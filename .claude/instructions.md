@@ -1,54 +1,60 @@
 # Seat Leon Gauge Cluster — Raspberry Pi Pico 2 WH (RP2350 ARM Cortex M33 + CYW4343) + Pimoroni PIM715 Pico Display Pack 2.8
 
+---
+
 ## Overview
 
-This is a Rust project that builds a compact, high-contrast, glanceable **digital gauge cluster** for a car.
-It targets a **Raspberry Pi Pico 2 (RP2350)** driving a **320×240 ST7789-based LCD** (Pimoroni Pico Display Pack 2.8"),
-rendering a **4×2 sensor grid** plus overlays (popups) and a debug/profiling page.
+This is a Rust project that builds a compact, high-contrast, glanceable digital gauge cluster for a car. It targets a Raspberry Pi Pico 2 (RP2350) driving a 320×240 ST7789-based LCD (Pimoroni Pico Display Pack 2.8"), rendering a 4×2 sensor grid plus overlays (popups) and a debug/profiling page.
 
 ---
 
-## Important context
+## Important Context
 
-### Target platform
+### Target Platform
 
-- **MCU/Board:** Raspberry Pi **Pico 2 (RP2350)**  
-  - Dual-core MCU; firmware is expected to run on the **Cortex‑M33** build target (e.g. `thumbv8m.main-none-eabihf`) once the project is moved to `no_std`.
+**MCU/Board:** Raspberry Pi Pico 2 (RP2350)
+- Dual-core MCU; firmware is expected to run on the Cortex-M33 build target (e.g. `thumbv8m.main-none-eabihf`) once the project is moved to `no_std`.
 
-- **Display:** **Pico Display Pack 2.8"** (ST7789 family)  
-  - **Resolution:** 320×240  
-  - **Format:** `Rgb565` (native for ST7789)  
-  - **Input:** 4 physical buttons mapped in the simulator as `X` / `Y` / `A` / `B`  
-  - **Extras:** onboard RGB LED + Qwiic/STEMMA QT connector (I²C expansion)
+**Display:** Pico Display Pack 2.8" (ST7789 family)
+- Resolution: 320×240
+- Format: `Rgb565` (native for ST7789)
+- Input: 4 physical buttons mapped in the simulator as `X` / `Y` / `A` / `B`
+- Extras: onboard RGB LED + Qwiic/STEMMA QT connector (I²C expansion)
 
-- **HAL + async model:**
-  - Target a modern **RP2350 HAL** (choose the canonical crate at implementation time; consult upstream docs).
-  - Use **Embassy async** to separate concerns:
-    - OBD/UDS polling task(s)
-    - UI render task
-    - Button/input task
-    - Logging/telemetry task (optional)
+**HAL + async model:**
+- Target a modern RP2350 HAL (choose the canonical crate at implementation time; consult upstream docs)
+- Use Embassy async to separate concerns:
+  - OBD/UDS polling task(s)
+  - UI render task
+  - Button/input task
+  - Logging/telemetry task (optional)
 
-### Vehicle context (why these gauges)
+### Vehicle Context
 
-- **Car (built and tested on):** 2019 **Seat Leon Cupra (5F)**  
-- **Engine:** **EA888.3 2.0 TSI “290”** (engine code **DNUC**)  
-- **Transmission:** DSG 7-speed, **DQ381** family
-- Dashboard is tuned around the sensors that matter most for this platform:
-  - **Boost**
-  - **AFR / Lambda**
-  - **Battery voltage**
-  - **Coolant temp**
-  - **Oil temp**
-  - **DSG temp**
-  - **IAT (Intake Air Temp)**
-  - **EGT (Exhaust Gas Temp)**
+**Car (built and tested on):** 2019 Seat Leon Cupra (5F)
+
+**Engine:** EA888.3 2.0 TSI "290" (engine code DNUC)
+
+**Transmission:** DSG 7-speed, DQ381 family
+
+**Dashboard sensors** tuned for this platform:
+
+| Sensor | Description |
+|--------|-------------|
+| Boost | Turbocharger boost pressure |
+| AFR / Lambda | Air-fuel ratio / Lambda sensor |
+| Battery | Voltage |
+| Coolant | Coolant temperature |
+| Oil | Oil temperature |
+| DSG | Transmission temperature |
+| IAT | Intake Air Temperature |
+| EGT | Exhaust Gas Temperature |
 
 ---
 
 ## OBDEleven
 
-I have **OBDEleven** and will use it as the practical “ground truth” tool to:
+I have OBDEleven and will use it as the practical "ground truth" tool to:
 
 - Confirm which signals are available on the ECU/TCU and under what conditions
 - Validate units/scaling (e.g., PSI vs bar, °C ranges, lambda/AFR conversion)
@@ -56,84 +62,93 @@ I have **OBDEleven** and will use it as the practical “ground truth” tool to
 
 ---
 
-## Electronics and hardware planned
+## Electronics and Hardware Planned
 
-*(Some specifics will be finalized once the on-car data path is chosen.)*
+_Some specifics will be finalized once the on-car data path is chosen._
 
-- **Core UI hardware**
-  - Raspberry Pi Pico 2 (RP2350)
-  - Pimoroni Pico Display Pack 2.8" (ST7789, 320×240, buttons, RGB LED)
+### Core UI Hardware
 
-- **Vehicle data interface (OBD-II / UDS)**
-  - OBD-II port connection and a physical layer suitable for your car (typically CAN on modern VAG platforms).
-  - A safe, robust interface design (transceiver, ESD protection, proper grounding, etc.).
+- Raspberry Pi Pico 2 (RP2350)
+- Pimoroni Pico Display Pack 2.8" (ST7789, 320×240, buttons, RGB LED)
 
-- **Power**
-  - Automotive 12V is noisy → plan for **clean power regulation** and protection:
-    - fuse, reverse polarity protection, transient suppression/TVS, filtering
-    - stable 5V/3.3V rails for the Pico + display
+### Vehicle Data Interface (OBD-II / UDS)
 
-- **Mechanical / enclosure**
-  - Vibration-safe mounting, cable strain relief
-  - Enclosure that prevents glare and minimizes driver distraction
+- OBD-II port connection and a physical layer suitable for your car (typically CAN on modern VAG platforms)
+- A safe, robust interface design (transceiver, ESD protection, proper grounding, etc.)
 
-- **Expansion options**
-  - Qwiic/STEMMA QT (I²C) expansion for future sensors or peripherals
+### Power
+
+Automotive 12V is noisy → plan for clean power regulation and protection:
+- Fuse, reverse polarity protection, transient suppression/TVS, filtering
+- Stable 5V/3.3V rails for the Pico + display
+
+### Mechanical / Enclosure
+
+- Vibration-safe mounting, cable strain relief
+- Enclosure that prevents glare and minimizes driver distraction
+
+### Expansion Options
+
+- Qwiic/STEMMA QT (I²C) expansion for future sensors or peripherals
 
 ---
 
-## AI agent notes and “how to help effectively”
+## AI Agent Notes and "How to Help Effectively"
 
-These items maximize what an agentic workflow (or AI assistant) can do safely and repeatably:
+These items maximize what an agentic workflow (or AI assistant) can do safely and repeatably.
 
-### High-leverage artifacts to maintain
+### High-Leverage Artifacts to Maintain
 
-- **Spec doc** (recommended): a short `docs/spec.md` for layout + state machine rules
-- **Performance budget** (recommended): what is allowed in the render loop (no alloc, fixed buffers, etc.)
+- Spec doc _(recommended)_: a short `docs/spec.md` for layout + state machine rules
+- Performance budget _(recommended)_: what is allowed in the render loop (no alloc, fixed buffers, etc.)
 
-### Invariants the agent must preserve
+### Invariants the Agent Must Preserve
 
-- **320×240** layout must not clip (labels/values/graphs/popups)
+- 320×240 layout must not clip (labels/values/graphs/popups)
 - UI must remain readable at a glance:
-  - consistent contrast rules (luminance-based text color selection)
-  - avoid flicker/instability when values hover near thresholds
+  - Consistent contrast rules (luminance-based text color selection)
+  - Avoid flicker/instability when values hover near thresholds
 - Popups must cleanly draw/clear without leaving artifacts
-- State resets must reset *all* derived state (min/max/avg/history/peaks)
+- State resets must reset _all_ derived state (min/max/avg/history/peaks)
 
-### Safety & scope boundaries
+### Safety & Scope Boundaries
 
-- This is a **read-only gauge display** project; do not implement anything that modifies vehicle behavior.
+> **Safety:** This is a read-only gauge display project; do not implement anything that modifies vehicle behavior.
 
 ---
 
-## Code style and quality gates
+## Code Style and Quality Gates
 
-### Rust / dependencies
+### Rust / Dependencies
 
-- Prefer the **newest stable Rust** where possible; this repo currently uses **edition 2024** and a **nightly toolchain**.
-- Keep dependencies current; **consult upstream docs** when behavior/APIs are uncertain.
+- Prefer the newest stable Rust where possible; this repo currently uses `edition = "2024"` and a nightly toolchain.
+- Keep dependencies current; consult upstream docs when behavior/APIs are uncertain.
 
-### Change discipline (required)
+### Change Discipline (Required)
 
 When making any change:
 
 1. **Read the full context** (modules + docs + comments) before editing.
-2. Update **all impacted code paths** and **state transitions**:
-   - dashboard ↔ debug page switching
-   - popup lifecycle (show → expire → cleanup)
-   - unit toggles (bar ↔ PSI) and formatting edge cases
-   - reset behavior (min/max/avg/history/peak highlight)
+
+2. **Update all impacted code paths** and state transitions:
+   - Dashboard ↔ debug page switching
+   - Popup lifecycle (show → expire → cleanup)
+   - Unit toggles (bar ↔ PSI) and formatting edge cases
+   - Reset behavior (min/max/avg/history/peak highlight)
+
 3. **Audit and update comments/docs** when behavior changes.
-4. Run the full quality loop and fix issues:
+
+4. **Run the full quality loop** and fix issues:
    - `cargo fmt --all`
    - `cargo clippy --all-targets --all-features` (fix or justify)
    - `cargo test`
-5. Verify UI layout still fits **320×240**:
-   - check worst-case values and long strings
-   - confirm popups don’t overlap in unintended ways
-   - ensure changes make sense visually at the simulator’s scale
 
-### Embedded performance posture
+5. **Verify UI layout** still fits 320×240:
+   - Check worst-case values and long strings
+   - Confirm popups don't overlap in unintended ways
+   - Ensure changes make sense visually at the simulator's scale
+
+### Embedded Performance Posture
 
 - Avoid heap allocation in hot paths (use `heapless::String` + `core::fmt::Write`)
 - Prefer compile-time constants for layout and styles
@@ -142,7 +157,7 @@ When making any change:
 
 ---
 
-## Git and version control preferences
+## Git and Version Control Preferences
 
 - **Commit messages:** Keep concise and descriptive
 - **Co-authorship:** Do not add `Co-Authored-By` tags in commit messages
