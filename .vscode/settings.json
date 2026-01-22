@@ -17,6 +17,7 @@
         "Qwiic",
         "rustup",
         "sinf",
-        "thumbv"
+        "thumbv",
+        "USERPROFILE"
     ]
 }
