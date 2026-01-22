@@ -1,0 +1,14 @@
+[env]
+LIBRARY_PATH = "/opt/homebrew/lib"
+
+# Native CPU optimizations for simulator (host target only)
+# Ignored when cross-compiling to ARM (Pico)
+[target.'cfg(not(target_arch = "arm"))']
+rustflags = ["-C", "target-cpu=native"]
+
+# Uncomment when targeting Pico 2 (RP2350, Cortex-M33)
+# [target.thumbv8m.main-none-eabihf]
+# rustflags = ["-C", "link-arg=-Tlink.x"]
+#
+# [build]
+# target = "thumbv8m.main-none-eabihf"
