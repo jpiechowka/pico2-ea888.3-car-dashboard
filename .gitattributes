@@ -1,0 +1,46 @@
+# Auto detect text files and normalize line endings to CRLF on checkout
+* text=auto eol=crlf
+
+# Explicitly declare text files you want to always be normalized and converted to CRLF
+*.rs text eol=crlf
+*.toml text eol=crlf
+*.md text eol=crlf
+*.json text eol=crlf
+
+# Denote all files that are truly binary and should not be modified
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.ico binary
+*.svg binary
+
+# Executables and libraries
+*.exe binary
+*.dll binary
+*.so binary
+*.a binary
+*.lib binary
+*.dylib binary
+*.o binary
+
+# Firmware and embedded binaries
+*.elf binary
+*.bin binary
+*.uf2 binary
+*.hex binary
+
+# Archives
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+*.rar binary
+
+# Fonts
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
