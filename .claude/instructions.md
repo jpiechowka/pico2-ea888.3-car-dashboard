@@ -204,7 +204,7 @@ firmware/
 
 ### Build Commands
 
-```bash
+```
 # Simulator (requires SDL2)
 cargo build -p dashboard-simulator --release
 cargo run -p dashboard-simulator --release
@@ -216,11 +216,18 @@ cargo run -p dashboard-pico --release  # flash via probe-rs
 
 ### Dependencies Setup
 
-**Simulator (Windows):**
+**Simulator (Windows via Scoop):**
+```
+scoop bucket add extras
+scoop install sdl2
+```
+Then set the `SDL2` environment variable to the Scoop install path (e.g., `%USERPROFILE%\scoop\apps\sdl2\current`).
+
+**Simulator (Windows manual):**
 - Download `SDL2-devel-x.x.x-VC.zip` from https://github.com/libsdl-org/SDL/releases
 - Copy `SDL2.lib` to Rust toolchain lib folder, or set `SDL2` environment variable
 
 **Pico:**
-```bash
+```
 rustup target add thumbv8m.main-none-eabihf
 ```
