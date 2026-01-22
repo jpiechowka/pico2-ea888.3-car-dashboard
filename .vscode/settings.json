@@ -5,6 +5,7 @@
         "codegen",
         "cosf",
         "Cupra",
+        "DEFMT",
         "DNUC",
         "eabihf",
         "glanceable",
