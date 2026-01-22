@@ -124,9 +124,7 @@ const _: () = assert!(BATT_CRITICAL < BATT_WARNING);
 /// Returns `true` if voltage is below `BATT_CRITICAL` (12.0V).
 #[inline]
 #[allow(dead_code)]
-pub fn is_critical_battery(voltage: f32) -> bool {
-    voltage < BATT_CRITICAL
-}
+pub fn is_critical_battery(voltage: f32) -> bool { voltage < BATT_CRITICAL }
 
 // =============================================================================
 // Air-Fuel Ratio (AFR) Thresholds

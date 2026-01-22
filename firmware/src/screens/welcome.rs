@@ -38,18 +38,15 @@
 //! Extended 12-color rainbow stored as const array for smooth gradients.
 //! Uses simple modulo arithmetic for color indexing (no floating-point).
 
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use embedded_graphics::{
-    mono_font::{MonoTextStyle, ascii::FONT_10X20},
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
-    text::Text,
-};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::ascii::FONT_10X20;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::text::Text;
 use embedded_graphics_simulator::{SimulatorDisplay, SimulatorEvent, Window};
 
 use crate::colors::BLACK;
@@ -144,7 +141,10 @@ const FRAMES_PER_STEP: u32 = 3;
 /// # Returns
 /// RGB565 color from the rainbow palette.
 #[inline]
-const fn rainbow_color_for_char(char_index: usize, frame: u32) -> Rgb565 {
+const fn rainbow_color_for_char(
+    char_index: usize,
+    frame: u32,
+) -> Rgb565 {
     // Animation base advances every FRAMES_PER_STEP frames
     let anim_offset = (frame / FRAMES_PER_STEP) as usize;
     // Each character offset by 1, animation flows in reverse for "raining" effect
@@ -157,7 +157,14 @@ const fn rainbow_color_for_char(char_index: usize, frame: u32) -> Rgb565 {
 // =============================================================================
 
 /// Draw a filled rectangle (helper for pixel art).
-fn draw_rect(display: &mut SimulatorDisplay<Rgb565>, x: i32, y: i32, w: u32, h: u32, color: Rgb565) {
+fn draw_rect(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    color: Rgb565,
+) {
     Rectangle::new(Point::new(x, y), Size::new(w, h))
         .into_styled(PrimitiveStyle::with_fill(color))
         .draw(display)
@@ -168,7 +175,11 @@ fn draw_rect(display: &mut SimulatorDisplay<Rgb565>, x: i32, y: i32, w: u32, h: 
 ///
 /// This is a simplified ~64x88 representation of the meme.
 /// The sprite is positioned at (`base_x`, `base_y`).
-fn draw_sanic(display: &mut SimulatorDisplay<Rgb565>, x: i32, y: i32) {
+fn draw_sanic(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: i32,
+    y: i32,
+) {
     // Head spikes (blue) - the iconic messy spikes
     draw_rect(display, x + 40, y, 16, 8, SANIC_BLUE);
     draw_rect(display, x + 48, y + 8, 16, 8, SANIC_BLUE);
@@ -282,7 +293,10 @@ fn draw_rainbow_text(
 ///
 /// Displays for `WELCOME_DURATION_SECS` (5 seconds) then returns.
 /// Returns `false` if window is closed, `true` when sequence completes.
-pub fn run_welcome_screen(display: &mut SimulatorDisplay<Rgb565>, window: &mut Window) -> bool {
+pub fn run_welcome_screen(
+    display: &mut SimulatorDisplay<Rgb565>,
+    window: &mut Window,
+) -> bool {
     let welcome_start = Instant::now();
     let welcome_duration = Duration::from_secs(WELCOME_DURATION_SECS);
     let mut frame: u32 = 0;

@@ -29,7 +29,8 @@
 //! - Color interpolation uses fixed-point integer math for efficiency
 //! - State is tracked per-cell with fixed-size arrays (no heap allocation)
 
-use embedded_graphics::{pixelcolor::Rgb565, prelude::IntoStorage};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::IntoStorage;
 
 use crate::render::CELL_COUNT;
 
@@ -83,7 +84,10 @@ const COLOR_SNAP_THRESHOLD: i32 = 2;
 /// let text_x = center_x + offset;
 /// ```
 #[inline]
-pub fn calculate_shake_offset(frame: u32, is_critical: bool) -> i32 {
+pub fn calculate_shake_offset(
+    frame: u32,
+    is_critical: bool,
+) -> i32 {
     if !is_critical {
         return 0;
     }
@@ -130,7 +134,11 @@ impl ColorTransition {
     /// Set target color for a cell and start transition if different.
     ///
     /// Returns `true` if a new transition was started.
-    pub fn set_target(&mut self, cell_idx: usize, target: Rgb565) -> bool {
+    pub fn set_target(
+        &mut self,
+        cell_idx: usize,
+        target: Rgb565,
+    ) -> bool {
         if self.target_colors[cell_idx] == target {
             false
         } else {
@@ -142,7 +150,10 @@ impl ColorTransition {
 
     /// Get current (interpolated) color for a cell.
     #[inline]
-    pub const fn get_current(&self, cell_idx: usize) -> Rgb565 {
+    pub const fn get_current(
+        &self,
+        cell_idx: usize,
+    ) -> Rgb565 {
         self.current_colors[cell_idx]
     }
 
@@ -183,9 +194,7 @@ impl ColorTransition {
 }
 
 impl Default for ColorTransition {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 // =============================================================================
@@ -208,7 +217,11 @@ impl Default for ColorTransition {
 ///
 /// With this fix, every lerp call either moves at least 1 step closer or
 /// the colors are already equal.
-fn lerp_rgb565(from: Rgb565, to: Rgb565, t: f32) -> Rgb565 {
+fn lerp_rgb565(
+    from: Rgb565,
+    to: Rgb565,
+    t: f32,
+) -> Rgb565 {
     // Extract RGB components from Rgb565
     // Rgb565: RRRRRGGGGGGBBBBB (5-6-5 bits)
     let from_raw = from.into_storage();
@@ -259,7 +272,10 @@ fn lerp_rgb565(from: Rgb565, to: Rgb565, t: f32) -> Rgb565 {
 /// Check if two colors are close enough to be considered equal.
 ///
 /// Uses Manhattan distance in RGB space.
-fn colors_close_enough(a: Rgb565, b: Rgb565) -> bool {
+fn colors_close_enough(
+    a: Rgb565,
+    b: Rgb565,
+) -> bool {
     let a_raw = a.into_storage();
     let b_raw = b.into_storage();
 

@@ -31,14 +31,10 @@
 //! For these, we expose `LABEL_FONT` so callers can create `MonoTextStyle::new(LABEL_FONT, color)`
 //! with minimal overhead - just the color varies, font reference is shared.
 
-use embedded_graphics::{
-    mono_font::{
-        MonoFont, MonoTextStyle,
-        ascii::{FONT_6X10, FONT_10X20},
-    },
-    pixelcolor::Rgb565,
-    text::{Alignment, TextStyle, TextStyleBuilder},
-};
+use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_10X20};
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::text::{Alignment, TextStyle, TextStyleBuilder};
 use profont::{PROFONT_18_POINT, PROFONT_24_POINT};
 
 use crate::colors::{BLACK, ORANGE, WHITE};

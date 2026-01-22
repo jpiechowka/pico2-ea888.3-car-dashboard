@@ -50,10 +50,8 @@
 //! - Rolling average: Fixed array of 60 samples (5 min at 5-sec intervals)
 //! - Graph history: Fixed array of 60 samples (~2 min at 2-sec intervals)
 
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 
@@ -182,7 +180,11 @@ impl SensorState {
     /// # Rolling Average
     /// Samples are added to the rolling average buffer every `AVG_SAMPLE_INTERVAL`
     /// frames (every 5 seconds at 50 FPS).
-    pub fn update(&mut self, value: f32, is_max_updated: bool) {
+    pub fn update(
+        &mut self,
+        value: f32,
+        is_max_updated: bool,
+    ) {
         // Maintain fixed-size history buffer (FIFO)
         if self.history.len() >= HISTORY_SIZE {
             self.history.pop_front();
@@ -219,7 +221,10 @@ impl SensorState {
     /// Add a sample to the rolling average buffer.
     ///
     /// Uses O(1) incremental update: subtract old value, add new value.
-    fn add_avg_sample(&mut self, value: f32) {
+    fn add_avg_sample(
+        &mut self,
+        value: f32,
+    ) {
         // If buffer is full, subtract the value we're about to overwrite
         if self.avg_count >= AVG_BUFFER_SIZE {
             self.avg_sum -= self.avg_buffer[self.avg_index];
@@ -265,7 +270,10 @@ impl SensorState {
     /// Add a sample to the graph history buffer.
     ///
     /// Updates local min/max for Y-axis scaling.
-    fn add_graph_sample(&mut self, value: f32) {
+    fn add_graph_sample(
+        &mut self,
+        value: f32,
+    ) {
         // Add new value to circular buffer
         self.graph_buffer[self.graph_index] = value;
         self.graph_index = (self.graph_index + 1) % GRAPH_HISTORY_SIZE;
@@ -378,9 +386,7 @@ impl SensorState {
 }
 
 impl Default for SensorState {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 // =============================================================================

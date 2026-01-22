@@ -1,6 +1,5 @@
 # Edition and Features
 edition = "2024"
-required_version = ">=1.8.0"
 unstable_features = true
 
 # Width Settings
@@ -28,7 +27,6 @@ use_field_init_shorthand = true
 use_try_shorthand = true
 
 # Literal Formatting
-float_literal_trailing_zero = "IfNoPostfix"
 hex_literal_case = "Upper"
 
 # Comment and Documentation

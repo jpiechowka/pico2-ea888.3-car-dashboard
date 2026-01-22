@@ -210,14 +210,17 @@ mod styles;
 mod thresholds;
 mod widgets;
 
-use std::{thread, time::Instant};
+use std::thread;
+use std::time::Instant;
 
 use animations::{ColorTransition, calculate_shake_offset};
 use colors::{BLACK, ORANGE, RED};
 // Optimization: Import pre-computed layout constants instead of calculating per-frame
 use config::{COL_WIDTH, FRAME_TIME, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH};
-use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
-use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics_simulator::sdl2::Keycode;
+use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window};
 use pages::Page;
 use profiling::{DebugLog, ProfilingMetrics};
 use render::{Popup, RenderState, cell_idx};
@@ -225,9 +228,24 @@ use screens::{draw_debug_page, run_loading_screen, run_welcome_screen};
 use state::SensorState;
 use thresholds::{BAR_TO_PSI, BATT_CRITICAL, BATT_WARNING, BOOST_EASTER_EGG_BAR, BOOST_EASTER_EGG_PSI};
 use widgets::{
-    draw_afr_cell, draw_batt_cell, draw_boost_cell, draw_boost_unit_popup, draw_dividers, draw_fps_toggle_popup,
-    draw_header, draw_reset_popup, draw_temp_cell, is_critical_afr, is_critical_egt, is_critical_iat,
-    is_critical_oil_dsg, is_critical_water, temp_color_egt, temp_color_iat, temp_color_oil_dsg, temp_color_water,
+    draw_afr_cell,
+    draw_batt_cell,
+    draw_boost_cell,
+    draw_boost_unit_popup,
+    draw_dividers,
+    draw_fps_toggle_popup,
+    draw_header,
+    draw_reset_popup,
+    draw_temp_cell,
+    is_critical_afr,
+    is_critical_egt,
+    is_critical_iat,
+    is_critical_oil_dsg,
+    is_critical_water,
+    temp_color_egt,
+    temp_color_iat,
+    temp_color_oil_dsg,
+    temp_color_water,
 };
 
 fn main() {
@@ -797,7 +815,12 @@ fn main() {
 /// - `min`: Minimum output value
 /// - `max`: Maximum output value
 /// - `freq`: Oscillation frequency (higher = faster cycles)
-fn fake_signal(t: f32, min: f32, max: f32, freq: f32) -> f32 {
+fn fake_signal(
+    t: f32,
+    min: f32,
+    max: f32,
+    freq: f32,
+) -> f32 {
     let normalized = (t * freq).sin().mul_add(0.5, 0.5);
     min + normalized * (max - min)
 }
@@ -810,7 +833,12 @@ fn fake_signal(t: f32, min: f32, max: f32, freq: f32) -> f32 {
 ///
 /// The signal holds at peak when the cycle phase is between 1.2 and 1.9 radians
 /// (around PI/2 where sine normally peaks). That's 0.7 radians out of 2π ≈ 11%.
-fn boost_signal(t: f32, min: f32, max: f32, freq: f32) -> f32 {
+fn boost_signal(
+    t: f32,
+    min: f32,
+    max: f32,
+    freq: f32,
+) -> f32 {
     let cycle = (t * freq) % std::f32::consts::TAU;
     // Hold at peak for ~11% of the cycle (0.7 / 2π)
     let normalized = if cycle > 1.2 && cycle < 1.9 {

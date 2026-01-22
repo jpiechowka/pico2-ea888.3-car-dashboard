@@ -44,25 +44,19 @@
 //! constructing `TextStyle` objects per frame.
 
 use core::fmt::Write;
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use embedded_graphics::{
-    mono_font::MonoTextStyle,
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{Line, PrimitiveStyle},
-    text::Text,
-};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{Line, PrimitiveStyle};
+use embedded_graphics::text::Text;
 use embedded_graphics_simulator::{SimulatorDisplay, SimulatorEvent, Window};
 use heapless::String;
 
-use crate::{
-    colors::{BLACK, RED, WHITE},
-    styles::{CENTERED, LEFT_ALIGNED},
-};
+use crate::colors::{BLACK, RED, WHITE};
+use crate::styles::{CENTERED, LEFT_ALIGNED};
 
 // =============================================================================
 // Loading Screen Layout Constants (Optimization: pre-computed at compile time)
@@ -112,7 +106,10 @@ const DIVIDER_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_stroke(RED, 1
 ///
 /// Displays initialization messages with animated spinner.
 /// Returns `false` if window is closed, `true` when sequence completes.
-pub fn run_loading_screen(display: &mut SimulatorDisplay<Rgb565>, window: &mut Window) -> bool {
+pub fn run_loading_screen(
+    display: &mut SimulatorDisplay<Rgb565>,
+    window: &mut Window,
+) -> bool {
     // Init messages: (text, display duration in ms)
     // These simulate OBD-II connection and vehicle identification
     let init_messages = [

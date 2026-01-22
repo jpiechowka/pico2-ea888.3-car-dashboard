@@ -30,11 +30,9 @@
 //! so sparse data (early in a session) spreads across the full graph width
 //! rather than clustering on the left side.
 
-use embedded_graphics::{
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{Line, PrimitiveStyle, Rectangle},
-};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics_simulator::SimulatorDisplay;
 
 use crate::state::GRAPH_HISTORY_SIZE;
@@ -56,7 +54,14 @@ use crate::state::GRAPH_HISTORY_SIZE;
 /// # Safety
 /// Returns early if dimensions are too small (w < 4 or h < 4) to prevent
 /// u32 underflow in the size calculation.
-pub fn draw_cell_background(display: &mut SimulatorDisplay<Rgb565>, x: u32, y: u32, w: u32, h: u32, bg_color: Rgb565) {
+pub fn draw_cell_background(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    bg_color: Rgb565,
+) {
     // Guard against underflow with small dimensions
     if w < 4 || h < 4 {
         return;
@@ -82,7 +87,13 @@ pub fn draw_cell_background(display: &mut SimulatorDisplay<Rgb565>, x: u32, y: u
 /// # Arrow Dimensions
 /// - Height: 8px total (y-4 to y+4)
 /// - Arrowhead width: 6px (x-3 to x+3)
-pub fn draw_trend_arrow(display: &mut SimulatorDisplay<Rgb565>, x: i32, y: i32, rising: bool, color: Rgb565) {
+pub fn draw_trend_arrow(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: i32,
+    y: i32,
+    rising: bool,
+    color: Rgb565,
+) {
     let arrow_style = PrimitiveStyle::with_stroke(color, 1);
     if rising {
         // Up arrow: shaft points upward, arrowhead at top

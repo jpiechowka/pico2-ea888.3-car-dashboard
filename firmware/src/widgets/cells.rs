@@ -83,31 +83,52 @@
 
 use core::fmt::Write;
 
-use embedded_graphics::{
-    mono_font::MonoTextStyle,
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
-    text::Text,
-};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::text::Text;
 use embedded_graphics_simulator::SimulatorDisplay;
 use heapless::String;
 use profont::PROFONT_24_POINT;
 
-use crate::{
-    colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, PINK, RED, WHITE, YELLOW},
-    state::SensorState,
-    styles::{
-        CENTERED, LABEL_FONT, LABEL_STYLE_BLACK, LABEL_STYLE_ORANGE, LABEL_STYLE_WHITE, VALUE_FONT_MEDIUM,
-        VALUE_STYLE_BLACK, VALUE_STYLE_WHITE,
-    },
-    thresholds::{
-        AFR_LEAN_CRITICAL, AFR_OPTIMAL_MAX, AFR_RICH, AFR_RICH_AF, AFR_STOICH, BAR_TO_PSI, BATT_CRITICAL, BATT_WARNING,
-        COOLANT_COLD_MAX, COOLANT_CRITICAL, EGT_COLD_MAX, EGT_CRITICAL, EGT_HIGH_LOAD, EGT_SPIRITED, IAT_COLD,
-        IAT_CRITICAL, IAT_EXTREME_COLD, IAT_HOT, IAT_WARM, OIL_DSG_CRITICAL, OIL_DSG_ELEVATED, OIL_DSG_HIGH,
-    },
-    widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow},
+use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, PINK, RED, WHITE, YELLOW};
+use crate::state::SensorState;
+use crate::styles::{
+    CENTERED,
+    LABEL_FONT,
+    LABEL_STYLE_BLACK,
+    LABEL_STYLE_ORANGE,
+    LABEL_STYLE_WHITE,
+    VALUE_FONT_MEDIUM,
+    VALUE_STYLE_BLACK,
+    VALUE_STYLE_WHITE,
 };
+use crate::thresholds::{
+    AFR_LEAN_CRITICAL,
+    AFR_OPTIMAL_MAX,
+    AFR_RICH,
+    AFR_RICH_AF,
+    AFR_STOICH,
+    BAR_TO_PSI,
+    BATT_CRITICAL,
+    BATT_WARNING,
+    COOLANT_COLD_MAX,
+    COOLANT_CRITICAL,
+    EGT_COLD_MAX,
+    EGT_CRITICAL,
+    EGT_HIGH_LOAD,
+    EGT_SPIRITED,
+    IAT_COLD,
+    IAT_CRITICAL,
+    IAT_EXTREME_COLD,
+    IAT_HOT,
+    IAT_WARM,
+    OIL_DSG_CRITICAL,
+    OIL_DSG_ELEVATED,
+    OIL_DSG_HIGH,
+};
+use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow};
 
 // =============================================================================
 // Color Helper Functions
@@ -151,9 +172,7 @@ pub fn label_color_for_bg(bg_color: Rgb565) -> Rgb565 {
 /// `base_text` color to avoid recomputing luminance. This function is kept for
 /// API compatibility with tests.
 #[cfg(test)]
-fn peak_highlight_color(bg_color: Rgb565) -> Rgb565 {
-    peak_highlight_for_text(label_color_for_bg(bg_color))
-}
+fn peak_highlight_color(bg_color: Rgb565) -> Rgb565 { peak_highlight_for_text(label_color_for_bg(bg_color)) }
 
 /// Return high-contrast highlight color for peak value display (optimized).
 ///
@@ -162,9 +181,7 @@ fn peak_highlight_color(bg_color: Rgb565) -> Rgb565 {
 /// - YELLOW on dark backgrounds (`base_text` == WHITE)
 /// - BLACK on light backgrounds (`base_text` == BLACK)
 #[inline]
-fn peak_highlight_for_text(base_text: Rgb565) -> Rgb565 {
-    if base_text == WHITE { YELLOW } else { BLACK }
-}
+fn peak_highlight_for_text(base_text: Rgb565) -> Rgb565 { if base_text == WHITE { YELLOW } else { BLACK } }
 
 /// Calculate perceptual luminance from an Rgb565 color.
 ///
@@ -235,19 +252,13 @@ pub fn temp_color_water(temp: f32) -> (Rgb565, Rgb565) {
 }
 
 /// Check if oil/DSG temperature is critical (triggers blinking).
-pub fn is_critical_oil_dsg(temp: f32) -> bool {
-    temp >= OIL_DSG_CRITICAL
-}
+pub fn is_critical_oil_dsg(temp: f32) -> bool { temp >= OIL_DSG_CRITICAL }
 
 /// Check if coolant temperature is critical (triggers blinking).
-pub fn is_critical_water(temp: f32) -> bool {
-    temp > COOLANT_CRITICAL
-}
+pub fn is_critical_water(temp: f32) -> bool { temp > COOLANT_CRITICAL }
 
 /// Check if AFR is critical (LEAN AF triggers blinking and shake).
-pub fn is_critical_afr(afr: f32) -> bool {
-    afr > AFR_LEAN_CRITICAL
-}
+pub fn is_critical_afr(afr: f32) -> bool { afr > AFR_LEAN_CRITICAL }
 
 /// Get background and text colors for Intake Air Temperature (IAT).
 ///
@@ -276,9 +287,7 @@ pub fn temp_color_iat(temp: f32) -> (Rgb565, Rgb565) {
 /// Check if IAT is critical (triggers blinking).
 ///
 /// Critical when extremely hot (>= `IAT_CRITICAL`, heat soak) or extremely cold (<= `IAT_EXTREME_COLD`, icing risk).
-pub fn is_critical_iat(temp: f32) -> bool {
-    temp >= IAT_CRITICAL || temp <= IAT_EXTREME_COLD
-}
+pub fn is_critical_iat(temp: f32) -> bool { temp >= IAT_CRITICAL || temp <= IAT_EXTREME_COLD }
 
 /// Get background and text colors for Exhaust Gas Temperature (EGT).
 ///
@@ -307,9 +316,7 @@ pub fn temp_color_egt(temp: f32) -> (Rgb565, Rgb565) {
 /// Check if EGT is critical (triggers blinking).
 ///
 /// Critical when exhaust temp indicates lean condition or detonation risk.
-pub fn is_critical_egt(temp: f32) -> bool {
-    temp >= EGT_CRITICAL
-}
+pub fn is_critical_egt(temp: f32) -> bool { temp >= EGT_CRITICAL }
 
 // =============================================================================
 // Style Selection Functions (Optimization: prefer static styles)

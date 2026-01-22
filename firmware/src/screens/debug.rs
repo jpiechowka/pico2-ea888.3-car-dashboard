@@ -25,22 +25,18 @@
 
 use core::fmt::Write;
 
-use embedded_graphics::{
-    mono_font::MonoTextStyle,
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{Line, PrimitiveStyle, Rectangle},
-    text::Text,
-};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
+use embedded_graphics::text::Text;
 use embedded_graphics_simulator::SimulatorDisplay;
 use heapless::String;
 
-use crate::{
-    colors::{BLACK, GRAY, GREEN, ORANGE, WHITE, YELLOW},
-    config::{SCREEN_HEIGHT, SCREEN_WIDTH},
-    profiling::{DebugLog, ProfilingMetrics},
-    styles::LABEL_FONT,
-};
+use crate::colors::{BLACK, GRAY, GREEN, ORANGE, WHITE, YELLOW};
+use crate::config::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::profiling::{DebugLog, ProfilingMetrics};
+use crate::styles::LABEL_FONT;
 
 // =============================================================================
 // Layout Constants
@@ -143,7 +139,12 @@ const NUM_SENSORS: u32 = 7;
 /// - Header with "DEBUG VIEW", uptime, and FPS
 /// - Three columns: Frame timing, Render stats, Memory estimates
 /// - Debug log terminal (bottom section)
-pub fn draw_debug_page(display: &mut SimulatorDisplay<Rgb565>, metrics: &ProfilingMetrics, log: &DebugLog, fps: f32) {
+pub fn draw_debug_page(
+    display: &mut SimulatorDisplay<Rgb565>,
+    metrics: &ProfilingMetrics,
+    log: &DebugLog,
+    fps: f32,
+) {
     // Clear display
     display.clear(DEBUG_BG).ok();
 
@@ -169,7 +170,11 @@ pub fn draw_debug_page(display: &mut SimulatorDisplay<Rgb565>, metrics: &Profili
 }
 
 /// Draw the header with title, uptime, and FPS.
-fn draw_header(display: &mut SimulatorDisplay<Rgb565>, metrics: &ProfilingMetrics, fps: f32) {
+fn draw_header(
+    display: &mut SimulatorDisplay<Rgb565>,
+    metrics: &ProfilingMetrics,
+    fps: f32,
+) {
     let header_style = MonoTextStyle::new(LABEL_FONT, HEADER_COLOR);
     let info_style = MonoTextStyle::new(LABEL_FONT, VALUE_COLOR);
 
@@ -210,7 +215,10 @@ fn draw_section_headers(display: &mut SimulatorDisplay<Rgb565>) {
 }
 
 /// Draw frame timing statistics (left column).
-fn draw_timing_column(display: &mut SimulatorDisplay<Rgb565>, metrics: &ProfilingMetrics) {
+fn draw_timing_column(
+    display: &mut SimulatorDisplay<Rgb565>,
+    metrics: &ProfilingMetrics,
+) {
     let value_style = MonoTextStyle::new(LABEL_FONT, VALUE_COLOR);
     let highlight_style = MonoTextStyle::new(LABEL_FONT, HIGHLIGHT_COLOR);
 
@@ -259,7 +267,10 @@ fn draw_timing_column(display: &mut SimulatorDisplay<Rgb565>, metrics: &Profilin
 }
 
 /// Draw render counters (middle column).
-fn draw_render_column(display: &mut SimulatorDisplay<Rgb565>, metrics: &ProfilingMetrics) {
+fn draw_render_column(
+    display: &mut SimulatorDisplay<Rgb565>,
+    metrics: &ProfilingMetrics,
+) {
     let value_style = MonoTextStyle::new(LABEL_FONT, VALUE_COLOR);
 
     let x = COL2_X;
@@ -351,7 +362,10 @@ fn draw_memory_column(display: &mut SimulatorDisplay<Rgb565>) {
 }
 
 /// Draw the debug log terminal section (compact).
-fn draw_log_terminal(display: &mut SimulatorDisplay<Rgb565>, log: &DebugLog) {
+fn draw_log_terminal(
+    display: &mut SimulatorDisplay<Rgb565>,
+    log: &DebugLog,
+) {
     let prompt_style = MonoTextStyle::new(LABEL_FONT, LOG_PROMPT_COLOR);
     let text_style = MonoTextStyle::new(LABEL_FONT, LOG_TEXT_COLOR);
 
@@ -384,7 +398,10 @@ fn draw_log_terminal(display: &mut SimulatorDisplay<Rgb565>, log: &DebugLog) {
 }
 
 /// Draw a horizontal divider line.
-fn draw_horizontal_line(display: &mut SimulatorDisplay<Rgb565>, y: i32) {
+fn draw_horizontal_line(
+    display: &mut SimulatorDisplay<Rgb565>,
+    y: i32,
+) {
     Line::new(Point::new(2, y), Point::new(SCREEN_WIDTH as i32 - 2, y))
         .into_styled(PrimitiveStyle::with_stroke(DIVIDER_COLOR, 1))
         .draw(display)

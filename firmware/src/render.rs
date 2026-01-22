@@ -96,9 +96,7 @@ impl Popup {
 
     /// Check if this popup has expired.
     #[inline]
-    pub fn is_expired(&self) -> bool {
-        self.start_time().elapsed() >= POPUP_DURATION
-    }
+    pub fn is_expired(&self) -> bool { self.start_time().elapsed() >= POPUP_DURATION }
 
     /// Get the popup kind (discriminant only, for comparison).
     #[inline]
@@ -154,22 +152,22 @@ impl RenderState {
 
     /// Check if dividers need drawing.
     #[inline]
-    pub const fn need_dividers(&self) -> bool {
-        !self.dividers_drawn || self.first_frame || self.display_cleared
-    }
+    pub const fn need_dividers(&self) -> bool { !self.dividers_drawn || self.first_frame || self.display_cleared }
 
     /// Mark dividers as drawn.
     #[inline]
-    pub const fn mark_dividers_drawn(&mut self) {
-        self.dividers_drawn = true;
-    }
+    pub const fn mark_dividers_drawn(&mut self) { self.dividers_drawn = true; }
 
     /// Check if header/FPS needs redrawing.
     ///
     /// Uses `fps.round()` to match the display formatting (`{:.0}`) which also
     /// rounds. This prevents mismatches where the dirty check sees a different
     /// value than what gets displayed.
-    pub const fn check_header_dirty(&mut self, show_fps: bool, fps: f32) -> bool {
+    pub const fn check_header_dirty(
+        &mut self,
+        show_fps: bool,
+        fps: f32,
+    ) -> bool {
         let fps_rounded = fps.round() as u32;
         let dirty = self.first_frame
             || self.popup_just_closed
@@ -194,7 +192,10 @@ impl RenderState {
     /// - Areas previously covered by the larger popup become visible again
     /// - Dividers overwritten by the larger popup won't redraw (draw-once)
     /// - Old pixels in borders/grid lines can persist
-    pub fn update_popup(&mut self, popup: Option<&Popup>) {
+    pub fn update_popup(
+        &mut self,
+        popup: Option<&Popup>,
+    ) {
         let current_kind = popup.map(Popup::kind);
         let changed = current_kind != self.prev_popup_kind;
         let was_visible = self.prev_popup_kind.is_some();
@@ -210,15 +211,11 @@ impl RenderState {
 
     /// Check if popup just closed this frame (need to clear remnants).
     #[inline]
-    pub const fn popup_just_closed(&self) -> bool {
-        self.popup_just_closed
-    }
+    pub const fn popup_just_closed(&self) -> bool { self.popup_just_closed }
 
     /// Check if this is the first frame.
     #[inline]
-    pub const fn is_first_frame(&self) -> bool {
-        self.first_frame
-    }
+    pub const fn is_first_frame(&self) -> bool { self.first_frame }
 
     /// Mark that the display was cleared externally.
     ///
@@ -238,9 +235,7 @@ impl RenderState {
 }
 
 impl Default for RenderState {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 // =============================================================================

@@ -27,20 +27,16 @@
 
 use core::fmt::Write;
 
-use embedded_graphics::{
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{Line, PrimitiveStyle, Rectangle},
-    text::Text,
-};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
+use embedded_graphics::text::Text;
 use embedded_graphics_simulator::SimulatorDisplay;
 use heapless::String;
 
-use crate::{
-    colors::{GRAY, RED},
-    config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH},
-    styles::{CENTERED, LABEL_STYLE_WHITE, RIGHT_ALIGNED, TITLE_STYLE_WHITE},
-};
+use crate::colors::{GRAY, RED};
+use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::styles::{CENTERED, LABEL_STYLE_WHITE, RIGHT_ALIGNED, TITLE_STYLE_WHITE};
 
 // =============================================================================
 // Header Layout Constants (Optimization: computed at compile time)
@@ -111,7 +107,11 @@ const HEADER_FILL_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_fill(RED)
 /// - Uses static `HEADER_FILL_STYLE` (const `PrimitiveStyle`)
 /// - Uses static `TITLE_STYLE_WHITE` and `CENTERED` styles
 /// - FPS string uses `heapless::String` (no heap allocation)
-pub fn draw_header(display: &mut SimulatorDisplay<Rgb565>, show_fps: bool, fps: f32) {
+pub fn draw_header(
+    display: &mut SimulatorDisplay<Rgb565>,
+    show_fps: bool,
+    fps: f32,
+) {
     // Draw red header background using const style
     Rectangle::new(HEADER_RECT_POS, HEADER_RECT_SIZE)
         .into_styled(HEADER_FILL_STYLE)

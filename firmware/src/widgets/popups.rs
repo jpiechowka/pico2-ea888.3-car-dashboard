@@ -25,19 +25,15 @@
 //! ## 4. Uses Global `CENTER_X/CENTER_Y`
 //! Text positions reference pre-computed screen center coordinates from config.
 
-use embedded_graphics::{
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
-    text::Text,
-};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::text::Text;
 use embedded_graphics_simulator::SimulatorDisplay;
 
-use crate::{
-    colors::{RED, WHITE},
-    config::{CENTER_X, CENTER_Y, SCREEN_HEIGHT, SCREEN_WIDTH},
-    styles::{CENTERED, TITLE_STYLE_WHITE},
-};
+use crate::colors::{RED, WHITE};
+use crate::config::{CENTER_X, CENTER_Y, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::styles::{CENTERED, TITLE_STYLE_WHITE};
 
 // =============================================================================
 // Reset Popup Layout Constants
@@ -155,7 +151,10 @@ pub fn draw_reset_popup(display: &mut SimulatorDisplay<Rgb565>) {
 /// - Uses pre-computed `FPS_TEXT_POS`
 /// - Uses static `TITLE_STYLE_WHITE` and `CENTERED` styles
 /// - Static string selection (no heap allocation)
-pub fn draw_fps_toggle_popup(display: &mut SimulatorDisplay<Rgb565>, fps_enabled: bool) {
+pub fn draw_fps_toggle_popup(
+    display: &mut SimulatorDisplay<Rgb565>,
+    fps_enabled: bool,
+) {
     // White border
     Rectangle::new(FPS_BORDER_POS, FPS_BORDER_SIZE)
         .into_styled(WHITE_FILL)
@@ -185,7 +184,10 @@ pub fn draw_fps_toggle_popup(display: &mut SimulatorDisplay<Rgb565>, fps_enabled
 /// - Reuses FPS popup geometry constants (same size)
 /// - Uses const `WHITE_FILL` and `RED_FILL` styles
 /// - Static string selection (no heap allocation)
-pub fn draw_boost_unit_popup(display: &mut SimulatorDisplay<Rgb565>, show_psi: bool) {
+pub fn draw_boost_unit_popup(
+    display: &mut SimulatorDisplay<Rgb565>,
+    show_psi: bool,
+) {
     // White border (reuse FPS popup geometry)
     Rectangle::new(FPS_BORDER_POS, FPS_BORDER_SIZE)
         .into_styled(WHITE_FILL)

@@ -1,5 +1,5 @@
 [package]
-name = "pico2-ea888.3-car-dashboard-firmware"
+name = "pico2-car-dashboard-firmware"
 version = "0.1.0"
 edition = "2024"
 

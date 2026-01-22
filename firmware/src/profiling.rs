@@ -86,6 +86,9 @@ pub struct ProfilingMetrics {
 }
 
 impl ProfilingMetrics {
+    /// Exponential moving average alpha (0.1 for smooth updates).
+    const EMA_ALPHA: f32 = 0.1;
+
     /// Create new profiling metrics, starting the uptime timer.
     pub fn new() -> Self {
         Self {
@@ -105,13 +108,15 @@ impl ProfilingMetrics {
         }
     }
 
-    /// Exponential moving average alpha (0.1 for smooth updates).
-    const EMA_ALPHA: f32 = 0.1;
-
     /// Record frame timing for this frame.
     ///
     /// Updates current frame stats, min/max, and rolling average.
-    pub fn record_frame(&mut self, total_time: Duration, render_time: Duration, sleep_time: Duration) {
+    pub fn record_frame(
+        &mut self,
+        total_time: Duration,
+        render_time: Duration,
+        sleep_time: Duration,
+    ) {
         let total_us = total_time.as_micros() as u32;
         let render_us = render_time.as_micros() as u32;
         let sleep_us = sleep_time.as_micros() as u32;
@@ -141,15 +146,11 @@ impl ProfilingMetrics {
 
     /// Get average frame time in microseconds.
     #[inline]
-    pub const fn frame_time_avg_us(&self) -> u32 {
-        self.frame_time_avg_us as u32
-    }
+    pub const fn frame_time_avg_us(&self) -> u32 { self.frame_time_avg_us as u32 }
 
     /// Get uptime since metrics were created.
     #[inline]
-    pub fn uptime(&self) -> Duration {
-        self.start_time.elapsed()
-    }
+    pub fn uptime(&self) -> Duration { self.start_time.elapsed() }
 
     /// Format uptime as HH:MM:SS string.
     pub fn uptime_string(&self) -> String<12> {
@@ -179,27 +180,24 @@ impl ProfilingMetrics {
 
     /// Increment header redraw counter.
     #[inline]
-    pub const fn inc_header_redraws(&mut self) {
-        self.header_redraws += 1;
-    }
+    pub const fn inc_header_redraws(&mut self) { self.header_redraws += 1; }
 
     /// Increment divider redraw counter.
     #[inline]
-    pub const fn inc_divider_redraws(&mut self) {
-        self.divider_redraws += 1;
-    }
+    pub const fn inc_divider_redraws(&mut self) { self.divider_redraws += 1; }
 
     /// Increment cell draw counter by n.
     #[inline]
-    pub const fn inc_cell_draws(&mut self, n: u32) {
+    pub const fn inc_cell_draws(
+        &mut self,
+        n: u32,
+    ) {
         self.cell_draws += n;
     }
 }
 
 impl Default for ProfilingMetrics {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 // =============================================================================
@@ -216,12 +214,13 @@ pub struct DebugLog {
 
 impl DebugLog {
     /// Create a new empty debug log.
-    pub const fn new() -> Self {
-        Self { buffer: Deque::new() }
-    }
+    pub const fn new() -> Self { Self { buffer: Deque::new() } }
 
     /// Push a log message. If buffer is full, oldest message is dropped.
-    pub fn push(&mut self, msg: &str) {
+    pub fn push(
+        &mut self,
+        msg: &str,
+    ) {
         // If full, remove oldest
         if self.buffer.is_full() {
             self.buffer.pop_front();
@@ -240,29 +239,21 @@ impl DebugLog {
     }
 
     /// Iterate over log messages (oldest first).
-    pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.buffer.iter().map(heapless::string::StringInner::as_str)
-    }
+    pub fn iter(&self) -> impl Iterator<Item = &str> { self.buffer.iter().map(heapless::string::StringInner::as_str) }
 
     /// Get number of log entries.
     #[inline]
     #[allow(dead_code)]
-    pub const fn len(&self) -> usize {
-        self.buffer.len()
-    }
+    pub const fn len(&self) -> usize { self.buffer.len() }
 
     /// Check if log is empty.
     #[inline]
     #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.buffer.is_empty() }
 }
 
 impl Default for DebugLog {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 // =============================================================================
@@ -270,7 +261,10 @@ impl Default for DebugLog {
 // =============================================================================
 
 /// Push a u32 value to a heapless string (no format! macro).
-fn push_u32<const N: usize>(s: &mut String<N>, mut val: u32) {
+fn push_u32<const N: usize>(
+    s: &mut String<N>,
+    mut val: u32,
+) {
     if val == 0 {
         s.push('0').ok();
         return;
