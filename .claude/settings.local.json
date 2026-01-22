@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(rustc:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(wc:*)",
+      "Bash(cargo build:*)"
     ]
   }
 }
