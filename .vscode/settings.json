@@ -1,17 +1,22 @@
 {
     "cSpell.words": [
         "agentic",
+        "clippy",
         "codegen",
+        "cosf",
         "Cupra",
         "DNUC",
         "eabihf",
         "glanceable",
         "heapless",
         "lerp",
+        "libm",
         "Pimoroni",
         "pinouts",
         "profont",
         "Qwiic",
+        "rustup",
+        "sinf",
         "thumbv"
     ]
 }
