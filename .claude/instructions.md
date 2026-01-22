@@ -166,10 +166,61 @@ When making any change:
 
 ## Directory Structure
 
-- `firmware/` - All Rust code for the embedded system
+- `firmware/` - Rust workspace (see Firmware Workspace section below)
 - `hardware/bom/` - Component lists for ordering parts
 - `hardware/gerber/` - PCB manufacturing files
 - `hardware/schematics/` - Circuit diagrams and design docs
 - `mechanical/stl/` - Final STL files ready for 3D printing
 - `mechanical/cad/` - Source 3D model files
 - `docs/` - Build instructions, pinouts, assembly guides, etc.
+
+---
+
+## Firmware Workspace
+
+The firmware is a Cargo workspace with three crates:
+
+```
+firmware/
+├── Cargo.toml          # Workspace root
+├── common/             # dashboard-common: shared no_std library
+├── simulator/          # dashboard-simulator: Windows simulator binary
+└── pico/               # dashboard-pico: RP2350 Embassy firmware
+```
+
+### Crate Responsibilities
+
+| Crate | Purpose |
+|-------|---------|
+| `common` | Platform-agnostic `no_std` code: colors, config, styles, thresholds, animations. No time dependencies. Uses `libm` for math. |
+| `simulator` | Windows simulator using `embedded-graphics-simulator` + SDL2. Uses `std::time` for timing. Contains `Popup`, `SensorState`, widgets, screens. |
+| `pico` | RP2350 firmware using Embassy async runtime. Uses `embassy_time` for timing. |
+
+### Key Design Decisions
+
+- **Time abstraction:** Time-dependent code stays in platform-specific crates (`std::time::Instant` in simulator, `embassy_time` in pico)
+- **no_std compatibility:** Common crate uses `libm` for math functions (`sinf`, `cosf`)
+- **Widgets/screens:** Currently simulator-specific (use `SimulatorDisplay` directly); can be made generic with traits when pico needs them
+
+### Build Commands
+
+```bash
+# Simulator (requires SDL2)
+cargo build -p dashboard-simulator --release
+cargo run -p dashboard-simulator --release
+
+# Pico (requires thumbv8m.main-none-eabihf target)
+cargo build -p dashboard-pico --release
+cargo run -p dashboard-pico --release  # flash via probe-rs
+```
+
+### Dependencies Setup
+
+**Simulator (Windows):**
+- Download `SDL2-devel-x.x.x-VC.zip` from https://github.com/libsdl-org/SDL/releases
+- Copy `SDL2.lib` to Rust toolchain lib folder, or set `SDL2` environment variable
+
+**Pico:**
+```bash
+rustup target add thumbv8m.main-none-eabihf
+```
