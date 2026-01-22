@@ -221,7 +221,14 @@ cargo run -p dashboard-pico --release  # flash via probe-rs
 scoop bucket add extras
 scoop install sdl2
 ```
-Then set the `SDL2` environment variable to the Scoop install path (e.g., `%USERPROFILE%\scoop\apps\sdl2\current`).
+Build with `LIB` env var pointing to SDL2 lib directory:
+```
+LIB="C:/Users/<user>/scoop/apps/sdl2/current/lib;$LIB" cargo build -p dashboard-simulator --release
+```
+Copy `SDL2.dll` to target directory for runtime:
+```
+cp ~/scoop/apps/sdl2/current/lib/SDL2.dll firmware/target/release/
+```
 
 **Simulator (Windows manual):**
 - Download `SDL2-devel-x.x.x-VC.zip` from https://github.com/libsdl-org/SDL/releases

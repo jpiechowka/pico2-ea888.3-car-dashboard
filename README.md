@@ -25,16 +25,29 @@ A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA8
 
 ### Simulator (Windows)
 
-1. Install SDL2 development libraries:
-   - Download `SDL2-devel-x.x.x-VC.zip` from https://github.com/libsdl-org/SDL/releases
-   - Extract and copy `SDL2.lib` to your Rust toolchain lib folder, or set the `SDL2` environment variable pointing to the extracted folder
+1. Install SDL2 via Scoop:
+   ```
+   scoop bucket add extras
+   scoop install sdl2
+   ```
 
-2. Build and run:
+2. Build with `LIB` env var pointing to SDL2:
    ```
    cd firmware
-   cargo build -p dashboard-simulator --release
+   LIB="C:/Users/<user>/scoop/apps/sdl2/current/lib;$LIB" cargo build -p dashboard-simulator --release
+   ```
+
+3. Copy SDL2.dll for runtime:
+   ```
+   cp ~/scoop/apps/sdl2/current/lib/SDL2.dll target/release/
+   ```
+
+4. Run:
+   ```
    cargo run -p dashboard-simulator --release
    ```
+
+**Alternative (manual):** Download `SDL2-devel-x.x.x-VC.zip` from https://github.com/libsdl-org/SDL/releases and copy `SDL2.lib` to your Rust toolchain lib folder.
 
 ### Pico 2 (RP2350)
 
