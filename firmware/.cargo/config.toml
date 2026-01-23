@@ -1,14 +1,28 @@
-[env]
-LIBRARY_PATH = "/opt/homebrew/lib"
-
-# Native CPU optimizations for simulator (host target only)
-# Ignored when cross-compiling to ARM (Pico)
-[target.'cfg(not(target_arch = "arm"))']
-rustflags = ["-C", "target-cpu=native"]
-
-# Uncomment when targeting Pico 2 (RP2350, Cortex-M33)
-# [target.thumbv8m.main-none-eabihf]
-# rustflags = ["-C", "link-arg=-Tlink.x"]
+# Workspace-level Cargo configuration
 #
-# [build]
-# target = "thumbv8m.main-none-eabihf"
+# This config doesn't set a default target, so:
+# - `cargo build -p dashboard-simulator` builds for host (Windows/Linux/macOS)
+# - `cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf` builds for Pico 2
+#
+# TIP: Use the aliases below for convenience:
+#   cargo pico        # build pico
+#   cargo sim         # run simulator
+
+[env]
+DEFMT_LOG = "debug"
+
+# ARM Cortex-M33 target settings (Pico 2 / RP2350)
+[target.thumbv8m.main-none-eabihf]
+rustflags = [
+    "-C", "link-arg=--nmagic",
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=-Tdefmt.x",
+    "-C", "target-cpu=cortex-m33",
+]
+runner = "elf2uf2-rs -d"
+
+# Convenient aliases
+[alias]
+pico = "build -p dashboard-pico --target thumbv8m.main-none-eabihf --release"
+pico-run = "run -p dashboard-pico --target thumbv8m.main-none-eabihf --release"
+sim = "run -p dashboard-simulator --release"

@@ -1,0 +1,624 @@
+//! Sensor display cells for the OBD dashboard grid.
+
+use core::fmt::Write;
+
+use dashboard_common::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, PINK, RED, WHITE, YELLOW};
+use dashboard_common::styles::{
+    CENTERED,
+    LABEL_FONT,
+    LABEL_STYLE_BLACK,
+    LABEL_STYLE_ORANGE,
+    LABEL_STYLE_WHITE,
+    VALUE_FONT_MEDIUM,
+    VALUE_STYLE_BLACK,
+    VALUE_STYLE_WHITE,
+};
+use dashboard_common::thresholds::{
+    AFR_LEAN_CRITICAL,
+    AFR_OPTIMAL_MAX,
+    AFR_RICH,
+    AFR_RICH_AF,
+    AFR_STOICH,
+    BAR_TO_PSI,
+    BATT_CRITICAL,
+    BATT_WARNING,
+    COOLANT_COLD_MAX,
+    COOLANT_CRITICAL,
+    EGT_COLD_MAX,
+    EGT_CRITICAL,
+    EGT_HIGH_LOAD,
+    EGT_SPIRITED,
+    IAT_COLD,
+    IAT_CRITICAL,
+    IAT_EXTREME_COLD,
+    IAT_HOT,
+    IAT_WARM,
+    OIL_DSG_CRITICAL,
+    OIL_DSG_ELEVATED,
+    OIL_DSG_HIGH,
+};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::text::Text;
+use embedded_graphics_simulator::SimulatorDisplay;
+use heapless::String;
+use profont::PROFONT_24_POINT;
+
+use crate::state::SensorState;
+use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow};
+
+// =============================================================================
+// Color Helper Functions
+// =============================================================================
+
+pub fn label_color_for_bg(bg_color: Rgb565) -> Rgb565 {
+    let luma = calculate_luminance(bg_color);
+    if luma < 128 { WHITE } else { BLACK }
+}
+
+#[inline]
+fn peak_highlight_for_text(base_text: Rgb565) -> Rgb565 { if base_text == WHITE { YELLOW } else { BLACK } }
+
+#[inline]
+fn calculate_luminance(color: Rgb565) -> u32 {
+    let raw = color.into_storage();
+    let r5 = u32::from((raw >> 11) & 0x1F);
+    let g6 = u32::from((raw >> 5) & 0x3F);
+    let b5 = u32::from(raw & 0x1F);
+
+    let r8 = (r5 << 3) | (r5 >> 2);
+    let g8 = (g6 << 2) | (g6 >> 4);
+    let b8 = (b5 << 3) | (b5 >> 2);
+
+    (r8 * 77 + g8 * 150 + b8 * 29) >> 8
+}
+
+pub fn temp_color_oil_dsg(temp: f32) -> (Rgb565, Rgb565) {
+    if temp >= OIL_DSG_CRITICAL {
+        (RED, WHITE)
+    } else if temp >= OIL_DSG_HIGH {
+        (ORANGE, BLACK)
+    } else if temp >= OIL_DSG_ELEVATED {
+        (YELLOW, BLACK)
+    } else {
+        (BLACK, WHITE)
+    }
+}
+
+pub fn temp_color_water(temp: f32) -> (Rgb565, Rgb565) {
+    if temp > COOLANT_CRITICAL {
+        (RED, WHITE)
+    } else if temp >= COOLANT_COLD_MAX {
+        (GREEN, BLACK)
+    } else {
+        (ORANGE, BLACK)
+    }
+}
+
+pub fn is_critical_oil_dsg(temp: f32) -> bool { temp >= OIL_DSG_CRITICAL }
+pub fn is_critical_water(temp: f32) -> bool { temp > COOLANT_CRITICAL }
+pub fn is_critical_afr(afr: f32) -> bool { afr > AFR_LEAN_CRITICAL }
+
+pub fn temp_color_iat(temp: f32) -> (Rgb565, Rgb565) {
+    if temp >= IAT_CRITICAL {
+        (RED, WHITE)
+    } else if temp >= IAT_HOT {
+        (ORANGE, BLACK)
+    } else if temp >= IAT_WARM {
+        (YELLOW, BLACK)
+    } else if temp >= IAT_COLD {
+        (GREEN, BLACK)
+    } else {
+        (BLUE, WHITE)
+    }
+}
+
+pub fn is_critical_iat(temp: f32) -> bool { temp >= IAT_CRITICAL || temp <= IAT_EXTREME_COLD }
+
+pub fn temp_color_egt(temp: f32) -> (Rgb565, Rgb565) {
+    if temp >= EGT_CRITICAL {
+        (RED, WHITE)
+    } else if temp >= EGT_HIGH_LOAD {
+        (ORANGE, BLACK)
+    } else if temp >= EGT_SPIRITED {
+        (YELLOW, BLACK)
+    } else if temp >= EGT_COLD_MAX {
+        (GREEN, BLACK)
+    } else {
+        (BLUE, WHITE)
+    }
+}
+
+pub fn is_critical_egt(temp: f32) -> bool { temp >= EGT_CRITICAL }
+
+// =============================================================================
+// Style Selection Functions
+// =============================================================================
+
+#[inline]
+fn label_style_for_text(base_text: Rgb565) -> MonoTextStyle<'static, Rgb565> {
+    if base_text == WHITE {
+        LABEL_STYLE_WHITE
+    } else {
+        LABEL_STYLE_BLACK
+    }
+}
+
+fn value_style_for_color(color: Rgb565) -> MonoTextStyle<'static, Rgb565> {
+    if color == WHITE {
+        VALUE_STYLE_WHITE
+    } else if color == BLACK {
+        VALUE_STYLE_BLACK
+    } else {
+        MonoTextStyle::new(&PROFONT_24_POINT, color)
+    }
+}
+
+// =============================================================================
+// Cell Drawing Functions
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_boost_cell(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    boost_bar: f32,
+    max_boost: f32,
+    show_psi: bool,
+    show_easter_egg: bool,
+    blink_on: bool,
+    shake_offset: i32,
+) {
+    draw_cell_background(display, x, y, w, h, BLACK);
+
+    let center_x = (x + w / 2) as i32;
+    let center_y = (y + h / 2) as i32;
+    let value_x = center_x + shake_offset;
+
+    Text::with_text_style(
+        "BOOST REL",
+        Point::new(center_x, y as i32 + 14),
+        LABEL_STYLE_WHITE,
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
+
+    let boost_psi = boost_bar * BAR_TO_PSI;
+
+    let mut value_str: String<16> = String::new();
+    if show_psi {
+        let _ = write!(value_str, "{boost_psi:.1}");
+    } else {
+        let _ = write!(value_str, "{boost_bar:.2}");
+    }
+    let value_color = if show_easter_egg {
+        if blink_on { PINK } else { WHITE }
+    } else {
+        WHITE
+    };
+    let value_style = value_style_for_color(value_color);
+    Text::with_text_style(&value_str, Point::new(value_x, center_y - 8), value_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    let unit_label = if show_psi { "PSI" } else { "BAR" };
+    Text::with_text_style(
+        unit_label,
+        Point::new(center_x, center_y + 10),
+        LABEL_STYLE_WHITE,
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
+
+    let mut conv_str: String<16> = String::new();
+    if show_psi {
+        let _ = write!(conv_str, "{boost_bar:.2} BAR");
+    } else {
+        let _ = write!(conv_str, "{boost_psi:.1} PSI");
+    }
+    Text::with_text_style(
+        &conv_str,
+        Point::new(center_x, center_y + 22),
+        LABEL_STYLE_WHITE,
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
+
+    if show_easter_egg {
+        let easter_color = if blink_on { WHITE } else { PINK };
+        let easter_style = MonoTextStyle::new(LABEL_FONT, easter_color);
+        Text::with_text_style(
+            "Fast AF Boi!",
+            Point::new(center_x, (y + h) as i32 - 8),
+            easter_style,
+            CENTERED,
+        )
+        .draw(display)
+        .ok();
+    } else {
+        let mut max_str: String<16> = String::new();
+        if show_psi {
+            let _ = write!(max_str, "MAX {max_boost:.1}");
+        } else {
+            let _ = write!(max_str, "MAX {max_boost:.2}");
+        }
+        Text::with_text_style(
+            &max_str,
+            Point::new(center_x, (y + h) as i32 - 8),
+            LABEL_STYLE_ORANGE,
+            CENTERED,
+        )
+        .draw(display)
+        .ok();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_temp_cell<F, C>(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    label: &str,
+    temp: f32,
+    max_temp: f32,
+    state: &SensorState,
+    color_fn: F,
+    critical_fn: C,
+    blink_on: bool,
+    shake_offset: i32,
+    bg_override: Option<Rgb565>,
+) -> Rgb565
+where
+    F: Fn(f32) -> (Rgb565, Rgb565),
+    C: Fn(f32) -> bool,
+{
+    let (mut bg_color, _) = color_fn(temp);
+    let is_critical = critical_fn(temp);
+    let max_is_critical = critical_fn(max_temp);
+
+    if let Some(override_color) = bg_override {
+        bg_color = override_color;
+    }
+
+    if is_critical && !blink_on {
+        bg_color = BLACK;
+    }
+
+    draw_cell_background(display, x, y, w, h, bg_color);
+
+    let base_text = label_color_for_bg(bg_color);
+    let label_style = label_style_for_text(base_text);
+    let peak_color = peak_highlight_for_text(base_text);
+
+    let center_x = (x + w / 2) as i32;
+    let center_y = (y + h / 2) as i32;
+    let value_x = center_x + shake_offset;
+
+    Text::with_text_style(label, Point::new(center_x, y as i32 + 14), label_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    if let Some(rising) = state.get_trend() {
+        let arrow_x = center_x + (label.len() as i32 * 3) + 8;
+        draw_trend_arrow(display, arrow_x, y as i32 + 10, rising, base_text);
+    }
+
+    let mut value_str: String<16> = String::new();
+    let _ = write!(value_str, "{temp:.0}C");
+    let value_color = if state.is_new_peak { peak_color } else { base_text };
+    if state.is_new_peak && value_color == BLACK {
+        let shadow_style = value_style_for_color(WHITE);
+        Text::with_text_style(
+            &value_str,
+            Point::new(value_x + 1, center_y - 11),
+            shadow_style,
+            CENTERED,
+        )
+        .draw(display)
+        .ok();
+    }
+    let value_style = value_style_for_color(value_color);
+    Text::with_text_style(&value_str, Point::new(value_x, center_y - 12), value_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    let graph_y = center_y + 4;
+    let graph_h = 20u32;
+    let graph_w = w - 16;
+    let graph_x = x as i32 + 8;
+
+    let graph_line_color = base_text;
+    let (buffer, start_idx, count, data_min, data_max) = state.get_graph_data();
+    draw_mini_graph(
+        display,
+        graph_x,
+        graph_y,
+        graph_w,
+        graph_h,
+        buffer,
+        start_idx,
+        count,
+        data_min,
+        data_max,
+        |_| graph_line_color,
+    );
+
+    let avg_color = if base_text == BLACK {
+        BLACK
+    } else if is_critical {
+        WHITE
+    } else {
+        ORANGE
+    };
+    let avg_style = MonoTextStyle::new(LABEL_FONT, avg_color);
+
+    let max_warning = max_is_critical && !is_critical;
+    let max_color = if max_is_critical {
+        if is_critical { WHITE } else { RED }
+    } else if base_text == BLACK {
+        BLACK
+    } else if is_critical {
+        WHITE
+    } else {
+        ORANGE
+    };
+    let max_style = MonoTextStyle::new(LABEL_FONT, max_color);
+
+    if let Some(avg) = state.get_average() {
+        let mut avg_str: String<16> = String::new();
+        let _ = write!(avg_str, "AVG {avg:.0}C");
+        Text::with_text_style(&avg_str, Point::new(center_x, (y + h) as i32 - 22), avg_style, CENTERED)
+            .draw(display)
+            .ok();
+    }
+
+    let mut max_str: String<16> = String::new();
+    let _ = write!(max_str, "MAX {max_temp:.0}C");
+    let max_pos = Point::new(center_x, (y + h) as i32 - 6);
+    let max_text = Text::with_text_style(&max_str, max_pos, max_style, CENTERED);
+
+    if max_warning {
+        let bb = max_text.bounding_box();
+        let pad: i32 = 2;
+        let cell_left = x as i32 + 2;
+        let cell_right = (x + w) as i32 - 2;
+        let badge_left = (bb.top_left.x - pad).max(cell_left);
+        let badge_right = (bb.top_left.x + bb.size.width as i32 + pad).min(cell_right);
+        let badge_pos = Point::new(badge_left, bb.top_left.y - pad);
+        let badge_width = (badge_right - badge_left).max(0) as u32;
+        let badge_size = Size::new(badge_width, bb.size.height + (pad as u32 * 2));
+        Rectangle::new(badge_pos, badge_size)
+            .into_styled(PrimitiveStyle::with_fill(BLACK))
+            .draw(display)
+            .ok();
+    }
+
+    max_text.draw(display).ok();
+
+    bg_color
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_batt_cell(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    voltage: f32,
+    min_voltage: f32,
+    max_voltage: f32,
+    state: &SensorState,
+    blink_on: bool,
+    shake_offset: i32,
+    bg_override: Option<Rgb565>,
+) -> Rgb565 {
+    let is_critical = voltage < BATT_CRITICAL;
+    let mut bg_color = if voltage < BATT_CRITICAL {
+        RED
+    } else if voltage < BATT_WARNING {
+        ORANGE
+    } else {
+        BLACK
+    };
+
+    if let Some(override_color) = bg_override {
+        bg_color = override_color;
+    }
+
+    if is_critical && !blink_on {
+        bg_color = BLACK;
+    }
+
+    draw_cell_background(display, x, y, w, h, bg_color);
+
+    let base_text = label_color_for_bg(bg_color);
+    let label_style = label_style_for_text(base_text);
+    let peak_color = peak_highlight_for_text(base_text);
+
+    let center_x = (x + w / 2) as i32;
+    let center_y = (y + h / 2) as i32;
+    let value_x = center_x + shake_offset;
+
+    Text::with_text_style("BATT", Point::new(center_x, y as i32 + 14), label_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    if let Some(rising) = state.get_trend() {
+        draw_trend_arrow(display, center_x + 20, y as i32 + 10, rising, base_text);
+    }
+
+    let mut value_str: String<16> = String::new();
+    let _ = write!(value_str, "{voltage:.1}V");
+    let value_color = if state.is_new_peak { peak_color } else { base_text };
+    if state.is_new_peak && value_color == BLACK {
+        let shadow_style = MonoTextStyle::new(VALUE_FONT_MEDIUM, WHITE);
+        Text::with_text_style(
+            &value_str,
+            Point::new(value_x + 1, center_y - 6),
+            shadow_style,
+            CENTERED,
+        )
+        .draw(display)
+        .ok();
+    }
+    let value_style = MonoTextStyle::new(VALUE_FONT_MEDIUM, value_color);
+    Text::with_text_style(&value_str, Point::new(value_x, center_y - 7), value_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    let graph_y = center_y + 4;
+    let graph_h = 20u32;
+    let graph_w = w - 16;
+    let graph_x = x as i32 + 8;
+
+    let graph_line_color = base_text;
+    let (buffer, start_idx, count, data_min, data_max) = state.get_graph_data();
+    draw_mini_graph(
+        display,
+        graph_x,
+        graph_y,
+        graph_w,
+        graph_h,
+        buffer,
+        start_idx,
+        count,
+        data_min,
+        data_max,
+        |_| graph_line_color,
+    );
+
+    let minmax_color = if base_text == BLACK {
+        BLACK
+    } else if is_critical {
+        WHITE
+    } else {
+        ORANGE
+    };
+    let minmax_style = MonoTextStyle::new(LABEL_FONT, minmax_color);
+
+    let mut min_str: String<16> = String::new();
+    let _ = write!(min_str, "MIN {min_voltage:.1}V");
+    Text::with_text_style(
+        &min_str,
+        Point::new(center_x, (y + h) as i32 - 18),
+        minmax_style,
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
+
+    let mut max_str: String<16> = String::new();
+    let _ = write!(max_str, "MAX {max_voltage:.1}V");
+    Text::with_text_style(
+        &max_str,
+        Point::new(center_x, (y + h) as i32 - 8),
+        minmax_style,
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
+
+    bg_color
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_afr_cell(
+    display: &mut SimulatorDisplay<Rgb565>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    afr: f32,
+    state: &SensorState,
+    blink_on: bool,
+    shake_offset: i32,
+    bg_override: Option<Rgb565>,
+) -> Rgb565 {
+    let is_critical = afr > AFR_LEAN_CRITICAL;
+    let (mut bg_color, status) = if afr < AFR_RICH_AF {
+        (BLUE, "RICH AF")
+    } else if afr < AFR_RICH {
+        (DARK_TEAL, "RICH")
+    } else if afr < AFR_OPTIMAL_MAX {
+        (GREEN, "OPTIMAL")
+    } else if afr <= AFR_LEAN_CRITICAL {
+        (ORANGE, "LEAN")
+    } else {
+        (RED, "LEAN AF")
+    };
+
+    if let Some(override_color) = bg_override {
+        bg_color = override_color;
+    }
+
+    if is_critical && !blink_on {
+        bg_color = BLACK;
+    }
+
+    let text_color = label_color_for_bg(bg_color);
+    let label_style = label_style_for_text(text_color);
+
+    draw_cell_background(display, x, y, w, h, bg_color);
+
+    let center_x = (x + w / 2) as i32;
+    let center_y = (y + h / 2) as i32;
+    let value_x = center_x + shake_offset;
+
+    Text::with_text_style("AFR/LAMBDA", Point::new(center_x, y as i32 + 14), label_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    let mut value_str: String<16> = String::new();
+    let _ = write!(value_str, "{afr:.1}");
+    let value_style = value_style_for_color(text_color);
+    Text::with_text_style(&value_str, Point::new(value_x, center_y - 14), value_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    let lambda = afr / AFR_STOICH;
+    let mut lambda_str: String<16> = String::new();
+    let _ = write!(lambda_str, "L {lambda:.2}");
+    let lambda_style = MonoTextStyle::new(LABEL_FONT, text_color);
+    Text::with_text_style(&lambda_str, Point::new(center_x, center_y + 4), lambda_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    let graph_y = center_y + 14;
+    let graph_h = 16u32;
+    let graph_w = w - 16;
+    let graph_x = x as i32 + 8;
+
+    let graph_line_color = text_color;
+    let (buffer, start_idx, count, data_min, data_max) = state.get_graph_data();
+    draw_mini_graph(
+        display,
+        graph_x,
+        graph_y,
+        graph_w,
+        graph_h,
+        buffer,
+        start_idx,
+        count,
+        data_min,
+        data_max,
+        |_| graph_line_color,
+    );
+
+    let status_style = MonoTextStyle::new(LABEL_FONT, text_color);
+    Text::with_text_style(status, Point::new(center_x, (y + h) as i32 - 8), status_style, CENTERED)
+        .draw(display)
+        .ok();
+
+    bg_color
+}

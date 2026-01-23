@@ -1,14 +1,12 @@
-[package]
-name = "pico2-car-dashboard-firmware"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "common",
+    "simulator",
+    "pico",
+]
 
-[dependencies]
-embedded-graphics = "0.8.1"
-embedded-graphics-simulator = "0.8.0"
-profont = "0.7"
-heapless = "0.9.2"
-
+# Shared profile settings for all workspace members
 [profile.release]
 opt-level = 3
 lto = "fat"

@@ -1,0 +1,16 @@
+[package]
+name = "dashboard-simulator"
+version = "0.1.0"
+edition = "2024"
+description = "Windows/Desktop simulator for OBD-II dashboard"
+
+[[bin]]
+name = "simulator"
+path = "src/main.rs"
+
+[dependencies]
+dashboard-common = { path = "../common" }
+embedded-graphics = "0.8.1"
+embedded-graphics-simulator = "0.8.0"
+profont = "0.7"
+heapless = "0.9.2"

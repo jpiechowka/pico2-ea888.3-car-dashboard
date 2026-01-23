@@ -192,49 +192,67 @@ firmware/
 
 | Crate | Purpose |
 |-------|---------|
-| `common` | Platform-agnostic `no_std` code: colors, config, styles, thresholds, animations. No time dependencies. Uses `libm` for math. |
+| `common` | Platform-agnostic `no_std` code: colors, config, styles, thresholds, animations. No time dependencies. Uses `micromath` for fast trig approximations. |
 | `simulator` | Windows simulator using `embedded-graphics-simulator` + SDL2. Uses `std::time` for timing. Contains `Popup`, `SensorState`, widgets, screens. |
 | `pico` | RP2350 firmware using Embassy async runtime. Uses `embassy_time` for timing. |
 
 ### Key Design Decisions
 
 - **Time abstraction:** Time-dependent code stays in platform-specific crates (`std::time::Instant` in simulator, `embassy_time` in pico)
-- **no_std compatibility:** Common crate uses `libm` for math functions (`sinf`, `cosf`)
+- **no_std compatibility:** Common crate uses `micromath` for fast trig approximations (max error 0.002 for sin/cos)
 - **Widgets/screens:** Currently simulator-specific (use `SimulatorDisplay` directly); can be made generic with traits when pico needs them
 
 ### Build Commands
 
-```
-# Simulator (requires SDL2)
+All commands run from the `firmware/` directory:
+
+```bash
+# Using cargo aliases (recommended)
+cargo sim        # Build & run simulator
+cargo pico       # Build pico firmware
+cargo pico-run   # Build & flash pico firmware
+
+# Explicit commands
 cargo build -p dashboard-simulator --release
 cargo run -p dashboard-simulator --release
-
-# Pico (requires thumbv8m.main-none-eabihf target)
-cargo build -p dashboard-pico --release
-cargo run -p dashboard-pico --release  # flash via probe-rs
+cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf --release
+cargo run -p dashboard-pico --target thumbv8m.main-none-eabihf --release
 ```
+
+The `rustfmt.toml` and `rust-toolchain.toml` files are inherited in subdirectories,
+so `cargo fmt` and `cargo clippy` work from any subdirectory.
 
 ### Dependencies Setup
 
-**Simulator (Windows via Scoop):**
-```
-scoop bucket add extras
-scoop install sdl2
-```
-Build with `LIB` env var pointing to SDL2 lib directory:
-```
-LIB="C:/Users/<user>/scoop/apps/sdl2/current/lib;$LIB" cargo build -p dashboard-simulator --release
-```
-Copy `SDL2.dll` to target directory for runtime:
-```
-cp ~/scoop/apps/sdl2/current/lib/SDL2.dll firmware/target/release/
-```
+**Simulator (Windows):**
 
-**Simulator (Windows manual):**
-- Download `SDL2-devel-x.x.x-VC.zip` from https://github.com/libsdl-org/SDL/releases
-- Copy `SDL2.lib` to Rust toolchain lib folder, or set `SDL2` environment variable
+SDL2 is bundled in `vendor/sdl2/`. The build script (`simulator/build.rs`) automatically:
+- Links against the bundled `SDL2.lib`
+- Copies `SDL2.dll` to the target directory
+
+First-time setup (if `vendor/sdl2/` is empty):
+```bash
+scoop bucket add extras && scoop install sdl2
+cp ~/scoop/apps/sdl2/current/lib/SDL2.{lib,dll} vendor/sdl2/
+```
 
 **Pico:**
-```
+```bash
 rustup target add thumbv8m.main-none-eabihf
+cargo install elf2uf2-rs
 ```
+
+**Flashing Pico 2:**
+1. Hold BOOTSEL button, plug in USB
+2. Run: `cargo pico-run`
+
+### Hardware Notes
+
+**PIM715 Display Pack 2.8" Pinout:**
+- RGB LED: GPIO 26 (Red), GPIO 27 (Green), GPIO 28 (Blue) - active-low
+- Buttons: GPIO 12 (A), GPIO 13 (B), GPIO 14 (X), GPIO 15 (Y) - active-low with pull-up
+- Display: ST7789V via SPI
+
+**Pico 2 WH (WiFi version):**
+- The onboard LED is connected to the CYW43 WiFi chip, not a GPIO
+- Use the PIM715 RGB LED for visual feedback instead
