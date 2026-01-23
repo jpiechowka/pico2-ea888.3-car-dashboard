@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use dashboard_common::config::{HISTORY_SIZE, TREND_THRESHOLD};
+use dashboard_common::widgets::SensorDisplayData;
 
 // =============================================================================
 // Rolling Average Configuration
@@ -243,6 +244,22 @@ impl SensorState {
             None
         } else {
             Some(diff > 0.0)
+        }
+    }
+
+    /// Convert to display data for use with common widgets.
+    pub fn to_display_data(&self) -> SensorDisplayData<'_> {
+        let (buffer, start_idx, count, min, max) = self.get_graph_data();
+        SensorDisplayData {
+            trend: self.get_trend(),
+            is_new_peak: self.is_new_peak,
+            graph_buffer: buffer,
+            graph_buffer_size: GRAPH_HISTORY_SIZE,
+            graph_start_idx: start_idx,
+            graph_count: count,
+            graph_min: min,
+            graph_max: max,
+            average: self.get_average(),
         }
     }
 }

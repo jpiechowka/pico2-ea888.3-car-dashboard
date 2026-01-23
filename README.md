@@ -9,14 +9,22 @@ A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA8
 ```
 .
 ├── firmware/           # Rust-based firmware workspace
-│   ├── common/         # Shared no_std library (platform-agnostic)
+│   ├── common/         # Shared no_std library (colors, config, widgets, SensorState)
 │   ├── simulator/      # Windows simulator binary (uses SDL2)
-│   ├── pico/           # RP2350 Embassy firmware
+│   ├── pico/           # RP2350 Embassy firmware (drives ST7789 display)
 │   └── vendor/sdl2/    # Bundled SDL2 (lib + dll)
 ├── hardware/           # Hardware schematics and PCB designs
 ├── mechanical/         # CAD files and mechanical designs
 └── docs/               # Project documentation
 ```
+
+## Architecture
+
+The firmware uses a shared-code architecture:
+
+- **common crate**: Platform-agnostic `no_std` code including generic UI widgets, sensor state tracking, colors, styles, and configuration constants
+- **simulator**: Windows simulator using SDL2 for development. Re-exports widgets from common.
+- **pico**: RP2350 firmware using Embassy async runtime and mipidsi driver for ST7789 display. Uses the same widgets as the simulator.
 
 ## Firmware Setup
 
@@ -59,16 +67,19 @@ cargo sim
 
 ### Pico 2 (RP2350)
 
-1. Add the ARM target and install flasher:
+1. Add the ARM target:
    ```bash
    rustup target add thumbv8m.main-none-eabihf
-   cargo install elf2uf2-rs
    ```
 
 2. Flash (hold BOOTSEL, plug USB, then run):
    ```bash
    cargo pico-run
    ```
+
+**Note:** `picotool` is bundled in `firmware/tools/` and used automatically by `cargo pico-run`.
+
+**Display:** The firmware drives the Pimoroni PIM715 Display Pack 2.8" (ST7789, 320×240) via SPI, rendering the same dashboard UI as the simulator.
 
 ### Config File Inheritance
 

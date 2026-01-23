@@ -28,3 +28,13 @@ cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
 defmt-rtt = "1.1.0"
+
+# Display driver
+mipidsi = "0.8"
+display-interface-spi = "0.5"
+embedded-graphics = "0.8.1"
+embedded-hal = "1.0"
+embedded-hal-bus = "0.2"
+
+# Math functions for no_std
+libm = "0.2"

@@ -192,15 +192,17 @@ firmware/
 
 | Crate | Purpose |
 |-------|---------|
-| `common` | Platform-agnostic `no_std` code: colors, config, styles, thresholds, animations. No time dependencies. Uses `micromath` for fast trig approximations. |
-| `simulator` | Windows simulator using `embedded-graphics-simulator` + SDL2. Uses `std::time` for timing. Contains `Popup`, `SensorState`, widgets, screens. |
-| `pico` | RP2350 firmware using Embassy async runtime. Uses `embassy_time` for timing. |
+| `common` | Platform-agnostic `no_std` code: colors, config, styles, thresholds, animations, render state, `SensorState`, and generic `widgets` module. No time dependencies. Uses `micromath` for fast trig approximations. |
+| `simulator` | Windows simulator using `embedded-graphics-simulator` + SDL2. Uses `std::time` for timing. Contains `Popup`, std-enhanced `SensorState` (accurate timing), screens. Re-exports widgets from common. |
+| `pico` | RP2350 firmware using Embassy async runtime. Uses `embassy_time` for timing. Drives PIM715 ST7789 display. Uses widgets and `SensorState` from common. |
 
 ### Key Design Decisions
 
 - **Time abstraction:** Time-dependent code stays in platform-specific crates (`std::time::Instant` in simulator, `embassy_time` in pico)
 - **no_std compatibility:** Common crate uses `micromath` for fast trig approximations (max error 0.002 for sin/cos)
-- **Widgets/screens:** Currently simulator-specific (use `SimulatorDisplay` directly); can be made generic with traits when pico needs them
+- **Widgets:** Generic over `DrawTarget<Color = Rgb565>` in `common/widgets/`. Both simulator and pico use the same rendering code.
+- **SensorState:** Two implementations: no_std version in `common/sensor_state.rs` (frame-based timing) and std version in `simulator/state.rs` (accurate timing). Both produce `SensorDisplayData` for widgets.
+- **Display driver:** Pico uses `mipidsi` crate for ST7789 display via SPI
 
 ### Build Commands
 
@@ -239,19 +241,27 @@ cp ~/scoop/apps/sdl2/current/lib/SDL2.{lib,dll} vendor/sdl2/
 **Pico:**
 ```bash
 rustup target add thumbv8m.main-none-eabihf
-cargo install elf2uf2-rs
 ```
 
 **Flashing Pico 2:**
 1. Hold BOOTSEL button, plug in USB
 2. Run: `cargo pico-run`
 
+**Note:** `picotool` is bundled in `firmware/tools/` and used automatically for flashing.
+
 ### Hardware Notes
 
 **PIM715 Display Pack 2.8" Pinout:**
 - RGB LED: GPIO 26 (Red), GPIO 27 (Green), GPIO 28 (Blue) - active-low
 - Buttons: GPIO 12 (A), GPIO 13 (B), GPIO 14 (X), GPIO 15 (Y) - active-low with pull-up
-- Display: ST7789V via SPI
+- Display (ST7789 via SPI0):
+  - CS: GPIO 17
+  - DC: GPIO 16
+  - CLK: GPIO 18 (SPI0 SCK)
+  - MOSI: GPIO 19 (SPI0 TX)
+  - Backlight: GPIO 20
+  - Reset: Tied to RUN pin (resets with Pico, no GPIO needed)
+- Native panel: 240x320 (portrait), rotated 90° for 320x240 (landscape)
 
 **Pico 2 WH (WiFi version):**
 - The onboard LED is connected to the CYW43 WiFi chip, not a GPIO
