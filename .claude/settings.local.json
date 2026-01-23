@@ -12,7 +12,8 @@
       "Bash(powershell -Command:*)",
       "Bash(cargo search:*)",
       "Bash(curl:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git log:*)"
     ]
   }
 }
