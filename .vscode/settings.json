@@ -1,6 +1,7 @@
 {
     "cSpell.words": [
         "agentic",
+        "BOOTSEL",
         "clippy",
         "codegen",
         "cosf",
@@ -12,13 +13,21 @@
         "heapless",
         "lerp",
         "libm",
+        "micromath",
+        "nmagic",
+        "picotool",
         "Pimoroni",
         "pinouts",
         "profont",
         "Qwiic",
+        "riscv",
+        "rustc",
+        "rustflags",
         "rustup",
         "sinf",
+        "Tdefmt",
         "thumbv",
+        "Tlink",
         "USERPROFILE"
     ]
 }
