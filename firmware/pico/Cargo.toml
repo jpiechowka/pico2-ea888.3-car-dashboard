@@ -30,11 +30,11 @@ defmt = "1.0.1"
 defmt-rtt = "1.1.0"
 
 # Display driver
-mipidsi = "0.8"
+mipidsi = "0.9"
 display-interface-spi = "0.5"
 embedded-graphics = "0.8.1"
 embedded-hal = "1.0"
-embedded-hal-bus = "0.2"
+embedded-hal-bus = "0.3"
 
 # Math functions for no_std
 libm = "0.2"
