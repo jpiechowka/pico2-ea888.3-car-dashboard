@@ -1,5 +1,7 @@
 # Pico2 EA888.3 Car Dashboard
 
+[![CI](https://github.com/jpiechowka/pico2-ea888.3-car-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/jpiechowka/pico2-ea888.3-car-dashboard/actions/workflows/ci.yml)
+
 A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA888.3 engines. This embedded system provides real-time vehicle data visualization and monitoring capabilities.
 
 ## Directory Structure
