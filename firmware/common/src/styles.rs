@@ -46,6 +46,10 @@ pub const RIGHT_ALIGNED: TextStyle = TextStyleBuilder::new().alignment(Alignment
 /// Usage: `MonoTextStyle::new(LABEL_FONT, dynamic_color)`
 pub const LABEL_FONT: &MonoFont = &FONT_6X10;
 
+/// Large value font (`ProFont` 24pt). Exposed for creating dynamic-color styles with outlines.
+/// Usage: `draw_value_with_outline(display, text, pos, VALUE_FONT, color, style)`
+pub const VALUE_FONT: &MonoFont = &PROFONT_24_POINT;
+
 // =============================================================================
 // Pre-computed Text Styles (const - zero runtime cost)
 // =============================================================================
