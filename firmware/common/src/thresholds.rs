@@ -23,6 +23,10 @@
 // Oil/DSG Temperature Thresholds (shared by both sensors)
 // =============================================================================
 
+/// Temperature below which oil is considered cold and needs warming up.
+/// Triggers "Low" badge on oil temperature cell.
+pub const OIL_LOW_TEMP: f32 = 75.0;
+
 /// Temperature where oil/DSG enters elevated state (90-100C = YELLOW).
 /// Below this value, background is BLACK (normal operation).
 pub const OIL_DSG_ELEVATED: f32 = 90.0;
@@ -35,6 +39,7 @@ pub const OIL_DSG_HIGH: f32 = 100.0;
 pub const OIL_DSG_CRITICAL: f32 = 110.0;
 
 // Compile-time validation: thresholds must be in ascending order
+const _: () = assert!(OIL_LOW_TEMP < OIL_DSG_ELEVATED);
 const _: () = assert!(OIL_DSG_ELEVATED < OIL_DSG_HIGH);
 const _: () = assert!(OIL_DSG_HIGH < OIL_DSG_CRITICAL);
 
@@ -181,6 +186,7 @@ mod tests {
 
     #[test]
     fn test_oil_dsg_threshold_ordering() {
+        assert!(OIL_LOW_TEMP < OIL_DSG_ELEVATED);
         assert!(OIL_DSG_ELEVATED < OIL_DSG_HIGH);
         assert!(OIL_DSG_HIGH < OIL_DSG_CRITICAL);
     }
