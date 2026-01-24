@@ -3,13 +3,6 @@
 //! This is the simulator binary that runs on desktop platforms using
 //! the embedded-graphics-simulator crate.
 
-// Crate-level lints
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::cast_sign_loss)]
-#![allow(clippy::too_many_lines)]
-
 mod popup;
 mod profiling;
 mod screens;
@@ -58,6 +51,7 @@ use crate::widgets::{
     is_critical_iat,
     is_critical_oil_dsg,
     is_critical_water,
+    is_low_temp_oil,
     temp_color_egt,
     temp_color_iat,
     temp_color_oil_dsg,
@@ -388,6 +382,7 @@ fn main() {
                     &water_state.to_display_data(),
                     temp_color_water,
                     is_critical_water,
+                    None::<fn(f32) -> bool>,
                     blink_on,
                     coolant_shake,
                     Some(color_transition.get_current(cell_idx::COOLANT)),
@@ -405,6 +400,7 @@ fn main() {
                     &oil_state.to_display_data(),
                     temp_color_oil_dsg,
                     is_critical_oil_dsg,
+                    Some(is_low_temp_oil),
                     blink_on,
                     oil_shake,
                     Some(color_transition.get_current(cell_idx::OIL)),
@@ -422,6 +418,7 @@ fn main() {
                     &dsg_state.to_display_data(),
                     temp_color_oil_dsg,
                     is_critical_oil_dsg,
+                    None::<fn(f32) -> bool>,
                     blink_on,
                     dsg_shake,
                     Some(color_transition.get_current(cell_idx::DSG)),
@@ -439,6 +436,7 @@ fn main() {
                     &iat_state.to_display_data(),
                     temp_color_iat,
                     is_critical_iat,
+                    None::<fn(f32) -> bool>,
                     blink_on,
                     iat_shake,
                     Some(color_transition.get_current(cell_idx::IAT)),
@@ -456,6 +454,7 @@ fn main() {
                     &egt_state.to_display_data(),
                     temp_color_egt,
                     is_critical_egt,
+                    None::<fn(f32) -> bool>,
                     blink_on,
                     egt_shake,
                     Some(color_transition.get_current(cell_idx::EGT)),

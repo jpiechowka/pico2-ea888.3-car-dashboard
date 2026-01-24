@@ -18,6 +18,7 @@ pub use dashboard_common::widgets::{
     is_critical_iat,
     is_critical_oil_dsg,
     is_critical_water,
+    is_low_temp_oil,
     temp_color_egt,
     temp_color_iat,
     temp_color_oil_dsg,
