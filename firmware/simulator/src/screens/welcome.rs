@@ -1,59 +1,82 @@
-//! Welcome screen with Sanic meme and per-character rainbow-animated text.
+//! Welcome screen with AEZAKMI (GTA cheat code) logo and blinking golden stars.
+//!
+//! Displays golden "AEZAKMI" text with black shadow, a red/black stripe,
+//! and 5 golden stars that blink in sequence (GTA San Andreas style).
+//!
+//! # Layout (320x240 screen, 1.5x scale, vertically centered)
+//!
+//! ```text
+//! ┌──────────────────────────────────────┐
+//! │              (64px margin)           │
+//! │         ╔════════════════╗           │
+//! │         ║   AEZAKMI      ║  48px     │  Golden text, black shadow
+//! │         ╚════════════════╝           │
+//! │              (13px gap)              │
+//! │         ══════════════════           │  Red/black stripe (27px)
+//! │         ★    ★    ★    ★    ★        │  Stars overlap stripe by ~4px
+//! │              (64px margin)           │
+//! └──────────────────────────────────────┘
+//! ```
 
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dashboard_common::colors::BLACK;
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::mono_font::ascii::FONT_10X20;
+use dashboard_common::colors::WHITE;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
-use embedded_graphics::text::Text;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, Triangle};
 use embedded_graphics_simulator::{SimulatorDisplay, SimulatorEvent, Window};
 
-const TOP_TEXT: &str = "Gotta go fast...";
-const BOTTOM_TEXT: &str = "fast as fuck boi...";
-const TOP_TEXT_Y: i32 = 35;
-const BOTTOM_TEXT_Y: i32 = 200;
-const CHAR_WIDTH: i32 = 10;
 const SCREEN_CENTER_X: i32 = 160;
-const SANIC_POS: Point = Point::new(128, 55);
-const WELCOME_DURATION_SECS: u64 = 5;
+const WELCOME_DURATION_SECS: u64 = 8;
 
-const SANIC_BLUE: Rgb565 = Rgb565::new(0, 16, 31);
-const SANIC_SKIN: Rgb565 = Rgb565::new(31, 24, 16);
-const SANIC_RED: Rgb565 = Rgb565::new(31, 0, 0);
-const SANIC_WHITE: Rgb565 = Rgb565::WHITE;
-const SANIC_BLACK: Rgb565 = Rgb565::BLACK;
+// Vertically centered layout (screen is 240px tall)
+// Content height: text(48) + gap(13) + stripe(27) + overlap(-4) + stars(27/2) ≈ 112px
+// Top margin: (240 - 112) / 2 = 64px
+const TEXT_Y: i32 = 64;
+const STRIPE_Y: i32 = 128;
+const STARS_Y: i32 = 162; // Stars overlap stripe bottom by ~4px
 
-const RAINBOW_COLORS: [Rgb565; 12] = [
-    Rgb565::new(31, 0, 0),
-    Rgb565::new(31, 24, 0),
-    Rgb565::new(31, 48, 0),
-    Rgb565::new(31, 63, 0),
-    Rgb565::new(16, 63, 0),
-    Rgb565::new(0, 63, 0),
-    Rgb565::new(0, 63, 16),
-    Rgb565::new(0, 48, 31),
-    Rgb565::new(0, 24, 31),
-    Rgb565::new(16, 0, 31),
-    Rgb565::new(31, 0, 31),
-    Rgb565::new(31, 0, 16),
+const COLOR_BLACK: Rgb565 = Rgb565::BLACK;
+const COLOR_DARK_GRAY: Rgb565 = Rgb565::new(4, 8, 4);
+const COLOR_RED: Rgb565 = Rgb565::new(31, 0, 0);
+const COLOR_GOLD: Rgb565 = Rgb565::new(31, 50, 0);
+const COLOR_DARK_GOLD: Rgb565 = Rgb565::new(20, 32, 0);
+const COLOR_DIM_GOLD: Rgb565 = Rgb565::new(12, 20, 0);
+
+// Letter dimensions at 1.5x scale (base: 22x32, scaled: 33x48)
+const LETTER_WIDTH: i32 = 33;
+const LETTER_SPACING: i32 = 3;
+
+const LETTER_A: &[(i32, i32, u32, u32)] = &[(0, 8, 5, 24), (15, 8, 5, 24), (5, 0, 10, 8), (5, 14, 10, 5)];
+
+const LETTER_E: &[(i32, i32, u32, u32)] = &[(0, 0, 5, 32), (5, 0, 15, 5), (5, 13, 12, 5), (5, 27, 15, 5)];
+
+const LETTER_Z: &[(i32, i32, u32, u32)] = &[
+    (0, 0, 20, 5),
+    (14, 5, 5, 5),
+    (11, 9, 5, 5),
+    (8, 13, 5, 5),
+    (5, 17, 5, 5),
+    (2, 21, 5, 5),
+    (0, 27, 20, 5),
 ];
 
-const RAINBOW_LEN: usize = 12;
-const FRAMES_PER_STEP: u32 = 3;
+const LETTER_K: &[(i32, i32, u32, u32)] = &[
+    (0, 0, 5, 32),
+    (5, 12, 5, 5),
+    (8, 8, 5, 5),
+    (11, 4, 5, 5),
+    (14, 0, 6, 5),
+    (5, 15, 5, 5),
+    (8, 19, 5, 5),
+    (11, 23, 5, 5),
+    (14, 27, 6, 5),
+];
 
-#[inline]
-const fn rainbow_color_for_char(
-    char_index: usize,
-    frame: u32,
-) -> Rgb565 {
-    let anim_offset = (frame / FRAMES_PER_STEP) as usize;
-    let color_index = (RAINBOW_LEN + anim_offset - (char_index % RAINBOW_LEN)) % RAINBOW_LEN;
-    RAINBOW_COLORS[color_index]
-}
+const LETTER_M: &[(i32, i32, u32, u32)] = &[(0, 0, 5, 32), (15, 0, 5, 32), (5, 4, 4, 6), (11, 4, 4, 6), (8, 8, 4, 6)];
+
+const LETTER_I: &[(i32, i32, u32, u32)] = &[(2, 0, 16, 5), (7, 5, 6, 22), (2, 27, 16, 5)];
 
 fn draw_rect(
     display: &mut SimulatorDisplay<Rgb565>,
@@ -69,60 +92,145 @@ fn draw_rect(
         .ok();
 }
 
-fn draw_sanic(
+fn draw_letter(
     display: &mut SimulatorDisplay<Rgb565>,
-    x: i32,
-    y: i32,
+    letter: &[(i32, i32, u32, u32)],
+    base_x: i32,
+    base_y: i32,
 ) {
-    draw_rect(display, x + 40, y, 16, 8, SANIC_BLUE);
-    draw_rect(display, x + 48, y + 8, 16, 8, SANIC_BLUE);
-    draw_rect(display, x + 56, y + 16, 12, 8, SANIC_BLUE);
-    draw_rect(display, x + 16, y + 8, 32, 40, SANIC_BLUE);
-    draw_rect(display, x + 8, y + 16, 12, 24, SANIC_BLUE);
-    draw_rect(display, x + 4, y + 20, 20, 24, SANIC_SKIN);
-    draw_rect(display, x + 4, y + 20, 10, 12, SANIC_WHITE);
-    draw_rect(display, x + 12, y + 24, 8, 10, SANIC_WHITE);
-    draw_rect(display, x + 8, y + 26, 4, 4, SANIC_BLACK);
-    draw_rect(display, x + 14, y + 28, 4, 4, SANIC_BLACK);
-    draw_rect(display, x, y + 32, 6, 6, SANIC_SKIN);
-    draw_rect(display, x + 4, y + 40, 12, 2, SANIC_BLACK);
-    draw_rect(display, x + 20, y + 48, 24, 20, SANIC_BLUE);
-    draw_rect(display, x + 24, y + 52, 12, 12, SANIC_SKIN);
-    draw_rect(display, x + 12, y + 52, 8, 12, SANIC_BLUE);
-    draw_rect(display, x + 44, y + 52, 8, 12, SANIC_BLUE);
-    draw_rect(display, x + 8, y + 60, 8, 8, SANIC_WHITE);
-    draw_rect(display, x + 48, y + 60, 8, 8, SANIC_WHITE);
-    draw_rect(display, x + 20, y + 68, 10, 12, SANIC_BLUE);
-    draw_rect(display, x + 34, y + 68, 10, 12, SANIC_BLUE);
-    draw_rect(display, x + 16, y + 80, 16, 8, SANIC_RED);
-    draw_rect(display, x + 32, y + 80, 16, 8, SANIC_RED);
-    draw_rect(display, x + 20, y + 82, 8, 2, SANIC_WHITE);
-    draw_rect(display, x + 36, y + 82, 8, 2, SANIC_WHITE);
+    // Apply 1.5x scale (3/2) to all coordinates and sizes
+    // Black shadow (offset scaled from 2 to 3)
+    for &(dx, dy, w, h) in letter {
+        let sx = base_x + dx * 3 / 2 + 3;
+        let sy = base_y + dy * 3 / 2 + 3;
+        draw_rect(display, sx, sy, w * 3 / 2, h * 3 / 2, COLOR_BLACK);
+    }
+    // Golden text
+    for &(dx, dy, w, h) in letter {
+        let sx = base_x + dx * 3 / 2;
+        let sy = base_y + dy * 3 / 2;
+        draw_rect(display, sx, sy, w * 3 / 2, h * 3 / 2, COLOR_GOLD);
+    }
 }
 
-fn draw_rainbow_text(
+fn draw_aezakmi(
     display: &mut SimulatorDisplay<Rgb565>,
-    text: &str,
-    center_x: i32,
     y: i32,
-    char_offset: usize,
-    frame: u32,
-) -> usize {
-    let char_count = text.chars().count() as i32;
-    let start_x = center_x - (char_count * CHAR_WIDTH) / 2;
+) {
+    let letters: [&[(i32, i32, u32, u32)]; 7] = [LETTER_A, LETTER_E, LETTER_Z, LETTER_A, LETTER_K, LETTER_M, LETTER_I];
 
-    for (i, ch) in text.chars().enumerate() {
-        let color = rainbow_color_for_char(char_offset + i, frame);
-        let style = MonoTextStyle::new(&FONT_10X20, color);
-        let x = start_x + (i as i32 * CHAR_WIDTH);
+    let total_width = (LETTER_WIDTH + LETTER_SPACING) * 7 - LETTER_SPACING;
+    let start_x = SCREEN_CENTER_X - total_width / 2;
 
-        let mut char_buf = [0u8; 4];
-        let char_str = ch.encode_utf8(&mut char_buf);
+    for (i, letter) in letters.iter().enumerate() {
+        let x = start_x + i as i32 * (LETTER_WIDTH + LETTER_SPACING);
+        draw_letter(display, letter, x, y);
+    }
+}
 
-        Text::new(char_str, Point::new(x, y), style).draw(display).ok();
+fn draw_stripe(
+    display: &mut SimulatorDisplay<Rgb565>,
+    y: i32,
+) {
+    // Scaled stripe (1.5x: 180->270, heights scaled proportionally)
+    let stripe_width: u32 = 260;
+    let start_x = SCREEN_CENTER_X - (stripe_width as i32) / 2;
+
+    draw_rect(display, start_x - 3, y - 3, stripe_width + 6, 27, COLOR_BLACK);
+    draw_rect(display, start_x, y, stripe_width, 9, COLOR_RED);
+    draw_rect(display, start_x, y + 12, stripe_width, 9, COLOR_BLACK);
+}
+
+fn draw_star(
+    display: &mut SimulatorDisplay<Rgb565>,
+    center_x: i32,
+    center_y: i32,
+    size: i32,
+    color: Rgb565,
+    outline_color: Rgb565,
+) {
+    let outer_radius = size;
+    let inner_radius = size * 38 / 100;
+
+    const COS_OUTER: [i32; 5] = [0, -95, -59, 59, 95];
+    const SIN_OUTER: [i32; 5] = [100, 31, -81, -81, 31];
+    const COS_INNER: [i32; 5] = [-59, -95, 0, 95, 59];
+    const SIN_INNER: [i32; 5] = [81, -31, -100, -31, 81];
+
+    for i in 0..5 {
+        let next = (i + 1) % 5;
+
+        let ox = center_x + (COS_OUTER[i] * outer_radius / 100);
+        let oy = center_y - (SIN_OUTER[i] * outer_radius / 100);
+        let ix = center_x + (COS_INNER[i] * inner_radius / 100);
+        let iy = center_y - (SIN_INNER[i] * inner_radius / 100);
+        let nx = center_x + (COS_OUTER[next] * outer_radius / 100);
+        let ny = center_y - (SIN_OUTER[next] * outer_radius / 100);
+
+        Triangle::new(Point::new(center_x, center_y), Point::new(ox, oy), Point::new(ix, iy))
+            .into_styled(PrimitiveStyle::with_fill(outline_color))
+            .draw(display)
+            .ok();
+
+        Triangle::new(Point::new(center_x, center_y), Point::new(ix, iy), Point::new(nx, ny))
+            .into_styled(PrimitiveStyle::with_fill(outline_color))
+            .draw(display)
+            .ok();
     }
 
-    char_offset + text.chars().count()
+    let fill_outer = outer_radius * 85 / 100;
+    let fill_inner = inner_radius * 85 / 100;
+
+    for i in 0..5 {
+        let next = (i + 1) % 5;
+
+        let ox = center_x + (COS_OUTER[i] * fill_outer / 100);
+        let oy = center_y - (SIN_OUTER[i] * fill_outer / 100);
+        let ix = center_x + (COS_INNER[i] * fill_inner / 100);
+        let iy = center_y - (SIN_INNER[i] * fill_inner / 100);
+        let nx = center_x + (COS_OUTER[next] * fill_outer / 100);
+        let ny = center_y - (SIN_OUTER[next] * fill_outer / 100);
+
+        Triangle::new(Point::new(center_x, center_y), Point::new(ox, oy), Point::new(ix, iy))
+            .into_styled(PrimitiveStyle::with_fill(color))
+            .draw(display)
+            .ok();
+
+        Triangle::new(Point::new(center_x, center_y), Point::new(ix, iy), Point::new(nx, ny))
+            .into_styled(PrimitiveStyle::with_fill(color))
+            .draw(display)
+            .ok();
+    }
+}
+
+fn draw_stars(
+    display: &mut SimulatorDisplay<Rgb565>,
+    y: i32,
+    frame: u32,
+) {
+    // Scaled stars (1.5x: size 18->27, spacing 40->56)
+    let star_size = 27;
+    let star_spacing = 56;
+    let total_width = star_spacing * 4;
+    let start_x = SCREEN_CENTER_X - total_width / 2;
+
+    let cycle_frame = frame % 210;
+    let lit_count = if cycle_frame < 150 {
+        (cycle_frame / 30 + 1).min(5) as usize
+    } else {
+        if (cycle_frame / 10).is_multiple_of(2) { 5 } else { 0 }
+    };
+
+    for i in 0..5 {
+        let x = start_x + i as i32 * star_spacing;
+        let is_lit = i < lit_count;
+
+        if is_lit {
+            draw_star(display, x, y, star_size, COLOR_GOLD, COLOR_DARK_GOLD);
+        } else {
+            draw_star(display, x, y, star_size, COLOR_DIM_GOLD, COLOR_DARK_GRAY);
+        }
+    }
 }
 
 pub fn run_welcome_screen(
@@ -140,20 +248,11 @@ pub fn run_welcome_screen(
             }
         }
 
-        display.clear(BLACK).ok();
+        display.clear(WHITE).ok();
 
-        let next_char_idx = draw_rainbow_text(display, TOP_TEXT, SCREEN_CENTER_X, TOP_TEXT_Y, 0, frame);
-
-        draw_sanic(display, SANIC_POS.x, SANIC_POS.y);
-
-        draw_rainbow_text(
-            display,
-            BOTTOM_TEXT,
-            SCREEN_CENTER_X,
-            BOTTOM_TEXT_Y,
-            next_char_idx,
-            frame,
-        );
+        draw_aezakmi(display, TEXT_Y);
+        draw_stripe(display, STRIPE_Y);
+        draw_stars(display, STARS_Y, frame);
 
         window.update(display);
         thread::sleep(Duration::from_millis(16));
