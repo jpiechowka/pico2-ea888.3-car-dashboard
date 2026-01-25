@@ -498,6 +498,18 @@ where
     } else {
         (VALUE_FONT, TEMP_VALUE_Y_LARGE)
     };
+
+    // Clear value area to remove residual outline pixels from previous frames
+    // Max width: 5 chars × 14px + 2px outline = 72px, height: 24px + 2px = 26px
+    let clear_rect = Rectangle::new(
+        Point::new(center_x - 38, center_y + value_y_offset - 20),
+        Size::new(76, 28),
+    );
+    clear_rect
+        .into_styled(PrimitiveStyle::with_fill(bg_color))
+        .draw(display)
+        .ok();
+
     draw_value_with_outline(
         display,
         &value_str,
