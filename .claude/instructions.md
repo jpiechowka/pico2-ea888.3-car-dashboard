@@ -50,6 +50,13 @@ This is a Rust project that builds a compact, high-contrast, glanceable digital 
 | IAT | Intake Air Temperature |
 | EGT | Exhaust Gas Temperature |
 
+**EGT Thresholds:**
+- Cold/warming: < 300°C (BLUE)
+- Spirited driving: 600-850°C (YELLOW)
+- High load: 850-950°C (ORANGE)
+- Critical: >= 950°C (RED, blink + shake)
+- "Danger To Manifold": >= 1050°C (Fast & Furious easter egg popup with blinking red/white warning)
+
 ---
 
 ## OBDEleven

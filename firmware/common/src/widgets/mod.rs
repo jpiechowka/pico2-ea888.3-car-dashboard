@@ -26,5 +26,5 @@ pub use cells::{
     temp_color_water,
 };
 pub use header::{draw_dividers, draw_header};
-pub use popups::{draw_boost_unit_popup, draw_fps_toggle_popup, draw_reset_popup};
+pub use popups::{draw_boost_unit_popup, draw_danger_manifold_popup, draw_fps_toggle_popup, draw_reset_popup};
 pub use primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};

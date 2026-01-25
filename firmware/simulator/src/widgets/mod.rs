@@ -8,6 +8,7 @@ pub use dashboard_common::widgets::{
     draw_batt_cell,
     draw_boost_cell,
     draw_boost_unit_popup,
+    draw_danger_manifold_popup,
     draw_dividers,
     draw_fps_toggle_popup,
     draw_header,

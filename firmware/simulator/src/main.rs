@@ -25,6 +25,7 @@ use dashboard_common::thresholds::{
     BATT_WARNING,
     BOOST_EASTER_EGG_BAR,
     BOOST_EASTER_EGG_PSI,
+    EGT_DANGER_MANIFOLD,
 };
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -41,6 +42,7 @@ use crate::widgets::{
     draw_batt_cell,
     draw_boost_cell,
     draw_boost_unit_popup,
+    draw_danger_manifold_popup,
     draw_dividers,
     draw_fps_toggle_popup,
     draw_header,
@@ -113,6 +115,7 @@ fn main() {
     let mut current_page = Page::default();
     let mut page_just_switched = false;
     let mut reset_requested = false;
+    let mut prev_egt_danger_active = false;
 
     // Profiling
     let mut metrics = ProfilingMetrics::new();
@@ -168,8 +171,16 @@ fn main() {
             active_popup = None;
         }
 
-        // Update render state
-        render_state.update_popup(active_popup.as_ref().map(Popup::kind));
+        // Update render state (include danger popup in combined visibility)
+        // Kind 3 is used for the danger popup to track popup_just_closed() transitions
+        let popup_kind = if active_popup.is_some() {
+            active_popup.as_ref().map(Popup::kind)
+        } else if prev_egt_danger_active {
+            Some(3u8) // Danger popup kind
+        } else {
+            None
+        };
+        render_state.update_popup(popup_kind);
 
         // Clear display when needed
         if render_state.is_first_frame() || render_state.popup_just_closed() || page_just_switched {
@@ -201,7 +212,7 @@ fn main() {
         let water_temp = fake_signal(t, 30.0, 95.0, 0.10);
         let dsg_temp = fake_signal(t, 30.0, 115.0, 0.07);
         let iat_temp = fake_signal(t, -10.0, 70.0, 0.05);
-        let egt_temp = fake_signal(t, 200.0, 900.0, 0.04);
+        let egt_temp = fake_signal(t, 200.0, 1200.0, 0.04);
         let batt_voltage = fake_signal(t, 10.0, 15.0, 0.06);
         let afr = fake_signal(t, 10.0, 18.0, 0.09);
 
@@ -282,6 +293,9 @@ fn main() {
             fps_frame_count = 0;
             last_fps_calc = Instant::now();
         }
+
+        // Calculate EGT danger state before page rendering (persists across page switches)
+        let egt_danger_active = egt_temp >= EGT_DANGER_MANIFOLD;
 
         // Render based on current page
         match current_page {
@@ -466,12 +480,15 @@ fn main() {
                     metrics.inc_divider_redraws();
                 }
 
+                // Render popup (user popup takes priority over danger warning)
                 if let Some(ref popup) = active_popup {
                     match popup {
                         Popup::Reset(_) => draw_reset_popup(&mut display),
                         Popup::Fps(_) => draw_fps_toggle_popup(&mut display, show_fps),
                         Popup::BoostUnit(_) => draw_boost_unit_popup(&mut display, show_boost_psi),
                     }
+                } else if egt_danger_active {
+                    draw_danger_manifold_popup(&mut display, blink_on);
                 }
 
                 metrics.inc_cell_draws(8);
@@ -481,6 +498,9 @@ fn main() {
                 draw_debug_page(&mut display, &metrics, &debug_log, current_fps);
             }
         }
+
+        // Update danger popup state for next frame (outside page match to persist across switches)
+        prev_egt_danger_active = egt_danger_active;
 
         let render_time = frame_start.elapsed();
         render_state.end_frame();

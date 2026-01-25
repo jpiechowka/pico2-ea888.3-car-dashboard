@@ -94,21 +94,26 @@ const _: () = assert!(IAT_HOT < IAT_CRITICAL);
 /// Engine and catalyst still warming up.
 pub const EGT_COLD_MAX: f32 = 300.0;
 
-/// Spirited driving threshold (500-700C = YELLOW).
+/// Spirited driving threshold (600-850C = YELLOW).
 /// Normal for enthusiastic driving.
-pub const EGT_SPIRITED: f32 = 500.0;
+pub const EGT_SPIRITED: f32 = 600.0;
 
-/// High load threshold (700-850C = ORANGE).
+/// High load threshold (850-950C = ORANGE).
 /// Hard acceleration, track use.
-pub const EGT_HIGH_LOAD: f32 = 700.0;
+pub const EGT_HIGH_LOAD: f32 = 850.0;
 
-/// Critical threshold (>=850C = RED, blink + shake).
+/// Critical threshold (>=950C = RED, blink + shake).
 /// Risk of catalyst/turbo damage, possible lean condition.
-pub const EGT_CRITICAL: f32 = 850.0;
+pub const EGT_CRITICAL: f32 = 950.0;
+
+/// "Danger To Manifold" threshold (>=1050C = Fast & Furious easter egg).
+/// Extreme temperature - shows blinking warning popup.
+pub const EGT_DANGER_MANIFOLD: f32 = 1050.0;
 
 const _: () = assert!(EGT_COLD_MAX < EGT_SPIRITED);
 const _: () = assert!(EGT_SPIRITED < EGT_HIGH_LOAD);
 const _: () = assert!(EGT_HIGH_LOAD < EGT_CRITICAL);
+const _: () = assert!(EGT_CRITICAL < EGT_DANGER_MANIFOLD);
 
 // =============================================================================
 // Battery Voltage Thresholds
@@ -209,6 +214,7 @@ mod tests {
         assert!(EGT_COLD_MAX < EGT_SPIRITED);
         assert!(EGT_SPIRITED < EGT_HIGH_LOAD);
         assert!(EGT_HIGH_LOAD < EGT_CRITICAL);
+        assert!(EGT_CRITICAL < EGT_DANGER_MANIFOLD);
     }
 
     #[test]

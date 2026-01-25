@@ -23,7 +23,6 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use heapless::String;
-use profont::PROFONT_24_POINT;
 
 use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, PINK, RED, WHITE, YELLOW};
 use crate::styles::{
@@ -32,6 +31,7 @@ use crate::styles::{
     LABEL_STYLE_BLACK,
     LABEL_STYLE_ORANGE,
     LABEL_STYLE_WHITE,
+    VALUE_FONT,
     VALUE_FONT_MEDIUM,
     VALUE_STYLE_BLACK,
     VALUE_STYLE_WHITE,
@@ -62,6 +62,21 @@ use crate::thresholds::{
     OIL_LOW_TEMP,
 };
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
+
+// =============================================================================
+// Temperature Value Display Constants
+// =============================================================================
+
+/// Temperature threshold for switching to smaller font (4-digit values like "1200C").
+/// Values >= 1000 use 18pt font instead of 24pt to fit in 80px cell.
+const TEMP_LARGE_VALUE_THRESHOLD: f32 = 1000.0;
+
+/// Y offset for large (24pt) temperature values relative to cell center.
+const TEMP_VALUE_Y_LARGE: i32 = -12;
+
+/// Y offset for medium (18pt) temperature values relative to cell center.
+/// Slightly higher to maintain visual balance with smaller font.
+const TEMP_VALUE_Y_MEDIUM: i32 = -10;
 
 // =============================================================================
 // Sensor Display Data
@@ -284,7 +299,7 @@ fn value_style_for_color(color: Rgb565) -> MonoTextStyle<'static, Rgb565> {
     } else if color == BLACK {
         VALUE_STYLE_BLACK
     } else {
-        MonoTextStyle::new(&PROFONT_24_POINT, color)
+        MonoTextStyle::new(VALUE_FONT, color)
     }
 }
 
@@ -476,11 +491,18 @@ where
     let mut value_str: String<16> = String::new();
     let _ = write!(value_str, "{temp:.0}C");
     let value_color = if state.is_new_peak { peak_color } else { base_text };
+
+    // Use smaller font for 4-digit temperatures to fit in 80px cell
+    let (value_font, value_y_offset) = if temp >= TEMP_LARGE_VALUE_THRESHOLD {
+        (VALUE_FONT_MEDIUM, TEMP_VALUE_Y_MEDIUM)
+    } else {
+        (VALUE_FONT, TEMP_VALUE_Y_LARGE)
+    };
     draw_value_with_outline(
         display,
         &value_str,
-        Point::new(value_x, center_y - 12),
-        &PROFONT_24_POINT,
+        Point::new(value_x, center_y + value_y_offset),
+        value_font,
         value_color,
         CENTERED,
     );
