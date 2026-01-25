@@ -1,8 +1,12 @@
 //! Low-level drawing primitives shared across widgets.
 
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
+use embedded_graphics::text::{Text, TextStyle};
+
+use crate::colors::{BLACK, WHITE};
 
 /// Draw a cell's background rectangle with 2px inset.
 pub fn draw_cell_background<D>(
@@ -137,4 +141,73 @@ pub fn draw_mini_graph<D, F>(
         prev_screen_y = screen_y;
         first_point = false;
     }
+}
+
+// =============================================================================
+// Text Outline Drawing
+// =============================================================================
+
+/// Determine the outline color for a given text color.
+///
+/// Returns BLACK for light text (WHITE, YELLOW, etc.) and WHITE for dark text (BLACK).
+/// This ensures maximum contrast for readability on any background.
+#[inline]
+fn outline_color_for_text(text_color: Rgb565) -> Rgb565 {
+    let raw = text_color.into_storage();
+    let r5 = u32::from((raw >> 11) & 0x1F);
+    let g6 = u32::from((raw >> 5) & 0x3F);
+    let b5 = u32::from(raw & 0x1F);
+    let r8 = (r5 << 3) | (r5 >> 2);
+    let g8 = (g6 << 2) | (g6 >> 4);
+    let b8 = (b5 << 3) | (b5 >> 2);
+    let luma = (r8 * 77 + g8 * 150 + b8 * 29) >> 8;
+
+    if luma >= 128 { BLACK } else { WHITE }
+}
+
+/// Draw text with a contrasting 1px outline for visibility on any background.
+///
+/// The outline color is automatically selected based on text color luminance:
+/// - Light text (WHITE, YELLOW, etc.) → BLACK outline
+/// - Dark text (BLACK) → WHITE outline
+///
+/// The outline is drawn in 8 directions (cardinal + diagonal) for full coverage,
+/// then the main text is drawn on top.
+pub fn draw_value_with_outline<D>(
+    display: &mut D,
+    text: &str,
+    position: Point,
+    font: &MonoFont<'_>,
+    text_color: Rgb565,
+    text_style: TextStyle,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let outline_color = outline_color_for_text(text_color);
+    let outline_char_style = MonoTextStyle::new(font, outline_color);
+    let main_char_style = MonoTextStyle::new(font, text_color);
+
+    // Draw outline in 8 directions (1px offset each)
+    const OFFSETS: [(i32, i32); 8] = [
+        (-1, -1),
+        (0, -1),
+        (1, -1), // top row
+        (-1, 0),
+        (1, 0), // middle row (skip center)
+        (-1, 1),
+        (0, 1),
+        (1, 1), // bottom row
+    ];
+
+    for (dx, dy) in OFFSETS {
+        let offset_pos = Point::new(position.x + dx, position.y + dy);
+        Text::with_text_style(text, offset_pos, outline_char_style, text_style)
+            .draw(display)
+            .ok();
+    }
+
+    // Draw main text on top
+    Text::with_text_style(text, position, main_char_style, text_style)
+        .draw(display)
+        .ok();
 }
