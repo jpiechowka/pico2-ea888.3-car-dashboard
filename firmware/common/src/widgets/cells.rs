@@ -661,21 +661,24 @@ where
     let mut value_str: String<16> = String::new();
     let _ = write!(value_str, "{voltage:.1}V");
     let value_color = if state.is_new_peak { peak_color } else { base_text };
-    if state.is_new_peak && value_color == BLACK {
-        let shadow_style = MonoTextStyle::new(VALUE_FONT_MEDIUM, WHITE);
-        Text::with_text_style(
-            &value_str,
-            Point::new(value_x + 1, center_y - 6),
-            shadow_style,
-            CENTERED,
-        )
-        .draw(display)
-        .ok();
-    }
-    let value_style = MonoTextStyle::new(VALUE_FONT_MEDIUM, value_color);
-    Text::with_text_style(&value_str, Point::new(value_x, center_y - 7), value_style, CENTERED)
-        .draw(display)
-        .ok();
+
+    // Clear value area to remove residual outline pixels from previous frames
+    Rectangle::new(
+        Point::new(center_x - VALUE_CLEAR_HALF_WIDTH, center_y - 7 - VALUE_CLEAR_Y_OFFSET),
+        Size::new(VALUE_CLEAR_WIDTH, VALUE_CLEAR_HEIGHT),
+    )
+    .into_styled(PrimitiveStyle::with_fill(bg_color))
+    .draw(display)
+    .ok();
+
+    draw_value_with_outline(
+        display,
+        &value_str,
+        Point::new(value_x, center_y - 7),
+        VALUE_FONT_MEDIUM,
+        value_color,
+        CENTERED,
+    );
 
     let graph_y = center_y + 4;
     let graph_h = 20u32;
@@ -784,10 +787,24 @@ where
 
     let mut value_str: String<16> = String::new();
     let _ = write!(value_str, "{afr:.1}");
-    let value_style = value_style_for_color(text_color);
-    Text::with_text_style(&value_str, Point::new(value_x, center_y - 14), value_style, CENTERED)
-        .draw(display)
-        .ok();
+
+    // Clear value area to remove residual outline pixels from previous frames
+    Rectangle::new(
+        Point::new(center_x - VALUE_CLEAR_HALF_WIDTH, center_y - 14 - VALUE_CLEAR_Y_OFFSET),
+        Size::new(VALUE_CLEAR_WIDTH, VALUE_CLEAR_HEIGHT),
+    )
+    .into_styled(PrimitiveStyle::with_fill(bg_color))
+    .draw(display)
+    .ok();
+
+    draw_value_with_outline(
+        display,
+        &value_str,
+        Point::new(value_x, center_y - 14),
+        VALUE_FONT,
+        text_color,
+        CENTERED,
+    );
 
     let lambda = afr / AFR_STOICH;
     let mut lambda_str: String<16> = String::new();

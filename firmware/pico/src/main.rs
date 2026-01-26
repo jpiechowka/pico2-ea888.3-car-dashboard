@@ -1,23 +1,48 @@
 //! OBD-II Dashboard Firmware for Raspberry Pi Pico 2 (RP2350)
 //!
 //! Displays the OBD-II dashboard on the Pimoroni PIM715 Display Pack 2.8".
+//!
+//! # Button Controls
+//!
+//! - **X**: Toggle FPS display (Dashboard only)
+//! - **Y**: Switch between Dashboard and Debug pages
+//! - **A**: Toggle boost unit BAR/PSI (Dashboard only)
+//! - **B**: Reset min/max/avg statistics (Dashboard only)
 
 #![no_std]
 #![no_main]
 
 mod display;
+mod screens;
 
 use dashboard_common::SensorState;
-use dashboard_common::colors::BLACK;
+use dashboard_common::animations::ColorTransition;
+use dashboard_common::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
 use dashboard_common::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
-use dashboard_common::render::RenderState;
+use dashboard_common::pages::Page;
+use dashboard_common::render::{RenderState, cell_idx};
+use dashboard_common::thresholds::{
+    AFR_LEAN_CRITICAL,
+    AFR_OPTIMAL_MAX,
+    AFR_RICH,
+    AFR_RICH_AF,
+    BATT_CRITICAL,
+    BATT_WARNING,
+    BOOST_EASTER_EGG_BAR,
+    BOOST_EASTER_EGG_PSI,
+    EGT_DANGER_MANIFOLD,
+};
 use dashboard_common::widgets::{
     SensorDisplayData,
     draw_afr_cell,
     draw_batt_cell,
     draw_boost_cell,
+    draw_boost_unit_popup,
+    draw_danger_manifold_popup,
     draw_dividers,
+    draw_fps_toggle_popup,
     draw_header,
+    draw_reset_popup,
     draw_temp_cell,
     is_critical_egt,
     is_critical_iat,
@@ -31,13 +56,104 @@ use dashboard_common::widgets::{
 };
 use defmt::info;
 use embassy_executor::Spawner;
-use embassy_rp::gpio::{Level, Output};
+use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::spi::Spi;
-use embassy_time::Timer;
+use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::display::{display_spi_config, init_display};
+use crate::screens::{show_loading_screen, show_welcome_screen};
+
+// =============================================================================
+// Popup State Management
+// =============================================================================
+
+/// Duration that popups remain visible on screen.
+const POPUP_DURATION: Duration = Duration::from_secs(3);
+
+/// Active popup with its start time.
+#[derive(Clone, Copy, Debug)]
+enum Popup {
+    /// "MIN/AVG/MAX RESET" popup.
+    Reset(Instant),
+    /// "FPS ON/OFF" popup.
+    Fps(Instant),
+    /// "BOOST: BAR/PSI" popup.
+    BoostUnit(Instant),
+}
+
+impl Popup {
+    /// Get the start time of this popup.
+    #[inline]
+    const fn start_time(&self) -> Instant {
+        match self {
+            Self::Reset(t) | Self::Fps(t) | Self::BoostUnit(t) => *t,
+        }
+    }
+
+    /// Check if this popup has expired.
+    #[inline]
+    fn is_expired(&self) -> bool { self.start_time().elapsed() >= POPUP_DURATION }
+
+    /// Get the popup kind as a u8 discriminant for RenderState tracking.
+    #[inline]
+    const fn kind(&self) -> u8 {
+        match self {
+            Self::Reset(_) => 0,
+            Self::Fps(_) => 1,
+            Self::BoostUnit(_) => 2,
+        }
+    }
+}
+
+// =============================================================================
+// Button Debounce
+// =============================================================================
+
+/// Debounce duration in milliseconds.
+const DEBOUNCE_MS: u64 = 50;
+
+/// Button debounce state with time-based edge detection.
+struct ButtonState {
+    was_pressed: bool,
+    last_change: Option<Instant>,
+}
+
+impl ButtonState {
+    const fn new() -> Self {
+        Self {
+            was_pressed: false,
+            last_change: None,
+        }
+    }
+
+    /// Returns true only on the falling edge (button just pressed).
+    /// Buttons are active-low, so `is_low()` means pressed.
+    /// Includes debounce logic to prevent multiple triggers from contact bounce.
+    fn just_pressed(
+        &mut self,
+        is_low: bool,
+    ) -> bool {
+        // Check if state changed
+        if is_low != self.was_pressed {
+            // Apply debounce: only accept change if enough time has passed
+            if let Some(last) = self.last_change
+                && last.elapsed() < Duration::from_millis(DEBOUNCE_MS)
+            {
+                return false;
+            }
+
+            self.was_pressed = is_low;
+            self.last_change = Some(Instant::now());
+
+            // Return true only on press (falling edge, is_low == true)
+            return is_low;
+        }
+
+        false
+    }
+}
 
 // Program metadata for `picotool info`
 #[unsafe(link_section = ".bi_entries")]
@@ -57,14 +173,9 @@ async fn main(_spawner: Spawner) {
 
     // Initialize RGB LED (active-low: Low = ON)
     // PIM715: Red=26, Green=27, Blue=28
-    let mut led_r = Output::new(p.PIN_26, Level::High); // Off
-    let mut led_g = Output::new(p.PIN_27, Level::High); // Off
-    let mut led_b = Output::new(p.PIN_28, Level::High); // Off
-
-    // Flash red to indicate startup
-    led_r.set_low(); // Red ON
-    Timer::after_millis(200).await;
-    led_r.set_high(); // Red OFF
+    let mut _led_r = Output::new(p.PIN_26, Level::High); // Off
+    let mut _led_g = Output::new(p.PIN_27, Level::High); // Off
+    let mut led_b = Output::new(p.PIN_28, Level::High); // Off (used for heartbeat)
 
     // Initialize display pins
     // PIM715 pinout: CS=17, DC=16, CLK=18, MOSI=19, Backlight=20
@@ -72,25 +183,51 @@ async fn main(_spawner: Spawner) {
     let dc = Output::new(p.PIN_16, Level::Low);
     let mut _backlight = Output::new(p.PIN_20, Level::High); // Turn on backlight
 
-    // Initialize SPI (TX-only, display doesn't need MISO)
-    let spi = Spi::new_blocking_txonly(p.SPI0, p.PIN_18, p.PIN_19, display_spi_config());
+    // Initialize async SPI with DMA (TX-only, display doesn't need MISO)
+    let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, display_spi_config());
 
     // Initialize display (no reset pin on PIM715)
     let mut display = init_display(spi, cs, dc);
 
     info!("Display initialized!");
 
-    // Flash green to indicate display init success
-    led_g.set_low(); // Green ON
-    Timer::after_millis(200).await;
-    led_g.set_high(); // Green OFF
+    // Show boot screens
+    show_loading_screen(&mut display).await;
+    show_welcome_screen(&mut display).await;
+
+    // Initialize buttons (active-low with internal pull-up)
+    // PIM715: A=12, B=13, X=14, Y=15
+    let btn_a = Input::new(p.PIN_12, Pull::Up);
+    let btn_b = Input::new(p.PIN_13, Pull::Up);
+    let btn_x = Input::new(p.PIN_14, Pull::Up);
+    let btn_y = Input::new(p.PIN_15, Pull::Up);
+
+    // Button debounce state
+    let mut btn_a_state = ButtonState::new();
+    let mut btn_b_state = ButtonState::new();
+    let mut btn_x_state = ButtonState::new();
+    let mut btn_y_state = ButtonState::new();
+
+    info!("Buttons initialized!");
 
     // Clear display
     display.clear(BLACK).ok();
 
+    // UI state
+    let mut current_page = Page::Dashboard;
+    let mut page_just_switched = false;
+    let mut show_fps = false;
+    let mut show_boost_psi = false;
+    let mut active_popup: Option<Popup> = None;
+    let mut prev_egt_danger_active = false;
+    let mut reset_requested = false;
+
     // Render state
     let mut render_state = RenderState::new();
     let mut frame_count = 0u32;
+    let mut current_fps = 0.0f32;
+    let mut fps_frame_count = 0u32;
+    let mut last_fps_calc = Instant::now();
 
     // Demo sensor values (initialized in loop)
     let mut boost: f32;
@@ -123,19 +260,122 @@ async fn main(_spawner: Spawner) {
 
     info!("Starting main loop...");
 
-    loop {
-        let blink_on = (frame_count / 30).is_multiple_of(2);
+    // Color transitions for smooth background changes
+    let mut color_transitions = ColorTransition::new();
 
-        // Animate demo values (simple sine wave simulation)
-        let t = frame_count as f32 * 0.02;
-        boost = 0.5 + 1.0 * libm::sinf(t * 0.5).abs();
-        oil_temp = 85.0 + 20.0 * libm::sinf(t * 0.3);
-        water_temp = 88.0 + 7.0 * libm::sinf(t * 0.4);
-        dsg_temp = 75.0 + 25.0 * libm::sinf(t * 0.35);
-        iat_temp = 30.0 + 20.0 * libm::sinf(t * 0.25);
-        egt_temp = 400.0 + 300.0 * libm::sinf(t * 0.2).abs();
-        batt_voltage = 13.5 + 1.0 * libm::sinf(t * 0.15);
-        afr = 14.0 + 2.0 * libm::sinf(t * 0.45);
+    // Time-based animation (independent of frame rate)
+    let animation_start = Instant::now();
+
+    loop {
+        // Time-based blink cycle (200ms per state)
+        let elapsed_ms = animation_start.elapsed().as_millis() as u32;
+        let blink_on = (elapsed_ms / 200).is_multiple_of(2);
+
+        // Handle button presses
+        if btn_x_state.just_pressed(btn_x.is_low()) && current_page == Page::Dashboard {
+            show_fps = !show_fps;
+            active_popup = Some(Popup::Fps(Instant::now()));
+            info!("FPS: {}", if show_fps { "ON" } else { "OFF" });
+        }
+
+        if btn_y_state.just_pressed(btn_y.is_low()) {
+            current_page = current_page.toggle();
+            page_just_switched = true;
+            active_popup = None;
+            info!("Page switched");
+        }
+
+        if btn_a_state.just_pressed(btn_a.is_low()) && current_page == Page::Dashboard {
+            show_boost_psi = !show_boost_psi;
+            active_popup = Some(Popup::BoostUnit(Instant::now()));
+            info!("Boost: {}", if show_boost_psi { "PSI" } else { "BAR" });
+        }
+
+        if btn_b_state.just_pressed(btn_b.is_low()) && current_page == Page::Dashboard {
+            reset_requested = true;
+            active_popup = Some(Popup::Reset(Instant::now()));
+            info!("Reset requested");
+        }
+
+        // Check popup expiration
+        if let Some(ref popup) = active_popup
+            && popup.is_expired()
+        {
+            active_popup = None;
+        }
+
+        // Update render state (include danger popup in combined visibility)
+        let popup_kind = if active_popup.is_some() {
+            active_popup.as_ref().map(Popup::kind)
+        } else if prev_egt_danger_active {
+            Some(3u8) // Danger popup kind
+        } else {
+            None
+        };
+        render_state.update_popup(popup_kind);
+
+        // Clear display when needed
+        if render_state.is_first_frame() || render_state.popup_just_closed() || page_just_switched {
+            display.clear(BLACK).ok();
+            if page_just_switched {
+                render_state.mark_display_cleared();
+            }
+        }
+
+        // Animate demo values (simple sine wave simulation) - time-based
+        let t = elapsed_ms as f32 / 1000.0;
+        boost = 0.5 + 1.5 * micromath::F32(t * 0.5).sin().0.abs();
+        oil_temp = 60.0 + 55.0 * micromath::F32(t * 0.3).sin().0;
+        water_temp = 88.0 + 7.0 * micromath::F32(t * 0.4).sin().0;
+        dsg_temp = 75.0 + 40.0 * micromath::F32(t * 0.35).sin().0;
+        iat_temp = 30.0 + 40.0 * micromath::F32(t * 0.25).sin().0;
+        egt_temp = 200.0 + 1000.0 * micromath::F32(t * 0.04).sin().0.abs();
+        batt_voltage = 12.0 + 2.5 * micromath::F32(t * 0.15).sin().0;
+        afr = 14.0 + 4.0 * micromath::F32(t * 0.45).sin().0;
+
+        // Handle reset
+        if reset_requested {
+            oil_state.reset_average();
+            oil_state.reset_graph();
+            oil_state.reset_peak();
+            water_state.reset_average();
+            water_state.reset_graph();
+            water_state.reset_peak();
+            dsg_state.reset_average();
+            dsg_state.reset_graph();
+            dsg_state.reset_peak();
+            iat_state.reset_average();
+            iat_state.reset_graph();
+            iat_state.reset_peak();
+            egt_state.reset_average();
+            egt_state.reset_graph();
+            egt_state.reset_peak();
+            batt_state.reset_average();
+            batt_state.reset_graph();
+            batt_state.reset_peak();
+            afr_state.reset_average();
+            afr_state.reset_graph();
+            afr_state.reset_peak();
+
+            boost_max = boost;
+            oil_max = oil_temp;
+            water_max = water_temp;
+            dsg_max = dsg_temp;
+            iat_max = iat_temp;
+            egt_max = egt_temp;
+            batt_min = batt_voltage;
+            batt_max = batt_voltage;
+
+            reset_requested = false;
+            info!("Stats reset complete");
+        }
+
+        // Boost easter egg detection
+        let show_boost_easter_egg = if show_boost_psi {
+            boost * 14.5038 >= BOOST_EASTER_EGG_PSI
+        } else {
+            boost >= BOOST_EASTER_EGG_BAR
+        };
 
         // Update max values
         let oil_updated = oil_temp > oil_max;
@@ -163,160 +403,291 @@ async fn main(_spawner: Spawner) {
         batt_state.update(batt_voltage, batt_updated);
         afr_state.update(afr, false);
 
-        // Draw header
-        if render_state.check_header_dirty(false, 0.0) {
-            draw_header(&mut display, false, 0.0);
+        // FPS calculation
+        fps_frame_count += 1;
+        if last_fps_calc.elapsed() >= Duration::from_secs(1) {
+            current_fps = fps_frame_count as f32 / last_fps_calc.elapsed().as_millis() as f32 * 1000.0;
+            fps_frame_count = 0;
+            last_fps_calc = Instant::now();
         }
 
-        // Draw cells
-        draw_boost_cell(
-            &mut display,
-            0,
-            HEADER_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            boost,
-            boost_max,
-            false,
-            false,
-            blink_on,
-            0,
-        );
+        // Calculate EGT danger state (persists across page switches)
+        let egt_danger_active = egt_temp >= EGT_DANGER_MANIFOLD;
 
-        draw_afr_cell(
-            &mut display,
-            COL_WIDTH,
-            HEADER_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            afr,
-            &to_display_data(&afr_state),
-            blink_on,
-            0,
-            None,
-        );
+        // Calculate target colors and update transitions
+        // AFR color based on value
+        let afr_target = if afr < AFR_RICH_AF {
+            BLUE
+        } else if afr < AFR_RICH {
+            DARK_TEAL
+        } else if afr < AFR_OPTIMAL_MAX {
+            GREEN
+        } else if afr <= AFR_LEAN_CRITICAL {
+            ORANGE
+        } else {
+            RED
+        };
+        color_transitions.set_target(cell_idx::AFR, afr_target);
 
-        draw_batt_cell(
-            &mut display,
-            COL_WIDTH * 2,
-            HEADER_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            batt_voltage,
-            batt_min,
-            batt_max,
-            &to_display_data(&batt_state),
-            blink_on,
-            0,
-            None,
-        );
+        // Battery color based on voltage
+        let batt_target = if batt_voltage < BATT_CRITICAL {
+            RED
+        } else if batt_voltage < BATT_WARNING {
+            ORANGE
+        } else {
+            BLACK
+        };
+        color_transitions.set_target(cell_idx::BATTERY, batt_target);
 
-        draw_temp_cell(
-            &mut display,
-            COL_WIDTH * 3,
-            HEADER_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            "COOL",
-            water_temp,
-            water_max,
-            &to_display_data(&water_state),
-            temp_color_water,
-            is_critical_water,
-            None::<fn(f32) -> bool>,
-            blink_on,
-            0,
-            None,
-        );
+        // Temperature cells - get color from color functions
+        let (water_target, _) = temp_color_water(water_temp);
+        let (oil_target, _) = temp_color_oil_dsg(oil_temp);
+        let (dsg_target, _) = temp_color_oil_dsg(dsg_temp);
+        let (iat_target, _) = temp_color_iat(iat_temp);
+        let (egt_target, _) = temp_color_egt(egt_temp);
 
-        draw_temp_cell(
-            &mut display,
-            0,
-            HEADER_HEIGHT + ROW_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            "OIL",
-            oil_temp,
-            oil_max,
-            &to_display_data(&oil_state),
-            temp_color_oil_dsg,
-            is_critical_oil_dsg,
-            Some(is_low_temp_oil),
-            blink_on,
-            0,
-            None,
-        );
+        color_transitions.set_target(cell_idx::COOLANT, water_target);
+        color_transitions.set_target(cell_idx::OIL, oil_target);
+        color_transitions.set_target(cell_idx::DSG, dsg_target);
+        color_transitions.set_target(cell_idx::IAT, iat_target);
+        color_transitions.set_target(cell_idx::EGT, egt_target);
 
-        draw_temp_cell(
-            &mut display,
-            COL_WIDTH,
-            HEADER_HEIGHT + ROW_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            "DSG",
-            dsg_temp,
-            dsg_max,
-            &to_display_data(&dsg_state),
-            temp_color_oil_dsg,
-            is_critical_oil_dsg,
-            None::<fn(f32) -> bool>,
-            blink_on,
-            0,
-            None,
-        );
+        // Update color transitions (advance interpolation)
+        color_transitions.update();
 
-        draw_temp_cell(
-            &mut display,
-            COL_WIDTH * 2,
-            HEADER_HEIGHT + ROW_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            "IAT",
-            iat_temp,
-            iat_max,
-            &to_display_data(&iat_state),
-            temp_color_iat,
-            is_critical_iat,
-            None::<fn(f32) -> bool>,
-            blink_on,
-            0,
-            None,
-        );
+        // Render based on current page
+        match current_page {
+            Page::Dashboard => {
+                // Draw header
+                if render_state.check_header_dirty(show_fps, current_fps) {
+                    draw_header(&mut display, show_fps, current_fps);
+                }
 
-        draw_temp_cell(
-            &mut display,
-            COL_WIDTH * 3,
-            HEADER_HEIGHT + ROW_HEIGHT,
-            COL_WIDTH,
-            ROW_HEIGHT,
-            "EGT",
-            egt_temp,
-            egt_max,
-            &to_display_data(&egt_state),
-            temp_color_egt,
-            is_critical_egt,
-            None::<fn(f32) -> bool>,
-            blink_on,
-            0,
-            None,
-        );
+                // Draw cells
+                draw_boost_cell(
+                    &mut display,
+                    0,
+                    HEADER_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    boost,
+                    boost_max,
+                    show_boost_psi,
+                    show_boost_easter_egg,
+                    blink_on,
+                    0,
+                );
 
-        // Draw dividers
-        if render_state.need_dividers() {
-            draw_dividers(&mut display);
-            render_state.mark_dividers_drawn();
+                draw_afr_cell(
+                    &mut display,
+                    COL_WIDTH,
+                    HEADER_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    afr,
+                    &to_display_data(&afr_state),
+                    blink_on,
+                    0,
+                    Some(color_transitions.get_current(cell_idx::AFR)),
+                );
+
+                draw_batt_cell(
+                    &mut display,
+                    COL_WIDTH * 2,
+                    HEADER_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    batt_voltage,
+                    batt_min,
+                    batt_max,
+                    &to_display_data(&batt_state),
+                    blink_on,
+                    0,
+                    Some(color_transitions.get_current(cell_idx::BATTERY)),
+                );
+
+                draw_temp_cell(
+                    &mut display,
+                    COL_WIDTH * 3,
+                    HEADER_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    "COOL",
+                    water_temp,
+                    water_max,
+                    &to_display_data(&water_state),
+                    temp_color_water,
+                    is_critical_water,
+                    None::<fn(f32) -> bool>,
+                    blink_on,
+                    0,
+                    Some(color_transitions.get_current(cell_idx::COOLANT)),
+                );
+
+                draw_temp_cell(
+                    &mut display,
+                    0,
+                    HEADER_HEIGHT + ROW_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    "OIL",
+                    oil_temp,
+                    oil_max,
+                    &to_display_data(&oil_state),
+                    temp_color_oil_dsg,
+                    is_critical_oil_dsg,
+                    Some(is_low_temp_oil),
+                    blink_on,
+                    0,
+                    Some(color_transitions.get_current(cell_idx::OIL)),
+                );
+
+                draw_temp_cell(
+                    &mut display,
+                    COL_WIDTH,
+                    HEADER_HEIGHT + ROW_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    "DSG",
+                    dsg_temp,
+                    dsg_max,
+                    &to_display_data(&dsg_state),
+                    temp_color_oil_dsg,
+                    is_critical_oil_dsg,
+                    None::<fn(f32) -> bool>,
+                    blink_on,
+                    0,
+                    Some(color_transitions.get_current(cell_idx::DSG)),
+                );
+
+                draw_temp_cell(
+                    &mut display,
+                    COL_WIDTH * 2,
+                    HEADER_HEIGHT + ROW_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    "IAT",
+                    iat_temp,
+                    iat_max,
+                    &to_display_data(&iat_state),
+                    temp_color_iat,
+                    is_critical_iat,
+                    None::<fn(f32) -> bool>,
+                    blink_on,
+                    0,
+                    Some(color_transitions.get_current(cell_idx::IAT)),
+                );
+
+                draw_temp_cell(
+                    &mut display,
+                    COL_WIDTH * 3,
+                    HEADER_HEIGHT + ROW_HEIGHT,
+                    COL_WIDTH,
+                    ROW_HEIGHT,
+                    "EGT",
+                    egt_temp,
+                    egt_max,
+                    &to_display_data(&egt_state),
+                    temp_color_egt,
+                    is_critical_egt,
+                    None::<fn(f32) -> bool>,
+                    blink_on,
+                    0,
+                    Some(color_transitions.get_current(cell_idx::EGT)),
+                );
+
+                // Draw dividers
+                if render_state.need_dividers() {
+                    draw_dividers(&mut display);
+                    render_state.mark_dividers_drawn();
+                }
+
+                // Render popup (user popup takes priority over danger warning)
+                if let Some(ref popup) = active_popup {
+                    match popup {
+                        Popup::Reset(_) => draw_reset_popup(&mut display),
+                        Popup::Fps(_) => draw_fps_toggle_popup(&mut display, show_fps),
+                        Popup::BoostUnit(_) => draw_boost_unit_popup(&mut display, show_boost_psi),
+                    }
+                } else if egt_danger_active {
+                    draw_danger_manifold_popup(&mut display, blink_on);
+                }
+            }
+
+            Page::Debug => {
+                // Simple debug page placeholder
+                // TODO: Implement full debug page similar to simulator
+                use core::fmt::Write;
+
+                use dashboard_common::colors::{GREEN, WHITE};
+                use dashboard_common::styles::LABEL_FONT;
+                use embedded_graphics::mono_font::MonoTextStyle;
+                use embedded_graphics::text::Text;
+                use heapless::String;
+
+                let header_style = MonoTextStyle::new(LABEL_FONT, GREEN);
+                let value_style = MonoTextStyle::new(LABEL_FONT, WHITE);
+
+                Text::new("DEBUG VIEW", Point::new(4, 12), header_style)
+                    .draw(&mut display)
+                    .ok();
+
+                let mut fps_str: String<16> = String::new();
+                let _ = write!(fps_str, "FPS: {:.1}", current_fps);
+                Text::new(&fps_str, Point::new(4, 30), value_style)
+                    .draw(&mut display)
+                    .ok();
+
+                let mut frame_str: String<20> = String::new();
+                let _ = write!(frame_str, "Frame: {}", frame_count);
+                Text::new(&frame_str, Point::new(4, 45), value_style)
+                    .draw(&mut display)
+                    .ok();
+
+                Text::new("Press Y to return", Point::new(4, 220), value_style)
+                    .draw(&mut display)
+                    .ok();
+            }
         }
+
+        // Update danger popup state for next frame (outside page match)
+        prev_egt_danger_active = egt_danger_active;
 
         render_state.end_frame();
         frame_count = frame_count.wrapping_add(1);
+        page_just_switched = false;
 
-        // Toggle blue LED every 30 frames (~1 sec) to show loop is running
-        if frame_count.is_multiple_of(30) {
-            led_b.toggle();
+        // Toggle blue LED every second to show loop is running (time-based)
+        if (elapsed_ms / 1000).is_multiple_of(2) {
+            led_b.set_low(); // ON
+        } else {
+            led_b.set_high(); // OFF
         }
 
-        // Target ~30 FPS
-        Timer::after_millis(33).await;
+        // Target ~30 FPS with fast button polling
+        // Poll buttons every 10ms during the frame delay to catch quick presses
+        for _ in 0..3 {
+            Timer::after_millis(10).await;
+
+            // Fast button polling - check buttons during frame delay
+            if btn_x_state.just_pressed(btn_x.is_low()) && current_page == Page::Dashboard {
+                show_fps = !show_fps;
+                active_popup = Some(Popup::Fps(Instant::now()));
+            }
+            if btn_y_state.just_pressed(btn_y.is_low()) {
+                current_page = current_page.toggle();
+                page_just_switched = true;
+                active_popup = None;
+            }
+            if btn_a_state.just_pressed(btn_a.is_low()) && current_page == Page::Dashboard {
+                show_boost_psi = !show_boost_psi;
+                active_popup = Some(Popup::BoostUnit(Instant::now()));
+            }
+            if btn_b_state.just_pressed(btn_b.is_low()) && current_page == Page::Dashboard {
+                reset_requested = true;
+                active_popup = Some(Popup::Reset(Instant::now()));
+            }
+        }
     }
 }
 

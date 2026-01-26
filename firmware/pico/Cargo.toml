@@ -9,32 +9,18 @@ name = "pico"
 path = "src/main.rs"
 
 [dependencies]
-dashboard-common = { path = "../common" }
-panic-probe = { version = "1.0.0", features = ["print-defmt"] }
-embassy-executor = { version = "0.9.1", features = [
-    "arch-cortex-m",
-    "executor-thread",
-    "defmt",
-] }
-embassy-time = "0.5.0"
-embassy-rp = { version = "0.9.0", features = [
-    "time-driver",
-    "critical-section-impl",
-    "rp235xa",
-    "binary-info",
-    "defmt",
-] }
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
+dashboard-common = { path = "../common" }
 defmt = "1.0.1"
 defmt-rtt = "1.1.0"
-
-# Display driver
-mipidsi = "0.8"
-display-interface-spi = "0.5"
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "defmt", "executor-thread"] }
+embassy-rp = { version = "0.9.0", features = ["binary-info", "critical-section-impl", "defmt", "rp235xa", "time-driver"] }
+embassy-time = "0.5.0"
 embedded-graphics = "0.8.1"
 embedded-hal = "1.0"
-embedded-hal-bus = "0.2"
-
-# Math functions for no_std
-libm = "0.2"
+embedded-hal-bus = "0.3"
+heapless = "0.9.2"
+micromath = "2.1"
+mipidsi = "0.9"
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
