@@ -14,6 +14,7 @@
 
 mod display;
 mod screens;
+mod st7789;
 
 use dashboard_common::SensorState;
 use dashboard_common::animations::ColorTransition;
@@ -187,7 +188,7 @@ async fn main(_spawner: Spawner) {
     let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, display_spi_config());
 
     // Initialize display (no reset pin on PIM715)
-    let mut display = init_display(spi, cs, dc);
+    let mut display = init_display(spi, dc, cs).await;
 
     info!("Display initialized!");
 
@@ -649,6 +650,9 @@ async fn main(_spawner: Spawner) {
                     .ok();
             }
         }
+
+        // Async flush framebuffer to display via DMA
+        display.flush().await;
 
         // Update danger popup state for next frame (outside page match)
         prev_egt_danger_active = egt_danger_active;
