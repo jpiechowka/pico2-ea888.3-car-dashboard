@@ -12,6 +12,7 @@ A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA8
 │   ├── common/         # Shared no_std library (colors, config, widgets, SensorState)
 │   ├── simulator/      # Windows simulator binary (uses SDL2)
 │   ├── pico/           # RP2350 Embassy firmware (drives ST7789 display)
+    ├── tools/          # Bundled tools like picotool
 │   └── vendor/sdl2/    # Bundled SDL2 (lib + dll)
 ├── hardware/           # Hardware schematics and PCB designs
 ├── mechanical/         # CAD files and mechanical designs
