@@ -13,7 +13,11 @@
       "Bash(cargo search:*)",
       "Bash(curl:*)",
       "Bash(git add:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.embassy.dev)",
+      "Bash(grep:*)"
     ]
   }
 }
