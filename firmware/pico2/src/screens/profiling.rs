@@ -12,7 +12,7 @@
 //! - **Max FPS**: Theoretical maximum based on total frame time
 //! - **Buffer swaps**: Number of double-buffer swaps
 //! - **Buffer waits**: Times render had to wait for flush (should be 0)
-//! - **Render/Flush buffers**: Current buffer indices (0 or 1)
+//! - **Render/Flush buffers**: Current buffer indices (0 or 1) - may show same value due to sampling timing
 //!
 //! # Right Column - Memory & System
 //!
@@ -22,6 +22,11 @@
 //! - **CPU**: Clock frequency (150/250/375 MHz based on feature)
 //! - **SPI**: Display bus speed (62.5 MHz max)
 //! - **FB**: Framebuffer configuration (2×150K for double buffering)
+//!
+//! # Right Column - CPU Utilization
+//!
+//! - **Util**: CPU utilization percentage (0-100%, yellow if >80%)
+//! - **Cycles**: CPU cycles used per frame (in thousands)
 
 use core::fmt::Write;
 
@@ -54,6 +59,10 @@ pub struct ProfilingData {
     pub stack_total_kb: u32,
     pub static_ram_kb: u32,
     pub ram_total_kb: u32,
+
+    // CPU utilization
+    pub cpu_util_percent: u32,
+    pub frame_cycles: u32,
 }
 
 /// Draw the profiling/debug page.
@@ -218,9 +227,33 @@ pub fn draw_profiling_page<D>(
     s.clear();
     let _ = write!(s, "FB: 2x{}K", crate::memory::FRAMEBUFFER_SIZE / 1024);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    y += line_height + 4;
+
+    // === RIGHT COLUMN: CPU Utilization ===
+    Text::new("CPU UTIL", Point::new(col2, y), header_style)
+        .draw(display)
+        .ok();
+    y += line_height;
+
+    s.clear();
+    let _ = write!(s, "Util: {}%", data.cpu_util_percent);
+    // Highlight if high utilization (>80%)
+    let util_style = if data.cpu_util_percent > 80 {
+        highlight_style
+    } else {
+        value_style
+    };
+    Text::new(&s, Point::new(col2, y), util_style).draw(display).ok();
+    y += line_height;
+
+    s.clear();
+    let _ = write!(s, "Cycles: {}K", data.frame_cycles / 1000);
+    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    // y is not used after this, suppress warning
+    let _ = y;
 
     // Footer
-    Text::new("Press Y to return", Point::new(col1, 226), header_style)
+    Text::new("Press Y for Logs", Point::new(col1, 226), header_style)
         .draw(display)
         .ok();
 }

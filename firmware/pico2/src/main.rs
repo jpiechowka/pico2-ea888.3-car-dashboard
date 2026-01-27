@@ -11,7 +11,7 @@
 //! # Button Controls
 //!
 //! - **X**: Toggle FPS display (Dashboard only)
-//! - **Y**: Switch between Dashboard and Debug pages
+//! - **Y**: Cycle through pages (Dashboard → Debug → Logs → Dashboard)
 //! - **A**: Toggle boost unit BAR/PSI (Dashboard only)
 //! - **B**: Reset min/max/avg statistics (Dashboard only)
 
@@ -37,6 +37,8 @@ mod st7789;
 mod styles;
 mod thresholds;
 mod widgets;
+
+mod cpu_cycles;
 
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
@@ -357,6 +359,17 @@ async fn main(spawner: Spawner) {
     #[cfg(not(any(feature = "overclock", feature = "turbo-oc")))]
     let p = embassy_rp::init(Default::default());
 
+    // Initialize DWT cycle counter for CPU utilization measurement
+    let cpu_freq_hz = if cfg!(feature = "turbo-oc") {
+        375_000_000
+    } else if cfg!(feature = "overclock") {
+        250_000_000
+    } else {
+        150_000_000
+    };
+    cpu_cycles::init(cpu_freq_hz);
+    info!("DWT cycle counter initialized at {} MHz", cpu_freq_hz / 1_000_000);
+
     // Initialize RGB LED (active-low: Low = ON)
     // PIM715: Red=26, Green=27, Blue=28
     let mut _led_r = Output::new(p.PIN_26, Level::High); // Off
@@ -381,6 +394,20 @@ async fn main(spawner: Spawner) {
     // Initialize double buffer
     // SAFETY: Only one DoubleBuffer instance exists
     let mut double_buffer = unsafe { DoubleBuffer::new() };
+
+    // Clear both framebuffers before boot screens to prevent grainy noise
+    {
+        let buffer = unsafe { double_buffer.render_buffer() };
+        St7789Renderer::new(buffer).clear(BLACK).ok();
+    }
+    flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+    double_buffer.swap();
+    {
+        let buffer = unsafe { double_buffer.render_buffer() };
+        St7789Renderer::new(buffer).clear(BLACK).ok();
+    }
+    flusher.flush_buffer(unsafe { double_buffer.get_buffer(1) }).await;
+    double_buffer.swap(); // Back to buffer 0
 
     // Show boot screens using single-buffer mode for simplicity
     {
@@ -416,20 +443,6 @@ async fn main(spawner: Spawner) {
 
     info!("Buttons initialized!");
 
-    // Clear both buffers
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut renderer = St7789Renderer::new(buffer);
-        renderer.clear(BLACK).ok();
-    }
-    double_buffer.swap();
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut renderer = St7789Renderer::new(buffer);
-        renderer.clear(BLACK).ok();
-    }
-    double_buffer.swap();
-
     // UI state
     let mut current_page = Page::Dashboard;
     let mut clear_frames_remaining: u8 = 0; // Clear both buffers on page switch
@@ -451,6 +464,10 @@ async fn main(spawner: Spawner) {
     let mut flush_time_us = 0u32;
     let mut total_frame_time_us = 0u32;
     let mut last_profile_log = Instant::now();
+
+    // CPU cycle tracking
+    let mut frame_cycles_used = 0u32;
+    let mut cpu_util_percent = 0u32;
 
     // Track if flush is in progress (for first frame)
     let mut flush_in_progress = false;
@@ -502,6 +519,7 @@ async fn main(spawner: Spawner) {
 
     loop {
         let frame_start = Instant::now();
+        let frame_cycles_start = cpu_cycles::read();
 
         // Time-based blink cycle (200ms per state)
         let elapsed_ms = animation_start.elapsed().as_millis() as u32;
@@ -511,6 +529,7 @@ async fn main(spawner: Spawner) {
         if btn_x_state.just_pressed(btn_x.is_low()) && current_page == Page::Dashboard {
             show_fps = !show_fps;
             active_popup = Some(Popup::Fps(Instant::now()));
+            clear_frames_remaining = 2; // Clear both buffers when FPS toggles
             info!("FPS: {}", if show_fps { "ON" } else { "OFF" });
         }
 
@@ -545,6 +564,7 @@ async fn main(spawner: Spawner) {
             && popup.is_expired()
         {
             active_popup = None;
+            clear_frames_remaining = 2; // Clear both buffers when popup closes
         }
 
         // Update render state (include danger popup in combined visibility)
@@ -702,10 +722,8 @@ async fn main(spawner: Spawner) {
         // Clear display when needed (both buffers need clearing on page switch)
         if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
             display.clear(BLACK).ok();
-            if clear_frames_remaining > 0 {
-                clear_frames_remaining -= 1;
-                render_state.mark_display_cleared();
-            }
+            render_state.mark_display_cleared(); // Always mark when cleared
+            clear_frames_remaining = clear_frames_remaining.saturating_sub(1);
         }
 
         // Render based on current page
@@ -890,6 +908,9 @@ async fn main(spawner: Spawner) {
                         stack_total_kb: mem_stats.stack_total / 1024,
                         static_ram_kb: mem_stats.static_ram / 1024,
                         ram_total_kb: mem_stats.ram_total / 1024,
+                        // CPU utilization
+                        cpu_util_percent,
+                        frame_cycles: frame_cycles_used,
                     },
                 );
             }
@@ -917,6 +938,11 @@ async fn main(spawner: Spawner) {
         // Get flush time from previous frame (atomic read)
         flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
         total_frame_time_us = frame_start.elapsed().as_micros() as u32;
+
+        // Calculate CPU utilization from cycle counts
+        let frame_cycles_end = cpu_cycles::read();
+        frame_cycles_used = cpu_cycles::elapsed(frame_cycles_start, frame_cycles_end);
+        cpu_util_percent = cpu_cycles::calc_util_percent(frame_cycles_used, total_frame_time_us);
 
         // Log profiling data every 2 seconds
         if last_profile_log.elapsed() >= Duration::from_secs(2) {

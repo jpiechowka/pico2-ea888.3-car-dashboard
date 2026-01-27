@@ -207,6 +207,7 @@ firmware/
         ├── sensor_state.rs # Sensor state tracking
         ├── pages.rs    # Page navigation enum (Dashboard, Debug, Logs)
         ├── log_buffer.rs # Log buffer with levels and dual-output macros
+        ├── cpu_cycles.rs # CPU cycle counter via DWT (utilization measurement)
         └── memory.rs   # Memory profiling (stack/RAM usage)
 ```
 
@@ -246,7 +247,7 @@ Core 0 (Main Task):         Core 1 (Flush Task):
 | Other statics | ~32KB | Estimated overhead |
 | Stack | ~172KB | Remaining for stack/heap |
 
-Memory stats are collected via the MSP register and displayed on the Debug page.
+Memory stats are collected via the SP register (inline assembly) and displayed on the Debug page.
 
 ### Performance Features
 

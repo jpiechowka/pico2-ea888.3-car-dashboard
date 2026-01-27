@@ -10,10 +10,9 @@
 //!
 //! # Stack
 //!
-//! Embassy uses a single main stack. Stack grows downward from the top of RAM.
-//! We can measure usage by comparing MSP to the stack start address.
-
-use cortex_m::register::msp;
+//! Embassy uses PSP (Process Stack Pointer) for task execution.
+//! Stack grows downward from the top of RAM. We measure usage by
+//! reading SP directly via inline assembly (gets PSP in task context).
 
 /// RP2350 RAM configuration.
 const RAM_START: u32 = 0x2000_0000;
@@ -47,14 +46,28 @@ impl MemoryStats {
     /// Collect current memory statistics.
     ///
     /// # Note
-    /// Stack usage is measured from the current MSP value. The "total" stack
-    /// size is estimated since we don't have precise linker symbol access.
+    /// Stack usage is measured from the current SP value (PSP in task context).
+    /// The "total" stack size is estimated since we don't have precise linker symbol access.
     pub fn collect() -> Self {
-        let stack_ptr = msp::read();
+        // Read current stack pointer via inline asm (gets PSP in task context)
+        let stack_ptr: u32;
+        #[cfg(target_arch = "arm")]
+        unsafe {
+            core::arch::asm!("mov {}, sp", out(reg) stack_ptr);
+        }
+        #[cfg(not(target_arch = "arm"))]
+        {
+            stack_ptr = 0; // Placeholder for non-ARM (tests)
+        }
 
-        // Stack grows down from RAM_END
-        // Stack usage = RAM_END - current_SP
-        let stack_used = RAM_END.saturating_sub(stack_ptr);
+        // Validate stack pointer is within RAM bounds
+        let stack_used = if (RAM_START..=RAM_END).contains(&stack_ptr) {
+            // Stack grows down from RAM_END
+            // Stack usage = RAM_END - current_SP
+            RAM_END.saturating_sub(stack_ptr)
+        } else {
+            0 // Invalid SP, return 0
+        };
 
         // Estimate total stack size (RAM minus static allocations)
         // This is approximate - actual stack region depends on linker

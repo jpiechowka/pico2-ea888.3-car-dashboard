@@ -7,6 +7,10 @@
 [env]
 DEFMT_LOG = "debug"
 
+# Default target for all builds (Pico 2 / RP2350)
+[build]
+target = "thumbv8m.main-none-eabihf"
+
 # ARM Cortex-M33 target settings (Pico 2 / RP2350)
 [target.thumbv8m.main-none-eabihf]
 rustflags = [
@@ -17,19 +21,19 @@ rustflags = [
 ]
 runner = "tools/picotool.exe load -u -v -x -t elf"
 
-# Convenient aliases
+# Convenient aliases (target inherited from [build])
 [alias]
-pico2 = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release"
-pico2-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release"
-pico2-fast = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline"
-pico2-fast-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline"
+pico2 = "build -p dashboard-pico2 --release"
+pico2-run = "run -p dashboard-pico2 --release"
+pico2-fast = "build -p dashboard-pico2 --release --features simple-outline"
+pico2-fast-run = "run -p dashboard-pico2 --release --features simple-outline"
 # Overclock: 250 MHz @ 1.10V (optimal SPI timing)
-pico2-oc = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features overclock"
-pico2-oc-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features overclock"
-pico2-fast-oc = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,overclock"
-pico2-fast-oc-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,overclock"
+pico2-oc = "build -p dashboard-pico2 --release --features overclock"
+pico2-oc-run = "run -p dashboard-pico2 --release --features overclock"
+pico2-fast-oc = "build -p dashboard-pico2 --release --features simple-outline,overclock"
+pico2-fast-oc-run = "run -p dashboard-pico2 --release --features simple-outline,overclock"
 # Turbo: 375 MHz @ 1.30V (maximum performance)
-pico2-turbo = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features turbo-oc"
-pico2-turbo-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features turbo-oc"
-pico2-fast-turbo = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,turbo-oc"
-pico2-fast-turbo-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,turbo-oc"
+pico2-turbo = "build -p dashboard-pico2 --release --features turbo-oc"
+pico2-turbo-run = "run -p dashboard-pico2 --release --features turbo-oc"
+pico2-fast-turbo = "build -p dashboard-pico2 --release --features simple-outline,turbo-oc"
+pico2-fast-turbo-run = "run -p dashboard-pico2 --release --features simple-outline,turbo-oc"
