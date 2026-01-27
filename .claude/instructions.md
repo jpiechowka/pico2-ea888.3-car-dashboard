@@ -224,12 +224,14 @@ Use `cargo pico-fast` or `cargo pico-fast-run` to enable the `simple-outline` fe
 
 **Overclocking:**
 
-The `dashboard-pico` crate has an `overclock` feature that doubles the CPU clock from 150 MHz to 300 MHz:
+The `dashboard-pico` crate has an `overclock` feature that increases the CPU clock from 150 MHz to 250 MHz:
 
-| Mode                    | CPU Clock | Description                                    |
-|-------------------------|-----------|------------------------------------------------|
-| Default                 | 150 MHz   | Stock RP2350 frequency                         |
-| `overclock` (`-oc`)     | 300 MHz   | 2x overclock at default 1.1V (safe, no cooling)|
+| Mode                    | CPU Clock | SPI Clock | Description                                    |
+|-------------------------|-----------|-----------|------------------------------------------------|
+| Default                 | 150 MHz   | 37.5 MHz  | Stock RP2350 frequency                         |
+| `overclock` (`-oc`)     | 250 MHz   | 62.5 MHz  | 1.67x overclock, optimal SPI (ST7789 max)      |
+
+Note: 250 MHz was chosen over 300 MHz because it divides evenly to 62.5 MHz SPI (250/4=62.5). At 300 MHz, the best achievable SPI is 50 MHz (300/6=50), which is actually slower.
 
 Combine both features with `cargo pico-fast-oc` for maximum performance.
 

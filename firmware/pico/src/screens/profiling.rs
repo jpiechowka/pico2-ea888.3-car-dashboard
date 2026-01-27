@@ -97,7 +97,7 @@ pub fn draw_profiling_page<D>(
 
     // Build info - CPU speed
     #[cfg(feature = "overclock")]
-    Text::new("CPU: 300 MHz (OC)", Point::new(4, 165), value_style)
+    Text::new("CPU: 250 MHz (OC)", Point::new(4, 165), value_style)
         .draw(display)
         .ok();
 

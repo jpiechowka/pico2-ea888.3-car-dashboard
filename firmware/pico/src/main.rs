@@ -234,15 +234,16 @@ async fn main(spawner: Spawner) {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
-        // Overclock settings - adjust these values as needed
-        const OVERCLOCK_FREQ_HZ: u32 = 300_000_000; // 300 MHz (2x default)
+        // Overclock to 250 MHz for optimal SPI timing:
+        // - SPI clock = 250 MHz / 4 = 62.5 MHz (exactly ST7789 maximum)
+        // - 300 MHz would give 300/6 = 50 MHz SPI (slower due to divider math)
+        const OVERCLOCK_FREQ_HZ: u32 = 250_000_000; // 250 MHz (1.67x default)
         const OVERCLOCK_VOLTAGE: CoreVoltage = CoreVoltage::V1_10; // 1.10V (default, safe)
 
         let mut config = Config::default();
-        // Safe according to Pimoroni testing (312 MHz achieved at 1.1V)
         config.clocks = ClockConfig::system_freq(OVERCLOCK_FREQ_HZ).expect("Invalid overclock frequency");
         config.clocks.core_voltage = OVERCLOCK_VOLTAGE;
-        info!("Overclocking to 300 MHz @ 1.10V");
+        info!("Overclocking to 250 MHz @ 1.10V (SPI 62.5 MHz)");
         embassy_rp::init(config)
     };
 
