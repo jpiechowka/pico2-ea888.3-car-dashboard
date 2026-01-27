@@ -40,10 +40,12 @@ use crate::render::CELL_COUNT;
 
 /// Maximum horizontal shake offset in pixels.
 /// Larger values = more dramatic shake, but may cause text clipping.
+#[allow(dead_code)]
 const SHAKE_AMPLITUDE: f32 = 3.0;
 
 /// Shake oscillation speed. Higher = faster wiggle.
 /// At 50 FPS, 0.5 gives roughly 4 wiggles per second.
+#[allow(dead_code)]
 const SHAKE_FREQUENCY: f32 = 0.5;
 
 // =============================================================================
@@ -75,6 +77,7 @@ const COLOR_SNAP_THRESHOLD: i32 = 2;
 /// - `frame`: Current frame counter (used for timing)
 /// - `is_critical`: Whether the sensor is in critical state
 #[inline]
+#[allow(dead_code)]
 pub fn calculate_shake_offset(
     frame: u32,
     is_critical: bool,

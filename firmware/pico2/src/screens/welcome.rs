@@ -2,40 +2,20 @@
 //!
 //! Displays golden "AEZAKMI" text with black shadow, a red/black stripe,
 //! and 5 golden stars that blink in sequence (GTA San Andreas style).
-//!
-//! # Layout (320x240 screen, 1.5x scale, vertically centered)
-//!
-//! ```text
-//! ┌──────────────────────────────────────┐
-//! │              (64px margin)           │
-//! │         ╔════════════════╗           │
-//! │         ║   AEZAKMI      ║  48px     │  Golden text, black shadow
-//! │         ╚════════════════╝           │
-//! │              (13px gap)              │
-//! │         ══════════════════           │  Red/black stripe (27px)
-//! │         ★    ★    ★    ★    ★        │  Stars overlap stripe by ~4px
-//! │              (64px margin)           │
-//! └──────────────────────────────────────┘
-//! ```
 
-use std::thread;
-use std::time::{Duration, Instant};
-
-use dashboard_common::colors::WHITE;
+use embassy_time::{Duration, Timer};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, Triangle};
-use embedded_graphics_simulator::{SimulatorDisplay, SimulatorEvent, Window};
+
+use crate::colors::WHITE;
 
 const SCREEN_CENTER_X: i32 = 160;
-const WELCOME_DURATION_SECS: u64 = 8;
 
 // Vertically centered layout (screen is 240px tall)
-// Content height: text(48) + gap(13) + stripe(27) + overlap(-4) + stars(27/2) ≈ 112px
-// Top margin: (240 - 112) / 2 = 64px
 const TEXT_Y: i32 = 64;
 const STRIPE_Y: i32 = 128;
-const STARS_Y: i32 = 162; // Stars overlap stripe bottom by ~4px
+const STARS_Y: i32 = 162;
 
 const COLOR_BLACK: Rgb565 = Rgb565::BLACK;
 const COLOR_DARK_GRAY: Rgb565 = Rgb565::new(4, 8, 4);
@@ -48,6 +28,7 @@ const COLOR_DIM_GOLD: Rgb565 = Rgb565::new(12, 20, 0);
 const LETTER_WIDTH: i32 = 33;
 const LETTER_SPACING: i32 = 3;
 
+// Letter pixel definitions (dx, dy, width, height) at base scale
 const LETTER_A: &[(i32, i32, u32, u32)] = &[(0, 8, 5, 24), (15, 8, 5, 24), (5, 0, 10, 8), (5, 14, 10, 5)];
 
 const LETTER_E: &[(i32, i32, u32, u32)] = &[(0, 0, 5, 32), (5, 0, 15, 5), (5, 13, 12, 5), (5, 27, 15, 5)];
@@ -78,26 +59,30 @@ const LETTER_M: &[(i32, i32, u32, u32)] = &[(0, 0, 5, 32), (15, 0, 5, 32), (5, 4
 
 const LETTER_I: &[(i32, i32, u32, u32)] = &[(2, 0, 16, 5), (7, 5, 6, 22), (2, 27, 16, 5)];
 
-fn draw_rect(
-    display: &mut SimulatorDisplay<Rgb565>,
+fn draw_rect<D>(
+    display: &mut D,
     x: i32,
     y: i32,
     w: u32,
     h: u32,
     color: Rgb565,
-) {
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     Rectangle::new(Point::new(x, y), Size::new(w, h))
         .into_styled(PrimitiveStyle::with_fill(color))
         .draw(display)
         .ok();
 }
 
-fn draw_letter(
-    display: &mut SimulatorDisplay<Rgb565>,
+fn draw_letter<D>(
+    display: &mut D,
     letter: &[(i32, i32, u32, u32)],
     base_x: i32,
     base_y: i32,
-) {
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     // Apply 1.5x scale (3/2) to all coordinates and sizes
     // Black shadow (offset scaled from 2 to 3)
     for &(dx, dy, w, h) in letter {
@@ -113,10 +98,12 @@ fn draw_letter(
     }
 }
 
-fn draw_aezakmi(
-    display: &mut SimulatorDisplay<Rgb565>,
+fn draw_aezakmi<D>(
+    display: &mut D,
     y: i32,
-) {
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     let letters: [&[(i32, i32, u32, u32)]; 7] = [LETTER_A, LETTER_E, LETTER_Z, LETTER_A, LETTER_K, LETTER_M, LETTER_I];
 
     let total_width = (LETTER_WIDTH + LETTER_SPACING) * 7 - LETTER_SPACING;
@@ -128,10 +115,12 @@ fn draw_aezakmi(
     }
 }
 
-fn draw_stripe(
-    display: &mut SimulatorDisplay<Rgb565>,
+fn draw_stripe<D>(
+    display: &mut D,
     y: i32,
-) {
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     // Scaled stripe (1.5x: 180->270, heights scaled proportionally)
     let stripe_width: u32 = 260;
     let start_x = SCREEN_CENTER_X - (stripe_width as i32) / 2;
@@ -141,14 +130,16 @@ fn draw_stripe(
     draw_rect(display, start_x, y + 12, stripe_width, 9, COLOR_BLACK);
 }
 
-fn draw_star(
-    display: &mut SimulatorDisplay<Rgb565>,
+fn draw_star<D>(
+    display: &mut D,
     center_x: i32,
     center_y: i32,
     size: i32,
     color: Rgb565,
     outline_color: Rgb565,
-) {
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     let outer_radius = size;
     let inner_radius = size * 38 / 100;
 
@@ -157,6 +148,7 @@ fn draw_star(
     const COS_INNER: [i32; 5] = [-59, -95, 0, 95, 59];
     const SIN_INNER: [i32; 5] = [81, -31, -100, -31, 81];
 
+    // Draw outline triangles
     for i in 0..5 {
         let next = (i + 1) % 5;
 
@@ -178,6 +170,7 @@ fn draw_star(
             .ok();
     }
 
+    // Draw fill triangles (slightly smaller)
     let fill_outer = outer_radius * 85 / 100;
     let fill_inner = inner_radius * 85 / 100;
 
@@ -203,11 +196,13 @@ fn draw_star(
     }
 }
 
-fn draw_stars(
-    display: &mut SimulatorDisplay<Rgb565>,
+fn draw_stars<D>(
+    display: &mut D,
     y: i32,
     frame: u32,
-) {
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     // Scaled stars (1.5x: size 18->27, spacing 40->56)
     let star_size = 27;
     let star_spacing = 56;
@@ -217,13 +212,15 @@ fn draw_stars(
     let cycle_frame = frame % 210;
     let lit_count = if cycle_frame < 150 {
         (cycle_frame / 30 + 1).min(5) as usize
+    } else if (cycle_frame / 10).is_multiple_of(2) {
+        5
     } else {
-        if (cycle_frame / 10).is_multiple_of(2) { 5 } else { 0 }
+        0
     };
 
-    for i in 0..5 {
-        let x = start_x + i as i32 * star_spacing;
-        let is_lit = i < lit_count;
+    for i in 0i32..5 {
+        let x = start_x + i * star_spacing;
+        let is_lit = (i as usize) < lit_count;
 
         if is_lit {
             draw_star(display, x, y, star_size, COLOR_GOLD, COLOR_DARK_GOLD);
@@ -233,30 +230,34 @@ fn draw_stars(
     }
 }
 
-pub fn run_welcome_screen(
-    display: &mut SimulatorDisplay<Rgb565>,
-    window: &mut Window,
-) -> bool {
-    let welcome_start = Instant::now();
-    let welcome_duration = Duration::from_secs(WELCOME_DURATION_SECS);
-    let mut frame: u32 = 0;
+/// Draw a single frame of the welcome screen.
+///
+/// This is a non-async function that renders one frame. Call this in a loop
+/// with appropriate timing and flush the display after each call.
+pub fn draw_welcome_frame<D>(
+    display: &mut D,
+    frame: u32,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    display.clear(WHITE).ok();
 
-    while welcome_start.elapsed() < welcome_duration {
-        for ev in window.events() {
-            if matches!(ev, SimulatorEvent::Quit) {
-                return false;
-            }
-        }
+    draw_aezakmi(display, TEXT_Y);
+    draw_stripe(display, STRIPE_Y);
+    draw_stars(display, STARS_Y, frame);
+}
 
-        display.clear(WHITE).ok();
+/// Run the welcome screen with AEZAKMI logo and blinking stars.
+///
+/// This renders the complete welcome sequence to the display.
+/// Note: The display is only cleared and drawn, NOT flushed - caller must flush.
+pub async fn show_welcome_screen<D>(display: &mut D)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    // Just draw a single frame with all stars lit (simplified boot screen)
+    draw_welcome_frame(display, 150); // Frame 150 = all 5 stars lit
 
-        draw_aezakmi(display, TEXT_Y);
-        draw_stripe(display, STRIPE_Y);
-        draw_stars(display, STARS_Y, frame);
-
-        window.update(display);
-        thread::sleep(Duration::from_millis(16));
-        frame = frame.wrapping_add(1);
-    }
-    true
+    // Wait for the welcome duration
+    Timer::after(Duration::from_millis(2000)).await;
 }

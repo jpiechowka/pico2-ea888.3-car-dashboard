@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["common", "pico", "simulator"]
+members = ["pico2"]
 
 [profile.release]
 codegen-units = 1

@@ -119,6 +119,7 @@ pub struct SensorDisplayData<'a> {
 
 impl<'a> SensorDisplayData<'a> {
     /// Create display data with no graph/trends (minimal display).
+    #[allow(dead_code)]
     pub const fn empty() -> Self {
         Self {
             trend: None,
@@ -138,6 +139,7 @@ impl<'a> SensorDisplayData<'a> {
 // Color Helper Functions
 // =============================================================================
 
+#[allow(dead_code)]
 pub fn label_color_for_bg(bg_color: Rgb565) -> Rgb565 {
     let luma = calculate_luminance(bg_color);
     if luma < 128 { WHITE } else { BLACK }
@@ -184,6 +186,7 @@ pub fn temp_color_water(temp: f32) -> (Rgb565, Rgb565) {
 
 pub fn is_critical_oil_dsg(temp: f32) -> bool { temp >= OIL_DSG_CRITICAL }
 pub fn is_critical_water(temp: f32) -> bool { temp > COOLANT_CRITICAL }
+#[allow(dead_code)]
 pub fn is_critical_afr(afr: f32) -> bool { afr > AFR_LEAN_CRITICAL }
 
 pub fn temp_color_iat(temp: f32) -> (Rgb565, Rgb565) {

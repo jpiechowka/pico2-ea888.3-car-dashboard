@@ -2,6 +2,12 @@
 //!
 //! Displays the OBD-II dashboard on the Pimoroni PIM715 Display Pack 2.8".
 //!
+//! # Architecture
+//!
+//! Uses double buffering for parallel render/flush:
+//! - Main task: Renders to buffer A, signals flush, swaps to buffer B, continues rendering
+//! - Flush task: Waits for signal, flushes completed buffer via DMA
+//!
 //! # Button Controls
 //!
 //! - **X**: Toggle FPS display (Dashboard only)
@@ -11,18 +17,48 @@
 
 #![no_std]
 #![no_main]
+// Crate-level lints (from dashboard-common)
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
 
+mod animations;
+mod colors;
+mod config;
 mod display;
+mod log_buffer;
+mod memory;
+mod pages;
+mod render;
 mod screens;
+mod sensor_state;
 mod st7789;
+mod styles;
+mod thresholds;
+mod widgets;
 
-use dashboard_common::SensorState;
-use dashboard_common::animations::ColorTransition;
-use dashboard_common::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
-use dashboard_common::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
-use dashboard_common::pages::Page;
-use dashboard_common::render::{RenderState, cell_idx};
-use dashboard_common::thresholds::{
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+
+use defmt::info;
+use embassy_executor::Spawner;
+use embassy_rp::gpio::{Input, Level, Output, Pull};
+use embassy_rp::spi::Spi;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
+use embassy_time::{Duration, Instant, Timer};
+use embedded_graphics::prelude::*;
+use {defmt_rtt as _, panic_probe as _};
+
+use crate::animations::ColorTransition;
+use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
+use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
+use crate::pages::Page;
+use crate::render::{RenderState, cell_idx};
+use crate::sensor_state::SensorState;
+use crate::st7789::{DoubleBuffer, St7789Flusher, St7789Renderer};
+use crate::thresholds::{
     AFR_LEAN_CRITICAL,
     AFR_OPTIMAL_MAX,
     AFR_RICH,
@@ -33,7 +69,7 @@ use dashboard_common::thresholds::{
     BOOST_EASTER_EGG_PSI,
     EGT_DANGER_MANIFOLD,
 };
-use dashboard_common::widgets::{
+use crate::widgets::{
     SensorDisplayData,
     draw_afr_cell,
     draw_batt_cell,
@@ -55,15 +91,62 @@ use dashboard_common::widgets::{
     temp_color_oil_dsg,
     temp_color_water,
 };
-use defmt::info;
-use embassy_executor::Spawner;
-use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::spi::Spi;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::watch::Watch;
-use embassy_time::{Duration, Instant, Timer};
-use embedded_graphics::prelude::*;
-use {defmt_rtt as _, panic_probe as _};
+
+// =============================================================================
+// Double Buffering Synchronization
+// =============================================================================
+
+/// Signal to notify flush task which buffer to flush (buffer index).
+static FLUSH_SIGNAL: Signal<CriticalSectionRawMutex, usize> = Signal::new();
+
+/// Signal to notify main task that flush is complete.
+static FLUSH_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Atomic counter for buffer swaps (for profiling).
+static BUFFER_SWAPS: AtomicU32 = AtomicU32::new(0);
+
+/// Atomic counter for times main task waited for flush (for profiling).
+static BUFFER_WAITS: AtomicU32 = AtomicU32::new(0);
+
+/// Current buffer being flushed (for profiling display).
+static FLUSH_BUFFER_IDX: AtomicUsize = AtomicUsize::new(0);
+
+/// Last flush time in microseconds (for profiling).
+static LAST_FLUSH_TIME_US: AtomicU32 = AtomicU32::new(0);
+
+/// Display flush task - runs in parallel with rendering.
+///
+/// Waits for signal from main task, then flushes the completed buffer to display.
+/// This allows the main task to continue rendering to the other buffer.
+#[embassy_executor::task]
+async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
+    info!("Display flush task started");
+
+    loop {
+        // Wait for signal with buffer index to flush
+        let buffer_idx = FLUSH_SIGNAL.wait().await;
+        FLUSH_BUFFER_IDX.store(buffer_idx, Ordering::Relaxed);
+
+        let flush_start = Instant::now();
+
+        // SAFETY: Main task is rendering to the OTHER buffer, so this one is safe to read
+        let buffer = unsafe {
+            if buffer_idx == 0 {
+                &*core::ptr::addr_of!(crate::st7789::FRAMEBUFFER_A)
+            } else {
+                &*core::ptr::addr_of!(crate::st7789::FRAMEBUFFER_B)
+            }
+        };
+
+        // Flush buffer to display via DMA
+        flusher.flush_buffer(buffer).await;
+
+        LAST_FLUSH_TIME_US.store(flush_start.elapsed().as_micros() as u32, Ordering::Relaxed);
+
+        // Signal completion
+        FLUSH_DONE.signal(());
+    }
+}
 
 // =============================================================================
 // Demo Sensor Values (generated by separate async task)
@@ -121,8 +204,8 @@ async fn demo_values_task(
     }
 }
 
-use crate::display::{display_spi_config, init_display};
-use crate::screens::{ProfilingData, draw_profiling_page, show_loading_screen, show_welcome_screen};
+use crate::display::display_spi_config;
+use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, show_loading_screen, show_welcome_screen};
 
 // =============================================================================
 // Popup State Management
@@ -224,6 +307,13 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
 
+// Make framebuffers accessible for the flush task
+pub use crate::st7789::{FRAMEBUFFER_A, FRAMEBUFFER_B};
+
+// Ensure overclock and turbo-oc are mutually exclusive
+#[cfg(all(feature = "overclock", feature = "turbo-oc"))]
+compile_error!("Features 'overclock' and 'turbo-oc' are mutually exclusive. Use one or the other.");
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("OBD-II Dashboard starting...");
@@ -247,7 +337,24 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    #[cfg(not(feature = "overclock"))]
+    // Turbo overclock: 375 MHz @ 1.30V for maximum performance
+    // Per Pimoroni testing, RP2350 is stable at 420 MHz @ 1.30V
+    #[cfg(feature = "turbo-oc")]
+    let p = {
+        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
+        use embassy_rp::config::Config;
+
+        const TURBO_FREQ_HZ: u32 = 375_000_000; // 375 MHz (2.5x default)
+        const TURBO_VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V (higher for stability)
+
+        let mut config = Config::default();
+        config.clocks = ClockConfig::system_freq(TURBO_FREQ_HZ).expect("Invalid turbo frequency");
+        config.clocks.core_voltage = TURBO_VOLTAGE;
+        info!("Turbo overclocking to 375 MHz @ 1.30V");
+        embassy_rp::init(config)
+    };
+
+    #[cfg(not(any(feature = "overclock", feature = "turbo-oc")))]
     let p = embassy_rp::init(Default::default());
 
     // Initialize RGB LED (active-low: Low = ON)
@@ -265,14 +372,34 @@ async fn main(spawner: Spawner) {
     // Initialize async SPI with DMA (TX-only, display doesn't need MISO)
     let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, display_spi_config());
 
-    // Initialize display (no reset pin on PIM715)
-    let mut display = init_display(spi, dc, cs).await;
+    // Initialize display flusher and hardware
+    let mut flusher = St7789Flusher::new(spi, dc, cs);
+    flusher.init().await;
 
-    info!("Display initialized!");
+    log_info!("Display initialized");
 
-    // Show boot screens
-    show_loading_screen(&mut display).await;
-    show_welcome_screen(&mut display).await;
+    // Initialize double buffer
+    // SAFETY: Only one DoubleBuffer instance exists
+    let mut double_buffer = unsafe { DoubleBuffer::new() };
+
+    // Show boot screens using single-buffer mode for simplicity
+    {
+        let buffer = unsafe { double_buffer.render_buffer() };
+        let mut renderer = St7789Renderer::new(buffer);
+        show_loading_screen(&mut renderer).await;
+        flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+        show_welcome_screen(&mut renderer).await;
+        flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+    }
+
+    // Move flusher to static for task (Embassy tasks need 'static lifetime)
+    use static_cell::StaticCell;
+    static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
+    let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
+
+    // Spawn flush task (takes &'static mut reference, no unsafe needed)
+    spawner.spawn(display_flush_task(flusher)).unwrap();
+    info!("Display flush task spawned");
 
     // Initialize buttons (active-low with internal pull-up)
     // PIM715: A=12, B=13, X=14, Y=15
@@ -289,12 +416,23 @@ async fn main(spawner: Spawner) {
 
     info!("Buttons initialized!");
 
-    // Clear display
-    display.clear(BLACK).ok();
+    // Clear both buffers
+    {
+        let buffer = unsafe { double_buffer.render_buffer() };
+        let mut renderer = St7789Renderer::new(buffer);
+        renderer.clear(BLACK).ok();
+    }
+    double_buffer.swap();
+    {
+        let buffer = unsafe { double_buffer.render_buffer() };
+        let mut renderer = St7789Renderer::new(buffer);
+        renderer.clear(BLACK).ok();
+    }
+    double_buffer.swap();
 
     // UI state
     let mut current_page = Page::Dashboard;
-    let mut page_just_switched = false;
+    let mut clear_frames_remaining: u8 = 0; // Clear both buffers on page switch
     let mut show_fps = false;
     let mut show_boost_psi = false;
     let mut active_popup: Option<Popup> = None;
@@ -313,6 +451,9 @@ async fn main(spawner: Spawner) {
     let mut flush_time_us = 0u32;
     let mut total_frame_time_us = 0u32;
     let mut last_profile_log = Instant::now();
+
+    // Track if flush is in progress (for first frame)
+    let mut flush_in_progress = false;
 
     // Demo sensor values (defaults until first update from demo task)
     let mut boost = 0.5f32;
@@ -343,7 +484,7 @@ async fn main(spawner: Spawner) {
     let mut batt_min = f32::MAX;
     let mut batt_max = 0.0f32;
 
-    info!("Starting main loop...");
+    log_info!("Main loop starting");
 
     // Color transitions for smooth background changes
     let mut color_transitions = ColorTransition::new();
@@ -360,6 +501,8 @@ async fn main(spawner: Spawner) {
     info!("Demo values task spawned");
 
     loop {
+        let frame_start = Instant::now();
+
         // Time-based blink cycle (200ms per state)
         let elapsed_ms = animation_start.elapsed().as_millis() as u32;
         let blink_on = (elapsed_ms / 200).is_multiple_of(2);
@@ -373,9 +516,16 @@ async fn main(spawner: Spawner) {
 
         if btn_y_state.just_pressed(btn_y.is_low()) {
             current_page = current_page.toggle();
-            page_just_switched = true;
+            clear_frames_remaining = 2; // Clear both double buffers on page switch
             active_popup = None;
-            info!("Page switched");
+            log_info!(
+                "Page: {}",
+                match current_page {
+                    Page::Dashboard => "Dashboard",
+                    Page::Debug => "Debug",
+                    Page::Logs => "Logs",
+                }
+            );
         }
 
         if btn_a_state.just_pressed(btn_a.is_low()) && current_page == Page::Dashboard {
@@ -406,14 +556,6 @@ async fn main(spawner: Spawner) {
             None
         };
         render_state.update_popup(popup_kind);
-
-        // Clear display when needed
-        if render_state.is_first_frame() || render_state.popup_just_closed() || page_just_switched {
-            display.clear(BLACK).ok();
-            if page_just_switched {
-                render_state.mark_display_cleared();
-            }
-        }
 
         // Get demo values from async task (generated on second core)
         // Use try_get() for non-blocking access to latest values
@@ -462,7 +604,7 @@ async fn main(spawner: Spawner) {
             batt_max = batt_voltage;
 
             reset_requested = false;
-            info!("Stats reset complete");
+            log_info!("Stats reset");
         }
 
         // Boost easter egg detection
@@ -552,6 +694,19 @@ async fn main(spawner: Spawner) {
 
         // Profiling: start render timing
         let render_start = Instant::now();
+
+        // Get current render buffer and create renderer
+        let buffer = unsafe { double_buffer.render_buffer() };
+        let mut display = St7789Renderer::new(buffer);
+
+        // Clear display when needed (both buffers need clearing on page switch)
+        if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
+            display.clear(BLACK).ok();
+            if clear_frames_remaining > 0 {
+                clear_frames_remaining -= 1;
+                render_state.mark_display_cleared();
+            }
+        }
 
         // Render based on current page
         match current_page {
@@ -713,35 +868,66 @@ async fn main(spawner: Spawner) {
             }
 
             Page::Debug => {
+                // Collect memory stats
+                let mem_stats = crate::memory::MemoryStats::collect();
+
                 draw_profiling_page(
                     &mut display,
                     &ProfilingData {
+                        // Timing
                         current_fps,
                         frame_count,
                         render_time_us,
                         flush_time_us,
                         total_frame_time_us,
+                        // Double buffer stats
+                        buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
+                        buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
+                        render_buffer_idx: double_buffer.render_idx(),
+                        flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
+                        // Memory
+                        stack_used_kb: mem_stats.stack_used / 1024,
+                        stack_total_kb: mem_stats.stack_total / 1024,
+                        static_ram_kb: mem_stats.static_ram / 1024,
+                        ram_total_kb: mem_stats.ram_total / 1024,
                     },
                 );
             }
+
+            Page::Logs => {
+                draw_logs_page(&mut display);
+            }
         }
 
-        // Profiling: end render timing, start flush timing
+        // Profiling: end render timing
         render_time_us = render_start.elapsed().as_micros() as u32;
-        let flush_start = Instant::now();
 
-        // Async flush framebuffer to display via DMA
-        display.flush().await;
+        // Wait for previous flush to complete before swapping (if one is in progress)
+        if flush_in_progress {
+            FLUSH_DONE.wait().await;
+            BUFFER_WAITS.fetch_add(1, Ordering::Relaxed);
+        }
 
-        // Profiling: end flush timing
-        flush_time_us = flush_start.elapsed().as_micros() as u32;
-        total_frame_time_us = render_time_us + flush_time_us;
+        // Swap buffers and signal flush task
+        let completed_idx = double_buffer.swap();
+        BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
+        FLUSH_SIGNAL.signal(completed_idx);
+        flush_in_progress = true;
+
+        // Get flush time from previous frame (atomic read)
+        flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
+        total_frame_time_us = frame_start.elapsed().as_micros() as u32;
 
         // Log profiling data every 2 seconds
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
             info!(
-                "PROFILE: render={}us flush={}us total={}us ({} FPS)",
-                render_time_us, flush_time_us, total_frame_time_us, current_fps as u32
+                "PROFILE: render={}us flush={}us total={}us ({} FPS) swaps={} waits={}",
+                render_time_us,
+                flush_time_us,
+                total_frame_time_us,
+                current_fps as u32,
+                BUFFER_SWAPS.load(Ordering::Relaxed),
+                BUFFER_WAITS.load(Ordering::Relaxed)
             );
             last_profile_log = Instant::now();
         }
@@ -751,7 +937,6 @@ async fn main(spawner: Spawner) {
 
         render_state.end_frame();
         frame_count = frame_count.wrapping_add(1);
-        page_just_switched = false;
 
         // Toggle blue LED every second to show loop is running (time-based)
         if (elapsed_ms / 1000).is_multiple_of(2) {
@@ -761,7 +946,7 @@ async fn main(spawner: Spawner) {
         }
 
         // No artificial delay - run at maximum frame rate
-        // Buttons are polled at frame start (debounced)
+        // Rendering continues immediately while flush runs in parallel
     }
 }
 
@@ -772,7 +957,7 @@ fn to_display_data(state: &SensorState) -> SensorDisplayData<'_> {
         trend: state.get_trend(),
         is_new_peak: state.is_new_peak,
         graph_buffer: buffer,
-        graph_buffer_size: dashboard_common::sensor_state::GRAPH_HISTORY_SIZE,
+        graph_buffer_size: crate::sensor_state::GRAPH_HISTORY_SIZE,
         graph_start_idx: start_idx,
         graph_count: count,
         graph_min: min,

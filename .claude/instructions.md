@@ -13,12 +13,13 @@ This is a Rust project that builds a compact, high-contrast, glanceable digital 
 ### Target Platform
 
 **MCU/Board:** Raspberry Pi Pico 2 (RP2350)
-- Dual-core MCU; firmware is expected to run on the Cortex-M33 build target (e.g. `thumbv8m.main-none-eabihf`) once the project is moved to `no_std`.
+
+- Dual-core MCU running no_std firmware on the Cortex-M33 build target (`thumbv8m.main-none-eabihf`).
 
 **Display:** Pico Display Pack 2.8" (ST7789 family)
 - Resolution: 320×240
 - Format: `Rgb565` (native for ST7789)
-- Input: 4 physical buttons mapped in the simulator as `X` / `Y` / `A` / `B`
+- Input: 4 physical buttons mapped as `X` / `Y` / `A` / `B`
 - Extras: onboard RGB LED + Qwiic/STEMMA QT connector (I²C expansion)
 
 **HAL + async model:**
@@ -153,7 +154,7 @@ When making any change:
 5. **Verify UI layout** still fits 320×240:
    - Check worst-case values and long strings
    - Confirm popups don't overlap in unintended ways
-   - Ensure changes make sense visually at the simulator's scale
+   - Ensure changes make sense visually at the device's scale
 
 ### Embedded Performance Posture
 
@@ -173,7 +174,7 @@ When making any change:
 
 ## Directory Structure
 
-- `firmware/` - Rust workspace (see Firmware Workspace section below)
+- `firmware/` - Rust workspace containing the `dashboard-pico2` crate
 - `hardware/bom/` - Component lists for ordering parts
 - `hardware/gerber/` - PCB manufacturing files
 - `hardware/schematics/` - Circuit diagrams and design docs
@@ -183,59 +184,97 @@ When making any change:
 
 ---
 
-## Firmware Workspace
+## Firmware
 
-The firmware is a Cargo workspace with three crates:
+The firmware is a single-crate Cargo workspace:
 
 ```
 firmware/
 ├── Cargo.toml          # Workspace root
-├── common/             # dashboard-common: shared no_std library
-├── simulator/          # dashboard-simulator: Windows simulator binary
-└── pico/               # dashboard-pico: RP2350 Embassy firmware
+└── pico2/              # dashboard-pico2: RP2350 Embassy firmware
+    └── src/
+        ├── main.rs     # Entry point, button handling, main loop
+        ├── st7789.rs   # Custom async ST7789 driver with DMA
+        ├── display.rs  # Display initialization helpers
+        ├── screens/    # Screen renderers (loading, welcome, profiling, logs)
+        ├── widgets/    # UI widgets (cells, header, popups, primitives)
+        ├── colors.rs   # RGB565 color constants
+        ├── config.rs   # Layout and display configuration
+        ├── styles.rs   # Pre-computed text styles
+        ├── thresholds.rs # Sensor threshold values
+        ├── animations.rs # Color transitions
+        ├── render.rs   # Cell indices and render state tracking
+        ├── sensor_state.rs # Sensor state tracking
+        ├── pages.rs    # Page navigation enum (Dashboard, Debug, Logs)
+        ├── log_buffer.rs # Log buffer with levels and dual-output macros
+        └── memory.rs   # Memory profiling (stack/RAM usage)
 ```
-
-### Crate Responsibilities
-
-| Crate | Purpose |
-|-------|---------|
-| `common` | Platform-agnostic `no_std` code: colors, config, styles, thresholds, animations, render state, `SensorState`, and generic `widgets` module. No time dependencies. Uses `micromath` for fast trig approximations. |
-| `simulator` | Windows simulator using `embedded-graphics-simulator` + SDL2. Uses `std::time` for timing. Contains `Popup`, std-enhanced `SensorState` (accurate timing), screens. Re-exports widgets from common. |
-| `pico` | RP2350 firmware using Embassy async runtime. Uses `embassy_time` for timing. Drives PIM715 ST7789 display via custom async ST7789 driver. Uses widgets and `SensorState` from common. Contains `screens/` module with boot screens (loading, welcome) and profiling page. |
 
 ### Key Design Decisions
 
-- **Time abstraction:** Time-dependent code stays in platform-specific crates (`std::time::Instant` in simulator, `embassy_time` in pico)
-- **no_std compatibility:** Common crate uses `micromath` for fast trig approximations (max error 0.002 for sin/cos)
-- **Widgets:** Generic over `DrawTarget<Color = Rgb565>` in `common/widgets/`. Both simulator and pico use the same rendering code.
-- **SensorState:** Two implementations: no_std version in `common/sensor_state.rs` (frame-based timing) and std version in `simulator/state.rs` (accurate timing). Both produce `SensorDisplayData` for widgets.
-- **Display driver:** Pico uses custom async ST7789 driver with full-screen framebuffer (153KB) and DMA transfers
+- **Embassy async:** Uses `embassy_time` for timing, async DMA for display transfers
+- **no_std:** Uses `micromath` for fast trig approximations (max error 0.002 for sin/cos)
+- **Widgets:** Generic over `DrawTarget<Color = Rgb565>`, all rendering code in one crate
+- **Display driver:** Custom async ST7789 driver with double-buffered framebuffers (307KB total) and DMA transfers
 
-### Performance Optimizations (Pico)
+### Dual-Core Architecture
 
-The `dashboard-common` crate has a `simple-outline` feature flag for embedded performance:
+The firmware uses parallel render/flush for maximum performance:
 
-| Mode                                 | Draw Calls  | Description                                      |
-|--------------------------------------|-------------|--------------------------------------------------|
-| Default (`cargo pico`)               | 9 per value | Full 8-direction outline for maximum visibility  |
-| `simple-outline` (`cargo pico-fast`) | 3 per value | 2-direction shadow (bottom-right) for better FPS |
+```text
+Core 0 (Main Task):         Core 1 (Flush Task):
+┌─────────────┐             ┌─────────────┐
+│ Render to A │────signal──→│ Flush A     │ (23ms via DMA)
+│ Swap to B   │             │             │
+│ Render to B │────signal──→│ Flush B     │ (23ms via DMA)
+│ Swap to A   │             │             │
+└─────────────┘             └─────────────┘
+    ~2ms each                 Runs in parallel
+```
 
-Use `cargo pico-fast` or `cargo pico-fast-run` to enable the `simple-outline` feature for improved frame rates on embedded targets.
+- **Double buffering:** Two 153KB framebuffers allow rendering while flushing
+- **Signal synchronization:** Uses `embassy_sync::Signal` for buffer handoff
+- **Atomic counters:** Track buffer swaps, waits, and timing for profiling
 
-**Overclocking:**
+### Memory Layout (RP2350)
 
-The `dashboard-pico` crate has an `overclock` feature that increases the CPU clock from 150 MHz to 250 MHz:
+| Component | Size | Notes |
+|-----------|------|-------|
+| RAM Total | 512KB | 0x20000000 - 0x20080000 |
+| Framebuffer A | 153KB | Static, double buffer |
+| Framebuffer B | 153KB | Static, double buffer |
+| Other statics | ~32KB | Estimated overhead |
+| Stack | ~172KB | Remaining for stack/heap |
 
-| Mode                    | CPU Clock | SPI Clock | Description                                    |
-|-------------------------|-----------|-----------|------------------------------------------------|
-| Default                 | 150 MHz   | 37.5 MHz  | Stock RP2350 frequency                         |
-| `overclock` (`-oc`)     | 250 MHz   | 62.5 MHz  | 1.67x overclock, optimal SPI (ST7789 max)      |
+Memory stats are collected via the MSP register and displayed on the Debug page.
 
-Note: 250 MHz was chosen over 300 MHz because it divides evenly to 62.5 MHz SPI (250/4=62.5). At 300 MHz, the best achievable SPI is 50 MHz (300/6=50), which is actually slower.
+### Performance Features
 
-Combine both features with `cargo pico-fast-oc` for maximum performance.
+The crate has two feature flags for performance:
 
-Additional optimizations in Pico firmware:
+**`simple-outline` feature:**
+
+| Mode                                   | Draw Calls  | Description                                      |
+|----------------------------------------|-------------|--------------------------------------------------|
+| Default (`cargo pico2`)                | 9 per value | Full 8-direction outline for maximum visibility  |
+| `simple-outline` (`cargo pico2-fast`)  | 3 per value | 2-direction shadow (bottom-right) for better FPS |
+
+**`overclock` and `turbo-oc` features:**
+
+| Mode                     | CPU Clock | Voltage | SPI Clock | Description                          |
+|--------------------------|-----------|---------|-----------|--------------------------------------|
+| Default                  | 150 MHz   | 1.10V   | 37.5 MHz  | Stock RP2350 frequency               |
+| `overclock` (`-oc`)      | 250 MHz   | 1.10V   | 62.5 MHz  | Optimal SPI (ST7789 max)             |
+| `turbo-oc` (`-turbo`)    | 375 MHz   | 1.30V   | 62.5 MHz  | Maximum CPU performance              |
+
+Note: 250 MHz was chosen for `overclock` because it divides evenly to 62.5 MHz SPI (250/4=62.5). The `turbo-oc` feature pushes to 375 MHz at 1.30V for maximum CPU performance (per Pimoroni testing, RP2350 is stable up to 420 MHz @ 1.30V).
+
+**Feature combinations:**
+
+- `cargo pico2-fast-oc` - Simple outlines + 250 MHz (balanced)
+- `cargo pico2-fast-turbo` - Simple outlines + 375 MHz (maximum performance)
+
+**Additional optimizations:**
 
 - **32-bit word writes:** Framebuffer fill operations use 32-bit writes (2 pixels at a time)
 - **Async DMA transfers:** Full-screen SPI transfers use DMA without blocking CPU
@@ -248,24 +287,20 @@ All commands run from the `firmware/` directory:
 
 ```bash
 # Using cargo aliases (recommended)
-cargo sim            # Build & run simulator
-cargo sim-fast       # Build & run simulator with simple-outline
-cargo pico           # Build pico firmware
-cargo pico-run       # Build & flash pico firmware
-cargo pico-fast      # Build pico with simple-outline optimization
-cargo pico-fast-run  # Build & flash pico with simple-outline
-cargo pico-oc        # Build pico with 300 MHz overclock
-cargo pico-oc-run    # Build & flash pico with 300 MHz overclock
-cargo pico-fast-oc   # Build pico with simple-outline + overclock
-cargo pico-fast-oc-run # Build & flash with simple-outline + overclock
+cargo pico2           # Build pico2 firmware
+cargo pico2-run       # Build & flash pico2 firmware
+cargo pico2-fast      # Build pico2 with simple-outline optimization
+cargo pico2-fast-run  # Build & flash pico2 with simple-outline
+cargo pico2-oc        # Build pico2 with 250 MHz overclock
+cargo pico2-oc-run    # Build & flash pico2 with 250 MHz overclock
+cargo pico2-fast-oc   # Build pico2 with simple-outline + overclock
+cargo pico2-fast-oc-run # Build & flash with simple-outline + overclock
 
 # Explicit commands
-cargo build -p dashboard-simulator --release
-cargo run -p dashboard-simulator --release
-cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf --release
-cargo run -p dashboard-pico --target thumbv8m.main-none-eabihf --release
+cargo build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release
+cargo run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release
 # With simple-outline optimization:
-cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-common/simple-outline
+cargo build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline
 ```
 
 The `rustfmt.toml` and `rust-toolchain.toml` files are inherited in subdirectories,
@@ -273,26 +308,14 @@ so `cargo fmt` and `cargo clippy` work from any subdirectory.
 
 ### Dependencies Setup
 
-**Simulator (Windows):**
-
-SDL2 is bundled in `vendor/sdl2/`. The build script (`simulator/build.rs`) automatically:
-- Links against the bundled `SDL2.lib`
-- Copies `SDL2.dll` to the target directory
-
-First-time setup (if `vendor/sdl2/` is empty):
-```bash
-scoop bucket add extras && scoop install sdl2
-cp ~/scoop/apps/sdl2/current/lib/SDL2.{lib,dll} vendor/sdl2/
-```
-
-**Pico:**
+**Pico 2:**
 ```bash
 rustup target add thumbv8m.main-none-eabihf
 ```
 
 **Flashing Pico 2:**
 1. Hold BOOTSEL button, plug in USB
-2. Run: `cargo pico-run`
+2. Run: `cargo pico2-run`
 
 **Note:** `picotool` is bundled in `firmware/tools/` and used automatically for flashing.
 

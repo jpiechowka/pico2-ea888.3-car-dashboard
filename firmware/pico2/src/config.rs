@@ -5,12 +5,6 @@
 //! Layout calculations like `SCREEN_WIDTH / 4` are computed at compile time as `const`,
 //! avoiding per-frame arithmetic. These constants are used throughout the rendering code
 //! instead of recalculating positions every frame.
-//!
-//! # Note on Timing Constants
-//!
-//! Timing-related constants (like `FRAME_TIME` and `POPUP_DURATION`) that use
-//! `std::time::Duration` are defined in the simulator crate, as they depend on
-//! platform-specific time implementations.
 
 // =============================================================================
 // Display Configuration

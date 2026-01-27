@@ -1,12 +1,8 @@
 # Workspace-level Cargo configuration
 #
-# This config doesn't set a default target, so:
-# - `cargo build -p dashboard-simulator` builds for host (Windows/Linux/macOS)
-# - `cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf` builds for Pico 2
-#
 # TIP: Use the aliases below for convenience:
-#   cargo pico        # build pico
-#   cargo sim         # run simulator
+#   cargo pico2           # build pico2
+#   cargo pico2-fast-oc   # build with overclock + fast outlines
 
 [env]
 DEFMT_LOG = "debug"
@@ -23,13 +19,17 @@ runner = "tools/picotool.exe load -u -v -x -t elf"
 
 # Convenient aliases
 [alias]
-pico = "build -p dashboard-pico --target thumbv8m.main-none-eabihf --release"
-pico-run = "run -p dashboard-pico --target thumbv8m.main-none-eabihf --release"
-pico-fast = "build -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-common/simple-outline"
-pico-fast-run = "run -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-common/simple-outline"
-pico-oc = "build -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-pico/overclock"
-pico-oc-run = "run -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-pico/overclock"
-pico-fast-oc = "build -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-common/simple-outline,dashboard-pico/overclock"
-pico-fast-oc-run = "run -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-common/simple-outline,dashboard-pico/overclock"
-sim = "run -p dashboard-simulator --release"
-sim-fast = "run -p dashboard-simulator --release --features dashboard-common/simple-outline"
+pico2 = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release"
+pico2-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release"
+pico2-fast = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline"
+pico2-fast-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline"
+# Overclock: 250 MHz @ 1.10V (optimal SPI timing)
+pico2-oc = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features overclock"
+pico2-oc-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features overclock"
+pico2-fast-oc = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,overclock"
+pico2-fast-oc-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,overclock"
+# Turbo: 375 MHz @ 1.30V (maximum performance)
+pico2-turbo = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features turbo-oc"
+pico2-turbo-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features turbo-oc"
+pico2-fast-turbo = "build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,turbo-oc"
+pico2-fast-turbo-run = "run -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features simple-outline,turbo-oc"

@@ -9,30 +9,19 @@ A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA8
 ```text
 .
 ├── firmware/           # Rust-based firmware workspace
-│   ├── common/         # Shared no_std library (colors, config, widgets, SensorState)
-│   ├── simulator/      # Windows simulator binary (uses SDL2)
-│   ├── pico/           # RP2350 Embassy firmware (drives ST7789 display)
-│   ├── tools/          # Bundled tools like picotool
-│   └── vendor/sdl2/    # Bundled SDL2 (lib + dll)
+│   ├── pico2/          # RP2350 Embassy firmware (drives ST7789 display)
+│   └── tools/          # Bundled tools like picotool
 ├── hardware/           # Hardware schematics and PCB designs
 ├── mechanical/         # CAD files and mechanical designs
 └── docs/               # Project documentation
 ```
-
-## Architecture
-
-The firmware uses a shared-code architecture:
-
-- **common crate**: Platform-agnostic `no_std` code including generic UI widgets, sensor state tracking, colors, styles, and configuration constants
-- **simulator**: Windows simulator using SDL2 for development. Re-exports widgets from common.
-- **pico**: RP2350 firmware using Embassy async runtime with custom async ST7789 driver. Uses the same widgets as the simulator.
 
 ## Firmware Setup
 
 ### Prerequisites
 
 - Rust nightly toolchain (auto-configured via `rust-toolchain.toml`)
-- For Pico: ARM Cortex-M target
+- ARM Cortex-M target for Pico 2
 
 ### Quick Start
 
@@ -41,61 +30,60 @@ All commands run from the `firmware/` directory:
 ```bash
 cd firmware
 
-# Build & run simulator
-cargo sim
-
-# Build & run simulator with simple-outline (to preview pico-fast rendering)
-cargo sim-fast
-
 # Build & flash Pico 2 (hold BOOTSEL, plug USB)
-cargo pico-run
+cargo pico2-run
 
 # Build only (no flash)
-cargo pico
+cargo pico2
 
 # Build with simple-outline optimization
-cargo pico-fast
+cargo pico2-fast
 
 # Build & flash with simple-outline optimization
-cargo pico-fast-run
+cargo pico2-fast-run
 
-# Build with overclocking (300 MHz)
-cargo pico-oc
+# Build with overclocking (250 MHz)
+cargo pico2-oc
 
-# Build with simple-outline + overclocking (maximum performance)
-cargo pico-fast-oc
+# Build & flash with overclocking
+cargo pico2-oc-run
+
+# Build with simple-outline + overclocking (balanced)
+cargo pico2-fast-oc
+
+# Build & flash with simple-outline + overclocking
+cargo pico2-fast-oc-run
+
+# Build with turbo overclocking (375 MHz)
+cargo pico2-turbo
+
+# Build & flash with turbo overclocking
+cargo pico2-turbo-run
+
+# Build with simple-outline + turbo (maximum performance)
+cargo pico2-fast-turbo
+
+# Build & flash with simple-outline + turbo
+cargo pico2-fast-turbo-run
 ```
-
-### Simulator (Windows)
-
-SDL2 is bundled in `vendor/sdl2/`. The build script automatically:
-- Links against the bundled `SDL2.lib`
-- Copies `SDL2.dll` to the target directory
-
-Just run:
-```bash
-cargo sim
-```
-
-**First-time setup (if vendor/sdl2 is empty):**
-1. Install SDL2 via Scoop: `scoop bucket add extras && scoop install sdl2`
-2. Copy files: `cp ~/scoop/apps/sdl2/current/lib/SDL2.{lib,dll} vendor/sdl2/`
 
 ### Pico 2 (RP2350)
 
 1. Add the ARM target:
+
    ```bash
    rustup target add thumbv8m.main-none-eabihf
    ```
 
 2. Flash (hold BOOTSEL, plug USB, then run):
+
    ```bash
-   cargo pico-run
+   cargo pico2-run
    ```
 
-**Note:** `picotool` is bundled in `firmware/tools/` and used automatically by `cargo pico-run`.
+**Note:** `picotool` is bundled in `firmware/tools/` and used automatically by `cargo pico2-run`.
 
-**Display:** The firmware drives the Pimoroni PIM715 Display Pack 2.8" (ST7789, 320×240) via SPI, rendering the same dashboard UI as the simulator.
+**Display:** The firmware drives the Pimoroni PIM715 Display Pack 2.8" (ST7789, 320×240) via SPI.
 
 ### Config File Inheritance
 

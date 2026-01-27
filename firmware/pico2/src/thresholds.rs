@@ -14,9 +14,9 @@
 //!
 //! Import individual thresholds or use glob import:
 //! ```ignore
-//! use dashboard_common::thresholds::{OIL_DSG_CRITICAL, is_critical_battery};
+//! use crate::thresholds::{OIL_DSG_CRITICAL, is_critical_battery};
 //! // or
-//! use dashboard_common::thresholds::*;
+//! use crate::thresholds::*;
 //! ```
 
 // =============================================================================

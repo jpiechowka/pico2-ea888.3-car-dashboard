@@ -22,23 +22,8 @@ jobs:
         run: cargo fmt --all --check
         working-directory: firmware
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: firmware
-      - name: Clippy (common + simulator)
-        run: cargo clippy -p dashboard-common -p dashboard-simulator --all-features -- -D warnings
-        working-directory: firmware
-
-  clippy-pico:
-    name: Clippy (Pico)
+  clippy-pico2:
+    name: Clippy (Pico 2)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -49,42 +34,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: firmware
-      - name: Clippy (pico)
-        run: cargo clippy -p dashboard-pico --target thumbv8m.main-none-eabihf -- -D warnings
+      - name: Clippy (pico2)
+        run: cargo clippy -p dashboard-pico2 --target thumbv8m.main-none-eabihf -- -D warnings
         working-directory: firmware
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: firmware
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
-      - name: Run tests
-        run: cargo test -p dashboard-common -p dashboard-simulator
-        working-directory: firmware
-
-  build-simulator:
-    name: Build Simulator
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: firmware
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
-      - name: Build simulator
-        run: cargo build -p dashboard-simulator --release
-        working-directory: firmware
-
-  build-pico:
-    name: Build Pico
+  build-pico2:
+    name: Build Pico 2
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -94,6 +49,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: firmware
-      - name: Build pico
-        run: cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf --release
+      - name: Build pico2
+        run: cargo build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release
         working-directory: firmware

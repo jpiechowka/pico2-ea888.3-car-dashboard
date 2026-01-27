@@ -1,17 +1,24 @@
-//! Async ST7789 display driver with framebuffer for embassy-rp.
+//! Async ST7789 display driver with double buffering for embassy-rp.
 //!
-//! This driver uses a full framebuffer (153KB for 320x240 RGB565) and async DMA
-//! transfers for flicker-free rendering.
+//! This driver uses two framebuffers (307KB total for 320x240 RGB565) and async DMA
+//! transfers for flicker-free rendering with parallel render/flush.
+//!
+//! # Architecture
+//!
+//! The driver is split into two components:
+//! - [`St7789Renderer`]: Implements `DrawTarget`, writes to a framebuffer reference
+//! - [`St7789Flusher`]: Owns SPI peripheral, handles async DMA transfers
+//!
+//! Double buffering allows rendering to one buffer while flushing the other,
+//! achieving higher frame rates by parallelizing CPU and DMA work.
 //!
 //! # Performance Optimizations
 //!
-//! - **32-bit word writes:** `clear_buffer()` and `fill_solid()` use 32-bit writes (2 pixels at a time) for faster
-//!   framebuffer operations on ARM Cortex-M33.
-//! - **Async DMA:** `flush()` transfers the entire framebuffer via DMA without blocking the CPU, allowing other async
-//!   tasks to run.
-//! - **Max SPI speed:** Configured for 62.5 MHz SPI clock (ST7789 maximum).
-//! - **Pre-configured window:** Display window is set to full screen during `init()`, eliminating redundant CASET/RASET
-//!   commands on every `flush()` (~4 SPI transactions saved per frame).
+//! - **Double buffering:** Parallel render/flush for 45-50+ FPS
+//! - **32-bit word writes:** `clear()` and `fill_solid()` use 32-bit writes (2 pixels at a time)
+//! - **Async DMA:** `flush_buffer()` transfers via DMA without blocking the CPU
+//! - **Max SPI speed:** Configured for 62.5 MHz SPI clock (ST7789 maximum)
+//! - **Pre-configured window:** Display window is set to full screen during `init()`
 
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
@@ -26,8 +33,10 @@ pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 240;
 const BUFFER_SIZE: usize = WIDTH * HEIGHT * 2;
 
-/// Static framebuffer (153,600 bytes = ~30% of RP2350's 520KB SRAM).
-static mut FRAMEBUFFER: [u8; BUFFER_SIZE] = [0u8; BUFFER_SIZE];
+/// Static framebuffer A (153,600 bytes).
+pub static mut FRAMEBUFFER_A: [u8; BUFFER_SIZE] = [0u8; BUFFER_SIZE];
+/// Static framebuffer B (153,600 bytes).
+pub static mut FRAMEBUFFER_B: [u8; BUFFER_SIZE] = [0u8; BUFFER_SIZE];
 
 // ST7789 Commands
 const SWRESET: u8 = 0x01;
@@ -45,32 +54,89 @@ const COLMOD: u8 = 0x3A;
 const MADCTL_MX: u8 = 0x40; // Column address order
 const MADCTL_MV: u8 = 0x20; // Row/column exchange
 
-/// Async ST7789 display driver with framebuffer.
-pub struct St7789<'d> {
+/// Double buffer manager for parallel render/flush operations.
+///
+/// Manages two framebuffers and tracks which is currently being rendered to.
+/// After rendering completes, call `swap()` to switch buffers and get the
+/// index of the completed buffer for flushing.
+pub struct DoubleBuffer {
+    /// Index of the buffer currently being rendered to (0 or 1).
+    render_idx: usize,
+}
+
+impl DoubleBuffer {
+    /// Create a new double buffer manager.
+    ///
+    /// # Safety
+    /// Must only be called once. The static framebuffers are owned by this instance.
+    pub unsafe fn new() -> Self { Self { render_idx: 0 } }
+
+    /// Get a mutable reference to the current render buffer.
+    ///
+    /// # Safety
+    /// Caller must ensure exclusive access to the render buffer.
+    #[inline]
+    pub unsafe fn render_buffer(&mut self) -> &'static mut [u8] {
+        if self.render_idx == 0 {
+            unsafe { &mut *core::ptr::addr_of_mut!(FRAMEBUFFER_A) }
+        } else {
+            unsafe { &mut *core::ptr::addr_of_mut!(FRAMEBUFFER_B) }
+        }
+    }
+
+    /// Get an immutable reference to a buffer by index for flushing.
+    ///
+    /// # Safety
+    /// Caller must ensure the buffer is not being written to.
+    #[inline]
+    pub unsafe fn get_buffer(
+        &self,
+        idx: usize,
+    ) -> &'static [u8] {
+        if idx == 0 {
+            unsafe { &*core::ptr::addr_of!(FRAMEBUFFER_A) }
+        } else {
+            unsafe { &*core::ptr::addr_of!(FRAMEBUFFER_B) }
+        }
+    }
+
+    /// Swap buffers after rendering completes.
+    ///
+    /// Returns the index of the buffer that was just rendered to (for flushing).
+    /// The next render will use the other buffer.
+    #[inline]
+    pub fn swap(&mut self) -> usize {
+        let completed_idx = self.render_idx;
+        self.render_idx = 1 - self.render_idx;
+        completed_idx
+    }
+
+    /// Get the current render buffer index (for profiling display).
+    #[inline]
+    pub const fn render_idx(&self) -> usize { self.render_idx }
+}
+
+/// ST7789 display flusher - owns SPI and handles async DMA transfers.
+///
+/// This component is responsible for sending framebuffer data to the display.
+/// It should be owned by the flush task for parallel operation.
+pub struct St7789Flusher<'d> {
     spi: Spi<'d, SPI0, Async>,
     dc: Output<'d>,
     cs: Output<'d>,
-    framebuffer: &'static mut [u8],
 }
 
-impl<'d> St7789<'d> {
-    /// Create a new ST7789 driver (call init() after).
+impl<'d> St7789Flusher<'d> {
+    /// Create a new flusher from SPI and control pins.
     pub fn new(
         spi: Spi<'d, SPI0, Async>,
         dc: Output<'d>,
         cs: Output<'d>,
     ) -> Self {
-        // SAFETY: Single-threaded embedded context, only one display instance
-        let framebuffer = unsafe { &mut *core::ptr::addr_of_mut!(FRAMEBUFFER) };
-        Self {
-            spi,
-            dc,
-            cs,
-            framebuffer,
-        }
+        Self { spi, dc, cs }
     }
 
-    /// Initialize the display.
+    /// Initialize the display hardware.
     pub async fn init(&mut self) {
         // Software reset
         self.write_command(SWRESET).await;
@@ -102,7 +168,6 @@ impl<'d> St7789<'d> {
         Timer::after_millis(10).await;
 
         // Pre-set window to full screen for flush optimization
-        // This avoids repeated CASET/RASET commands on every flush
         self.set_window(0, 0, WIDTH as u16, HEIGHT as u16).await;
     }
 
@@ -148,20 +213,37 @@ impl<'d> St7789<'d> {
             .await;
     }
 
-    /// Flush the framebuffer to the display via async DMA transfer.
+    /// Flush a buffer to the display via async DMA transfer.
     ///
     /// Window is pre-configured to full screen during init() for performance.
-    /// This saves ~4 SPI transactions (2 commands + 2 data) per frame.
-    pub async fn flush(&mut self) {
+    pub async fn flush_buffer(
+        &mut self,
+        buffer: &[u8],
+    ) {
         // RAMWR command then large data transfer with CS held low
-        // Window already set to full screen during init()
         self.cs.set_low();
         self.dc.set_low();
-        self.spi.write(&[RAMWR]).await.ok();
+        // Use blocking write for single-byte command (faster than DMA setup)
+        self.spi.blocking_write(&[RAMWR]).ok();
         self.dc.set_high();
-        self.spi.write(self.framebuffer).await.ok();
+        // Async DMA transfer for the large framebuffer
+        self.spi.write(buffer).await.ok();
         self.cs.set_high();
     }
+}
+
+/// ST7789 renderer - implements DrawTarget, writes to a framebuffer.
+///
+/// This component handles all drawing operations. It writes to a framebuffer
+/// reference and does not own any hardware. Create a new renderer each frame
+/// after swapping buffers.
+pub struct St7789Renderer<'a> {
+    framebuffer: &'a mut [u8],
+}
+
+impl<'a> St7789Renderer<'a> {
+    /// Create a new renderer targeting the given framebuffer.
+    pub fn new(framebuffer: &'a mut [u8]) -> Self { Self { framebuffer } }
 
     /// Clear the framebuffer with a color.
     ///
@@ -204,11 +286,11 @@ impl<'d> St7789<'d> {
     }
 }
 
-impl OriginDimensions for St7789<'_> {
+impl OriginDimensions for St7789Renderer<'_> {
     fn size(&self) -> Size { Size::new(WIDTH as u32, HEIGHT as u32) }
 }
 
-impl DrawTarget for St7789<'_> {
+impl DrawTarget for St7789Renderer<'_> {
     type Color = Rgb565;
     type Error = core::convert::Infallible;
 

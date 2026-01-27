@@ -9,9 +9,6 @@
 //! **Note:** Color transitions are handled separately by
 //! [`ColorTransition`](crate::animations::ColorTransition), not by this module.
 //!
-//! **Note:** The `Popup` type with time-based expiration is defined in the
-//! simulator/pico crates since it depends on platform-specific time types.
-//!
 //! # Update Strategy
 //!
 //! | Element | Update Frequency | Strategy |
@@ -25,8 +22,6 @@
 // Cell State Tracking
 // =============================================================================
 
-// F32Ext provides round() in no_std; unused when building with std (simulator)
-#[allow(unused_imports)]
 use micromath::F32Ext;
 
 /// Number of cells in the dashboard grid (4 columns × 2 rows).
@@ -36,9 +31,9 @@ pub const CELL_COUNT: usize = 8;
 /// Layout:
 ///   Row 1 (top):    BOOST | AFR  | BATT | COOL
 ///   Row 2 (bottom): OIL   | DSG  | IAT  | EGT
-#[allow(dead_code)]
 pub mod cell_idx {
     // Row 1: BOOST | AFR | BATT | COOL
+    #[allow(dead_code)] // Only used in tests (boost cell has special color handling)
     pub const BOOST: usize = 0;
     pub const AFR: usize = 1;
     pub const BATTERY: usize = 2;
@@ -101,6 +96,7 @@ impl RenderState {
 
     /// Force dividers to be redrawn on next frame.
     #[inline]
+    #[allow(dead_code)]
     pub fn mark_dividers_dirty(&mut self) { self.dividers_drawn = false; }
 
     /// Check if header/FPS needs redrawing.
