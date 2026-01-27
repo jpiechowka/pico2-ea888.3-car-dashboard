@@ -122,7 +122,7 @@ async fn demo_values_task(
 }
 
 use crate::display::{display_spi_config, init_display};
-use crate::screens::{show_loading_screen, show_welcome_screen};
+use crate::screens::{ProfilingData, draw_profiling_page, show_loading_screen, show_welcome_screen};
 
 // =============================================================================
 // Popup State Management
@@ -712,108 +712,16 @@ async fn main(spawner: Spawner) {
             }
 
             Page::Debug => {
-                // Debug/Profiling page - shows performance metrics
-                use core::fmt::Write;
-
-                use dashboard_common::colors::{GREEN, WHITE, YELLOW};
-                use dashboard_common::styles::LABEL_FONT;
-                use embedded_graphics::mono_font::MonoTextStyle;
-                use embedded_graphics::text::Text;
-                use heapless::String;
-
-                // Clear screen every frame to prevent overlapping text
-                display.clear(BLACK).ok();
-
-                let header_style = MonoTextStyle::new(LABEL_FONT, GREEN);
-                let value_style = MonoTextStyle::new(LABEL_FONT, WHITE);
-                let highlight_style = MonoTextStyle::new(LABEL_FONT, YELLOW);
-
-                // Header
-                Text::new("PROFILING", Point::new(4, 12), header_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // FPS
-                let mut fps_str: String<16> = String::new();
-                let _ = write!(fps_str, "FPS: {:.1}", current_fps);
-                Text::new(&fps_str, Point::new(4, 30), highlight_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Frame count
-                let mut frame_str: String<20> = String::new();
-                let _ = write!(frame_str, "Frame: {}", frame_count);
-                Text::new(&frame_str, Point::new(4, 45), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Render time
-                let mut render_str: String<24> = String::new();
-                let _ = write!(render_str, "Render: {} us", render_time_us);
-                Text::new(&render_str, Point::new(4, 65), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Flush time
-                let mut flush_str: String<24> = String::new();
-                let _ = write!(flush_str, "Flush:  {} us", flush_time_us);
-                Text::new(&flush_str, Point::new(4, 80), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Total frame time
-                let mut total_str: String<24> = String::new();
-                let _ = write!(total_str, "Total:  {} us", total_frame_time_us);
-                Text::new(&total_str, Point::new(4, 95), highlight_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Frame time in ms for easier reading
-                let frame_ms = total_frame_time_us as f32 / 1000.0;
-                let mut ms_str: String<24> = String::new();
-                let _ = write!(ms_str, "        {:.1} ms", frame_ms);
-                Text::new(&ms_str, Point::new(4, 110), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Theoretical max FPS
-                let max_fps = if total_frame_time_us > 0 {
-                    1_000_000.0 / total_frame_time_us as f32
-                } else {
-                    0.0
-                };
-                let mut max_fps_str: String<24> = String::new();
-                let _ = write!(max_fps_str, "Max FPS: {:.1}", max_fps);
-                Text::new(&max_fps_str, Point::new(4, 130), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Separator
-                Text::new("----------------", Point::new(4, 150), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Build info
-                #[cfg(feature = "overclock")]
-                Text::new("CPU: 300 MHz (OC)", Point::new(4, 165), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                #[cfg(not(feature = "overclock"))]
-                Text::new("CPU: 150 MHz", Point::new(4, 165), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Note: simple-outline feature is on dashboard-common crate
-                // Check build command used (pico vs pico-fast)
-                Text::new("SPI: 62.5 MHz", Point::new(4, 180), value_style)
-                    .draw(&mut display)
-                    .ok();
-
-                // Instructions
-                Text::new("Press Y to return", Point::new(4, 220), header_style)
-                    .draw(&mut display)
-                    .ok();
+                draw_profiling_page(
+                    &mut display,
+                    &ProfilingData {
+                        current_fps,
+                        frame_count,
+                        render_time_us,
+                        flush_time_us,
+                        total_frame_time_us,
+                    },
+                );
             }
         }
 
@@ -851,30 +759,8 @@ async fn main(spawner: Spawner) {
             led_b.set_high(); // OFF
         }
 
-        // Target ~30 FPS with fast button polling
-        // Poll buttons every 10ms during the frame delay to catch quick presses
-        for _ in 0..3 {
-            Timer::after_millis(10).await;
-
-            // Fast button polling - check buttons during frame delay
-            if btn_x_state.just_pressed(btn_x.is_low()) && current_page == Page::Dashboard {
-                show_fps = !show_fps;
-                active_popup = Some(Popup::Fps(Instant::now()));
-            }
-            if btn_y_state.just_pressed(btn_y.is_low()) {
-                current_page = current_page.toggle();
-                page_just_switched = true;
-                active_popup = None;
-            }
-            if btn_a_state.just_pressed(btn_a.is_low()) && current_page == Page::Dashboard {
-                show_boost_psi = !show_boost_psi;
-                active_popup = Some(Popup::BoostUnit(Instant::now()));
-            }
-            if btn_b_state.just_pressed(btn_b.is_low()) && current_page == Page::Dashboard {
-                reset_requested = true;
-                active_popup = Some(Popup::Reset(Instant::now()));
-            }
-        }
+        // No artificial delay - run at maximum frame rate
+        // Buttons are polled at frame start (debounced)
     }
 }
 

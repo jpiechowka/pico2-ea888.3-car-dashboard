@@ -201,7 +201,7 @@ firmware/
 |-------|---------|
 | `common` | Platform-agnostic `no_std` code: colors, config, styles, thresholds, animations, render state, `SensorState`, and generic `widgets` module. No time dependencies. Uses `micromath` for fast trig approximations. |
 | `simulator` | Windows simulator using `embedded-graphics-simulator` + SDL2. Uses `std::time` for timing. Contains `Popup`, std-enhanced `SensorState` (accurate timing), screens. Re-exports widgets from common. |
-| `pico` | RP2350 firmware using Embassy async runtime. Uses `embassy_time` for timing. Drives PIM715 ST7789 display. Uses widgets and `SensorState` from common. |
+| `pico` | RP2350 firmware using Embassy async runtime. Uses `embassy_time` for timing. Drives PIM715 ST7789 display via custom async ST7789 driver. Uses widgets and `SensorState` from common. Contains `screens/` module with boot screens (loading, welcome) and profiling page. |
 
 ### Key Design Decisions
 
@@ -238,6 +238,7 @@ Additional optimizations in Pico firmware:
 - **32-bit word writes:** Framebuffer fill operations use 32-bit writes (2 pixels at a time)
 - **Async DMA transfers:** Full-screen SPI transfers use DMA without blocking CPU
 - **SPI at max speed:** 62.5 MHz SPI clock (ST7789 maximum)
+- **Pre-configured window:** Display window is set once during init(), skipping redundant CASET/RASET commands per flush
 
 ### Build Commands
 

@@ -1,9 +1,11 @@
-//! Boot screens for the Pico dashboard.
+//! Screens for the Pico dashboard.
 //!
-//! Provides loading and welcome screens that display during startup.
+//! Provides boot screens and diagnostic/profiling screens.
 
 mod loading;
+mod profiling;
 mod welcome;
 
 pub use loading::show_loading_screen;
+pub use profiling::{ProfilingData, draw_profiling_page};
 pub use welcome::show_welcome_screen;

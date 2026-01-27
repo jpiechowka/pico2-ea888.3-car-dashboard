@@ -10,6 +10,8 @@
 //! - **Async DMA:** `flush()` transfers the entire framebuffer via DMA without blocking the CPU, allowing other async
 //!   tasks to run.
 //! - **Max SPI speed:** Configured for 62.5 MHz SPI clock (ST7789 maximum).
+//! - **Pre-configured window:** Display window is set to full screen during `init()`, eliminating redundant CASET/RASET
+//!   commands on every `flush()` (~4 SPI transactions saved per frame).
 
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
@@ -98,6 +100,10 @@ impl<'d> St7789<'d> {
         // Display on
         self.write_command(DISPON).await;
         Timer::after_millis(10).await;
+
+        // Pre-set window to full screen for flush optimization
+        // This avoids repeated CASET/RASET commands on every flush
+        self.set_window(0, 0, WIDTH as u16, HEIGHT as u16).await;
     }
 
     /// Send a command byte (DC low, CS low during transfer).
@@ -143,10 +149,12 @@ impl<'d> St7789<'d> {
     }
 
     /// Flush the framebuffer to the display via async DMA transfer.
+    ///
+    /// Window is pre-configured to full screen during init() for performance.
+    /// This saves ~4 SPI transactions (2 commands + 2 data) per frame.
     pub async fn flush(&mut self) {
-        self.set_window(0, 0, WIDTH as u16, HEIGHT as u16).await;
-
         // RAMWR command then large data transfer with CS held low
+        // Window already set to full screen during init()
         self.cs.set_low();
         self.dc.set_low();
         self.spi.write(&[RAMWR]).await.ok();
