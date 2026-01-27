@@ -9,6 +9,8 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, Triangle};
 
+use crate::st7789::St7789;
+
 const SCREEN_CENTER_X: i32 = 160;
 const WELCOME_DURATION_MS: u64 = 8000;
 
@@ -231,10 +233,7 @@ fn draw_stars<D>(
 }
 
 /// Run the welcome screen with AEZAKMI logo and blinking stars.
-pub async fn show_welcome_screen<D>(display: &mut D)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
+pub async fn show_welcome_screen(display: &mut St7789<'_>) {
     let welcome_start = Instant::now();
     let welcome_duration = Duration::from_millis(WELCOME_DURATION_MS);
     let mut frame: u32 = 0;
@@ -245,6 +244,9 @@ where
         draw_aezakmi(display, TEXT_Y);
         draw_stripe(display, STRIPE_Y);
         draw_stars(display, STARS_Y, frame);
+
+        // Flush framebuffer to display
+        display.flush().await;
 
         // ~60 FPS update rate
         Timer::after(Duration::from_millis(16)).await;

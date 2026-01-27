@@ -12,6 +12,8 @@ use embedded_graphics::primitives::{Line, PrimitiveStyle};
 use embedded_graphics::text::Text;
 use heapless::String;
 
+use crate::st7789::St7789;
+
 const TITLE_POS: Point = Point::new(160, 25);
 const LINE_START: Point = Point::new(10, 35);
 const LINE_END: Point = Point::new(310, 35);
@@ -40,10 +42,7 @@ const INIT_MESSAGES: [(&str, u64); 7] = [
 const SPINNER_CHARS: [char; 4] = ['|', '/', '-', '\\'];
 
 /// Run the loading screen with console-style init messages.
-pub async fn show_loading_screen<D>(display: &mut D)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
+pub async fn show_loading_screen(display: &mut St7789<'_>) {
     // Track which lines are visible (circular buffer simulation)
     let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
     let mut line_count: usize = 0;
@@ -97,6 +96,9 @@ where
                     .draw(display)
                     .ok();
             }
+
+            // Flush framebuffer to display
+            display.flush().await;
 
             // ~60 FPS update rate
             Timer::after(Duration::from_millis(16)).await;
