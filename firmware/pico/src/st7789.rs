@@ -269,7 +269,7 @@ impl DrawTarget for St7789<'_> {
             let mut x = x_start;
 
             // Handle unaligned start (write single pixel if needed)
-            if x % 2 != 0 && x < x_start + width {
+            if !x.is_multiple_of(2) && x < x_start + width {
                 let idx = row_start + x * 2;
                 self.framebuffer[idx] = pixel_bytes[0];
                 self.framebuffer[idx + 1] = pixel_bytes[1];
