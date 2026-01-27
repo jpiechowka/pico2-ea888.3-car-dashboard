@@ -8,6 +8,12 @@ description = "OBD-II dashboard firmware for Raspberry Pi Pico 2 (RP2350)"
 name = "pico"
 path = "src/main.rs"
 
+[features]
+default = []
+# Overclock RP2350 from 150 MHz to 300 MHz (2x) at default 1.1V
+# Safe for most boards without additional cooling
+overclock = []
+
 [dependencies]
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"

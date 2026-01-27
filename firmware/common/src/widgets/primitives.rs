@@ -1,4 +1,9 @@
 //! Low-level drawing primitives shared across widgets.
+//!
+//! # Feature Flags
+//!
+//! - **`simple-outline`**: Uses 2-pass shadow instead of 8-pass outline for `draw_value_with_outline()`. Reduces draw
+//!   calls from 9 to 3 per text, significantly improving FPS on embedded targets.
 
 use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -165,14 +170,19 @@ fn outline_color_for_text(text_color: Rgb565) -> Rgb565 {
     if luma >= 128 { BLACK } else { WHITE }
 }
 
-/// Draw text with a contrasting 1px outline for visibility on any background.
+/// Draw text with a contrasting outline for visibility on any background.
 ///
 /// The outline color is automatically selected based on text color luminance:
 /// - Light text (WHITE, YELLOW, etc.) → BLACK outline
 /// - Dark text (BLACK) → WHITE outline
 ///
-/// The outline is drawn in 8 directions (cardinal + diagonal) for full coverage,
-/// then the main text is drawn on top.
+/// # Performance Modes
+///
+/// - **Default (simulator)**: Full 8-direction outline (9 draw calls per text)
+/// - **`simple-outline` feature (Pico)**: Simple 2-direction shadow (3 draw calls per text)
+///
+/// The `simple-outline` feature reduces draw calls from 9 to 3, significantly improving
+/// FPS on embedded targets while maintaining good readability.
 pub fn draw_value_with_outline<D>(
     display: &mut D,
     text: &str,
@@ -187,7 +197,12 @@ pub fn draw_value_with_outline<D>(
     let outline_char_style = MonoTextStyle::new(font, outline_color);
     let main_char_style = MonoTextStyle::new(font, text_color);
 
-    // Draw outline in 8 directions (1px offset each)
+    // Simple shadow mode: 2 offsets (bottom-right shadow) for embedded performance
+    #[cfg(feature = "simple-outline")]
+    const OFFSETS: [(i32, i32); 2] = [(1, 1), (1, 0)];
+
+    // Full outline mode: 8 directions for maximum visibility on desktop
+    #[cfg(not(feature = "simple-outline"))]
     const OFFSETS: [(i32, i32); 8] = [
         (-1, -1),
         (0, -1),

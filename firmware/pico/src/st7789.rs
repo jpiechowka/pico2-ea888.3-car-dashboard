@@ -2,6 +2,14 @@
 //!
 //! This driver uses a full framebuffer (153KB for 320x240 RGB565) and async DMA
 //! transfers for flicker-free rendering.
+//!
+//! # Performance Optimizations
+//!
+//! - **32-bit word writes:** `clear_buffer()` and `fill_solid()` use 32-bit writes (2 pixels at a time) for faster
+//!   framebuffer operations on ARM Cortex-M33.
+//! - **Async DMA:** `flush()` transfers the entire framebuffer via DMA without blocking the CPU, allowing other async
+//!   tasks to run.
+//! - **Max SPI speed:** Configured for 62.5 MHz SPI clock (ST7789 maximum).
 
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
@@ -148,16 +156,25 @@ impl<'d> St7789<'d> {
     }
 
     /// Clear the framebuffer with a color.
+    ///
+    /// Uses 32-bit word writes for better performance on ARM Cortex-M33.
     pub fn clear_buffer(
         &mut self,
         color: Rgb565,
     ) {
         let raw: RawU16 = color.into();
-        let bytes = raw.into_inner().to_be_bytes();
+        let pixel = raw.into_inner().to_be();
+        // Pack two pixels into a 32-bit word for faster writes
+        let word = (pixel as u32) | ((pixel as u32) << 16);
 
-        for chunk in self.framebuffer.chunks_exact_mut(2) {
-            chunk[0] = bytes[0];
-            chunk[1] = bytes[1];
+        // SAFETY: framebuffer is u8 aligned, and we write 4 bytes at a time
+        // The buffer size (153600) is divisible by 4
+        let ptr = self.framebuffer.as_mut_ptr() as *mut u32;
+        let word_count = self.framebuffer.len() / 4;
+
+        for i in 0..word_count {
+            // SAFETY: We're writing within the buffer bounds
+            unsafe { ptr.add(i).write(word) };
         }
     }
 
@@ -239,17 +256,41 @@ impl DrawTarget for St7789<'_> {
         }
 
         let raw: RawU16 = color.into();
-        let bytes = raw.into_inner().to_be_bytes();
+        let pixel = raw.into_inner().to_be();
+        let pixel_bytes = pixel.to_ne_bytes();
+        // Pack two pixels into a 32-bit word for faster writes
+        let word = (pixel as u32) | ((pixel as u32) << 16);
+
+        let x_start = drawable_area.top_left.x as usize;
+        let width = drawable_area.size.width as usize;
 
         for y in drawable_area.rows() {
             let row_start = y as usize * WIDTH * 2;
-            let x_start = drawable_area.top_left.x as usize;
-            let x_end = x_start + drawable_area.size.width as usize;
+            let mut x = x_start;
 
-            for x in x_start..x_end {
+            // Handle unaligned start (write single pixel if needed)
+            if x % 2 != 0 && x < x_start + width {
                 let idx = row_start + x * 2;
-                self.framebuffer[idx] = bytes[0];
-                self.framebuffer[idx + 1] = bytes[1];
+                self.framebuffer[idx] = pixel_bytes[0];
+                self.framebuffer[idx + 1] = pixel_bytes[1];
+                x += 1;
+            }
+
+            // Write 32-bit words (2 pixels at a time) for aligned middle section
+            let word_end = x_start + width - ((x_start + width - x) % 2);
+            while x + 1 < word_end {
+                let idx = row_start + x * 2;
+                // SAFETY: idx is within bounds and aligned to 2 pixels
+                let ptr = unsafe { self.framebuffer.as_mut_ptr().add(idx) as *mut u32 };
+                unsafe { ptr.write_unaligned(word) };
+                x += 2;
+            }
+
+            // Handle remaining pixel if width is odd
+            if x < x_start + width {
+                let idx = row_start + x * 2;
+                self.framebuffer[idx] = pixel_bytes[0];
+                self.framebuffer[idx + 1] = pixel_bytes[1];
             }
         }
         Ok(())

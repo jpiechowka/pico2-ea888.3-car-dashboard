@@ -209,7 +209,35 @@ firmware/
 - **no_std compatibility:** Common crate uses `micromath` for fast trig approximations (max error 0.002 for sin/cos)
 - **Widgets:** Generic over `DrawTarget<Color = Rgb565>` in `common/widgets/`. Both simulator and pico use the same rendering code.
 - **SensorState:** Two implementations: no_std version in `common/sensor_state.rs` (frame-based timing) and std version in `simulator/state.rs` (accurate timing). Both produce `SensorDisplayData` for widgets.
-- **Display driver:** Pico uses `mipidsi` crate for ST7789 display via SPI
+- **Display driver:** Pico uses custom async ST7789 driver with full-screen framebuffer (153KB) and DMA transfers
+
+### Performance Optimizations (Pico)
+
+The `dashboard-common` crate has a `simple-outline` feature flag for embedded performance:
+
+| Mode                                 | Draw Calls  | Description                                      |
+|--------------------------------------|-------------|--------------------------------------------------|
+| Default (`cargo pico`)               | 9 per value | Full 8-direction outline for maximum visibility  |
+| `simple-outline` (`cargo pico-fast`) | 3 per value | 2-direction shadow (bottom-right) for better FPS |
+
+Use `cargo pico-fast` or `cargo pico-fast-run` to enable the `simple-outline` feature for improved frame rates on embedded targets.
+
+**Overclocking:**
+
+The `dashboard-pico` crate has an `overclock` feature that doubles the CPU clock from 150 MHz to 300 MHz:
+
+| Mode                    | CPU Clock | Description                                    |
+|-------------------------|-----------|------------------------------------------------|
+| Default                 | 150 MHz   | Stock RP2350 frequency                         |
+| `overclock` (`-oc`)     | 300 MHz   | 2x overclock at default 1.1V (safe, no cooling)|
+
+Combine both features with `cargo pico-fast-oc` for maximum performance.
+
+Additional optimizations in Pico firmware:
+
+- **32-bit word writes:** Framebuffer fill operations use 32-bit writes (2 pixels at a time)
+- **Async DMA transfers:** Full-screen SPI transfers use DMA without blocking CPU
+- **SPI at max speed:** 62.5 MHz SPI clock (ST7789 maximum)
 
 ### Build Commands
 
@@ -217,15 +245,24 @@ All commands run from the `firmware/` directory:
 
 ```bash
 # Using cargo aliases (recommended)
-cargo sim        # Build & run simulator
-cargo pico       # Build pico firmware
-cargo pico-run   # Build & flash pico firmware
+cargo sim            # Build & run simulator
+cargo sim-fast       # Build & run simulator with simple-outline
+cargo pico           # Build pico firmware
+cargo pico-run       # Build & flash pico firmware
+cargo pico-fast      # Build pico with simple-outline optimization
+cargo pico-fast-run  # Build & flash pico with simple-outline
+cargo pico-oc        # Build pico with 300 MHz overclock
+cargo pico-oc-run    # Build & flash pico with 300 MHz overclock
+cargo pico-fast-oc   # Build pico with simple-outline + overclock
+cargo pico-fast-oc-run # Build & flash with simple-outline + overclock
 
 # Explicit commands
 cargo build -p dashboard-simulator --release
 cargo run -p dashboard-simulator --release
 cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf --release
 cargo run -p dashboard-pico --target thumbv8m.main-none-eabihf --release
+# With simple-outline optimization:
+cargo build -p dashboard-pico --target thumbv8m.main-none-eabihf --release --features dashboard-common/simple-outline
 ```
 
 The `rustfmt.toml` and `rust-toolchain.toml` files are inherited in subdirectories,

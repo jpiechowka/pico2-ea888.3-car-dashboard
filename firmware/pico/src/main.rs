@@ -170,6 +170,25 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 async fn main(_spawner: Spawner) {
     info!("OBD-II Dashboard starting...");
 
+    // Initialize with optional overclocking
+    #[cfg(feature = "overclock")]
+    let p = {
+        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
+        use embassy_rp::config::Config;
+
+        // Overclock settings - adjust these values as needed
+        const OVERCLOCK_FREQ_HZ: u32 = 300_000_000; // 300 MHz (2x default)
+        const OVERCLOCK_VOLTAGE: CoreVoltage = CoreVoltage::V1_10; // 1.10V (default, safe)
+
+        let mut config = Config::default();
+        // Safe according to Pimoroni testing (312 MHz achieved at 1.1V)
+        config.clocks = ClockConfig::system_freq(OVERCLOCK_FREQ_HZ).expect("Invalid overclock frequency");
+        config.clocks.core_voltage = OVERCLOCK_VOLTAGE;
+        info!("Overclocking to 300 MHz @ 1.10V");
+        embassy_rp::init(config)
+    };
+
+    #[cfg(not(feature = "overclock"))]
     let p = embassy_rp::init(Default::default());
 
     // Initialize RGB LED (active-low: Low = ON)
