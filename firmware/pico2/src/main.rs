@@ -40,6 +40,7 @@ mod widgets;
 
 mod cpu_cycles;
 
+use core::mem;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use defmt::info;
@@ -445,7 +446,7 @@ async fn main(spawner: Spawner) {
 
     // UI state
     let mut current_page = Page::Dashboard;
-    let mut clear_frames_remaining: u8 = 0; // Clear both buffers on page switch
+    let mut clear_frames_remaining: u8 = 2;
     let mut show_fps = false;
     let mut show_boost_psi = false;
     let mut active_popup: Option<Popup> = None;
@@ -904,7 +905,11 @@ async fn main(spawner: Spawner) {
                         render_buffer_idx: double_buffer.render_idx(),
                         flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
                         // Memory
-                        stack_used_kb: mem_stats.stack_used / 1024,
+                        stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
+                            1
+                        } else {
+                            mem_stats.stack_used / 1024
+                        },
                         stack_total_kb: mem_stats.stack_total / 1024,
                         static_ram_kb: mem_stats.static_ram / 1024,
                         ram_total_kb: mem_stats.ram_total / 1024,
