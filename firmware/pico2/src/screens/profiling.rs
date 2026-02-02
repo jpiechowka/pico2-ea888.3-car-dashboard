@@ -20,7 +20,7 @@
 //! - **Static**: Static RAM allocation (framebuffers + overhead)
 //! - **RAM**: Total RP2350 RAM (512KB)
 //! - **CPU**: Clock frequency (150/250/280/300/320/340 MHz based on feature)
-//! - **Volt**: Core voltage (1.10V/1.30V/1.40V based on feature, yellow if 1.40V)
+//! - **Volt**: Actual core voltage read from VREG hardware (yellow if ≥1.40V)
 //! - **SPI**: Display bus speed (requested/actual MHz from hardware)
 //! - **FB**: Framebuffer configuration (2×150K for double buffering)
 //!
@@ -68,6 +68,9 @@ pub struct ProfilingData {
     // System clocks
     pub requested_spi_mhz: u32,
     pub actual_spi_mhz: u32,
+
+    // Voltage (millivolts, e.g., 1100 = 1.10V)
+    pub actual_voltage_mv: u32,
 }
 
 /// Draw the profiling/debug page.
@@ -208,43 +211,16 @@ pub fn draw_profiling_page<D>(
         .ok();
     y += line_height;
 
-    // CPU frequency and voltage display
+    // CPU frequency (compile-time constant based on feature)
     #[cfg(feature = "cpu340-spi85-1v40")]
-    {
-        Text::new("CPU: 340 MHz", Point::new(col2, y), highlight_style)
-            .draw(display)
-            .ok();
-        y += line_height;
-        Text::new("Volt: 1.40V", Point::new(col2, y), highlight_style)
-            .draw(display)
-            .ok();
-    }
-
+    let cpu_mhz = 340u32;
     #[cfg(all(feature = "cpu320-spi80-1v40", not(feature = "cpu340-spi85-1v40")))]
-    {
-        Text::new("CPU: 320 MHz", Point::new(col2, y), highlight_style)
-            .draw(display)
-            .ok();
-        y += line_height;
-        Text::new("Volt: 1.40V", Point::new(col2, y), highlight_style)
-            .draw(display)
-            .ok();
-    }
-
+    let cpu_mhz = 320u32;
     #[cfg(all(
         feature = "cpu300-spi75-1v30",
         not(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))
     ))]
-    {
-        Text::new("CPU: 300 MHz", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-        y += line_height;
-        Text::new("Volt: 1.30V", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-    }
-
+    let cpu_mhz = 300u32;
     #[cfg(all(
         feature = "cpu280-spi70-1v30",
         not(any(
@@ -253,16 +229,7 @@ pub fn draw_profiling_page<D>(
             feature = "cpu340-spi85-1v40"
         ))
     ))]
-    {
-        Text::new("CPU: 280 MHz", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-        y += line_height;
-        Text::new("Volt: 1.30V", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-    }
-
+    let cpu_mhz = 280u32;
     #[cfg(all(
         feature = "cpu250-spi62-1v10",
         not(any(
@@ -272,16 +239,7 @@ pub fn draw_profiling_page<D>(
             feature = "cpu340-spi85-1v40"
         ))
     ))]
-    {
-        Text::new("CPU: 250 MHz", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-        y += line_height;
-        Text::new("Volt: 1.10V", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-    }
-
+    let cpu_mhz = 250u32;
     #[cfg(not(any(
         feature = "cpu250-spi62-1v10",
         feature = "cpu280-spi70-1v30",
@@ -289,15 +247,27 @@ pub fn draw_profiling_page<D>(
         feature = "cpu320-spi80-1v40",
         feature = "cpu340-spi85-1v40"
     )))]
-    {
-        Text::new("CPU: 150 MHz", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-        y += line_height;
-        Text::new("Volt: 1.10V", Point::new(col2, y), value_style)
-            .draw(display)
-            .ok();
-    }
+    let cpu_mhz = 150u32;
+
+    s.clear();
+    let _ = write!(s, "CPU: {} MHz", cpu_mhz);
+    // Highlight if high voltage profile
+    let cpu_style = if cpu_mhz >= 320 { highlight_style } else { value_style };
+    Text::new(&s, Point::new(col2, y), cpu_style).draw(display).ok();
+    y += line_height;
+
+    // Actual voltage from hardware (shows what VREG is really set to)
+    s.clear();
+    let volts = data.actual_voltage_mv / 1000;
+    let millivolts = (data.actual_voltage_mv % 1000) / 10;
+    let _ = write!(s, "Volt: {}.{:02}V", volts, millivolts);
+    // Highlight if 1.40V or higher
+    let volt_style = if data.actual_voltage_mv >= 1400 {
+        highlight_style
+    } else {
+        value_style
+    };
+    Text::new(&s, Point::new(col2, y), volt_style).draw(display).ok();
     y += line_height;
 
     // SPI frequency display (requested / actual from hardware)

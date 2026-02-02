@@ -361,40 +361,65 @@ compile_error!(
      cpu300-spi75-1v30, cpu320-spi80-1v40, cpu340-spi85-1v40"
 );
 
-/// Set VREG voltage to 1.40V by directly writing to hardware registers.
+// =============================================================================
+// VREG Voltage Control (RP2350)
+// =============================================================================
+// Register addresses from RP2350 datasheet and pico-sdk:
+// - VREG_CTRL: 0x40100004 - unlock bit at bit 13
+// - VREG: 0x4010000c - VSEL in bits [8:4]
+// Voltage formula: V = 0.55 + (VSEL × 0.05), range 0.55V to 3.30V
+// Reference: https://github.com/nspsck/RP2350_Micropython_voltage_control
+
+/// Read current VREG voltage from hardware registers.
+///
+/// Returns voltage in millivolts (e.g., 1100 for 1.10V).
+#[cfg(target_arch = "arm")]
+fn read_vreg_voltage_mv() -> u32 {
+    const VREG: *const u32 = 0x4010_000C as *const u32;
+    // SAFETY: Reading hardware register
+    let vreg_val = unsafe { core::ptr::read_volatile(VREG) };
+    let vsel = (vreg_val >> 4) & 0x1F; // VSEL is bits [8:4]
+    // V = 0.55 + (VSEL × 0.05), convert to mV
+    550 + (vsel * 50)
+}
+
+/// Placeholder for non-ARM targets (tests).
+#[cfg(not(target_arch = "arm"))]
+fn read_vreg_voltage_mv() -> u32 {
+    1100 // Default 1.10V for tests
+}
+
+/// Set VREG voltage by directly writing to hardware registers.
 ///
 /// The RP2350 VREG is locked by default to prevent accidental voltage changes.
 /// This function:
 /// 1. Unlocks the VREG by writing the magic value to VREG_CTRL
-/// 2. Sets VSEL to 17 (1.40V) in the VREG register
+/// 2. Sets VSEL in the VREG register with magic value
 ///
 /// # Safety
-/// - Increases power consumption and heat generation
-/// - May reduce chip lifespan
+/// - Higher voltages increase power consumption and heat
 /// - VREG remains unlocked until power cycle
 ///
 /// # Voltage Formula
 /// `voltage = 0.55V + (VSEL × 0.05V)`
 /// For 1.40V: VSEL = (1.40 - 0.55) / 0.05 = 17
 #[cfg(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))]
-unsafe fn set_vreg_voltage_1_40v() {
+unsafe fn set_vreg_voltage(vsel: u32) {
     const VREG_CTRL: *mut u32 = 0x4010_0004 as *mut u32;
     const VREG: *mut u32 = 0x4010_000C as *mut u32;
+    const VREG_UNLOCK_MAGIC: u32 = 0x5AFE_0000;
 
     // SAFETY: Writing to VREG registers to set voltage
     // Rust 2024 requires explicit unsafe blocks even inside unsafe fn
     unsafe {
-        // Unlock VREG (magic value: 0x5AFE in upper 16 bits)
+        // Step 1: Unlock VREG control interface
         core::ptr::write_volatile(VREG_CTRL, 0x5AFE_2100);
 
-        // Read current VREG value, set VSEL to 17 (1.40V)
-        // VSEL is in bits [8:4], so shift left by 4
+        // Step 2: Read current value, clear VSEL bits, set new VSEL with magic
         let current = core::ptr::read_volatile(VREG);
-        let new_val = (current & !0x1F0) | (17 << 4); // Clear VSEL bits, set to 17
+        let new_val = (current & 0xFFFF_FE0F) | ((vsel << 4) & 0x1F0) | VREG_UNLOCK_MAGIC;
         core::ptr::write_volatile(VREG, new_val);
     }
-
-    defmt::info!("VREG voltage set to 1.40V (VSEL=17)");
 }
 
 #[embassy_executor::main]
@@ -452,52 +477,52 @@ async fn main(spawner: Spawner) {
 
     // cpu320-spi80-1v40: 320 MHz @ 1.40V for 80 MHz SPI (320/4)
     // WARNING: 1.40V requires manual VREG unlock (beyond embassy's 1.30V limit)
+    // We set voltage BEFORE init to ensure stability at 320 MHz
     #[cfg(feature = "cpu320-spi80-1v40")]
     let p = {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
+        // CRITICAL: Set voltage to 1.40V BEFORE initializing at 320 MHz
+        // VSEL 17 = 0.55V + (17 × 0.05V) = 1.40V
+        unsafe {
+            set_vreg_voltage(17);
+        }
+
         const FREQ_HZ: u32 = 320_000_000; // 320 MHz / 4 = 80 MHz SPI
 
         let mut config = Config::default();
         config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        config.clocks.core_voltage = CoreVoltage::V1_30; // Initial voltage, will be raised after init
+        // Embassy will try to set 1.30V, but we already set 1.40V above
+        config.clocks.core_voltage = CoreVoltage::V1_30;
 
         info!("Overclock: 320 MHz @ 1.40V (SPI 80 MHz)");
-        let p = embassy_rp::init(config);
-
-        // Raise voltage to 1.40V by directly writing to VREG registers
-        // This unlocks the voltage regulator (permanent until power cycle)
-        unsafe {
-            set_vreg_voltage_1_40v();
-        }
-
-        p
+        embassy_rp::init(config)
     };
 
     // cpu340-spi85-1v40: 340 MHz @ 1.40V for 85 MHz SPI (340/4)
     // WARNING: 1.40V requires manual VREG unlock (beyond embassy's 1.30V limit)
+    // We set voltage BEFORE init to ensure stability at 340 MHz
     #[cfg(feature = "cpu340-spi85-1v40")]
     let p = {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
+        // CRITICAL: Set voltage to 1.40V BEFORE initializing at 340 MHz
+        // VSEL 17 = 0.55V + (17 × 0.05V) = 1.40V
+        unsafe {
+            set_vreg_voltage(17);
+        }
+
         const FREQ_HZ: u32 = 340_000_000; // 340 MHz / 4 = 85 MHz SPI
 
         let mut config = Config::default();
         config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        config.clocks.core_voltage = CoreVoltage::V1_30; // Initial voltage, will be raised after init
+        // Embassy will try to set 1.30V, but we already set 1.40V above
+        config.clocks.core_voltage = CoreVoltage::V1_30;
 
         info!("Overclock: 340 MHz @ 1.40V (SPI 85 MHz)");
-        let p = embassy_rp::init(config);
-
-        // Raise voltage to 1.40V by directly writing to VREG registers
-        // This unlocks the voltage regulator (permanent until power cycle)
-        unsafe {
-            set_vreg_voltage_1_40v();
-        }
-
-        p
+        embassy_rp::init(config)
     };
 
     #[cfg(not(any(
@@ -1085,6 +1110,8 @@ async fn main(spawner: Spawner) {
                         // SPI clocks
                         requested_spi_mhz: requested_spi_hz / 1_000_000,
                         actual_spi_mhz: actual_spi_hz / 1_000_000,
+                        // Voltage (read from hardware)
+                        actual_voltage_mv: read_vreg_voltage_mv(),
                     },
                 );
             }
