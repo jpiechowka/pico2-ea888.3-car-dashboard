@@ -54,11 +54,17 @@ cargo pico2-fast-oc
 # Build & flash with simple-outline + overclocking
 cargo pico2-fast-oc-run
 
-# Build with 70 MHz SPI (280 MHz core, maximum stable overclock)
+# Build with 70 MHz SPI (280 MHz core)
 cargo pico2-spi70
 
 # Build & flash with 70 MHz SPI
 cargo pico2-spi70-run
+
+# Build with 75 MHz SPI (300 MHz core, maximum overclock)
+cargo pico2-spi75
+
+# Build & flash with 75 MHz SPI
+cargo pico2-spi75-run
 ```
 
 ### Pico 2 (RP2350)

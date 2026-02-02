@@ -35,3 +35,6 @@ pico2-fast-oc-run = "run -p dashboard-pico2 --release --features simple-outline,
 # SPI 70 MHz: 280 MHz @ 1.30V (280/4 = 70 MHz SPI, beyond ST7789 datasheet)
 pico2-spi70 = "build -p dashboard-pico2 --release --features simple-outline,spi-70mhz"
 pico2-spi70-run = "run -p dashboard-pico2 --release --features simple-outline,spi-70mhz"
+# SPI 75 MHz: 300 MHz @ 1.30V (300/4 = 75 MHz SPI, maximum overclock)
+pico2-spi75 = "build -p dashboard-pico2 --release --features simple-outline,spi-75mhz"
+pico2-spi75-run = "run -p dashboard-pico2 --release --features simple-outline,spi-75mhz"

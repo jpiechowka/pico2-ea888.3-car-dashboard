@@ -13,16 +13,21 @@ use embassy_rp::spi::Config as SpiConfig;
 /// SPI configuration for the ST7789 display.
 ///
 /// Frequency depends on feature flags:
+/// - `spi-75mhz`: 75 MHz (300 MHz core / 4, maximum overclock)
 /// - `spi-70mhz`: 70 MHz (280 MHz core / 4, beyond ST7789 datasheet)
 /// - Default: 62.5 MHz (ST7789 datasheet maximum)
 pub fn display_spi_config() -> SpiConfig {
     let mut config = SpiConfig::default();
 
-    #[cfg(feature = "spi-70mhz")]
+    #[cfg(feature = "spi-75mhz")]
+    {
+        config.frequency = 75_000_000;
+    }
+    #[cfg(all(feature = "spi-70mhz", not(feature = "spi-75mhz")))]
     {
         config.frequency = 70_000_000;
     }
-    #[cfg(not(feature = "spi-70mhz"))]
+    #[cfg(not(any(feature = "spi-70mhz", feature = "spi-75mhz")))]
     {
         config.frequency = 62_500_000;
     }

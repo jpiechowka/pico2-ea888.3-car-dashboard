@@ -18,6 +18,7 @@ path = "src/main.rs"
 default = []
 overclock = []      # 250 MHz @ 1.10V - optimal SPI timing (62.5 MHz SPI)
 spi-70mhz = []      # 280 MHz @ 1.30V - 70 MHz SPI (280/4, beyond ST7789 datasheet)
+spi-75mhz = []      # 300 MHz @ 1.30V - 75 MHz SPI (300/4, maximum overclock)
 simple-outline = []
 
 # === Cross-platform dependencies (work on host and ARM) ===

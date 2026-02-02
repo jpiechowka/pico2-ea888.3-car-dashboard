@@ -332,8 +332,12 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 pub use crate::st7789::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 
 // Ensure only one overclock feature is enabled at a time
-#[cfg(all(feature = "overclock", feature = "spi-70mhz"))]
-compile_error!("Only one overclock feature can be enabled at a time. Choose one of: overclock, spi-70mhz");
+#[cfg(any(
+    all(feature = "overclock", feature = "spi-70mhz"),
+    all(feature = "overclock", feature = "spi-75mhz"),
+    all(feature = "spi-70mhz", feature = "spi-75mhz")
+))]
+compile_error!("Only one overclock feature can be enabled at a time. Choose one of: overclock, spi-70mhz, spi-75mhz");
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -374,11 +378,29 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    #[cfg(not(any(feature = "overclock", feature = "spi-70mhz")))]
+    // SPI 75 MHz overclock: 300 MHz @ 1.30V for 75 MHz SPI (300/4)
+    #[cfg(feature = "spi-75mhz")]
+    let p = {
+        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
+        use embassy_rp::config::Config;
+
+        const FREQ_HZ: u32 = 300_000_000; // 300 MHz / 4 = 75 MHz SPI
+        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V for stability
+
+        let mut config = Config::default();
+        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid SPI 75 MHz overclock frequency");
+        config.clocks.core_voltage = VOLTAGE;
+        info!("SPI 75 MHz overclock: 300 MHz @ 1.30V");
+        embassy_rp::init(config)
+    };
+
+    #[cfg(not(any(feature = "overclock", feature = "spi-70mhz", feature = "spi-75mhz")))]
     let p = embassy_rp::init(Default::default());
 
     // Initialize DWT cycle counter for CPU utilization measurement
-    let cpu_freq_hz = if cfg!(feature = "spi-70mhz") {
+    let cpu_freq_hz = if cfg!(feature = "spi-75mhz") {
+        300_000_000
+    } else if cfg!(feature = "spi-70mhz") {
         280_000_000
     } else if cfg!(feature = "overclock") {
         250_000_000
