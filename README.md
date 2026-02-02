@@ -42,7 +42,7 @@ cargo pico2-fast
 # Build & flash with simple-outline optimization
 cargo pico2-fast-run
 
-# Build with overclocking (250 MHz)
+# Build with overclocking (250 MHz, 62.5 MHz SPI)
 cargo pico2-oc
 
 # Build & flash with overclocking
@@ -54,17 +54,11 @@ cargo pico2-fast-oc
 # Build & flash with simple-outline + overclocking
 cargo pico2-fast-oc-run
 
-# Build with turbo overclocking (375 MHz)
-cargo pico2-turbo
+# Build with 70 MHz SPI (280 MHz core, maximum stable overclock)
+cargo pico2-spi70
 
-# Build & flash with turbo overclocking
-cargo pico2-turbo-run
-
-# Build with simple-outline + turbo (maximum performance)
-cargo pico2-fast-turbo
-
-# Build & flash with simple-outline + turbo
-cargo pico2-fast-turbo-run
+# Build & flash with 70 MHz SPI
+cargo pico2-spi70-run
 ```
 
 ### Pico 2 (RP2350)
@@ -84,6 +78,25 @@ cargo pico2-fast-turbo-run
 **Note:** `picotool` is bundled in `firmware/tools/` and used automatically by `cargo pico2-run`.
 
 **Display:** The firmware drives the Pimoroni PIM715 Display Pack 2.8" (ST7789, 320×240) via SPI.
+
+### Testing
+
+The firmware is structured as a library + binary crate to enable host-based testing. Tests run on your development machine (not on the embedded target).
+
+```bash
+cd firmware
+
+# Run all tests on host (Linux/macOS)
+cargo test -p dashboard-pico2 --lib --target x86_64-unknown-linux-gnu
+
+# Run all tests on host (Windows)
+cargo test -p dashboard-pico2 --lib --target x86_64-pc-windows-msvc
+
+# Run tests with output
+cargo test -p dashboard-pico2 --lib --target x86_64-unknown-linux-gnu -- --nocapture
+```
+
+**Note:** Tests use `#![cfg_attr(not(test), no_std)]` to enable `std` during testing while remaining `no_std` for the embedded binary.
 
 ### Config File Inheritance
 

@@ -7,8 +7,8 @@
 //!
 //! The CYCCNT is a 32-bit counter that wraps at different intervals:
 //! - 150 MHz: wraps every ~28.6 seconds (2^32 / 150M)
-//! - 250 MHz: wraps every ~17.2 seconds
-//! - 375 MHz: wraps every ~11.4 seconds
+//! - 250 MHz: wraps every ~17.2 seconds (overclock profile)
+//! - 280 MHz: wraps every ~15.3 seconds (spi-70mhz profile)
 //!
 //! This module uses `wrapping_sub` to correctly handle counter wrap
 //! for elapsed time measurements within a single frame (~milliseconds).
@@ -137,7 +137,7 @@ pub fn calc_util_percent(
 }
 
 // =============================================================================
-// Tests
+// Unit Tests (run on host with: cargo test --lib --target <host-triple>)
 // =============================================================================
 
 #[cfg(test)]

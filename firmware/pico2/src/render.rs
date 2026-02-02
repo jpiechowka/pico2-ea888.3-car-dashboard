@@ -22,6 +22,7 @@
 // Cell State Tracking
 // =============================================================================
 
+#[cfg(target_arch = "arm")]
 use micromath::F32Ext;
 
 /// Number of cells in the dashboard grid (4 columns × 2 rows).
@@ -171,7 +172,7 @@ impl Default for RenderState {
 }
 
 // =============================================================================
-// Unit Tests
+// Unit Tests (run on host with: cargo test --lib --target <host-triple>)
 // =============================================================================
 
 #[cfg(test)]

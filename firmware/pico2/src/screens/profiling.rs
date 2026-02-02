@@ -19,8 +19,8 @@
 //! - **Stack**: Current stack usage (KB) vs total available
 //! - **Static**: Static RAM allocation (framebuffers + overhead)
 //! - **RAM**: Total RP2350 RAM (512KB)
-//! - **CPU**: Clock frequency (150/250/375 MHz based on feature)
-//! - **SPI**: Display bus speed (62.5 MHz max)
+//! - **CPU**: Clock frequency (150/250/280 MHz based on feature)
+//! - **SPI**: Display bus speed (requested/actual MHz from hardware)
 //! - **FB**: Framebuffer configuration (2×150K for double buffering)
 //!
 //! # Right Column - CPU Utilization
@@ -63,12 +63,17 @@ pub struct ProfilingData {
     // CPU utilization
     pub cpu_util_percent: u32,
     pub frame_cycles: u32,
+
+    // System clocks
+    pub requested_spi_mhz: u32,
+    pub actual_spi_mhz: u32,
 }
 
 /// Draw the profiling/debug page.
 ///
 /// Shows performance metrics including FPS, render/flush times, buffer stats, and memory.
 /// Two-column layout to fit all info on 320x240 screen.
+#[allow(clippy::manual_checked_ops)] // Explicit zero-check is clearer for embedded
 pub fn draw_profiling_page<D>(
     display: &mut D,
     data: &ProfilingData,
@@ -202,25 +207,31 @@ pub fn draw_profiling_page<D>(
         .ok();
     y += line_height;
 
-    #[cfg(feature = "turbo-oc")]
-    Text::new("CPU: 375 MHz", Point::new(col2, y), value_style)
+    // CPU frequency display
+    #[cfg(feature = "spi-70mhz")]
+    Text::new("CPU: 280 MHz", Point::new(col2, y), value_style)
         .draw(display)
         .ok();
 
-    #[cfg(feature = "overclock")]
+    #[cfg(all(feature = "overclock", not(feature = "spi-70mhz")))]
     Text::new("CPU: 250 MHz", Point::new(col2, y), value_style)
         .draw(display)
         .ok();
 
-    #[cfg(not(any(feature = "overclock", feature = "turbo-oc")))]
+    #[cfg(not(any(feature = "overclock", feature = "spi-70mhz")))]
     Text::new("CPU: 150 MHz", Point::new(col2, y), value_style)
         .draw(display)
         .ok();
     y += line_height;
 
-    Text::new("SPI: 62.5 MHz", Point::new(col2, y), value_style)
-        .draw(display)
-        .ok();
+    // SPI frequency display (requested / actual from hardware)
+    s.clear();
+    if data.actual_spi_mhz > 0 {
+        let _ = write!(s, "SPI: {}/{} MHz", data.requested_spi_mhz, data.actual_spi_mhz);
+    } else {
+        let _ = write!(s, "SPI: {} MHz", data.requested_spi_mhz);
+    }
+    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 
     // Framebuffers info

@@ -1,6 +1,8 @@
 //! Sensor state tracking for trend detection, peak hold, rolling average, and graph history.
 //!
-//! This is a no_std compatible version that uses frame-based timing instead of std::time.
+//! This is a no_std compatible version that uses frame-based timing instead of wall-clock time.
+//! Frame-based intervals are intentional for embedded use where FPS is relatively stable (~35 FPS).
+//! This approach avoids the overhead of reading system time on every update.
 
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 
@@ -20,7 +22,8 @@ pub const GRAPH_HISTORY_SIZE: usize = 60;
 /// Interval between graph samples (in frames).
 const GRAPH_SAMPLE_INTERVAL: u32 = 100;
 
-/// Peak hold duration in frames (~500ms at 60fps = 30 frames).
+/// Peak hold duration in frames.
+/// At ~35 FPS (typical with SPI 70 MHz), this is approximately 500-850ms.
 const PEAK_HOLD_FRAMES: u32 = 30;
 
 // =============================================================================
@@ -268,4 +271,188 @@ impl SensorState {
 
 impl Default for SensorState {
     fn default() -> Self { Self::new() }
+}
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_state() {
+        let state = SensorState::new();
+        assert_eq!(state.history_count, 0);
+        assert_eq!(state.is_new_peak, false);
+        assert!(state.get_average().is_none());
+        assert!(state.get_trend().is_none());
+    }
+
+    #[test]
+    fn test_default_impl() {
+        let state = SensorState::default();
+        assert_eq!(state.history_count, 0);
+    }
+
+    #[test]
+    fn test_update_increments_history() {
+        let mut state = SensorState::new();
+        state.update(100.0, false);
+        assert_eq!(state.history_count, 1);
+        state.update(101.0, false);
+        assert_eq!(state.history_count, 2);
+    }
+
+    #[test]
+    fn test_peak_hold_activation() {
+        let mut state = SensorState::new();
+        state.update(100.0, true); // New peak
+        assert!(state.is_new_peak);
+        assert_eq!(state.peak_hold_frames, PEAK_HOLD_FRAMES);
+    }
+
+    #[test]
+    fn test_peak_hold_decay() {
+        let mut state = SensorState::new();
+        state.update(100.0, true); // Activate peak
+        assert!(state.is_new_peak);
+
+        // Simulate frames passing
+        for _ in 0..PEAK_HOLD_FRAMES {
+            state.update(100.0, false);
+        }
+
+        // Peak should be cleared after PEAK_HOLD_FRAMES
+        assert!(!state.is_new_peak);
+        assert_eq!(state.peak_hold_frames, 0);
+    }
+
+    #[test]
+    fn test_reset_peak() {
+        let mut state = SensorState::new();
+        state.update(100.0, true); // Activate peak
+        assert!(state.is_new_peak);
+
+        state.reset_peak();
+        assert!(!state.is_new_peak);
+        assert_eq!(state.peak_hold_frames, 0);
+    }
+
+    #[test]
+    fn test_rolling_average() {
+        let mut state = SensorState::new();
+
+        // First, no average available
+        assert!(state.get_average().is_none());
+
+        // Manually trigger avg sample (normally happens every AVG_SAMPLE_INTERVAL frames)
+        state.avg_frame_counter = AVG_SAMPLE_INTERVAL - 1;
+        state.update(100.0, false);
+
+        // Now average should be available
+        let avg = state.get_average();
+        assert!(avg.is_some());
+        assert!((avg.unwrap() - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_reset_average() {
+        let mut state = SensorState::new();
+        state.avg_frame_counter = AVG_SAMPLE_INTERVAL - 1;
+        state.update(100.0, false);
+        assert!(state.get_average().is_some());
+
+        state.reset_average();
+        assert!(state.get_average().is_none());
+        assert_eq!(state.avg_count, 0);
+        assert_eq!(state.avg_sum, 0.0);
+    }
+
+    #[test]
+    fn test_graph_data_initial() {
+        let state = SensorState::new();
+        let (_, start_idx, count, ..) = state.get_graph_data();
+        assert_eq!(start_idx, 0);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_graph_sampling() {
+        let mut state = SensorState::new();
+
+        // Trigger graph sample
+        state.graph_frame_counter = GRAPH_SAMPLE_INTERVAL - 1;
+        state.update(50.0, false);
+
+        let (_, _, count, min, max) = state.get_graph_data();
+        assert_eq!(count, 1);
+        assert!((min - 50.0).abs() < 0.001);
+        assert!((max - 50.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_reset_graph() {
+        let mut state = SensorState::new();
+        state.graph_frame_counter = GRAPH_SAMPLE_INTERVAL - 1;
+        state.update(50.0, false);
+
+        state.reset_graph();
+        let (_, _, count, ..) = state.get_graph_data();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_trend_requires_minimum_samples() {
+        let mut state = SensorState::new();
+
+        // Less than 20 samples should return None
+        for _ in 0..19 {
+            state.update(100.0, false);
+        }
+        assert!(state.get_trend().is_none());
+
+        // 20th sample should allow trend calculation
+        state.update(100.0, false);
+        // Trend might still be None if values are stable, but function should work
+        let _ = state.get_trend(); // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_trend_rising() {
+        let mut state = SensorState::new();
+
+        // Fill with rising values that exceed TREND_THRESHOLD
+        for i in 0..HISTORY_SIZE {
+            state.update(i as f32, false);
+        }
+
+        let trend = state.get_trend();
+        assert!(trend.is_some());
+        assert!(trend.unwrap()); // Rising = true
+    }
+
+    #[test]
+    fn test_trend_falling() {
+        let mut state = SensorState::new();
+
+        // Fill with falling values
+        for i in 0..HISTORY_SIZE {
+            state.update((HISTORY_SIZE - i) as f32, false);
+        }
+
+        let trend = state.get_trend();
+        assert!(trend.is_some());
+        assert!(!trend.unwrap()); // Falling = false
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(GRAPH_HISTORY_SIZE, 60);
+        assert!(AVG_BUFFER_SIZE > 0);
+        assert!(AVG_SAMPLE_INTERVAL > 0);
+        assert!(GRAPH_SAMPLE_INTERVAL > 0);
+        assert!(PEAK_HOLD_FRAMES > 0);
+    }
 }

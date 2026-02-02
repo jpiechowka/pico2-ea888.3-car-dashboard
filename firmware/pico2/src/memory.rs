@@ -85,6 +85,7 @@ impl MemoryStats {
 
     /// Get stack usage as a percentage.
     #[allow(dead_code)]
+    #[allow(clippy::manual_checked_ops)] // Explicit zero-check is clearer for embedded
     pub fn stack_percent(&self) -> u32 {
         if self.stack_total > 0 {
             (self.stack_used * 100) / self.stack_total
@@ -95,6 +96,7 @@ impl MemoryStats {
 
     /// Get static RAM usage as a percentage of total.
     #[allow(dead_code)]
+    #[allow(clippy::manual_checked_ops)] // Explicit zero-check is clearer for embedded
     pub fn static_percent(&self) -> u32 {
         if self.ram_total > 0 {
             (self.static_ram * 100) / self.ram_total
@@ -105,7 +107,7 @@ impl MemoryStats {
 }
 
 // =============================================================================
-// Tests
+// Unit Tests (run on host with: cargo test --lib --target <host-triple>)
 // =============================================================================
 
 #[cfg(test)]

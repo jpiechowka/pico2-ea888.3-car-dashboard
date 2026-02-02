@@ -4,17 +4,31 @@ version = "0.1.0"
 edition = "2024"
 description = "OBD-II dashboard firmware for Raspberry Pi Pico 2 (RP2350)"
 
+# Library for testable modules (can run on host)
+[lib]
+name = "dashboard_pico2"
+path = "src/lib.rs"
+
+# Binary for embedded target (RP2350)
 [[bin]]
 name = "pico2"
 path = "src/main.rs"
 
 [features]
 default = []
-overclock = []      # 250 MHz @ 1.10V - optimal SPI timing
-turbo-oc = []       # 375 MHz @ 1.30V - maximum performance
+overclock = []      # 250 MHz @ 1.10V - optimal SPI timing (62.5 MHz SPI)
+spi-70mhz = []      # 280 MHz @ 1.30V - 70 MHz SPI (280/4, beyond ST7789 datasheet)
 simple-outline = []
 
+# === Cross-platform dependencies (work on host and ARM) ===
 [dependencies]
+embedded-graphics = "0.8.1"
+heapless = "0.9.2"
+micromath = "2.1.0"
+profont = "0.7"
+
+# === ARM-only dependencies (conditional on target) ===
+[target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
@@ -23,9 +37,5 @@ embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "defmt", "e
 embassy-rp = { version = "0.9.0", features = ["binary-info", "critical-section-impl", "defmt", "rp235xa", "time-driver"] }
 embassy-sync = "0.7.2"
 embassy-time = "0.5.0"
-embedded-graphics = "0.8.1"
-heapless = "0.9.2"
-micromath = "2.1.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
-profont = "0.7"
 static_cell = "2.1"

@@ -22,6 +22,21 @@ jobs:
         run: cargo fmt --all --check
         working-directory: firmware
 
+  test:
+    name: Test (Host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: firmware
+      - name: Run tests
+        # Tests run on host target (x86_64-unknown-linux-gnu), not embedded target
+        # The library uses cfg_attr to enable std for tests
+        run: cargo test -p dashboard-pico2 --lib --target x86_64-unknown-linux-gnu
+        working-directory: firmware
+
   clippy-pico2:
     name: Clippy (Pico 2)
     runs-on: ubuntu-latest

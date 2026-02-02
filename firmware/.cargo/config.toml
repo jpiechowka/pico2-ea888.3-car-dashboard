@@ -32,8 +32,6 @@ pico2-oc = "build -p dashboard-pico2 --release --features overclock"
 pico2-oc-run = "run -p dashboard-pico2 --release --features overclock"
 pico2-fast-oc = "build -p dashboard-pico2 --release --features simple-outline,overclock"
 pico2-fast-oc-run = "run -p dashboard-pico2 --release --features simple-outline,overclock"
-# Turbo: 375 MHz @ 1.30V (maximum performance)
-pico2-turbo = "build -p dashboard-pico2 --release --features turbo-oc"
-pico2-turbo-run = "run -p dashboard-pico2 --release --features turbo-oc"
-pico2-fast-turbo = "build -p dashboard-pico2 --release --features simple-outline,turbo-oc"
-pico2-fast-turbo-run = "run -p dashboard-pico2 --release --features simple-outline,turbo-oc"
+# SPI 70 MHz: 280 MHz @ 1.30V (280/4 = 70 MHz SPI, beyond ST7789 datasheet)
+pico2-spi70 = "build -p dashboard-pico2 --release --features simple-outline,spi-70mhz"
+pico2-spi70-run = "run -p dashboard-pico2 --release --features simple-outline,spi-70mhz"

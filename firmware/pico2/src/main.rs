@@ -17,30 +17,48 @@
 
 #![no_std]
 #![no_main]
-// Crate-level lints (from dashboard-common)
+// Crate-level lints (match lib.rs for consistency)
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
+// Modules only used in the binary (not testable on host)
 mod animations;
-mod colors;
-mod config;
 mod display;
 mod log_buffer;
-mod memory;
-mod pages;
-mod render;
 mod screens;
-mod sensor_state;
 mod st7789;
 mod styles;
-mod thresholds;
 mod widgets;
 
-mod cpu_cycles;
+// Re-export testable modules from library for local use
+// (These are defined in lib.rs with host-testable code)
+mod colors {
+    pub use dashboard_pico2::colors::*;
+}
+mod config {
+    pub use dashboard_pico2::config::*;
+}
+mod cpu_cycles {
+    pub use dashboard_pico2::cpu_cycles::*;
+}
+mod memory {
+    pub use dashboard_pico2::memory::*;
+}
+mod pages {
+    pub use dashboard_pico2::pages::*;
+}
+mod render {
+    pub use dashboard_pico2::render::*;
+}
+mod sensor_state {
+    pub use dashboard_pico2::sensor_state::*;
+}
+mod thresholds {
+    pub use dashboard_pico2::thresholds::*;
+}
 
-use core::mem;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use defmt::info;
@@ -207,7 +225,7 @@ async fn demo_values_task(
     }
 }
 
-use crate::display::display_spi_config;
+use crate::display::{display_spi_config, get_actual_spi_freq};
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, show_loading_screen, show_welcome_screen};
 
 // =============================================================================
@@ -313,9 +331,9 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 // Make framebuffers accessible for the flush task
 pub use crate::st7789::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 
-// Ensure overclock and turbo-oc are mutually exclusive
-#[cfg(all(feature = "overclock", feature = "turbo-oc"))]
-compile_error!("Features 'overclock' and 'turbo-oc' are mutually exclusive. Use one or the other.");
+// Ensure only one overclock feature is enabled at a time
+#[cfg(all(feature = "overclock", feature = "spi-70mhz"))]
+compile_error!("Only one overclock feature can be enabled at a time. Choose one of: overclock, spi-70mhz");
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -340,29 +358,28 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    // Turbo overclock: 375 MHz @ 1.30V for maximum performance
-    // Per Pimoroni testing, RP2350 is stable at 420 MHz @ 1.30V
-    #[cfg(feature = "turbo-oc")]
+    // SPI 70 MHz overclock: 280 MHz @ 1.30V for 70 MHz SPI (280/4)
+    #[cfg(feature = "spi-70mhz")]
     let p = {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
-        const TURBO_FREQ_HZ: u32 = 375_000_000; // 375 MHz (2.5x default)
-        const TURBO_VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V (higher for stability)
+        const FREQ_HZ: u32 = 280_000_000; // 280 MHz / 4 = 70 MHz SPI
+        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V for stability
 
         let mut config = Config::default();
-        config.clocks = ClockConfig::system_freq(TURBO_FREQ_HZ).expect("Invalid turbo frequency");
-        config.clocks.core_voltage = TURBO_VOLTAGE;
-        info!("Turbo overclocking to 375 MHz @ 1.30V");
+        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid SPI 70 MHz overclock frequency");
+        config.clocks.core_voltage = VOLTAGE;
+        info!("SPI 70 MHz overclock: 280 MHz @ 1.30V");
         embassy_rp::init(config)
     };
 
-    #[cfg(not(any(feature = "overclock", feature = "turbo-oc")))]
+    #[cfg(not(any(feature = "overclock", feature = "spi-70mhz")))]
     let p = embassy_rp::init(Default::default());
 
     // Initialize DWT cycle counter for CPU utilization measurement
-    let cpu_freq_hz = if cfg!(feature = "turbo-oc") {
-        375_000_000
+    let cpu_freq_hz = if cfg!(feature = "spi-70mhz") {
+        280_000_000
     } else if cfg!(feature = "overclock") {
         250_000_000
     } else {
@@ -710,8 +727,8 @@ async fn main(spawner: Spawner) {
         color_transitions.set_target(cell_idx::IAT, iat_target);
         color_transitions.set_target(cell_idx::EGT, egt_target);
 
-        // Update color transitions (advance interpolation)
-        color_transitions.update();
+        // Update color transitions (time-based interpolation for FPS independence)
+        color_transitions.update(Instant::now());
 
         // Profiling: start render timing
         let render_start = Instant::now();
@@ -720,11 +737,18 @@ async fn main(spawner: Spawner) {
         let buffer = unsafe { double_buffer.render_buffer() };
         let mut display = St7789Renderer::new(buffer);
 
-        // Clear display when needed (both buffers need clearing on page switch)
+        // Clear display when needed (both buffers need clearing on page switch or popup close)
         if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
             display.clear(BLACK).ok();
             render_state.mark_display_cleared(); // Always mark when cleared
-            clear_frames_remaining = clear_frames_remaining.saturating_sub(1);
+
+            // When popup closes via render_state, ensure BOTH double buffers get cleared
+            // by setting clear_frames_remaining = 1 for the next frame
+            if render_state.popup_just_closed() && clear_frames_remaining == 0 {
+                clear_frames_remaining = 1;
+            } else {
+                clear_frames_remaining = clear_frames_remaining.saturating_sub(1);
+            }
         }
 
         // Render based on current page
@@ -890,6 +914,10 @@ async fn main(spawner: Spawner) {
                 // Collect memory stats
                 let mem_stats = crate::memory::MemoryStats::collect();
 
+                // Get SPI frequencies (requested from config, actual from hardware)
+                let requested_spi_hz = display_spi_config().frequency;
+                let actual_spi_hz = get_actual_spi_freq(cpu_freq_hz);
+
                 draw_profiling_page(
                     &mut display,
                     &ProfilingData {
@@ -916,6 +944,9 @@ async fn main(spawner: Spawner) {
                         // CPU utilization
                         cpu_util_percent,
                         frame_cycles: frame_cycles_used,
+                        // SPI clocks
+                        requested_spi_mhz: requested_spi_hz / 1_000_000,
+                        actual_spi_mhz: actual_spi_hz / 1_000_000,
                     },
                 );
             }

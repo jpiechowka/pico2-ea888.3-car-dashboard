@@ -78,15 +78,6 @@ const TEMP_VALUE_Y_LARGE: i32 = -12;
 /// Slightly higher to maintain visual balance with smaller font.
 const TEMP_VALUE_Y_MEDIUM: i32 = -10;
 
-// Value clear area dimensions (removes outline artifacts when value width changes).
-// Max width: 5 chars × 14px (24pt) + 2px outline = 72px → half-width = 38px, total = 76px
-// Height: 24px font + 2px outline + 2px margin = 28px
-// Y offset from baseline: ~20px (font height minus descent)
-const VALUE_CLEAR_HALF_WIDTH: i32 = 38;
-const VALUE_CLEAR_WIDTH: u32 = 76;
-const VALUE_CLEAR_HEIGHT: u32 = 28;
-const VALUE_CLEAR_Y_OFFSET: i32 = 20;
-
 // =============================================================================
 // Sensor Display Data
 // =============================================================================
@@ -511,18 +502,6 @@ where
         (VALUE_FONT, TEMP_VALUE_Y_LARGE)
     };
 
-    // Clear value area to remove residual outline pixels from previous frames
-    Rectangle::new(
-        Point::new(
-            center_x - VALUE_CLEAR_HALF_WIDTH,
-            center_y + value_y_offset - VALUE_CLEAR_Y_OFFSET,
-        ),
-        Size::new(VALUE_CLEAR_WIDTH, VALUE_CLEAR_HEIGHT),
-    )
-    .into_styled(PrimitiveStyle::with_fill(bg_color))
-    .draw(display)
-    .ok();
-
     draw_value_with_outline(
         display,
         &value_str,
@@ -665,15 +644,6 @@ where
     let _ = write!(value_str, "{voltage:.1}V");
     let value_color = if state.is_new_peak { peak_color } else { base_text };
 
-    // Clear value area to remove residual outline pixels from previous frames
-    Rectangle::new(
-        Point::new(center_x - VALUE_CLEAR_HALF_WIDTH, center_y - 7 - VALUE_CLEAR_Y_OFFSET),
-        Size::new(VALUE_CLEAR_WIDTH, VALUE_CLEAR_HEIGHT),
-    )
-    .into_styled(PrimitiveStyle::with_fill(bg_color))
-    .draw(display)
-    .ok();
-
     draw_value_with_outline(
         display,
         &value_str,
@@ -790,15 +760,6 @@ where
 
     let mut value_str: String<16> = String::new();
     let _ = write!(value_str, "{afr:.1}");
-
-    // Clear value area to remove residual outline pixels from previous frames
-    Rectangle::new(
-        Point::new(center_x - VALUE_CLEAR_HALF_WIDTH, center_y - 14 - VALUE_CLEAR_Y_OFFSET),
-        Size::new(VALUE_CLEAR_WIDTH, VALUE_CLEAR_HEIGHT),
-    )
-    .into_styled(PrimitiveStyle::with_fill(bg_color))
-    .draw(display)
-    .ok();
 
     draw_value_with_outline(
         display,

@@ -115,13 +115,15 @@ pub fn draw_mini_graph<D, F>(
         0.0
     };
 
+    // Step by 2 for performance: reduces line draws by ~50% with minimal visual impact
+    let step = 2usize;
     let x_step = (graph_width - 1) as f32 / (count - 1).max(1) as f32;
 
     let mut prev_screen_x = 0i32;
     let mut prev_screen_y = 0i32;
     let mut first_point = true;
 
-    for i in 0..count {
+    for i in (0..count).step_by(step) {
         let buffer_idx = (start_idx + i) % buffer_size;
         let value = buffer[buffer_idx];
 

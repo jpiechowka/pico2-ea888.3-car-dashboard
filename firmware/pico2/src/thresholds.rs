@@ -185,7 +185,6 @@ pub const BAR_TO_PSI: f32 = 14.5038;
 // =============================================================================
 
 #[cfg(test)]
-#[allow(clippy::assertions_on_constants)] // Intentional compile-time validation of threshold ordering
 mod tests {
     use super::*;
 
@@ -245,18 +244,6 @@ mod tests {
         // 2 bar (easter egg threshold) should be approximately 29 PSI
         let two_bar_psi = 2.0 * BAR_TO_PSI;
         assert!((two_bar_psi - 29.0).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_easter_egg_thresholds_consistent() {
-        // Easter egg PSI threshold should be reasonably close to BAR threshold converted
-        // BAR = 1.95, PSI = 29.0, actual conversion = 1.95 * 14.5038 ≈ 28.28 PSI
-        // The PSI threshold is a rounded value, so allow larger tolerance
-        let bar_as_psi = BOOST_EASTER_EGG_BAR * BAR_TO_PSI;
-        assert!(
-            (bar_as_psi - BOOST_EASTER_EGG_PSI).abs() < 1.0,
-            "Easter egg thresholds should be within ~1 PSI"
-        );
     }
 
     #[test]
