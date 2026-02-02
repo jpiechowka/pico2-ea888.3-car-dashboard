@@ -13,21 +13,47 @@ use embassy_rp::spi::Config as SpiConfig;
 /// SPI configuration for the ST7789 display.
 ///
 /// Frequency depends on feature flags:
-/// - `spi-75mhz`: 75 MHz (300 MHz core / 4, maximum overclock)
-/// - `spi-70mhz`: 70 MHz (280 MHz core / 4, beyond ST7789 datasheet)
-/// - Default: 62.5 MHz (ST7789 datasheet maximum)
+/// - `cpu340-spi85-1v40`: 85 MHz (340 MHz core / 4, extreme overclock)
+/// - `cpu320-spi80-1v40`: 80 MHz (320 MHz core / 4, extreme overclock)
+/// - `cpu300-spi75-1v30`: 75 MHz (300 MHz core / 4)
+/// - `cpu280-spi70-1v30`: 70 MHz (280 MHz core / 4, beyond ST7789 datasheet)
+/// - `cpu250-spi62-1v10`: 62.5 MHz (ST7789 datasheet maximum)
+/// - Default: 62.5 MHz (stock 150 MHz core)
 pub fn display_spi_config() -> SpiConfig {
     let mut config = SpiConfig::default();
 
-    #[cfg(feature = "spi-75mhz")]
+    #[cfg(feature = "cpu340-spi85-1v40")]
+    {
+        config.frequency = 85_000_000;
+    }
+    #[cfg(all(feature = "cpu320-spi80-1v40", not(feature = "cpu340-spi85-1v40")))]
+    {
+        config.frequency = 80_000_000;
+    }
+    #[cfg(all(
+        feature = "cpu300-spi75-1v30",
+        not(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))
+    ))]
     {
         config.frequency = 75_000_000;
     }
-    #[cfg(all(feature = "spi-70mhz", not(feature = "spi-75mhz")))]
+    #[cfg(all(
+        feature = "cpu280-spi70-1v30",
+        not(any(
+            feature = "cpu300-spi75-1v30",
+            feature = "cpu320-spi80-1v40",
+            feature = "cpu340-spi85-1v40"
+        ))
+    ))]
     {
         config.frequency = 70_000_000;
     }
-    #[cfg(not(any(feature = "spi-70mhz", feature = "spi-75mhz")))]
+    #[cfg(not(any(
+        feature = "cpu280-spi70-1v30",
+        feature = "cpu300-spi75-1v30",
+        feature = "cpu320-spi80-1v40",
+        feature = "cpu340-spi85-1v40"
+    )))]
     {
         config.frequency = 62_500_000;
     }

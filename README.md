@@ -42,29 +42,28 @@ cargo pico2-fast
 # Build & flash with simple-outline optimization
 cargo pico2-fast-run
 
-# Build with overclocking (250 MHz, 62.5 MHz SPI)
-cargo pico2-oc
+# === Overclock profiles (all include simple-outline) ===
+# Format: cargo pico2-{cpu_mhz}-{spi_mhz}-{voltage}
 
-# Build & flash with overclocking
-cargo pico2-oc-run
+# 250 MHz @ 1.10V (62.5 MHz SPI - ST7789 datasheet max)
+cargo pico2-250-62-1v10
+cargo pico2-250-62-1v10-run
 
-# Build with simple-outline + overclocking (balanced)
-cargo pico2-fast-oc
+# 280 MHz @ 1.30V (70 MHz SPI - beyond ST7789 datasheet)
+cargo pico2-280-70-1v30
+cargo pico2-280-70-1v30-run
 
-# Build & flash with simple-outline + overclocking
-cargo pico2-fast-oc-run
+# 300 MHz @ 1.30V (75 MHz SPI)
+cargo pico2-300-75-1v30
+cargo pico2-300-75-1v30-run
 
-# Build with 70 MHz SPI (280 MHz core)
-cargo pico2-spi70
+# 320 MHz @ 1.40V (80 MHz SPI - higher voltage/clock)
+cargo pico2-320-80-1v40
+cargo pico2-320-80-1v40-run
 
-# Build & flash with 70 MHz SPI
-cargo pico2-spi70-run
-
-# Build with 75 MHz SPI (300 MHz core, maximum overclock)
-cargo pico2-spi75
-
-# Build & flash with 75 MHz SPI
-cargo pico2-spi75-run
+# 340 MHz @ 1.40V (85 MHz SPI - higher voltage/clock)
+cargo pico2-340-85-1v40
+cargo pico2-340-85-1v40-run
 ```
 
 ### Pico 2 (RP2350)

@@ -16,9 +16,13 @@ path = "src/main.rs"
 
 [features]
 default = []
-overclock = []      # 250 MHz @ 1.10V - optimal SPI timing (62.5 MHz SPI)
-spi-70mhz = []      # 280 MHz @ 1.30V - 70 MHz SPI (280/4, beyond ST7789 datasheet)
-spi-75mhz = []      # 300 MHz @ 1.30V - 75 MHz SPI (300/4, maximum overclock)
+# Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
+# All profiles use simple-outline by default for best FPS
+cpu250-spi62-1v10 = []  # 250 MHz @ 1.10V - 62.5 MHz SPI (ST7789 datasheet max)
+cpu280-spi70-1v30 = []  # 280 MHz @ 1.30V - 70 MHz SPI (280/4, beyond datasheet)
+cpu300-spi75-1v30 = []  # 300 MHz @ 1.30V - 75 MHz SPI (300/4)
+cpu320-spi80-1v40 = []  # 320 MHz @ 1.40V - 80 MHz SPI (320/4, extreme OC)
+cpu340-spi85-1v40 = []  # 340 MHz @ 1.40V - 85 MHz SPI (340/4, extreme OC)
 simple-outline = []
 
 # === Cross-platform dependencies (work on host and ARM) ===

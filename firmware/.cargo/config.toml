@@ -27,14 +27,26 @@ pico2 = "build -p dashboard-pico2 --release"
 pico2-run = "run -p dashboard-pico2 --release"
 pico2-fast = "build -p dashboard-pico2 --release --features simple-outline"
 pico2-fast-run = "run -p dashboard-pico2 --release --features simple-outline"
-# Overclock: 250 MHz @ 1.10V (optimal SPI timing)
-pico2-oc = "build -p dashboard-pico2 --release --features overclock"
-pico2-oc-run = "run -p dashboard-pico2 --release --features overclock"
-pico2-fast-oc = "build -p dashboard-pico2 --release --features simple-outline,overclock"
-pico2-fast-oc-run = "run -p dashboard-pico2 --release --features simple-outline,overclock"
-# SPI 70 MHz: 280 MHz @ 1.30V (280/4 = 70 MHz SPI, beyond ST7789 datasheet)
-pico2-spi70 = "build -p dashboard-pico2 --release --features simple-outline,spi-70mhz"
-pico2-spi70-run = "run -p dashboard-pico2 --release --features simple-outline,spi-70mhz"
-# SPI 75 MHz: 300 MHz @ 1.30V (300/4 = 75 MHz SPI, maximum overclock)
-pico2-spi75 = "build -p dashboard-pico2 --release --features simple-outline,spi-75mhz"
-pico2-spi75-run = "run -p dashboard-pico2 --release --features simple-outline,spi-75mhz"
+
+# Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
+# All use simple-outline for best FPS
+
+# 250 MHz @ 1.10V (62.5 MHz SPI - ST7789 datasheet max)
+pico2-250-62-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu250-spi62-1v10"
+pico2-250-62-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu250-spi62-1v10"
+
+# 280 MHz @ 1.30V (70 MHz SPI - beyond ST7789 datasheet)
+pico2-280-70-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu280-spi70-1v30"
+pico2-280-70-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu280-spi70-1v30"
+
+# 300 MHz @ 1.30V (75 MHz SPI)
+pico2-300-75-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"
+pico2-300-75-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"
+
+# 320 MHz @ 1.40V (80 MHz SPI - extreme overclock)
+pico2-320-80-1v40 = "build -p dashboard-pico2 --release --features simple-outline,cpu320-spi80-1v40"
+pico2-320-80-1v40-run = "run -p dashboard-pico2 --release --features simple-outline,cpu320-spi80-1v40"
+
+# 340 MHz @ 1.40V (85 MHz SPI - extreme overclock)
+pico2-340-85-1v40 = "build -p dashboard-pico2 --release --features simple-outline,cpu340-spi85-1v40"
+pico2-340-85-1v40-run = "run -p dashboard-pico2 --release --features simple-outline,cpu340-spi85-1v40"
