@@ -389,6 +389,32 @@ fn read_vreg_voltage_mv() -> u32 {
     1100 // Default 1.10V for tests
 }
 
+/// Get requested voltage based on compile-time feature flags.
+///
+/// Returns voltage in millivolts (e.g., 1100 for 1.10V).
+const fn requested_voltage_mv() -> u32 {
+    #[cfg(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))]
+    {
+        1400 // 1.40V for extreme overclock profiles
+    }
+    #[cfg(all(
+        any(feature = "cpu280-spi70-1v30", feature = "cpu300-spi75-1v30"),
+        not(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))
+    ))]
+    {
+        1300 // 1.30V for moderate overclock profiles
+    }
+    #[cfg(not(any(
+        feature = "cpu280-spi70-1v30",
+        feature = "cpu300-spi75-1v30",
+        feature = "cpu320-spi80-1v40",
+        feature = "cpu340-spi85-1v40"
+    )))]
+    {
+        1100 // 1.10V default
+    }
+}
+
 /// Set VREG voltage by directly writing to hardware registers.
 ///
 /// The RP2350 VREG is locked by default to prevent accidental voltage changes.
@@ -1110,7 +1136,8 @@ async fn main(spawner: Spawner) {
                         // SPI clocks
                         requested_spi_mhz: requested_spi_hz / 1_000_000,
                         actual_spi_mhz: actual_spi_hz / 1_000_000,
-                        // Voltage (read from hardware)
+                        // Voltage: requested (compile-time) vs actual (from hardware)
+                        requested_voltage_mv: requested_voltage_mv(),
                         actual_voltage_mv: read_vreg_voltage_mv(),
                     },
                 );

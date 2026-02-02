@@ -20,7 +20,7 @@
 //! - **Static**: Static RAM allocation (framebuffers + overhead)
 //! - **RAM**: Total RP2350 RAM (512KB)
 //! - **CPU**: Clock frequency (150/250/280/300/320/340 MHz based on feature)
-//! - **Volt**: Actual core voltage read from VREG hardware (yellow if ≥1.40V)
+//! - **Volt**: Core voltage requested/actual (yellow if mismatch or ≥1.40V)
 //! - **SPI**: Display bus speed (requested/actual MHz from hardware)
 //! - **FB**: Framebuffer configuration (2×150K for double buffering)
 //!
@@ -70,6 +70,7 @@ pub struct ProfilingData {
     pub actual_spi_mhz: u32,
 
     // Voltage (millivolts, e.g., 1100 = 1.10V)
+    pub requested_voltage_mv: u32,
     pub actual_voltage_mv: u32,
 }
 
@@ -256,13 +257,13 @@ pub fn draw_profiling_page<D>(
     Text::new(&s, Point::new(col2, y), cpu_style).draw(display).ok();
     y += line_height;
 
-    // Actual voltage from hardware (shows what VREG is really set to)
+    // Voltage display: requested / actual (from VREG hardware)
     s.clear();
-    let volts = data.actual_voltage_mv / 1000;
-    let millivolts = (data.actual_voltage_mv % 1000) / 10;
-    let _ = write!(s, "Volt: {}.{:02}V", volts, millivolts);
-    // Highlight if 1.40V or higher
-    let volt_style = if data.actual_voltage_mv >= 1400 {
+    let req_v = data.requested_voltage_mv / 100; // e.g., 1100 -> 11 (for 1.1)
+    let act_v = data.actual_voltage_mv / 100;
+    let _ = write!(s, "Volt: {}.{}/{}.{}V", req_v / 10, req_v % 10, act_v / 10, act_v % 10);
+    // Highlight if actual >= 1.40V or mismatch
+    let volt_style = if data.actual_voltage_mv >= 1400 || data.actual_voltage_mv != data.requested_voltage_mv {
         highlight_style
     } else {
         value_style
