@@ -1,8 +1,8 @@
 # Workspace-level Cargo configuration
 #
 # TIP: Use the aliases below for convenience:
-#   cargo pico2           # build pico2
-#   cargo pico2-fast-oc   # build with overclock + fast outlines
+#   cargo pico2              # build pico2 (150 MHz, stock)
+#   cargo pico2-250-62-1v10  # build with 250 MHz @ 1.10V (62.5 MHz SPI)
 
 [env]
 DEFMT_LOG = "debug"
