@@ -19,7 +19,7 @@
 //! - **Stack**: Current stack usage (KB) vs total available
 //! - **Static**: Static RAM allocation (framebuffers + overhead)
 //! - **RAM**: Total RP2350 RAM (512KB)
-//! - **CPU**: Clock frequency (150/250/280 MHz based on feature)
+//! - **CPU**: Clock frequency (150/250/280/300 MHz based on feature)
 //! - **SPI**: Display bus speed (requested/actual MHz from hardware)
 //! - **FB**: Framebuffer configuration (2×150K for double buffering)
 //!
@@ -208,17 +208,22 @@ pub fn draw_profiling_page<D>(
     y += line_height;
 
     // CPU frequency display
-    #[cfg(feature = "spi-70mhz")]
+    #[cfg(feature = "spi-75mhz")]
+    Text::new("CPU: 300 MHz", Point::new(col2, y), value_style)
+        .draw(display)
+        .ok();
+
+    #[cfg(all(feature = "spi-70mhz", not(feature = "spi-75mhz")))]
     Text::new("CPU: 280 MHz", Point::new(col2, y), value_style)
         .draw(display)
         .ok();
 
-    #[cfg(all(feature = "overclock", not(feature = "spi-70mhz")))]
+    #[cfg(all(feature = "overclock", not(any(feature = "spi-70mhz", feature = "spi-75mhz"))))]
     Text::new("CPU: 250 MHz", Point::new(col2, y), value_style)
         .draw(display)
         .ok();
 
-    #[cfg(not(any(feature = "overclock", feature = "spi-70mhz")))]
+    #[cfg(not(any(feature = "overclock", feature = "spi-70mhz", feature = "spi-75mhz")))]
     Text::new("CPU: 150 MHz", Point::new(col2, y), value_style)
         .draw(display)
         .ok();
