@@ -1,4 +1,13 @@
 //! Header bar and divider line rendering.
+//!
+//! The header displays the dashboard title and optional FPS counter.
+//!
+//! # FPS Display Modes
+//!
+//! - **Off**: No FPS displayed
+//! - **Instant**: Shows current FPS (e.g., "50 FPS")
+//! - **Average**: Shows average FPS since last page switch (e.g., "48 AVG")
+//! - **Combined**: Shows both instant and average (e.g., "50/48 FPS")
 
 use core::fmt::Write;
 
@@ -33,12 +42,20 @@ const HEADER_FILL_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_fill(RED)
 /// Draw the header bar with optional FPS display.
 ///
 /// # Arguments
-/// * `fps_mode` - The FPS display mode (Off, Instant, or Average)
-/// * `fps` - The FPS value to display (instant or average, depending on mode)
+/// * `fps_mode` - The FPS display mode (Off, Instant, Average, or Combined)
+/// * `fps_instant` - The instantaneous FPS value (updated every second)
+/// * `fps_average` - The average FPS value (since last page switch)
+///
+/// # Display Formats
+/// - **Off**: No FPS displayed
+/// - **Instant**: "50 FPS"
+/// - **Average**: "48 AVG"
+/// - **Combined**: "50/48 FPS" (instant/average)
 pub fn draw_header<D>(
     display: &mut D,
     fps_mode: FpsMode,
-    fps: f32,
+    fps_instant: f32,
+    fps_average: f32,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -53,7 +70,25 @@ pub fn draw_header<D>(
 
     if fps_mode.is_visible() {
         let mut fps_str: String<16> = String::new();
-        let _ = write!(fps_str, "{:.0}{}", fps, fps_mode.suffix());
+        match fps_mode {
+            FpsMode::Off => {}
+            FpsMode::Instant => {
+                let _ = write!(fps_str, "{:.0}{}", fps_instant, fps_mode.suffix());
+            }
+            FpsMode::Average => {
+                let _ = write!(fps_str, "{:.0}{}", fps_average, fps_mode.suffix());
+            }
+            FpsMode::Combined => {
+                // Format: "XX/YY FPS" where XX is instant and YY is average
+                let _ = write!(
+                    fps_str,
+                    "{:.0}/{:.0}{}",
+                    fps_instant,
+                    fps_average,
+                    fps_mode.suffix()
+                );
+            }
+        }
         Text::with_text_style(&fps_str, HEADER_FPS_POS, LABEL_STYLE_WHITE, RIGHT_ALIGNED)
             .draw(display)
             .ok();

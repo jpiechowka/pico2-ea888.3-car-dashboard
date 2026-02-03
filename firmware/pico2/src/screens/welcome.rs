@@ -2,6 +2,28 @@
 //!
 //! Displays golden "AEZAKMI" text with black shadow, a red/black stripe,
 //! and 5 golden stars that blink in sequence (GTA San Andreas style).
+//!
+//! # Animation
+//!
+//! The star animation cycle is 210 frames:
+//! - Frames 0-149: Stars light up sequentially (one every 30 frames)
+//! - Frames 150-209: All stars blink on/off
+//!
+//! # Usage
+//!
+//! The caller should call [`draw_welcome_frame`] in a loop with incrementing
+//! frame numbers, flushing the display after each frame. Typical usage runs
+//! for ~90 frames at 30 FPS (~3 seconds).
+//!
+//! # Example
+//!
+//! ```ignore
+//! for frame in 0..90 {
+//!     draw_welcome_frame(&mut display, frame);
+//!     display.flush().await;
+//!     Timer::after(Duration::from_millis(33)).await; // ~30 FPS
+//! }
+//! ```
 
 use embassy_time::{Duration, Timer};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -249,8 +271,13 @@ pub fn draw_welcome_frame<D>(
 
 /// Run the welcome screen with AEZAKMI logo and blinking stars.
 ///
-/// This renders the complete welcome sequence to the display.
-/// Note: The display is only cleared and drawn, NOT flushed - caller must flush.
+/// **Note:** This function only draws a single static frame and does NOT
+/// provide the animated star sequence. For proper animation, use
+/// [`draw_welcome_frame`] directly in a loop with flushes after each frame.
+/// See the boot sequence in `main.rs` for the correct implementation.
+///
+/// This function is kept for reference but should not be used for the actual
+/// boot sequence.
 pub async fn show_welcome_screen<D>(display: &mut D)
 where
     D: DrawTarget<Color = Rgb565>,

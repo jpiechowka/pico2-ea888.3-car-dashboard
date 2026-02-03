@@ -8,9 +8,23 @@
 //! - Main task: Renders to buffer A, signals flush, swaps to buffer B, continues rendering
 //! - Flush task: Waits for signal, flushes completed buffer via DMA
 //!
+//! # Boot Sequence
+//!
+//! On startup, the firmware displays two boot screens before entering the main loop:
+//!
+//! 1. **Loading Screen** - Console-style initialization messages displayed sequentially
+//!    with delays between each message (total ~6 seconds). Messages include ECU connection
+//!    status, vehicle info, and sensor loading progress.
+//!
+//! 2. **Welcome Screen** - AEZAKMI logo (GTA San Andreas reference) with animated
+//!    blinking golden stars (~3 seconds). Stars light up sequentially then blink.
+//!
+//! Each boot screen frame is rendered and flushed to the display individually to ensure
+//! proper visual updates during the boot sequence.
+//!
 //! # Button Controls
 //!
-//! - **X**: Cycle FPS display mode: Off → Instant → Average → Off (Dashboard only)
+//! - **X**: Cycle FPS display mode: Off → Instant → Average → Combined → Off (Dashboard only)
 //! - **Y**: Cycle through pages (Dashboard → Debug → Logs → Dashboard)
 //! - **A**: Toggle boost unit BAR/PSI (Dashboard only)
 //! - **B**: Reset min/max/avg statistics (Dashboard only)
@@ -20,6 +34,7 @@
 //! - **Off**: No FPS displayed in header
 //! - **Instant**: Shows current FPS (updated every second)
 //! - **Average**: Shows average FPS since last page switch or reset
+//! - **Combined**: Shows both instant and average FPS (e.g., "50/48 FPS")
 
 #![no_std]
 #![no_main]
@@ -233,7 +248,10 @@ async fn demo_values_task(
 }
 
 use crate::display::{display_spi_config, get_actual_spi_freq};
-use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, show_loading_screen, show_welcome_screen};
+use crate::screens::{
+    INIT_MESSAGES, MAX_VISIBLE_LINES, ProfilingData, draw_loading_frame, draw_logs_page,
+    draw_profiling_page, draw_welcome_frame,
+};
 
 // =============================================================================
 // Popup State Management
@@ -581,14 +599,67 @@ async fn main(spawner: Spawner) {
     flusher.flush_buffer(unsafe { double_buffer.get_buffer(1) }).await;
     double_buffer.swap(); // Back to buffer 0
 
-    // Show boot screens using single-buffer mode for simplicity
+    // ==========================================================================
+    // Boot Sequence: Loading Screen → Welcome Screen
+    // ==========================================================================
+    // Uses single-buffer mode for simplicity. Each frame is rendered and then
+    // flushed to the display before proceeding to the next frame.
+
+    // --- Loading Screen ---
+    // Display console-style initialization messages sequentially with delays.
+    // Each message is rendered and flushed before waiting for its duration.
     {
         let buffer = unsafe { double_buffer.render_buffer() };
         let mut renderer = St7789Renderer::new(buffer);
-        show_loading_screen(&mut renderer).await;
-        flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-        show_welcome_screen(&mut renderer).await;
-        flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+
+        // Track visible lines (console scrolling effect)
+        let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
+        let mut line_count: usize = 0;
+
+        for (msg, duration_ms) in &INIT_MESSAGES {
+            // Add message to visible lines
+            if line_count < MAX_VISIBLE_LINES {
+                visible_lines[line_count] = msg;
+                line_count += 1;
+            } else {
+                // Shift lines up (scroll effect)
+                for i in 0..MAX_VISIBLE_LINES - 1 {
+                    visible_lines[i] = visible_lines[i + 1];
+                }
+                visible_lines[MAX_VISIBLE_LINES - 1] = msg;
+            }
+
+            // Draw the frame with current messages
+            draw_loading_frame(&mut renderer, &visible_lines, line_count, 0);
+
+            // Flush to display so the message is visible
+            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+
+            // Wait for message duration before showing next message
+            Timer::after(Duration::from_millis(*duration_ms)).await;
+        }
+
+        // Final pause after "Ready." message
+        Timer::after(Duration::from_millis(500)).await;
+    }
+
+    // --- Welcome Screen ---
+    // Display AEZAKMI logo with animated blinking stars.
+    // Runs for approximately 3 seconds with star animation.
+    {
+        let buffer = unsafe { double_buffer.render_buffer() };
+        let mut renderer = St7789Renderer::new(buffer);
+
+        // Animation: ~3 seconds at 30 FPS = 90 frames
+        // Star animation cycle is 210 frames, so we show about half a cycle
+        const WELCOME_FRAMES: u32 = 90;
+        const FRAME_DELAY_MS: u64 = 33; // ~30 FPS
+
+        for frame in 0..WELCOME_FRAMES {
+            draw_welcome_frame(&mut renderer, frame);
+            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+            Timer::after(Duration::from_millis(FRAME_DELAY_MS)).await;
+        }
     }
 
     // Move flusher to static for task (Embassy tasks need 'static lifetime)
@@ -920,15 +991,9 @@ async fn main(spawner: Spawner) {
         // Render based on current page
         match current_page {
             Page::Dashboard => {
-                // Select which FPS value to display based on mode
-                let display_fps = match fps_mode {
-                    FpsMode::Average => average_fps,
-                    _ => current_fps,
-                };
-
-                // Draw header
-                if render_state.check_header_dirty(fps_mode, display_fps) {
-                    draw_header(&mut display, fps_mode, display_fps);
+                // Draw header (pass both FPS values for Combined mode support)
+                if render_state.check_header_dirty(fps_mode, current_fps, average_fps) {
+                    draw_header(&mut display, fps_mode, current_fps, average_fps);
                 }
 
                 // Draw cells

@@ -1,4 +1,9 @@
 //! Non-modal popup overlays for status messages.
+//!
+//! Popups are temporary overlays that display status information:
+//! - **Reset popup**: "MIN/AVG/MAX RESET" when statistics are cleared
+//! - **FPS popup**: Shows current FPS mode ("FPS OFF", "FPS: INST", "FPS: AVG", "FPS: BOTH")
+//! - **Boost unit popup**: Shows current boost unit ("BOOST: BAR" or "BOOST: PSI")
 
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_10X20;
@@ -78,7 +83,7 @@ where
 
 /// Draw FPS mode toggle popup.
 ///
-/// Shows the current FPS mode: "FPS OFF", "FPS: INST", or "FPS: AVG".
+/// Shows the current FPS mode: "FPS OFF", "FPS: INST", "FPS: AVG", or "FPS: BOTH".
 pub fn draw_fps_toggle_popup<D>(
     display: &mut D,
     fps_mode: FpsMode,

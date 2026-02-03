@@ -161,10 +161,38 @@ impl SensorState {
         self.avg_frame_counter = 0;
     }
 
-    fn add_graph_sample(
-        &mut self,
-        value: f32,
-    ) {
+    /// Adds a new sample to the graph history buffer with incremental min/max tracking.
+    ///
+    /// # Optimization Strategy
+    ///
+    /// Instead of recalculating min/max by iterating through the entire buffer on every
+    /// sample (O(n) where n = GRAPH_HISTORY_SIZE), this implementation uses incremental
+    /// tracking that achieves O(1) time complexity for most updates:
+    ///
+    /// 1. **New sample extends range**: If the new value is less than the current min
+    ///    or greater than the current max, we simply update the min/max directly. O(1)
+    ///
+    /// 2. **Old sample was min/max**: When the circular buffer is full and we're about
+    ///    to overwrite an old sample that equals the current min or max, we must perform
+    ///    a full recalculation since we're removing a boundary value. O(n), but rare.
+    ///
+    /// 3. **All other cases**: No recalculation needed - the new sample is within the
+    ///    existing range and the overwritten sample wasn't a boundary. O(1)
+    ///
+    /// This reduces average time complexity from O(n) to O(1) amortized, with O(n)
+    /// recalculations occurring only when removing a min/max boundary value.
+    fn add_graph_sample(&mut self, value: f32) {
+        // Determine if we need a full recalculation after the update.
+        // This is only necessary when the buffer is full and we're about to overwrite
+        // a sample that equals the current min or max value.
+        let needs_recalculation = if self.graph_count == GRAPH_HISTORY_SIZE {
+            let old_value = self.graph_buffer[self.graph_index];
+            old_value == self.graph_min || old_value == self.graph_max
+        } else {
+            false
+        };
+
+        // Write the new sample to the circular buffer
         self.graph_buffer[self.graph_index] = value;
         self.graph_index = (self.graph_index + 1) % GRAPH_HISTORY_SIZE;
 
@@ -172,9 +200,25 @@ impl SensorState {
             self.graph_count += 1;
         }
 
-        self.recalculate_graph_minmax();
+        if needs_recalculation {
+            // The old min or max was removed from the buffer, so we must scan
+            // the entire buffer to find the new min/max boundaries.
+            self.recalculate_graph_minmax();
+        } else {
+            // O(1) incremental update: check if the new value extends the range
+            if value < self.graph_min {
+                self.graph_min = value;
+            }
+            if value > self.graph_max {
+                self.graph_max = value;
+            }
+        }
     }
 
+    /// Recalculates min/max by scanning the entire graph buffer.
+    ///
+    /// This is a helper function used only when the incremental tracking cannot
+    /// determine the new min/max (i.e., when removing a boundary value from the buffer).
     fn recalculate_graph_minmax(&mut self) {
         if self.graph_count == 0 {
             self.graph_min = f32::MAX;

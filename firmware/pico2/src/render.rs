@@ -1,7 +1,7 @@
 //! Render state tracking for optimized display updates.
 //!
 //! This module provides:
-//! - [`FpsMode`] - FPS display modes (Off, Instant, Average)
+//! - [`FpsMode`] - FPS display modes (Off, Instant, Average, Combined)
 //! - [`RenderState`] - Tracks display state for conditional redraws
 //! - [`cell_idx`] - Named cell indices for the dashboard grid
 //!
@@ -11,6 +11,7 @@
 //! - **Off** - No FPS displayed in header
 //! - **Instant** - Shows current FPS (updated every second)
 //! - **Average** - Shows average FPS since last page switch
+//! - **Combined** - Shows both instant and average FPS (e.g., "50/48")
 //!
 //! Average FPS is reset when switching pages.
 //!
@@ -48,36 +49,47 @@ pub enum FpsMode {
     Instant,
     /// Show average FPS since last reset.
     Average,
+    /// Show both instant and average FPS (e.g., "50/48").
+    Combined,
 }
 
 impl FpsMode {
-    /// Cycle to the next mode: Off -> Instant -> Average -> Off
+    /// Cycle to the next mode: Off -> Instant -> Average -> Combined -> Off
     pub const fn next(self) -> Self {
         match self {
             Self::Off => Self::Instant,
             Self::Instant => Self::Average,
-            Self::Average => Self::Off,
+            Self::Average => Self::Combined,
+            Self::Combined => Self::Off,
         }
     }
 
     /// Check if FPS should be displayed.
     pub const fn is_visible(self) -> bool { !matches!(self, Self::Off) }
 
-    /// Get display label for the mode.
+    /// Check if this mode requires both instant and average FPS values.
+    pub const fn needs_both_fps(self) -> bool { matches!(self, Self::Combined) }
+
+    /// Get display label for the mode (shown in popup).
     pub const fn label(self) -> &'static str {
         match self {
             Self::Off => "FPS OFF",
             Self::Instant => "FPS: INST",
             Self::Average => "FPS: AVG",
+            Self::Combined => "FPS: BOTH",
         }
     }
 
     /// Get short suffix for header display.
+    ///
+    /// Note: For Combined mode, the suffix is empty because the format
+    /// is handled specially in `draw_header()` as "XX/YY FPS".
     pub const fn suffix(self) -> &'static str {
         match self {
             Self::Off => "",
             Self::Instant => " FPS",
             Self::Average => " AVG",
+            Self::Combined => " FPS", // Used after the combined "XX/YY" format
         }
     }
 }
@@ -120,8 +132,11 @@ pub struct RenderState {
     /// Previous FPS display mode.
     prev_fps_mode: FpsMode,
 
-    /// Previous FPS value (rounded to avoid unnecessary redraws).
-    prev_fps_rounded: u32,
+    /// Previous instant FPS value (rounded to avoid unnecessary redraws).
+    prev_fps_instant_rounded: u32,
+
+    /// Previous average FPS value (rounded, for Combined mode).
+    prev_fps_average_rounded: u32,
 
     /// Previous popup kind (discriminant only, for detecting switches).
     prev_popup_kind: Option<u8>,
@@ -143,7 +158,8 @@ impl RenderState {
         Self {
             dividers_drawn: false,
             prev_fps_mode: FpsMode::Off,
-            prev_fps_rounded: 0,
+            prev_fps_instant_rounded: 0,
+            prev_fps_average_rounded: 0,
             prev_popup_kind: None,
             popup_just_closed: false,
             first_frame: true,
@@ -169,20 +185,37 @@ impl RenderState {
     /// Uses `fps.round()` to match the display formatting (`{:.0}`) which also
     /// rounds. This prevents mismatches where the dirty check sees a different
     /// value than what gets displayed.
+    ///
+    /// For Combined mode, both `fps_instant` and `fps_average` are checked.
+    /// For other modes, only the relevant FPS value is checked.
     pub fn check_header_dirty(
         &mut self,
         fps_mode: FpsMode,
-        fps: f32,
+        fps_instant: f32,
+        fps_average: f32,
     ) -> bool {
-        let fps_rounded = fps.round() as u32;
+        let instant_rounded = fps_instant.round() as u32;
+        let average_rounded = fps_average.round() as u32;
+
+        let fps_changed = match fps_mode {
+            FpsMode::Off => false,
+            FpsMode::Instant => instant_rounded != self.prev_fps_instant_rounded,
+            FpsMode::Average => average_rounded != self.prev_fps_average_rounded,
+            FpsMode::Combined => {
+                instant_rounded != self.prev_fps_instant_rounded
+                    || average_rounded != self.prev_fps_average_rounded
+            }
+        };
+
         let dirty = self.first_frame
             || self.popup_just_closed
             || self.display_cleared
             || fps_mode != self.prev_fps_mode
-            || (fps_mode.is_visible() && fps_rounded != self.prev_fps_rounded);
+            || fps_changed;
 
         self.prev_fps_mode = fps_mode;
-        self.prev_fps_rounded = fps_rounded;
+        self.prev_fps_instant_rounded = instant_rounded;
+        self.prev_fps_average_rounded = average_rounded;
         dirty
     }
 
@@ -280,23 +313,37 @@ mod tests {
     #[test]
     fn test_check_header_dirty_first_frame() {
         let mut state = RenderState::new();
-        assert!(state.check_header_dirty(FpsMode::Instant, 50.0));
+        assert!(state.check_header_dirty(FpsMode::Instant, 50.0, 48.0));
     }
 
     #[test]
     fn test_check_header_dirty_fps_change() {
         let mut state = RenderState::new();
         state.first_frame = false;
-        state.check_header_dirty(FpsMode::Instant, 50.0);
-        assert!(!state.check_header_dirty(FpsMode::Instant, 50.4)); // rounds to 50
-        assert!(state.check_header_dirty(FpsMode::Instant, 51.0)); // different
+        state.check_header_dirty(FpsMode::Instant, 50.0, 48.0);
+        assert!(!state.check_header_dirty(FpsMode::Instant, 50.4, 48.0)); // rounds to 50
+        assert!(state.check_header_dirty(FpsMode::Instant, 51.0, 48.0)); // different
+    }
+
+    #[test]
+    fn test_check_header_dirty_combined_mode() {
+        let mut state = RenderState::new();
+        state.first_frame = false;
+        state.check_header_dirty(FpsMode::Combined, 50.0, 48.0);
+        // Neither changed
+        assert!(!state.check_header_dirty(FpsMode::Combined, 50.0, 48.0));
+        // Instant changed
+        assert!(state.check_header_dirty(FpsMode::Combined, 51.0, 48.0));
+        // Average changed
+        assert!(state.check_header_dirty(FpsMode::Combined, 51.0, 49.0));
     }
 
     #[test]
     fn test_fps_mode_cycle() {
         assert_eq!(FpsMode::Off.next(), FpsMode::Instant);
         assert_eq!(FpsMode::Instant.next(), FpsMode::Average);
-        assert_eq!(FpsMode::Average.next(), FpsMode::Off);
+        assert_eq!(FpsMode::Average.next(), FpsMode::Combined);
+        assert_eq!(FpsMode::Combined.next(), FpsMode::Off);
     }
 
     #[test]
@@ -304,6 +351,15 @@ mod tests {
         assert!(!FpsMode::Off.is_visible());
         assert!(FpsMode::Instant.is_visible());
         assert!(FpsMode::Average.is_visible());
+        assert!(FpsMode::Combined.is_visible());
+    }
+
+    #[test]
+    fn test_fps_mode_needs_both() {
+        assert!(!FpsMode::Off.needs_both_fps());
+        assert!(!FpsMode::Instant.needs_both_fps());
+        assert!(!FpsMode::Average.needs_both_fps());
+        assert!(FpsMode::Combined.needs_both_fps());
     }
 
     #[test]

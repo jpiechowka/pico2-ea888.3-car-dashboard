@@ -80,6 +80,31 @@ cargo pico2-300-75-1v30-run
 
 **Display:** The firmware drives the Pimoroni PIM715 Display Pack 2.8" (ST7789, 320×240) via SPI.
 
+### Boot Sequence
+
+On startup, the firmware displays two boot screens:
+
+1. **Loading Screen** (~6 seconds) - Console-style initialization messages displayed sequentially
+2. **Welcome Screen** (~3 seconds) - AEZAKMI logo with animated blinking stars
+
+After the boot sequence, the main dashboard is displayed.
+
+### Button Controls
+
+| Button | Action |
+|--------|--------|
+| **X** | Cycle FPS display: Off → Instant → Average → Combined → Off |
+| **Y** | Cycle pages: Dashboard → Debug → Logs → Dashboard |
+| **A** | Toggle boost unit: BAR ↔ PSI |
+| **B** | Reset min/max/avg statistics |
+
+### FPS Display Modes
+
+- **Off**: No FPS displayed in header
+- **Instant**: Shows current FPS (e.g., "50 FPS")
+- **Average**: Shows average FPS since last page switch (e.g., "48 AVG")
+- **Combined**: Shows both instant and average (e.g., "50/48 FPS")
+
 ### Testing
 
 The firmware is structured as a library + binary crate to enable host-based testing. Tests run on your development machine (not on the embedded target).

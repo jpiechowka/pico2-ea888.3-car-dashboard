@@ -1,4 +1,32 @@
 //! Loading screen with console-style initialization messages.
+//!
+//! Displays initialization messages sequentially with delays between each message,
+//! simulating a console boot sequence. Each message appears one at a time with
+//! the display flushed after each frame.
+//!
+//! # Usage
+//!
+//! The caller should iterate over [`INIT_MESSAGES`], call [`draw_loading_frame`]
+//! for each message, flush the display, then wait for the message's duration.
+//! See `main.rs` boot sequence for the reference implementation.
+//!
+//! # Example
+//!
+//! ```ignore
+//! let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
+//! let mut line_count = 0;
+//!
+//! for (msg, duration_ms) in &INIT_MESSAGES {
+//!     // Add message to visible lines (with scrolling)
+//!     if line_count < MAX_VISIBLE_LINES {
+//!         visible_lines[line_count] = msg;
+//!         line_count += 1;
+//!     }
+//!     draw_loading_frame(&mut display, &visible_lines, line_count, 0);
+//!     display.flush().await;
+//!     Timer::after(Duration::from_millis(*duration_ms)).await;
+//! }
+//! ```
 
 use core::fmt::Write;
 
@@ -19,7 +47,9 @@ const LINE_END: Point = Point::new(310, 35);
 const CONSOLE_X: i32 = 10;
 const CONSOLE_START_Y: i32 = 50;
 const CONSOLE_LINE_HEIGHT: i32 = 14;
-const MAX_VISIBLE_LINES: usize = 12;
+
+/// Maximum number of console lines visible on the loading screen.
+pub const MAX_VISIBLE_LINES: usize = 12;
 
 const TITLE_STYLE: MonoTextStyle<'static, Rgb565> =
     MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_10X20, RED);
@@ -28,7 +58,7 @@ const CONSOLE_STYLE: MonoTextStyle<'static, Rgb565> =
 const DIVIDER_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_stroke(RED, 1);
 
 /// Messages to display during loading (message, duration in milliseconds).
-const INIT_MESSAGES: [(&str, u64); 7] = [
+pub const INIT_MESSAGES: [(&str, u64); 7] = [
     ("Initializing OBD-II interface...", 800),
     ("Connecting to ECU...", 1200),
     ("Reading vehicle info...", 1000),
@@ -86,8 +116,13 @@ pub fn draw_loading_frame<D>(
 
 /// Run the loading screen with console-style init messages.
 ///
-/// This renders the complete loading sequence to the display.
-/// Note: The display is only cleared and drawn, NOT flushed - caller must flush.
+/// **Note:** This function does NOT flush the display between messages, so all
+/// messages appear at once when the caller flushes. For proper sequential display,
+/// use [`draw_loading_frame`] directly with flushes after each frame. See the
+/// boot sequence in `main.rs` for the correct implementation.
+///
+/// This function is kept for reference but should not be used for the actual
+/// boot sequence.
 pub async fn show_loading_screen<D>(display: &mut D)
 where
     D: DrawTarget<Color = Rgb565>,
