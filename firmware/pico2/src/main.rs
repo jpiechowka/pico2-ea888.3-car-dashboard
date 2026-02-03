@@ -15,8 +15,8 @@
 //! 1. **Loading Screen** (~6 seconds) - Console-style initialization messages displayed sequentially with delays
 //!    between each message. Messages include ECU connection status, vehicle info, and sensor loading progress.
 //!
-//! 2. **Welcome Screen** (5 seconds) - AEZAKMI logo (GTA San Andreas reference) with time-based star animation: 4
-//!    seconds for stars to light up sequentially, then 1 second of blinking.
+//! 2. **Welcome Screen** (7 seconds) - AEZAKMI logo (GTA San Andreas reference) with time-based star animation: 4
+//!    seconds for stars to light up sequentially, then 3 seconds of slow blinking.
 //!
 //! Each boot screen frame is rendered and flushed to the display individually to ensure
 //! proper visual updates during the boot sequence.
@@ -611,7 +611,7 @@ async fn main(spawner: Spawner) {
 
     // --- Loading Screen ---
     // Display console-style initialization messages sequentially with delays.
-    // Each message is rendered and flushed before waiting for its duration.
+    // Renders continuously during each message's wait period so the spinner animates.
     {
         let buffer = unsafe { double_buffer.render_buffer() };
         let mut renderer = St7789Renderer::new(buffer);
@@ -619,6 +619,7 @@ async fn main(spawner: Spawner) {
         // Track visible lines (console scrolling effect)
         let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
         let mut line_count: usize = 0;
+        let boot_start = Instant::now();
 
         for (msg, duration_ms) in &INIT_MESSAGES {
             // Add message to visible lines
@@ -633,28 +634,40 @@ async fn main(spawner: Spawner) {
                 visible_lines[MAX_VISIBLE_LINES - 1] = msg;
             }
 
-            // Draw the frame with current messages
-            draw_loading_frame(&mut renderer, &visible_lines, line_count, 0);
+            // Render continuously during message wait so the spinner animates
+            let msg_start = Instant::now();
+            loop {
+                let elapsed_ms = boot_start.elapsed().as_millis() as u32;
+                draw_loading_frame(&mut renderer, &visible_lines, line_count, elapsed_ms);
+                flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
 
-            // Flush to display so the message is visible
-            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-
-            // Wait for message duration before showing next message
-            Timer::after(Duration::from_millis(*duration_ms)).await;
+                if msg_start.elapsed().as_millis() >= *duration_ms as u64 {
+                    break;
+                }
+            }
         }
 
-        // Final pause after "Ready." message
-        Timer::after(Duration::from_millis(500)).await;
+        // Final pause after "Ready." with spinning spinner
+        let pause_start = Instant::now();
+        loop {
+            let elapsed_ms = boot_start.elapsed().as_millis() as u32;
+            draw_loading_frame(&mut renderer, &visible_lines, line_count, elapsed_ms);
+            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+
+            if pause_start.elapsed().as_millis() >= 500 {
+                break;
+            }
+        }
     }
 
     // --- Welcome Screen ---
     // Display AEZAKMI logo with animated blinking stars.
-    // Time-based animation: 4 seconds star filling + 1 second blinking = 5 seconds total.
+    // Time-based animation: 4 seconds star filling + 3 seconds blinking = 7 seconds total.
     {
         let buffer = unsafe { double_buffer.render_buffer() };
         let mut renderer = St7789Renderer::new(buffer);
 
-        const WELCOME_DURATION_MS: u64 = 5000;
+        const WELCOME_DURATION_MS: u64 = 7000;
         let start = Instant::now();
 
         loop {

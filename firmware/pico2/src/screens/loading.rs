@@ -1,13 +1,14 @@
 //! Loading screen with console-style initialization messages.
 //!
 //! Displays initialization messages sequentially with delays between each message,
-//! simulating a console boot sequence. Each message appears one at a time with
-//! the display flushed after each frame.
+//! simulating a console boot sequence. The title bar has animated spinners that
+//! rotate based on elapsed time.
 //!
 //! # Usage
 //!
-//! The caller should iterate over [`INIT_MESSAGES`], call [`draw_loading_frame`]
-//! for each message, flush the display, then wait for the message's duration.
+//! The caller should iterate over [`INIT_MESSAGES`] and render continuously during
+//! each message's wait period so the spinners animate. Pass the total elapsed time
+//! in milliseconds since boot for time-based spinner animation.
 //! See `main.rs` boot sequence for the reference implementation.
 //!
 //! # Example
@@ -15,6 +16,7 @@
 //! ```ignore
 //! let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
 //! let mut line_count = 0;
+//! let boot_start = Instant::now();
 //!
 //! for (msg, duration_ms) in &INIT_MESSAGES {
 //!     // Add message to visible lines (with scrolling)
@@ -22,9 +24,13 @@
 //!         visible_lines[line_count] = msg;
 //!         line_count += 1;
 //!     }
-//!     draw_loading_frame(&mut display, &visible_lines, line_count, 0);
-//!     display.flush().await;
-//!     Timer::after(Duration::from_millis(*duration_ms)).await;
+//!     let msg_start = Instant::now();
+//!     loop {
+//!         let elapsed_ms = boot_start.elapsed().as_millis() as u32;
+//!         draw_loading_frame(&mut display, &visible_lines, line_count, elapsed_ms);
+//!         display.flush().await;
+//!         if msg_start.elapsed().as_millis() >= *duration_ms as u64 { break; }
+//!     }
 //! }
 //! ```
 
@@ -71,20 +77,24 @@ const SPINNER_CHARS: [char; 4] = ['|', '/', '-', '\\'];
 
 /// Draw a single frame of the loading screen.
 ///
+/// # Arguments
+/// * `elapsed_ms` - Milliseconds since the loading screen started. Used for time-based spinner animation (rotates every
+///   150ms).
+///
 /// This is a non-async function that renders one frame. Call this in a loop
 /// with appropriate timing and flush the display after each call.
 pub fn draw_loading_frame<D>(
     display: &mut D,
     visible_lines: &[&str],
     line_count: usize,
-    spinner_frame: u32,
+    elapsed_ms: u32,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
     display.clear(WHITE).ok();
 
-    // Update spinner
-    let spinner_idx = (spinner_frame / 8) as usize % SPINNER_CHARS.len();
+    // Time-based spinner: rotates every 150ms
+    let spinner_idx = (elapsed_ms / 150) as usize % SPINNER_CHARS.len();
     let left_spinner = SPINNER_CHARS[spinner_idx];
     let right_spinner = SPINNER_CHARS[(spinner_idx + 2) % SPINNER_CHARS.len()];
 

@@ -5,9 +5,9 @@
 //!
 //! # Animation
 //!
-//! The star animation is time-based (5 seconds total):
+//! The star animation is time-based (7 seconds total):
 //! - 0-4000ms: Stars light up sequentially (one every 800ms)
-//! - 4000-5000ms: All 5 stars blink on/off
+//! - 4000-7000ms: All 5 stars blink on/off slowly (toggle every 250ms)
 //!
 //! # Usage
 //!
@@ -21,7 +21,7 @@
 //! let start = Instant::now();
 //! loop {
 //!     let elapsed_ms = start.elapsed().as_millis() as u32;
-//!     if elapsed_ms >= 5000 { break; }
+//!     if elapsed_ms >= 7000 { break; }
 //!     draw_welcome_frame(&mut display, elapsed_ms);
 //!     display.flush().await;
 //! }
@@ -232,15 +232,15 @@ fn draw_stars<D>(
     let total_width = star_spacing * 4;
     let start_x = SCREEN_CENTER_X - total_width / 2;
 
-    // Time-based animation (5 seconds total):
+    // Time-based animation (7 seconds total):
     // - 0-4000ms: Stars light up sequentially (one every 800ms)
-    // - 4000-5000ms: All 5 stars blink on/off
-    let cycle_ms = elapsed_ms % 5000;
+    // - 4000-7000ms: All 5 stars blink on/off slowly
+    let cycle_ms = elapsed_ms % 7000;
     let lit_count = if cycle_ms < 4000 {
         // Star filling phase: one star every 800ms
         (cycle_ms / 800 + 1).min(5) as usize
-    } else if ((cycle_ms - 4000) / 100).is_multiple_of(2) {
-        // Blinking phase: toggle every 100ms (~5 blinks per second)
+    } else if ((cycle_ms - 4000) / 250).is_multiple_of(2) {
+        // Blinking phase: toggle every 250ms (~2 blinks per second)
         5
     } else {
         0
@@ -262,7 +262,7 @@ fn draw_stars<D>(
 ///
 /// # Arguments
 /// * `elapsed_ms` - Milliseconds since the welcome screen started. Used for time-based star animation (0-4000ms: stars
-///   fill, 4000-5000ms: blink).
+///   fill, 4000-7000ms: blink).
 ///
 /// This is a non-async function that renders one frame. Call this in a loop
 /// with appropriate timing and flush the display after each call.

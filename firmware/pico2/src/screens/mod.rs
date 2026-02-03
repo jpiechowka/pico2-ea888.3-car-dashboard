@@ -9,9 +9,9 @@
 //! 1. **Loading screen** (~6 seconds) - Console-style initialization messages displayed sequentially with delays
 //!    between each message. Uses [`draw_loading_frame`] with [`INIT_MESSAGES`] for timing.
 //!
-//! 2. **Welcome screen** (5 seconds) - AEZAKMI logo with time-based star animation. Uses [`draw_welcome_frame`] with
+//! 2. **Welcome screen** (7 seconds) - AEZAKMI logo with time-based star animation. Uses [`draw_welcome_frame`] with
 //!    elapsed milliseconds for consistent animation speed regardless of frame rate. Stars fill over 4 seconds, then
-//!    blink for 1 second.
+//!    blink slowly for 3 seconds.
 //!
 //! Both screens require the caller to flush the display after each frame
 //! to ensure proper visual updates.
