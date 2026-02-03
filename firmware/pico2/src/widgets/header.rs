@@ -7,7 +7,7 @@
 //! - **Off**: No FPS displayed
 //! - **Instant**: Shows current FPS (e.g., "50 FPS")
 //! - **Average**: Shows average FPS since last page switch (e.g., "48 AVG")
-//! - **Combined**: Shows both instant and average (e.g., "50/48 FPS")
+//! - **Combined**: Shows both instant and average (e.g., "50/48 AVG")
 
 use core::fmt::Write;
 
@@ -50,7 +50,7 @@ const HEADER_FILL_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_fill(RED)
 /// - **Off**: No FPS displayed
 /// - **Instant**: "50 FPS"
 /// - **Average**: "48 AVG"
-/// - **Combined**: "50/48 FPS" (instant/average)
+/// - **Combined**: "50/48 AVG" (instant/average)
 pub fn draw_header<D>(
     display: &mut D,
     fps_mode: FpsMode,
@@ -79,7 +79,7 @@ pub fn draw_header<D>(
                 let _ = write!(fps_str, "{:.0}{}", fps_average, fps_mode.suffix());
             }
             FpsMode::Combined => {
-                // Format: "XX/YY FPS" where XX is instant and YY is average
+                // Format: "XX/YY AVG" where XX is instant and YY is average
                 let _ = write!(fps_str, "{:.0}/{:.0}{}", fps_instant, fps_average, fps_mode.suffix());
             }
         }

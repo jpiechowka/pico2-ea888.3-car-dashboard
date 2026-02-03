@@ -103,7 +103,7 @@ After the boot sequence (~11 seconds total), the main dashboard is displayed.
 - **Off**: No FPS displayed in header
 - **Instant**: Shows current FPS (e.g., "50 FPS")
 - **Average**: Shows average FPS since last page switch (e.g., "48 AVG")
-- **Combined**: Shows both instant and average (e.g., "50/48 FPS")
+- **Combined**: Shows both instant and average (e.g., "50/48 AVG")
 
 ### Testing
 

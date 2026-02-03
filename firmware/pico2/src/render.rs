@@ -11,7 +11,7 @@
 //! - **Off** - No FPS displayed in header
 //! - **Instant** - Shows current FPS (updated every second)
 //! - **Average** - Shows average FPS since last page switch
-//! - **Combined** - Shows both instant and average FPS (e.g., "50/48")
+//! - **Combined** - Shows both instant and average FPS (e.g., "50/48 AVG")
 //!
 //! Average FPS is reset when switching pages.
 //!
@@ -82,14 +82,14 @@ impl FpsMode {
 
     /// Get short suffix for header display.
     ///
-    /// Note: For Combined mode, the suffix is empty because the format
-    /// is handled specially in `draw_header()` as "XX/YY FPS".
+    /// For Combined mode, " AVG" is used to indicate the second value
+    /// is the average (format: "XX/YY AVG" where XX=instant, YY=average).
     pub const fn suffix(self) -> &'static str {
         match self {
             Self::Off => "",
             Self::Instant => " FPS",
             Self::Average => " AVG",
-            Self::Combined => " FPS", // Used after the combined "XX/YY" format
+            Self::Combined => " AVG", // "XX/YY AVG" where XX=instant, YY=average
         }
     }
 }

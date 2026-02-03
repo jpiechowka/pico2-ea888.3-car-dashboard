@@ -5,7 +5,7 @@
 //! # Left Column - Timing & Buffers
 //!
 //! - **FPS**: Current (instantaneous) frames per second (highlighted in yellow)
-//! - **Avg**: Average FPS since last reset (highlighted in yellow)
+//! - **Avg. FPS**: Average FPS since last reset (highlighted in yellow)
 //! - **Frame**: Total frame count since boot
 //! - **Render**: Time to render current frame (microseconds)
 //! - **Flush**: Time for DMA transfer to display (microseconds)
@@ -117,7 +117,7 @@ pub fn draw_profiling_page<D>(
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Avg: {:.1}", data.average_fps);
+    let _ = write!(s, "Avg. FPS: {:.1}", data.average_fps);
     Text::new(&s, Point::new(col1, y), highlight_style).draw(display).ok();
     y += line_height;
 

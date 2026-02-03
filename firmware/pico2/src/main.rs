@@ -33,7 +33,7 @@
 //! - **Off**: No FPS displayed in header
 //! - **Instant**: Shows current FPS (updated every second)
 //! - **Average**: Shows average FPS since last page switch or reset
-//! - **Combined**: Shows both instant and average FPS (e.g., "50/48 FPS")
+//! - **Combined**: Shows both instant and average FPS (e.g., "50/48 AVG")
 
 #![no_std]
 #![no_main]
