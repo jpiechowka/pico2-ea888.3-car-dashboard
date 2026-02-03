@@ -9,6 +9,7 @@ use embedded_graphics::text::Text;
 
 use crate::colors::{RED, WHITE};
 use crate::config::{CENTER_X, CENTER_Y, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::render::FpsMode;
 use crate::styles::{CENTERED, TITLE_STYLE_WHITE};
 
 /// Red text style for danger popup on white background.
@@ -75,9 +76,12 @@ where
         .ok();
 }
 
+/// Draw FPS mode toggle popup.
+///
+/// Shows the current FPS mode: "FPS OFF", "FPS: INST", or "FPS: AVG".
 pub fn draw_fps_toggle_popup<D>(
     display: &mut D,
-    fps_enabled: bool,
+    fps_mode: FpsMode,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -91,8 +95,7 @@ pub fn draw_fps_toggle_popup<D>(
         .draw(display)
         .ok();
 
-    let status = if fps_enabled { "FPS ON" } else { "FPS OFF" };
-    Text::with_text_style(status, FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
+    Text::with_text_style(fps_mode.label(), FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
 }

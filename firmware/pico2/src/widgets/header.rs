@@ -10,6 +10,7 @@ use heapless::String;
 
 use crate::colors::{GRAY, RED};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::render::FpsMode;
 use crate::styles::{CENTERED, LABEL_STYLE_WHITE, RIGHT_ALIGNED, TITLE_STYLE_WHITE};
 
 const HEADER_TITLE_POS: Point = Point::new(160, 19);
@@ -29,9 +30,14 @@ const DIV_H_END: Point = Point::new((SCREEN_WIDTH - 1) as i32, (HEADER_HEIGHT + 
 const DIVIDER_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_stroke(GRAY, 1);
 const HEADER_FILL_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_fill(RED);
 
+/// Draw the header bar with optional FPS display.
+///
+/// # Arguments
+/// * `fps_mode` - The FPS display mode (Off, Instant, or Average)
+/// * `fps` - The FPS value to display (instant or average, depending on mode)
 pub fn draw_header<D>(
     display: &mut D,
-    show_fps: bool,
+    fps_mode: FpsMode,
     fps: f32,
 ) where
     D: DrawTarget<Color = Rgb565>,
@@ -45,9 +51,9 @@ pub fn draw_header<D>(
         .draw(display)
         .ok();
 
-    if show_fps {
+    if fps_mode.is_visible() {
         let mut fps_str: String<16> = String::new();
-        let _ = write!(fps_str, "{fps:.0} FPS");
+        let _ = write!(fps_str, "{:.0}{}", fps, fps_mode.suffix());
         Text::with_text_style(&fps_str, HEADER_FPS_POS, LABEL_STYLE_WHITE, RIGHT_ALIGNED)
             .draw(display)
             .ok();

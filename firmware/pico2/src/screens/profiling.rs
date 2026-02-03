@@ -4,7 +4,8 @@
 //!
 //! # Left Column - Timing & Buffers
 //!
-//! - **FPS**: Current frames per second (highlighted in yellow)
+//! - **FPS**: Current (instantaneous) frames per second (highlighted in yellow)
+//! - **Avg**: Average FPS since last reset (highlighted in yellow)
 //! - **Frame**: Total frame count since boot
 //! - **Render**: Time to render current frame (microseconds)
 //! - **Flush**: Time for DMA transfer to display (microseconds)
@@ -44,6 +45,7 @@ use crate::styles::LABEL_FONT;
 pub struct ProfilingData {
     // Timing
     pub current_fps: f32,
+    pub average_fps: f32,
     pub frame_count: u32,
     pub render_time_us: u32,
     pub flush_time_us: u32,
@@ -111,6 +113,11 @@ pub fn draw_profiling_page<D>(
 
     let mut s: String<24> = String::new();
     let _ = write!(s, "FPS: {:.1}", data.current_fps);
+    Text::new(&s, Point::new(col1, y), highlight_style).draw(display).ok();
+    y += line_height;
+
+    s.clear();
+    let _ = write!(s, "Avg: {:.1}", data.average_fps);
     Text::new(&s, Point::new(col1, y), highlight_style).draw(display).ok();
     y += line_height;
 

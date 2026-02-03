@@ -10,10 +10,16 @@
 //!
 //! # Button Controls
 //!
-//! - **X**: Toggle FPS display (Dashboard only)
+//! - **X**: Cycle FPS display mode: Off → Instant → Average → Off (Dashboard only)
 //! - **Y**: Cycle through pages (Dashboard → Debug → Logs → Dashboard)
 //! - **A**: Toggle boost unit BAR/PSI (Dashboard only)
 //! - **B**: Reset min/max/avg statistics (Dashboard only)
+//!
+//! # FPS Display Modes
+//!
+//! - **Off**: No FPS displayed in header
+//! - **Instant**: Shows current FPS (updated every second)
+//! - **Average**: Shows average FPS since last page switch or reset
 
 #![no_std]
 #![no_main]
@@ -76,7 +82,7 @@ use crate::animations::ColorTransition;
 use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::pages::Page;
-use crate::render::{RenderState, cell_idx};
+use crate::render::{FpsMode, RenderState, cell_idx};
 use crate::sensor_state::SensorState;
 use crate::st7789::{DoubleBuffer, St7789Flusher, St7789Renderer};
 use crate::thresholds::{
@@ -336,7 +342,11 @@ pub use crate::st7789::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 #[cfg(any(
     all(
         feature = "cpu250-spi62-1v10",
-        any(feature = "cpu280-spi70-1v30", feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30")
+        any(
+            feature = "cpu280-spi70-1v30",
+            feature = "cpu290-spi72-1v30",
+            feature = "cpu300-spi75-1v30"
+        )
     ),
     all(
         feature = "cpu280-spi70-1v30",
@@ -345,8 +355,8 @@ pub use crate::st7789::{FRAMEBUFFER_A, FRAMEBUFFER_B};
     all(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30")
 ))]
 compile_error!(
-    "Only one overclock feature can be enabled at a time. Choose one of: \
-     cpu250-spi62-1v10, cpu280-spi70-1v30, cpu290-spi72-1v30, cpu300-spi75-1v30"
+    "Only one overclock feature can be enabled at a time. Choose one of: cpu250-spi62-1v10, cpu280-spi70-1v30, \
+     cpu290-spi72-1v30, cpu300-spi75-1v30"
 );
 
 // =============================================================================
@@ -608,7 +618,7 @@ async fn main(spawner: Spawner) {
     // UI state
     let mut current_page = Page::Dashboard;
     let mut clear_frames_remaining: u8 = 2;
-    let mut show_fps = false;
+    let mut fps_mode = FpsMode::Off;
     let mut show_boost_psi = false;
     let mut active_popup: Option<Popup> = None;
     let mut prev_egt_danger_active = false;
@@ -618,7 +628,10 @@ async fn main(spawner: Spawner) {
     let mut render_state = RenderState::new();
     let mut frame_count = 0u32;
     let mut current_fps = 0.0f32;
+    let mut average_fps = 0.0f32;
     let mut fps_frame_count = 0u32;
+    let mut fps_sample_count = 0u32;
+    let mut fps_sum = 0.0f32;
     let mut last_fps_calc = Instant::now();
 
     // Profiling: track render and flush times (microseconds)
@@ -689,16 +702,20 @@ async fn main(spawner: Spawner) {
 
         // Handle button presses
         if btn_x_state.just_pressed(btn_x.is_low()) && current_page == Page::Dashboard {
-            show_fps = !show_fps;
+            fps_mode = fps_mode.next();
             active_popup = Some(Popup::Fps(Instant::now()));
             clear_frames_remaining = 2; // Clear both buffers when FPS toggles
-            info!("FPS: {}", if show_fps { "ON" } else { "OFF" });
+            info!("FPS mode: {}", fps_mode.label());
         }
 
         if btn_y_state.just_pressed(btn_y.is_low()) {
             current_page = current_page.toggle();
             clear_frames_remaining = 2; // Clear both double buffers on page switch
             active_popup = None;
+            // Reset average FPS tracking on page switch
+            fps_sample_count = 0;
+            fps_sum = 0.0;
+            average_fps = 0.0;
             log_info!(
                 "Page: {}",
                 match current_page {
@@ -822,12 +839,17 @@ async fn main(spawner: Spawner) {
         batt_state.update(batt_voltage, batt_updated);
         afr_state.update(afr, false);
 
-        // FPS calculation
+        // FPS calculation (instant and average)
         fps_frame_count += 1;
         if last_fps_calc.elapsed() >= Duration::from_secs(1) {
             current_fps = fps_frame_count as f32 / last_fps_calc.elapsed().as_millis() as f32 * 1000.0;
             fps_frame_count = 0;
             last_fps_calc = Instant::now();
+
+            // Update running average
+            fps_sample_count += 1;
+            fps_sum += current_fps;
+            average_fps = fps_sum / fps_sample_count as f32;
         }
 
         // Calculate EGT danger state (persists across page switches)
@@ -898,9 +920,15 @@ async fn main(spawner: Spawner) {
         // Render based on current page
         match current_page {
             Page::Dashboard => {
+                // Select which FPS value to display based on mode
+                let display_fps = match fps_mode {
+                    FpsMode::Average => average_fps,
+                    _ => current_fps,
+                };
+
                 // Draw header
-                if render_state.check_header_dirty(show_fps, current_fps) {
-                    draw_header(&mut display, show_fps, current_fps);
+                if render_state.check_header_dirty(fps_mode, display_fps) {
+                    draw_header(&mut display, fps_mode, display_fps);
                 }
 
                 // Draw cells
@@ -1046,7 +1074,7 @@ async fn main(spawner: Spawner) {
                 if let Some(ref popup) = active_popup {
                     match popup {
                         Popup::Reset(_) => draw_reset_popup(&mut display),
-                        Popup::Fps(_) => draw_fps_toggle_popup(&mut display, show_fps),
+                        Popup::Fps(_) => draw_fps_toggle_popup(&mut display, fps_mode),
                         Popup::BoostUnit(_) => draw_boost_unit_popup(&mut display, show_boost_psi),
                     }
                 } else if egt_danger_active {
@@ -1067,6 +1095,7 @@ async fn main(spawner: Spawner) {
                     &ProfilingData {
                         // Timing
                         current_fps,
+                        average_fps,
                         frame_count,
                         render_time_us,
                         flush_time_us,
