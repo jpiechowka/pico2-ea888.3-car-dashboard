@@ -53,17 +53,13 @@ cargo pico2-250-62-1v10-run
 cargo pico2-280-70-1v30
 cargo pico2-280-70-1v30-run
 
-# 300 MHz @ 1.30V (75 MHz SPI)
+# 290 MHz @ 1.30V (72.5 MHz SPI)
+cargo pico2-290-72-1v30
+cargo pico2-290-72-1v30-run
+
+# 300 MHz @ 1.30V (75 MHz SPI - embassy-rp max)
 cargo pico2-300-75-1v30
 cargo pico2-300-75-1v30-run
-
-# 320 MHz @ 1.40V (80 MHz SPI - higher voltage/clock)
-cargo pico2-320-80-1v40
-cargo pico2-320-80-1v40-run
-
-# 340 MHz @ 1.40V (85 MHz SPI - higher voltage/clock)
-cargo pico2-340-85-1v40
-cargo pico2-340-85-1v40-run
 ```
 
 ### Pico 2 (RP2350)

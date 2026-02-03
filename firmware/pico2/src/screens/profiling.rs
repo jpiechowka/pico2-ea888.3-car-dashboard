@@ -19,8 +19,8 @@
 //! - **Stack**: Current stack usage (KB) vs total available
 //! - **Static**: Static RAM allocation (framebuffers + overhead)
 //! - **RAM**: Total RP2350 RAM (512KB)
-//! - **CPU**: Clock frequency (150/250/280/300/320/340 MHz based on feature)
-//! - **Volt**: Core voltage requested/actual (yellow if mismatch or ≥1.40V)
+//! - **CPU**: Clock frequency requested/actual MHz (yellow if mismatch)
+//! - **Volt**: Core voltage requested/actual (yellow if mismatch)
 //! - **SPI**: Display bus speed (requested/actual MHz from hardware)
 //! - **FB**: Framebuffer configuration (2×150K for double buffering)
 //!
@@ -65,7 +65,11 @@ pub struct ProfilingData {
     pub cpu_util_percent: u32,
     pub frame_cycles: u32,
 
-    // System clocks
+    // CPU frequency (MHz)
+    pub requested_cpu_mhz: u32,
+    pub actual_cpu_mhz: u32,
+
+    // SPI frequency (MHz)
     pub requested_spi_mhz: u32,
     pub actual_spi_mhz: u32,
 
@@ -212,48 +216,19 @@ pub fn draw_profiling_page<D>(
         .ok();
     y += line_height;
 
-    // CPU frequency (compile-time constant based on feature)
-    #[cfg(feature = "cpu340-spi85-1v40")]
-    let cpu_mhz = 340u32;
-    #[cfg(all(feature = "cpu320-spi80-1v40", not(feature = "cpu340-spi85-1v40")))]
-    let cpu_mhz = 320u32;
-    #[cfg(all(
-        feature = "cpu300-spi75-1v30",
-        not(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))
-    ))]
-    let cpu_mhz = 300u32;
-    #[cfg(all(
-        feature = "cpu280-spi70-1v30",
-        not(any(
-            feature = "cpu300-spi75-1v30",
-            feature = "cpu320-spi80-1v40",
-            feature = "cpu340-spi85-1v40"
-        ))
-    ))]
-    let cpu_mhz = 280u32;
-    #[cfg(all(
-        feature = "cpu250-spi62-1v10",
-        not(any(
-            feature = "cpu280-spi70-1v30",
-            feature = "cpu300-spi75-1v30",
-            feature = "cpu320-spi80-1v40",
-            feature = "cpu340-spi85-1v40"
-        ))
-    ))]
-    let cpu_mhz = 250u32;
-    #[cfg(not(any(
-        feature = "cpu250-spi62-1v10",
-        feature = "cpu280-spi70-1v30",
-        feature = "cpu300-spi75-1v30",
-        feature = "cpu320-spi80-1v40",
-        feature = "cpu340-spi85-1v40"
-    )))]
-    let cpu_mhz = 150u32;
-
+    // CPU frequency display: requested / actual (from DWT init)
     s.clear();
-    let _ = write!(s, "CPU: {} MHz", cpu_mhz);
-    // Highlight if high voltage profile
-    let cpu_style = if cpu_mhz >= 320 { highlight_style } else { value_style };
+    if data.actual_cpu_mhz > 0 && data.actual_cpu_mhz != data.requested_cpu_mhz {
+        let _ = write!(s, "CPU: {}/{} MHz", data.requested_cpu_mhz, data.actual_cpu_mhz);
+    } else {
+        let _ = write!(s, "CPU: {} MHz", data.requested_cpu_mhz);
+    }
+    // Highlight if mismatch
+    let cpu_style = if data.actual_cpu_mhz != data.requested_cpu_mhz {
+        highlight_style
+    } else {
+        value_style
+    };
     Text::new(&s, Point::new(col2, y), cpu_style).draw(display).ok();
     y += line_height;
 
@@ -263,7 +238,8 @@ pub fn draw_profiling_page<D>(
     let act_v = data.actual_voltage_mv / 100;
     let _ = write!(s, "Volt: {}.{}/{}.{}V", req_v / 10, req_v % 10, act_v / 10, act_v % 10);
     // Highlight if actual >= 1.40V or mismatch
-    let volt_style = if data.actual_voltage_mv >= 1400 || data.actual_voltage_mv != data.requested_voltage_mv {
+    // Highlight if mismatch
+    let volt_style = if data.actual_voltage_mv != data.requested_voltage_mv {
         highlight_style
     } else {
         value_style

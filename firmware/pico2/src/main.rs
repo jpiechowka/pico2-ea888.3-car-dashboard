@@ -206,8 +206,9 @@ async fn demo_values_task(
         let t = elapsed_ms as f32 / 1000.0;
 
         // Generate demo values using micromath sine waves
+        // Boost: peaks at 2.0 bar with a flat top (extends past 2.0 then clamps)
         let values = DemoSensorValues {
-            boost: 0.5 + 1.5 * micromath::F32(t * 0.5).sin().0.abs(),
+            boost: (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
             oil_temp: 60.0 + 55.0 * micromath::F32(t * 0.3).sin().0,
             water_temp: 88.0 + 7.0 * micromath::F32(t * 0.4).sin().0,
             dsg_temp: 75.0 + 40.0 * micromath::F32(t * 0.35).sin().0,
@@ -335,30 +336,17 @@ pub use crate::st7789::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 #[cfg(any(
     all(
         feature = "cpu250-spi62-1v10",
-        any(
-            feature = "cpu280-spi70-1v30",
-            feature = "cpu300-spi75-1v30",
-            feature = "cpu320-spi80-1v40",
-            feature = "cpu340-spi85-1v40"
-        )
+        any(feature = "cpu280-spi70-1v30", feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30")
     ),
     all(
         feature = "cpu280-spi70-1v30",
-        any(
-            feature = "cpu300-spi75-1v30",
-            feature = "cpu320-spi80-1v40",
-            feature = "cpu340-spi85-1v40"
-        )
+        any(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30")
     ),
-    all(
-        feature = "cpu300-spi75-1v30",
-        any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40")
-    ),
-    all(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40")
+    all(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30")
 ))]
 compile_error!(
-    "Only one overclock feature can be enabled at a time. Choose one of: cpu250-spi62-1v10, cpu280-spi70-1v30, \
-     cpu300-spi75-1v30, cpu320-spi80-1v40, cpu340-spi85-1v40"
+    "Only one overclock feature can be enabled at a time. Choose one of: \
+     cpu250-spi62-1v10, cpu280-spi70-1v30, cpu290-spi72-1v30, cpu300-spi75-1v30"
 );
 
 // =============================================================================
@@ -393,58 +381,62 @@ fn read_vreg_voltage_mv() -> u32 {
 ///
 /// Returns voltage in millivolts (e.g., 1100 for 1.10V).
 const fn requested_voltage_mv() -> u32 {
-    #[cfg(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))]
-    {
-        1400 // 1.40V for extreme overclock profiles
-    }
-    #[cfg(all(
-        any(feature = "cpu280-spi70-1v30", feature = "cpu300-spi75-1v30"),
-        not(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))
+    #[cfg(any(
+        feature = "cpu280-spi70-1v30",
+        feature = "cpu290-spi72-1v30",
+        feature = "cpu300-spi75-1v30"
     ))]
     {
-        1300 // 1.30V for moderate overclock profiles
+        1300 // 1.30V for overclock profiles
     }
     #[cfg(not(any(
         feature = "cpu280-spi70-1v30",
-        feature = "cpu300-spi75-1v30",
-        feature = "cpu320-spi80-1v40",
-        feature = "cpu340-spi85-1v40"
+        feature = "cpu290-spi72-1v30",
+        feature = "cpu300-spi75-1v30"
     )))]
     {
         1100 // 1.10V default
     }
 }
 
-/// Set VREG voltage by directly writing to hardware registers.
+/// Get requested CPU frequency based on compile-time feature flags.
 ///
-/// The RP2350 VREG is locked by default to prevent accidental voltage changes.
-/// This function:
-/// 1. Unlocks the VREG by writing the magic value to VREG_CTRL
-/// 2. Sets VSEL in the VREG register with magic value
-///
-/// # Safety
-/// - Higher voltages increase power consumption and heat
-/// - VREG remains unlocked until power cycle
-///
-/// # Voltage Formula
-/// `voltage = 0.55V + (VSEL × 0.05V)`
-/// For 1.40V: VSEL = (1.40 - 0.55) / 0.05 = 17
-#[cfg(any(feature = "cpu320-spi80-1v40", feature = "cpu340-spi85-1v40"))]
-unsafe fn set_vreg_voltage(vsel: u32) {
-    const VREG_CTRL: *mut u32 = 0x4010_0004 as *mut u32;
-    const VREG: *mut u32 = 0x4010_000C as *mut u32;
-    const VREG_UNLOCK_MAGIC: u32 = 0x5AFE_0000;
-
-    // SAFETY: Writing to VREG registers to set voltage
-    // Rust 2024 requires explicit unsafe blocks even inside unsafe fn
-    unsafe {
-        // Step 1: Unlock VREG control interface
-        core::ptr::write_volatile(VREG_CTRL, 0x5AFE_2100);
-
-        // Step 2: Read current value, clear VSEL bits, set new VSEL with magic
-        let current = core::ptr::read_volatile(VREG);
-        let new_val = (current & 0xFFFF_FE0F) | ((vsel << 4) & 0x1F0) | VREG_UNLOCK_MAGIC;
-        core::ptr::write_volatile(VREG, new_val);
+/// Returns frequency in MHz.
+const fn requested_cpu_mhz() -> u32 {
+    #[cfg(feature = "cpu300-spi75-1v30")]
+    {
+        300
+    }
+    #[cfg(all(feature = "cpu290-spi72-1v30", not(feature = "cpu300-spi75-1v30")))]
+    {
+        290
+    }
+    #[cfg(all(
+        feature = "cpu280-spi70-1v30",
+        not(any(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30"))
+    ))]
+    {
+        280
+    }
+    #[cfg(all(
+        feature = "cpu250-spi62-1v10",
+        not(any(
+            feature = "cpu280-spi70-1v30",
+            feature = "cpu290-spi72-1v30",
+            feature = "cpu300-spi75-1v30"
+        ))
+    ))]
+    {
+        250
+    }
+    #[cfg(not(any(
+        feature = "cpu250-spi62-1v10",
+        feature = "cpu280-spi70-1v30",
+        feature = "cpu290-spi72-1v30",
+        feature = "cpu300-spi75-1v30"
+    )))]
+    {
+        150 // Stock RP2350 frequency
     }
 }
 
@@ -485,6 +477,22 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
+    // cpu290-spi72-1v30: 290 MHz @ 1.30V for 72.5 MHz SPI (290/4)
+    #[cfg(feature = "cpu290-spi72-1v30")]
+    let p = {
+        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
+        use embassy_rp::config::Config;
+
+        const FREQ_HZ: u32 = 290_000_000; // 290 MHz / 4 = 72.5 MHz SPI
+        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V for stability
+
+        let mut config = Config::default();
+        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
+        config.clocks.core_voltage = VOLTAGE;
+        info!("Overclock: 290 MHz @ 1.30V (SPI 72.5 MHz)");
+        embassy_rp::init(config)
+    };
+
     // cpu300-spi75-1v30: 300 MHz @ 1.30V for 75 MHz SPI (300/4)
     #[cfg(feature = "cpu300-spi75-1v30")]
     let p = {
@@ -501,72 +509,19 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    // cpu320-spi80-1v40: 320 MHz @ 1.40V for 80 MHz SPI (320/4)
-    // WARNING: 1.40V requires manual VREG unlock (beyond embassy's 1.30V limit)
-    // We set voltage BEFORE init to ensure stability at 320 MHz
-    #[cfg(feature = "cpu320-spi80-1v40")]
-    let p = {
-        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
-        use embassy_rp::config::Config;
-
-        // CRITICAL: Set voltage to 1.40V BEFORE initializing at 320 MHz
-        // VSEL 17 = 0.55V + (17 × 0.05V) = 1.40V
-        unsafe {
-            set_vreg_voltage(17);
-        }
-
-        const FREQ_HZ: u32 = 320_000_000; // 320 MHz / 4 = 80 MHz SPI
-
-        let mut config = Config::default();
-        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        // Embassy will try to set 1.30V, but we already set 1.40V above
-        config.clocks.core_voltage = CoreVoltage::V1_30;
-
-        info!("Overclock: 320 MHz @ 1.40V (SPI 80 MHz)");
-        embassy_rp::init(config)
-    };
-
-    // cpu340-spi85-1v40: 340 MHz @ 1.40V for 85 MHz SPI (340/4)
-    // WARNING: 1.40V requires manual VREG unlock (beyond embassy's 1.30V limit)
-    // We set voltage BEFORE init to ensure stability at 340 MHz
-    #[cfg(feature = "cpu340-spi85-1v40")]
-    let p = {
-        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
-        use embassy_rp::config::Config;
-
-        // CRITICAL: Set voltage to 1.40V BEFORE initializing at 340 MHz
-        // VSEL 17 = 0.55V + (17 × 0.05V) = 1.40V
-        unsafe {
-            set_vreg_voltage(17);
-        }
-
-        const FREQ_HZ: u32 = 340_000_000; // 340 MHz / 4 = 85 MHz SPI
-
-        let mut config = Config::default();
-        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        // Embassy will try to set 1.30V, but we already set 1.40V above
-        config.clocks.core_voltage = CoreVoltage::V1_30;
-
-        info!("Overclock: 340 MHz @ 1.40V (SPI 85 MHz)");
-        embassy_rp::init(config)
-    };
-
     #[cfg(not(any(
         feature = "cpu250-spi62-1v10",
         feature = "cpu280-spi70-1v30",
-        feature = "cpu300-spi75-1v30",
-        feature = "cpu320-spi80-1v40",
-        feature = "cpu340-spi85-1v40"
+        feature = "cpu290-spi72-1v30",
+        feature = "cpu300-spi75-1v30"
     )))]
     let p = embassy_rp::init(Default::default());
 
     // Initialize DWT cycle counter for CPU utilization measurement
-    let cpu_freq_hz = if cfg!(feature = "cpu340-spi85-1v40") {
-        340_000_000
-    } else if cfg!(feature = "cpu320-spi80-1v40") {
-        320_000_000
-    } else if cfg!(feature = "cpu300-spi75-1v30") {
+    let cpu_freq_hz = if cfg!(feature = "cpu300-spi75-1v30") {
         300_000_000
+    } else if cfg!(feature = "cpu290-spi72-1v30") {
+        290_000_000
     } else if cfg!(feature = "cpu280-spi70-1v30") {
         280_000_000
     } else if cfg!(feature = "cpu250-spi62-1v10") {
@@ -1133,6 +1088,9 @@ async fn main(spawner: Spawner) {
                         // CPU utilization
                         cpu_util_percent,
                         frame_cycles: frame_cycles_used,
+                        // CPU frequency: requested (feature name) vs actual (from DWT init)
+                        requested_cpu_mhz: requested_cpu_mhz(),
+                        actual_cpu_mhz: cpu_freq_hz / 1_000_000,
                         // SPI clocks
                         requested_spi_mhz: requested_spi_hz / 1_000_000,
                         actual_spi_mhz: actual_spi_hz / 1_000_000,
@@ -1148,8 +1106,11 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        // Profiling: end render timing
+        // Profiling: end render timing and CPU cycles BEFORE waiting
+        // This ensures we measure actual work, not time spent in async wait
         render_time_us = render_start.elapsed().as_micros() as u32;
+        let frame_cycles_end = cpu_cycles::read();
+        frame_cycles_used = cpu_cycles::elapsed(frame_cycles_start, frame_cycles_end);
 
         // Wait for previous flush to complete before swapping (if one is in progress)
         if flush_in_progress {
@@ -1167,9 +1128,7 @@ async fn main(spawner: Spawner) {
         flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
         total_frame_time_us = frame_start.elapsed().as_micros() as u32;
 
-        // Calculate CPU utilization from cycle counts
-        let frame_cycles_end = cpu_cycles::read();
-        frame_cycles_used = cpu_cycles::elapsed(frame_cycles_start, frame_cycles_end);
+        // Calculate CPU utilization (cycles used during render vs total frame time)
         cpu_util_percent = cpu_cycles::calc_util_percent(frame_cycles_used, total_frame_time_us);
 
         // Log profiling data every 2 seconds

@@ -39,14 +39,10 @@ pico2-250-62-1v10-run = "run -p dashboard-pico2 --release --features simple-outl
 pico2-280-70-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu280-spi70-1v30"
 pico2-280-70-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu280-spi70-1v30"
 
-# 300 MHz @ 1.30V (75 MHz SPI)
+# 290 MHz @ 1.30V (72.5 MHz SPI)
+pico2-290-72-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu290-spi72-1v30"
+pico2-290-72-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu290-spi72-1v30"
+
+# 300 MHz @ 1.30V (75 MHz SPI - embassy-rp max)
 pico2-300-75-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"
 pico2-300-75-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"
-
-# 320 MHz @ 1.40V (80 MHz SPI - extreme overclock)
-pico2-320-80-1v40 = "build -p dashboard-pico2 --release --features simple-outline,cpu320-spi80-1v40"
-pico2-320-80-1v40-run = "run -p dashboard-pico2 --release --features simple-outline,cpu320-spi80-1v40"
-
-# 340 MHz @ 1.40V (85 MHz SPI - extreme overclock)
-pico2-340-85-1v40 = "build -p dashboard-pico2 --release --features simple-outline,cpu340-spi85-1v40"
-pico2-340-85-1v40-run = "run -p dashboard-pico2 --release --features simple-outline,cpu340-spi85-1v40"
