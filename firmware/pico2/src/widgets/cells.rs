@@ -68,8 +68,10 @@ use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_tre
 // =============================================================================
 
 /// Temperature threshold for switching to smaller font (4-digit values like "1200C").
-/// Values >= 1000 use 18pt font instead of 24pt to fit in 80px cell.
-const TEMP_LARGE_VALUE_THRESHOLD: f32 = 1000.0;
+/// Values >= this use 18pt font instead of 24pt to fit in 80px cell.
+/// Set to 999.5 (not 1000.0) because `{temp:.0}` rounds for display — a value of 999.5
+/// displays as "1000C" (5 chars), so the font must switch before the displayed text does.
+const TEMP_LARGE_VALUE_THRESHOLD: f32 = 999.5;
 
 /// Y offset for large (24pt) temperature values relative to cell center.
 const TEMP_VALUE_Y_LARGE: i32 = -12;
