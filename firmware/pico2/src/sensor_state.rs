@@ -169,19 +169,22 @@ impl SensorState {
     /// sample (O(n) where n = GRAPH_HISTORY_SIZE), this implementation uses incremental
     /// tracking that achieves O(1) time complexity for most updates:
     ///
-    /// 1. **New sample extends range**: If the new value is less than the current min
-    ///    or greater than the current max, we simply update the min/max directly. O(1)
+    /// 1. **New sample extends range**: If the new value is less than the current min or greater than the current max,
+    ///    we simply update the min/max directly. O(1)
     ///
-    /// 2. **Old sample was min/max**: When the circular buffer is full and we're about
-    ///    to overwrite an old sample that equals the current min or max, we must perform
-    ///    a full recalculation since we're removing a boundary value. O(n), but rare.
+    /// 2. **Old sample was min/max**: When the circular buffer is full and we're about to overwrite an old sample that
+    ///    equals the current min or max, we must perform a full recalculation since we're removing a boundary value.
+    ///    O(n), but rare.
     ///
-    /// 3. **All other cases**: No recalculation needed - the new sample is within the
-    ///    existing range and the overwritten sample wasn't a boundary. O(1)
+    /// 3. **All other cases**: No recalculation needed - the new sample is within the existing range and the
+    ///    overwritten sample wasn't a boundary. O(1)
     ///
     /// This reduces average time complexity from O(n) to O(1) amortized, with O(n)
     /// recalculations occurring only when removing a min/max boundary value.
-    fn add_graph_sample(&mut self, value: f32) {
+    fn add_graph_sample(
+        &mut self,
+        value: f32,
+    ) {
         // Determine if we need a full recalculation after the update.
         // This is only necessary when the buffer is full and we're about to overwrite
         // a sample that equals the current min or max value.

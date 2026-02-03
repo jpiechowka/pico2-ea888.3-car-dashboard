@@ -80,13 +80,7 @@ pub fn draw_header<D>(
             }
             FpsMode::Combined => {
                 // Format: "XX/YY FPS" where XX is instant and YY is average
-                let _ = write!(
-                    fps_str,
-                    "{:.0}/{:.0}{}",
-                    fps_instant,
-                    fps_average,
-                    fps_mode.suffix()
-                );
+                let _ = write!(fps_str, "{:.0}/{:.0}{}", fps_instant, fps_average, fps_mode.suffix());
             }
         }
         Text::with_text_style(&fps_str, HEADER_FPS_POS, LABEL_STYLE_WHITE, RIGHT_ALIGNED)

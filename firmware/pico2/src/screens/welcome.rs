@@ -5,27 +5,28 @@
 //!
 //! # Animation
 //!
-//! The star animation cycle is 210 frames:
-//! - Frames 0-149: Stars light up sequentially (one every 30 frames)
-//! - Frames 150-209: All stars blink on/off
+//! The star animation is time-based (5 seconds total):
+//! - 0-4000ms: Stars light up sequentially (one every 800ms)
+//! - 4000-5000ms: All 5 stars blink on/off
 //!
 //! # Usage
 //!
-//! The caller should call [`draw_welcome_frame`] in a loop with incrementing
-//! frame numbers, flushing the display after each frame. Typical usage runs
-//! for ~90 frames at 30 FPS (~3 seconds).
+//! The caller should call [`draw_welcome_frame`] in a loop, passing the elapsed
+//! time in milliseconds since the welcome screen started. This ensures consistent
+//! animation speed regardless of actual frame rate.
 //!
 //! # Example
 //!
 //! ```ignore
-//! for frame in 0..90 {
-//!     draw_welcome_frame(&mut display, frame);
+//! let start = Instant::now();
+//! loop {
+//!     let elapsed_ms = start.elapsed().as_millis() as u32;
+//!     if elapsed_ms >= 5000 { break; }
+//!     draw_welcome_frame(&mut display, elapsed_ms);
 //!     display.flush().await;
-//!     Timer::after(Duration::from_millis(33)).await; // ~30 FPS
 //! }
 //! ```
 
-use embassy_time::{Duration, Timer};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, Triangle};
@@ -221,7 +222,7 @@ fn draw_star<D>(
 fn draw_stars<D>(
     display: &mut D,
     y: i32,
-    frame: u32,
+    elapsed_ms: u32,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -231,10 +232,15 @@ fn draw_stars<D>(
     let total_width = star_spacing * 4;
     let start_x = SCREEN_CENTER_X - total_width / 2;
 
-    let cycle_frame = frame % 210;
-    let lit_count = if cycle_frame < 150 {
-        (cycle_frame / 30 + 1).min(5) as usize
-    } else if (cycle_frame / 10).is_multiple_of(2) {
+    // Time-based animation (5 seconds total):
+    // - 0-4000ms: Stars light up sequentially (one every 800ms)
+    // - 4000-5000ms: All 5 stars blink on/off
+    let cycle_ms = elapsed_ms % 5000;
+    let lit_count = if cycle_ms < 4000 {
+        // Star filling phase: one star every 800ms
+        (cycle_ms / 800 + 1).min(5) as usize
+    } else if ((cycle_ms - 4000) / 100).is_multiple_of(2) {
+        // Blinking phase: toggle every 100ms (~5 blinks per second)
         5
     } else {
         0
@@ -254,11 +260,15 @@ fn draw_stars<D>(
 
 /// Draw a single frame of the welcome screen.
 ///
+/// # Arguments
+/// * `elapsed_ms` - Milliseconds since the welcome screen started. Used for time-based star animation (0-4000ms: stars
+///   fill, 4000-5000ms: blink).
+///
 /// This is a non-async function that renders one frame. Call this in a loop
 /// with appropriate timing and flush the display after each call.
 pub fn draw_welcome_frame<D>(
     display: &mut D,
-    frame: u32,
+    elapsed_ms: u32,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -266,25 +276,5 @@ pub fn draw_welcome_frame<D>(
 
     draw_aezakmi(display, TEXT_Y);
     draw_stripe(display, STRIPE_Y);
-    draw_stars(display, STARS_Y, frame);
-}
-
-/// Run the welcome screen with AEZAKMI logo and blinking stars.
-///
-/// **Note:** This function only draws a single static frame and does NOT
-/// provide the animated star sequence. For proper animation, use
-/// [`draw_welcome_frame`] directly in a loop with flushes after each frame.
-/// See the boot sequence in `main.rs` for the correct implementation.
-///
-/// This function is kept for reference but should not be used for the actual
-/// boot sequence.
-pub async fn show_welcome_screen<D>(display: &mut D)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    // Just draw a single frame with all stars lit (simplified boot screen)
-    draw_welcome_frame(display, 150); // Frame 150 = all 5 stars lit
-
-    // Wait for the welcome duration
-    Timer::after(Duration::from_millis(2000)).await;
+    draw_stars(display, STARS_Y, elapsed_ms);
 }

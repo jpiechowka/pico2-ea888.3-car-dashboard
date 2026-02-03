@@ -12,12 +12,11 @@
 //!
 //! On startup, the firmware displays two boot screens before entering the main loop:
 //!
-//! 1. **Loading Screen** - Console-style initialization messages displayed sequentially
-//!    with delays between each message (total ~6 seconds). Messages include ECU connection
-//!    status, vehicle info, and sensor loading progress.
+//! 1. **Loading Screen** - Console-style initialization messages displayed sequentially with delays between each
+//!    message (total ~6 seconds). Messages include ECU connection status, vehicle info, and sensor loading progress.
 //!
-//! 2. **Welcome Screen** - AEZAKMI logo (GTA San Andreas reference) with animated
-//!    blinking golden stars (~3 seconds). Stars light up sequentially then blink.
+//! 2. **Welcome Screen** - AEZAKMI logo (GTA San Andreas reference) with animated blinking golden stars (~3 seconds).
+//!    Stars light up sequentially then blink.
 //!
 //! Each boot screen frame is rendered and flushed to the display individually to ensure
 //! proper visual updates during the boot sequence.
@@ -249,8 +248,13 @@ async fn demo_values_task(
 
 use crate::display::{display_spi_config, get_actual_spi_freq};
 use crate::screens::{
-    INIT_MESSAGES, MAX_VISIBLE_LINES, ProfilingData, draw_loading_frame, draw_logs_page,
-    draw_profiling_page, draw_welcome_frame,
+    INIT_MESSAGES,
+    MAX_VISIBLE_LINES,
+    ProfilingData,
+    draw_loading_frame,
+    draw_logs_page,
+    draw_profiling_page,
+    draw_welcome_frame,
 };
 
 // =============================================================================
@@ -645,20 +649,22 @@ async fn main(spawner: Spawner) {
 
     // --- Welcome Screen ---
     // Display AEZAKMI logo with animated blinking stars.
-    // Runs for approximately 3 seconds with star animation.
+    // Time-based animation: 4 seconds star filling + 1 second blinking = 5 seconds total.
     {
         let buffer = unsafe { double_buffer.render_buffer() };
         let mut renderer = St7789Renderer::new(buffer);
 
-        // Animation: ~3 seconds at 30 FPS = 90 frames
-        // Star animation cycle is 210 frames, so we show about half a cycle
-        const WELCOME_FRAMES: u32 = 90;
-        const FRAME_DELAY_MS: u64 = 33; // ~30 FPS
+        const WELCOME_DURATION_MS: u64 = 5000;
+        let start = Instant::now();
 
-        for frame in 0..WELCOME_FRAMES {
-            draw_welcome_frame(&mut renderer, frame);
+        loop {
+            let elapsed_ms = start.elapsed().as_millis() as u32;
+            if elapsed_ms >= WELCOME_DURATION_MS as u32 {
+                break;
+            }
+
+            draw_welcome_frame(&mut renderer, elapsed_ms);
             flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-            Timer::after(Duration::from_millis(FRAME_DELAY_MS)).await;
         }
     }
 

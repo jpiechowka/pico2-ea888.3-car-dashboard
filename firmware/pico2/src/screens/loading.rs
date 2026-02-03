@@ -30,7 +30,6 @@
 
 use core::fmt::Write;
 
-use embassy_time::{Duration, Timer};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -112,45 +111,4 @@ pub fn draw_loading_frame<D>(
             .draw(display)
             .ok();
     }
-}
-
-/// Run the loading screen with console-style init messages.
-///
-/// **Note:** This function does NOT flush the display between messages, so all
-/// messages appear at once when the caller flushes. For proper sequential display,
-/// use [`draw_loading_frame`] directly with flushes after each frame. See the
-/// boot sequence in `main.rs` for the correct implementation.
-///
-/// This function is kept for reference but should not be used for the actual
-/// boot sequence.
-pub async fn show_loading_screen<D>(display: &mut D)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    // Track which lines are visible (circular buffer simulation)
-    let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
-    let mut line_count: usize = 0;
-
-    for (msg, duration_ms) in &INIT_MESSAGES {
-        // Add message to visible lines
-        if line_count < MAX_VISIBLE_LINES {
-            visible_lines[line_count] = msg;
-            line_count += 1;
-        } else {
-            // Shift lines up
-            for i in 0..MAX_VISIBLE_LINES - 1 {
-                visible_lines[i] = visible_lines[i + 1];
-            }
-            visible_lines[MAX_VISIBLE_LINES - 1] = msg;
-        }
-
-        // Just draw the final frame for this message (no animation in simplified mode)
-        draw_loading_frame(display, &visible_lines, line_count, 0);
-
-        // Wait for message duration
-        Timer::after(Duration::from_millis(*duration_ms)).await;
-    }
-
-    // Final pause before transitioning
-    Timer::after(Duration::from_millis(500)).await;
 }

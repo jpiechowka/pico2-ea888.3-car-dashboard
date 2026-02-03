@@ -98,7 +98,10 @@ impl FpsMode {
 // Cell State Tracking
 // =============================================================================
 
-#[cfg(target_arch = "arm")]
+// Import F32Ext for f32::round() in no_std environments.
+// In test builds, std provides this method directly, but micromath's F32Ext
+// is still imported (and unused) which is fine.
+#[cfg(not(test))]
 use micromath::F32Ext;
 
 /// Number of cells in the dashboard grid (4 columns × 2 rows).
@@ -202,8 +205,7 @@ impl RenderState {
             FpsMode::Instant => instant_rounded != self.prev_fps_instant_rounded,
             FpsMode::Average => average_rounded != self.prev_fps_average_rounded,
             FpsMode::Combined => {
-                instant_rounded != self.prev_fps_instant_rounded
-                    || average_rounded != self.prev_fps_average_rounded
+                instant_rounded != self.prev_fps_instant_rounded || average_rounded != self.prev_fps_average_rounded
             }
         };
 
