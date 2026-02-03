@@ -6,10 +6,12 @@
 //!
 //! The boot sequence consists of two screens:
 //!
-//! 1. **Loading screen** - Console-style initialization messages displayed sequentially with delays between each
-//!    message. Uses [`draw_loading_frame`] with [`INIT_MESSAGES`] for timing.
+//! 1. **Loading screen** (~6 seconds) - Console-style initialization messages displayed sequentially with delays
+//!    between each message. Uses [`draw_loading_frame`] with [`INIT_MESSAGES`] for timing.
 //!
-//! 2. **Welcome screen** - AEZAKMI logo with animated blinking stars. Uses [`draw_welcome_frame`] for animation frames.
+//! 2. **Welcome screen** (5 seconds) - AEZAKMI logo with time-based star animation. Uses [`draw_welcome_frame`] with
+//!    elapsed milliseconds for consistent animation speed regardless of frame rate. Stars fill over 4 seconds, then
+//!    blink for 1 second.
 //!
 //! Both screens require the caller to flush the display after each frame
 //! to ensure proper visual updates.

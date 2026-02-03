@@ -85,9 +85,9 @@ cargo pico2-300-75-1v30-run
 On startup, the firmware displays two boot screens:
 
 1. **Loading Screen** (~6 seconds) - Console-style initialization messages displayed sequentially
-2. **Welcome Screen** (~3 seconds) - AEZAKMI logo with animated blinking stars
+2. **Welcome Screen** (5 seconds) - AEZAKMI logo with animated blinking stars (4s filling + 1s blinking)
 
-After the boot sequence, the main dashboard is displayed.
+After the boot sequence (~11 seconds total), the main dashboard is displayed.
 
 ### Button Controls
 

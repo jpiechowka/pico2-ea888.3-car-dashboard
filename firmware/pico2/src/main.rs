@@ -12,11 +12,11 @@
 //!
 //! On startup, the firmware displays two boot screens before entering the main loop:
 //!
-//! 1. **Loading Screen** - Console-style initialization messages displayed sequentially with delays between each
-//!    message (total ~6 seconds). Messages include ECU connection status, vehicle info, and sensor loading progress.
+//! 1. **Loading Screen** (~6 seconds) - Console-style initialization messages displayed sequentially with delays
+//!    between each message. Messages include ECU connection status, vehicle info, and sensor loading progress.
 //!
-//! 2. **Welcome Screen** - AEZAKMI logo (GTA San Andreas reference) with animated blinking golden stars (~3 seconds).
-//!    Stars light up sequentially then blink.
+//! 2. **Welcome Screen** (5 seconds) - AEZAKMI logo (GTA San Andreas reference) with time-based star animation: 4
+//!    seconds for stars to light up sequentially, then 1 second of blinking.
 //!
 //! Each boot screen frame is rendered and flushed to the display individually to ensure
 //! proper visual updates during the boot sequence.
