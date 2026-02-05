@@ -10,6 +10,15 @@ A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA8
 .
 ├── firmware/           # Rust-based firmware workspace
 │   ├── pico2/          # RP2350 Embassy firmware (drives ST7789 display)
+│   │   └── src/
+│   │       ├── main.rs         # Entry point, main loop
+│   │       ├── lib.rs          # Library root (testable modules)
+│   │       ├── tasks/          # Async tasks (flush, demo)
+│   │       ├── widgets/        # UI widgets
+│   │       │   ├── cells/      # Sensor cell renderers (boost, temp, battery, afr)
+│   │       │   ├── header.rs   # Header bar
+│   │       │   └── popups.rs   # Popup overlays
+│   │       └── screens/        # Screen renderers (loading, welcome, profiling)
 │   └── tools/          # Bundled tools like picotool
 ├── hardware/           # Hardware schematics and PCB designs
 ├── mechanical/         # CAD files and mechanical designs
