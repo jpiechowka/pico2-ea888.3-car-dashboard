@@ -13,6 +13,7 @@ A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA8
 │   │   └── src/
 │   │       ├── main.rs         # Entry point, main loop
 │   │       ├── lib.rs          # Library root (testable modules)
+│   │       ├── drivers/        # Hardware drivers (ST7789, SPI config)
 │   │       ├── tasks/          # Async tasks (flush, demo)
 │   │       ├── widgets/        # UI widgets
 │   │       │   ├── cells/      # Sensor cell renderers (boost, temp, battery, afr)

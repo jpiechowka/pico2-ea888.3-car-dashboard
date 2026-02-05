@@ -10,6 +10,7 @@
 //!
 //! # Module Organization
 //!
+//! - `drivers/` - Hardware drivers (ST7789 display, SPI configuration)
 //! - `tasks/` - Async Embassy tasks (flush, demo sensor values)
 //! - `button` - Button debounce handling
 //! - `popup` - Popup state management
@@ -54,11 +55,10 @@
 // Modules only used in the binary (not testable on host)
 mod animations;
 mod button;
-mod display;
+mod drivers;
 mod log_buffer;
 mod popup;
 mod screens;
-mod st7789;
 mod styles;
 mod tasks;
 mod widgets;
@@ -104,7 +104,7 @@ use crate::animations::ColorTransition;
 use crate::button::ButtonState;
 use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
-use crate::display::{display_spi_config, get_actual_spi_freq};
+use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::pages::Page;
 use crate::popup::Popup;
 use crate::render::{FpsMode, RenderState, cell_idx};
@@ -118,7 +118,6 @@ use crate::screens::{
     draw_welcome_frame,
 };
 use crate::sensor_state::SensorState;
-use crate::st7789::{DoubleBuffer, St7789Flusher, St7789Renderer};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
@@ -175,7 +174,7 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 ];
 
 // Make framebuffers accessible for the flush task
-pub use crate::st7789::{FRAMEBUFFER_A, FRAMEBUFFER_B};
+pub use crate::drivers::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 
 // Ensure only one overclock feature is enabled at a time
 #[cfg(any(

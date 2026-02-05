@@ -11,7 +11,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Instant;
 
-use crate::st7789::St7789Flusher;
+use crate::drivers::St7789Flusher;
 
 // =============================================================================
 // Double Buffering Synchronization
@@ -53,9 +53,9 @@ pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
         // SAFETY: Main task is rendering to the OTHER buffer, so this one is safe to read
         let buffer = unsafe {
             if buffer_idx == 0 {
-                &*core::ptr::addr_of!(crate::st7789::FRAMEBUFFER_A)
+                &*core::ptr::addr_of!(crate::drivers::FRAMEBUFFER_A)
             } else {
-                &*core::ptr::addr_of!(crate::st7789::FRAMEBUFFER_B)
+                &*core::ptr::addr_of!(crate::drivers::FRAMEBUFFER_B)
             }
         };
 
