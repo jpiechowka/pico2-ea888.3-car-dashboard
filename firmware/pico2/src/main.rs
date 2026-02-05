@@ -100,20 +100,36 @@ use embassy_time::{Duration, Instant};
 use embedded_graphics::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
-use crate::button::ButtonState;
-use crate::popup::Popup;
-use crate::tasks::{
-    BUFFER_SWAPS, BUFFER_WAITS, DEMO_VALUES, FLUSH_BUFFER_IDX, FLUSH_DONE, FLUSH_SIGNAL,
-    LAST_FLUSH_TIME_US, demo_values_task, display_flush_task,
-};
-
 use crate::animations::ColorTransition;
+use crate::button::ButtonState;
 use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
+use crate::display::{display_spi_config, get_actual_spi_freq};
 use crate::pages::Page;
+use crate::popup::Popup;
 use crate::render::{FpsMode, RenderState, cell_idx};
+use crate::screens::{
+    INIT_MESSAGES,
+    MAX_VISIBLE_LINES,
+    ProfilingData,
+    draw_loading_frame,
+    draw_logs_page,
+    draw_profiling_page,
+    draw_welcome_frame,
+};
 use crate::sensor_state::SensorState;
 use crate::st7789::{DoubleBuffer, St7789Flusher, St7789Renderer};
+use crate::tasks::{
+    BUFFER_SWAPS,
+    BUFFER_WAITS,
+    DEMO_VALUES,
+    FLUSH_BUFFER_IDX,
+    FLUSH_DONE,
+    FLUSH_SIGNAL,
+    LAST_FLUSH_TIME_US,
+    demo_values_task,
+    display_flush_task,
+};
 use crate::thresholds::{
     AFR_LEAN_CRITICAL,
     AFR_OPTIMAL_MAX,
@@ -146,18 +162,6 @@ use crate::widgets::{
     temp_color_iat,
     temp_color_oil_dsg,
     temp_color_water,
-};
-
-
-use crate::display::{display_spi_config, get_actual_spi_freq};
-use crate::screens::{
-    INIT_MESSAGES,
-    MAX_VISIBLE_LINES,
-    ProfilingData,
-    draw_loading_frame,
-    draw_logs_page,
-    draw_profiling_page,
-    draw_welcome_frame,
 };
 
 // Program metadata for `picotool info`

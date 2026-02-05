@@ -8,12 +8,11 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
 use heapless::String;
 
+`use super::{SensorDisplayData, label_color_for_bg, label_style_for_text};
 use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
 use crate::styles::{CENTERED, LABEL_FONT, VALUE_FONT};
 use crate::thresholds::{AFR_LEAN_CRITICAL, AFR_OPTIMAL_MAX, AFR_RICH, AFR_RICH_AF, AFR_STOICH};
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_value_with_outline};
-
-use super::{SensorDisplayData, label_color_for_bg, label_style_for_text};
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_afr_cell<D>(

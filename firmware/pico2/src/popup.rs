@@ -30,9 +30,7 @@ impl Popup {
 
     /// Check if this popup has expired.
     #[inline]
-    pub fn is_expired(&self) -> bool {
-        self.start_time().elapsed() >= POPUP_DURATION
-    }
+    pub fn is_expired(&self) -> bool { self.start_time().elapsed() >= POPUP_DURATION }
 
     /// Get the popup kind as a u8 discriminant for RenderState tracking.
     #[inline]

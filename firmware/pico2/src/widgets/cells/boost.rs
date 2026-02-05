@@ -8,12 +8,11 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
 use heapless::String;
 
+use super::value_style_for_color;
 use crate::colors::{BLACK, PINK, WHITE};
 use crate::styles::{CENTERED, LABEL_FONT, LABEL_STYLE_ORANGE, LABEL_STYLE_WHITE};
 use crate::thresholds::BAR_TO_PSI;
 use crate::widgets::primitives::draw_cell_background;
-
-use super::value_style_for_color;
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_boost_cell<D>(

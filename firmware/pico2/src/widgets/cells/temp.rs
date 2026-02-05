@@ -12,18 +12,27 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use heapless::String;
 
+use super::{SensorDisplayData, label_color_for_bg, label_style_for_text, peak_highlight_for_text};
 use crate::colors::{BLACK, BLUE, GREEN, ORANGE, RED, WHITE, YELLOW};
 use crate::styles::{CENTERED, LABEL_FONT, VALUE_FONT, VALUE_FONT_MEDIUM};
 use crate::thresholds::{
-    COOLANT_COLD_MAX, COOLANT_CRITICAL, EGT_COLD_MAX, EGT_CRITICAL, EGT_HIGH_LOAD, EGT_SPIRITED,
-    IAT_COLD, IAT_CRITICAL, IAT_EXTREME_COLD, IAT_HOT, IAT_WARM, OIL_DSG_CRITICAL, OIL_DSG_ELEVATED,
-    OIL_DSG_HIGH, OIL_LOW_TEMP,
+    COOLANT_COLD_MAX,
+    COOLANT_CRITICAL,
+    EGT_COLD_MAX,
+    EGT_CRITICAL,
+    EGT_HIGH_LOAD,
+    EGT_SPIRITED,
+    IAT_COLD,
+    IAT_CRITICAL,
+    IAT_EXTREME_COLD,
+    IAT_HOT,
+    IAT_WARM,
+    OIL_DSG_CRITICAL,
+    OIL_DSG_ELEVATED,
+    OIL_DSG_HIGH,
+    OIL_LOW_TEMP,
 };
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
-
-use super::{
-    SensorDisplayData, label_color_for_bg, label_style_for_text, peak_highlight_for_text,
-};
 
 // =============================================================================
 // Temperature Value Display Constants
@@ -83,18 +92,12 @@ pub fn temp_color_water(temp: f32) -> (Rgb565, Rgb565) {
     }
 }
 
-pub fn is_critical_oil_dsg(temp: f32) -> bool {
-    temp >= OIL_DSG_CRITICAL
-}
+pub fn is_critical_oil_dsg(temp: f32) -> bool { temp >= OIL_DSG_CRITICAL }
 
-pub fn is_critical_water(temp: f32) -> bool {
-    temp > COOLANT_CRITICAL
-}
+pub fn is_critical_water(temp: f32) -> bool { temp > COOLANT_CRITICAL }
 
 #[allow(dead_code)]
-pub fn is_critical_afr(afr: f32) -> bool {
-    afr > crate::thresholds::AFR_LEAN_CRITICAL
-}
+pub fn is_critical_afr(afr: f32) -> bool { afr > crate::thresholds::AFR_LEAN_CRITICAL }
 
 pub fn temp_color_iat(temp: f32) -> (Rgb565, Rgb565) {
     if temp >= IAT_CRITICAL {
@@ -110,9 +113,7 @@ pub fn temp_color_iat(temp: f32) -> (Rgb565, Rgb565) {
     }
 }
 
-pub fn is_critical_iat(temp: f32) -> bool {
-    temp >= IAT_CRITICAL || temp <= IAT_EXTREME_COLD
-}
+pub fn is_critical_iat(temp: f32) -> bool { temp >= IAT_CRITICAL || temp <= IAT_EXTREME_COLD }
 
 pub fn temp_color_egt(temp: f32) -> (Rgb565, Rgb565) {
     if temp >= EGT_CRITICAL {
@@ -128,16 +129,12 @@ pub fn temp_color_egt(temp: f32) -> (Rgb565, Rgb565) {
     }
 }
 
-pub fn is_critical_egt(temp: f32) -> bool {
-    temp >= EGT_CRITICAL
-}
+pub fn is_critical_egt(temp: f32) -> bool { temp >= EGT_CRITICAL }
 
 /// Check if oil temperature is below the low threshold (75C).
 ///
 /// Returns `true` when oil needs warming up. Used to trigger the "LOW" warning badge.
-pub fn is_low_temp_oil(temp: f32) -> bool {
-    temp < OIL_LOW_TEMP
-}
+pub fn is_low_temp_oil(temp: f32) -> bool { temp < OIL_LOW_TEMP }
 
 // =============================================================================
 // LOW Badge Drawing

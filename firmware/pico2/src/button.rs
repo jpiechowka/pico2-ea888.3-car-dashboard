@@ -52,7 +52,5 @@ impl ButtonState {
 }
 
 impl Default for ButtonState {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
