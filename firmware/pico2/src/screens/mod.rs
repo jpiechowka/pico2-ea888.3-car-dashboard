@@ -16,11 +16,14 @@
 //! Both screens require the caller to flush the display after each frame
 //! to ensure proper visual updates.
 
+mod boot;
 mod loading;
 mod logs;
 mod profiling;
 mod welcome;
 
+// Boot sequence runner
+pub use boot::{clear_framebuffers, run_boot_sequence};
 // Boot screen frame drawing functions and constants
 pub use loading::{INIT_MESSAGES, MAX_VISIBLE_LINES, draw_loading_frame};
 // Other screens

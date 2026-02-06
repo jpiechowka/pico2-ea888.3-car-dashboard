@@ -24,12 +24,14 @@
 
 // === Pure logic modules (testable on host, no ARM dependencies) ===
 
-// Configuration
+// Configuration (layout + sensor thresholds)
 pub mod config;
-pub mod thresholds;
 
 // Rendering
 pub mod render;
+
+// Re-export thresholds at top level for backwards compatibility
+pub use config::sensors as thresholds;
 
 // Re-export from subdirectories for backwards compatibility
 // These modules contain the testable logic

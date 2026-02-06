@@ -87,16 +87,8 @@ use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::profiling as cpu_cycles;
 use crate::render::{FpsMode, RenderState, cell_idx};
-use crate::screens::{
-    INIT_MESSAGES,
-    MAX_VISIBLE_LINES,
-    ProfilingData,
-    draw_loading_frame,
-    draw_logs_page,
-    draw_profiling_page,
-    draw_welcome_frame,
-};
-use crate::state::{ButtonState, Page, Popup, SensorState};
+use crate::screens::{ProfilingData, clear_framebuffers, draw_logs_page, draw_profiling_page, run_boot_sequence};
+use crate::state::{ButtonState, Page, Popup, SensorState, process_buttons};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
@@ -386,96 +378,10 @@ async fn main(spawner: Spawner) {
     let mut double_buffer = unsafe { DoubleBuffer::new() };
 
     // Clear both framebuffers before boot screens to prevent grainy noise
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        St7789Renderer::new(buffer).clear(BLACK).ok();
-    }
-    flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-    double_buffer.swap();
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        St7789Renderer::new(buffer).clear(BLACK).ok();
-    }
-    flusher.flush_buffer(unsafe { double_buffer.get_buffer(1) }).await;
-    double_buffer.swap(); // Back to buffer 0
+    clear_framebuffers(&mut flusher, &mut double_buffer).await;
 
-    // ==========================================================================
     // Boot Sequence: Loading Screen → Welcome Screen
-    // ==========================================================================
-    // Uses single-buffer mode for simplicity. Each frame is rendered and then
-    // flushed to the display before proceeding to the next frame.
-
-    // --- Loading Screen ---
-    // Display console-style initialization messages sequentially with delays.
-    // Renders continuously during each message's wait period so the spinner animates.
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut renderer = St7789Renderer::new(buffer);
-
-        // Track visible lines (console scrolling effect)
-        let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
-        let mut line_count: usize = 0;
-        let boot_start = Instant::now();
-
-        for (msg, duration_ms) in &INIT_MESSAGES {
-            // Add message to visible lines
-            if line_count < MAX_VISIBLE_LINES {
-                visible_lines[line_count] = msg;
-                line_count += 1;
-            } else {
-                // Shift lines up (scroll effect)
-                for i in 0..MAX_VISIBLE_LINES - 1 {
-                    visible_lines[i] = visible_lines[i + 1];
-                }
-                visible_lines[MAX_VISIBLE_LINES - 1] = msg;
-            }
-
-            // Render continuously during message wait so the spinner animates
-            let msg_start = Instant::now();
-            loop {
-                let elapsed_ms = boot_start.elapsed().as_millis() as u32;
-                draw_loading_frame(&mut renderer, &visible_lines, line_count, elapsed_ms);
-                flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-
-                if msg_start.elapsed().as_millis() >= *duration_ms as u64 {
-                    break;
-                }
-            }
-        }
-
-        // Final pause after "Ready." with spinning spinner
-        let pause_start = Instant::now();
-        loop {
-            let elapsed_ms = boot_start.elapsed().as_millis() as u32;
-            draw_loading_frame(&mut renderer, &visible_lines, line_count, elapsed_ms);
-            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-
-            if pause_start.elapsed().as_millis() >= 500 {
-                break;
-            }
-        }
-    }
-
-    // --- Welcome Screen ---
-    // Display AEZAKMI logo with animated blinking stars.
-    // Time-based animation: 4 seconds star filling + 3 seconds blinking = 7 seconds total.
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut renderer = St7789Renderer::new(buffer);
-
-        const WELCOME_DURATION_MS: u64 = 7000;
-        let start = Instant::now();
-
-        loop {
-            let elapsed_ms = start.elapsed().as_millis() as u32;
-            if elapsed_ms >= WELCOME_DURATION_MS as u32 {
-                break;
-            }
-
-            draw_welcome_frame(&mut renderer, elapsed_ms);
-            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-        }
-    }
+    run_boot_sequence(&mut flusher, &mut double_buffer).await;
 
     // Move flusher to static for task (Embassy tasks need 'static lifetime)
     use static_cell::StaticCell;
@@ -587,18 +493,29 @@ async fn main(spawner: Spawner) {
         let blink_on = (elapsed_ms / 200).is_multiple_of(2);
 
         // Handle button presses
-        if btn_x_state.just_pressed(btn_x.is_low()) && current_page == Page::Dashboard {
-            fps_mode = fps_mode.next();
-            active_popup = Some(Popup::Fps(Instant::now()));
-            clear_frames_remaining = 2; // Clear both buffers when FPS toggles
+        let input = process_buttons(
+            &mut btn_x_state,
+            &mut btn_y_state,
+            &mut btn_a_state,
+            &mut btn_b_state,
+            btn_x.is_low(),
+            btn_y.is_low(),
+            btn_a.is_low(),
+            btn_b.is_low(),
+            current_page,
+            fps_mode,
+        );
+
+        // Apply input results
+        if let Some(new_mode) = input.new_fps_mode {
+            fps_mode = new_mode;
+            clear_frames_remaining = 2;
             info!("FPS mode: {}", fps_mode.label());
         }
-
-        if btn_y_state.just_pressed(btn_y.is_low()) {
-            current_page = current_page.toggle();
-            clear_frames_remaining = 2; // Clear both double buffers on page switch
+        if let Some(new_page) = input.new_page {
+            current_page = new_page;
+            clear_frames_remaining = 2;
             active_popup = None;
-            // Reset average FPS tracking on page switch
             fps_sample_count = 0;
             fps_sum = 0.0;
             average_fps = 0.0;
@@ -611,17 +528,16 @@ async fn main(spawner: Spawner) {
                 }
             );
         }
-
-        if btn_a_state.just_pressed(btn_a.is_low()) && current_page == Page::Dashboard {
+        if input.boost_unit_toggled {
             show_boost_psi = !show_boost_psi;
-            active_popup = Some(Popup::BoostUnit(Instant::now()));
             info!("Boost: {}", if show_boost_psi { "PSI" } else { "BAR" });
         }
-
-        if btn_b_state.just_pressed(btn_b.is_low()) && current_page == Page::Dashboard {
+        if input.reset_requested {
             reset_requested = true;
-            active_popup = Some(Popup::Reset(Instant::now()));
             info!("Reset requested");
+        }
+        if let Some(popup) = input.show_popup {
+            active_popup = Some(popup);
         }
 
         // Check popup expiration

@@ -1,4 +1,4 @@
-//! Application configuration constants.
+//! Display and layout configuration constants.
 //!
 //! # Optimization: Pre-computed Layout Constants
 //!
