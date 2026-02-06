@@ -31,7 +31,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, Triangle};
 
-use crate::colors::WHITE;
+use crate::ui::WHITE;
 
 const SCREEN_CENTER_X: i32 = 160;
 

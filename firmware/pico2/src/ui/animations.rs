@@ -119,7 +119,7 @@ impl ColorTransition {
     ///
     /// All cells start with black background and no active transitions.
     pub const fn new() -> Self {
-        use crate::colors::BLACK;
+        use super::colors::BLACK;
         Self {
             current_colors: [BLACK; CELL_COUNT],
             target_colors: [BLACK; CELL_COUNT],

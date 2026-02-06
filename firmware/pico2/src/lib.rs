@@ -24,11 +24,31 @@
 
 // === Pure logic modules (testable on host, no ARM dependencies) ===
 
-pub mod colors;
+// Configuration
 pub mod config;
-pub mod cpu_cycles;
-pub mod memory;
-pub mod pages;
-pub mod render;
-pub mod sensor_state;
 pub mod thresholds;
+
+// Rendering
+pub mod render;
+
+// Re-export from subdirectories for backwards compatibility
+// These modules contain the testable logic
+
+mod profiling {
+    pub mod cpu_cycles;
+    pub mod memory;
+}
+
+mod state {
+    pub mod pages;
+    pub mod sensor_state;
+}
+
+mod ui {
+    pub mod colors;
+}
+
+// Re-export at top level for existing imports
+pub use profiling::{cpu_cycles, memory};
+pub use state::{pages, sensor_state};
+pub use ui::colors;

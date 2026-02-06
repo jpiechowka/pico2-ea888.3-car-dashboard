@@ -13,8 +13,6 @@ use embedded_graphics::text::Text;
 use heapless::String;
 
 use super::{SensorDisplayData, label_color_for_bg, label_style_for_text, peak_highlight_for_text};
-use crate::colors::{BLACK, BLUE, GREEN, ORANGE, RED, WHITE, YELLOW};
-use crate::styles::{CENTERED, LABEL_FONT, VALUE_FONT, VALUE_FONT_MEDIUM};
 use crate::thresholds::{
     COOLANT_COLD_MAX,
     COOLANT_CRITICAL,
@@ -32,6 +30,7 @@ use crate::thresholds::{
     OIL_DSG_HIGH,
     OIL_LOW_TEMP,
 };
+use crate::ui::{BLACK, BLUE, CENTERED, GREEN, LABEL_FONT, ORANGE, RED, VALUE_FONT, VALUE_FONT_MEDIUM, WHITE, YELLOW};
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
 
 // =============================================================================

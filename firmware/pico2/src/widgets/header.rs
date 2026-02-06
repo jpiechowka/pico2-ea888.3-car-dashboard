@@ -17,10 +17,9 @@ use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use heapless::String;
 
-use crate::colors::{GRAY, RED};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::render::FpsMode;
-use crate::styles::{CENTERED, LABEL_STYLE_WHITE, RIGHT_ALIGNED, TITLE_STYLE_WHITE};
+use crate::ui::{CENTERED, GRAY, LABEL_STYLE_WHITE, RED, RIGHT_ALIGNED, TITLE_STYLE_WHITE};
 
 const HEADER_TITLE_POS: Point = Point::new(160, 19);
 const HEADER_FPS_POS: Point = Point::new((SCREEN_WIDTH - 5) as i32, 17);

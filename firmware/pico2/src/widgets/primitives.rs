@@ -11,7 +11,7 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Text, TextStyle};
 
-use crate::colors::{BLACK, WHITE};
+use crate::ui::{BLACK, WHITE};
 
 /// Draw a cell's background rectangle with 2px inset.
 pub fn draw_cell_background<D>(

@@ -43,8 +43,7 @@ use embedded_graphics::primitives::{Line, PrimitiveStyle};
 use embedded_graphics::text::Text;
 use heapless::String;
 
-use crate::colors::{BLACK, RED, WHITE};
-use crate::styles::{CENTERED, LEFT_ALIGNED};
+use crate::ui::{BLACK, CENTERED, LEFT_ALIGNED, RED, WHITE};
 
 const TITLE_POS: Point = Point::new(160, 25);
 const LINE_START: Point = Point::new(10, 35);

@@ -9,9 +9,8 @@ use embedded_graphics::text::Text;
 use heapless::String;
 
 use super::{SensorDisplayData, label_color_for_bg, label_style_for_text, peak_highlight_for_text};
-use crate::colors::{BLACK, ORANGE, RED, WHITE};
-use crate::styles::{CENTERED, LABEL_FONT, VALUE_FONT_MEDIUM};
 use crate::thresholds::{BATT_CRITICAL, BATT_WARNING};
+use crate::ui::{BLACK, CENTERED, LABEL_FONT, ORANGE, RED, VALUE_FONT_MEDIUM, WHITE};
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
 
 #[allow(clippy::too_many_arguments)]

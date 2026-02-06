@@ -45,8 +45,16 @@ pub use temp::{
     temp_color_water,
 };
 
-use crate::colors::{BLACK, WHITE, YELLOW};
-use crate::styles::{LABEL_STYLE_BLACK, LABEL_STYLE_WHITE, VALUE_FONT, VALUE_STYLE_BLACK, VALUE_STYLE_WHITE};
+use crate::ui::{
+    BLACK,
+    LABEL_STYLE_BLACK,
+    LABEL_STYLE_WHITE,
+    VALUE_FONT,
+    VALUE_STYLE_BLACK,
+    VALUE_STYLE_WHITE,
+    WHITE,
+    YELLOW,
+};
 
 // =============================================================================
 // Sensor Display Data

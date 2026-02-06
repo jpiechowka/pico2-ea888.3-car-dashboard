@@ -26,7 +26,7 @@ use embassy_sync::mutex::Mutex;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use crate::colors::{GRAY, GREEN, RED, YELLOW};
+use crate::ui::{GRAY, GREEN, RED, YELLOW};
 
 /// Maximum number of log entries to keep.
 pub const LOG_ENTRIES: usize = 14;
@@ -229,9 +229,9 @@ pub fn push_log(
 macro_rules! log_info {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let mut buf: heapless::String<{ $crate::log_buffer::LOG_MSG_LEN }> = heapless::String::new();
+        let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
         let _ = write!(buf, $($arg)*);
-        $crate::log_buffer::push_log($crate::log_buffer::LogLevel::Info, buf.as_str());
+        $crate::profiling::push_log($crate::profiling::LogLevel::Info, buf.as_str());
         defmt::info!($($arg)*);
     }};
 }
@@ -241,9 +241,9 @@ macro_rules! log_info {
 macro_rules! log_warn {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let mut buf: heapless::String<{ $crate::log_buffer::LOG_MSG_LEN }> = heapless::String::new();
+        let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
         let _ = write!(buf, $($arg)*);
-        $crate::log_buffer::push_log($crate::log_buffer::LogLevel::Warn, buf.as_str());
+        $crate::profiling::push_log($crate::profiling::LogLevel::Warn, buf.as_str());
         defmt::warn!($($arg)*);
     }};
 }
@@ -253,9 +253,9 @@ macro_rules! log_warn {
 macro_rules! log_error {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let mut buf: heapless::String<{ $crate::log_buffer::LOG_MSG_LEN }> = heapless::String::new();
+        let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
         let _ = write!(buf, $($arg)*);
-        $crate::log_buffer::push_log($crate::log_buffer::LogLevel::Error, buf.as_str());
+        $crate::profiling::push_log($crate::profiling::LogLevel::Error, buf.as_str());
         defmt::error!($($arg)*);
     }};
 }
@@ -265,9 +265,9 @@ macro_rules! log_error {
 macro_rules! log_debug {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let mut buf: heapless::String<{ $crate::log_buffer::LOG_MSG_LEN }> = heapless::String::new();
+        let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
         let _ = write!(buf, $($arg)*);
-        $crate::log_buffer::push_log($crate::log_buffer::LogLevel::Debug, buf.as_str());
+        $crate::profiling::push_log($crate::profiling::LogLevel::Debug, buf.as_str());
         defmt::debug!($($arg)*);
     }};
 }

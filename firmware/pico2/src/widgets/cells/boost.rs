@@ -9,9 +9,8 @@ use embedded_graphics::text::Text;
 use heapless::String;
 
 use super::value_style_for_color;
-use crate::colors::{BLACK, PINK, WHITE};
-use crate::styles::{CENTERED, LABEL_FONT, LABEL_STYLE_ORANGE, LABEL_STYLE_WHITE};
 use crate::thresholds::BAR_TO_PSI;
+use crate::ui::{BLACK, CENTERED, LABEL_FONT, LABEL_STYLE_ORANGE, LABEL_STYLE_WHITE, PINK, WHITE};
 use crate::widgets::primitives::draw_cell_background;
 
 #[allow(clippy::too_many_arguments)]

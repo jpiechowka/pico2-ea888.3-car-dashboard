@@ -21,9 +21,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
 use heapless::String;
 
-use crate::colors::{BLACK, GREEN, WHITE};
-use crate::log_buffer::{LOG_BUFFER, LogEntry};
-use crate::styles::LABEL_FONT;
+use crate::profiling::{LOG_BUFFER, LogEntry};
+use crate::ui::{BLACK, GREEN, LABEL_FONT, WHITE};
 
 /// Draw the logs page with recent log entries.
 pub fn draw_logs_page<D>(display: &mut D)

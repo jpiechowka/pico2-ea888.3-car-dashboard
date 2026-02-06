@@ -37,8 +37,7 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
 use heapless::String;
 
-use crate::colors::{BLACK, GREEN, WHITE, YELLOW};
-use crate::styles::LABEL_FONT;
+use crate::ui::{BLACK, GREEN, LABEL_FONT, WHITE, YELLOW};
 
 /// Profiling data to display on the debug screen.
 #[derive(Clone, Copy, Default)]
@@ -266,7 +265,7 @@ pub fn draw_profiling_page<D>(
 
     // Framebuffers info
     s.clear();
-    let _ = write!(s, "FB: 2x{}K", crate::memory::FRAMEBUFFER_SIZE / 1024);
+    let _ = write!(s, "FB: 2x{}K", crate::profiling::FRAMEBUFFER_SIZE / 1024);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height + 4;
 

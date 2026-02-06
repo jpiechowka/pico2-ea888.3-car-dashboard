@@ -23,7 +23,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::text::{Alignment, TextStyle, TextStyleBuilder};
 use profont::{PROFONT_18_POINT, PROFONT_24_POINT};
 
-use crate::colors::{BLACK, ORANGE, WHITE};
+use super::colors::{BLACK, ORANGE, WHITE};
 
 // =============================================================================
 // Text Alignment Styles (const - zero runtime cost)

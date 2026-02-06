@@ -12,10 +12,9 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 
-use crate::colors::{RED, WHITE};
 use crate::config::{CENTER_X, CENTER_Y, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::render::FpsMode;
-use crate::styles::{CENTERED, TITLE_STYLE_WHITE};
+use crate::ui::{CENTERED, RED, TITLE_STYLE_WHITE, WHITE};
 
 /// Red text style for danger popup on white background.
 const TITLE_STYLE_RED: MonoTextStyle<'static, Rgb565> = MonoTextStyle::new(&FONT_10X20, RED);

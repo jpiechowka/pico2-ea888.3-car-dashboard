@@ -53,38 +53,21 @@
 #![allow(clippy::cast_sign_loss)]
 
 // Modules only used in the binary (not testable on host)
-mod animations;
-mod button;
 mod drivers;
-mod log_buffer;
-mod popup;
+mod profiling;
 mod screens;
-mod styles;
+mod state;
 mod tasks;
+mod ui;
 mod widgets;
 
 // Re-export testable modules from library for local use
 // (These are defined in lib.rs with host-testable code)
-mod colors {
-    pub use dashboard_pico2::colors::*;
-}
 mod config {
     pub use dashboard_pico2::config::*;
 }
-mod cpu_cycles {
-    pub use dashboard_pico2::cpu_cycles::*;
-}
-mod memory {
-    pub use dashboard_pico2::memory::*;
-}
-mod pages {
-    pub use dashboard_pico2::pages::*;
-}
 mod render {
     pub use dashboard_pico2::render::*;
-}
-mod sensor_state {
-    pub use dashboard_pico2::sensor_state::*;
 }
 mod thresholds {
     pub use dashboard_pico2::thresholds::*;
@@ -100,13 +83,9 @@ use embassy_time::{Duration, Instant};
 use embedded_graphics::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
-use crate::animations::ColorTransition;
-use crate::button::ButtonState;
-use crate::colors::{BLACK, BLUE, DARK_TEAL, GREEN, ORANGE, RED};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
-use crate::pages::Page;
-use crate::popup::Popup;
+use crate::profiling as cpu_cycles;
 use crate::render::{FpsMode, RenderState, cell_idx};
 use crate::screens::{
     INIT_MESSAGES,
@@ -117,7 +96,7 @@ use crate::screens::{
     draw_profiling_page,
     draw_welcome_frame,
 };
-use crate::sensor_state::SensorState;
+use crate::state::{ButtonState, Page, Popup, SensorState};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
@@ -140,6 +119,7 @@ use crate::thresholds::{
     BOOST_EASTER_EGG_PSI,
     EGT_DANGER_MANIFOLD,
 };
+use crate::ui::{BLACK, BLUE, ColorTransition, DARK_TEAL, GREEN, ORANGE, RED};
 use crate::widgets::{
     SensorDisplayData,
     draw_afr_cell,
@@ -984,7 +964,7 @@ async fn main(spawner: Spawner) {
 
             Page::Debug => {
                 // Collect memory stats
-                let mem_stats = crate::memory::MemoryStats::collect();
+                let mem_stats = crate::profiling::MemoryStats::collect();
 
                 // Get SPI frequencies (requested from config, actual from hardware)
                 let requested_spi_hz = display_spi_config().frequency;
@@ -1099,7 +1079,7 @@ fn to_display_data(state: &SensorState) -> SensorDisplayData<'_> {
         trend: state.get_trend(),
         is_new_peak: state.is_new_peak,
         graph_buffer: buffer,
-        graph_buffer_size: crate::sensor_state::GRAPH_HISTORY_SIZE,
+        graph_buffer_size: crate::state::GRAPH_HISTORY_SIZE,
         graph_start_idx: start_idx,
         graph_count: count,
         graph_min: min,
