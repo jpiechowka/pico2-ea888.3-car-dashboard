@@ -1,8 +1,3 @@
-//! Temperature sensor cell rendering.
-//!
-//! Handles OIL, COOLANT, DSG, IAT, and EGT temperature displays with
-//! color-coded backgrounds based on thresholds.
-
 use core::fmt::Write;
 
 use embedded_graphics::mono_font::MonoTextStyle;
@@ -33,41 +28,15 @@ use crate::thresholds::{
 use crate::ui::{BLACK, BLUE, CENTERED, GREEN, LABEL_FONT, ORANGE, RED, VALUE_FONT, VALUE_FONT_MEDIUM, WHITE, YELLOW};
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
 
-// =============================================================================
-// Temperature Value Display Constants
-// =============================================================================
-
-/// Temperature threshold for switching to smaller font (4-digit values like "1200C").
-/// Values >= this use 18pt font instead of 24pt to fit in 80px cell.
-/// Set to 999.5 (not 1000.0) because `{temp:.0}` rounds for display - a value of 999.5
-/// displays as "1000C" (5 chars), so the font must switch before the displayed text does.
 const TEMP_LARGE_VALUE_THRESHOLD: f32 = 999.5;
 
-/// Y offset for large (24pt) temperature values relative to cell center.
 const TEMP_VALUE_Y_LARGE: i32 = -12;
 
-/// Y offset for medium (18pt) temperature values relative to cell center.
-/// Slightly higher to maintain visual balance with smaller font.
 const TEMP_VALUE_Y_MEDIUM: i32 = -10;
 
-// =============================================================================
-// LOW Badge Layout Constants
-// =============================================================================
-// Calculated to center (badge + gap + label + arrow) in 80px cell:
-//   badge(34) + gap(2) + label(18) + arrow(8) = 62px total
-//   margin = (80 - 62) / 2 = 9px
-// If badge width or label changes, recalculate these values.
-
-/// Left margin from cell edge to badge content (border is 1px further left).
 const LOW_BADGE_MARGIN: u32 = 9;
 
-/// Right shift for label center when LOW badge is visible.
-/// Keeps badge+label visually centered in the cell.
 const LOW_LABEL_SHIFT: i32 = 12;
-
-// =============================================================================
-// Color Functions
-// =============================================================================
 
 pub fn temp_color_oil_dsg(temp: f32) -> (Rgb565, Rgb565) {
     if temp >= OIL_DSG_CRITICAL {
@@ -94,9 +63,6 @@ pub fn temp_color_water(temp: f32) -> (Rgb565, Rgb565) {
 pub fn is_critical_oil_dsg(temp: f32) -> bool { temp >= OIL_DSG_CRITICAL }
 
 pub fn is_critical_water(temp: f32) -> bool { temp > COOLANT_CRITICAL }
-
-#[allow(dead_code)]
-pub fn is_critical_afr(afr: f32) -> bool { afr > crate::thresholds::AFR_LEAN_CRITICAL }
 
 pub fn temp_color_iat(temp: f32) -> (Rgb565, Rgb565) {
     if temp >= IAT_CRITICAL {
@@ -130,22 +96,8 @@ pub fn temp_color_egt(temp: f32) -> (Rgb565, Rgb565) {
 
 pub fn is_critical_egt(temp: f32) -> bool { temp >= EGT_CRITICAL }
 
-/// Check if oil temperature is below the low threshold (75C).
-///
-/// Returns `true` when oil needs warming up. Used to trigger the "LOW" warning badge.
 pub fn is_low_temp_oil(temp: f32) -> bool { temp < OIL_LOW_TEMP }
 
-// =============================================================================
-// LOW Badge Drawing
-// =============================================================================
-
-/// Draw a "LOW" warning badge for cold oil temperature with blinking colors.
-///
-/// Badge is positioned in the top-left area of the cell. The caller should shift
-/// the label right by `LOW_LABEL_SHIFT` when the badge is visible.
-/// Colors alternate based on blink state:
-/// - `blink_on = true`: Red background, white text
-/// - `blink_on = false`: White background, black text
 fn draw_low_warning_badge<D>(
     display: &mut D,
     x: u32,
@@ -156,14 +108,11 @@ fn draw_low_warning_badge<D>(
 {
     let badge_w = 32u32;
     let badge_h = 14u32;
-    // Position badge to center combined (badge + label) in cell
     let badge_x = (x + LOW_BADGE_MARGIN) as i32;
     let badge_y = (y + 4) as i32;
 
-    // Select colors based on blink state
     let (bg_color, text_color) = if blink_on { (RED, WHITE) } else { (WHITE, BLACK) };
 
-    // Black border (always visible)
     Rectangle::new(
         Point::new(badge_x - 1, badge_y - 1),
         Size::new(badge_w + 2, badge_h + 2),
@@ -172,13 +121,11 @@ fn draw_low_warning_badge<D>(
     .draw(display)
     .ok();
 
-    // Badge background
     Rectangle::new(Point::new(badge_x, badge_y), Size::new(badge_w, badge_h))
         .into_styled(PrimitiveStyle::with_fill(bg_color))
         .draw(display)
         .ok();
 
-    // "LOW" text
     let label_style = MonoTextStyle::new(LABEL_FONT, text_color);
     Text::with_text_style(
         "LOW",
@@ -190,24 +137,6 @@ fn draw_low_warning_badge<D>(
     .ok();
 }
 
-// =============================================================================
-// Temperature Cell Drawing
-// =============================================================================
-
-/// Draw a temperature sensor cell with color-coded background and optional warnings.
-///
-/// # Parameters
-///
-/// - `color_fn`: Returns (background, text) colors based on temperature thresholds
-/// - `critical_fn`: Returns true if temperature is in critical range (triggers blink + shake)
-/// - `low_fn`: Optional function to check for low temperature warning (e.g., `Some(is_low_temp_oil)`)
-///   - When `Some` and returns true, displays "LOW" badge in top-left corner
-///   - Badge colors blink: red/white <-> white/black
-///   - Label shifts right when badge is visible to avoid overlap
-///   - Pass `None` for sensors that don't need low-temp warnings
-/// - `blink_on`: Current blink state (toggles every 6 frames for ~200ms cycle)
-/// - `shake_offset`: Horizontal text offset for shake animation (0 when not critical)
-/// - `bg_override`: Optional color transition override for smooth color changes
 #[allow(clippy::too_many_arguments)]
 pub fn draw_temp_cell<D, F, C, L>(
     display: &mut D,
@@ -247,7 +176,6 @@ where
 
     draw_cell_background(display, x, y, w, h, bg_color);
 
-    // Draw low temperature warning badge in top-left corner (colors blink when oil is cold)
     if is_low {
         draw_low_warning_badge(display, x, y, blink_on);
     }
@@ -260,7 +188,6 @@ where
     let center_y = (y + h / 2) as i32;
     let value_x = center_x + shake_offset;
 
-    // Shift label right when LOW badge is visible to keep badge+label centered
     let label_x = if is_low { center_x + LOW_LABEL_SHIFT } else { center_x };
 
     Text::with_text_style(label, Point::new(label_x, y as i32 + 14), label_style, CENTERED)
@@ -276,7 +203,6 @@ where
     let _ = write!(value_str, "{temp:.0}C");
     let value_color = if state.is_new_peak { peak_color } else { base_text };
 
-    // Use smaller font for 4-digit temperatures to fit in 80px cell
     let (value_font, value_y_offset) = if temp >= TEMP_LARGE_VALUE_THRESHOLD {
         (VALUE_FONT_MEDIUM, TEMP_VALUE_Y_MEDIUM)
     } else {
