@@ -1,61 +1,32 @@
-//! Sensor state tracking for trend detection, peak hold, rolling average, and graph history.
-//!
-//! This is a no_std compatible version that uses frame-based timing instead of wall-clock time.
-//! Frame-based intervals are intentional for embedded use where FPS is relatively stable (~35 FPS).
-//! This approach avoids the overhead of reading system time on every update.
-
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 
-// =============================================================================
-// Configuration Constants
-// =============================================================================
-
-/// Number of samples in the rolling average buffer.
 const AVG_BUFFER_SIZE: usize = 60;
 
-/// Interval between rolling average samples (in frames).
 const AVG_SAMPLE_INTERVAL: u32 = 250;
 
-/// Number of samples in the graph history buffer.
 pub const GRAPH_HISTORY_SIZE: usize = 60;
 
-/// Interval between graph samples (in frames).
 const GRAPH_SAMPLE_INTERVAL: u32 = 100;
 
-/// Peak hold duration in frames.
-/// At ~35 FPS (typical with SPI 70 MHz), this is approximately 500-850ms.
 const PEAK_HOLD_FRAMES: u32 = 30;
 
-// =============================================================================
-// Sensor State Structure
-// =============================================================================
-
-/// Tracks sensor history for trend arrows, peak detection, and rolling average.
-///
-/// This is a no_std compatible version using fixed arrays and frame-based timing.
 pub struct SensorState {
-    /// Circular buffer of recent sensor values for trend calculation.
     history: [f32; HISTORY_SIZE],
     history_index: usize,
     history_count: usize,
 
-    /// Previous frame's value.
     prev_value: f32,
 
-    /// Frame counter for peak hold timing.
     peak_hold_frames: u32,
 
-    /// True for ~500ms after a new extreme value is recorded.
     pub is_new_peak: bool,
 
-    // Rolling Average State
     avg_buffer: [f32; AVG_BUFFER_SIZE],
     avg_index: usize,
     avg_count: usize,
     avg_sum: f32,
     avg_frame_counter: u32,
 
-    // Graph History State
     graph_buffer: [f32; GRAPH_HISTORY_SIZE],
     graph_index: usize,
     graph_count: usize,
@@ -65,7 +36,6 @@ pub struct SensorState {
 }
 
 impl SensorState {
-    /// Create a new sensor state with pre-allocated history buffer.
     pub const fn new() -> Self {
         Self {
             history: [0.0; HISTORY_SIZE],
@@ -88,13 +58,11 @@ impl SensorState {
         }
     }
 
-    /// Update state with a new sensor reading.
     pub fn update(
         &mut self,
         value: f32,
         is_max_updated: bool,
     ) {
-        // Maintain fixed-size history buffer
         self.history[self.history_index] = value;
         self.history_index = (self.history_index + 1) % HISTORY_SIZE;
         if self.history_count < HISTORY_SIZE {
@@ -102,7 +70,6 @@ impl SensorState {
         }
         self.prev_value = value;
 
-        // Peak hold: highlight new extreme value for ~500ms (frame-based)
         if is_max_updated {
             self.peak_hold_frames = PEAK_HOLD_FRAMES;
             self.is_new_peak = true;
@@ -113,14 +80,12 @@ impl SensorState {
             }
         }
 
-        // Rolling average: sample every AVG_SAMPLE_INTERVAL frames
         self.avg_frame_counter += 1;
         if self.avg_frame_counter >= AVG_SAMPLE_INTERVAL {
             self.avg_frame_counter = 0;
             self.add_avg_sample(value);
         }
 
-        // Graph history: sample every GRAPH_SAMPLE_INTERVAL frames
         self.graph_frame_counter += 1;
         if self.graph_frame_counter >= GRAPH_SAMPLE_INTERVAL {
             self.graph_frame_counter = 0;
@@ -143,7 +108,6 @@ impl SensorState {
         self.avg_index = (self.avg_index + 1) % AVG_BUFFER_SIZE;
     }
 
-    /// Get the rolling average.
     pub fn get_average(&self) -> Option<f32> {
         if self.avg_count == 0 {
             None
@@ -152,7 +116,6 @@ impl SensorState {
         }
     }
 
-    /// Reset the rolling average buffer.
     pub fn reset_average(&mut self) {
         self.avg_buffer = [0.0; AVG_BUFFER_SIZE];
         self.avg_index = 0;
@@ -161,33 +124,10 @@ impl SensorState {
         self.avg_frame_counter = 0;
     }
 
-    /// Adds a new sample to the graph history buffer with incremental min/max tracking.
-    ///
-    /// # Optimization Strategy
-    ///
-    /// Instead of recalculating min/max by iterating through the entire buffer on every
-    /// sample (O(n) where n = GRAPH_HISTORY_SIZE), this implementation uses incremental
-    /// tracking that achieves O(1) time complexity for most updates:
-    ///
-    /// 1. **New sample extends range**: If the new value is less than the current min or greater than the current max,
-    ///    we simply update the min/max directly. O(1)
-    ///
-    /// 2. **Old sample was min/max**: When the circular buffer is full and we're about to overwrite an old sample that
-    ///    equals the current min or max, we must perform a full recalculation since we're removing a boundary value.
-    ///    O(n), but rare.
-    ///
-    /// 3. **All other cases**: No recalculation needed - the new sample is within the existing range and the
-    ///    overwritten sample wasn't a boundary. O(1)
-    ///
-    /// This reduces average time complexity from O(n) to O(1) amortized, with O(n)
-    /// recalculations occurring only when removing a min/max boundary value.
     fn add_graph_sample(
         &mut self,
         value: f32,
     ) {
-        // Determine if we need a full recalculation after the update.
-        // This is only necessary when the buffer is full and we're about to overwrite
-        // a sample that equals the current min or max value.
         let needs_recalculation = if self.graph_count == GRAPH_HISTORY_SIZE {
             let old_value = self.graph_buffer[self.graph_index];
             old_value == self.graph_min || old_value == self.graph_max
@@ -195,7 +135,6 @@ impl SensorState {
             false
         };
 
-        // Write the new sample to the circular buffer
         self.graph_buffer[self.graph_index] = value;
         self.graph_index = (self.graph_index + 1) % GRAPH_HISTORY_SIZE;
 
@@ -204,11 +143,8 @@ impl SensorState {
         }
 
         if needs_recalculation {
-            // The old min or max was removed from the buffer, so we must scan
-            // the entire buffer to find the new min/max boundaries.
             self.recalculate_graph_minmax();
         } else {
-            // O(1) incremental update: check if the new value extends the range
             if value < self.graph_min {
                 self.graph_min = value;
             }
@@ -218,10 +154,6 @@ impl SensorState {
         }
     }
 
-    /// Recalculates min/max by scanning the entire graph buffer.
-    ///
-    /// This is a helper function used only when the incremental tracking cannot
-    /// determine the new min/max (i.e., when removing a boundary value from the buffer).
     fn recalculate_graph_minmax(&mut self) {
         if self.graph_count == 0 {
             self.graph_min = f32::MAX;
@@ -246,9 +178,6 @@ impl SensorState {
         self.graph_max = max;
     }
 
-    /// Get the graph history data.
-    ///
-    /// Returns (buffer, start_idx, count, data_min, data_max).
     pub const fn get_graph_data(&self) -> (&[f32; GRAPH_HISTORY_SIZE], usize, usize, f32, f32) {
         let start_idx = if self.graph_count < GRAPH_HISTORY_SIZE {
             0
@@ -264,7 +193,6 @@ impl SensorState {
         )
     }
 
-    /// Reset the graph history buffer.
     pub fn reset_graph(&mut self) {
         self.graph_buffer = [0.0; GRAPH_HISTORY_SIZE];
         self.graph_index = 0;
@@ -274,19 +202,16 @@ impl SensorState {
         self.graph_max = f32::MIN;
     }
 
-    /// Reset the peak highlight state.
     pub fn reset_peak(&mut self) {
         self.is_new_peak = false;
         self.peak_hold_frames = 0;
     }
 
-    /// Get the current trend direction.
     pub fn get_trend(&self) -> Option<bool> {
         if self.history_count < 20 {
             return None;
         }
 
-        // Calculate recent average (last 10 samples)
         let mut recent_sum = 0.0f32;
         for i in 0..10 {
             let idx = (self.history_index + HISTORY_SIZE - 1 - i) % HISTORY_SIZE;
@@ -294,7 +219,6 @@ impl SensorState {
         }
         let recent_avg = recent_sum / 10.0;
 
-        // Calculate older average (oldest 10 samples in buffer)
         let mut older_sum = 0.0f32;
         let start = if self.history_count < HISTORY_SIZE {
             0
@@ -319,10 +243,6 @@ impl SensorState {
 impl Default for SensorState {
     fn default() -> Self { Self::new() }
 }
-
-// =============================================================================
-// Unit Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -355,7 +275,7 @@ mod tests {
     #[test]
     fn test_peak_hold_activation() {
         let mut state = SensorState::new();
-        state.update(100.0, true); // New peak
+        state.update(100.0, true);
         assert!(state.is_new_peak);
         assert_eq!(state.peak_hold_frames, PEAK_HOLD_FRAMES);
     }
@@ -363,15 +283,13 @@ mod tests {
     #[test]
     fn test_peak_hold_decay() {
         let mut state = SensorState::new();
-        state.update(100.0, true); // Activate peak
+        state.update(100.0, true);
         assert!(state.is_new_peak);
 
-        // Simulate frames passing
         for _ in 0..PEAK_HOLD_FRAMES {
             state.update(100.0, false);
         }
 
-        // Peak should be cleared after PEAK_HOLD_FRAMES
         assert!(!state.is_new_peak);
         assert_eq!(state.peak_hold_frames, 0);
     }
@@ -379,7 +297,7 @@ mod tests {
     #[test]
     fn test_reset_peak() {
         let mut state = SensorState::new();
-        state.update(100.0, true); // Activate peak
+        state.update(100.0, true);
         assert!(state.is_new_peak);
 
         state.reset_peak();
@@ -391,14 +309,11 @@ mod tests {
     fn test_rolling_average() {
         let mut state = SensorState::new();
 
-        // First, no average available
         assert!(state.get_average().is_none());
 
-        // Manually trigger avg sample (normally happens every AVG_SAMPLE_INTERVAL frames)
         state.avg_frame_counter = AVG_SAMPLE_INTERVAL - 1;
         state.update(100.0, false);
 
-        // Now average should be available
         let avg = state.get_average();
         assert!(avg.is_some());
         assert!((avg.unwrap() - 100.0).abs() < 0.001);
@@ -429,7 +344,6 @@ mod tests {
     fn test_graph_sampling() {
         let mut state = SensorState::new();
 
-        // Trigger graph sample
         state.graph_frame_counter = GRAPH_SAMPLE_INTERVAL - 1;
         state.update(50.0, false);
 
@@ -454,44 +368,39 @@ mod tests {
     fn test_trend_requires_minimum_samples() {
         let mut state = SensorState::new();
 
-        // Less than 20 samples should return None
         for _ in 0..19 {
             state.update(100.0, false);
         }
         assert!(state.get_trend().is_none());
 
-        // 20th sample should allow trend calculation
         state.update(100.0, false);
-        // Trend might still be None if values are stable, but function should work
-        let _ = state.get_trend(); // Just verify it doesn't panic
+        let _ = state.get_trend();
     }
 
     #[test]
     fn test_trend_rising() {
         let mut state = SensorState::new();
 
-        // Fill with rising values that exceed TREND_THRESHOLD
         for i in 0..HISTORY_SIZE {
             state.update(i as f32, false);
         }
 
         let trend = state.get_trend();
         assert!(trend.is_some());
-        assert!(trend.unwrap()); // Rising = true
+        assert!(trend.unwrap());
     }
 
     #[test]
     fn test_trend_falling() {
         let mut state = SensorState::new();
 
-        // Fill with falling values
         for i in 0..HISTORY_SIZE {
             state.update((HISTORY_SIZE - i) as f32, false);
         }
 
         let trend = state.get_trend();
         assert!(trend.is_some());
-        assert!(!trend.unwrap()); // Falling = false
+        assert!(!trend.unwrap());
     }
 
     #[test]
