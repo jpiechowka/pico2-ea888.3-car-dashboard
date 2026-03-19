@@ -1,32 +1,3 @@
-//! Welcome screen with AEZAKMI (GTA cheat code) logo and blinking golden stars.
-//!
-//! Displays golden "AEZAKMI" text with black shadow, a red/black stripe,
-//! and 5 golden stars that blink in sequence (GTA San Andreas style).
-//!
-//! # Animation
-//!
-//! The star animation is time-based (7 seconds total):
-//! - 0-4000ms: Stars light up sequentially (one every 800ms)
-//! - 4000-7000ms: All 5 stars blink on/off slowly (toggle every 250ms)
-//!
-//! # Usage
-//!
-//! The caller should call [`draw_welcome_frame`] in a loop, passing the elapsed
-//! time in milliseconds since the welcome screen started. This ensures consistent
-//! animation speed regardless of actual frame rate.
-//!
-//! # Example
-//!
-//! ```ignore
-//! let start = Instant::now();
-//! loop {
-//!     let elapsed_ms = start.elapsed().as_millis() as u32;
-//!     if elapsed_ms >= 7000 { break; }
-//!     draw_welcome_frame(&mut display, elapsed_ms);
-//!     display.flush().await;
-//! }
-//! ```
-
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, Triangle};
@@ -35,7 +6,6 @@ use crate::ui::WHITE;
 
 const SCREEN_CENTER_X: i32 = 160;
 
-// Vertically centered layout (screen is 240px tall)
 const TEXT_Y: i32 = 64;
 const STRIPE_Y: i32 = 128;
 const STARS_Y: i32 = 162;
@@ -47,11 +17,9 @@ const COLOR_GOLD: Rgb565 = Rgb565::new(31, 50, 0);
 const COLOR_DARK_GOLD: Rgb565 = Rgb565::new(20, 32, 0);
 const COLOR_DIM_GOLD: Rgb565 = Rgb565::new(12, 20, 0);
 
-// Letter dimensions at 1.5x scale (base: 22x32, scaled: 33x48)
 const LETTER_WIDTH: i32 = 33;
 const LETTER_SPACING: i32 = 3;
 
-// Letter pixel definitions (dx, dy, width, height) at base scale
 const LETTER_A: &[(i32, i32, u32, u32)] = &[(0, 8, 5, 24), (15, 8, 5, 24), (5, 0, 10, 8), (5, 14, 10, 5)];
 
 const LETTER_E: &[(i32, i32, u32, u32)] = &[(0, 0, 5, 32), (5, 0, 15, 5), (5, 13, 12, 5), (5, 27, 15, 5)];
@@ -106,14 +74,11 @@ fn draw_letter<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    // Apply 1.5x scale (3/2) to all coordinates and sizes
-    // Black shadow (offset scaled from 2 to 3)
     for &(dx, dy, w, h) in letter {
         let sx = base_x + dx * 3 / 2 + 3;
         let sy = base_y + dy * 3 / 2 + 3;
         draw_rect(display, sx, sy, w * 3 / 2, h * 3 / 2, COLOR_BLACK);
     }
-    // Golden text
     for &(dx, dy, w, h) in letter {
         let sx = base_x + dx * 3 / 2;
         let sy = base_y + dy * 3 / 2;
@@ -144,7 +109,6 @@ fn draw_stripe<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    // Scaled stripe (1.5x: 180->270, heights scaled proportionally)
     let stripe_width: u32 = 260;
     let start_x = SCREEN_CENTER_X - (stripe_width as i32) / 2;
 
@@ -171,7 +135,6 @@ fn draw_star<D>(
     const COS_INNER: [i32; 5] = [-59, -95, 0, 95, 59];
     const SIN_INNER: [i32; 5] = [81, -31, -100, -31, 81];
 
-    // Draw outline triangles
     for i in 0..5 {
         let next = (i + 1) % 5;
 
@@ -193,7 +156,6 @@ fn draw_star<D>(
             .ok();
     }
 
-    // Draw fill triangles (slightly smaller)
     let fill_outer = outer_radius * 85 / 100;
     let fill_inner = inner_radius * 85 / 100;
 
@@ -226,21 +188,15 @@ fn draw_stars<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    // Scaled stars (1.5x: size 18->27, spacing 40->56)
     let star_size = 27;
     let star_spacing = 56;
     let total_width = star_spacing * 4;
     let start_x = SCREEN_CENTER_X - total_width / 2;
 
-    // Time-based animation (7 seconds total):
-    // - 0-4000ms: Stars light up sequentially (one every 800ms)
-    // - 4000-7000ms: All 5 stars blink on/off slowly
     let cycle_ms = elapsed_ms % 7000;
     let lit_count = if cycle_ms < 4000 {
-        // Star filling phase: one star every 800ms
         (cycle_ms / 800 + 1).min(5) as usize
     } else if ((cycle_ms - 4000) / 250).is_multiple_of(2) {
-        // Blinking phase: toggle every 250ms (~2 blinks per second)
         5
     } else {
         0
@@ -258,14 +214,6 @@ fn draw_stars<D>(
     }
 }
 
-/// Draw a single frame of the welcome screen.
-///
-/// # Arguments
-/// * `elapsed_ms` - Milliseconds since the welcome screen started. Used for time-based star animation (0-4000ms: stars
-///   fill, 4000-7000ms: blink).
-///
-/// This is a non-async function that renders one frame. Call this in a loop
-/// with appropriate timing and flush the display after each call.
 pub fn draw_welcome_frame<D>(
     display: &mut D,
     elapsed_ms: u32,
