@@ -1,17 +1,9 @@
-# Workspace-level Cargo configuration
-#
-# TIP: Use the aliases below for convenience:
-#   cargo pico2              # build pico2 (150 MHz, stock)
-#   cargo pico2-250-62-1v10  # build with 250 MHz @ 1.10V (62.5 MHz SPI)
-
 [env]
 DEFMT_LOG = "debug"
 
-# Default target for all builds (Pico 2 / RP2350)
 [build]
 target = "thumbv8m.main-none-eabihf"
 
-# ARM Cortex-M33 target settings (Pico 2 / RP2350)
 [target.thumbv8m.main-none-eabihf]
 rustflags = [
     "-C", "link-arg=--nmagic",
@@ -21,7 +13,6 @@ rustflags = [
 ]
 runner = "tools/picotool.exe load -u -v -x -t elf"
 
-# Convenient aliases (target inherited from [build])
 [alias]
 pico2 = "build -p dashboard-pico2 --release"
 pico2-run = "run -p dashboard-pico2 --release"
