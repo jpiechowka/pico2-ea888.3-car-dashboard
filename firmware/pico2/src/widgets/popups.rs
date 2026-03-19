@@ -1,10 +1,3 @@
-//! Non-modal popup overlays for status messages.
-//!
-//! Popups are temporary overlays that display status information:
-//! - **Reset popup**: "MIN/AVG/MAX RESET" when statistics are cleared
-//! - **FPS popup**: Shows current FPS mode ("FPS OFF", "FPS: INST", "FPS: AVG", "FPS: BOTH")
-//! - **Boost unit popup**: Shows current boost unit ("BOOST: BAR" or "BOOST: PSI")
-
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_10X20;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -16,7 +9,6 @@ use crate::config::{CENTER_X, CENTER_Y, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::render::FpsMode;
 use crate::ui::{CENTERED, RED, TITLE_STYLE_WHITE, WHITE};
 
-/// Red text style for danger popup on white background.
 const TITLE_STYLE_RED: MonoTextStyle<'static, Rgb565> = MonoTextStyle::new(&FONT_10X20, RED);
 
 const RESET_POPUP_WIDTH: u32 = 180;
@@ -80,9 +72,6 @@ where
         .ok();
 }
 
-/// Draw FPS mode toggle popup.
-///
-/// Shows the current FPS mode: "FPS OFF", "FPS: INST", "FPS: AVG", or "FPS: BOTH".
 pub fn draw_fps_toggle_popup<D>(
     display: &mut D,
     fps_mode: FpsMode,
@@ -126,10 +115,6 @@ pub fn draw_boost_unit_popup<D>(
         .ok();
 }
 
-/// Draw "DANGER TO MANIFOLD" popup with blinking background.
-///
-/// Fast & Furious easter egg when EGT >= 1100°C.
-/// `blink_on`: alternates between RED bg / WHITE bg for visual alarm effect.
 pub fn draw_danger_manifold_popup<D>(
     display: &mut D,
     blink_on: bool,
@@ -142,7 +127,6 @@ pub fn draw_danger_manifold_popup<D>(
         (WHITE_FILL, TITLE_STYLE_RED)
     };
 
-    // Border is always the opposite color of background for contrast
     let border_style = if blink_on { WHITE_FILL } else { RED_FILL };
 
     Rectangle::new(DANGER_BORDER_POS, DANGER_BORDER_SIZE)
