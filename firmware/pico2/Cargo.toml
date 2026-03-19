@@ -13,7 +13,7 @@ name = "pico2"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["simple-outline"]
 # Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
 # All profiles use simple-outline by default for best FPS
 cpu250-spi62-1v10 = []  # 250 MHz @ 1.10V - 62.5 MHz SPI (ST7789 datasheet max)

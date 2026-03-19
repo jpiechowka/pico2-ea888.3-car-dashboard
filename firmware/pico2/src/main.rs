@@ -185,85 +185,58 @@ const fn requested_cpu_mhz() -> u32 {
 async fn main(spawner: Spawner) {
     info!("OBD-II Dashboard starting...");
 
-    #[cfg(feature = "cpu250-spi62-1v10")]
     let p = {
+        #[cfg(any(
+            feature = "cpu250-spi62-1v10",
+            feature = "cpu280-spi70-1v30",
+            feature = "cpu290-spi72-1v30",
+            feature = "cpu300-spi75-1v30"
+        ))]
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
-        const FREQ_HZ: u32 = 250_000_000;
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_10;
-
+        #[allow(unused_mut)]
         let mut config = Config::default();
-        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        config.clocks.core_voltage = VOLTAGE;
-        info!("Overclock: 250 MHz @ 1.10V (SPI 62.5 MHz)");
+
+        #[cfg(feature = "cpu300-spi75-1v30")]
+        {
+            config.clocks = ClockConfig::system_freq(300_000_000).expect("Invalid overclock frequency");
+            config.clocks.core_voltage = CoreVoltage::V1_30;
+            info!("Overclock: 300 MHz @ 1.30V (SPI 75 MHz)");
+        }
+        #[cfg(all(feature = "cpu290-spi72-1v30", not(feature = "cpu300-spi75-1v30")))]
+        {
+            config.clocks = ClockConfig::system_freq(290_000_000).expect("Invalid overclock frequency");
+            config.clocks.core_voltage = CoreVoltage::V1_30;
+            info!("Overclock: 290 MHz @ 1.30V (SPI 72.5 MHz)");
+        }
+        #[cfg(all(
+            feature = "cpu280-spi70-1v30",
+            not(any(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30"))
+        ))]
+        {
+            config.clocks = ClockConfig::system_freq(280_000_000).expect("Invalid overclock frequency");
+            config.clocks.core_voltage = CoreVoltage::V1_30;
+            info!("Overclock: 280 MHz @ 1.30V (SPI 70 MHz)");
+        }
+        #[cfg(all(
+            feature = "cpu250-spi62-1v10",
+            not(any(
+                feature = "cpu280-spi70-1v30",
+                feature = "cpu290-spi72-1v30",
+                feature = "cpu300-spi75-1v30"
+            ))
+        ))]
+        {
+            config.clocks = ClockConfig::system_freq(250_000_000).expect("Invalid overclock frequency");
+            config.clocks.core_voltage = CoreVoltage::V1_10;
+            info!("Overclock: 250 MHz @ 1.10V (SPI 62.5 MHz)");
+        }
+
         embassy_rp::init(config)
     };
 
-    #[cfg(feature = "cpu280-spi70-1v30")]
-    let p = {
-        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
-        use embassy_rp::config::Config;
-
-        const FREQ_HZ: u32 = 280_000_000;
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30;
-
-        let mut config = Config::default();
-        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        config.clocks.core_voltage = VOLTAGE;
-        info!("Overclock: 280 MHz @ 1.30V (SPI 70 MHz)");
-        embassy_rp::init(config)
-    };
-
-    #[cfg(feature = "cpu290-spi72-1v30")]
-    let p = {
-        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
-        use embassy_rp::config::Config;
-
-        const FREQ_HZ: u32 = 290_000_000;
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30;
-
-        let mut config = Config::default();
-        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        config.clocks.core_voltage = VOLTAGE;
-        info!("Overclock: 290 MHz @ 1.30V (SPI 72.5 MHz)");
-        embassy_rp::init(config)
-    };
-
-    #[cfg(feature = "cpu300-spi75-1v30")]
-    let p = {
-        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
-        use embassy_rp::config::Config;
-
-        const FREQ_HZ: u32 = 300_000_000;
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30;
-
-        let mut config = Config::default();
-        config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
-        config.clocks.core_voltage = VOLTAGE;
-        info!("Overclock: 300 MHz @ 1.30V (SPI 75 MHz)");
-        embassy_rp::init(config)
-    };
-
-    #[cfg(not(any(
-        feature = "cpu250-spi62-1v10",
-        feature = "cpu280-spi70-1v30",
-        feature = "cpu290-spi72-1v30",
-        feature = "cpu300-spi75-1v30"
-    )))]
-    let p = embassy_rp::init(Default::default());
-
-    let cpu_freq_hz = if cfg!(feature = "cpu300-spi75-1v30") {
-        300_000_000
-    } else if cfg!(feature = "cpu290-spi72-1v30") {
-        290_000_000
-    } else if cfg!(feature = "cpu280-spi70-1v30") {
-        280_000_000
-    } else if cfg!(feature = "cpu250-spi62-1v10") {
-        250_000_000
-    } else {
-        150_000_000
-    };
+    let cpu_freq_hz = requested_cpu_mhz() * 1_000_000;
     cpu_cycles::init(cpu_freq_hz);
 
     let mut _led_r = Output::new(p.PIN_26, Level::High);
