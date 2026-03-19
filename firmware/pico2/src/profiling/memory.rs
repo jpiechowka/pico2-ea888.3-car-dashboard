@@ -1,55 +1,22 @@
-//! Memory profiling utilities for RP2350.
-//!
-//! Provides functions to query stack usage and estimate RAM consumption.
-//!
-//! # Memory Layout (RP2350)
-//!
-//! - RAM: 512KB at 0x20000000 (striped across SRAM0-7)
-//! - SRAM4: 4KB at 0x20080000 (direct mapped)
-//! - SRAM5: 4KB at 0x20081000 (direct mapped)
-//!
-//! # Stack
-//!
-//! Embassy uses PSP (Process Stack Pointer) for task execution.
-//! Stack grows downward from the top of RAM. We measure usage by
-//! reading SP directly via inline assembly (gets PSP in task context).
-
-/// RP2350 RAM configuration.
 const RAM_START: u32 = 0x2000_0000;
-const RAM_SIZE: u32 = 512 * 1024; // 512KB
+const RAM_SIZE: u32 = 512 * 1024;
 const RAM_END: u32 = RAM_START + RAM_SIZE;
 
-/// Known static allocations in this firmware.
-///
-/// These are large buffers we allocate statically:
-/// - 2x framebuffers: 153,600 bytes each = 307,200 bytes total
-pub const FRAMEBUFFER_SIZE: usize = 320 * 240 * 2; // 153,600 bytes
-pub const TOTAL_FRAMEBUFFER_SIZE: usize = FRAMEBUFFER_SIZE * 2; // 307,200 bytes
+pub const FRAMEBUFFER_SIZE: usize = 320 * 240 * 2;
+pub const TOTAL_FRAMEBUFFER_SIZE: usize = FRAMEBUFFER_SIZE * 2;
 
-/// Memory statistics snapshot.
 #[derive(Clone, Copy, Default)]
 pub struct MemoryStats {
-    /// Current stack pointer value (MSP register).
     #[allow(dead_code)]
     pub stack_ptr: u32,
-    /// Estimated stack usage in bytes.
     pub stack_used: u32,
-    /// Total stack size (RAM end - heap end, approximate).
     pub stack_total: u32,
-    /// Known static RAM usage (framebuffers + estimated overhead).
     pub static_ram: u32,
-    /// Total RAM available.
     pub ram_total: u32,
 }
 
 impl MemoryStats {
-    /// Collect current memory statistics.
-    ///
-    /// # Note
-    /// Stack usage is measured from the current SP value (PSP in task context).
-    /// The "total" stack size is estimated since we don't have precise linker symbol access.
     pub fn collect() -> Self {
-        // Read current stack pointer via inline asm (gets PSP in task context)
         let stack_ptr: u32;
         #[cfg(target_arch = "arm")]
         unsafe {
@@ -57,21 +24,16 @@ impl MemoryStats {
         }
         #[cfg(not(target_arch = "arm"))]
         {
-            stack_ptr = 0; // Placeholder for non-ARM (tests)
+            stack_ptr = 0;
         }
 
-        // Validate stack pointer is within RAM bounds
         let stack_used = if (RAM_START..=RAM_END).contains(&stack_ptr) {
-            // Stack grows down from RAM_END
-            // Stack usage = RAM_END - current_SP
             RAM_END.saturating_sub(stack_ptr)
         } else {
-            0 // Invalid SP, return 0
+            0
         };
 
-        // Estimate total stack size (RAM minus static allocations)
-        // This is approximate - actual stack region depends on linker
-        let static_estimate = TOTAL_FRAMEBUFFER_SIZE as u32 + 32 * 1024; // framebuffers + ~32KB other statics
+        let static_estimate = TOTAL_FRAMEBUFFER_SIZE as u32 + 32 * 1024;
         let stack_total = RAM_SIZE.saturating_sub(static_estimate);
 
         Self {
@@ -83,9 +45,8 @@ impl MemoryStats {
         }
     }
 
-    /// Get stack usage as a percentage.
     #[allow(dead_code)]
-    #[allow(clippy::manual_checked_ops)] // Explicit zero-check is clearer for embedded
+    #[allow(clippy::manual_checked_ops)]
     pub fn stack_percent(&self) -> u32 {
         if self.stack_total > 0 {
             (self.stack_used * 100) / self.stack_total
@@ -94,9 +55,8 @@ impl MemoryStats {
         }
     }
 
-    /// Get static RAM usage as a percentage of total.
     #[allow(dead_code)]
-    #[allow(clippy::manual_checked_ops)] // Explicit zero-check is clearer for embedded
+    #[allow(clippy::manual_checked_ops)]
     pub fn static_percent(&self) -> u32 {
         if self.ram_total > 0 {
             (self.static_ram * 100) / self.ram_total
@@ -106,10 +66,6 @@ impl MemoryStats {
     }
 }
 
-// =============================================================================
-// Unit Tests (run on host with: cargo test --lib --target <host-triple>)
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,7 +74,7 @@ mod tests {
     fn test_constants() {
         assert_eq!(FRAMEBUFFER_SIZE, 153_600);
         assert_eq!(TOTAL_FRAMEBUFFER_SIZE, 307_200);
-        assert_eq!(RAM_SIZE, 524_288); // 512KB
+        assert_eq!(RAM_SIZE, 524_288);
     }
 
     #[test]
@@ -149,7 +105,6 @@ mod tests {
             static_ram: 307_200,
             ram_total: 524_288,
         };
-        // 307200 / 524288 * 100 = ~58%
         assert_eq!(stats.static_percent(), 58);
     }
 }
