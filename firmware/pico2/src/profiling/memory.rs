@@ -16,13 +16,8 @@ pub struct MemoryStats {
 impl MemoryStats {
     pub fn collect() -> Self {
         let stack_ptr: u32;
-        #[cfg(target_arch = "arm")]
         unsafe {
             core::arch::asm!("mov {}, sp", out(reg) stack_ptr);
-        }
-        #[cfg(not(target_arch = "arm"))]
-        {
-            stack_ptr = 0;
         }
 
         let stack_used = if (RAM_START..=RAM_END).contains(&stack_ptr) {

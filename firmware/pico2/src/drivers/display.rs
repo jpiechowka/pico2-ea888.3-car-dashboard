@@ -30,7 +30,6 @@ pub fn display_spi_config() -> SpiConfig {
     config
 }
 
-#[cfg(target_arch = "arm")]
 pub fn get_actual_spi_freq(sys_clk_hz: u32) -> u32 {
     const SPI0_BASE: u32 = 0x4008_0000;
     const SSPCR0_OFFSET: u32 = 0x00;
@@ -50,6 +49,3 @@ pub fn get_actual_spi_freq(sys_clk_hz: u32) -> u32 {
         sys_clk_hz / (cpsdvsr * (scr + 1))
     }
 }
-
-#[cfg(not(target_arch = "arm"))]
-pub fn get_actual_spi_freq(_sys_clk_hz: u32) -> u32 { 0 }

@@ -117,16 +117,12 @@ compile_error!(
      cpu290-spi72-1v30, cpu300-spi75-1v30"
 );
 
-#[cfg(target_arch = "arm")]
 fn read_vreg_voltage_mv() -> u32 {
     const VREG: *const u32 = 0x4010_000C as *const u32;
     let vreg_val = unsafe { core::ptr::read_volatile(VREG) };
     let vsel = (vreg_val >> 4) & 0x1F;
     550 + (vsel * 50)
 }
-
-#[cfg(not(target_arch = "arm"))]
-fn read_vreg_voltage_mv() -> u32 { 1100 }
 
 const fn requested_voltage_mv() -> u32 {
     #[cfg(any(

@@ -8,7 +8,6 @@ pub fn init(freq_hz: u32) {
     let clamped_freq = freq_hz.clamp(100_000_000, 500_000_000);
     CPU_FREQ_HZ.store(clamped_freq, Ordering::Relaxed);
 
-    #[cfg(target_arch = "arm")]
     unsafe {
         use core::ptr::{read_volatile, write_volatile};
 
@@ -24,14 +23,9 @@ pub fn init(freq_hz: u32) {
 
 #[inline]
 pub fn read() -> u32 {
-    #[cfg(target_arch = "arm")]
     unsafe {
         const DWT_CYCCNT: *const u32 = 0xE000_1004 as *const u32;
         core::ptr::read_volatile(DWT_CYCCNT)
-    }
-    #[cfg(not(target_arch = "arm"))]
-    {
-        0
     }
 }
 
