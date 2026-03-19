@@ -4,12 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "OBD-II dashboard firmware for Raspberry Pi Pico 2 (RP2350)"
 
-# Library for testable modules (can run on host)
 [lib]
 name = "dashboard_pico2"
 path = "src/lib.rs"
 
-# Binary for embedded target (RP2350)
 [[bin]]
 name = "pico2"
 path = "src/main.rs"
@@ -24,14 +22,12 @@ cpu290-spi72-1v30 = []  # 290 MHz @ 1.30V - 72.5 MHz SPI (290/4)
 cpu300-spi75-1v30 = []  # 300 MHz @ 1.30V - 75 MHz SPI (300/4, embassy-rp max)
 simple-outline = []
 
-# === Cross-platform dependencies (work on host and ARM) ===
 [dependencies]
 embedded-graphics = "0.8.1"
 heapless = "0.9.2"
 micromath = "2.1.0"
 profont = "0.7"
 
-# === ARM-only dependencies (conditional on target) ===
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
