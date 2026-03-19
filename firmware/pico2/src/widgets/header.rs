@@ -1,14 +1,3 @@
-//! Header bar and divider line rendering.
-//!
-//! The header displays the dashboard title and optional FPS counter.
-//!
-//! # FPS Display Modes
-//!
-//! - **Off**: No FPS displayed
-//! - **Instant**: Shows current FPS (e.g., "50 FPS")
-//! - **Average**: Shows average FPS since last page switch (e.g., "48 AVG")
-//! - **Combined**: Shows both instant and average (e.g., "50/48 AVG")
-
 use core::fmt::Write;
 
 use embedded_graphics::pixelcolor::Rgb565;
@@ -38,18 +27,6 @@ const DIV_H_END: Point = Point::new((SCREEN_WIDTH - 1) as i32, (HEADER_HEIGHT + 
 const DIVIDER_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_stroke(GRAY, 1);
 const HEADER_FILL_STYLE: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_fill(RED);
 
-/// Draw the header bar with optional FPS display.
-///
-/// # Arguments
-/// * `fps_mode` - The FPS display mode (Off, Instant, Average, or Combined)
-/// * `fps_instant` - The instantaneous FPS value (updated every second)
-/// * `fps_average` - The average FPS value (since last page switch)
-///
-/// # Display Formats
-/// - **Off**: No FPS displayed
-/// - **Instant**: "50 FPS"
-/// - **Average**: "48 AVG"
-/// - **Combined**: "50/48 AVG" (instant/average)
 pub fn draw_header<D>(
     display: &mut D,
     fps_mode: FpsMode,
@@ -78,7 +55,6 @@ pub fn draw_header<D>(
                 let _ = write!(fps_str, "{:.0}{}", fps_average, fps_mode.suffix());
             }
             FpsMode::Combined => {
-                // Format: "XX/YY AVG" where XX is instant and YY is average
                 let _ = write!(fps_str, "{:.0}/{:.0}{}", fps_instant, fps_average, fps_mode.suffix());
             }
         }
