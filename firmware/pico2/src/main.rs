@@ -1,58 +1,10 @@
-//! OBD-II Dashboard Firmware for Raspberry Pi Pico 2 (RP2350)
-//!
-//! Displays the OBD-II dashboard on the Pimoroni PIM715 Display Pack 2.8".
-//!
-//! # Architecture
-//!
-//! Uses double buffering for parallel render/flush:
-//! - Main task: Renders to buffer A, signals flush, swaps to buffer B, continues rendering
-//! - Flush task (`tasks::flush`): Waits for signal, flushes completed buffer via DMA
-//!
-//! # Module Organization
-//!
-//! - `drivers/` - Hardware drivers (ST7789 display, SPI configuration)
-//! - `tasks/` - Async Embassy tasks (flush, demo sensor values)
-//! - `button` - Button debounce handling
-//! - `popup` - Popup state management
-//! - `widgets/` - UI components (cells, header, popups)
-//! - `screens/` - Full-screen renderers (loading, welcome, profiling, logs)
-//!
-//! # Boot Sequence
-//!
-//! On startup, the firmware displays two boot screens before entering the main loop:
-//!
-//! 1. **Loading Screen** (~6 seconds) - Console-style initialization messages displayed sequentially with delays
-//!    between each message. Messages include ECU connection status, vehicle info, and sensor loading progress.
-//!
-//! 2. **Welcome Screen** (7 seconds) - AEZAKMI logo (GTA San Andreas reference) with time-based star animation: 4
-//!    seconds for stars to light up sequentially, then 3 seconds of slow blinking.
-//!
-//! Each boot screen frame is rendered and flushed to the display individually to ensure
-//! proper visual updates during the boot sequence.
-//!
-//! # Button Controls
-//!
-//! - **X**: Cycle FPS display mode: Off → Instant → Average → Combined → Off (Dashboard only)
-//! - **Y**: Cycle through pages (Dashboard → Debug → Logs → Dashboard)
-//! - **A**: Toggle boost unit BAR/PSI (Dashboard only)
-//! - **B**: Reset min/max/avg statistics (Dashboard only)
-//!
-//! # FPS Display Modes
-//!
-//! - **Off**: No FPS displayed in header
-//! - **Instant**: Shows current FPS (updated every second)
-//! - **Average**: Shows average FPS since last page switch or reset
-//! - **Combined**: Shows both instant and average FPS (e.g., "50/48 AVG")
-
 #![no_std]
 #![no_main]
-// Crate-level lints (match lib.rs for consistency)
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
-// Modules only used in the binary (not testable on host)
 mod drivers;
 mod profiling;
 mod screens;
@@ -61,8 +13,6 @@ mod tasks;
 mod ui;
 mod widgets;
 
-// Re-export testable modules from library for local use
-// (These are defined in lib.rs with host-testable code)
 mod config {
     pub use dashboard_pico2::config::*;
 }
@@ -76,12 +26,13 @@ mod thresholds {
 use core::sync::atomic::Ordering;
 
 use defmt::info;
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::spi::Spi;
 use embassy_time::{Duration, Instant};
 use embedded_graphics::prelude::*;
-use {defmt_rtt as _, panic_probe as _};
+use panic_probe as _;
 
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
@@ -135,7 +86,6 @@ use crate::widgets::{
     temp_color_water,
 };
 
-// Program metadata for `picotool info`
 #[unsafe(link_section = ".bi_entries")]
 #[used]
 pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
@@ -145,10 +95,8 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
 
-// Make framebuffers accessible for the flush task
 pub use crate::drivers::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 
-// Ensure only one overclock feature is enabled at a time
 #[cfg(any(
     all(
         feature = "cpu250-spi62-1v10",
@@ -169,37 +117,17 @@ compile_error!(
      cpu290-spi72-1v30, cpu300-spi75-1v30"
 );
 
-// =============================================================================
-// VREG Voltage Control (RP2350)
-// =============================================================================
-// Register addresses from RP2350 datasheet and pico-sdk:
-// - VREG_CTRL: 0x40100004 - unlock bit at bit 13
-// - VREG: 0x4010000c - VSEL in bits [8:4]
-// Voltage formula: V = 0.55 + (VSEL × 0.05), range 0.55V to 3.30V
-// Reference: https://github.com/nspsck/RP2350_Micropython_voltage_control
-
-/// Read current VREG voltage from hardware registers.
-///
-/// Returns voltage in millivolts (e.g., 1100 for 1.10V).
 #[cfg(target_arch = "arm")]
 fn read_vreg_voltage_mv() -> u32 {
     const VREG: *const u32 = 0x4010_000C as *const u32;
-    // SAFETY: Reading hardware register
     let vreg_val = unsafe { core::ptr::read_volatile(VREG) };
-    let vsel = (vreg_val >> 4) & 0x1F; // VSEL is bits [8:4]
-    // V = 0.55 + (VSEL × 0.05), convert to mV
+    let vsel = (vreg_val >> 4) & 0x1F;
     550 + (vsel * 50)
 }
 
-/// Placeholder for non-ARM targets (tests).
 #[cfg(not(target_arch = "arm"))]
-fn read_vreg_voltage_mv() -> u32 {
-    1100 // Default 1.10V for tests
-}
+fn read_vreg_voltage_mv() -> u32 { 1100 }
 
-/// Get requested voltage based on compile-time feature flags.
-///
-/// Returns voltage in millivolts (e.g., 1100 for 1.10V).
 const fn requested_voltage_mv() -> u32 {
     #[cfg(any(
         feature = "cpu280-spi70-1v30",
@@ -207,7 +135,7 @@ const fn requested_voltage_mv() -> u32 {
         feature = "cpu300-spi75-1v30"
     ))]
     {
-        1300 // 1.30V for overclock profiles
+        1300
     }
     #[cfg(not(any(
         feature = "cpu280-spi70-1v30",
@@ -215,13 +143,10 @@ const fn requested_voltage_mv() -> u32 {
         feature = "cpu300-spi75-1v30"
     )))]
     {
-        1100 // 1.10V default
+        1100
     }
 }
 
-/// Get requested CPU frequency based on compile-time feature flags.
-///
-/// Returns frequency in MHz.
 const fn requested_cpu_mhz() -> u32 {
     #[cfg(feature = "cpu300-spi75-1v30")]
     {
@@ -256,7 +181,7 @@ const fn requested_cpu_mhz() -> u32 {
         feature = "cpu300-spi75-1v30"
     )))]
     {
-        150 // Stock RP2350 frequency
+        150
     }
 }
 
@@ -264,15 +189,13 @@ const fn requested_cpu_mhz() -> u32 {
 async fn main(spawner: Spawner) {
     info!("OBD-II Dashboard starting...");
 
-    // Initialize with optional overclocking
-    // cpu250-spi62-1v10: 250 MHz @ 1.10V for 62.5 MHz SPI (250/4)
     #[cfg(feature = "cpu250-spi62-1v10")]
     let p = {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
-        const FREQ_HZ: u32 = 250_000_000; // 250 MHz / 4 = 62.5 MHz SPI
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_10; // 1.10V (default, safe)
+        const FREQ_HZ: u32 = 250_000_000;
+        const VOLTAGE: CoreVoltage = CoreVoltage::V1_10;
 
         let mut config = Config::default();
         config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
@@ -281,14 +204,13 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    // cpu280-spi70-1v30: 280 MHz @ 1.30V for 70 MHz SPI (280/4)
     #[cfg(feature = "cpu280-spi70-1v30")]
     let p = {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
-        const FREQ_HZ: u32 = 280_000_000; // 280 MHz / 4 = 70 MHz SPI
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V for stability
+        const FREQ_HZ: u32 = 280_000_000;
+        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30;
 
         let mut config = Config::default();
         config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
@@ -297,14 +219,13 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    // cpu290-spi72-1v30: 290 MHz @ 1.30V for 72.5 MHz SPI (290/4)
     #[cfg(feature = "cpu290-spi72-1v30")]
     let p = {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
-        const FREQ_HZ: u32 = 290_000_000; // 290 MHz / 4 = 72.5 MHz SPI
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V for stability
+        const FREQ_HZ: u32 = 290_000_000;
+        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30;
 
         let mut config = Config::default();
         config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
@@ -313,14 +234,13 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    // cpu300-spi75-1v30: 300 MHz @ 1.30V for 75 MHz SPI (300/4)
     #[cfg(feature = "cpu300-spi75-1v30")]
     let p = {
         use embassy_rp::clocks::{ClockConfig, CoreVoltage};
         use embassy_rp::config::Config;
 
-        const FREQ_HZ: u32 = 300_000_000; // 300 MHz / 4 = 75 MHz SPI
-        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30; // 1.30V for stability
+        const FREQ_HZ: u32 = 300_000_000;
+        const VOLTAGE: CoreVoltage = CoreVoltage::V1_30;
 
         let mut config = Config::default();
         config.clocks = ClockConfig::system_freq(FREQ_HZ).expect("Invalid overclock frequency");
@@ -337,7 +257,6 @@ async fn main(spawner: Spawner) {
     )))]
     let p = embassy_rp::init(Default::default());
 
-    // Initialize DWT cycle counter for CPU utilization measurement
     let cpu_freq_hz = if cfg!(feature = "cpu300-spi75-1v30") {
         300_000_000
     } else if cfg!(feature = "cpu290-spi72-1v30") {
@@ -350,56 +269,40 @@ async fn main(spawner: Spawner) {
         150_000_000
     };
     cpu_cycles::init(cpu_freq_hz);
-    info!("DWT cycle counter initialized at {} MHz", cpu_freq_hz / 1_000_000);
 
-    // Initialize RGB LED (active-low: Low = ON)
-    // PIM715: Red=26, Green=27, Blue=28
-    let mut _led_r = Output::new(p.PIN_26, Level::High); // Off
-    let mut _led_g = Output::new(p.PIN_27, Level::High); // Off
-    let mut led_b = Output::new(p.PIN_28, Level::High); // Off (used for heartbeat)
+    let mut _led_r = Output::new(p.PIN_26, Level::High);
+    let mut _led_g = Output::new(p.PIN_27, Level::High);
+    let mut led_b = Output::new(p.PIN_28, Level::High);
 
-    // Initialize display pins
-    // PIM715 pinout: CS=17, DC=16, CLK=18, MOSI=19, Backlight=20
     let cs = Output::new(p.PIN_17, Level::High);
     let dc = Output::new(p.PIN_16, Level::Low);
-    let mut _backlight = Output::new(p.PIN_20, Level::High); // Turn on backlight
+    let mut _backlight = Output::new(p.PIN_20, Level::High);
 
-    // Initialize async SPI with DMA (TX-only, display doesn't need MISO)
     let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, display_spi_config());
 
-    // Initialize display flusher and hardware
     let mut flusher = St7789Flusher::new(spi, dc, cs);
     flusher.init().await;
 
     log_info!("Display initialized");
 
-    // Initialize double buffer
-    // SAFETY: Only one DoubleBuffer instance exists
     let mut double_buffer = unsafe { DoubleBuffer::new() };
 
-    // Clear both framebuffers before boot screens to prevent grainy noise
     clear_framebuffers(&mut flusher, &mut double_buffer).await;
 
-    // Boot Sequence: Loading Screen → Welcome Screen
     run_boot_sequence(&mut flusher, &mut double_buffer).await;
 
-    // Move flusher to static for task (Embassy tasks need 'static lifetime)
     use static_cell::StaticCell;
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
 
-    // Spawn flush task (takes &'static mut reference, no unsafe needed)
     spawner.spawn(display_flush_task(flusher)).unwrap();
     info!("Display flush task spawned");
 
-    // Initialize buttons (active-low with internal pull-up)
-    // PIM715: A=12, B=13, X=14, Y=15
     let btn_a = Input::new(p.PIN_12, Pull::Up);
     let btn_b = Input::new(p.PIN_13, Pull::Up);
     let btn_x = Input::new(p.PIN_14, Pull::Up);
     let btn_y = Input::new(p.PIN_15, Pull::Up);
 
-    // Button debounce state
     let mut btn_a_state = ButtonState::new();
     let mut btn_b_state = ButtonState::new();
     let mut btn_x_state = ButtonState::new();
@@ -407,7 +310,6 @@ async fn main(spawner: Spawner) {
 
     info!("Buttons initialized!");
 
-    // UI state
     let mut current_page = Page::Dashboard;
     let mut clear_frames_remaining: u8 = 2;
     let mut fps_mode = FpsMode::Off;
@@ -416,7 +318,6 @@ async fn main(spawner: Spawner) {
     let mut prev_egt_danger_active = false;
     let mut reset_requested = false;
 
-    // Render state
     let mut render_state = RenderState::new();
     let mut frame_count = 0u32;
     let mut current_fps = 0.0f32;
@@ -426,20 +327,16 @@ async fn main(spawner: Spawner) {
     let mut fps_sum = 0.0f32;
     let mut last_fps_calc = Instant::now();
 
-    // Profiling: track render and flush times (microseconds)
     let mut render_time_us = 0u32;
     let mut flush_time_us = 0u32;
     let mut total_frame_time_us = 0u32;
     let mut last_profile_log = Instant::now();
 
-    // CPU cycle tracking
     let mut frame_cycles_used = 0u32;
     let mut cpu_util_percent = 0u32;
 
-    // Track if flush is in progress (for first frame)
     let mut flush_in_progress = false;
 
-    // Demo sensor values (defaults until first update from demo task)
     let mut boost = 0.5f32;
     let mut oil_temp = 60.0f32;
     let mut water_temp = 88.0f32;
@@ -449,7 +346,6 @@ async fn main(spawner: Spawner) {
     let mut batt_voltage = 12.0f32;
     let mut afr = 14.0f32;
 
-    // Sensor states
     let mut oil_state = SensorState::new();
     let mut water_state = SensorState::new();
     let mut dsg_state = SensorState::new();
@@ -458,7 +354,6 @@ async fn main(spawner: Spawner) {
     let mut batt_state = SensorState::new();
     let mut afr_state = SensorState::new();
 
-    // Max tracking
     let mut boost_max = 0.0f32;
     let mut oil_max = 0.0f32;
     let mut water_max = 0.0f32;
@@ -470,17 +365,13 @@ async fn main(spawner: Spawner) {
 
     log_info!("Main loop starting");
 
-    // Color transitions for smooth background changes
     let mut color_transitions = ColorTransition::new();
 
-    // Time-based animation (independent of frame rate)
     let animation_start = Instant::now();
 
-    // Get sender/receiver from static Watch channel (initialized at compile time)
     let mut demo_receiver = DEMO_VALUES.dyn_receiver().unwrap();
     let demo_sender = DEMO_VALUES.dyn_sender();
 
-    // Spawn demo values task on second core (Embassy handles core assignment)
     spawner.spawn(demo_values_task(demo_sender, animation_start)).unwrap();
     info!("Demo values task spawned");
 
@@ -488,11 +379,9 @@ async fn main(spawner: Spawner) {
         let frame_start = Instant::now();
         let frame_cycles_start = cpu_cycles::read();
 
-        // Time-based blink cycle (200ms per state)
         let elapsed_ms = animation_start.elapsed().as_millis() as u32;
         let blink_on = (elapsed_ms / 200).is_multiple_of(2);
 
-        // Handle button presses
         let input = process_buttons(
             &mut btn_x_state,
             &mut btn_y_state,
@@ -506,7 +395,6 @@ async fn main(spawner: Spawner) {
             fps_mode,
         );
 
-        // Apply input results
         if let Some(new_mode) = input.new_fps_mode {
             fps_mode = new_mode;
             clear_frames_remaining = 2;
@@ -540,26 +428,22 @@ async fn main(spawner: Spawner) {
             active_popup = Some(popup);
         }
 
-        // Check popup expiration
         if let Some(ref popup) = active_popup
             && popup.is_expired()
         {
             active_popup = None;
-            clear_frames_remaining = 2; // Clear both buffers when popup closes
+            clear_frames_remaining = 2;
         }
 
-        // Update render state (include danger popup in combined visibility)
         let popup_kind = if active_popup.is_some() {
             active_popup.as_ref().map(Popup::kind)
         } else if prev_egt_danger_active {
-            Some(3u8) // Danger popup kind
+            Some(3u8)
         } else {
             None
         };
         render_state.update_popup(popup_kind);
 
-        // Get demo values from async task (generated on second core)
-        // Use try_get() for non-blocking access to latest values
         if let Some(demo_values) = demo_receiver.try_get() {
             boost = demo_values.boost;
             oil_temp = demo_values.oil_temp;
@@ -571,7 +455,6 @@ async fn main(spawner: Spawner) {
             afr = demo_values.afr;
         }
 
-        // Handle reset
         if reset_requested {
             oil_state.reset_average();
             oil_state.reset_graph();
@@ -608,14 +491,12 @@ async fn main(spawner: Spawner) {
             log_info!("Stats reset");
         }
 
-        // Boost easter egg detection
         let show_boost_easter_egg = if show_boost_psi {
             boost * 14.5038 >= BOOST_EASTER_EGG_PSI
         } else {
             boost >= BOOST_EASTER_EGG_BAR
         };
 
-        // Update max values
         let oil_updated = oil_temp > oil_max;
         let water_updated = water_temp > water_max;
         let dsg_updated = dsg_temp > dsg_max;
@@ -632,7 +513,6 @@ async fn main(spawner: Spawner) {
         batt_min = batt_min.min(batt_voltage);
         batt_max = batt_max.max(batt_voltage);
 
-        // Update sensor states
         oil_state.update(oil_temp, oil_updated);
         water_state.update(water_temp, water_updated);
         dsg_state.update(dsg_temp, dsg_updated);
@@ -641,24 +521,19 @@ async fn main(spawner: Spawner) {
         batt_state.update(batt_voltage, batt_updated);
         afr_state.update(afr, false);
 
-        // FPS calculation (instant and average)
         fps_frame_count += 1;
         if last_fps_calc.elapsed() >= Duration::from_secs(1) {
             current_fps = fps_frame_count as f32 / last_fps_calc.elapsed().as_millis() as f32 * 1000.0;
             fps_frame_count = 0;
             last_fps_calc = Instant::now();
 
-            // Update running average
             fps_sample_count += 1;
             fps_sum += current_fps;
             average_fps = fps_sum / fps_sample_count as f32;
         }
 
-        // Calculate EGT danger state (persists across page switches)
         let egt_danger_active = egt_temp >= EGT_DANGER_MANIFOLD;
 
-        // Calculate target colors and update transitions
-        // AFR color based on value
         let afr_target = if afr < AFR_RICH_AF {
             BLUE
         } else if afr < AFR_RICH {
@@ -672,7 +547,6 @@ async fn main(spawner: Spawner) {
         };
         color_transitions.set_target(cell_idx::AFR, afr_target);
 
-        // Battery color based on voltage
         let batt_target = if batt_voltage < BATT_CRITICAL {
             RED
         } else if batt_voltage < BATT_WARNING {
@@ -682,7 +556,6 @@ async fn main(spawner: Spawner) {
         };
         color_transitions.set_target(cell_idx::BATTERY, batt_target);
 
-        // Temperature cells - get color from color functions
         let (water_target, _) = temp_color_water(water_temp);
         let (oil_target, _) = temp_color_oil_dsg(oil_temp);
         let (dsg_target, _) = temp_color_oil_dsg(dsg_temp);
@@ -695,23 +568,17 @@ async fn main(spawner: Spawner) {
         color_transitions.set_target(cell_idx::IAT, iat_target);
         color_transitions.set_target(cell_idx::EGT, egt_target);
 
-        // Update color transitions (time-based interpolation for FPS independence)
         color_transitions.update(Instant::now());
 
-        // Profiling: start render timing
         let render_start = Instant::now();
 
-        // Get current render buffer and create renderer
         let buffer = unsafe { double_buffer.render_buffer() };
         let mut display = St7789Renderer::new(buffer);
 
-        // Clear display when needed (both buffers need clearing on page switch or popup close)
         if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
             display.clear(BLACK).ok();
-            render_state.mark_display_cleared(); // Always mark when cleared
+            render_state.mark_display_cleared();
 
-            // When popup closes via render_state, ensure BOTH double buffers get cleared
-            // by setting clear_frames_remaining = 1 for the next frame
             if render_state.popup_just_closed() && clear_frames_remaining == 0 {
                 clear_frames_remaining = 1;
             } else {
@@ -719,15 +586,12 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        // Render based on current page
         match current_page {
             Page::Dashboard => {
-                // Draw header (pass both FPS values for Combined mode support)
                 if render_state.check_header_dirty(fps_mode, current_fps, average_fps) {
                     draw_header(&mut display, fps_mode, current_fps, average_fps);
                 }
 
-                // Draw cells
                 draw_boost_cell(
                     &mut display,
                     0,
@@ -860,13 +724,11 @@ async fn main(spawner: Spawner) {
                     Some(color_transitions.get_current(cell_idx::EGT)),
                 );
 
-                // Draw dividers
                 if render_state.need_dividers() {
                     draw_dividers(&mut display);
                     render_state.mark_dividers_drawn();
                 }
 
-                // Render popup (user popup takes priority over danger warning)
                 if let Some(ref popup) = active_popup {
                     match popup {
                         Popup::Reset(_) => draw_reset_popup(&mut display),
@@ -879,29 +741,24 @@ async fn main(spawner: Spawner) {
             }
 
             Page::Debug => {
-                // Collect memory stats
                 let mem_stats = crate::profiling::MemoryStats::collect();
 
-                // Get SPI frequencies (requested from config, actual from hardware)
                 let requested_spi_hz = display_spi_config().frequency;
                 let actual_spi_hz = get_actual_spi_freq(cpu_freq_hz);
 
                 draw_profiling_page(
                     &mut display,
                     &ProfilingData {
-                        // Timing
                         current_fps,
                         average_fps,
                         frame_count,
                         render_time_us,
                         flush_time_us,
                         total_frame_time_us,
-                        // Double buffer stats
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
                         render_buffer_idx: double_buffer.render_idx(),
                         flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
-                        // Memory
                         stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
                             1
                         } else {
@@ -910,16 +767,12 @@ async fn main(spawner: Spawner) {
                         stack_total_kb: mem_stats.stack_total / 1024,
                         static_ram_kb: mem_stats.static_ram / 1024,
                         ram_total_kb: mem_stats.ram_total / 1024,
-                        // CPU utilization
                         cpu_util_percent,
                         frame_cycles: frame_cycles_used,
-                        // CPU frequency: requested (feature name) vs actual (from DWT init)
                         requested_cpu_mhz: requested_cpu_mhz(),
                         actual_cpu_mhz: cpu_freq_hz / 1_000_000,
-                        // SPI clocks
                         requested_spi_mhz: requested_spi_hz / 1_000_000,
                         actual_spi_mhz: actual_spi_hz / 1_000_000,
-                        // Voltage: requested (compile-time) vs actual (from hardware)
                         requested_voltage_mv: requested_voltage_mv(),
                         actual_voltage_mv: read_vreg_voltage_mv(),
                     },
@@ -931,32 +784,25 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        // Profiling: end render timing and CPU cycles BEFORE waiting
-        // This ensures we measure actual work, not time spent in async wait
         render_time_us = render_start.elapsed().as_micros() as u32;
         let frame_cycles_end = cpu_cycles::read();
         frame_cycles_used = cpu_cycles::elapsed(frame_cycles_start, frame_cycles_end);
 
-        // Wait for previous flush to complete before swapping (if one is in progress)
         if flush_in_progress {
             FLUSH_DONE.wait().await;
             BUFFER_WAITS.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Swap buffers and signal flush task
         let completed_idx = double_buffer.swap();
         BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
         FLUSH_SIGNAL.signal(completed_idx);
         flush_in_progress = true;
 
-        // Get flush time from previous frame (atomic read)
         flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
         total_frame_time_us = frame_start.elapsed().as_micros() as u32;
 
-        // Calculate CPU utilization (cycles used during render vs total frame time)
         cpu_util_percent = cpu_cycles::calc_util_percent(frame_cycles_used, total_frame_time_us);
 
-        // Log profiling data every 2 seconds
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
             info!(
                 "PROFILE: render={}us flush={}us total={}us ({} FPS) swaps={} waits={}",
@@ -970,25 +816,19 @@ async fn main(spawner: Spawner) {
             last_profile_log = Instant::now();
         }
 
-        // Update danger popup state for next frame (outside page match)
         prev_egt_danger_active = egt_danger_active;
 
         render_state.end_frame();
         frame_count = frame_count.wrapping_add(1);
 
-        // Toggle blue LED every second to show loop is running (time-based)
         if (elapsed_ms / 1000).is_multiple_of(2) {
-            led_b.set_low(); // ON
+            led_b.set_low();
         } else {
-            led_b.set_high(); // OFF
+            led_b.set_high();
         }
-
-        // No artificial delay - run at maximum frame rate
-        // Rendering continues immediately while flush runs in parallel
     }
 }
 
-/// Convert SensorState to SensorDisplayData for rendering.
 fn to_display_data(state: &SensorState) -> SensorDisplayData<'_> {
     let (buffer, start_idx, count, min, max) = state.get_graph_data();
     SensorDisplayData {
