@@ -1,5 +1,3 @@
-//! Battery voltage cell rendering.
-
 use core::fmt::Write;
 
 use embedded_graphics::mono_font::MonoTextStyle;
