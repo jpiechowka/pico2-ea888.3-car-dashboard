@@ -1,9 +1,3 @@
-//! UI styling and visual constants.
-//!
-//! - `colors`: RGB565 color constants
-//! - `styles`: Pre-computed text styles and fonts
-//! - `animations`: Color transitions for smooth background changes
-
 mod animations;
 mod colors;
 mod styles;

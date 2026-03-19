@@ -1,8 +1,3 @@
-//! Hardware drivers for the dashboard.
-//!
-//! - `st7789`: Custom async ST7789 display driver with DMA and double buffering
-//! - `display`: SPI configuration for the Pimoroni PIM715 Display Pack 2.8"
-
 mod display;
 mod st7789;
 

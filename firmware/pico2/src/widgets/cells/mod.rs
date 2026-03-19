@@ -1,26 +1,3 @@
-//! Sensor display cells for the OBD dashboard grid.
-//!
-//! Each cell displays a sensor value with color-coded background based on thresholds,
-//! trend arrows, mini sparkline graphs, and warning indicators.
-//!
-//! # Cell Types
-//!
-//! - `boost`: Boost pressure in BAR/PSI with easter egg
-//! - `temp`: Temperature cells (OIL, COOLANT, DSG, IAT, EGT) with color thresholds
-//! - `battery`: Battery voltage with min/max tracking
-//! - `afr`: Air-fuel ratio with lambda conversion and status
-//!
-//! # Value Display
-//!
-//! All sensor values use contrasting outlines for visibility on any background color.
-//! The outline color is automatically selected based on luminance (light text -> dark outline,
-//! dark text -> light outline).
-//!
-//! # Warning States
-//!
-//! - **Critical (high temp)**: Background flashes RED, text shakes (blink + shake)
-//! - **Low (oil only)**: "LOW" badge in top-left with blinking colors when < 75C
-
 mod afr;
 mod battery;
 mod boost;
@@ -56,59 +33,20 @@ use crate::ui::{
     YELLOW,
 };
 
-// =============================================================================
-// Sensor Display Data
-// =============================================================================
-
-/// Data needed to render a sensor cell.
-///
-/// This struct decouples the rendering from the state management,
-/// allowing different SensorState implementations (std vs no_std)
-/// to be used with the same rendering code.
 pub struct SensorDisplayData<'a> {
-    /// Current trend direction (Some(true) = rising, Some(false) = falling, None = stable).
     pub trend: Option<bool>,
-    /// Whether a new peak was just recorded (for highlight effect).
     pub is_new_peak: bool,
-    /// Graph history buffer.
     pub graph_buffer: &'a [f32],
-    /// Size of the graph buffer (for circular buffer indexing).
     pub graph_buffer_size: usize,
-    /// Starting index in the circular buffer.
     pub graph_start_idx: usize,
-    /// Number of valid samples in the buffer.
     pub graph_count: usize,
-    /// Minimum value in graph data.
     pub graph_min: f32,
-    /// Maximum value in graph data.
     pub graph_max: f32,
-    /// Rolling average value.
     pub average: Option<f32>,
 }
 
-impl<'a> SensorDisplayData<'a> {
-    /// Create display data with no graph/trends (minimal display).
-    #[allow(dead_code)]
-    pub const fn empty() -> Self {
-        Self {
-            trend: None,
-            is_new_peak: false,
-            graph_buffer: &[],
-            graph_buffer_size: 0,
-            graph_start_idx: 0,
-            graph_count: 0,
-            graph_min: 0.0,
-            graph_max: 0.0,
-            average: None,
-        }
-    }
-}
+impl<'a> SensorDisplayData<'a> {}
 
-// =============================================================================
-// Color Helper Functions
-// =============================================================================
-
-#[allow(dead_code)]
 pub fn label_color_for_bg(bg_color: Rgb565) -> Rgb565 {
     let luma = calculate_luminance(bg_color);
     if luma < 128 { WHITE } else { BLACK }
@@ -130,10 +68,6 @@ pub(crate) fn calculate_luminance(color: Rgb565) -> u32 {
 
     (r8 * 77 + g8 * 150 + b8 * 29) >> 8
 }
-
-// =============================================================================
-// Style Selection Functions
-// =============================================================================
 
 #[inline]
 pub(crate) fn label_style_for_text(base_text: Rgb565) -> MonoTextStyle<'static, Rgb565> {

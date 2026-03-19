@@ -1,7 +1,3 @@
-//! Widget components for the OBD dashboard display.
-//!
-//! All widgets are generic over `DrawTarget<Color = Rgb565>` for platform independence.
-
 mod cells;
 mod header;
 mod popups;

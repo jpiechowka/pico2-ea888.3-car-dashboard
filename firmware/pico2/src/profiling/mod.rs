@@ -1,9 +1,3 @@
-//! Profiling and debugging utilities.
-//!
-//! - `cpu_cycles`: CPU cycle counter via DWT for utilization measurement
-//! - `memory`: Memory profiling (stack/RAM usage)
-//! - `log_buffer`: Log buffer with levels and dual-output macros
-
 mod cpu_cycles;
 mod log_buffer;
 mod memory;

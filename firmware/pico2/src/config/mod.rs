@@ -1,12 +1,6 @@
-//! Application configuration.
-//!
-//! - `layout`: Display dimensions and pre-computed layout constants
-//! - `sensors`: Sensor threshold values and validation
-
 pub mod layout;
 pub mod sensors;
 
-// Re-export layout constants at config level for convenience
 pub use layout::{
     CENTER_X,
     CENTER_Y,
@@ -18,7 +12,6 @@ pub use layout::{
     SCREEN_WIDTH,
     TREND_THRESHOLD,
 };
-// Re-export sensor thresholds at config level for convenience
 pub use sensors::{
     AFR_LEAN_CRITICAL,
     AFR_OPTIMAL_MAX,

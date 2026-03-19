@@ -1,9 +1,3 @@
-//! Async tasks for the dashboard firmware.
-//!
-//! This module contains Embassy async tasks that run concurrently:
-//! - `flush`: Display buffer flush task (DMA transfers)
-//! - `demo`: Demo sensor value generation task
-
 pub mod demo;
 pub mod flush;
 
