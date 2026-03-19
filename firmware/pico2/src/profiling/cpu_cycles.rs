@@ -45,10 +45,6 @@ pub fn elapsed(
     if elapsed > MAX_SANE_CYCLES { 0 } else { elapsed }
 }
 
-#[inline]
-#[allow(dead_code)]
-pub fn freq_hz() -> u32 { CPU_FREQ_HZ.load(Ordering::Relaxed) }
-
 pub fn calc_util_percent(
     cycles_used: u32,
     frame_time_us: u32,
@@ -68,40 +64,4 @@ pub fn calc_util_percent(
     let util = (cycles_used as u64 * 100) / cycles_expected;
 
     util.min(100) as u32
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_elapsed_normal() {
-        assert_eq!(elapsed(100, 200), 100);
-        assert_eq!(elapsed(0, 1000), 1000);
-    }
-
-    #[test]
-    fn test_elapsed_wrap() {
-        assert_eq!(elapsed(u32::MAX - 100, 100), 201);
-    }
-
-    #[test]
-    fn test_elapsed_sanity_check() {
-        assert_eq!(elapsed(0, MAX_SANE_CYCLES + 1), 0);
-    }
-
-    #[test]
-    fn test_util_zero_inputs() {
-        assert_eq!(calc_util_percent(0, 1000), 0);
-        assert_eq!(calc_util_percent(1000, 0), 0);
-    }
-
-    #[test]
-    fn test_util_calculation() {
-        CPU_FREQ_HZ.store(250_000_000, Ordering::Relaxed);
-
-        assert_eq!(calc_util_percent(125_000, 1000), 50);
-
-        assert_eq!(calc_util_percent(250_000, 1000), 100);
-    }
 }

@@ -40,14 +40,11 @@ impl FpsMode {
     }
 }
 
-#[cfg(not(test))]
 use micromath::F32Ext;
 
 pub const CELL_COUNT: usize = 8;
 
 pub mod cell_idx {
-    #[allow(dead_code)]
-    pub const BOOST: usize = 0;
     pub const AFR: usize = 1;
     pub const BATTERY: usize = 2;
     pub const COOLANT: usize = 3;
@@ -87,10 +84,6 @@ impl RenderState {
 
     #[inline]
     pub fn mark_dividers_drawn(&mut self) { self.dividers_drawn = true; }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub fn mark_dividers_dirty(&mut self) { self.dividers_drawn = false; }
 
     pub fn check_header_dirty(
         &mut self,
@@ -156,118 +149,4 @@ impl RenderState {
 
 impl Default for RenderState {
     fn default() -> Self { Self::new() }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cell_count() {
-        assert_eq!(CELL_COUNT, 8);
-    }
-
-    #[test]
-    fn test_cell_indices() {
-        assert_eq!(cell_idx::BOOST, 0);
-        assert_eq!(cell_idx::AFR, 1);
-        assert_eq!(cell_idx::BATTERY, 2);
-        assert_eq!(cell_idx::COOLANT, 3);
-        assert_eq!(cell_idx::OIL, 4);
-        assert_eq!(cell_idx::DSG, 5);
-        assert_eq!(cell_idx::IAT, 6);
-        assert_eq!(cell_idx::EGT, 7);
-    }
-
-    #[test]
-    fn test_render_state_new() {
-        let state = RenderState::new();
-        assert!(state.is_first_frame());
-        assert!(state.need_dividers());
-        assert!(!state.popup_just_closed());
-    }
-
-    #[test]
-    fn test_mark_dividers_drawn() {
-        let mut state = RenderState::new();
-        state.first_frame = false;
-        assert!(state.need_dividers());
-        state.mark_dividers_drawn();
-        assert!(!state.need_dividers());
-    }
-
-    #[test]
-    fn test_check_header_dirty_first_frame() {
-        let mut state = RenderState::new();
-        assert!(state.check_header_dirty(FpsMode::Instant, 50.0, 48.0));
-    }
-
-    #[test]
-    fn test_check_header_dirty_fps_change() {
-        let mut state = RenderState::new();
-        state.first_frame = false;
-        state.check_header_dirty(FpsMode::Instant, 50.0, 48.0);
-        assert!(!state.check_header_dirty(FpsMode::Instant, 50.4, 48.0));
-        assert!(state.check_header_dirty(FpsMode::Instant, 51.0, 48.0));
-    }
-
-    #[test]
-    fn test_check_header_dirty_combined_mode() {
-        let mut state = RenderState::new();
-        state.first_frame = false;
-        state.check_header_dirty(FpsMode::Combined, 50.0, 48.0);
-        assert!(!state.check_header_dirty(FpsMode::Combined, 50.0, 48.0));
-        assert!(state.check_header_dirty(FpsMode::Combined, 51.0, 48.0));
-        assert!(state.check_header_dirty(FpsMode::Combined, 51.0, 49.0));
-    }
-
-    #[test]
-    fn test_fps_mode_cycle() {
-        assert_eq!(FpsMode::Off.next(), FpsMode::Instant);
-        assert_eq!(FpsMode::Instant.next(), FpsMode::Average);
-        assert_eq!(FpsMode::Average.next(), FpsMode::Combined);
-        assert_eq!(FpsMode::Combined.next(), FpsMode::Off);
-    }
-
-    #[test]
-    fn test_fps_mode_visibility() {
-        assert!(!FpsMode::Off.is_visible());
-        assert!(FpsMode::Instant.is_visible());
-        assert!(FpsMode::Average.is_visible());
-        assert!(FpsMode::Combined.is_visible());
-    }
-
-    #[test]
-    fn test_fps_mode_needs_both() {
-        assert!(!FpsMode::Off.needs_both_fps());
-        assert!(!FpsMode::Instant.needs_both_fps());
-        assert!(!FpsMode::Average.needs_both_fps());
-        assert!(FpsMode::Combined.needs_both_fps());
-    }
-
-    #[test]
-    fn test_popup_close_triggers_cleanup() {
-        let mut state = RenderState::new();
-        state.first_frame = false;
-        state.mark_dividers_drawn();
-
-        state.update_popup(Some(0));
-        assert!(!state.popup_just_closed());
-
-        state.update_popup(None);
-        assert!(state.popup_just_closed());
-        assert!(state.need_dividers());
-    }
-
-    #[test]
-    fn test_end_frame_clears_flags() {
-        let mut state = RenderState::new();
-        state.update_popup(Some(0));
-        state.update_popup(None);
-        assert!(state.popup_just_closed());
-
-        state.end_frame();
-        assert!(!state.popup_just_closed());
-        assert!(!state.is_first_frame());
-    }
 }

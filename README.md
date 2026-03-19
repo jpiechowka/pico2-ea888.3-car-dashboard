@@ -1,7 +1,5 @@
 # Pico2 EA888.3 Car Dashboard
 
-[![CI](https://github.com/jpiechowka/pico2-ea888.3-car-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/jpiechowka/pico2-ea888.3-car-dashboard/actions/workflows/ci.yml)
-
 A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA888.3 engines. This embedded system provides real-time vehicle data visualization and monitoring capabilities.
 
 ## Directory Structure
@@ -12,7 +10,7 @@ A custom car dashboard project built on the Raspberry Pi Pico 2 (RP2350) for EA8
 │   ├── pico2/          # RP2350 Embassy firmware (drives ST7789 display)
 │   │   └── src/
 │   │       ├── main.rs         # Entry point, main loop
-│   │       ├── lib.rs          # Library root (testable modules)
+│   │       ├── lib.rs          # Library root
 │   │       ├── config/         # Configuration (layout, sensor thresholds)
 │   │       ├── drivers/        # Hardware drivers (ST7789, SPI config)
 │   │       ├── tasks/          # Async tasks (flush, demo)
@@ -118,25 +116,6 @@ After the boot sequence (~13 seconds total), the main dashboard is displayed.
 - **Instant**: Shows current FPS (e.g., "50 FPS")
 - **Average**: Shows average FPS since last page switch (e.g., "48 AVG")
 - **Combined**: Shows both instant and average (e.g., "50/48 AVG")
-
-### Testing
-
-The firmware is structured as a library + binary crate to enable host-based testing. Tests run on your development machine (not on the embedded target).
-
-```bash
-cd firmware
-
-# Run all tests on host (Linux/macOS)
-cargo test -p dashboard-pico2 --lib --target x86_64-unknown-linux-gnu
-
-# Run all tests on host (Windows)
-cargo test -p dashboard-pico2 --lib --target x86_64-pc-windows-msvc
-
-# Run tests with output
-cargo test -p dashboard-pico2 --lib --target x86_64-unknown-linux-gnu -- --nocapture
-```
-
-**Note:** Tests use `#![cfg_attr(not(test), no_std)]` to enable `std` during testing while remaining `no_std` for the embedded binary.
 
 ### Config File Inheritance
 

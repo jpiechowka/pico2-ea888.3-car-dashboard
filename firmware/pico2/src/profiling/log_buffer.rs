@@ -3,7 +3,7 @@ use embassy_sync::mutex::Mutex;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use crate::ui::{GRAY, GREEN, RED, YELLOW};
+use crate::ui::GREEN;
 
 pub const LOG_ENTRIES: usize = 14;
 
@@ -11,34 +11,21 @@ pub const LOG_MSG_LEN: usize = 40;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[repr(u8)]
-#[allow(dead_code)]
 pub enum LogLevel {
-    Trace = 0,
-    Debug = 1,
     #[default]
     Info = 2,
-    Warn = 3,
-    Error = 4,
 }
 
 impl LogLevel {
     pub const fn color(self) -> Rgb565 {
         match self {
-            Self::Trace => GRAY,
-            Self::Debug => GRAY,
             Self::Info => GREEN,
-            Self::Warn => YELLOW,
-            Self::Error => RED,
         }
     }
 
     pub const fn prefix(self) -> char {
         match self {
-            Self::Trace => 'T',
-            Self::Debug => 'D',
             Self::Info => 'I',
-            Self::Warn => 'W',
-            Self::Error => 'E',
         }
     }
 }
@@ -114,10 +101,6 @@ impl LogBuffer {
     }
 
     #[inline]
-    #[allow(dead_code)]
-    pub const fn len(&self) -> usize { self.count }
-
-    #[inline]
     pub const fn is_empty(&self) -> bool { self.count == 0 }
 
     pub fn iter(&self) -> LogBufferIter<'_> {
@@ -179,38 +162,5 @@ macro_rules! log_info {
         let _ = write!(buf, $($arg)*);
         $crate::profiling::push_log($crate::profiling::LogLevel::Info, buf.as_str());
         defmt::info!($($arg)*);
-    }};
-}
-
-#[macro_export]
-macro_rules! log_warn {
-    ($($arg:tt)*) => {{
-        use core::fmt::Write;
-        let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
-        let _ = write!(buf, $($arg)*);
-        $crate::profiling::push_log($crate::profiling::LogLevel::Warn, buf.as_str());
-        defmt::warn!($($arg)*);
-    }};
-}
-
-#[macro_export]
-macro_rules! log_error {
-    ($($arg:tt)*) => {{
-        use core::fmt::Write;
-        let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
-        let _ = write!(buf, $($arg)*);
-        $crate::profiling::push_log($crate::profiling::LogLevel::Error, buf.as_str());
-        defmt::error!($($arg)*);
-    }};
-}
-
-#[macro_export]
-macro_rules! log_debug {
-    ($($arg:tt)*) => {{
-        use core::fmt::Write;
-        let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
-        let _ = write!(buf, $($arg)*);
-        $crate::profiling::push_log($crate::profiling::LogLevel::Debug, buf.as_str());
-        defmt::debug!($($arg)*);
     }};
 }

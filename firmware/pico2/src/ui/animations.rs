@@ -4,30 +4,9 @@ use embedded_graphics::prelude::IntoStorage;
 
 use crate::render::CELL_COUNT;
 
-#[allow(dead_code)]
-const SHAKE_AMPLITUDE: f32 = 3.0;
-
-#[allow(dead_code)]
-const SHAKE_FREQUENCY: f32 = 0.5;
-
 const COLOR_TRANSITION_DURATION_MS: u32 = 300;
 
 const COLOR_SNAP_THRESHOLD: i32 = 2;
-
-#[inline]
-#[allow(dead_code)]
-pub fn calculate_shake_offset(
-    frame: u32,
-    is_critical: bool,
-) -> i32 {
-    if !is_critical {
-        return 0;
-    }
-
-    let phase = frame as f32 * SHAKE_FREQUENCY;
-    let offset = micromath::F32(phase).sin().0 * SHAKE_AMPLITUDE;
-    offset as i32
-}
 
 pub struct ColorTransition {
     current_colors: [Rgb565; CELL_COUNT],

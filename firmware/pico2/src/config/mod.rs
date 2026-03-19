@@ -39,5 +39,4 @@ pub use sensors::{
     OIL_DSG_ELEVATED,
     OIL_DSG_HIGH,
     OIL_LOW_TEMP,
-    is_critical_battery,
 };
