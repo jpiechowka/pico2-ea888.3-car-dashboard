@@ -1,5 +1,3 @@
-//! Air-Fuel Ratio (AFR) cell rendering.
-
 use core::fmt::Write;
 
 use embedded_graphics::mono_font::MonoTextStyle;
