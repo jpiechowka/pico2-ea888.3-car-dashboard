@@ -31,8 +31,8 @@ cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
 defmt-rtt = "1.1.0"
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "defmt", "executor-thread"] }
-embassy-rp = { version = "0.9.0", features = ["binary-info", "critical-section-impl", "defmt", "rp235xa", "time-driver"] }
-embassy-sync = "0.7.2"
+embassy-rp = { version = "0.10.0", features = ["binary-info", "critical-section-impl", "defmt", "rp235xa", "time-driver"] }
+embassy-sync = "0.8.0"
 embassy-time = "0.5.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 static_cell = "2.1"
