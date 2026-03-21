@@ -27,23 +27,28 @@ use core::sync::atomic::Ordering;
 
 use defmt::info;
 use defmt_rtt as _;
-use embassy_executor::Spawner;
+use embassy_executor::{Executor, Spawner};
+use embassy_rp::bind_interrupts;
+use embassy_rp::dma::InterruptHandler as DmaInterruptHandler;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::spi::Spi;
 use embassy_time::{Duration, Instant};
 use embedded_graphics::prelude::*;
 use panic_probe as _;
+use static_cell::StaticCell;
 
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
-use crate::profiling as cpu_cycles;
+use crate::profiling as cpu_profiling;
 use crate::render::{FpsMode, RenderState, cell_idx};
 use crate::screens::{ProfilingData, clear_framebuffers, draw_logs_page, draw_profiling_page, run_boot_sequence};
 use crate::state::{ButtonState, Page, Popup, SensorState, process_buttons};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
+    CORE1_STACK,
     DEMO_VALUES,
+    EXECUTOR_CORE1,
     FLUSH_BUFFER_IDX,
     FLUSH_DONE,
     FLUSH_SIGNAL,
@@ -181,6 +186,22 @@ const fn requested_cpu_mhz() -> u32 {
     }
 }
 
+fn core1_main(
+    animation_start: Instant,
+    cpu_freq_hz: u32,
+    stack_top: u32,
+) -> ! {
+    cpu_profiling::init(cpu_freq_hz);
+    let executor = EXECUTOR_CORE1.init(Executor::new());
+    executor.run(|spawner| {
+        spawner.spawn(demo_values_task(animation_start, stack_top).unwrap());
+    })
+}
+
+bind_interrupts!(struct Irqs {
+    DMA_IRQ_0 => DmaInterruptHandler<embassy_rp::peripherals::DMA_CH0>;
+});
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("OBD-II Dashboard starting...");
@@ -237,7 +258,15 @@ async fn main(spawner: Spawner) {
     };
 
     let cpu_freq_hz = requested_cpu_mhz() * 1_000_000;
-    cpu_cycles::init(cpu_freq_hz);
+
+    let animation_start = Instant::now();
+    let stack = CORE1_STACK.init(embassy_rp::multicore::Stack::new());
+    let stack_top = stack as *const _ as u32 + 8192 * 4;
+    embassy_rp::multicore::spawn_core1(p.CORE1, stack, move || {
+        core1_main(animation_start, cpu_freq_hz, stack_top);
+    });
+
+    cpu_profiling::init(cpu_freq_hz);
 
     let mut _led_r = Output::new(p.PIN_26, Level::High);
     let mut _led_g = Output::new(p.PIN_27, Level::High);
@@ -247,7 +276,7 @@ async fn main(spawner: Spawner) {
     let dc = Output::new(p.PIN_16, Level::Low);
     let mut _backlight = Output::new(p.PIN_20, Level::High);
 
-    let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, display_spi_config());
+    let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, Irqs, display_spi_config());
 
     let mut flusher = St7789Flusher::new(spi, dc, cs);
     flusher.init().await;
@@ -260,11 +289,10 @@ async fn main(spawner: Spawner) {
 
     run_boot_sequence(&mut flusher, &mut double_buffer).await;
 
-    use static_cell::StaticCell;
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
 
-    spawner.spawn(display_flush_task(flusher)).unwrap();
+    spawner.spawn(display_flush_task(flusher).unwrap());
     info!("Display flush task spawned");
 
     let btn_a = Input::new(p.PIN_12, Pull::Up);
@@ -302,7 +330,8 @@ async fn main(spawner: Spawner) {
     let mut last_profile_log = Instant::now();
 
     let mut frame_cycles_used = 0u32;
-    let mut cpu_util_percent = 0u32;
+    let mut cpu0_util_percent = 0u32;
+    let mut cpu1_util_percent = 0u32;
 
     let mut flush_in_progress = false;
 
@@ -339,14 +368,10 @@ async fn main(spawner: Spawner) {
     let animation_start = Instant::now();
 
     let mut demo_receiver = DEMO_VALUES.dyn_receiver().unwrap();
-    let demo_sender = DEMO_VALUES.dyn_sender();
-
-    spawner.spawn(demo_values_task(demo_sender, animation_start)).unwrap();
-    info!("Demo values task spawned");
 
     loop {
         let frame_start = Instant::now();
-        let frame_cycles_start = cpu_cycles::read();
+        let frame_cycles_start = cpu_profiling::read();
 
         let elapsed_ms = animation_start.elapsed().as_millis() as u32;
         let blink_on = (elapsed_ms / 200).is_multiple_of(2);
@@ -728,15 +753,18 @@ async fn main(spawner: Spawner) {
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
                         render_buffer_idx: double_buffer.render_idx(),
                         flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
-                        stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
+                        core0_stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
                             1
                         } else {
                             mem_stats.stack_used / 1024
                         },
-                        stack_total_kb: mem_stats.stack_total / 1024,
+                        core0_stack_total_kb: mem_stats.stack_total / 1024,
+                        core1_stack_used_kb: crate::tasks::CORE1_STACK_USED_KB.load(Ordering::Relaxed),
+                        core1_stack_total_kb: 32, // Fixed 32KB stack for core 1
                         static_ram_kb: mem_stats.static_ram / 1024,
                         ram_total_kb: mem_stats.ram_total / 1024,
-                        cpu_util_percent,
+                        cpu0_util_percent,
+                        cpu1_util_percent,
                         frame_cycles: frame_cycles_used,
                         requested_cpu_mhz: requested_cpu_mhz(),
                         actual_cpu_mhz: cpu_freq_hz / 1_000_000,
@@ -754,8 +782,8 @@ async fn main(spawner: Spawner) {
         }
 
         render_time_us = render_start.elapsed().as_micros() as u32;
-        let frame_cycles_end = cpu_cycles::read();
-        frame_cycles_used = cpu_cycles::elapsed(frame_cycles_start, frame_cycles_end);
+        let frame_cycles_end = cpu_profiling::read();
+        frame_cycles_used = cpu_profiling::elapsed(frame_cycles_start, frame_cycles_end);
 
         if flush_in_progress {
             FLUSH_DONE.wait().await;
@@ -770,15 +798,18 @@ async fn main(spawner: Spawner) {
         flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
         total_frame_time_us = frame_start.elapsed().as_micros() as u32;
 
-        cpu_util_percent = cpu_cycles::calc_util_percent(frame_cycles_used, total_frame_time_us);
+        cpu0_util_percent = cpu_profiling::calc_util_percent(frame_cycles_used, total_frame_time_us);
+        cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
             info!(
-                "PROFILE: render={}us flush={}us total={}us ({} FPS) swaps={} waits={}",
+                "PROFILE: render={}us flush={}us total={}us ({} FPS) CORE0: {}% CORE1: {}% swaps={} waits={}",
                 render_time_us,
                 flush_time_us,
                 total_frame_time_us,
                 current_fps as u32,
+                cpu0_util_percent,
+                cpu1_util_percent,
                 BUFFER_SWAPS.load(Ordering::Relaxed),
                 BUFFER_WAITS.load(Ordering::Relaxed)
             );

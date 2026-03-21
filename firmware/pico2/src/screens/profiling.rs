@@ -21,12 +21,15 @@ pub struct ProfilingData {
     pub render_buffer_idx: usize,
     pub flush_buffer_idx: usize,
 
-    pub stack_used_kb: u32,
-    pub stack_total_kb: u32,
+    pub core0_stack_used_kb: u32,
+    pub core0_stack_total_kb: u32,
+    pub core1_stack_used_kb: u32,
+    pub core1_stack_total_kb: u32,
     pub static_ram_kb: u32,
     pub ram_total_kb: u32,
 
-    pub cpu_util_percent: u32,
+    pub cpu0_util_percent: u32,
+    pub cpu1_util_percent: u32,
     pub frame_cycles: u32,
 
     pub requested_cpu_mhz: u32,
@@ -134,33 +137,48 @@ pub fn draw_profiling_page<D>(
 
     y = 12;
 
-    Text::new("MEMORY", Point::new(col2, y), header_style)
+    Text::new("CORE 0", Point::new(col2, y), header_style)
         .draw(display)
         .ok();
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Stack: {}K/{}K", data.stack_used_kb, data.stack_total_kb);
-    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
-    y += line_height;
-
-    let stack_pct = if data.stack_total_kb > 0 {
-        (data.stack_used_kb * 100) / data.stack_total_kb
+    let _ = write!(s, "Util: {}%", data.cpu0_util_percent);
+    let util0_style = if data.cpu0_util_percent > 85 {
+        highlight_style
     } else {
-        0
+        value_style
     };
+    Text::new(&s, Point::new(col2, y), util0_style).draw(display).ok();
+    y += line_height;
+
     s.clear();
-    let _ = write!(s, "       ({}%)", stack_pct);
+    let _ = write!(s, "Cycles: {}K", data.frame_cycles / 1000);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Static: {}K", data.static_ram_kb);
+    let _ = write!(s, "Stack: {}K/{}K", data.core0_stack_used_kb, data.core0_stack_total_kb);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    y += line_height + 4;
+
+    Text::new("CORE 1", Point::new(col2, y), header_style)
+        .draw(display)
+        .ok();
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "RAM: {}K total", data.ram_total_kb);
+    let _ = write!(s, "Util: {}%", data.cpu1_util_percent);
+    let util1_style = if data.cpu1_util_percent > 85 {
+        highlight_style
+    } else {
+        value_style
+    };
+    Text::new(&s, Point::new(col2, y), util1_style).draw(display).ok();
+    y += line_height;
+
+    s.clear();
+    let _ = write!(s, "Stack: {}K/{}K", data.core1_stack_used_kb, data.core1_stack_total_kb);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height + 4;
 
@@ -170,62 +188,28 @@ pub fn draw_profiling_page<D>(
     y += line_height;
 
     s.clear();
-    if data.actual_cpu_mhz > 0 && data.actual_cpu_mhz != data.requested_cpu_mhz {
-        let _ = write!(s, "CPU: {}/{} MHz", data.requested_cpu_mhz, data.actual_cpu_mhz);
-    } else {
-        let _ = write!(s, "CPU: {} MHz", data.requested_cpu_mhz);
-    }
-    let cpu_style = if data.actual_cpu_mhz != data.requested_cpu_mhz {
-        highlight_style
-    } else {
-        value_style
-    };
-    Text::new(&s, Point::new(col2, y), cpu_style).draw(display).ok();
+    let _ = write!(s, "CPU: {} MHz", data.requested_cpu_mhz);
+    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 
     s.clear();
-    let req_v = data.requested_voltage_mv / 100;
     let act_v = data.actual_voltage_mv / 100;
-    let _ = write!(s, "Volt: {}.{}/{}.{}V", req_v / 10, req_v % 10, act_v / 10, act_v % 10);
-    let volt_style = if data.actual_voltage_mv != data.requested_voltage_mv {
-        highlight_style
-    } else {
-        value_style
-    };
-    Text::new(&s, Point::new(col2, y), volt_style).draw(display).ok();
+    let _ = write!(s, "Volt: {}.{}V", act_v / 10, act_v % 10);
+    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 
     s.clear();
-    if data.actual_spi_mhz > 0 {
-        let _ = write!(s, "SPI: {}/{} MHz", data.requested_spi_mhz, data.actual_spi_mhz);
-    } else {
-        let _ = write!(s, "SPI: {} MHz", data.requested_spi_mhz);
-    }
+    let _ = write!(s, "SPI: {} MHz", data.requested_spi_mhz);
+    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    y += line_height;
+
+    s.clear();
+    let _ = write!(s, "RAM: {}K/{}K", data.static_ram_kb, data.ram_total_kb);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 
     s.clear();
     let _ = write!(s, "FB: 2x{}K", crate::profiling::FRAMEBUFFER_SIZE / 1024);
-    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
-    y += line_height + 4;
-
-    Text::new("CPU UTIL", Point::new(col2, y), header_style)
-        .draw(display)
-        .ok();
-    y += line_height;
-
-    s.clear();
-    let _ = write!(s, "Util: {}%", data.cpu_util_percent);
-    let util_style = if data.cpu_util_percent > 80 {
-        highlight_style
-    } else {
-        value_style
-    };
-    Text::new(&s, Point::new(col2, y), util_style).draw(display).ok();
-    y += line_height;
-
-    s.clear();
-    let _ = write!(s, "Cycles: {}K", data.frame_cycles / 1000);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     let _ = y;
 
