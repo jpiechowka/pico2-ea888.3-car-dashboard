@@ -1,9 +1,12 @@
+use core::fmt::Write;
+
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_10X20;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
+use heapless::String;
 
 use crate::config::{CENTER_X, CENTER_Y, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::render::FpsMode;
@@ -143,6 +146,34 @@ pub fn draw_danger_manifold_popup<D>(
         .draw(display)
         .ok();
     Text::with_text_style("DANGER TO MANIFOLD", DANGER_TEXT2_POS, text_style, CENTERED)
+        .draw(display)
+        .ok();
+}
+
+pub fn draw_brightness_popup<D>(
+    display: &mut D,
+    brightness_percent: u32,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    // Re-use the FPS popup size — compact centered box
+    Rectangle::new(FPS_BORDER_POS, FPS_BORDER_SIZE)
+        .into_styled(WHITE_FILL)
+        .draw(display)
+        .ok();
+
+    Rectangle::new(FPS_BG_POS, FPS_BG_SIZE)
+        .into_styled(RED_FILL)
+        .draw(display)
+        .ok();
+
+    let mut label: String<20> = String::new();
+    if brightness_percent == 0 {
+        let _ = write!(label, "BL: OFF");
+    } else {
+        let _ = write!(label, "BL: {}%", brightness_percent);
+    }
+    Text::with_text_style(label.as_str(), FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
 }

@@ -5,6 +5,10 @@ const RAM_END: u32 = RAM_START + RAM_SIZE;
 pub const FRAMEBUFFER_SIZE: usize = 320 * 240 * 2;
 pub const TOTAL_FRAMEBUFFER_SIZE: usize = FRAMEBUFFER_SIZE * 2;
 
+/// Core 1 stack size in bytes (must match tasks::CORE1_STACK_WORDS * 4).
+/// Defined here to avoid cross-crate reference from lib → binary.
+pub const CORE1_STACK_BYTES: u32 = 8192 * 4;
+
 #[derive(Clone, Copy, Default)]
 pub struct MemoryStats {
     pub stack_used: u32,
@@ -26,7 +30,9 @@ impl MemoryStats {
             0
         };
 
-        let static_estimate = TOTAL_FRAMEBUFFER_SIZE as u32 + 32 * 1024;
+        // Static SRAM includes: 2x framebuffers + misc statics (~32KB)
+        // + Core 1 stack (32KB) + log buffer 128 entries (~6KB)
+        let static_estimate = TOTAL_FRAMEBUFFER_SIZE as u32 + 38 * 1024 + CORE1_STACK_BYTES;
         let stack_total = RAM_SIZE.saturating_sub(static_estimate);
 
         Self {

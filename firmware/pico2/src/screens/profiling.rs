@@ -15,6 +15,7 @@ pub struct ProfilingData {
     pub render_time_us: u32,
     pub flush_time_us: u32,
     pub total_frame_time_us: u32,
+    pub brightness_percent: u32,
 
     pub buffer_swaps: u32,
     pub buffer_waits: u32,
@@ -210,6 +211,15 @@ pub fn draw_profiling_page<D>(
 
     s.clear();
     let _ = write!(s, "FB: 2x{}K", crate::profiling::FRAMEBUFFER_SIZE / 1024);
+    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    y += line_height;
+
+    s.clear();
+    if data.brightness_percent == 0 {
+        let _ = write!(s, "BL: OFF");
+    } else {
+        let _ = write!(s, "BL: {}%", data.brightness_percent);
+    }
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     let _ = y;
 

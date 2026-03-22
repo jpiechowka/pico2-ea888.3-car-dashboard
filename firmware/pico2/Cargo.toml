@@ -24,6 +24,7 @@ simple-outline = []
 
 [dependencies]
 embedded-graphics = "0.8.2"
+embedded-hal-async = "1.0.0"
 heapless = "0.9.2"
 micromath = "2.1.0"
 profont = "0.7"

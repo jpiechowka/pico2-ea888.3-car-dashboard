@@ -1,11 +1,11 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use defmt::info;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Instant;
 
 use crate::drivers::St7789Flusher;
+use crate::log_info;
 
 pub static FLUSH_SIGNAL: Signal<CriticalSectionRawMutex, usize> = Signal::new();
 
@@ -21,7 +21,7 @@ pub static LAST_FLUSH_TIME_US: AtomicU32 = AtomicU32::new(0);
 
 #[embassy_executor::task]
 pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
-    info!("Display flush task started");
+    log_info!("Flush task started");
 
     loop {
         let buffer_idx = FLUSH_SIGNAL.wait().await;

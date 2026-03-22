@@ -1,11 +1,11 @@
 use core::sync::atomic::Ordering;
 
-use defmt::info;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Instant, Timer};
 
-use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT};
+use crate::log_info;
+use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT, core1_stack_hwm_bytes};
 
 #[derive(Clone, Copy, Default)]
 pub struct DemoSensorValues {
@@ -24,10 +24,10 @@ pub static DEMO_VALUES: Watch<CriticalSectionRawMutex, DemoSensorValues, 2> = Wa
 #[embassy_executor::task]
 pub async fn demo_values_task(
     start_time: Instant,
-    stack_top: u32,
+    stack_base: u32,
 ) {
     let sender = DEMO_VALUES.dyn_sender();
-    info!("Demo values task started (stack top: 0x{:08x})", stack_top);
+    log_info!("Demo task started");
 
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
@@ -58,15 +58,10 @@ pub async fn demo_values_task(
             let util = crate::profiling::calc_util_percent(total_work_cycles, 1_000_000);
             CORE1_UTIL_PERCENT.store(util, Ordering::Relaxed);
 
-            // Calculate stack usage for Core 1
-            let stack_ptr: u32;
-            unsafe {
-                core::arch::asm!("mov {}, sp", out(reg) stack_ptr);
-            }
-            if stack_ptr < stack_top {
-                let used = stack_top - stack_ptr;
-                CORE1_STACK_USED_KB.store(used / 1024, Ordering::Relaxed);
-            }
+            // High-water-mark stack usage: scan sentinel pattern from base upward.
+            // This captures the deepest stack penetration since boot, not just current depth.
+            let hwm_bytes = unsafe { core1_stack_hwm_bytes(stack_base as *const u32) };
+            CORE1_STACK_USED_KB.store(hwm_bytes / 1024, Ordering::Relaxed);
 
             total_work_cycles = 0;
             last_util_calc = Instant::now();

@@ -5,7 +5,7 @@ use heapless::String;
 
 use crate::ui::GREEN;
 
-pub const LOG_ENTRIES: usize = 14;
+pub const LOG_ENTRIES: usize = 128;
 
 pub const LOG_MSG_LEN: usize = 40;
 
@@ -103,6 +103,9 @@ impl LogBuffer {
     #[inline]
     pub const fn is_empty(&self) -> bool { self.count == 0 }
 
+    #[inline]
+    pub const fn count(&self) -> usize { self.count }
+
     pub fn iter(&self) -> LogBufferIter<'_> {
         let start = if self.count < LOG_ENTRIES { 0 } else { self.head };
         LogBufferIter {
@@ -161,6 +164,5 @@ macro_rules! log_info {
         let mut buf: heapless::String<{ $crate::profiling::LOG_MSG_LEN }> = heapless::String::new();
         let _ = write!(buf, $($arg)*);
         $crate::profiling::push_log($crate::profiling::LogLevel::Info, buf.as_str());
-        defmt::info!($($arg)*);
     }};
 }

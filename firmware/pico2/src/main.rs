@@ -6,6 +6,7 @@
 #![allow(clippy::cast_sign_loss)]
 
 mod drivers;
+mod peripherals;
 mod profiling;
 mod screens;
 mod state;
@@ -25,12 +26,13 @@ mod thresholds {
 
 use core::sync::atomic::Ordering;
 
-use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
 use embassy_rp::dma::InterruptHandler as DmaInterruptHandler;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
+use embassy_rp::i2c::{self, InterruptHandler as I2cInterruptHandler};
+use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::spi::Spi;
 use embassy_time::{Duration, Instant};
 use embedded_graphics::prelude::*;
@@ -39,6 +41,7 @@ use static_cell::StaticCell;
 
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
+use crate::peripherals::{ENCODER_BUTTON, ENCODER_DELTA, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::render::{FpsMode, RenderState, cell_idx};
 use crate::screens::{ProfilingData, clear_framebuffers, draw_logs_page, draw_profiling_page, run_boot_sequence};
@@ -55,6 +58,7 @@ use crate::tasks::{
     LAST_FLUSH_TIME_US,
     demo_values_task,
     display_flush_task,
+    fill_core1_stack_sentinel,
 };
 use crate::thresholds::{
     AFR_LEAN_CRITICAL,
@@ -74,6 +78,7 @@ use crate::widgets::{
     draw_batt_cell,
     draw_boost_cell,
     draw_boost_unit_popup,
+    draw_brightness_popup,
     draw_danger_manifold_popup,
     draw_dividers,
     draw_fps_toggle_popup,
@@ -189,22 +194,23 @@ const fn requested_cpu_mhz() -> u32 {
 fn core1_main(
     animation_start: Instant,
     cpu_freq_hz: u32,
-    stack_top: u32,
+    stack_base: u32,
 ) -> ! {
     cpu_profiling::init(cpu_freq_hz);
     let executor = EXECUTOR_CORE1.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(demo_values_task(animation_start, stack_top).unwrap());
+        spawner.spawn(demo_values_task(animation_start, stack_base).unwrap());
     })
 }
 
 bind_interrupts!(struct Irqs {
     DMA_IRQ_0 => DmaInterruptHandler<embassy_rp::peripherals::DMA_CH0>;
+    I2C0_IRQ => I2cInterruptHandler<embassy_rp::peripherals::I2C0>;
 });
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    info!("OBD-II Dashboard starting...");
+    log_info!("OBD-II Dashboard starting");
 
     let p = {
         #[cfg(any(
@@ -223,13 +229,13 @@ async fn main(spawner: Spawner) {
         {
             config.clocks = ClockConfig::system_freq(300_000_000).expect("Invalid overclock frequency");
             config.clocks.core_voltage = CoreVoltage::V1_30;
-            info!("Overclock: 300 MHz @ 1.30V (SPI 75 MHz)");
+            log_info!("OC: 300MHz @ 1.30V SPI 75MHz");
         }
         #[cfg(all(feature = "cpu290-spi72-1v30", not(feature = "cpu300-spi75-1v30")))]
         {
             config.clocks = ClockConfig::system_freq(290_000_000).expect("Invalid overclock frequency");
             config.clocks.core_voltage = CoreVoltage::V1_30;
-            info!("Overclock: 290 MHz @ 1.30V (SPI 72.5 MHz)");
+            log_info!("OC: 290MHz @ 1.30V SPI 72MHz");
         }
         #[cfg(all(
             feature = "cpu280-spi70-1v30",
@@ -238,7 +244,7 @@ async fn main(spawner: Spawner) {
         {
             config.clocks = ClockConfig::system_freq(280_000_000).expect("Invalid overclock frequency");
             config.clocks.core_voltage = CoreVoltage::V1_30;
-            info!("Overclock: 280 MHz @ 1.30V (SPI 70 MHz)");
+            log_info!("OC: 280MHz @ 1.30V SPI 70MHz");
         }
         #[cfg(all(
             feature = "cpu250-spi62-1v10",
@@ -251,7 +257,7 @@ async fn main(spawner: Spawner) {
         {
             config.clocks = ClockConfig::system_freq(250_000_000).expect("Invalid overclock frequency");
             config.clocks.core_voltage = CoreVoltage::V1_10;
-            info!("Overclock: 250 MHz @ 1.10V (SPI 62.5 MHz)");
+            log_info!("OC: 250MHz @ 1.10V SPI 62MHz");
         }
 
         embassy_rp::init(config)
@@ -261,9 +267,11 @@ async fn main(spawner: Spawner) {
 
     let animation_start = Instant::now();
     let stack = CORE1_STACK.init(embassy_rp::multicore::Stack::new());
-    let stack_top = stack as *const _ as u32 + 8192 * 4;
+    let stack_base = stack as *const _ as u32;
+    // Fill stack with sentinel pattern for high-water-mark detection
+    unsafe { fill_core1_stack_sentinel(stack_base as *mut u32) };
     embassy_rp::multicore::spawn_core1(p.CORE1, stack, move || {
-        core1_main(animation_start, cpu_freq_hz, stack_top);
+        core1_main(animation_start, cpu_freq_hz, stack_base);
     });
 
     cpu_profiling::init(cpu_freq_hz);
@@ -274,7 +282,12 @@ async fn main(spawner: Spawner) {
 
     let cs = Output::new(p.PIN_17, Level::High);
     let dc = Output::new(p.PIN_16, Level::Low);
-    let mut _backlight = Output::new(p.PIN_20, Level::High);
+
+    // Backlight via PWM for brightness control (GP20 = PWM slice 2, channel A)
+    let mut pwm_config = PwmConfig::default();
+    pwm_config.top = 999;
+    pwm_config.compare_a = 1000; // 100% duty — fully on during boot
+    let mut backlight_pwm = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, pwm_config.clone());
 
     let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, Irqs, display_spi_config());
 
@@ -293,7 +306,16 @@ async fn main(spawner: Spawner) {
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
 
     spawner.spawn(display_flush_task(flusher).unwrap());
-    info!("Display flush task spawned");
+    log_info!("Display flush task spawned");
+
+    // I2C0 for STEMMA QT encoder (GP4=SDA, GP5=SCL, 400kHz)
+    let mut i2c_config = i2c::Config::default();
+    i2c_config.frequency = 400_000;
+    let i2c = i2c::I2c::new_async(p.I2C0, p.PIN_5, p.PIN_4, Irqs, i2c_config);
+
+    // Spawn encoder task — only starts polling after init is fully complete
+    spawner.spawn(encoder_task(i2c).unwrap());
+    log_info!("Encoder task spawned");
 
     let btn_a = Input::new(p.PIN_12, Pull::Up);
     let btn_b = Input::new(p.PIN_13, Pull::Up);
@@ -305,7 +327,7 @@ async fn main(spawner: Spawner) {
     let mut btn_x_state = ButtonState::new();
     let mut btn_y_state = ButtonState::new();
 
-    info!("Buttons initialized!");
+    log_info!("Buttons initialized");
 
     let mut current_page = Page::Dashboard;
     let mut clear_frames_remaining: u8 = 2;
@@ -334,6 +356,12 @@ async fn main(spawner: Spawner) {
     let mut cpu1_util_percent = 0u32;
 
     let mut flush_in_progress = false;
+
+    // Brightness state (PWM backlight, encoder-controlled)
+    let mut brightness_percent: u32 = 100;
+    let mut saved_brightness: u32 = 100; // for toggle on/off
+    let mut backlight_off_pending = false; // deferred off: show popup first, then cut PWM
+    let mut log_scroll_offset: i32 = 0;
 
     let mut boost = 0.5f32;
     let mut oil_temp = 60.0f32;
@@ -392,11 +420,17 @@ async fn main(spawner: Spawner) {
         if let Some(new_mode) = input.new_fps_mode {
             fps_mode = new_mode;
             clear_frames_remaining = 2;
-            info!("FPS mode: {}", fps_mode.label());
+            log_info!("FPS: {}", fps_mode.label());
         }
         if let Some(new_page) = input.new_page {
             current_page = new_page;
             clear_frames_remaining = 2;
+            // If backlight-off was deferred and popup is being cleared, apply PWM now
+            if backlight_off_pending {
+                pwm_config.compare_a = 0;
+                backlight_pwm.set_config(&pwm_config);
+                backlight_off_pending = false;
+            }
             active_popup = None;
             fps_sample_count = 0;
             fps_sum = 0.0;
@@ -412,19 +446,84 @@ async fn main(spawner: Spawner) {
         }
         if input.boost_unit_toggled {
             show_boost_psi = !show_boost_psi;
-            info!("Boost: {}", if show_boost_psi { "PSI" } else { "BAR" });
+            log_info!("Boost: {}", if show_boost_psi { "PSI" } else { "BAR" });
         }
         if input.reset_requested {
             reset_requested = true;
-            info!("Reset requested");
+            log_info!("Stats reset requested");
         }
         if let Some(popup) = input.show_popup {
+            // If a non-brightness popup replaces a pending backlight-off, apply it now
+            if backlight_off_pending && !matches!(popup, Popup::Brightness(_, _)) {
+                pwm_config.compare_a = 0;
+                backlight_pwm.set_config(&pwm_config);
+                backlight_off_pending = false;
+            }
             active_popup = Some(popup);
+        }
+
+        // --- Encoder events (rotation + button press) ---
+        let enc_delta = ENCODER_DELTA.swap(0, Ordering::Relaxed);
+        let enc_button = ENCODER_BUTTON.swap(false, Ordering::Relaxed);
+
+        match current_page {
+            Page::Logs => {
+                // Rotation scrolls logs: CW = scroll down (newer), CCW = scroll up (older)
+                if enc_delta != 0 {
+                    log_scroll_offset = (log_scroll_offset - enc_delta).max(0);
+                }
+                // Button does nothing on Logs page
+            }
+            _ => {
+                // Rotation adjusts brightness in 5% steps
+                if enc_delta != 0 {
+                    let new_brightness = (brightness_percent as i32 + enc_delta * 5).clamp(5, 100) as u32;
+                    if new_brightness != brightness_percent {
+                        brightness_percent = new_brightness;
+                        saved_brightness = brightness_percent;
+                        backlight_off_pending = false; // cancel any pending off
+                        pwm_config.compare_a = (brightness_percent as u16 * 10).min(1000);
+                        backlight_pwm.set_config(&pwm_config);
+                        active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
+                        clear_frames_remaining = clear_frames_remaining.max(1);
+                    }
+                }
+                // Button toggles backlight on/off
+                if enc_button {
+                    if brightness_percent > 0 {
+                        // Turning off: defer PWM change until popup expires so user sees it
+                        saved_brightness = brightness_percent;
+                        brightness_percent = 0;
+                        backlight_off_pending = true;
+                        // Don't touch PWM yet — keep backlight on for the popup
+                    } else {
+                        // Turning on: apply immediately
+                        brightness_percent = saved_brightness.max(5);
+                        backlight_off_pending = false;
+                        pwm_config.compare_a = (brightness_percent as u16 * 10).min(1000);
+                        backlight_pwm.set_config(&pwm_config);
+                    }
+                    active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
+                    clear_frames_remaining = clear_frames_remaining.max(1);
+                }
+            }
+        }
+
+        // Reset log scroll when leaving Logs page
+        if input.new_page.is_some() {
+            log_scroll_offset = 0;
         }
 
         if let Some(ref popup) = active_popup
             && popup.is_expired()
         {
+            // If a backlight-off was deferred and this is the Brightness popup expiring,
+            // apply the PWM change now (don't apply on other popup types)
+            if backlight_off_pending && matches!(popup, Popup::Brightness(_, _)) {
+                pwm_config.compare_a = 0;
+                backlight_pwm.set_config(&pwm_config);
+                backlight_off_pending = false;
+            }
             active_popup = None;
             clear_frames_remaining = 2;
         }
@@ -728,6 +827,7 @@ async fn main(spawner: Spawner) {
                         Popup::Reset(_) => draw_reset_popup(&mut display),
                         Popup::Fps(_) => draw_fps_toggle_popup(&mut display, fps_mode),
                         Popup::BoostUnit(_) => draw_boost_unit_popup(&mut display, show_boost_psi),
+                        Popup::Brightness(_, pct) => draw_brightness_popup(&mut display, *pct),
                     }
                 } else if egt_danger_active {
                     draw_danger_manifold_popup(&mut display, blink_on);
@@ -749,6 +849,7 @@ async fn main(spawner: Spawner) {
                         render_time_us,
                         flush_time_us,
                         total_frame_time_us,
+                        brightness_percent,
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
                         render_buffer_idx: double_buffer.render_idx(),
@@ -760,7 +861,7 @@ async fn main(spawner: Spawner) {
                         },
                         core0_stack_total_kb: mem_stats.stack_total / 1024,
                         core1_stack_used_kb: crate::tasks::CORE1_STACK_USED_KB.load(Ordering::Relaxed),
-                        core1_stack_total_kb: 32, // Fixed 32KB stack for core 1
+                        core1_stack_total_kb: crate::tasks::CORE1_STACK_BYTES / 1024,
                         static_ram_kb: mem_stats.static_ram / 1024,
                         ram_total_kb: mem_stats.ram_total / 1024,
                         cpu0_util_percent,
@@ -777,7 +878,14 @@ async fn main(spawner: Spawner) {
             }
 
             Page::Logs => {
-                draw_logs_page(&mut display);
+                draw_logs_page(&mut display, log_scroll_offset);
+            }
+        }
+
+        // Brightness popup overlay on Debug page (not Logs — encoder controls scroll there)
+        if matches!(current_page, Page::Debug) {
+            if let Some(Popup::Brightness(_, pct)) = active_popup {
+                draw_brightness_popup(&mut display, pct);
             }
         }
 
@@ -802,12 +910,16 @@ async fn main(spawner: Spawner) {
         cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
-            info!(
-                "PROFILE: render={}us flush={}us total={}us ({} FPS) CORE0: {}% CORE1: {}% swaps={} waits={}",
+            // Two log_info! lines to fit within 40-char message limit
+            log_info!(
+                "r={}us f={}us t={}us {}fps",
                 render_time_us,
                 flush_time_us,
                 total_frame_time_us,
                 current_fps as u32,
+            );
+            log_info!(
+                "C0:{}% C1:{}% sw={} w={}",
                 cpu0_util_percent,
                 cpu1_util_percent,
                 BUFFER_SWAPS.load(Ordering::Relaxed),
