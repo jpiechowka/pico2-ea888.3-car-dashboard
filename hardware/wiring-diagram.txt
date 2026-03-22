@@ -1,0 +1,204 @@
+                         SIMPLIFIED WIRING DIAGRAM
+                     Pico2 EA888.3 Car Dashboard Project
+                           (last updated 2026-03-22)
+
+
+  COMPONENTS
+  ----------
+  - Adafruit 3218    Illuminated toggle switch (latching, 3-12V, red LED)
+  - Pololu 3782      D36V28F5 step-down regulator (5.3-50V in, 5V/3.2A out)
+  - Adafruit 5880    I2C STEMMA QT rotary encoder (Seesaw, addr 0x36)
+  - Pimoroni PIM715  Pico Display Pack 2.8" (ST7789, 320x240, SPI)
+  - Raspberry Pi Pico 2 (RP2350)
+  - Longan Labs 1030002  OBD-II Serial CAN Bus Dev Kit (MCP2515 + MCP2551)
+
+
+  POWER PATH
+  ==========
+
+  OBD-II Pin 16 (+12V constant)
+       |
+       v
+  [ 3A mini blade fuse ]
+       |
+       v
+  +------------------------------+
+  | Adafruit 3218 Toggle Switch  |
+  |                              |
+  | (+) <-- 12V (fused input)    |
+  | (=D) --> switched 12V out    |  Headlamp pin IS the output.
+  | (GND) --> common GND         |  LED anode connected internally
+  +------+-----------------------+  through resistor to (=D).
+         |                          LED lights when ON; zero draw when OFF.
+         | switched 12V
+         v
+  +------------------------------+
+  | Pololu 3782 (D36V28F5)       |
+  |                               |
+  | VIN  <-- switched 12V         |
+  | GND  --> common GND           |
+  | EN   (float = enabled;        |  Internal 100k pull-up to VIN.
+  |        pull below 1.2V to     |
+  |        enter sleep <20uA/V)   |
+  | PG   (open-drain, optional)   |
+  | VOUT --> 5V regulated          |
+  +------+------------------------+
+         |
+         | 5V
+         v
+  [ 2A inline fuse ]              Pololu has built-in OCP, but fuse
+         |                         protects wiring.
+         v
+  Pico 2 VSYS pin
+
+
+  DATA PATH: CAN BUS
+  ===================
+
+  OBD-II Port                    Longan Labs 1030002
+  +--------+                     +----------------------------+
+  | Pin 6  | --- CAN-H -------> | CAN-H    (MCP2551)         |
+  | Pin 14 | --- CAN-L -------> | CAN-L    (MCP2551)         |
+  | Pin 16 | --- +12V --------> | VIN      (self-powered)    |
+  | Pin 4/5| --- GND ---------> | GND                        |
+  +--------+                     |                            |
+                                 | UART TX ---> Pico GP1     |  (UART0 RX)
+                                 | UART RX <--- Pico GP0     |  (UART0 TX)
+                                 | GND -------> common GND   |
+                                 +----------------------------+
+  Default baud: 9600 (configurable).
+  IMPORTANT: Verify UART voltage level. If kit outputs 5V logic,
+  add a level shifter (RP2350 GPIOs are 3.3V, NOT 5V-tolerant).
+
+
+  I2C: ENCODER
+  =============
+
+  Pimoroni PIM715                JST SH 4-pin cable          Adafruit 5880
+  STEMMA QT port   ---------->  (STEMMA QT / Qwiic)  -----> STEMMA QT port
+  +------------+                                              +------------+
+  | 3.3V       | ----------------------------------------->  | VCC (3.3V) |
+  | GND        | ----------------------------------------->  | GND        |
+  | GP4 (SDA)  | ----------------------------------------->  | SDA        |
+  | GP5 (SCL)  | ----------------------------------------->  | SCL        |
+  +------------+                                              +------------+
+
+  Encoder has onboard 10K pull-ups. Addr 0x36 (configurable via jumpers).
+  I2C0 bus at 400 kHz.  Plug-and-play, no extra wiring.
+
+
+  FULL CONNECTION SUMMARY
+  =======================
+
+  Pico 2 VSYS  <---  5V (Pololu VOUT, fused)
+  Pico 2 GND   <---  Common GND rail
+
+  [via PIM715 headers - directly connected by the display hat]
+  GP4   =  I2C0 SDA   (PIM715 STEMMA QT --> Adafruit 5880)
+  GP5   =  I2C0 SCL   (PIM715 STEMMA QT --> Adafruit 5880)
+  GP6   =  PIM715 LED_R  (active-low RGB LED on display pack)
+  GP7   =  PIM715 LED_G
+  GP8   =  PIM715 LED_B
+  GP12  =  PIM715 Button A
+  GP13  =  PIM715 Button B
+  GP14  =  PIM715 Button X
+  GP15  =  PIM715 Button Y
+  GP16  =  SPI0 DC     (display data/command)
+  GP17  =  SPI0 CS     (display chip select)
+  GP18  =  SPI0 SCK    (display clock)
+  GP19  =  SPI0 MOSI   (display data)
+  GP20  =  PWM BL      (display backlight, slice 2 ch A)
+
+  [user-wired]
+  GP0   =  UART0 TX    (--> Longan Labs CAN kit RX)
+  GP1   =  UART0 RX    (<-- Longan Labs CAN kit TX)
+
+  All other GND pins  --> common GND rail
+
+
+  PIN ALLOCATION TABLE
+  ====================
+
+  Pin   | Function               | Used By
+  ------+------------------------+----------------------------
+  GP0   | UART0 TX               | Longan Labs CAN kit (RX)
+  GP1   | UART0 RX               | Longan Labs CAN kit (TX)
+  GP2   | --free--               |
+  GP3   | --free--               |
+  GP4   | I2C0 SDA               | Encoder (via PIM715 STEMMA QT)
+  GP5   | I2C0 SCL               | Encoder (via PIM715 STEMMA QT)
+  GP6   | LED_R                  | PIM715 RGB LED
+  GP7   | LED_G                  | PIM715 RGB LED
+  GP8   | LED_B                  | PIM715 RGB LED
+  GP9   | --free--               |
+  GP10  | --free--               |
+  GP11  | --free--               |
+  GP12  | Button A               | PIM715
+  GP13  | Button B               | PIM715
+  GP14  | Button X               | PIM715
+  GP15  | Button Y               | PIM715
+  GP16  | SPI0 DC                | PIM715 display
+  GP17  | SPI0 CS                | PIM715 display
+  GP18  | SPI0 SCK               | PIM715 display
+  GP19  | SPI0 MOSI              | PIM715 display
+  GP20  | PWM backlight          | PIM715 display
+  GP21  | --free--               |
+  GP22  | --free--               |
+  GP23  | --free--               |
+  GP24  | --free--               |
+  GP25  | --free--               |
+  GP26  | --free-- (ADC0)        |
+  GP27  | --free-- (ADC1)        |
+  GP28  | --free-- (ADC2)        |
+
+  Free pins: GP2, GP3, GP9-GP11, GP21-GP28 (15 pins available)
+  If SPI CAN is needed instead of UART: GP10=SCK, GP11=MOSI,
+  GP8=MISO*, GP9=CS, GP22=INT  (*conflicts with PIM715 LED_B)
+
+
+  NOTES
+  =====
+
+  1. SWITCH: The Adafruit 3218 is a latching toggle (stays ON/OFF).
+     3 terminals: (+)=input, (=D)=output, (GND)=ground.
+     The (=D) "headlamp" pin is both the switched output AND the
+     LED anode (through an internal current-limiting resistor).
+     When ON: 12V passes from (+) to (=D), LED lights, load powered.
+     When OFF: circuit open, LED dark, zero standby current.
+     Rated for 1-2A (sufficient; dashboard draws ~0.1A from 12V).
+
+  2. FUSES: 3A mini blade fuse on 12V (before switch, protects wiring
+     from OBD-II port). 2A inline fuse on 5V (after Pololu, before
+     Pico VSYS). Both are protective margins above actual draw.
+
+  3. POLOLU EN PIN: Left floating = enabled (internal 100k pull-up to
+     VIN). To add a soft-shutdown from firmware, connect EN to a GPIO
+     and drive low to enter <20uA/V sleep mode.
+
+  4. CAN KIT VOLTAGE: The Longan Labs 1030002 powers itself from
+     OBD-II 12V. Its UART logic level may be 5V. RP2350 GPIOs are
+     3.3V and NOT 5V-tolerant. Verify the kit's UART voltage before
+     connecting. If 5V, use a bidirectional level shifter on GP0/GP1.
+     Alternative: some kit variants support 3.3V operation.
+
+  5. CAN KIT POWER: The kit is always powered from OBD-II pin 16
+     (constant 12V) and does NOT go through the Adafruit 3218 switch.
+     It stays on when the dashboard switch is off. To power it down
+     with the switch, splice the kit's 12V through the switch output.
+
+  6. ENCODER: Connects to PIM715's STEMMA QT port with a standard
+     JST SH 4-pin cable (included with encoder). No soldering.
+     Powered at 3.3V from the PIM715. I2C address 0x36 (default).
+     Up to 8 encoders can be daisy-chained via address jumpers.
+
+  7. PIM715 RGB LED: GP6/GP7/GP8 are physically wired to the RGB LED
+     on the display pack. These pins are NOT free for other use even
+     if the firmware doesn't drive them.
+
+  Sources:
+  - Adafruit 3218: https://www.adafruit.com/product/3218
+  - Pololu 3782:   https://www.pololu.com/product/3782
+  - Adafruit 5880: https://www.adafruit.com/product/5880
+  - PIM715 pins:   pimoroni-pico/common/pimoroni_common.hpp (BG_SPI_FRONT)
+  - PIM715 buttons: pimoroni-pico/libraries/pico_display_2/pico_display_2.hpp
+  - Longan Labs:   https://docs.longan-labs.cc/1030002/
