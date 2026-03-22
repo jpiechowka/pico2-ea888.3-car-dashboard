@@ -362,6 +362,7 @@ async fn main(spawner: Spawner) {
     let mut saved_brightness: u32 = 100; // for toggle on/off
     let mut backlight_off_pending = false; // deferred off: show popup first, then cut PWM
     let mut log_scroll_offset: i32 = 0;
+    let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
 
     let mut boost = 0.5f32;
     let mut oil_temp = 60.0f32;
@@ -468,7 +469,21 @@ async fn main(spawner: Spawner) {
 
         match current_page {
             Page::Logs => {
-                // Rotation scrolls logs: CW = scroll down (newer), CCW = scroll up (older)
+                // Anchor scroll position when new log entries arrive while scrolled,
+                // so the visible entries don't shift under the user.
+                if let Ok(buf) = crate::profiling::LOG_BUFFER.try_lock() {
+                    let current_count = buf.count();
+                    if log_scroll_offset > 0 && current_count > prev_log_count {
+                        log_scroll_offset += (current_count - prev_log_count) as i32;
+                    }
+                    prev_log_count = current_count;
+
+                    // Clamp to valid range so excess rotations don't accumulate
+                    let max_offset = if current_count > 13 { current_count - 13 } else { 0 };
+                    log_scroll_offset = log_scroll_offset.clamp(0, max_offset as i32);
+                }
+
+                // Rotation scrolls logs
                 if enc_delta != 0 {
                     log_scroll_offset = (log_scroll_offset - enc_delta).max(0);
                 }
@@ -477,15 +492,20 @@ async fn main(spawner: Spawner) {
             _ => {
                 // Rotation adjusts brightness in 5% steps
                 if enc_delta != 0 {
-                    let new_brightness = (brightness_percent as i32 + enc_delta * 5).clamp(5, 100) as u32;
+                    let new_brightness = (brightness_percent as i32 + enc_delta * 5).clamp(0, 100) as u32;
                     if new_brightness != brightness_percent {
                         brightness_percent = new_brightness;
                         saved_brightness = brightness_percent;
                         backlight_off_pending = false; // cancel any pending off
-                        pwm_config.compare_a = (brightness_percent as u16 * 10).min(1000);
+                        // Remap 1-100% to 450-1000 compare (LED needs ~45% duty minimum)
+                        pwm_config.compare_a = if brightness_percent == 0 {
+                            0
+                        } else {
+                            (450 + brightness_percent as u16 * 550 / 100).min(1000)
+                        };
                         backlight_pwm.set_config(&pwm_config);
                         active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
-                        clear_frames_remaining = clear_frames_remaining.max(1);
+                        clear_frames_remaining = 2;
                     }
                 }
                 // Button toggles backlight on/off
@@ -500,11 +520,11 @@ async fn main(spawner: Spawner) {
                         // Turning on: apply immediately
                         brightness_percent = saved_brightness.max(5);
                         backlight_off_pending = false;
-                        pwm_config.compare_a = (brightness_percent as u16 * 10).min(1000);
+                        pwm_config.compare_a = (450 + brightness_percent as u16 * 550 / 100).min(1000);
                         backlight_pwm.set_config(&pwm_config);
                     }
                     active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
-                    clear_frames_remaining = clear_frames_remaining.max(1);
+                    clear_frames_remaining = 2;
                 }
             }
         }
@@ -512,6 +532,7 @@ async fn main(spawner: Spawner) {
         // Reset log scroll when leaving Logs page
         if input.new_page.is_some() {
             log_scroll_offset = 0;
+            prev_log_count = 0;
         }
 
         if let Some(ref popup) = active_popup

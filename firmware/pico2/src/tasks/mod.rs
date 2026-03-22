@@ -18,7 +18,8 @@ pub use flush::{
 };
 
 pub static EXECUTOR_CORE1: StaticCell<Executor> = StaticCell::new();
-pub static CORE1_STACK: StaticCell<embassy_rp::multicore::Stack<8192>> = StaticCell::new();
+// Stack<N> takes N in bytes. CORE1_STACK_WORDS * 4 = 32768 bytes = 32 KB.
+pub static CORE1_STACK: StaticCell<embassy_rp::multicore::Stack<{ CORE1_STACK_WORDS * 4 }>> = StaticCell::new();
 
 pub static CORE1_UTIL_PERCENT: AtomicU32 = AtomicU32::new(0);
 pub static CORE1_STACK_USED_KB: AtomicU32 = AtomicU32::new(0);
@@ -27,7 +28,7 @@ pub static CORE1_STACK_USED_KB: AtomicU32 = AtomicU32::new(0);
 /// Chosen to be unlikely to appear naturally in stack data.
 pub const STACK_SENTINEL: u32 = 0xDEAD_C0DE;
 
-/// Core 1 stack size in u32 words (must match Stack<8192>).
+/// Core 1 stack size in u32 words. Stack<N> uses bytes, so Stack<CORE1_STACK_WORDS * 4>.
 pub const CORE1_STACK_WORDS: usize = 8192;
 
 /// Core 1 stack size in bytes (re-exported from profiling::memory for convenience).

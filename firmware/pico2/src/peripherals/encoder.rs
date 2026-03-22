@@ -180,8 +180,7 @@ pub async fn encoder_task(mut i2c: I2c<'static, I2C0, Async>) {
         // Read encoder delta
         if let Ok(delta) = read_delta(&mut i2c).await {
             if delta != 0 {
-                // Negate: seesaw reports CW as negative, we want CW as positive
-                ENCODER_DELTA.fetch_add(-delta, Ordering::Relaxed);
+                ENCODER_DELTA.fetch_add(delta, Ordering::Relaxed);
             }
         }
 

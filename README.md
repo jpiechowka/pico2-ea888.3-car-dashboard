@@ -130,11 +130,11 @@ After the boot sequence (~13 seconds total), the main dashboard is displayed.
 
 | Input | Dashboard / Debug | Logs |
 |-------|-------------------|------|
-| **Rotate CW** | Increase brightness (+5%) | Scroll down (newer) |
-| **Rotate CCW** | Decrease brightness (-5%, min 5%) | Scroll up (older) |
+| **Rotate CW** | Decrease brightness (-5%, min 0% = off) | Scroll up (older) |
+| **Rotate CCW** | Increase brightness (+5%) | Scroll down (newer) |
 | **Press** | Toggle backlight on/off | No action |
 
-Brightness defaults to 100% on boot. When toggling the backlight off, the "BL: OFF" popup is displayed for 1.5 seconds before the backlight is actually turned off, so the user can see the confirmation. Brightness is controlled via PWM on GP20 (slice 2, channel A).
+Brightness defaults to 100% on boot. Rotating down to 0% turns the backlight off. When toggling the backlight off via button press, the "BL: OFF" popup is displayed for 1.5 seconds before the backlight is actually turned off, so the user can see the confirmation. Brightness is controlled via PWM on GP20 (slice 2, channel A), with the 0-100% user range remapped to the LED's visible duty cycle range.
 
 ### FPS Display Modes
 
@@ -145,7 +145,7 @@ Brightness defaults to 100% on boot. When toggling the backlight off, the "BL: O
 
 ### On-Screen Log Viewer
 
-The Logs page (accessible via Y button) displays the last 128 log entries in a scrollable view. All firmware events (boot, task spawning, encoder init, periodic profiling stats, page changes, etc.) are logged via the `log_info!()` macro to a circular buffer. Use the rotary encoder to scroll through entries. A scroll indicator (e.g., "5-17/42") appears in the header when the buffer is scrollable.
+The Logs page (accessible via Y button) displays the last 128 log entries in a scrollable view. All firmware events (boot, task spawning, encoder init, periodic profiling stats, page changes, etc.) are logged via the `log_info!()` macro to a circular buffer. Use the rotary encoder to scroll through entries. A scroll indicator (e.g., "5-17/42") appears in the header when the buffer is scrollable. When scrolled, the view is anchored so new log entries don't shift the visible content.
 
 ### Config File Inheritance
 
