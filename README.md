@@ -136,6 +136,8 @@ After the boot sequence (~13 seconds total), the main dashboard is displayed.
 
 Brightness defaults to 100% on boot. Rotating down to 0% turns the backlight off. When toggling the backlight off via button press, the "BL: OFF" popup is displayed for 1.5 seconds before the backlight is actually turned off, so the user can see the confirmation. Brightness is controlled via PWM on GP20 (slice 2, channel A), with the 0-100% user range remapped to the LED's visible duty cycle range.
 
+> **PWM slice note:** GP20 maps to PWM slice 2, channel A via the hardware's `pin/2 % 8` GPIO-to-PWM wiring (same on RP2040 and RP2350). The RP2350 adds PWM slices 8–11 for GPIOs 30+; embassy-rp 0.10.0 gates these behind the `_rp235x` feature flag.
+
 ### FPS Display Modes
 
 - **Off**: No FPS displayed in header
