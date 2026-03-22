@@ -25,6 +25,12 @@ pub fn init(freq_hz: u32) {
         let demcr_val = read_volatile(DEMCR);
         write_volatile(DEMCR, demcr_val | (1 << 24));
 
+        // Unlock CoreSight DWT Software Lock (required on Cortex-M33 Core 1;
+        // Core 0 may be unlocked by the debug probe, but Core 1 is not).
+        // Harmless no-op if LAR is not implemented on this silicon.
+        const DWT_LAR: *mut u32 = 0xE000_1FB0 as *mut u32;
+        write_volatile(DWT_LAR, 0xC5AC_CE55);
+
         const DWT_CTRL: *mut u32 = 0xE000_1000 as *mut u32;
         let ctrl_val = read_volatile(DWT_CTRL);
         write_volatile(DWT_CTRL, ctrl_val | 1);
@@ -50,7 +56,10 @@ pub fn elapsed(
     if elapsed > max { 0 } else { elapsed }
 }
 
-/// Calculate CPU utilization as a percentage.
+/// Calculate CPU utilization in tenths-of-percent (0–1000 → 0.0%–100.0%).
+///
+/// Returns 10× the percentage so callers can display one decimal place
+/// without floating-point math (e.g. 163 → "16.3%").
 ///
 /// `cycles_used`: DWT cycles consumed by work during the measurement window.
 /// `elapsed_us`: duration of the measurement window in microseconds
@@ -71,7 +80,7 @@ pub fn calc_util_percent(
         return 0;
     }
 
-    let util = (cycles_used as u64 * 100) / cycles_expected;
+    let util = (cycles_used as u64 * 1000) / cycles_expected;
 
-    util.min(100) as u32
+    util.min(1000) as u32
 }

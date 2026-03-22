@@ -61,7 +61,12 @@ pub async fn demo_values_task(
             // High-water-mark stack usage: scan sentinel pattern from base upward.
             // This captures the deepest stack penetration since boot, not just current depth.
             let hwm_bytes = unsafe { core1_stack_hwm_bytes(stack_base as *const u32) };
-            CORE1_STACK_USED_KB.store(hwm_bytes / 1024, Ordering::Relaxed);
+            let kb = if hwm_bytes > 0 && hwm_bytes < 1024 {
+                1
+            } else {
+                hwm_bytes / 1024
+            };
+            CORE1_STACK_USED_KB.store(kb, Ordering::Relaxed);
 
             total_work_cycles = 0;
             last_util_calc = Instant::now();

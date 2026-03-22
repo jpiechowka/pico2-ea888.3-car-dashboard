@@ -144,8 +144,13 @@ pub fn draw_profiling_page<D>(
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Util: {}%", data.cpu0_util_percent);
-    let util0_style = if data.cpu0_util_percent > 85 {
+    let _ = write!(
+        s,
+        "Util: {}.{}%",
+        data.cpu0_util_percent / 10,
+        data.cpu0_util_percent % 10
+    );
+    let util0_style = if data.cpu0_util_percent > 850 {
         highlight_style
     } else {
         value_style
@@ -169,8 +174,13 @@ pub fn draw_profiling_page<D>(
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Util: {}%", data.cpu1_util_percent);
-    let util1_style = if data.cpu1_util_percent > 85 {
+    let _ = write!(
+        s,
+        "Util: {}.{}%",
+        data.cpu1_util_percent / 10,
+        data.cpu1_util_percent % 10
+    );
+    let util1_style = if data.cpu1_util_percent > 850 {
         highlight_style
     } else {
         value_style

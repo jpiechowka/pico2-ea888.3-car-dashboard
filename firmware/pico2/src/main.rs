@@ -940,9 +940,11 @@ async fn main(spawner: Spawner) {
                 current_fps as u32,
             );
             log_info!(
-                "C0:{}% C1:{}% sw={} w={}",
-                cpu0_util_percent,
-                cpu1_util_percent,
+                "C0:{}.{}% C1:{}.{}% sw={} w={}",
+                cpu0_util_percent / 10,
+                cpu0_util_percent % 10,
+                cpu1_util_percent / 10,
+                cpu1_util_percent % 10,
                 BUFFER_SWAPS.load(Ordering::Relaxed),
                 BUFFER_WAITS.load(Ordering::Relaxed)
             );
