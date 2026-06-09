@@ -25,12 +25,12 @@ simple-outline = []
 [dependencies]
 embedded-graphics = "0.8.2"
 embedded-hal-async = "1.0.0"
-heapless = "0.9.2"
+heapless = "0.9.3"
 micromath = "2.1.0"
 profont = "0.7"
 cortex-m-rt = "0.7.5"
-defmt = "1.0.1"
-defmt-rtt = "1.1.0"
+defmt = "1.1.0"
+defmt-rtt = "1.2.0"
 embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "defmt", "executor-thread"] }
 embassy-rp = { version = "0.10.0", features = ["binary-info", "critical-section-impl", "defmt", "rp235xa", "time-driver"] }
 embassy-sync = "0.8.0"
