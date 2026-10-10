@@ -1,12 +1,15 @@
-use dashboard_host_validation::{
-    AlignedFrame, primitives,
-    render::{FpsMode, RenderState},
-    renderer::St7789Renderer,
-    ui, widgets,
-};
-use embedded_graphics::{pixelcolor::Rgb565, prelude::*, primitives::Rectangle, text::Text};
+use dashboard_host_validation::render::{FpsMode, RenderState};
+use dashboard_host_validation::renderer::St7789Renderer;
+use dashboard_host_validation::{AlignedFrame, primitives, ui, widgets};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::Rectangle;
+use embedded_graphics::text::Text;
 
-fn draw_colors(rect: Rectangle, colors: impl IntoIterator<Item = Rgb565>) -> Box<AlignedFrame> {
+fn draw_colors(
+    rect: Rectangle,
+    colors: impl IntoIterator<Item = Rgb565>,
+) -> Box<AlignedFrame> {
     let mut frame = AlignedFrame::boxed();
     St7789Renderer::new(&mut frame.0)
         .fill_contiguous(&rect, colors)
@@ -72,13 +75,74 @@ fn bottom_clipping_keeps_only_the_first_source_row() {
 }
 
 #[test]
+fn clipped_rgb565_rows_keep_their_original_source_positions() {
+    let colors = [
+        Rgb565::RED,
+        Rgb565::GREEN,
+        Rgb565::BLUE,
+        Rgb565::WHITE,
+        Rgb565::YELLOW,
+        Rgb565::CYAN,
+        Rgb565::MAGENTA,
+        Rgb565::BLACK,
+        Rgb565::RED,
+    ];
+    for (left, top) in [(-1, -1), (318, -1), (-1, 238), (318, 238)] {
+        let rect = Rectangle::new(Point::new(left, top), Size::new(3, 3));
+        let frame = draw_colors(rect, colors);
+        for source_y in 0..3 {
+            for source_x in 0..3 {
+                let screen_x = left + source_x;
+                let screen_y = top + source_y;
+                if (0..320).contains(&screen_x) && (0..240).contains(&screen_y) {
+                    let expected = colors[(source_y * 3 + source_x) as usize].into_storage();
+                    assert_eq!(
+                        frame.pixel(screen_x as usize, screen_y as usize),
+                        expected,
+                        "source ({source_x},{source_y}), rect at ({left},{top})"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn completely_outside_contiguous_fill_leaves_the_frame_untouched() {
+    for rect in [
+        Rectangle::new(Point::new(-5, 0), Size::new(3, 3)),
+        Rectangle::new(Point::new(320, 0), Size::new(3, 3)),
+        Rectangle::new(Point::new(0, -5), Size::new(3, 3)),
+        Rectangle::new(Point::new(0, 240), Size::new(3, 3)),
+    ] {
+        let frame = draw_colors(rect, [Rgb565::RED; 9]);
+        assert!(frame.0.iter().all(|byte| *byte == 0), "rect={rect:?}");
+    }
+}
+
+#[test]
+fn truncated_clipped_color_stream_never_reuses_a_hidden_pixel() {
+    let mut frame = AlignedFrame::boxed();
+    St7789Renderer::new(&mut frame.0)
+        .fill_contiguous(
+            &Rectangle::new(Point::new(-1, 4), Size::new(3, 2)),
+            [Rgb565::RED, Rgb565::GREEN, Rgb565::BLUE, Rgb565::WHITE],
+        )
+        .unwrap();
+    assert_eq!(frame.pixel(0, 4), Rgb565::GREEN.into_storage());
+    assert_eq!(frame.pixel(1, 4), Rgb565::BLUE.into_storage());
+    assert_eq!(frame.pixel(0, 5), 0);
+    assert_eq!(frame.pixel(1, 5), 0);
+}
+
+#[test]
 fn unclipped_rgb565_is_big_endian_on_the_wire() {
     let frame = draw_colors(
         Rectangle::new(Point::new(10, 10), Size::new(2, 1)),
         [Rgb565::RED, Rgb565::BLUE],
     );
-    assert_eq!(frame.pixel(10, 10), 0xf800);
-    assert_eq!(frame.pixel(11, 10), 0x001f);
+    assert_eq!(frame.pixel(10, 10), 0xF800);
+    assert_eq!(frame.pixel(11, 10), 0x001F);
 }
 
 #[test]
@@ -91,18 +155,17 @@ fn solid_fill_matches_a_pixel_reference_at_odd_and_clipped_edges() {
             .unwrap();
         for y in 0..240 {
             for col in 0..320 {
-                let expected = u16::from(rect.contains(Point::new(col as i32, y as i32))) * 0xf800;
-                assert_eq!(
-                    frame.pixel(col, y),
-                    expected,
-                    "rect={rect:?}, pixel={col},{y}"
-                );
+                let expected = u16::from(rect.contains(Point::new(col as i32, y as i32))) * 0xF800;
+                assert_eq!(frame.pixel(col, y), expected, "rect={rect:?}, pixel={col},{y}");
             }
         }
     }
 }
 
-fn assert_boost_peak_text(expected: &str, psi: bool) {
+fn assert_boost_peak_text(
+    expected: &str,
+    psi: bool,
+) {
     let mut actual = AlignedFrame::boxed();
     let mut reference = AlignedFrame::boxed();
     widgets::draw_boost_cell(
@@ -118,14 +181,9 @@ fn assert_boost_peak_text(expected: &str, psi: bool) {
         true,
         0,
     );
-    Text::with_text_style(
-        expected,
-        Point::new(40, 125),
-        ui::LABEL_STYLE_ORANGE,
-        ui::CENTERED,
-    )
-    .draw(&mut St7789Renderer::new(&mut reference.0))
-    .unwrap();
+    Text::with_text_style(expected, Point::new(40, 125), ui::LABEL_STYLE_ORANGE, ui::CENTERED)
+        .draw(&mut St7789Renderer::new(&mut reference.0))
+        .unwrap();
     for y in 116..132 {
         for x in 2..78 {
             assert_eq!(
@@ -138,14 +196,10 @@ fn assert_boost_peak_text(expected: &str, psi: bool) {
 }
 
 #[test]
-fn bar_peak_label_is_preserved() {
-    assert_boost_peak_text("MAX 2.00", false);
-}
+fn bar_peak_label_is_preserved() { assert_boost_peak_text("MAX 2.00", false); }
 
 #[test]
-fn psi_peak_label_converts_the_canonical_bar_value() {
-    assert_boost_peak_text("MAX 29.0", true);
-}
+fn psi_peak_label_converts_the_canonical_bar_value() { assert_boost_peak_text("MAX 29.0", true); }
 
 #[test]
 fn newest_graph_impulse_is_visible_at_full_history_capacity() {
@@ -181,8 +235,5 @@ fn newest_graph_impulse_is_visible_at_full_history_capacity() {
         100.0,
         |_| Rgb565::WHITE,
     );
-    assert!(
-        steady.0 != impulse.0,
-        "newest impulse must change graph pixels"
-    );
+    assert!(steady.0 != impulse.0, "newest impulse must change graph pixels");
 }

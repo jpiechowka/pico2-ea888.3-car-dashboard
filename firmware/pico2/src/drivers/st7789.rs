@@ -233,15 +233,38 @@ impl DrawTarget for St7789Renderer<'_> {
         }
 
         let mut colors = colors.into_iter();
-        for y in drawable_area.rows() {
-            for x in drawable_area.columns() {
-                if let Some(color) = colors.next() {
-                    let idx = (y as usize * WIDTH + x as usize) * 2;
-                    let raw: RawU16 = color.into();
-                    let bytes = raw.into_inner().to_be_bytes();
-                    self.framebuffer[idx] = bytes[0];
-                    self.framebuffer[idx + 1] = bytes[1];
-                }
+        let source_width = area.size.width as usize;
+        let hidden_top = (drawable_area.top_left.y - area.top_left.y) as usize;
+        let hidden_left = (drawable_area.top_left.x - area.top_left.x) as usize;
+        let visible_width = drawable_area.size.width as usize;
+        let visible_height = drawable_area.size.height as usize;
+        let hidden_right = source_width - hidden_left - visible_width;
+
+        for _ in 0..hidden_top {
+            if colors.nth(source_width - 1).is_none() {
+                return Ok(());
+            }
+        }
+
+        let first_x = drawable_area.top_left.x as usize;
+        let first_y = drawable_area.top_left.y as usize;
+        for row in 0..visible_height {
+            if hidden_left > 0 && colors.nth(hidden_left - 1).is_none() {
+                return Ok(());
+            }
+            let mut idx = ((first_y + row) * WIDTH + first_x) * 2;
+            for _ in 0..visible_width {
+                let Some(color) = colors.next() else {
+                    return Ok(());
+                };
+                let raw: RawU16 = color.into();
+                let bytes = raw.into_inner().to_be_bytes();
+                self.framebuffer[idx] = bytes[0];
+                self.framebuffer[idx + 1] = bytes[1];
+                idx += 2;
+            }
+            if row + 1 < visible_height && hidden_right > 0 && colors.nth(hidden_right - 1).is_none() {
+                return Ok(());
             }
         }
         Ok(())
