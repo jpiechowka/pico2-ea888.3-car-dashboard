@@ -82,7 +82,7 @@ pub fn draw_mini_graph<D, F>(
     D: DrawTarget<Color = Rgb565>,
     F: Fn(f32) -> Rgb565,
 {
-    if count < 2 {
+    if count < 2 || buffer_size == 0 || buffer_size > buffer.len() || count > buffer_size || start_idx >= buffer_size {
         return;
     }
 
@@ -112,7 +112,10 @@ pub fn draw_mini_graph<D, F>(
     let mut prev_screen_y = 0i32;
     let mut first_point = true;
 
-    for i in (0..count).step_by(step) {
+    let sampled_indices = (0..count)
+        .step_by(step)
+        .chain(core::iter::once(count - 1).filter(|last| last % step != 0));
+    for i in sampled_indices {
         let buffer_idx = (start_idx + i) % buffer_size;
         let value = buffer[buffer_idx];
 

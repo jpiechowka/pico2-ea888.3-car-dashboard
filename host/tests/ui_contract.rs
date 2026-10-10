@@ -241,3 +241,54 @@ fn newest_graph_impulse_is_visible_at_full_history_capacity() {
     );
     assert!(steady.0 != impulse.0, "newest impulse must change graph pixels");
 }
+
+fn graph_frame(
+    samples: &[f32],
+    size: usize,
+    start: usize,
+    count: usize,
+) -> Box<AlignedFrame> {
+    let mut frame = AlignedFrame::boxed();
+    primitives::draw_mini_graph(
+        &mut St7789Renderer::new(&mut frame.0),
+        0,
+        0,
+        64,
+        20,
+        samples,
+        size,
+        start,
+        count,
+        0.0,
+        100.0,
+        |_| Rgb565::WHITE,
+    );
+    frame
+}
+
+#[test]
+fn two_sample_graph_draws_its_latest_endpoint() {
+    let flat = graph_frame(&[0.0, 0.0], 2, 0, 2);
+    let rising = graph_frame(&[0.0, 100.0], 2, 0, 2);
+    assert!(flat.0 != rising.0, "second sample must affect graph pixels");
+}
+
+#[test]
+fn newest_wrapped_graph_sample_changes_the_pixels() {
+    let steady = [0.0f32; 60];
+    let mut impulse = steady;
+    impulse[16] = 100.0; // start 17, count 60: final sample wraps to 16.
+    assert!(
+        graph_frame(&steady, 60, 17, 60).0 != graph_frame(&impulse, 60, 17, 60).0,
+        "newest wrapped sample must affect graph pixels"
+    );
+}
+
+#[test]
+fn malformed_graph_ring_metadata_draws_nothing() {
+    let samples = [25.0f32; 60];
+    for (size, start, count) in [(0, 0, 2), (61, 0, 2), (60, 0, 61), (60, 60, 2), (60, usize::MAX, 2)] {
+        let frame = graph_frame(&samples, size, start, count);
+        assert!(frame.0.iter().all(|byte| *byte == 0), "{size}, {start}, {count}");
+    }
+}

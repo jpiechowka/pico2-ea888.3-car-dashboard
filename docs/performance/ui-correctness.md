@@ -32,6 +32,17 @@ gain from this specific change. The baseline and intermediate runs also had
 different dependency and host conditions. Pixel checks for bar, 2.0 bar to
 29.0 PSI, and 0.1 bar to 1.5 PSI now pass.
 
+## Mini graph endpoint
+
+The renderer now draws the final ring sample after its two-step decimation
+when that endpoint would otherwise be skipped. It rejects zero, oversized,
+out-of-range and overflow-prone ring metadata before indexing. The 60-sample
+newest-impulse case measured 1.490 us after this change, versus 2.097 us at
+the audited baseline and 1.495 us in the run before the change. The latest
+measurement is essentially unchanged from the immediate predecessor; both
+current and baseline runs include other timing differences. Full and wrapped
+rings, a two-sample graph, and malformed metadata have host pixel checks.
+
 Reproduce from `host/` after restoring the committed baseline:
 
 ```text
