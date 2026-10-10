@@ -14,9 +14,10 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-10
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all --check
@@ -26,12 +27,13 @@ jobs:
     name: Clippy (Pico 2)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-10
           components: clippy
           targets: thumbv8m.main-none-eabihf
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware
       - name: Clippy (pico2)
@@ -42,11 +44,12 @@ jobs:
     name: Build Pico 2
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-10
           targets: thumbv8m.main-none-eabihf
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware
       - name: Build pico2

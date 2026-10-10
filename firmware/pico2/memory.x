@@ -36,8 +36,9 @@ SECTIONS {
 
 } INSERT AFTER .vector_table;
 
-/* move .text to start /after/ the boot info */
-_stext = ADDR(.start_block) + SIZEOF(.start_block);
+/* Move .text after boot info. cortex-m-rt 0.7.7 checks section alignment;
+ * the boot info size alone can leave _stext at a four-byte-only address. */
+_stext = ALIGN(ADDR(.start_block) + SIZEOF(.start_block), 16);
 
 SECTIONS {
     /* ### Picotool 'Binary Info' Entries
