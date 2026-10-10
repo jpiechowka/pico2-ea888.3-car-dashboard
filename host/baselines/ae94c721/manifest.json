@@ -1,0 +1,16 @@
+{
+  "source_commit": "ae94c721f2f2124a9fbd675c3ba3cd780fe54644",
+  "baseline_name": "ae94c721",
+  "run_date_local": "2026-10-11",
+  "toolchain": "nightly-2026-10-10, rustc 1.101.0-nightly (32dba69d6 2026-10-09)",
+  "criterion_version": "0.8.2",
+  "host_cpu": "13th Gen Intel(R) Core(TM) i9-13900HX",
+  "host_os": "Microsoft Windows NT 10.0.22631.0",
+  "bench_fixture_sha256": "A091538E28CA203FA85467533A52BC4871C9D280848B4F16A5A49EDCACFF3C7E",
+  "test_fixture_sha256": "CF6852089220B6DFB3E0261CE9259701265672C13BC087C43D68B0BEB6789EC9",
+  "source_scope": "Production firmware src was unchanged from source_commit. Only Cargo target-key syntax was corrected after the first latest-nightly link failure.",
+  "samples_per_benchmark": 30,
+  "warmup_seconds": 1,
+  "measurement_seconds": 2,
+  "physical_device_measurement": false
+}

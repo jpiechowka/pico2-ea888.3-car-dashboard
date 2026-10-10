@@ -19,3 +19,9 @@ target
 
 # Claude Code settings (user-specific)
 .claude/
+
+# Local audit inputs and live handoff; never commit these.
+/TODO.md
+/ea888-pico2-audit-bundle/
+/ea888-pico2-audit-bundle.zip
+/ea888-pico2-audit.pdf
