@@ -40,6 +40,7 @@ impl FpsMode {
     }
 }
 
+#[cfg(target_os = "none")]
 use micromath::F32Ext;
 
 pub const CELL_COUNT: usize = 8;
@@ -56,22 +57,42 @@ pub mod cell_idx {
 
 pub struct RenderState {
     dividers_drawn: bool,
-    prev_fps_mode: FpsMode,
-    prev_fps_instant_rounded: u32,
-    prev_fps_average_rounded: u32,
+    headers: [Option<HeaderSnapshot>; 2],
     prev_popup_kind: Option<u8>,
     popup_just_closed: bool,
     first_frame: bool,
     display_cleared: bool,
 }
 
+#[derive(Clone, Copy)]
+struct HeaderSnapshot {
+    mode: FpsMode,
+    instant: u32,
+    average: u32,
+}
+
+impl HeaderSnapshot {
+    fn changed(
+        self,
+        previous: Self,
+    ) -> bool {
+        if self.mode != previous.mode {
+            return true;
+        }
+        match self.mode {
+            FpsMode::Off => false,
+            FpsMode::Instant => self.instant != previous.instant,
+            FpsMode::Average => self.average != previous.average,
+            FpsMode::Combined => self.instant != previous.instant || self.average != previous.average,
+        }
+    }
+}
+
 impl RenderState {
     pub const fn new() -> Self {
         Self {
             dividers_drawn: false,
-            prev_fps_mode: FpsMode::Off,
-            prev_fps_instant_rounded: 0,
-            prev_fps_average_rounded: 0,
+            headers: [None; 2],
             prev_popup_kind: None,
             popup_just_closed: false,
             first_frame: true,
@@ -87,31 +108,26 @@ impl RenderState {
 
     pub fn check_header_dirty(
         &mut self,
+        buffer_id: usize,
         fps_mode: FpsMode,
         fps_instant: f32,
         fps_average: f32,
     ) -> bool {
-        let instant_rounded = fps_instant.round() as u32;
-        let average_rounded = fps_average.round() as u32;
-
-        let fps_changed = match fps_mode {
-            FpsMode::Off => false,
-            FpsMode::Instant => instant_rounded != self.prev_fps_instant_rounded,
-            FpsMode::Average => average_rounded != self.prev_fps_average_rounded,
-            FpsMode::Combined => {
-                instant_rounded != self.prev_fps_instant_rounded || average_rounded != self.prev_fps_average_rounded
-            }
+        let Some(header) = self.headers.get_mut(buffer_id) else {
+            return true;
+        };
+        let current = HeaderSnapshot {
+            mode: fps_mode,
+            instant: fps_instant.round() as u32,
+            average: fps_average.round() as u32,
         };
 
         let dirty = self.first_frame
             || self.popup_just_closed
             || self.display_cleared
-            || fps_mode != self.prev_fps_mode
-            || fps_changed;
+            || header.is_none_or(|previous| current.changed(previous));
 
-        self.prev_fps_mode = fps_mode;
-        self.prev_fps_instant_rounded = instant_rounded;
-        self.prev_fps_average_rounded = average_rounded;
+        *header = Some(current);
         dirty
     }
 

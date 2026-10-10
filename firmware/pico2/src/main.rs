@@ -705,7 +705,7 @@ async fn main(spawner: Spawner) {
 
         match current_page {
             Page::Dashboard => {
-                if render_state.check_header_dirty(fps_mode, current_fps, average_fps) {
+                if render_state.check_header_dirty(double_buffer.render_idx(), fps_mode, current_fps, average_fps) {
                     draw_header(&mut display, fps_mode, current_fps, average_fps);
                 }
 

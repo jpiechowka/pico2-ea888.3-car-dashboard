@@ -20,18 +20,76 @@ fn draw_colors(
 #[test]
 fn a_changed_header_invalidates_both_alternating_frames() {
     let mut state = RenderState::new();
-    for _ in 0..2 {
+    for buffer in [0, 1] {
         state.mark_display_cleared();
-        assert!(state.check_header_dirty(FpsMode::Instant, 40.0, 40.0));
+        assert!(state.check_header_dirty(buffer, FpsMode::Instant, 40.0, 40.0));
         state.end_frame();
     }
     for buffer in [0, 1] {
         assert!(
-            state.check_header_dirty(FpsMode::Instant, 41.0, 40.0),
+            state.check_header_dirty(buffer, FpsMode::Instant, 41.0, 40.0),
             "buffer {buffer} must receive the updated header"
         );
         state.end_frame();
     }
+}
+
+#[test]
+fn header_cache_tracks_buffers_independently_when_render_order_repeats() {
+    let mut state = RenderState::new();
+    assert!(state.check_header_dirty(0, FpsMode::Combined, 40.0, 39.0));
+    state.end_frame();
+    assert!(!state.check_header_dirty(0, FpsMode::Combined, 40.0, 39.0));
+    state.end_frame();
+    assert!(state.check_header_dirty(1, FpsMode::Combined, 40.0, 39.0));
+    state.end_frame();
+    assert!(state.check_header_dirty(0, FpsMode::Combined, 41.0, 39.0));
+    state.end_frame();
+    assert!(state.check_header_dirty(1, FpsMode::Combined, 41.0, 39.0));
+    state.end_frame();
+    assert!(!state.check_header_dirty(1, FpsMode::Combined, 41.0, 39.0));
+}
+
+#[test]
+fn unknown_header_buffer_id_fails_open_without_corrupting_valid_cache() {
+    let mut state = RenderState::new();
+    assert!(state.check_header_dirty(usize::MAX, FpsMode::Instant, 1.0, 0.0));
+    state.end_frame();
+    assert!(state.check_header_dirty(0, FpsMode::Instant, 1.0, 0.0));
+}
+
+#[test]
+fn header_only_tracks_values_visible_in_each_fps_mode() {
+    let mut state = RenderState::new();
+    assert!(state.check_header_dirty(0, FpsMode::Off, 40.0, 39.0));
+    state.end_frame();
+    assert!(!state.check_header_dirty(0, FpsMode::Off, 80.0, 79.0));
+    assert!(state.check_header_dirty(0, FpsMode::Instant, 80.0, 79.0));
+    state.end_frame();
+    assert!(!state.check_header_dirty(0, FpsMode::Instant, 80.2, 99.0));
+    assert!(state.check_header_dirty(0, FpsMode::Instant, 80.5, 99.0));
+    state.end_frame();
+    assert!(state.check_header_dirty(0, FpsMode::Average, 80.5, 99.0));
+    state.end_frame();
+    assert!(!state.check_header_dirty(0, FpsMode::Average, 5.0, 99.2));
+    assert!(state.check_header_dirty(0, FpsMode::Combined, 5.0, 99.2));
+    state.end_frame();
+    assert!(state.check_header_dirty(0, FpsMode::Combined, 5.0, 100.0));
+}
+
+#[test]
+fn popup_and_display_clear_force_header_redraw() {
+    let mut state = RenderState::new();
+    assert!(state.check_header_dirty(0, FpsMode::Off, 0.0, 0.0));
+    state.end_frame();
+    assert!(!state.check_header_dirty(0, FpsMode::Off, 0.0, 0.0));
+    state.update_popup(Some(1));
+    state.end_frame();
+    state.update_popup(None);
+    assert!(state.check_header_dirty(0, FpsMode::Off, 0.0, 0.0));
+    state.end_frame();
+    state.mark_display_cleared();
+    assert!(state.check_header_dirty(0, FpsMode::Off, 0.0, 0.0));
 }
 
 #[test]
