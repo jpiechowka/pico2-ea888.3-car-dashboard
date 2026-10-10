@@ -1,7 +1,7 @@
 mod cells;
 mod header;
 mod popups;
-mod primitives;
+pub mod primitives;
 
 pub use cells::{
     SensorDisplayData,

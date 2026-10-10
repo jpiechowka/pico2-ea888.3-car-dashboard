@@ -9,6 +9,7 @@ use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT, core1_stack_hwm_byte
 
 #[derive(Clone, Copy, Default)]
 pub struct DemoSensorValues {
+    pub captured_ms: u64,
     pub boost: f32,
     pub oil_temp: f32,
     pub water_temp: f32,
@@ -39,6 +40,7 @@ pub async fn demo_values_task(
         let t = elapsed_ms as f32 / 1000.0;
 
         let values = DemoSensorValues {
+            captured_ms: Instant::now().as_millis(),
             boost: (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
             oil_temp: 60.0 + 55.0 * micromath::F32(t * 0.3).sin().0,
             water_temp: 88.0 + 7.0 * micromath::F32(t * 0.4).sin().0,

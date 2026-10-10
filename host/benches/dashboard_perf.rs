@@ -1,11 +1,13 @@
-use std::{hint::black_box, time::Duration};
+use std::hint::black_box;
+use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use dashboard_host_validation::{
-    AlignedFrame, FRAME_BYTES, primitives, renderer::St7789Renderer, sensor_state::SensorState,
-    widgets,
-};
-use embedded_graphics::{pixelcolor::Rgb565, prelude::*, primitives::Rectangle};
+use dashboard_host_validation::renderer::St7789Renderer;
+use dashboard_host_validation::sensor_state::SensorState;
+use dashboard_host_validation::{AlignedFrame, FRAME_BYTES, primitives, widgets};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::Rectangle;
 
 fn framebuffer(c: &mut Criterion) {
     let mut frame = AlignedFrame::boxed();
@@ -88,11 +90,13 @@ fn widgets_and_history(c: &mut Criterion) {
 
     let mut state = SensorState::new();
     let mut sample_index = 0usize;
+    let mut sample_clock_ms = 0u64;
     let trace = [0.2f32, 0.8, 1.1, 2.0, 0.4, -0.3, 1.5, 0.7];
-    c.bench_function("sensor_state/next_render_update", |b| {
+    c.bench_function("sensor_state/next_measurement_update", |b| {
         b.iter(|| {
-            state.update(black_box(trace[sample_index % trace.len()]), false);
+            state.update_at(black_box(trace[sample_index % trace.len()]), false, sample_clock_ms);
             sample_index = sample_index.wrapping_add(1);
+            sample_clock_ms = sample_clock_ms.wrapping_add(16);
             black_box(state.get_average());
         });
     });

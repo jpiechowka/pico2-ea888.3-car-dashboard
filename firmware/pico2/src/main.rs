@@ -385,9 +385,9 @@ async fn main(spawner: Spawner) {
     let mut water_state = SensorState::new();
     let mut dsg_state = SensorState::new();
     let mut iat_state = SensorState::new();
-    let mut egt_state = SensorState::new();
-    let mut batt_state = SensorState::new();
-    let mut afr_state = SensorState::new();
+    let mut egt_state = SensorState::with_trend_threshold(5.0);
+    let mut batt_state = SensorState::with_trend_threshold(0.05);
+    let mut afr_state = SensorState::with_trend_threshold(0.1);
 
     let mut boost_max = 0.0f32;
     let mut oil_max = 0.0f32;
@@ -561,7 +561,9 @@ async fn main(spawner: Spawner) {
         };
         render_state.update_popup(popup_kind);
 
+        let mut sample_timestamp_ms = None;
         if let Some(demo_values) = demo_receiver.try_get() {
+            sample_timestamp_ms = Some(demo_values.captured_ms);
             boost = demo_values.boost;
             oil_temp = demo_values.oil_temp;
             water_temp = demo_values.water_temp;
@@ -630,13 +632,27 @@ async fn main(spawner: Spawner) {
         batt_min = batt_min.min(batt_voltage);
         batt_max = batt_max.max(batt_voltage);
 
-        oil_state.update(oil_temp, oil_updated);
-        water_state.update(water_temp, water_updated);
-        dsg_state.update(dsg_temp, dsg_updated);
-        iat_state.update(iat_temp, iat_updated);
-        egt_state.update(egt_temp, egt_updated);
-        batt_state.update(batt_voltage, batt_updated);
-        afr_state.update(afr, false);
+        if let Some(sampled_at_ms) = sample_timestamp_ms {
+            oil_state.update_at(oil_temp, oil_updated, sampled_at_ms);
+            water_state.update_at(water_temp, water_updated, sampled_at_ms);
+            dsg_state.update_at(dsg_temp, dsg_updated, sampled_at_ms);
+            iat_state.update_at(iat_temp, iat_updated, sampled_at_ms);
+            egt_state.update_at(egt_temp, egt_updated, sampled_at_ms);
+            batt_state.update_at(batt_voltage, batt_updated, sampled_at_ms);
+            afr_state.update_at(afr, false, sampled_at_ms);
+        }
+        let now_ms = Instant::now().as_millis();
+        for state in [
+            &mut oil_state,
+            &mut water_state,
+            &mut dsg_state,
+            &mut iat_state,
+            &mut egt_state,
+            &mut batt_state,
+            &mut afr_state,
+        ] {
+            state.tick(now_ms);
+        }
 
         fps_frame_count += 1;
         if last_fps_calc.elapsed() >= Duration::from_secs(1) {

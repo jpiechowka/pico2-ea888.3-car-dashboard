@@ -5,8 +5,6 @@
 pub mod colors;
 #[path = "../../firmware/pico2/src/config/mod.rs"]
 pub mod config;
-#[path = "../../firmware/pico2/src/widgets/primitives.rs"]
-pub mod primitives;
 #[path = "../../firmware/pico2/src/render.rs"]
 pub mod render;
 #[path = "../../firmware/pico2/src/state/sensor_state.rs"]
@@ -15,6 +13,7 @@ pub mod sensor_state;
 pub mod styles;
 #[path = "../../firmware/pico2/src/widgets/mod.rs"]
 pub mod widgets;
+pub use widgets::primitives;
 
 pub mod thresholds {
     pub use crate::config::sensors::*;
