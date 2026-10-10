@@ -165,6 +165,7 @@ fn solid_fill_matches_a_pixel_reference_at_odd_and_clipped_edges() {
 fn assert_boost_peak_text(
     expected: &str,
     psi: bool,
+    max_boost_bar: f32,
 ) {
     let mut actual = AlignedFrame::boxed();
     let mut reference = AlignedFrame::boxed();
@@ -175,7 +176,7 @@ fn assert_boost_peak_text(
         80,
         107,
         1.0,
-        2.0,
+        max_boost_bar,
         psi,
         false,
         true,
@@ -196,10 +197,13 @@ fn assert_boost_peak_text(
 }
 
 #[test]
-fn bar_peak_label_is_preserved() { assert_boost_peak_text("MAX 2.00", false); }
+fn bar_peak_label_is_preserved() { assert_boost_peak_text("MAX 2.00", false, 2.0); }
 
 #[test]
-fn psi_peak_label_converts_the_canonical_bar_value() { assert_boost_peak_text("MAX 29.0", true); }
+fn psi_peak_label_converts_the_canonical_bar_value() { assert_boost_peak_text("MAX 29.0", true, 2.0); }
+
+#[test]
+fn psi_peak_label_rounds_small_bar_values_after_conversion() { assert_boost_peak_text("MAX 1.5", true, 0.1); }
 
 #[test]
 fn newest_graph_impulse_is_visible_at_full_history_capacity() {

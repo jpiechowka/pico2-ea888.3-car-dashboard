@@ -11,6 +11,18 @@ use crate::thresholds::BAR_TO_PSI;
 use crate::ui::{BLACK, CENTERED, LABEL_FONT, LABEL_STYLE_ORANGE, LABEL_STYLE_WHITE, PINK, WHITE};
 use crate::widgets::primitives::draw_cell_background;
 
+fn write_boost_value(
+    output: &mut String<16>,
+    value_bar: f32,
+    show_psi: bool,
+) -> core::fmt::Result {
+    if show_psi {
+        write!(output, "{:.1}", value_bar * BAR_TO_PSI)
+    } else {
+        write!(output, "{value_bar:.2}")
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw_boost_cell<D>(
     display: &mut D,
@@ -45,11 +57,7 @@ pub fn draw_boost_cell<D>(
     let boost_psi = boost_bar * BAR_TO_PSI;
 
     let mut value_str: String<16> = String::new();
-    if show_psi {
-        let _ = write!(value_str, "{boost_psi:.1}");
-    } else {
-        let _ = write!(value_str, "{boost_bar:.2}");
-    }
+    let _ = write_boost_value(&mut value_str, boost_bar, show_psi);
     let value_color = if show_easter_egg {
         if blink_on { PINK } else { WHITE }
     } else {
@@ -98,11 +106,8 @@ pub fn draw_boost_cell<D>(
         .ok();
     } else {
         let mut max_str: String<16> = String::new();
-        if show_psi {
-            let _ = write!(max_str, "MAX {max_boost:.1}");
-        } else {
-            let _ = write!(max_str, "MAX {max_boost:.2}");
-        }
+        let _ = write!(max_str, "MAX ");
+        let _ = write_boost_value(&mut max_str, max_boost, show_psi);
         Text::with_text_style(
             &max_str,
             Point::new(center_x, (y + h) as i32 - 8),
