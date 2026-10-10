@@ -1,286 +1,151 @@
-                         SIMPLIFIED WIRING DIAGRAM
-                     Pico2 EA888.3 Car Dashboard Project
-                           (last updated 2026-03-23)
+PICO 2 EA888 DASHBOARD: PROPOSED WIRING AND INSPECTION NET LIST
+Revision: 2026-10-11. No assembled board, Longan revision, ECU, or vehicle
+connection was inspected for this revision of the document.
 
+Parts named by the existing project: Raspberry Pi Pico 2, Pimoroni PIM715
+Display Pack 2.8, Adafruit 5880 I2C encoder, Longan 1030002 OBD-II Serial
+CAN Bus Dev Kit, Adafruit 3218 latching switch, and Pololu 3782 D36V28F5
+5 V regulator. Check markings on the actual assembled parts before wiring.
 
-  COMPONENTS
-  ----------
-  - Adafruit 3218    Illuminated toggle switch (latching, 3-12V, red LED)
-  - Pololu 3782      D36V28F5 step-down regulator (5.3-50V in, 5V/3.2A out)
-  - Adafruit 5880    I2C STEMMA QT rotary encoder (Seesaw, addr 0x36)
-  - Pimoroni PIM715  Pico Display Pack 2.8" (ST7789, 320x240, SPI)
-  - Raspberry Pi Pico 2 (RP2350)
-  - Longan Labs 1030002  OBD-II Serial CAN Bus Dev Kit (MCP2515 + MCP2551)
+POWER NETS
+===========
 
-  PROTECTION & FUSES
-  ------------------
-  - 12V rail: 3A mini blade fuse (ATM/APM) in inline holder
-  - 12V rail: SS34 Schottky diode (3A, 40V, ~0.2V drop @ 90mA) — reverse polarity
-  - 12V rail: SMAJ14A TVS diode (14V standoff, 400W) — transient voltage clamp
-  - 5V rail:  Bourns MF-R050 PTC polyfuse (500mA hold / 1A trip, self-resetting)
-  - 5V rail:  100uF electrolytic + 100nF ceramic — decoupling at Pico VSYS
-  - UART:     Bidirectional level shifter if CAN kit is 5V logic (e.g. Adafruit 757)
+OBD-II pin 16 (+vehicle supply)
+  -> suitably rated fuse and verified automotive input protection
+  -> latching switch
+  -> Pololu VIN.
 
+OBD-II pins 4/5, Pololu GND, Pico GND, Longan GND
+  -> common ground, with layout and conductor ratings checked in hardware.
 
-  POWER PATH
-  ==========
+Pololu VOUT (regulated 5 V, switched domain)
+  -> 5 V distribution and the specified PTC protection
+  -> Pico 2 VSYS and Longan Serial CAN module VCC on versions requiring 5 V.
 
-  OBD-II Pin 16 (+12V constant)
-       |
-       v
-  [ 3A mini blade fuse ]           ATM/APM in inline holder.
-       |
-       v
-  --|>|-- SS34 Schottky diode      Anode toward OBD-II, cathode toward switch.
-       |                           Blocks reverse polarity. ~0.2V drop @ 90mA.
-       |
-       +-----|<|--- GND            SMAJ14A TVS diode (14V standoff, 400W).
-       |                           Cathode band toward +12V rail.
-       |                           Clamps automotive transients (load dumps,
-       v                           alternator spikes, relay kick).
-  +------------------------------+
-  | Adafruit 3218 Toggle Switch  |
-  |                              |
-  | (+) <-- 12V (fused, clamped) |
-  | (=D) --> switched 12V out    |  Headlamp pin IS the output.
-  | (GND) --> common GND         |  LED anode connected internally
-  +------+-----------------------+  through resistor to (=D).
-         |                          LED lights when ON; zero draw when OFF.
-         | switched 12V
-         v
-  +------------------------------+
-  | Pololu 3782 (D36V28F5)       |
-  |                               |
-  | VIN  <-- switched 12V         |
-  | GND  --> common GND           |
-  | EN   (float = enabled;        |  Internal 100k pull-up to VIN.
-  |        pull below 1.2V to     |
-  |        enter sleep <20uA/V)   |
-  | PG   (open-drain, optional)   |
-  | VOUT --> 5V regulated          |
-  +------+------------------------+
-         |
-         | 5V
-         v
-  [ 500mA PTC polyfuse ]           Bourns MF-R050 (500mA hold, 1A trip).
-         |                         Self-resetting. Pololu has built-in OCP
-         v                         but PTC protects wiring from shorts.
-  [ 100uF electrolytic ]
-  [ + 100nF ceramic    ]           Decoupling caps close to Pico VSYS pin.
-         |                         Smooths voltage dips from PTC resistance
-         v                         and long wire runs.
-  Pico 2 VSYS pin
+The Longan 1030002 kit contains a Serial CAN module and an OBD connector.
+Its module VCC is not a 12 V VIN input. Do not connect OBD-II pin 16 or the
+switched vehicle supply directly to module VCC. Route its supply from the
+switched regulated rail so the adapter turns off with the dashboard. Longan
+documents 5 V VCC for V1.0-V1.2. V1.3 supports 5 V or 3.3 V VCC; a 3.3 V
+option also requires a checked Pico 3.3 V rail budget and physical revision
+identification. The actual kit PCB revision is presently unknown.
 
+Leave the Pololu EN pin disconnected from Pico GPIO. Pololu pulls EN to VIN
+through 100 kohm; a direct connection can expose an unpowered/reset Pico
+pin to vehicle supply. An optional MCU shutdown needs a separate, rated
+transistor/open-drain interface and a defined latch/wake circuit. Cutting
+regulator power also cuts the MCU's ability to hold EN low. No such circuit
+is specified or validated here.
 
-  DATA PATH: CAN BUS
-  ===================
+The previously proposed 3 A blade fuse, SS34 series diode, SMAJ14A TVS,
+500 mA PTC, and 100 uF/100 nF decoupling are provisional components, not a
+validated automotive surge or wiring protection design. Check fuse against
+wire gauge and fault energy, TVS/clamp behavior, polarity, regulator input
+range, PTC trip/hold behavior, and actual supply transients before fitting.
 
-  OBD-II Port                    Longan Labs 1030002
-  +--------+                     +----------------------------+
-  | Pin 6  | --- CAN-H -------> | CAN-H    (MCP2551)         |
-  | Pin 14 | --- CAN-L -------> | CAN-L    (MCP2551)         |
-  | Pin 16 | --- +12V --------> | VIN      (self-powered)    |
-  | Pin 4/5| --- GND ---------> | GND                        |
-  +--------+                     |                            |
-                                 | UART TX ------+            |
-                                 | UART RX ------+---+        |
-                                 | GND -------> common GND   |
-                                 +------------+---+-----------+
-                                              |   |
-                              IF 5V LOGIC:    v   v
-                              +---------------------------------+
-                              | Level Shifter (e.g. Adafruit    |
-                              |  757, BSS138-based, 4-ch)       |
-                              |                                 |
-                              | HV side (5V):  kit TX, kit RX   |
-                              | LV side (3.3V): GP1, GP0        |
-                              | HV ref: 5V    LV ref: 3.3V     |
-                              +-----------+-----+---------------+
-                                          |     |
-                                          v     v
-                                   Pico GP1    Pico GP0
-                                   (UART0 RX)  (UART0 TX)
+CAN AND UART NETS
+=================
 
-  Default baud: 9600 (configurable).
-  IMPORTANT: Verify UART voltage level before connecting directly.
-  RP2350 GPIOs are 3.3V and NOT 5V-tolerant. If kit outputs 5V,
-  the level shifter is mandatory. If kit supports 3.3V mode,
-  connect directly and skip the shifter.
+OBD-II pin 6 -> Longan CAN-H; pin 14 -> Longan CAN-L. Verify the connector
+cable and module labels by continuity before connection. The module is a
+UART-to-raw-CAN bridge, not an ELM327 interface. Firmware has no vehicle
+acquisition path yet; the intended GP0/GP1 wiring is reserved, not tested.
 
+Longan UART TX -> appropriate logic-level interface -> Pico GP1 (UART0 RX).
+Pico GP0 (UART0 TX) -> appropriate logic-level interface -> Longan UART RX.
+Share ground. Use a translator appropriate for push-pull UART signals where
+translation is needed; do not assume a bidirectional I2C level shifter is
+qualified for the chosen baud rate.
 
-  I2C: ENCODER
-  =============
+Longan version / VCC / UART condition:
+  V1.0:       5 V VCC, 5 V IO; translate Longan TX before Pico RX.
+  V1.1/V1.2: 5 V VCC; 3.3 V IO needs the documented solder-pad option.
+  V1.3:       5 V or 3.3 V VCC; documented 3.3 V IO option.
 
-  Pimoroni PIM715                JST SH 4-pin cable          Adafruit 5880
-  STEMMA QT port   ---------->  (STEMMA QT / Qwiic)  -----> STEMMA QT port
-  +------------+                                              +------------+
-  | 3.3V       | ----------------------------------------->  | VCC (3.3V) |
-  | GND        | ----------------------------------------->  | GND        |
-  | GP4 (SDA)  | ----------------------------------------->  | SDA        |
-  | GP5 (SCL)  | ----------------------------------------->  | SCL        |
-  +------------+                                              +------------+
+Measure TX idle/high and low levels at the chosen VCC and setting before
+connecting either UART line. Pico GPIO is 3.3 V logic. Longan documents
+9600 baud by default and up to 115200; negotiate and verify any baud change
+before firmware depends on it.
 
-  Encoder has onboard 10K pull-ups. Addr 0x36 (configurable via jumpers).
-  I2C0 bus at 400 kHz.  Plug-and-play, no extra wiring.
+The old 1030002 kit page describes a 120 ohm CAN resistor connected by
+default; the current 1030001 module page describes soldering a pad to add
+termination. Inspect and measure the actual PCB. A diagnostic tap on an
+already terminated vehicle bus normally must not add a third 120 ohm end
+resistor. Confirm CAN-H/CAN-L idle and bus resistance with the vehicle and
+adapter unpowered as appropriate for the installation procedure.
 
+PICO 2 / PIM715 PIN MAP
+======================
 
-  FULL CONNECTION SUMMARY
-  =======================
+The table is for the non-wireless Pico 2 with PIM715 Display Pack 2.8.
+"Header spare" means present on the Pico 2's 40-pin headers and not used
+by this firmware or an active named pack function with the optional PIM715
+SP/CE expansion unpopulated. Access and shared connector traces in an
+assembled stack still need inspection. PIM715 RGB traces can be cut, but
+are assumed intact here. The TE pin is reserved for a later experiment, not
+sampled by current firmware.
 
-  Pico 2 VSYS  <---  5V (Pololu VOUT, fused)
-  Pico 2 GND   <---  Common GND rail
+GPIO       Allocation or physical condition                  Category
+---------- ------------------------------------------------- ----------------
+GP0-GP1    Proposed UART0 to Longan serial bridge           Reserved, header
+GP2-GP3    No named connection                               Header spare
+GP4-GP5    PIM715 Qw/ST I2C0 to Adafruit 5880 encoder       Pack connection
+GP6-GP11   No named PIM715 2.8 function or firmware use     Header spare
+GP12-GP15  PIM715 buttons A, B, X, Y                        Pack connection
+GP16       PIM715 LCD data/command                          Pack connection
+GP17       PIM715 LCD chip select                           Pack connection
+GP18       PIM715 LCD SPI0 clock                            Pack connection
+GP19       PIM715 LCD SPI0 transmit                         Pack connection
+GP20       PIM715 AP2502 backlight enable PWM               Pack connection
+GP21       PIM715 LCD tearing-effect output                 Reserved for TE
+GP22       No named connection                               Header spare
+GP23       On-board SMPS power-save control                 Not on header
+GP24       On-board VBUS sense                               Not on header
+GP25       On-board user LED                                 Not on header
+GP26-GP28  PIM715 2.8 RGB LED (active low, traces intact)   Pack connection
+GP29       On-board VSYS/3 sense                             Not on header
 
-  [via PIM715 headers - directly connected by the display hat]
-  GP4   =  I2C0 SDA   (PIM715 STEMMA QT --> Adafruit 5880)
-  GP5   =  I2C0 SCL   (PIM715 STEMMA QT --> Adafruit 5880)
-  GP6   =  PIM715 LED_R  (active-low RGB LED on display pack)
-  GP7   =  PIM715 LED_G
-  GP8   =  PIM715 LED_B
-  GP12  =  PIM715 Button A
-  GP13  =  PIM715 Button B
-  GP14  =  PIM715 Button X
-  GP15  =  PIM715 Button Y
-  GP16  =  SPI0 DC     (display data/command)
-  GP17  =  SPI0 CS     (display chip select)
-  GP18  =  SPI0 SCK    (display clock)
-  GP19  =  SPI0 MOSI   (display data)
-  GP20  =  PWM BL      (display backlight, slice 2 ch A)
+The old GP6/GP7/GP8 RGB assignment belongs to other Display Pack variants.
+GP21 is not free: it carries LCD TE. GP23-GP25 are not general 40-pin-header
+GPIOs on Pico 2. Candidate SPI1 pins GP8/GP9/GP10/GP11 and interrupt GP22
+have no RGB conflict on PIM715 2.8, but using an alternative SPI CAN board
+would require a separate electrical and firmware design, including physical
+clearance and trace inspection. The currently named Longan device uses UART.
 
-  [user-wired]
-  GP0   =  UART0 TX    (--> Longan Labs CAN kit RX)
-  GP1   =  UART0 RX    (<-- Longan Labs CAN kit TX)
+BACKLIGHT TIMING
+================
 
-  All other GND pins  --> common GND rail
+The PIM715 schematic names AP2502 for backlight control. Its datasheet
+permits PWM to 150 kHz and specifies EN-high pulse time of at least 1 us.
+Firmware now derives a 1 kHz output from the configured system clock using
+TOP=9999 and dividers 15/25/28/29/30 for the 150/250/280/290/300 MHz
+profiles. Off drives compare=0. The old 45%-100% visible-duty mapping is
+retained until a scope and photometric/visual check establish useful lower
+duty settings. The clock and rate calculations are host tested; the actual
+GP20 waveform, dimming range and flicker remain unmeasured.
 
+POWER BUDGET AND PRE-CONNECTION RECORD
+======================================
 
-  PIN ALLOCATION TABLE
-  ====================
+The old 90 mA vehicle and 150 mA 5 V totals excluded Longan module current
+and were estimates. Measure Pico/display, encoder, Longan, switch LED, and
+regulator input currents in each operating mode, including overclock,
+backlight off/full, startup, and adapter active. Recheck regulator thermal
+margin and protection components from measured totals.
 
-  Pin   | Function               | Used By
-  ------+------------------------+----------------------------
-  GP0   | UART0 TX               | Longan Labs CAN kit (RX)
-  GP1   | UART0 RX               | Longan Labs CAN kit (TX)
-  GP2   | --free--               |
-  GP3   | --free--               |
-  GP4   | I2C0 SDA               | Encoder (via PIM715 STEMMA QT)
-  GP5   | I2C0 SCL               | Encoder (via PIM715 STEMMA QT)
-  GP6   | LED_R                  | PIM715 RGB LED
-  GP7   | LED_G                  | PIM715 RGB LED
-  GP8   | LED_B                  | PIM715 RGB LED
-  GP9   | --free--               |
-  GP10  | --free--               |
-  GP11  | --free--               |
-  GP12  | Button A               | PIM715
-  GP13  | Button B               | PIM715
-  GP14  | Button X               | PIM715
-  GP15  | Button Y               | PIM715
-  GP16  | SPI0 DC                | PIM715 display
-  GP17  | SPI0 CS                | PIM715 display
-  GP18  | SPI0 SCK               | PIM715 display
-  GP19  | SPI0 MOSI              | PIM715 display
-  GP20  | PWM backlight          | PIM715 display
-  GP21  | --free--               |
-  GP22  | --free--               |
-  GP23  | --free--               |
-  GP24  | --free--               |
-  GP25  | --free--               |
-  GP26  | --free-- (ADC0)        |
-  GP27  | --free-- (ADC1)        |
-  GP28  | --free-- (ADC2)        |
+Record the actual Longan PCB revision and UART VCC/IO setting; PIM715 and
+Pico 2 revisions; CAN termination state; wiring continuity; 5 V and 3.3 V
+rails; UART high/low levels; EN-to-Pico isolation; and GP20 frequency and
+minimum high pulse at stock and each selected overclock. Device behavior,
+ECU support, and physical frame rate are still unverified.
 
-  Free pins: GP2, GP3, GP9-GP11, GP21-GP28 (15 pins available)
-  If SPI CAN is needed instead of UART: GP10=SCK, GP11=MOSI,
-  GP8=MISO*, GP9=CS, GP22=INT  (*conflicts with PIM715 LED_B)
+PRIMARY REFERENCES
+==================
 
-
-  POWER BUDGET
-  ============
-
-  Component                    | Current  | Rail  | Notes
-  -----------------------------+----------+-------+-------------------------------
-  RP2350 @ 280 MHz / 1.3V     | ~40 mA   | 3.3V  | ~2x stock 150 MHz (~22 mA)
-  ST7789 controller            | ~6 mA    | 3.3V  | Display active
-  PIM715 backlight @ 100%     | ~80 mA   | 3.3V  | LED string, biggest consumer
-  Adafruit 5880 encoder        | ~3 mA    | 3.3V  | ATSAMD09 Seesaw, I2C idle
-  -----------------------------+----------+-------+-------------------------------
-  Subtotal @ 3.3V             | ~130 mA  |       | ~430 mW
-  -> From 5V VSYS             | ~150 mA  | 5V    | Through Pico RT6150 (~85% eff)
-  -----------------------------+----------+-------+-------------------------------
-  Adafruit 3218 switch LED     | ~15 mA   | 12V   | Internal resistor, red LED
-  Pololu 3782 input            | ~75 mA   | 12V   | 5V*150mA / (12V*0.85 eff)
-  -----------------------------+----------+-------+-------------------------------
-  Total from 12V              | ~90 mA   | 12V   |
-
-
-  NOTES
-  =====
-
-  1. SWITCH: The Adafruit 3218 is a latching toggle (stays ON/OFF).
-     3 terminals: (+)=input, (=D)=output, (GND)=ground.
-     The (=D) "headlamp" pin is both the switched output AND the
-     LED anode (through an internal current-limiting resistor).
-     When ON: 12V passes from (+) to (=D), LED lights, load powered.
-     When OFF: circuit open, LED dark, zero standby current.
-     Rated for 1-2A (sufficient; dashboard draws ~90 mA from 12V).
-
-  2. FUSES: 3A mini blade fuse on 12V (before switch, protects wiring
-     from OBD-II port). 500mA PTC polyfuse on 5V (Bourns MF-R050,
-     500mA hold / 1A trip; self-resetting after fault clears).
-     Actual draw: ~150 mA on 5V, ~90 mA on 12V.
-
-  3. REVERSE POLARITY: SS34 Schottky diode in series on 12V input
-     (after fuse, before switch). Blocks reverse-wired 12V from
-     reaching any downstream component. ~0.2V forward drop at
-     90 mA is negligible (0.5V max at 3A). Cheap insurance against
-     wiring mistakes.
-
-  4. TVS CLAMP: SMAJ14A transient voltage suppressor across the 12V
-     rail to GND (after fuse, before switch). Automotive 12V is
-     noisy — load dumps can spike to 40-80V, alternator transients,
-     relay inductive kick. The TVS clamps to ~23V peak, protecting
-     the Pololu (rated 50V) and the switch. Cathode band toward +12V.
-
-  5. DECOUPLING: 100uF electrolytic + 100nF ceramic at Pico VSYS pin.
-     Smooths voltage dips from PTC resistance and long wire runs
-     between the Pololu output and the Pico. Place physically close
-     to the VSYS pin.
-
-  6. POLOLU EN PIN: Left floating = enabled (internal 100k pull-up to
-     VIN). To add a soft-shutdown from firmware, connect EN to a GPIO
-     and drive low to enter <20uA/V sleep mode.
-
-  7. CAN KIT VOLTAGE: The Longan Labs 1030002 powers itself from
-     OBD-II 12V. Its UART logic level may be 5V. RP2350 GPIOs are
-     3.3V and NOT 5V-tolerant. Use a bidirectional level shifter
-     (e.g. Adafruit 757, BSS138-based) on GP0/GP1 if kit is 5V.
-     If kit supports 3.3V mode, connect directly.
-
-  8. CAN KIT POWER: The kit is always powered from OBD-II pin 16
-     (constant 12V) and does NOT go through the Adafruit 3218 switch.
-     It stays on when the dashboard switch is off. To power it down
-     with the switch, splice the kit's 12V through the switch output.
-
-  9. ENCODER: Connects to PIM715's STEMMA QT port with a standard
-     JST SH 4-pin cable (included with encoder). No soldering.
-     Powered at 3.3V from the PIM715. I2C address 0x36 (default).
-     Up to 8 encoders can be daisy-chained via address jumpers.
-
-  10. PIM715 RGB LED: GP6/GP7/GP8 are physically wired to the RGB LED
-      on the display pack. These pins are NOT free for other use even
-      if the firmware doesn't drive them.
-
-  11. NOT NEEDED: Flyback diode (no inductive loads), ESD on I2C
-      (internal connector, not user-facing), fuse after switch
-      (blade fuse before switch already covers the full path).
-
-  Sources:
-  - Adafruit 3218:  https://www.adafruit.com/product/3218
-  - Pololu 3782:    https://www.pololu.com/product/3782
-  - Adafruit 5880:  https://www.adafruit.com/product/5880
-  - Adafruit 757:   https://www.adafruit.com/product/757  (level shifter)
-  - PIM715 pins:    pimoroni-pico/common/pimoroni_common.hpp (BG_SPI_FRONT)
-  - PIM715 buttons: pimoroni-pico/libraries/pico_display_2/pico_display_2.hpp
-  - Longan Labs:    https://docs.longan-labs.cc/1030002/
-  - SS34 datasheet: Vishay SS34 (3A 40V Schottky)
-  - SMAJ14A:        Littelfuse SMAJ14A (14V 400W TVS)
-  - Bourns MF-R050: https://www.bourns.com/products/circuit-protection/resettable-fuses-multifuse
+Longan 1030002 kit:       https://docs.longan-labs.cc/1030002/
+Longan 1030001 module:    https://docs.longan-labs.cc/1030001/
+PIM715 product/schematic: https://shop.pimoroni.com/products/pico-display-pack-2-8
+Pico 2 datasheet:         https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf
+Pico 2 header pinout:     https://datasheets.raspberrypi.com/pico/Pico-2-Pinout.pdf
+AP2502 data sheet:        https://www.mouser.com/datasheet/3/175/1/AP2502.pdf
+Pololu 3782:             https://www.pololu.com/product/3782

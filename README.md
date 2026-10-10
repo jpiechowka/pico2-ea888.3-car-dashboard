@@ -104,7 +104,7 @@ The firmware uses both Cortex-M33 cores on the RP2350:
 
 Cross-core communication uses `AtomicU32`/`AtomicBool` for simple values and `embassy_sync::Watch` for structured data. The log buffer uses a `Mutex<CriticalSectionRawMutex>` (backed by RP2350 hardware spinlocks) for safe cross-core writes.
 
-Double-buffered rendering (2 × 150 KB framebuffers) allows Core 0 to render the next frame while the previous frame is being flushed over SPI DMA.
+The current firmware allocates two 150 KB framebuffers. DMA/render overlap and exclusive buffer ownership are still being corrected and have not been measured on hardware.
 
 ### Boot Sequence
 
@@ -134,7 +134,7 @@ After the boot sequence (~13 seconds total), the main dashboard is displayed.
 | **Rotate CCW** | Increase brightness (+5%) | Scroll down (newer) |
 | **Press** | Toggle backlight on/off | No action |
 
-Brightness defaults to 100% on boot. Rotating down to 0% turns the backlight off. When toggling the backlight off via button press, the "BL: OFF" popup is displayed for 1.5 seconds before the backlight is actually turned off, so the user can see the confirmation. Brightness is controlled via PWM on GP20 (slice 2, channel A), with the 0-100% user range remapped to the LED's visible duty cycle range.
+Brightness defaults to 100% on boot. Rotating down to 0% turns the backlight off. When toggling the backlight off via button press, the "BL: OFF" popup is displayed for 1.5 seconds before the backlight is actually turned off. GP20 (slice 2, channel A) is configured for 1 kHz PWM across supported clock profiles. The previous 45%-100% visible duty mapping remains until the panel's low-duty response and pulse width are checked on hardware. See [the proposed wiring and inspection net list](hardware/wiring-diagram.txt) before connecting the CAN adapter.
 
 > **PWM slice note:** GP20 maps to PWM slice 2, channel A via the hardware's `pin/2 % 8` GPIO-to-PWM wiring (same on RP2040 and RP2350). The RP2350 adds PWM slices 8–11 for GPIOs 30+; embassy-rp 0.10.0 gates these behind the `_rp235x` feature flag.
 

@@ -39,6 +39,7 @@ use embedded_graphics::prelude::*;
 use panic_probe as _;
 use static_cell::StaticCell;
 
+use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::peripherals::{ENCODER_BUTTON, ENCODER_DELTA, encoder_task};
@@ -263,7 +264,7 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    let cpu_freq_hz = requested_cpu_mhz() * 1_000_000;
+    let cpu_freq_hz = embassy_rp::clocks::clk_sys_freq();
 
     let animation_start = Instant::now();
     let stack = CORE1_STACK.init(embassy_rp::multicore::Stack::new());
@@ -284,10 +285,17 @@ async fn main(spawner: Spawner) {
     let dc = Output::new(p.PIN_16, Level::Low);
 
     // Backlight via PWM for brightness control (GP20 = PWM slice 2, channel A)
+    let backlight_divider = pwm_divider(cpu_freq_hz).expect("Unsupported backlight PWM clock");
     let mut pwm_config = PwmConfig::default();
-    pwm_config.top = 999;
-    pwm_config.compare_a = 1000; // 100% duty — fully on during boot
+    pwm_config.top = PWM_TOP;
+    pwm_config.divider = backlight_divider.into();
+    pwm_config.compare_a = PWM_TOP + 1;
     let mut backlight_pwm = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, pwm_config.clone());
+    log_info!(
+        "Configured CPU {} Hz, backlight PWM {} Hz",
+        cpu_freq_hz,
+        pwm_frequency_hz(cpu_freq_hz, backlight_divider)
+    );
 
     let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, Irqs, display_spi_config());
 
@@ -497,12 +505,7 @@ async fn main(spawner: Spawner) {
                         brightness_percent = new_brightness;
                         saved_brightness = brightness_percent;
                         backlight_off_pending = false; // cancel any pending off
-                        // Remap 1-100% to 450-1000 compare (LED needs ~45% duty minimum)
-                        pwm_config.compare_a = if brightness_percent == 0 {
-                            0
-                        } else {
-                            (450 + brightness_percent as u16 * 550 / 100).min(1000)
-                        };
+                        pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
                         active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
                         clear_frames_remaining = 2;
@@ -520,7 +523,7 @@ async fn main(spawner: Spawner) {
                         // Turning on: apply immediately
                         brightness_percent = saved_brightness.max(5);
                         backlight_off_pending = false;
-                        pwm_config.compare_a = (450 + brightness_percent as u16 * 550 / 100).min(1000);
+                        pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
                     }
                     active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));

@@ -1,3 +1,4 @@
+pub mod backlight;
 pub mod layout;
 pub mod sensors;
 
