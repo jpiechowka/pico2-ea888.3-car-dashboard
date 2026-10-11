@@ -61,9 +61,14 @@ $validationRun = 'demo-stock-01'
 $validationFeatures = 'demo,frame-trace,te-trace'
 $validationDir = "target/hardware-validation/$validationRun"
 New-Item -ItemType Directory -Path $validationDir -ErrorAction Stop | Out-Null
-$env:CARGO_PROFILE_RELEASE_STRIP = 'none'
-cargo build --locked -p dashboard-pico2 --release --target thumbv8m.main-none-eabihf --target-dir "$validationDir/build" --features $validationFeatures
-if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+$validationOldStrip = $env:CARGO_PROFILE_RELEASE_STRIP
+try {
+    $env:CARGO_PROFILE_RELEASE_STRIP = 'none'
+    cargo build --locked -p dashboard-pico2 --release --target thumbv8m.main-none-eabihf --target-dir "$validationDir/build" --features $validationFeatures
+    if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+} finally {
+    $env:CARGO_PROFILE_RELEASE_STRIP = $validationOldStrip
+}
 $validationElf = "$validationDir/build/thumbv8m.main-none-eabihf/release/pico2"
 python scripts/check_memory_layout.py $validationElf
 if ($LASTEXITCODE -ne 0) { throw 'Memory/flash gate failed' }
@@ -84,7 +89,8 @@ Get-FileHash "$validationDir/pico2.elf" -Algorithm SHA256 | Format-List | Out-Fi
 
 Do not combine `demo` and `longan-rx12`. A gate failure means stop and retain its
 output; changing expected instruction hashes is not a repair. Keep the frozen
-ELF for flashing and decoding, even after building another profile.
+ELF for flashing and decoding, even after building another profile. The scoped
+strip override is restored so it cannot contaminate later benchmark captures.
 
 ### Flash over isolated USB
 
@@ -146,7 +152,8 @@ Test persistence at stock clocks:
 
 The PIM715 wiring was checked against its
 [product/schematic](https://shop.pimoroni.com/products/pico-display-pack-2-8).
-The encoder uses address `0x36`, product 4991 and seesaw button GPIO24, as checked
+The PID5880 encoder uses address `0x36`, seesaw firmware product ID 4991 and
+seesaw button GPIO24, as checked
 against [Adafruit's guide](https://learn.adafruit.com/adafruit-i2c-qt-rotary-encoder?view=all)
 and the [driver review](../hardware/encoder-recovery.md).
 
@@ -200,7 +207,9 @@ Measure TE intervals physically, plus input-edge-to-visible-change with a
 high-speed camera or photodiode. TE frequency is panel scan cadence, while
 completed writes are update cadence; neither alone proves unique visible FPS.
 Record tearing, colors and latency. Repeat the same actions in the serial/full
-profile, with identical power, brightness and scene. Save waveforms and video
+profile, with identical power, brightness and scene. This comparison changes
+both overlap and partial updates, so it measures their combined effect. Add a
+`demo,frame-trace,te-trace,full-frame` image to isolate those effects. Save waveforms and video
 beside the ELF hash. See [TE limitations](../hardware/te-observations.md).
 
 ### Finite target kernels

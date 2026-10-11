@@ -22,7 +22,7 @@ pico2-fast-run = "run -p dashboard-pico2 --release --features simple-outline"
 # Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
 # All use simple-outline for best FPS
 
-# 250 MHz @ 1.10V (62.5 MHz SPI - ST7789 datasheet max)
+# 250 MHz @ 1.10V (experimental 62.5 MHz SPI; panel timing unverified)
 pico2-250-62-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu250-spi62-1v10"
 pico2-250-62-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu250-spi62-1v10"
 
