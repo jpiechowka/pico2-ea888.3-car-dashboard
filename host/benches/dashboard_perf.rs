@@ -4,6 +4,10 @@ use std::time::Duration;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
+use dashboard_host_validation::diagnostics::isotp::{IsoTpRx, RxEvent};
+use dashboard_host_validation::diagnostics::longan::Rx12;
+use dashboard_host_validation::diagnostics::request::{Reply, Request};
+use dashboard_host_validation::diagnostics::{CanFrame, obd};
 use dashboard_host_validation::display::damage::DamagePlan;
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::renderer::St7789Renderer;
@@ -238,12 +242,58 @@ fn dashboard_scene(c: &mut Criterion) {
     }
 }
 
+fn protocol(c: &mut Criterion) {
+    let mut rx12 = Rx12::new();
+    rx12.confirm_boundary().unwrap();
+    c.bench_function("protocol/rx12_record", |b| {
+        b.iter(|| {
+            for byte in black_box([0, 0, 7, 0xE8, 4, 0x41, 0x42, 0x36, 0xB0, 0, 0, 0]) {
+                black_box(rx12.push(byte).unwrap());
+            }
+        })
+    });
+    let sf = CanFrame::new(0x7E8, &[4, 0x41, 0x42, 0x36, 0xB0, 0, 0, 0]).unwrap();
+    c.bench_function("protocol/single_frame_obd", |b| {
+        b.iter(|| {
+            let mut rx = IsoTpRx::new();
+            rx.begin(0x7E8, 1, 0, 100).unwrap();
+            let RxEvent::Complete(payload) = rx.on_frame(black_box(&sf), 1, 1).unwrap() else {
+                panic!()
+            };
+            let Reply::Positive(bytes) = Request::Obd(0x42).reply(payload.as_slice()).unwrap() else {
+                panic!()
+            };
+            black_box(obd::decode(0x42, bytes).unwrap());
+        })
+    });
+    let first = CanFrame::new(0x7E8, &[0x10, 128, 0x62, 0xF1, 0x90, 1, 2, 3]).unwrap();
+    let subsequent: Vec<_> = (0..18)
+        .map(|i| CanFrame::new(0x7E8, &[0x20 | ((i + 1) & 15), 4, 5, 6, 7, 8, 9, 10]).unwrap())
+        .collect();
+    c.bench_function("protocol/isotp_128_bytes", |b| {
+        b.iter(|| {
+            let mut rx = IsoTpRx::new();
+            rx.begin(0x7E8, 1, 0, 1000).unwrap();
+            black_box(rx.on_frame(black_box(&first), 1, 0).unwrap());
+            rx.flow_control_sent(0).unwrap();
+            for (i, frame) in subsequent.iter().enumerate() {
+                let now = (i + 1) as u64 * 5;
+                let event = rx.on_frame(black_box(frame), 1, now).unwrap();
+                if matches!(event, RxEvent::FlowControl(_)) {
+                    rx.flow_control_sent(now).unwrap();
+                }
+                black_box(event);
+            }
+        })
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol
 }
 criterion_main!(dashboard_perf);

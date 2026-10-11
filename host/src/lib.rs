@@ -33,6 +33,8 @@ pub mod config;
 pub mod cycle_segments;
 #[path = "../../firmware/pico2/src/dashboard.rs"]
 pub mod dashboard;
+#[path = "../../firmware/pico2/src/diagnostics/mod.rs"]
+pub mod diagnostics;
 #[path = "../../firmware/pico2/src/state/extrema.rs"]
 pub mod extrema;
 #[path = "../../firmware/pico2/src/health.rs"]

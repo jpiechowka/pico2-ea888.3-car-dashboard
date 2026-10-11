@@ -7,6 +7,7 @@
 pub mod acquisition;
 pub mod config;
 pub mod dashboard;
+pub mod diagnostics;
 pub mod display;
 pub mod health;
 pub mod input_model;
