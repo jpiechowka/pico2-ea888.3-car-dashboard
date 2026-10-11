@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
+use dashboard_host_validation::dashboard::DashboardScene;
 use dashboard_host_validation::display::damage::DamagePlan;
+use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::renderer::St7789Renderer;
 use dashboard_host_validation::sensor_state::SensorState;
 use dashboard_host_validation::{AlignedFrame, FRAME_BYTES, primitives, widgets};
@@ -147,12 +149,38 @@ fn damage_planning(c: &mut Criterion) {
     }
 }
 
+fn dashboard_scene(c: &mut Criterion) {
+    let mut model = AcquisitionModel::new();
+    for sample in 0..200 {
+        model.ingest_batch([1.2, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7], sample * 10);
+    }
+    let snapshot = model.snapshot();
+    let scene = DashboardScene {
+        measurements: &snapshot,
+        now_ms: 2000,
+        blink_on: true,
+        boost_psi: false,
+        fps_mode: FpsMode::Off,
+        fps_instant: 40.0,
+        fps_average: 39.0,
+        backgrounds: [Rgb565::BLACK; 8],
+        overlay: None,
+    };
+    let mut frame = AlignedFrame::boxed();
+    c.bench_function("scene/full_dashboard", |b| {
+        b.iter(|| {
+            black_box(&scene).draw_full(&mut St7789Renderer::new(&mut frame.0));
+            black_box(&frame.0);
+        });
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene
 }
 criterion_main!(dashboard_perf);

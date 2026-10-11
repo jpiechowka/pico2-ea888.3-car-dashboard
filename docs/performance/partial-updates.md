@@ -81,6 +81,10 @@ After the DMA-start guard, the same fixtures measured 2.906, 2.792 and 0.281 us
 respectively; raw records are in `stage05_bounded`. The small differences fall
 within the variation observed across host runs, so no speedup is attributed
 to the guard. The initial source is preserved in commit `01b49e0`.
+The shared `DashboardScene` now drives both the device and host reference
+renderer, consolidating five temperature-cell call paths. Its full redraw
+baseline is 83.101 us for the fixed eight-cell scene in
+`host/baselines/stage05_scene_full`, preserved before retained-cell work.
 Retained widget rasterization and full-scene overlay/page replay are the next
 slice. Physical acceptance still requires CS/SPI/TE traces, orientation and
 stride verification on the actual panel, p95/p99 update intervals, input

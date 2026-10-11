@@ -6,11 +6,13 @@
 
 pub mod acquisition;
 pub mod config;
+pub mod dashboard;
 pub mod display;
 pub mod health;
 pub mod input_model;
 
 pub mod render;
+pub mod widgets;
 
 pub use config::sensors as thresholds;
 
@@ -29,8 +31,11 @@ mod state {
 
 mod ui {
     pub mod colors;
+    pub mod styles;
+    pub use colors::*;
+    pub use styles::*;
 }
 
 pub use profiling::{cpu_cycles, cycle_segments, memory, stack_samples};
 pub use state::{extrema, pages, sensor_state};
-pub use ui::colors;
+pub use ui::{colors, styles};

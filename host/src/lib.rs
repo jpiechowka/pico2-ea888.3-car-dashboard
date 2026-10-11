@@ -31,6 +31,8 @@ pub mod colors;
 pub mod config;
 #[path = "../../firmware/pico2/src/profiling/cycle_segments.rs"]
 pub mod cycle_segments;
+#[path = "../../firmware/pico2/src/dashboard.rs"]
+pub mod dashboard;
 #[path = "../../firmware/pico2/src/state/extrema.rs"]
 pub mod extrema;
 #[path = "../../firmware/pico2/src/health.rs"]

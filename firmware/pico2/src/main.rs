@@ -12,7 +12,9 @@ mod screens;
 mod state;
 mod tasks;
 mod ui;
-mod widgets;
+mod widgets {
+    pub use dashboard_pico2::widgets::*;
+}
 
 mod config {
     pub use dashboard_pico2::config::*;
@@ -27,12 +29,12 @@ mod thresholds {
 use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
+use dashboard_pico2::dashboard::{DashboardScene, Overlay};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
 use dashboard_pico2::input_model::{brightness_after, scroll_after};
-use dashboard_pico2::sensor_state::SensorSnapshot;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -47,7 +49,6 @@ use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
-use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
@@ -75,28 +76,12 @@ use crate::thresholds::{
     AFR_RICH_AF,
     BATT_CRITICAL,
     BATT_WARNING,
-    BOOST_EASTER_EGG_BAR,
     EGT_DANGER_MANIFOLD,
 };
 use crate::ui::{BLACK, BLUE, ColorTransition, DARK_TEAL, GREEN, ORANGE, RED};
 use crate::widgets::{
-    SensorDisplayData,
-    draw_afr_cell,
-    draw_batt_cell,
-    draw_boost_cell,
-    draw_boost_unit_popup,
     draw_brightness_popup,
-    draw_danger_manifold_popup,
     draw_dividers,
-    draw_fps_toggle_popup,
-    draw_header,
-    draw_reset_popup,
-    draw_temp_cell,
-    is_critical_egt,
-    is_critical_iat,
-    is_critical_oil_dsg,
-    is_critical_water,
-    is_low_temp_oil,
     temp_color_egt,
     temp_color_iat,
     temp_color_oil_dsg,
@@ -564,7 +549,7 @@ async fn main(spawner: Spawner) {
         render_state.update_popup(popup_kind);
 
         let [
-            boost_state,
+            _,
             oil_state,
             water_state,
             dsg_state,
@@ -573,7 +558,6 @@ async fn main(spawner: Spawner) {
             batt_state,
             afr_state,
         ] = &measurements.sensors;
-        let boost = boost_state.value().unwrap_or(0.0);
         let oil_temp = oil_state.value().unwrap_or(0.0);
         let water_temp = water_state.value().unwrap_or(0.0);
         let dsg_temp = dsg_state.value().unwrap_or(0.0);
@@ -581,8 +565,6 @@ async fn main(spawner: Spawner) {
         let egt_temp = egt_state.value().unwrap_or(0.0);
         let batt_voltage = batt_state.value().unwrap_or(0.0);
         let afr = afr_state.value().unwrap_or(0.0);
-        // Presentation units never change this canonical measurement threshold.
-        let show_boost_easter_egg = boost >= BOOST_EASTER_EGG_BAR;
 
         let now_ms = Instant::now().as_millis();
 
@@ -657,165 +639,44 @@ async fn main(spawner: Spawner) {
 
         match current_page {
             Page::Dashboard => {
+                let overlay = active_popup
+                    .as_ref()
+                    .map(|popup| {
+                        match popup {
+                            Popup::Reset(_) => Overlay::Reset,
+                            Popup::Fps(_) => Overlay::Fps(fps_mode),
+                            Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
+                            Popup::Brightness(_, percent) => Overlay::Brightness((*percent).min(100) as u8),
+                        }
+                    })
+                    .or(if egt_danger_active {
+                        Some(Overlay::Danger(blink_on))
+                    } else {
+                        None
+                    });
+                let scene = DashboardScene {
+                    measurements: &measurements,
+                    now_ms,
+                    blink_on,
+                    boost_psi: show_boost_psi,
+                    fps_mode,
+                    fps_instant: current_fps,
+                    fps_average: average_fps,
+                    backgrounds: core::array::from_fn(|cell| color_transitions.get_current(cell)),
+                    overlay,
+                };
                 if render_state.check_header_dirty(render_idx, fps_mode, current_fps, average_fps) {
-                    draw_header(&mut display, fps_mode, current_fps, average_fps);
+                    scene.draw_header(&mut display);
                 }
-
-                draw_boost_cell(
-                    &mut display,
-                    0,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    boost,
-                    boost_state.maximum().unwrap_or(0.0),
-                    show_boost_psi,
-                    show_boost_easter_egg,
-                    blink_on,
-                    0,
-                );
-                render_work.checkpoint().await;
-
-                draw_afr_cell(
-                    &mut display,
-                    COL_WIDTH,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    afr,
-                    &to_display_data(afr_state, now_ms),
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::AFR)),
-                );
-                render_work.checkpoint().await;
-
-                draw_batt_cell(
-                    &mut display,
-                    COL_WIDTH * 2,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    batt_voltage,
-                    batt_state.minimum().unwrap_or(0.0),
-                    batt_state.maximum().unwrap_or(0.0),
-                    &to_display_data(batt_state, now_ms),
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::BATTERY)),
-                );
-                render_work.checkpoint().await;
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH * 3,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "COOL",
-                    water_temp,
-                    water_state.maximum().unwrap_or(0.0),
-                    &to_display_data(water_state, now_ms),
-                    temp_color_water,
-                    is_critical_water,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::COOLANT)),
-                );
-                render_work.checkpoint().await;
-
-                draw_temp_cell(
-                    &mut display,
-                    0,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "OIL",
-                    oil_temp,
-                    oil_state.maximum().unwrap_or(0.0),
-                    &to_display_data(oil_state, now_ms),
-                    temp_color_oil_dsg,
-                    is_critical_oil_dsg,
-                    Some(is_low_temp_oil),
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::OIL)),
-                );
-                render_work.checkpoint().await;
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "DSG",
-                    dsg_temp,
-                    dsg_state.maximum().unwrap_or(0.0),
-                    &to_display_data(dsg_state, now_ms),
-                    temp_color_oil_dsg,
-                    is_critical_oil_dsg,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::DSG)),
-                );
-                render_work.checkpoint().await;
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH * 2,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "IAT",
-                    iat_temp,
-                    iat_state.maximum().unwrap_or(0.0),
-                    &to_display_data(iat_state, now_ms),
-                    temp_color_iat,
-                    is_critical_iat,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::IAT)),
-                );
-                render_work.checkpoint().await;
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH * 3,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "EGT",
-                    egt_temp,
-                    egt_state.maximum().unwrap_or(0.0),
-                    &to_display_data(egt_state, now_ms),
-                    temp_color_egt,
-                    is_critical_egt,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::EGT)),
-                );
-                render_work.checkpoint().await;
-
+                for cell in 0..8 {
+                    scene.draw_cell(&mut display, cell);
+                    render_work.checkpoint().await;
+                }
                 if render_state.need_dividers() {
                     draw_dividers(&mut display);
                     render_state.mark_dividers_drawn();
                 }
-
-                if let Some(ref popup) = active_popup {
-                    match popup {
-                        Popup::Reset(_) => draw_reset_popup(&mut display),
-                        Popup::Fps(_) => draw_fps_toggle_popup(&mut display, fps_mode),
-                        Popup::BoostUnit(_) => draw_boost_unit_popup(&mut display, show_boost_psi),
-                        Popup::Brightness(_, pct) => draw_brightness_popup(&mut display, *pct),
-                    }
-                } else if egt_danger_active {
-                    draw_danger_manifold_popup(&mut display, blink_on);
-                }
+                scene.draw_overlay(&mut display);
             }
 
             Page::Debug => {
@@ -978,23 +839,5 @@ async fn main(spawner: Spawner) {
         } else {
             led_b.set_high();
         }
-    }
-}
-
-fn to_display_data(
-    state: &SensorSnapshot,
-    now_ms: u64,
-) -> SensorDisplayData<'_> {
-    let (buffer, start_idx, count, min, max) = state.get_graph_data();
-    SensorDisplayData {
-        trend: state.get_trend_at(now_ms),
-        is_new_peak: state.is_new_peak_at(now_ms),
-        graph_buffer: buffer,
-        graph_buffer_size: dashboard_pico2::sensor_state::GRAPH_HISTORY_SIZE,
-        graph_start_idx: start_idx,
-        graph_count: count,
-        graph_min: min,
-        graph_max: max,
-        average: state.get_average(),
     }
 }
