@@ -22,8 +22,8 @@ unsupported, transport-faulted or invalid channels show `--` with a status label
 they do not show zero, old graphs or critical colors. A valid zero remains distinct.
 Both retained framebuffer caches include the effective quality and source.
 
-Lambda is the canonical mixture quantity. No fuel-dependent 14.7 conversion or
-unconditional lean/optimal alarm remains. `ECU V` identifies control-module
+Lambda is the canonical mixture quantity. No unconditional lean/optimal alarm
+is inferred from a fixed AFR threshold. `ECU V` identifies control-module
 voltage, not a battery-terminal measurement. Vehicle alarm coloring is disabled
 until source semantics and policies have been qualified. The remaining Demo
 temperature/color thresholds are synthetic presentation behavior and are not
@@ -35,6 +35,33 @@ scaling and epoch. In particular, PID4F can change MAP/wideband scaling; the
 future decoder must not silently assume the default when scaling is unknown.
 No DNU-specific DID, DSG oil or physical EGT source is enabled by this change.
 See [vehicle evidence limits](canchecked-dnu-evidence.md).
+
+## Lambda and derived AFR
+
+The lambda cell includes a secondary gasoline-equivalent readout:
+`AFR = lambda * 14.7`. Its visible `EQ 14.7` footer identifies the selected
+display scale. Examples: lambda 0.800 gives 11.76, 1.000 gives 14.70, and 1.200
+gives 17.64. Calculation uses the original value before rounding lambda to
+three decimals or AFR to two. The graph, acquisition and alarm model continue
+to use lambda; this adds no second sensor or independent AFR alarm.
+
+The user's fuel is Shell V-Power Racing 100 labelled E5.
+[E5 denotes up to 5% ethanol](https://www.gov.uk/guidance/e10-petrol-explained);
+the fuel name and label do not supply the actual tank blend or its
+stoichiometric mass ratio.
+Consequently the 14.7 display scale is a convention, not a claim of exact E5 AFR.
+The [AEM X-Series manual](https://documents.aemelectronics.com/7de5aac1eb25d0b33b15314fdaed2446291df20e.pdf)
+explains fuel-dependent AFR conversion and uses 14.65 for its own gasoline
+display. That product-specific scale is not assumed to identify this fuel.
+
+Derived text and retained-frame keys share the same formatter, including AFR
+changes that do not change the rounded lambda digits. It shows `AFR --` for
+nonfinite, nonpositive or unrepresentable results outside the 0.01..999.99
+display window. This is a formatting bound, not a validated sensor range.
+The entire cell still obeys lambda's source, payload, timestamp and freshness
+guards. Stale or unqualified lambda cannot retain an apparently live AFR.
+Vehicle lambda remains unavailable until its actual source/scaling is qualified;
+Demo continues to use synthetic lambda.
 
 ## Verification and cost
 

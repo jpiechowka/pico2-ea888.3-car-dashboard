@@ -131,8 +131,10 @@ video from power-on through the first usable frame.
 | Encoder clockwise, Debug | Legacy brightness increases in 5% steps and clamps at 100% |
 | Encoder press, Debug | Existing backlight toggle and 1.5-second popup |
 | Encoder on Logs | Rotation scrolls; press has no action |
-| Visible dashboard warning | RGB LED blinks red with the completed popup phase; blue remains off in both phases |
-| Warning covered by feedback, Debug/Logs, or backlight Off | Normal blue heartbeat |
+| Visible dashboard warning | RGB LED blinks red/off with the completed popup phase; green and blue remain off in both phases |
+| No visible warning, including feedback, Debug/Logs, or backlight Off | Steady green; blue off |
+| Fresh lambda | Main lambda plus derived AFR on the labelled EQ 14.7 gasoline scale; lambda 0.800 gives AFR 11.76 |
+| Stale or unavailable lambda | No current lambda or AFR number |
 
 Press/release once at a time, then test held buttons, quick repeated presses,
 rapid rotation, page changes during popups and unit changes. Leave the graph

@@ -124,10 +124,17 @@ so Dashboard rotation has no effect until additional views are configured.
 Debug keeps its legacy 5% control scale and 1.5-second toggle popup. Button
 feedback takes priority over dashboard warnings; warnings resume blinking after
 feedback expires and stay off Debug/Logs. The RGB LED blinks red with the last
-completed warning frame, suppressing blue during both warning phases. Otherwise
-the existing blue heartbeat remains. GP20 PWM stays at 1 kHz. Brightness is
+completed warning frame, suppressing green during both warning phases. Otherwise
+the LED stays green; blue remains off. Green means no visible warning, not
+verified vehicle health. GP20 PWM stays at 1 kHz. Brightness is
 runtime-only; unit and FPS choices remain persistent. See
 [backlight and indicator controls](docs/hardware/backlight-controls.md).
+
+The lambda cell also shows derived AFR and an `EQ 14.7` scale label. This is
+gasoline-equivalent AFR (`lambda * 14.7`), not a measured fuel composition.
+Lambda remains the primary value and graph; invalid or stale lambda hides both
+readings. An E5 label does not establish an exact fuel-specific conversion. See
+[measurement source and quality](docs/vehicle/sample-quality.md#lambda-and-derived-afr).
 
 The FPS modes count successful software transfers: Instant is the recent
 one-second-or-longer window; Average is since the last page change. An unchanged

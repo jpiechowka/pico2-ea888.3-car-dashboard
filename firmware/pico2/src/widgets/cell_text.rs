@@ -28,6 +28,16 @@ pub fn boost(
 pub fn lambda(value: f32) -> CellText {
     let mut text = empty();
     let _ = write!(text[0], "{value:.3}");
+    // A display convention, not the measured stoichiometry of the fuel in the
+    // tank. E5 is an upper ethanol-content label, not an exact composition.
+    const GASOLINE_EQUIVALENT_SCALE: f32 = 14.7;
+    let afr = value * GASOLINE_EQUIVALENT_SCALE;
+    if (0.01..=999.99).contains(&afr) {
+        let _ = write!(text[1], "AFR {afr:.2}");
+    } else {
+        let _ = text[1].push_str("AFR --");
+    }
+    let _ = write!(text[2], "EQ {GASOLINE_EQUIVALENT_SCALE:.1}");
     text
 }
 pub fn battery(

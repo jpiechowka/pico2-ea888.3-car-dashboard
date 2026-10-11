@@ -47,6 +47,10 @@ where
         CENTERED,
     );
 
+    Text::with_text_style(&text[1], Point::new(center_x, center_y + 5), label_style, CENTERED)
+        .draw(display)
+        .ok();
+
     let graph_y = center_y + 14;
     let graph_h = 16u32;
     let graph_w = w - 16;
@@ -70,7 +74,7 @@ where
 
     let status_style = MonoTextStyle::new(LABEL_FONT, text_color);
     Text::with_text_style(
-        "RATIO",
+        &text[2],
         Point::new(center_x, (y + h) as i32 - 8),
         status_style,
         CENTERED,
