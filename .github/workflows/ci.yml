@@ -41,6 +41,9 @@ jobs:
       - name: Host contracts
         run: cargo test --locked
         working-directory: host
+      - name: Verify vendored HAL source
+        run: python3 scripts/check_vendor.py
+        working-directory: firmware
       - name: Full outline contracts
         run: cargo test --locked --no-default-features
         working-directory: host
@@ -66,6 +69,9 @@ jobs:
           workspaces: firmware
       - name: Clippy (pico2)
         run: cargo clippy --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf -- -D warnings
+        working-directory: firmware
+      - name: UART ownership compile guards
+        run: python3 scripts/check_uart_api.py
         working-directory: firmware
 
   build-pico2:

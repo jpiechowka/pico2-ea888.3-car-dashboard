@@ -22,6 +22,10 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 
+#[allow(dead_code)]
+#[path = "../../firmware/vendor/embassy-rp/src/uart/buffered_io.rs"]
+mod uart_io;
+
 fn framebuffer(c: &mut Criterion) {
     let mut frame = AlignedFrame::boxed();
     let mut group = c.benchmark_group("framebuffer");
@@ -350,12 +354,51 @@ fn vehicle_session(c: &mut Criterion) {
     });
 }
 
+fn uart_ring(c: &mut Criterion) {
+    use core::sync::atomic::AtomicU8;
+    use core::task::Poll;
+
+    use embassy_hal_internal::atomic_ring_buffer::RingBuffer;
+
+    let mut storage = [0; 1024];
+    let ring = RingBuffer::new();
+    // This fixture retains storage and the single reader/writer until completion.
+    unsafe { ring.init(storage.as_mut_ptr(), storage.len()) };
+    let mut reader = unsafe { ring.reader() };
+    let mut writer = unsafe { ring.writer() };
+    let errors = AtomicU8::new(0);
+    c.bench_function("uart/rx12_ring_copy", |b| {
+        b.iter(|| {
+            let input = black_box([0, 0, 7, 0xE8, 3, 0x41, 5, 135, 0, 0, 0, 0]);
+            let mut at = 0;
+            while at < input.len() {
+                uart_io::fill_rx(&mut writer, &errors, 32, || {
+                    let byte = input.get(at).copied()?;
+                    at += 1;
+                    Some(Ok(byte))
+                });
+            }
+            let mut out = [0; 12];
+            let mut copied = 0;
+            while copied < out.len() {
+                let Poll::Ready(Ok(n)) = uart_io::try_read(&mut reader, &errors, &mut out[copied..], || {
+                    black_box(());
+                }) else {
+                    panic!()
+                };
+                copied += n;
+            }
+            black_box(out);
+        });
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, uart_ring
 }
 criterion_main!(dashboard_perf);

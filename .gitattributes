@@ -44,3 +44,8 @@
 *.otf binary
 *.woff binary
 *.woff2 binary
+
+# Preserve exact upstream crate bytes for the recorded provenance hashes.
+firmware/vendor/** -text
+# Preserve the published pin table's one trailing space and archive hash.
+firmware/vendor/embassy-rp/funcsel.txt -whitespace

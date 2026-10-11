@@ -17,6 +17,7 @@ micromath = "=2.1.0"
 profont = "=0.7.0"
 
 [dev-dependencies]
+embassy-hal-internal = "=0.5.0"
 criterion = "=0.8.2"
 embassy-sync = "=0.8.0"
 critical-section = { version = "=1.2.0", features = ["std"] }

@@ -442,8 +442,6 @@ dependencies = [
 [[package]]
 name = "embassy-rp"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d98f472894c1ecffac5596c657af5305c57282d29e8746d7fec033951931bc8"
 dependencies = [
  "cfg-if",
  "chrono",
