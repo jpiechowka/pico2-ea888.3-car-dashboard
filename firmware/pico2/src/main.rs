@@ -30,6 +30,7 @@ use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
+use dashboard_pico2::input_model::{brightness_after, scroll_after};
 use dashboard_pico2::sensor_state::SensorSnapshot;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
@@ -47,7 +48,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
-use crate::peripherals::{ENCODER_BUTTON, ENCODER_DELTA, encoder_task};
+use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::render::{FpsMode, RenderState, cell_idx};
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, run_boot_sequence};
@@ -63,7 +64,6 @@ use crate::tasks::{
     FLUSH_REQUESTS,
     demo_values_task,
     display_flush_task,
-    fill_core1_stack_sentinel,
     wait_completed,
     wait_started,
 };
@@ -198,12 +198,13 @@ const fn requested_cpu_mhz() -> u32 {
 fn core1_main(
     animation_start: Instant,
     cpu_freq_hz: u32,
-    stack_base: u32,
+    stack_bottom: u32,
+    stack_top: u32,
 ) -> ! {
     cpu_profiling::init(cpu_freq_hz);
     let executor = EXECUTOR_CORE1.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(demo_values_task(animation_start, stack_base).unwrap());
+        spawner.spawn(demo_values_task(animation_start, stack_bottom, stack_top).unwrap());
     })
 }
 
@@ -272,11 +273,12 @@ async fn main(spawner: Spawner) {
 
     let animation_start = Instant::now();
     let stack = CORE1_STACK.init(embassy_rp::multicore::Stack::new());
-    let stack_base = stack as *const _ as u32;
-    // Fill stack with sentinel pattern for high-water-mark detection
-    unsafe { fill_core1_stack_sentinel(stack_base as *mut u32) };
+    let stack_bottom = stack.mem.as_ptr() as u32;
+    let stack_top = stack_bottom
+        .checked_add(stack.mem.len() as u32)
+        .expect("invalid core1 stack bounds");
     embassy_rp::multicore::spawn_core1(p.CORE1, stack, move || {
-        core1_main(animation_start, cpu_freq_hz, stack_base);
+        core1_main(animation_start, cpu_freq_hz, stack_bottom, stack_top);
     });
 
     cpu_profiling::init(cpu_freq_hz);
@@ -450,8 +452,8 @@ async fn main(spawner: Spawner) {
         }
 
         // --- Encoder events (rotation + button press) ---
-        let enc_delta = ENCODER_DELTA.swap(0, Ordering::Relaxed);
-        let enc_button = ENCODER_BUTTON.swap(false, Ordering::Relaxed);
+        let (enc_delta, enc_presses) = ENCODER_EVENTS.take();
+        let enc_button = enc_presses % 2 == 1;
 
         match current_page {
             Page::Logs => {
@@ -460,7 +462,7 @@ async fn main(spawner: Spawner) {
                 if let Ok(buf) = crate::profiling::LOG_BUFFER.try_lock() {
                     let current_count = buf.count();
                     if log_scroll_offset > 0 && current_count > prev_log_count {
-                        log_scroll_offset += (current_count - prev_log_count) as i32;
+                        log_scroll_offset = log_scroll_offset.saturating_add((current_count - prev_log_count) as i32);
                     }
                     prev_log_count = current_count;
 
@@ -471,14 +473,18 @@ async fn main(spawner: Spawner) {
 
                 // Rotation scrolls logs
                 if enc_delta != 0 {
-                    log_scroll_offset = (log_scroll_offset - enc_delta).max(0);
+                    log_scroll_offset = scroll_after(
+                        log_scroll_offset,
+                        enc_delta,
+                        crate::profiling::LOG_ENTRIES.saturating_sub(13),
+                    );
                 }
                 // Button does nothing on Logs page
             }
             _ => {
                 // Rotation adjusts brightness in 5% steps
                 if enc_delta != 0 {
-                    let new_brightness = (brightness_percent as i32 + enc_delta * 5).clamp(0, 100) as u32;
+                    let new_brightness = brightness_after(brightness_percent, enc_delta);
                     if new_brightness != brightness_percent {
                         brightness_percent = new_brightness;
                         saved_brightness = brightness_percent;
@@ -626,7 +632,8 @@ async fn main(spawner: Spawner) {
         color_transitions.update(Instant::now());
 
         let render_start = Instant::now();
-        let render_cycles_start = cpu_profiling::read();
+        let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
+        let mut render_work = cpu_profiling::RenderWork::new(cpu_freq_hz);
 
         let render_idx = render_frame.id().index();
         let token = lifecycle.begin(render_frame.id()).expect("render buffer is not free");
@@ -642,6 +649,8 @@ async fn main(spawner: Spawner) {
                 clear_frames_remaining = clear_frames_remaining.saturating_sub(1);
             }
         }
+
+        render_work.checkpoint().await;
 
         match current_page {
             Page::Dashboard => {
@@ -662,6 +671,7 @@ async fn main(spawner: Spawner) {
                     blink_on,
                     0,
                 );
+                render_work.checkpoint().await;
 
                 draw_afr_cell(
                     &mut display,
@@ -675,6 +685,7 @@ async fn main(spawner: Spawner) {
                     0,
                     Some(color_transitions.get_current(cell_idx::AFR)),
                 );
+                render_work.checkpoint().await;
 
                 draw_batt_cell(
                     &mut display,
@@ -690,6 +701,7 @@ async fn main(spawner: Spawner) {
                     0,
                     Some(color_transitions.get_current(cell_idx::BATTERY)),
                 );
+                render_work.checkpoint().await;
 
                 draw_temp_cell(
                     &mut display,
@@ -708,6 +720,7 @@ async fn main(spawner: Spawner) {
                     0,
                     Some(color_transitions.get_current(cell_idx::COOLANT)),
                 );
+                render_work.checkpoint().await;
 
                 draw_temp_cell(
                     &mut display,
@@ -726,6 +739,7 @@ async fn main(spawner: Spawner) {
                     0,
                     Some(color_transitions.get_current(cell_idx::OIL)),
                 );
+                render_work.checkpoint().await;
 
                 draw_temp_cell(
                     &mut display,
@@ -744,6 +758,7 @@ async fn main(spawner: Spawner) {
                     0,
                     Some(color_transitions.get_current(cell_idx::DSG)),
                 );
+                render_work.checkpoint().await;
 
                 draw_temp_cell(
                     &mut display,
@@ -762,6 +777,7 @@ async fn main(spawner: Spawner) {
                     0,
                     Some(color_transitions.get_current(cell_idx::IAT)),
                 );
+                render_work.checkpoint().await;
 
                 draw_temp_cell(
                     &mut display,
@@ -780,6 +796,7 @@ async fn main(spawner: Spawner) {
                     0,
                     Some(color_transitions.get_current(cell_idx::EGT)),
                 );
+                render_work.checkpoint().await;
 
                 if render_state.need_dividers() {
                     draw_dividers(&mut display);
@@ -836,11 +853,13 @@ async fn main(spawner: Spawner) {
                         requested_voltage_mv: requested_voltage_mv(),
                         vreg_setting_mv: vreg_setting_mv(),
                     },
-                );
+                    &mut render_work,
+                )
+                .await;
             }
 
             Page::Logs => {
-                draw_logs_page(&mut display, log_scroll_offset);
+                draw_logs_page(&mut display, log_scroll_offset, &mut render_work).await;
             }
         }
 
@@ -852,9 +871,8 @@ async fn main(spawner: Spawner) {
         }
 
         let render_end = Instant::now();
-        let render_cycles = cpu_profiling::elapsed(render_cycles_start, cpu_profiling::read());
-        let frame_cycles_end = cpu_profiling::read();
-        frame_cycles_used = cpu_profiling::elapsed(frame_cycles_start, frame_cycles_end);
+        let render_cycles = render_work.finish();
+        frame_cycles_used = (u64::from(input_cycles) + render_cycles).min(u32::MAX as u64) as u32;
 
         lifecycle.ready(token).expect("render buffer is not owned");
         let wait_start = Instant::now();
@@ -878,7 +896,7 @@ async fn main(spawner: Spawner) {
                 .filter_map(|s| s.sampled_at_ms())
                 .min()
                 .and_then(|ms| ms.checked_mul(1000)),
-            active_cycles: u64::from(render_cycles),
+            active_cycles: render_cycles,
         };
         let request = render_frame.submit(token, trace);
         assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");

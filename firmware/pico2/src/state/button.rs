@@ -1,41 +1,14 @@
-use embassy_time::{Duration, Instant};
+use dashboard_pico2::input_model::DebouncedButton;
+use embassy_time::Instant;
 
-pub const DEBOUNCE_MS: u64 = 50;
-
-pub struct ButtonState {
-    was_pressed: bool,
-    last_change: Option<Instant>,
-}
-
+pub struct ButtonState(DebouncedButton);
 impl ButtonState {
-    pub const fn new() -> Self {
-        Self {
-            was_pressed: false,
-            last_change: None,
-        }
-    }
+    pub const fn new() -> Self { Self(DebouncedButton::new()) }
 
     pub fn just_pressed(
         &mut self,
         is_low: bool,
     ) -> bool {
-        if is_low != self.was_pressed {
-            if let Some(last) = self.last_change
-                && last.elapsed() < Duration::from_millis(DEBOUNCE_MS)
-            {
-                return false;
-            }
-
-            self.was_pressed = is_low;
-            self.last_change = Some(Instant::now());
-
-            return is_low;
-        }
-
-        false
+        self.0.update(is_low, Instant::now().as_millis())
     }
-}
-
-impl Default for ButtonState {
-    fn default() -> Self { Self::new() }
 }

@@ -7,6 +7,7 @@ checks progress every 50 ms and feeds a two-second hardware deadline only while:
 
 - acquisition task progress has changed within 500 ms;
 - rendering progress has changed within 500 ms;
+- input task progress has changed within 500 ms, including completed reconnect failures;
 - completed transfers have changed within 250 ms while display work is pending;
 - the supervisor itself has not missed more than 250 ms or seen time regress.
 

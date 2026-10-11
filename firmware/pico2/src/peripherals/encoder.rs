@@ -4,11 +4,12 @@
 //! over I2C to read encoder rotation (delta) and button press state.
 //! Publishes events via atomics for consumption by the main render loop.
 
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
+use dashboard_pico2::input_model::{DebouncedButton, EncoderEvents, decode_encoder_delta, valid_encoder_identity};
 use embassy_rp::i2c::{Async, I2c};
 use embassy_rp::peripherals::I2C0;
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use embedded_hal_async::i2c::I2c as _;
 
 use crate::log_info;
@@ -27,6 +28,7 @@ const SEESAW_ENCODER_BASE: u8 = 0x11;
 
 // Status functions
 const SEESAW_STATUS_HW_ID: u8 = 0x01;
+const SEESAW_STATUS_VERSION: u8 = 0x02;
 
 // GPIO functions
 const SEESAW_GPIO_DIRCLR_BULK: u8 = 0x03;
@@ -47,15 +49,21 @@ const SS_SWITCH_PIN: u8 = 24;
 
 /// Accumulated encoder rotation delta since the main loop last consumed it.
 /// Positive = clockwise, negative = counter-clockwise.
-/// The main loop should `swap(0)` to read-and-reset atomically.
-pub static ENCODER_DELTA: AtomicI32 = AtomicI32::new(0);
-
-/// Set to `true` on a button press edge (high→low transition).
-/// The main loop should `swap(false)` to consume.
-pub static ENCODER_BUTTON: AtomicBool = AtomicBool::new(false);
+/// Rotation and press streams have explicit saturation/drop policies.
+pub static ENCODER_EVENTS: EncoderEvents = EncoderEvents::new();
 
 /// Indicates whether the encoder was successfully initialized.
 pub static ENCODER_CONNECTED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug)]
+enum EncoderError {
+    Bus(embassy_rp::i2c::Error),
+    Identity,
+    Length,
+}
+impl From<embassy_rp::i2c::Error> for EncoderError {
+    fn from(error: embassy_rp::i2c::Error) -> Self { Self::Bus(error) }
+}
 
 // ---------------------------------------------------------------------------
 // Low-level seesaw I2C helpers
@@ -67,13 +75,17 @@ async fn seesaw_write(
     base: u8,
     func: u8,
     data: &[u8],
-) -> Result<(), embassy_rp::i2c::Error> {
+) -> Result<(), EncoderError> {
+    if data.len() > 4 {
+        return Err(EncoderError::Length);
+    }
     let mut buf = [0u8; 6];
     buf[0] = base;
     buf[1] = func;
-    let len = 2 + data.len().min(4);
+    let len = 2 + data.len();
     buf[2..len].copy_from_slice(&data[..len - 2]);
-    i2c.write(SEESAW_ADDR, &buf[..len]).await
+    i2c.write(SEESAW_ADDR, &buf[..len]).await?;
+    Ok(())
 }
 
 /// Read from a seesaw register. The seesaw needs a short delay between
@@ -83,10 +95,14 @@ async fn seesaw_read(
     base: u8,
     func: u8,
     buf: &mut [u8],
-) -> Result<(), embassy_rp::i2c::Error> {
+) -> Result<(), EncoderError> {
+    if buf.is_empty() || buf.len() > 4 {
+        return Err(EncoderError::Length);
+    }
     i2c.write(SEESAW_ADDR, &[base, func]).await?;
     Timer::after_micros(500).await;
-    i2c.read(SEESAW_ADDR, buf).await
+    i2c.read(SEESAW_ADDR, buf).await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -95,11 +111,15 @@ async fn seesaw_read(
 
 /// Attempt to initialize the seesaw encoder: verify HW ID, configure the
 /// button GPIO with pull-up, and reset the encoder position to zero.
-async fn init_encoder(i2c: &mut I2c<'_, I2C0, Async>) -> Result<(), embassy_rp::i2c::Error> {
+async fn init_encoder(i2c: &mut I2c<'_, I2C0, Async>) -> Result<(), EncoderError> {
     // Read hardware ID to verify the seesaw is present
     let mut hw_id = [0u8; 1];
     seesaw_read(i2c, SEESAW_STATUS_BASE, SEESAW_STATUS_HW_ID, &mut hw_id).await?;
-    log_info!("Seesaw HW ID: 0x{:02x}", hw_id[0]);
+    let mut version = [0u8; 4];
+    seesaw_read(i2c, SEESAW_STATUS_BASE, SEESAW_STATUS_VERSION, &mut version).await?;
+    if !valid_encoder_identity(hw_id[0], version) {
+        return Err(EncoderError::Identity);
+    }
 
     // Configure button pin (SS_SWITCH=24) as input with pull-up
     let pin_mask = (1u32 << SS_SWITCH_PIN).to_be_bytes();
@@ -125,15 +145,15 @@ async fn init_encoder(i2c: &mut I2c<'_, I2C0, Async>) -> Result<(), embassy_rp::
 // ---------------------------------------------------------------------------
 
 /// Read the encoder rotation delta (i32 big-endian). Resets on read.
-async fn read_delta(i2c: &mut I2c<'_, I2C0, Async>) -> Result<i32, embassy_rp::i2c::Error> {
+async fn read_delta(i2c: &mut I2c<'_, I2C0, Async>) -> Result<Option<i32>, EncoderError> {
     let mut buf = [0u8; 4];
     seesaw_read(i2c, SEESAW_ENCODER_BASE, SEESAW_ENCODER_DELTA, &mut buf).await?;
-    Ok(i32::from_be_bytes(buf))
+    Ok(decode_encoder_delta(buf))
 }
 
 /// Read the button state. Returns `true` if the button is currently pressed.
 /// The button is active-low (pulled up, reads 0 when pressed).
-async fn read_button(i2c: &mut I2c<'_, I2C0, Async>) -> Result<bool, embassy_rp::i2c::Error> {
+async fn read_button(i2c: &mut I2c<'_, I2C0, Async>) -> Result<bool, EncoderError> {
     let mut buf = [0u8; 4];
     seesaw_read(i2c, SEESAW_GPIO_BASE, SEESAW_GPIO_BULK, &mut buf).await?;
     let gpio_state = u32::from_be_bytes(buf);
@@ -151,48 +171,52 @@ pub async fn encoder_task(mut i2c: I2c<'static, I2C0, Async>) {
     // Small delay to let the seesaw boot after power-up
     Timer::after_millis(50).await;
 
-    // Try to initialize; retry on failure
-    let mut init_ok = false;
-    for attempt in 0..5u8 {
-        match init_encoder(&mut i2c).await {
-            Ok(()) => {
-                log_info!("Encoder OK (attempt {})", attempt + 1);
-                init_ok = true;
-                break;
-            }
-            Err(_e) => {
-                log_info!("Enc fail (attempt {})", attempt + 1);
-                Timer::after_millis(200).await;
-            }
-        }
-    }
-
-    if !init_ok {
-        log_info!("Encoder not found, giving up");
-        return;
-    }
-
-    ENCODER_CONNECTED.store(true, Ordering::Relaxed);
-
-    let mut prev_button_pressed = false;
-
+    let mut connected = false;
+    let mut button = DebouncedButton::new();
+    let mut reported_error = false;
     loop {
-        // Read encoder delta
-        if let Ok(delta) = read_delta(&mut i2c).await
-            && delta != 0
-        {
-            ENCODER_DELTA.fetch_add(delta, Ordering::Relaxed);
-        }
-
-        // Read button state for edge detection
-        if let Ok(pressed) = read_button(&mut i2c).await {
-            // Detect press edge (was not pressed, now pressed)
-            if pressed && !prev_button_pressed {
-                ENCODER_BUTTON.store(true, Ordering::Relaxed);
+        // No cancelling timeout: HAL I2C has no transfer-drop cleanup. A stuck
+        // future retains its owner; the independent watchdog observes no input
+        // progress and resets. Ordinary NACKs retry without resetting the board.
+        let result = async {
+            if !connected {
+                init_encoder(&mut i2c).await?;
+                // Consume stale motion from before startup/reconnect.
+                let _ = read_delta(&mut i2c).await?;
+                button = DebouncedButton::new();
+                connected = true;
+                ENCODER_CONNECTED.store(true, Ordering::Relaxed);
+                reported_error = false;
+                log_info!("Encoder connected");
             }
-            prev_button_pressed = pressed;
+            let delta = read_delta(&mut i2c).await?;
+            let pressed = read_button(&mut i2c).await?;
+            if let Some(delta) = delta {
+                ENCODER_EVENTS.publish_delta(delta);
+            } else {
+                ENCODER_EVENTS.drop_event();
+            }
+            if button.update(pressed, Instant::now().as_millis()) {
+                ENCODER_EVENTS.publish_press();
+            }
+            Ok::<(), EncoderError>(())
         }
-
-        Timer::after_millis(20).await;
+        .await;
+        crate::tasks::recovery::INPUT_PROGRESS.fetch_add(1, Ordering::Relaxed);
+        if let Err(error) = result {
+            connected = false;
+            ENCODER_CONNECTED.store(false, Ordering::Relaxed);
+            ENCODER_EVENTS.clear();
+            if !reported_error {
+                match error {
+                    EncoderError::Bus(cause) => log_info!("Encoder bus: {:?}", cause),
+                    _ => log_info!("Encoder unavailable: {:?}", error),
+                }
+                reported_error = true;
+            }
+            Timer::after_millis(200).await;
+        } else {
+            Timer::after_millis(20).await;
+        }
     }
 }

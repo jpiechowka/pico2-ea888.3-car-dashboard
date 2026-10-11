@@ -1,13 +1,14 @@
 use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{AcquisitionModel, DashboardSnapshot};
+use dashboard_pico2::stack_samples::StackSamples;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::log_info;
-use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT, core1_stack_hwm_bytes};
+use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT};
 
 pub static DEMO_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1> = Watch::new();
 // Only the newest requested generation matters. The acquisition owner echoes
@@ -17,7 +18,8 @@ pub static RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64> = Signal::new(
 #[embassy_executor::task]
 pub async fn demo_values_task(
     start_time: Instant,
-    stack_base: u32,
+    stack_bottom: u32,
+    stack_top: u32,
 ) {
     let sender = DEMO_VALUES.dyn_sender();
     log_info!("Demo task started");
@@ -25,6 +27,7 @@ pub async fn demo_values_task(
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
     let mut model = AcquisitionModel::new();
+    let mut stack_samples = StackSamples::new(stack_bottom, stack_top).expect("invalid core1 stack bounds");
 
     loop {
         let work_start = crate::profiling::read();
@@ -56,18 +59,17 @@ pub async fn demo_values_task(
         total_work_cycles = total_work_cycles.wrapping_add(crate::profiling::elapsed(work_start, work_end));
 
         if last_util_calc.elapsed() >= Duration::from_secs(1) {
-            let util = crate::profiling::calc_util_percent(total_work_cycles, 1_000_000);
+            let util = crate::profiling::calc_util_percent(
+                total_work_cycles,
+                last_util_calc.elapsed().as_micros().min(u32::MAX as u64) as u32,
+            );
             CORE1_UTIL_PERCENT.store(util, Ordering::Relaxed);
 
-            // High-water-mark stack usage: scan sentinel pattern from base upward.
-            // This captures the deepest stack penetration since boot, not just current depth.
-            let hwm_bytes = unsafe { core1_stack_hwm_bytes(stack_base as *const u32) };
-            let kb = if hwm_bytes > 0 && hwm_bytes < 1024 {
-                1
-            } else {
-                hwm_bytes / 1024
-            };
-            CORE1_STACK_USED_KB.store(kb, Ordering::Relaxed);
+            // Sampled depth only; never read live stack memory or claim a HWM.
+            let observed = stack_samples
+                .observe(dashboard_pico2::memory::stack_pointer())
+                .expect("core1 SP outside its stack");
+            CORE1_STACK_USED_KB.store(observed.div_ceil(1024), Ordering::Relaxed);
 
             total_work_cycles = 0;
             last_util_calc = Instant::now();

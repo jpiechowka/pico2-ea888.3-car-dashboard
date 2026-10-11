@@ -3,6 +3,7 @@
 pub struct Progress {
     pub acquisition: u32,
     pub rendering: u32,
+    pub input: u32,
     pub completed: u32,
     pub display_pending: bool,
 }
@@ -13,6 +14,7 @@ pub enum Fault {
     Supervisor,
     Acquisition,
     Rendering,
+    Input,
     Display,
 }
 
@@ -21,6 +23,7 @@ pub struct ProgressMonitor {
     last_check_ms: u64,
     acquisition_ms: u64,
     rendering_ms: u64,
+    input_ms: u64,
     completed_ms: u64,
     fault: Option<Fault>,
 }
@@ -35,6 +38,7 @@ impl ProgressMonitor {
             last_check_ms: now_ms,
             acquisition_ms: now_ms,
             rendering_ms: now_ms,
+            input_ms: now_ms,
             completed_ms: now_ms,
             fault: None,
         }
@@ -60,6 +64,9 @@ impl ProgressMonitor {
         if current.rendering != self.previous.rendering {
             self.rendering_ms = now_ms;
         }
+        if current.input != self.previous.input {
+            self.input_ms = now_ms;
+        }
         if current.completed != self.previous.completed || (current.display_pending && !self.previous.display_pending) {
             self.completed_ms = now_ms;
         }
@@ -70,6 +77,9 @@ impl ProgressMonitor {
         }
         if now_ms - self.rendering_ms >= 500 {
             return self.fail(Fault::Rendering);
+        }
+        if now_ms - self.input_ms >= 500 {
+            return self.fail(Fault::Input);
         }
         if current.display_pending && now_ms - self.completed_ms >= 250 {
             return self.fail(Fault::Display);

@@ -101,9 +101,6 @@ impl LogBuffer {
     }
 
     #[inline]
-    pub const fn is_empty(&self) -> bool { self.count == 0 }
-
-    #[inline]
     pub const fn count(&self) -> usize { self.count }
 
     pub fn iter(&self) -> LogBufferIter<'_> {

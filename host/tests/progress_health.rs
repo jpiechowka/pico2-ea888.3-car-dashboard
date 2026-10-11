@@ -4,6 +4,7 @@ fn progress(sequence: u32) -> Progress {
     Progress {
         acquisition: sequence,
         rendering: sequence,
+        input: sequence,
         completed: sequence,
         display_pending: true,
     }
@@ -19,7 +20,7 @@ fn healthy_progress_and_counter_wrap_keep_watchdog_eligible() {
 
 #[test]
 fn stopped_acquisition_display_and_rendering_are_independent_faults() {
-    for expected in [Fault::Acquisition, Fault::Display, Fault::Rendering] {
+    for expected in [Fault::Acquisition, Fault::Display, Fault::Rendering, Fault::Input] {
         let mut monitor = ProgressMonitor::new(0, progress(0));
         let mut result = Ok(());
         for step in 1..=10 {
@@ -28,6 +29,7 @@ fn stopped_acquisition_display_and_rendering_are_independent_faults() {
                 Fault::Acquisition => current.acquisition = 0,
                 Fault::Display => current.completed = 0,
                 Fault::Rendering => current.rendering = 0,
+                Fault::Input => current.input = 0,
                 _ => unreachable!(),
             }
             result = monitor.observe(step as u64 * 50, current);

@@ -2,12 +2,19 @@ const RAM_START: u32 = 0x2000_0000;
 const RAM_SIZE: u32 = 512 * 1024;
 const RAM_END: u32 = RAM_START + RAM_SIZE;
 
-pub const FRAMEBUFFER_SIZE: usize = 320 * 240 * 2;
-pub const TOTAL_FRAMEBUFFER_SIZE: usize = FRAMEBUFFER_SIZE * 2;
+/// Observe this core's SP without reading the memory to which it points.
+pub fn stack_pointer() -> u32 {
+    let stack_ptr: u32;
+    unsafe {
+        core::arch::asm!("mov {}, sp", out(reg) stack_ptr, options(nomem, nostack, preserves_flags));
+    }
+    stack_ptr
+}
 
-/// Core 1 stack size in bytes (must match tasks::CORE1_STACK_WORDS * 4).
-/// Defined here to avoid cross-crate reference from lib → binary.
-pub const CORE1_STACK_BYTES: u32 = 8192 * 4;
+pub const FRAMEBUFFER_SIZE: usize = crate::display::framebuffer::FRAME_BYTES;
+
+/// Single definition used by the core 1 stack allocation and diagnostic bounds.
+pub const CORE1_STACK_BYTES: u32 = 32 * 1024;
 
 #[derive(Clone, Copy, Default)]
 pub struct MemoryStats {
@@ -19,26 +26,28 @@ pub struct MemoryStats {
 
 impl MemoryStats {
     pub fn collect() -> Self {
-        let stack_ptr: u32;
-        unsafe {
-            core::arch::asm!("mov {}, sp", out(reg) stack_ptr);
+        let stack_ptr = stack_pointer();
+        // memory.x explicitly anchors this to aligned __euninit. The runtime's
+        // default location counter is moved into FLASH by our boot-info section.
+        unsafe extern "C" {
+            static __sheap: u8;
         }
+        let static_end = core::ptr::addr_of!(__sheap) as u32;
+        assert!((RAM_START..=RAM_END).contains(&static_end), "invalid static RAM end");
 
-        let stack_used = if (RAM_START..=RAM_END).contains(&stack_ptr) {
+        let stack_used = if (static_end..=RAM_END).contains(&stack_ptr) {
             RAM_END.saturating_sub(stack_ptr)
         } else {
             0
         };
 
-        // Static SRAM includes: 2x framebuffers + misc statics (~32KB)
-        // + Core 1 stack (32KB) + log buffer 128 entries (~6KB)
-        let static_estimate = TOTAL_FRAMEBUFFER_SIZE as u32 + 38 * 1024 + CORE1_STACK_BYTES;
-        let stack_total = RAM_SIZE.saturating_sub(static_estimate);
+        let static_ram = static_end - RAM_START;
+        let stack_total = RAM_SIZE - static_ram;
 
         Self {
             stack_used,
             stack_total,
-            static_ram: static_estimate,
+            static_ram,
             ram_total: RAM_SIZE,
         }
     }

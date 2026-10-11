@@ -10,12 +10,14 @@ use crate::drivers::watchdog::RecoveryWatchdog;
 // buffer-ownership protocol. Wrap is allowed; the monitor tests for change.
 pub static ACQUISITION_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static RENDER_PROGRESS: AtomicU32 = AtomicU32::new(0);
+pub static INPUT_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static DISPLAY_PENDING: AtomicBool = AtomicBool::new(true);
 
 fn progress() -> Progress {
     Progress {
         acquisition: ACQUISITION_PROGRESS.load(Ordering::Relaxed),
         rendering: RENDER_PROGRESS.load(Ordering::Relaxed),
+        input: INPUT_PROGRESS.load(Ordering::Relaxed),
         completed: COMPLETED_FRAMES.load(Ordering::Relaxed),
         display_pending: DISPLAY_PENDING.load(Ordering::Relaxed),
     }

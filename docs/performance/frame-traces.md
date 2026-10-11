@@ -8,7 +8,7 @@ fields and the inverse-loop-time "Max FPS" estimate were removed.
 | Field | Meaning |
 | --- | --- |
 | Render start/end | Software wall-clock interval for raster work |
-| Active cycles | DWT delta around raster work, including interrupts; not calibrated target cycles yet |
+| Active cycles | Sum of DWT deltas around raster segments, including interrupts and excluding cooperative suspension; not calibrated target cycles yet |
 | Blocked time | Time acquiring the next buffer after rendering, including call overhead |
 | Queued time | Timestamp immediately before submitting the buffer lease |
 | Started time | Timestamp after the first poll of the payload DMA future |
