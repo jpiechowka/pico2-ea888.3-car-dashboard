@@ -62,6 +62,16 @@ machine-code verifier or evidence of successful physical erase/program.
 
 ## Remaining physical checks
 
+On 11 October the updated `nightly-2026-10-11` compiler
+(`6f5da406b56c2db6607202b63daee73aa8c61297`, LLVM 23.1.3) reproduced every
+reviewed SRAM body byte, address and size. The frozen Longan+TE ELF SHA256 is
+`9d48712e80c49958060dd9c6662aa66ac5242f576c9459e889ed1b15de2fbd1f`.
+Independent parsing also confirmed unchanged Reset, pre-init, vector table and
+14,264 initialized data bytes. The source LMA and Reset's matching source
+literal both moved by eight bytes to `1003c960`; the startup copy remains
+correctly mapped. All 17 corrupted-artifact checks pass. Static RAM remains
+383,656 bytes, with 140,632 bytes core0 headroom. These are linked-image checks.
+
 Measure real JEDEC, ROM/board revision, pin voltage and QSPI state before/after
 probe/save. Exercise cold-cache dual-core rollover, UART overflow/rebootstrap,
 pending input/display work, power loss, unknown ID and stalled QMI/ROM recovery.
