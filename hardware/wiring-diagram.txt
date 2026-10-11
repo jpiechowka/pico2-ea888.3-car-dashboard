@@ -63,8 +63,9 @@ CAN AND UART NETS
 
 OBD-II pin 6 -> Longan CAN-H; pin 14 -> Longan CAN-L. Verify the connector
 cable and module labels by continuity before connection. The module is a
-UART-to-raw-CAN bridge, not an ELM327 interface. Firmware has no vehicle
-acquisition path yet; the intended GP0/GP1 wiring is reserved, not tested.
+UART-to-raw-CAN bridge, not an ELM327 interface. The optional longan-rx12
+profile instantiates UART0 on GP0/GP1. Its adapter/vehicle contract remains
+unqualified: no diagnostic CAN requests are enabled. Wiring is untested.
 
 Longan UART TX -> appropriate logic-level interface -> Pico GP1 (UART0 RX).
 Pico GP0 (UART0 TX) -> appropriate logic-level interface -> Longan UART RX.
@@ -79,8 +80,9 @@ Longan version / VCC / UART condition:
 
 Measure TX idle/high and low levels at the chosen VCC and setting before
 connecting either UART line. Pico GPIO is 3.3 V logic. Longan documents
-9600 baud by default and up to 115200; negotiate and verify any baud change
-before firmware depends on it.
+9600 baud by default and up to 115200. The implemented optional profile
+requires an externally preprovisioned, verified 115200 8N1 adapter. Firmware
+does not scan baud rates, negotiate a change, or write adapter EEPROM.
 
 The old 1030002 kit page describes a 120 ohm CAN resistor connected by
 default; the current 1030001 module page describes soldering a pad to add
@@ -97,12 +99,13 @@ The table is for the non-wireless Pico 2 with PIM715 Display Pack 2.8.
 by this firmware or an active named pack function with the optional PIM715
 SP/CE expansion unpopulated. Access and shared connector traces in an
 assembled stack still need inspection. PIM715 RGB traces can be cut, but
-are assumed intact here. The TE pin is reserved for a later experiment, not
-sampled by current firmware.
+are assumed intact here. The optional te-trace profile enables TEON 35h/00h
+and records software-observed rising edges on GP21. Physical timing remains
+unverified; TE is not a panel-presence or watchdog-health assertion.
 
 GPIO       Allocation or physical condition                  Category
 ---------- ------------------------------------------------- ----------------
-GP0-GP1    Proposed UART0 to Longan serial bridge           Reserved, header
+GP0-GP1    Optional UART0 to Longan serial bridge           Optional, header
 GP2-GP3    No named connection                               Header spare
 GP4-GP5    PIM715 Qw/ST I2C0 to Adafruit 5880 encoder       Pack connection
 GP6-GP11   No named PIM715 2.8 function or firmware use     Header spare
@@ -112,7 +115,7 @@ GP17       PIM715 LCD chip select                           Pack connection
 GP18       PIM715 LCD SPI0 clock                            Pack connection
 GP19       PIM715 LCD SPI0 transmit                         Pack connection
 GP20       PIM715 AP2502 backlight enable PWM               Pack connection
-GP21       PIM715 LCD tearing-effect output                 Reserved for TE
+GP21       PIM715 LCD tearing-effect output                 Optional TE input
 GP22       No named connection                               Header spare
 GP23       On-board SMPS power-save control                 Not on header
 GP24       On-board VBUS sense                               Not on header

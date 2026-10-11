@@ -17,8 +17,10 @@ the display does not report completion before this acknowledgement. Replayed
 reset generations do nothing.
 
 Peak and trend presentation expires using the display's current monotonic time,
-even without another producer snapshot. Sample validity/source/disconnect status
-is a separate acquisition stage; the current producer is still synthetic Demo.
+even without another producer snapshot. The integrated model now carries typed
+source/quality/disconnect state; Demo is explicit and the optional Longan runtime
+remains unqualified. See [sample quality](../vehicle/sample-quality.md) and
+[transport qualification](../vehicle/diagnostic-transport.md).
 
 ## Source checks
 
@@ -39,7 +41,7 @@ is a separate acquisition stage; the current producer is still synthetic Demo.
    requires measurement. Watch's own u64 revision has no wrap recovery; at
    100 Hz its exhaustion is far beyond a vehicle service life.
 
-## Verification and baseline
+## Historical stage 04 verification and baseline
 
 Eight host tests cover between-frame peaks, 20/40/60 Hz and irregular readers,
 130 seconds of history including ring wrap, malformed/late/retried channels,
@@ -61,7 +63,8 @@ New Criterion fixtures are saved in `host/baselines/stage04_acquisition/`:
 
 These establish a new baseline for the new contract. They are not a speedup
 comparison with the old raw-value handoff, and are not RP2350 cycle counts.
-Run from `host`: `cargo bench --locked --bench dashboard_perf -- acquisition
---save-baseline stage04_acquisition`. Host/toolchain/fixture hash and raw samples
-are stored with the baseline. Restore with the existing baseline restore script
-before later comparisons.
+The historical baseline retains its original host/toolchain/fixture and raw
+samples. For a current capture, use a new name from `host`:
+`python scripts/capture_benchmark.py acquisition-new-run --runner-id ea888-workstation-01 --filter acquisition`.
+Use [the comparison policy](benchmark-policy.md) for matched pairs; never relabel
+current expanded workloads as the old stage04 capture.

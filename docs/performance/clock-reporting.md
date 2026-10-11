@@ -17,6 +17,7 @@ Reviewed sources:
 - [Locked Embassy SPI implementation](https://github.com/embassy-rs/embassy/blob/84444a19eb57d978e3c09fcdc8e60cdd7278eb03/embassy-rp/src/spi.rs), `calc_prescs()` uses `clk_peri_freq()`.
 - Locked `rp-pac 7.0.0` RP235x POWMAN accessor: VREG offset `0x0c`.
 
-The follow-up build and strict firmware Clippy pass. Completed-transfer FPS,
-DMA-start/finish trace, physical clock frequency, voltage and overclock
-stability still need their separate pipeline and hardware acceptance checks.
+The software pipeline now counts completed transfers and exports coherent
+[frame/input windows](telemetry-windows.md). [Target CPU benchmarks](target-benchmarks.md)
+record configured clock metadata. Physical clock frequency, voltage, panel FPS
+and overclock stability still require device acceptance checks.

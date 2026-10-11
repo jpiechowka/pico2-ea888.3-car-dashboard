@@ -1,14 +1,17 @@
-# Timestamped sensor history, stage 03
+# Timestamped sensor history
 
-The production `SensorState` consumes a measurement only when its producer sends
-a new snapshot. It rejects nonfinite values, values outside the dashboard's
-one-million-unit guard, and timestamps that do not advance. Rendering calls
-`tick()` to expire a peak indication; it never inserts a sample. The demo
+Core1 feeds `SensorState` for each accepted measurement before publishing a
+coalescible display snapshot. Typed samples also check source, sequence and
+channel quality. See [acquisition ownership](acquisition-handoff.md) and
+[sample quality](../vehicle/sample-quality.md). It rejects nonfinite values, values outside the dashboard's
+one-million-unit guard, and timestamps that do not advance. Rendering evaluates
+immutable `SensorSnapshot::is_new_peak_at` and `get_trend_at` against current time;
+it never inserts a sample or mutates the producer history. The demo
 producer attaches `embassy_time::Instant::now().as_millis()` at capture. In the
 locked Embassy Time 0.5.1 source, `Instant` is MCU ticks since startup and
 `as_millis()` converts that common clock to `u64` milliseconds
-(`instant.rs:8-23,112-115`). Millisecond truncation means distinct events in
-one millisecond must eventually carry a separate sequence number if needed.
+(`instant.rs:8-23,112-115`). Typed samples carry an independent sequence; per-channel time guards still
+reject non-advancing millisecond timestamps.
 
 | Statistic | Provisional wall-clock rule | Value policy |
 | --- | --- | --- |
@@ -25,21 +28,21 @@ extrema from it, empties the average, graph and trend, and clears the peak
 highlight; the next **new** sample
 starts each window. A long gap inserts at most one point when measurements
 resume. The graph's horizontal spacing therefore represents accepted points,
-not elapsed time across a gap. Source freshness and a time-aware panel view
-remain stage 06/07 work. The temperature trend uses the existing 0.5 C
-threshold; EGT uses 5 C, battery 0.05 V and AFR 0.1. These are display-arrow
+not elapsed time across a gap. Current source freshness suppresses stale values
+and alerts. The temperature trend uses the existing 0.5 C threshold; EGT uses
+5 C, battery 0.05 V and lambda 0.1. These are display-arrow
 sensitivity settings, not validated vehicle alarm thresholds.
 
 Nine host tests cover 20/40/60 Hz and irregular render ticks, duplicate and
 regressed timestamps, nonfinite samples, an empty interval, graph-ring wrap and
 negative-minimum eviction, average-ring eviction, peak expiry, late samples,
 reset and source-specific
-trend sensitivity. They are model tests. The current Embassy `Watch` keeps the
-latest demo value, so a slow render loop can still skip producer samples.
-Stage 04's bounded acquisition handoff must close that gap before claiming
-lossless peaks on hardware.
+trend sensitivity. They are model tests from the stage 03 checkpoint. The
+subsequent acquisition-owner tests cover real Watch coalescing without losing
+between-frame statistics. Physical acquisition and interrupt behavior remain
+unverified.
 
-## Performance record
+## Historical stage 03 performance record
 
 On the baseline Windows i9-13900HX host and pinned nightly, Criterion's old
 `sensor_state/next_render_update` measured 5.04 ns median, but its operation
@@ -61,11 +64,10 @@ current-value and extrema storage. Criterion reported a 6.4% time increase
 (4.2%-8.9% interval). The added state is retained for correctness. Raw runs are
 in `host/baselines/review_extrema_before` and `review_extrema_complete`.
 
-To repeat the new case:
+To capture the current operation with current source/compiler evidence:
 
 ```text
 cd host
 cargo test --locked
-python scripts/restore_baseline.py stage03_timestamp
-cargo bench --locked --bench dashboard_perf -- sensor_state --baseline stage03_timestamp --noplot
+python scripts/capture_benchmark.py history-new-run --runner-id ea888-workstation-01 --filter sensor_state
 ```

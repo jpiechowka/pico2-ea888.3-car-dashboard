@@ -60,10 +60,10 @@ the extra cost is retained for correctness. Raw runs are committed under
 host cost, with no measured implication for physical FPS. The 27 UI tests
 and stock firmware release build pass at this checkpoint.
 
-Reproduce from `host/` after restoring the committed baseline:
+The historical renderer comparison requires the exact recorded source and
+compiler on both sides. For a new current-code run from `host/`:
 
 ```text
-python scripts/restore_baseline.py ae94c721
 cargo test --locked --test ui_contract
-cargo bench --locked --bench dashboard_perf -- '^(framebuffer|clipped_contiguous|boost_cell|mini_graph)/' --baseline ae94c721 --noplot
+python scripts/capture_benchmark.py ui-new-run --runner-id ea888-workstation-01 --filter '^(framebuffer|clipped_contiguous|boost_cell|mini_graph)/'
 ```

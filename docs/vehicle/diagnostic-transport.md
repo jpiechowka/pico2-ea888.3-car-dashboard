@@ -1,8 +1,10 @@
 # Diagnostic transport contracts
 
-This stage adds shared pure modules exercised on the host and compiled for
-RP2350. They are not yet connected to UART. No captured DNUC ECU reply or physical
-CAN behavior has been validated.
+Shared pure modules are exercised on the host and integrated into the optional
+core1 UART runtime. The deployment contract remains UNQUALIFIED and sends no
+diagnostic CAN requests. No captured DNUC ECU reply or physical CAN behavior has
+been validated. Sections below retain historical test, memory and performance
+checkpoints; the final section describes the integrated runtime.
 
 ## Wire and ownership boundaries
 
@@ -22,7 +24,7 @@ insertion/deletion/substitution and whole-record loss remain protocol limitation
 
 The caller must qualify the exact bridge firmware's setting/data-mode banners,
 consume the entire `ENTER DATA MODE` transition and retain following bytes from
-that RX chunk. The future hardware owner must separately qualify standard DLC8
+that RX chunk. The deployment owner must separately qualify standard DLC8
 traffic or retain values as unavailable. A configuration ACK cannot prove filter
 register readback; this firmware exposes no such readback command.
 
@@ -96,8 +98,8 @@ request; this is not a full ISO profile conformance claim.
 
 125 runtime tests plus two compile-fail ownership checks pass in both outline
 modes, with strict host/firmware lints and the stock target release/ELF gate.
-The pure modules are not yet instantiated on the target, so linked static RAM
-remains 374352 B with 149936 B headroom. The 30-sample host baseline in
+At that pure-core checkpoint these modules were not yet instantiated on the
+target, so linked static RAM remained 374352 B with 149936 B headroom. The 30-sample host baseline in
 `host/baselines/stage06_protocol` preserves source hashes and raw measurements:
 
 | Fixture | Local median |
@@ -134,7 +136,7 @@ total/N_Cr deadlines, epoch/clock failures, and reuse of old request/FC tokens
 within and across request generations. Nine client tests bring the suite to
 134 runtime tests plus two compile-fail checks in both outline modes. Strict
 lints and the stock target release/ELF gate pass; target RAM is unchanged because
-the client is not instantiated until acquisition integration.
+that checkpoint preceded acquisition integration.
 
 `host/baselines/stage06_client` preserves the two new 30-sample CPU fixtures,
 source hashes and command: single-frame transaction plus OBD decode approximately
@@ -175,7 +177,7 @@ epoch, stale TX completion and clock failure. The clock-failure fixture first
 reproduced stale valid status, then passed after centralized fatal invalidation.
 142 runtime tests plus two compile-fail checks pass in both outline modes, with
 strict lints and the stock target release/ELF gate. Independent review identified
-no remaining actionable defect in this slice. UART integration is still separate.
+no remaining actionable defect in this slice. UART integration followed below.
 
 The new `host/baselines/stage06_session` fixture includes a complete coolant
 transaction, typed statistics and a snapshot, after capability discovery outside
@@ -213,15 +215,15 @@ and [exact public firmware](https://github.com/Longan-Labs/Serial_CAN_Bus/blob/c
 The runtime recovery handshake does not write baud, CAN rate or filters to
 EEPROM. Those must be provisioned and physically verified separately; repeated
 recovery must not wear EEPROM or assume a successful AT response proves hardware
-filter configuration. Default baud is 9600, while the planned explicit deployment
+filter configuration. Default baud is 9600, while the implemented explicit deployment
 profile uses preprovisioned 115200. No automatic baud scan is implied.
 
 ## Shared vehicle service
 
 `Vehicle<Port>` owns bootstrap, RX12 phase, the write pump, transaction scheduling
 and acquisition history. One pass reads at most 32 bytes and performs at most
-four TX phase transitions. The real hardware wrapper must provide bounded,
-cancel-safe buffered operations. Software flush and observed UART BUSY clear
+four TX phase transitions. The reviewed hardware wrapper provides bounded,
+cancel-safe buffered operations for this exact vendored HAL. Software flush and observed UART BUSY clear
 precede transaction acknowledgement; early replies remain queued until then.
 
 Default `Profile::UNQUALIFIED` allows only the handshake and a 16-record raw
@@ -274,8 +276,8 @@ generation. Service watchdog progress advances even when the ECU is asleep,
 the adapter is disconnected or the port has been quarantined.
 Quarantine deliberately requires a user/power reset; it does not trip the
 task-progress watchdog or repeatedly emit recovery commands. That watchdog is
-reserved for stalled essential execution. Detailed link-state presentation is
-added with the following UI/recovery stage.
+reserved for stalled essential execution. The UI shows current link-state
+quality and recovery status; see [startup status](startup-status.md).
 
 Each IO method polls exactly one buffered HAL future, then drops it. The exact
 vendored implementation copies no bytes on Pending and retains no DMA/user
@@ -288,8 +290,9 @@ The [async IO 0.7.0 release notes](https://github.com/rust-embedded/embedded-hal
 locked trait source and actual HAL read/write/flush paths were checked. Adding
 the direct optional trait dependency changes no resolved crate version.
 
-Local strict Clippy passes stock, Demo and Longan configurations, and combined
-Demo/Longan selection is rejected. Optimized linked static RAM/headroom is
+At the historical UART-integration checkpoint, strict Clippy passed stock,
+Demo and Longan configurations, and combined Demo/Longan was rejected. Optimized
+linked static RAM/headroom at that checkpoint was
 374392/149896 bytes stock, 377048/147240 bytes Longan, and 383832/140456 bytes
 Longan with both traces at 300 MHz. Host replays cover the shared owner; target
 builds only check compilation/layout. Physical IRQ masking, FIFO overrun,

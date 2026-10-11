@@ -1,8 +1,12 @@
 # Dependency version constraints, 11 October 2026
 
-Inventory at `94f4d9a`; later host channel-test dependencies add no older versions.
+Inventory first established at `94f4d9a`; later direct/test edges add no older
+resolved versions. The final lock hashes and complete direct inventory are in
+[the dependency review](upgrade-2026-10-11.md).
 
-Live official crates.io metadata reviewed on 2026-10-11. Requirements come from exact locked parent manifests via Cargo metadata, cached crate Cargo.toml, or the exact release dependencies API. Parent dev-only requirements are excluded. Lockfile presence does not imply RP2350 runtime use; target and dependency kind are retained in the JSON.
+Live official crates.io metadata reviewed on 2026-10-11. Requirements come from exact locked parent manifests via Cargo metadata, cached crate Cargo.toml, or the exact release dependencies API. Parent dev-only requirements are excluded. Lockfile presence does not imply RP2350 runtime use; several constraints belong
+to host/build-only code. The table retains the exact parent requirements;
+selected target/kind must be checked with Cargo metadata/tree when changing an edge.
 
 | Graph | Package | Locked | Latest stable | Locked parent constraints |
 | --- | --- | --- | --- | --- |

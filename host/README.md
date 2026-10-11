@@ -17,14 +17,13 @@ python scripts/capture_benchmark.py candidate-name --runner-id ea888-workstation
 
 The capture runner freezes source and compiler inputs before execution and rejects source changes during the run. Do not run builds/tests or other benchmarks concurrently with timing collection. Raw samples and the source archive are saved under `baselines/`.
 
-The frame-based history operation was replaced by a timestamped measurement
-operation. Compare the four UI fixtures and the sensor fixture separately:
+Historical captures include intentionally incorrect renderers and earlier
+workloads/toolchains. Use their raw values to inspect the cost of correctness;
+do not infer an isolated optimization from different semantics. To inspect an
+old Criterion baseline without overwriting its committed evidence:
 
 ```text
 python scripts/restore_baseline.py ae94c721
-cargo bench --locked --bench dashboard_perf -- '^(framebuffer|clipped_contiguous|boost_cell|mini_graph)/' --baseline ae94c721 --noplot
-python scripts/restore_baseline.py stage03_timestamp
-cargo bench --locked --bench dashboard_perf -- sensor_state --baseline stage03_timestamp --noplot
 ```
 
 This restores committed measurements into Criterion's ignored `target/` tree.
@@ -35,3 +34,9 @@ RP2350 frame rate, DMA overlap, display scan rate, input latency or ECU
 compatibility.
 
 See [capture and comparison policy](../docs/performance/benchmark-policy.md) for controlled timing gates and historical capture limits.
+
+The current optional on-device experiment uses the same finite production
+kernels as `target_kernel/` in the Rust benchmark. See
+[target benchmark constraints and capture](../docs/performance/target-benchmarks.md).
+The long-duration RTT frame/diagnostic parser and its actual Rust producer
+fixture are documented in [telemetry windows](../docs/performance/telemetry-windows.md).

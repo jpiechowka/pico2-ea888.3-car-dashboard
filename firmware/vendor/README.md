@@ -84,12 +84,15 @@ unchanged `src/lib.rs`; the crate registry normally caps dependency diagnostics.
 The unrelated `proc-macro-error2 2.0.1` future incompatibility remains documented
 in the dependency review. Neither warning is hidden by modifying upstream files.
 
-Local verification at this stage: 150 host runtime tests and two compile-fail
+Historical UART-patch checkpoint before runtime integration: 150 host runtime
+tests and two compile-fail
 checks pass in both outline modes; all seven UART target API cases pass; strict
 application/host Clippy and formatting pass. Stock and serial/full-frame builds
 use 374,352 bytes of static RAM with 149,936 bytes of core-0 headroom. Demo with
 300 MHz and both traces uses 381,136 bytes with 143,152 bytes of headroom. These
-builds do not yet instantiate the acquisition UART; the target API control does.
+builds did not yet instantiate the acquisition UART; the target API control did.
+The current optional longan-rx12 runtime now constructs it on core1; see
+[the integrated owner](../../docs/vehicle/diagnostic-transport.md#core-1-runtime-and-qualification-gate).
 
 `host/baselines/stage06_uart` preserves the first Rust CPU fixture for the shared
 RX ring path, before runtime integration: one RX12 record, 1024-byte ring,

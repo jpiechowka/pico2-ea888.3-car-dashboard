@@ -45,14 +45,19 @@ the short ring lock. An absent TE signal does not hold a framebuffer, stop DMA,
 or affect watchdog eligibility. Duplicate/regressed observations are rejected
 and counted; old entries are overwritten with a saturating counter.
 
-Three host tests cover startup, absence, long gaps, regressed/equal/extreme
+At the initial TE checkpoint, three host tests covered startup, absence, long gaps, regressed/equal/extreme
 timestamps, wrap, invalid indices, bounded storage and overwrite accounting.
 They validate the recorder only. Local target build and RAM checks validate
 integration; they cannot validate the physical signal or interrupt latency.
-Stock and 300 MHz releases with both trace features pass the ELF gate at
+At that historical checkpoint, stock and 300 MHz releases with both trace
+features passed the ELF gate at
 380192 static RAM bytes and 144096 bytes core-0 headroom. Strict feature-enabled
 firmware Clippy and host Clippy pass. An independent source review found no
 actionable defect in the edge task, initialization or bounded recorder.
+
+Flash maintenance now explicitly marks a gap, skips the first post-pause
+observation and requires two fresh edges before another valid interval. Host
+regressions cover this boundary. No missing physical edge count is inferred.
 
 On hardware, capture GP21, CS, DC and SCK together at stock clocks. Compare
 physical edge intervals with software observations and frame traces; record

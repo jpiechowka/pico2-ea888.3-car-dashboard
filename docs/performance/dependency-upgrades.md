@@ -1,10 +1,11 @@
 # Dependency upgrade performance log
 
 The immutable `ae94c721` Criterion samples are in `host/baselines/ae94c721/`.
-Candidate runs use the same fixture and pinned `nightly-2026-10-10` on the
-same Windows i9-13900HX host. They are host rendering costs, not device FPS.
-Correctness takes precedence: the six known UI contract failures remain until
-the corresponding source fixes.
+The historical dependency-only candidate runs below used the same fixture and
+then-pinned `nightly-2026-10-10` on the same Windows i9-13900HX host. They are host
+rendering costs, not device FPS. Six known UI failures still existed at that
+checkpoint; subsequent correctness commits fixed them. Current builds use the
+newer dated nightly recorded in [the dependency review](../dependencies/upgrade-2026-10-11.md).
 
 ## `heapless` 0.9.2 to 0.9.3
 

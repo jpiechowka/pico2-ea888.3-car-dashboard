@@ -7,7 +7,12 @@ raw sample/estimate JSON are in `host/baselines/ae94c721/`.
 
 ## Reproduction
 
-Use the pinned `nightly-2026-10-10` (`rustc 1.101.0-nightly`, commit
+These commands describe the original baseline capture at `a8b366b`, whose
+production source was still `ae94c721`. Reproduction requires that exact source
+and an empty output directory; do not overwrite or reuse this name on current
+code. Current captures follow [the benchmark policy](benchmark-policy.md).
+
+Use the then-pinned `nightly-2026-10-10` (`rustc 1.101.0-nightly`, commit
 `32dba69d6`) on `x86_64-pc-windows-msvc`. This run used Windows
 `10.0.22631.0`, a 13th Gen Intel Core i9-13900HX, Criterion `0.8.2`, 30
 samples, one second of warmup and two seconds of measurement per case.

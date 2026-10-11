@@ -9,7 +9,8 @@ awaiting. Core 1 never has to wait for a screen raster operation while logging.
 first poll, then Ready on its second. The exact locked source was checked;
 this is an executor checkpoint, with no minimum sleep or real-time deadline.
 Device traces are needed to establish the longest uninterrupted drawing slice
-and input-to-visible latency. The later no-damage path must use a timer wait.
+and input-to-visible latency. The integrated no-damage path waits on a 16 ms
+timer so an unchanged scene yields execution without a busy loop.
 
 `CycleSegments` pauses DWT accounting before yielding and resumes afterward.
 This excludes other tasks' work while suspended, but includes interrupt work
@@ -25,7 +26,7 @@ accumulation, reconnects and debounce are covered in
 the new linked-image RAM acceptance gate are described in
 [memory layout](memory-layout.md).
 
-Verification for this slice: 86 runtime host tests plus two ownership
+Historical verification for this slice: 86 runtime host tests plus two ownership
 compile-fail tests pass in default and full-outline modes, with strict host
 and firmware Clippy, seven benchmark smoke fixtures, and stock/trace/300 MHz
 builds. These checks establish source and host contracts only. They do not

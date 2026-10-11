@@ -23,7 +23,7 @@ longan-rx12 = ["dep:embedded-io-async"]
 cpu250-spi62-1v10 = []  # 250 MHz @ 1.10V - 62.5 MHz SPI (ST7789 datasheet max)
 cpu280-spi70-1v30 = []  # 280 MHz @ 1.30V - 70 MHz SPI (280/4, beyond datasheet)
 cpu290-spi72-1v30 = []  # 290 MHz @ 1.30V - 72.5 MHz SPI (290/4)
-cpu300-spi75-1v30 = []  # 300 MHz @ 1.30V - 75 MHz SPI (300/4, embassy-rp max)
+cpu300-spi75-1v30 = []  # 300 MHz @ 1.30V - 75 MHz SPI (300/4, unverified panel timing)
 simple-outline = []
 # Keep ownership checks while disabling render/transfer overlap for diagnostics.
 serial-display = []
