@@ -1,0 +1,655 @@
+{
+  "schema": 1,
+  "scope": "Final follow-up software gates after optional performance refactor was reverted; no hardware execution",
+  "head": "95b5a3896ece77c4cabd97e8c1f7dc0ed2b2748c",
+  "completed_utc": "2026-10-11T11:22:43.4044103Z",
+  "commands": [
+    {
+      "name": "host-default",
+      "cwd": "host",
+      "command": [
+        "cargo",
+        "test",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/host-default.log",
+      "log_sha256": "392096129b7d89aa47b9770539e001623a0fb3a987b7423e7212742d55c6769c",
+      "release_strip": null
+    },
+    {
+      "name": "host-full-outline",
+      "cwd": "host",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--no-default-features"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/host-full-outline.log",
+      "log_sha256": "f5967bc3211869805d12533a3521584d386094e02e8d2794f311151e5d01025d",
+      "release_strip": null
+    },
+    {
+      "name": "host-clippy",
+      "cwd": "host",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/host-clippy.log",
+      "log_sha256": "2c593db90a5019cc7f97ebe5f57189210ee0826e7cd1a072d42fcc3aa0f06c42",
+      "release_strip": null
+    },
+    {
+      "name": "host-clippy-full-outline",
+      "cwd": "host",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--all-targets",
+        "--no-default-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/host-clippy-full-outline.log",
+      "log_sha256": "0c026383bfabaa25954bac275152b6d506ae351e406794d0ea82dd374f0a98be",
+      "release_strip": null
+    },
+    {
+      "name": "host-fmt",
+      "cwd": "host",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/host-fmt.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "release_strip": null
+    },
+    {
+      "name": "firmware-fmt",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/firmware-fmt.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "release_strip": null
+    },
+    {
+      "name": "bench-smoke-default",
+      "cwd": "host",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--bench",
+        "dashboard_perf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/bench-smoke-default.log",
+      "log_sha256": "21a0cc17abe259fe24175260600fe160a0f50a0bca0bab1e9a0b232e08205108",
+      "release_strip": null
+    },
+    {
+      "name": "bench-smoke-full-outline",
+      "cwd": "host",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--bench",
+        "dashboard_perf",
+        "--no-default-features"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/bench-smoke-full-outline.log",
+      "log_sha256": "c5e0ce81d426613d21b97dc85a71bb0d95fe51124eb97a5e2939ec418260632a",
+      "release_strip": null
+    },
+    {
+      "name": "benchmark-comparison",
+      "cwd": "host",
+      "command": [
+        "python",
+        "scripts/test_benchmark_comparison.py"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/benchmark-comparison.log",
+      "log_sha256": "cdffac46edb794ee059f4e3208cf7ff12621dca95402cc8bcd7d0aeb827e8e77",
+      "release_strip": null
+    },
+    {
+      "name": "telemetry-export",
+      "cwd": "host",
+      "command": [
+        "python",
+        "scripts/test_telemetry_export.py"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/telemetry-export.log",
+      "log_sha256": "23a8658ade5372a13065870d6d416d65696bc171b37edaf854576e0b4dfa45a4",
+      "release_strip": null
+    },
+    {
+      "name": "vendor-source",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/check_vendor.py"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/vendor-source.log",
+      "log_sha256": "0df591ae4c41e4511b4b77568e168c8460e5e51efa0aba45b3af23d6cd3fd7e9",
+      "release_strip": null
+    },
+    {
+      "name": "target-capture",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/test_target_capture.py"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/target-capture.log",
+      "log_sha256": "c01dded17023d8c0a3c5c665fff0fa52546718afaf84604f0d3a587bbd372475",
+      "release_strip": null
+    },
+    {
+      "name": "validation-policy-optimized",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "-O",
+        "scripts/test_validation_policy.py"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/validation-policy-optimized.log",
+      "log_sha256": "f938c307af6c0575610ba0e70f01abd8a398a400c97ee1df2adf8b098d2ba5f8",
+      "release_strip": null
+    },
+    {
+      "name": "clippy-stock",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/clippy-stock.log",
+      "log_sha256": "b634829eb0f0f08026928bd33bdb90b36db526f185c25e226ff03552552339c0",
+      "release_strip": null
+    },
+    {
+      "name": "build-stock",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        ""
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/build-stock.log",
+      "log_sha256": "be6445afde84f21f180d3d76fefa76729f0fd3bd039ae37382c13ca40f19d551",
+      "release_strip": "none"
+    },
+    {
+      "name": "memory-stock",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/check_memory_layout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\stock.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/memory-stock.log",
+      "log_sha256": "88a736f9de1bc845fdef2a633e4490f3c21c34b78f9cf24f76f05d7f93404cbc",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-stock",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\stock.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-stock.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-optimized-stock",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\stock.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-optimized-stock.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    },
+    {
+      "name": "clippy-demo",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "demo,frame-trace,te-trace",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/clippy-demo.log",
+      "log_sha256": "7f016acee0e334ae8735ee7520fd86ee98abf054fecbc7f1f313506123b1cf1e",
+      "release_strip": null
+    },
+    {
+      "name": "build-demo",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "demo,frame-trace,te-trace"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/build-demo.log",
+      "log_sha256": "cd02fb683902f9d07230517720434e45efe14764e51a220990c6297ef3d1c6ea",
+      "release_strip": "none"
+    },
+    {
+      "name": "memory-demo",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/check_memory_layout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\demo.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/memory-demo.log",
+      "log_sha256": "9fc4e33656988d0e8e95fbc3cec2beabd697ad4a2600a19c5d45d7653cdc939b",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-demo",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\demo.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-demo.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-optimized-demo",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\demo.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-optimized-demo.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    },
+    {
+      "name": "clippy-full-outline",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "demo,frame-trace,te-trace",
+        "--no-default-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/clippy-full-outline.log",
+      "log_sha256": "346bd8d82bc389994e1d907dccaf9ba1c72f144c5c2d6a316e1ead795f849689",
+      "release_strip": null
+    },
+    {
+      "name": "build-full-outline",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "demo,frame-trace,te-trace",
+        "--no-default-features"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/build-full-outline.log",
+      "log_sha256": "11bb2ae0bce141d6444317f50a93d5ff7cfa401407cbcaf9fe7fcebf9748dd6f",
+      "release_strip": "none"
+    },
+    {
+      "name": "memory-full-outline",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/check_memory_layout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\full-outline.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/memory-full-outline.log",
+      "log_sha256": "9fc4e33656988d0e8e95fbc3cec2beabd697ad4a2600a19c5d45d7653cdc939b",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-full-outline",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\full-outline.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-full-outline.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-optimized-full-outline",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\full-outline.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-optimized-full-outline.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    },
+    {
+      "name": "clippy-target-longan",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "target-bench,longan-rx12,frame-trace,te-trace",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/clippy-target-longan.log",
+      "log_sha256": "f794e59e41bf55ccf7bb2cef7cf1d2cb303acd41965ad6bb936879ddfe3ed6de",
+      "release_strip": null
+    },
+    {
+      "name": "build-target-longan",
+      "cwd": "firmware",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "target-bench,longan-rx12,frame-trace,te-trace"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/build-target-longan.log",
+      "log_sha256": "47cf74b4a66936d359a5008346590755a9a82e6fb06534d3a289d93e7df0ab18",
+      "release_strip": "none"
+    },
+    {
+      "name": "memory-target-longan",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/check_memory_layout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\target-longan.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/memory-target-longan.log",
+      "log_sha256": "52628e83d0b6cbdf5cbea3d983f0b32394d954d4f51260abf9dc0c26ee6736bb",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-target-longan",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\target-longan.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-target-longan.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    },
+    {
+      "name": "flash-negative-optimized-target-longan",
+      "cwd": "firmware",
+      "command": [
+        "python",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "D:\\GitHub\\pico2-ea888.3-car-dashboard\\firmware\\target\\review-round2\\validation\\target-longan.elf"
+      ],
+      "exit_code": 0,
+      "log": "firmware/target/review-round2/validation/flash-negative-optimized-target-longan.log",
+      "log_sha256": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+      "release_strip": null
+    }
+  ],
+  "artifacts": [
+    {
+      "profile": "stock",
+      "features": "",
+      "extra": [],
+      "sha256": "2f5b434e5f802dac5aeea4f34af84a7818f8f5fe332e380d15de7119f9d8c9a4",
+      "local_elf": "firmware/target/review-round2/validation/stock.elf"
+    },
+    {
+      "profile": "demo",
+      "features": "demo,frame-trace,te-trace",
+      "extra": [],
+      "sha256": "30741ac5e06b845b1268fbe0266f6b2728cdb8b3c2bc695d91f53c50e1794f6f",
+      "local_elf": "firmware/target/review-round2/validation/demo.elf"
+    },
+    {
+      "profile": "full-outline",
+      "features": "demo,frame-trace,te-trace",
+      "extra": [
+        "--no-default-features"
+      ],
+      "sha256": "00c1f8a86f47fd84a57e3ad51f98c01edf2218f48e6828e673f4d3b92eb03d86",
+      "local_elf": "firmware/target/review-round2/validation/full-outline.elf"
+    },
+    {
+      "profile": "target-longan",
+      "features": "target-bench,longan-rx12,frame-trace,te-trace",
+      "extra": [],
+      "sha256": "b44bb2fad052b4d5c3f2b263892c47992e541c9679b27a9361416e1643e7a1af",
+      "local_elf": "firmware/target/review-round2/validation/target-longan.elf"
+    }
+  ],
+  "runtime_tests_per_outline": 268,
+  "ownership_compile_fail_tests_per_outline": 2,
+  "benchmark_smoke_cases_per_outline": 75,
+  "logs_note": "Logs and exact ELFs are retained locally at the listed ignored paths. Commands and digests are recorded here for reproduction and identity.",
+  "captures": [
+    {
+      "path": "host/baselines/audit2_before",
+      "cases": 75,
+      "input_files": 179,
+      "metadata_sha256": "c0d32b46fcaaa1a4ca15f712c3af23eaaf7a4f81452143ccffd4604ddfabaa11",
+      "source_zip_sha256": "bf6bd5bac8408d1bf446e17dc76e21155c69880667429a58df28a7a143c510d8"
+    },
+    {
+      "path": "host/baselines/audit2_band_candidate",
+      "cases": 11,
+      "input_files": 179,
+      "metadata_sha256": "3d5229f466ec949e18ef37dfa635338b43fad08787e7d8064056dcebfa265632",
+      "source_zip_sha256": "e551e59acd8c9aa278d04ebc9c48a8c0aaed06ae2c2503a0a2c7772dee904fec"
+    },
+    {
+      "path": "host/baselines/audit2_band_repeat",
+      "cases": 11,
+      "input_files": 179,
+      "metadata_sha256": "13d630bcb3f28d9cb28f60d29daa932fe4f91771ecee7f76d0204833f18a4ea1",
+      "source_zip_sha256": "ebd2d30efc23ae2722266daf9e5c47776f5cc5d072b76f1a2baba9a2aea04bd6"
+    },
+    {
+      "path": "host/baselines/audit2_fill_candidate",
+      "cases": 75,
+      "input_files": 179,
+      "metadata_sha256": "09cf77abe973d44d40b0ef13c6083cb8b5dcf97ff0ef4d91142e7aebc6b7c74b",
+      "source_zip_sha256": "fdd7c9430f7b422bf393cf45d64b15da9705a8a880e745d795868c28312394bd"
+    },
+    {
+      "path": "host/baselines/audit2_pinned_before",
+      "cases": 75,
+      "input_files": 179,
+      "metadata_sha256": "bd83e0be9afcada7a494a51c15dd89d346e33c7cb572dcc27e2d58bd1f94315b",
+      "source_zip_sha256": "89d6150506f395d3f622b7520990bc362ec8f6b01c345c8092b9eccf95d2c0b0"
+    },
+    {
+      "path": "host/baselines/audit2_pinned_after",
+      "cases": 75,
+      "input_files": 179,
+      "metadata_sha256": "2f3713e105896dda029ffb6c65baabd8f345b624247f1371a29af2bc912fc781",
+      "source_zip_sha256": "6784ea63a2a2064811d0c11c92e860a360f41a09c693606e3a6984ca57502b05"
+    },
+    {
+      "path": "host/baselines/audit2_pinned_repeat",
+      "cases": 8,
+      "input_files": 179,
+      "metadata_sha256": "c3986ef6793c309054488da698a7e1ad30af6906aac9b97a49ce8d99b2286184",
+      "source_zip_sha256": "444d5acc5c216f392774028ae3fe27c691a615606180d9bb9720535acfd97158"
+    }
+  ],
+  "comparison_results": [
+    {
+      "before": "audit2_before",
+      "after": "audit2_band_candidate",
+      "before_records_subset": true,
+      "budget_percent": 20,
+      "counts": {
+        "pass": 10,
+        "review": 0,
+        "regression": 1
+      },
+      "gate_pass": false
+    },
+    {
+      "before": "audit2_before",
+      "after": "audit2_band_repeat",
+      "before_records_subset": true,
+      "budget_percent": 20,
+      "counts": {
+        "pass": 10,
+        "review": 0,
+        "regression": 1
+      },
+      "gate_pass": false
+    },
+    {
+      "before": "audit2_before",
+      "after": "audit2_fill_candidate",
+      "before_records_subset": false,
+      "budget_percent": 20,
+      "counts": {
+        "pass": 74,
+        "review": 1,
+        "regression": 0
+      },
+      "gate_pass": false
+    },
+    {
+      "before": "audit2_pinned_before",
+      "after": "audit2_pinned_after",
+      "before_records_subset": false,
+      "budget_percent": 20,
+      "counts": {
+        "pass": 49,
+        "review": 7,
+        "regression": 19
+      },
+      "gate_pass": false
+    },
+    {
+      "before": "audit2_pinned_after",
+      "after": "audit2_pinned_repeat",
+      "before_records_subset": true,
+      "budget_percent": 20,
+      "counts": {
+        "pass": 6,
+        "review": 1,
+        "regression": 1
+      },
+      "gate_pass": false
+    }
+  ],
+  "timing_acceptance": "No new timing gate accepted. Band shortcut rejected; fill candidate reverted. All unfavorable measurements retained.",
+  "final_inputs_equal_audit2_before": true
+}
