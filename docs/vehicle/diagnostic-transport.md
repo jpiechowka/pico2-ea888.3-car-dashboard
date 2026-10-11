@@ -109,3 +109,35 @@ remains 374352 B with 149936 B headroom. The 30-sample host baseline in
 These are new parser CPU baselines; no UART waits, CAN traffic or physical
 latency is measured. Adjacent host runs varied by several percent even in the
 unchanged RX12 path, so no gain is attributed to the deadline correction.
+
+## Single-owner transaction client
+
+`client.rs` admits one outstanding request per configured ECU/transport epoch.
+Separate private request-generation and transmission-serial tokens gate every
+request and flow-control completion. UART completion must include hardware BUSY
+clear; it does not prove CAN acknowledgement. A missing completion closes the
+client until a newly qualified transport epoch, preventing interleaved records.
+
+Application budgets are provisional: 100 ms per UART transmission, 500 ms first
+response, 1000 ms after NRC78, at most three NRC78 replies, and an immutable
+5000 ms transaction limit. ISO-TP retains its separate 1000 ms N_Cr limit.
+Matching service/identifier echoes and exact decoder widths remain mandatory.
+Foreign replies cannot renew a deadline or abort matching segmented reception.
+Negative/malformed/oversized replies never become samples. An identical late
+wire reply has no transaction identifier and cannot be proven new from its
+contents; tokens protect local ownership, not wire-level freshness.
+
+Review reproduced two corrected edge cases: overflow flow-control completion
+after the first-response deadline, and a foreign single frame aborting a
+matching segmented response. Regression tests cover both, three pending replies,
+total/N_Cr deadlines, epoch/clock failures, and reuse of old request/FC tokens
+within and across request generations. Nine client tests bring the suite to
+134 runtime tests plus two compile-fail checks in both outline modes. Strict
+lints and the stock target release/ELF gate pass; target RAM is unchanged because
+the client is not instantiated until acquisition integration.
+
+`host/baselines/stage06_client` preserves the two new 30-sample CPU fixtures,
+source hashes and command: single-frame transaction plus OBD decode approximately
+72 ns, and 128-byte transaction with all FC acknowledgements approximately
+630 ns. These measure more work than the lower-level parser fixtures and are
+not an optimization comparison or a physical latency claim.

@@ -1,4 +1,5 @@
 //! Bounded, hardware-independent classical CAN diagnostic transport.
+pub mod client;
 pub mod isotp;
 pub mod longan;
 pub mod obd;

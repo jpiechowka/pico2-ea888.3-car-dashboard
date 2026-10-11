@@ -4,6 +4,7 @@ use std::time::Duration;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
+use dashboard_host_validation::diagnostics::client::{Client, Event};
 use dashboard_host_validation::diagnostics::isotp::{IsoTpRx, RxEvent};
 use dashboard_host_validation::diagnostics::longan::Rx12;
 use dashboard_host_validation::diagnostics::request::{Reply, Request};
@@ -288,12 +289,52 @@ fn protocol(c: &mut Criterion) {
     });
 }
 
+fn diagnostic_client(c: &mut Criterion) {
+    let mut client = Client::new(0x7E0, 0x7E8, 1).unwrap();
+    let mut now = 0;
+    let sf = CanFrame::new(0x7E8, &[4, 0x41, 0x42, 0x36, 0xB0, 0, 0, 0]).unwrap();
+    c.bench_function("client/single_frame_obd", |b| {
+        b.iter(|| {
+            let tx = client.start(black_box(Request::Obd(0x42)), now).unwrap();
+            black_box(client.tx_completed(tx.token, now + 1).unwrap());
+            let Event::Positive(reply) = client.receive(black_box(&sf), 1, now + 2).unwrap() else {
+                panic!()
+            };
+            black_box(obd::decode(0x42, reply.bytes.as_slice()).unwrap());
+            now += 100;
+        });
+    });
+    let first = CanFrame::new(0x7E8, &[0x10, 128, 0x62, 0xF1, 0x90, 1, 2, 3]).unwrap();
+    let subsequent: Vec<_> = (0..18)
+        .map(|i| CanFrame::new(0x7E8, &[0x20 | ((i + 1) & 15), 4, 5, 6, 7, 8, 9, 10]).unwrap())
+        .collect();
+    c.bench_function("client/isotp_128_bytes", |b| {
+        b.iter(|| {
+            let tx = client.start(black_box(Request::ReadDid(0xF190)), now).unwrap();
+            black_box(client.tx_completed(tx.token, now + 1).unwrap());
+            let Event::Transmit(fc) = client.receive(black_box(&first), 1, now + 2).unwrap() else {
+                panic!()
+            };
+            black_box(client.tx_completed(fc.token, now + 3).unwrap());
+            for (index, frame) in subsequent.iter().enumerate() {
+                let at = now + (index + 1) as u64 * 5;
+                let event = client.receive(black_box(frame), 1, at).unwrap();
+                if let Event::Transmit(fc) = &event {
+                    black_box(client.tx_completed(fc.token, at + 1).unwrap());
+                }
+                black_box(event);
+            }
+            now += 100;
+        });
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client
 }
 criterion_main!(dashboard_perf);
