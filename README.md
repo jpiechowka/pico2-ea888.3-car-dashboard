@@ -100,18 +100,13 @@ cargo pico2-300-75-1v30-run
 The firmware uses both Cortex-M33 cores on the RP2350:
 
 - **Core 0:** Runs the Embassy async executor with the main render loop, display flush task (DMA SPI), and encoder polling task (I2C). Handles all UI rendering, button/encoder input, and PWM backlight control.
-- **Core 1:** Runs a dedicated Embassy executor with the demo sensor data task. Publishes sensor values to Core 0 via an Embassy Watch channel. Reports its own CPU utilization and stack high-water mark via atomics.
+- **Core 1:** Owns acquisition, per-sample statistics and the optional buffered UART transport. Demo is an explicit build choice. Publishes coherent snapshots to Core 0 through Embassy Watch, and reports CPU work and sampled stack depth.
 
 Cross-core communication uses `AtomicU32`/`AtomicBool` for simple values and `embassy_sync::Watch` for structured data. The log buffer uses a `Mutex<CriticalSectionRawMutex>` (backed by RP2350 hardware spinlocks) for safe cross-core writes.
 
-The current firmware allocates two 150 KB framebuffers. DMA/render overlap and exclusive buffer ownership are still being corrected and have not been measured on hardware.
+Two aligned 150 KB framebuffers move through checked render/queued/in-flight/completed ownership. Host tests verify ownership and partial-update replay; physical overlap, timing and FPS remain unmeasured.
 
-### Boot Sequence
-
-On startup, the firmware displays two boot screens:
-
-1. **Loading Screen** (~6 seconds) - Console-style initialization messages displayed sequentially
-2. **Welcome Screen** (7 seconds) - AEZAKMI logo with animated blinking stars (4s filling + 3s blinking)
+### Startup
 
 The dashboard starts after display and input setup without a cosmetic boot delay.
 The header reports actual transport/sample state. Stock firmware shows unavailable
