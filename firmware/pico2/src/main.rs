@@ -29,6 +29,7 @@ use core::sync::atomic::Ordering;
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
+use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
 use dashboard_pico2::sensor_state::SensorSnapshot;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
@@ -60,7 +61,6 @@ use crate::tasks::{
     EXECUTOR_CORE1,
     FLUSH_BUFFER_IDX,
     FLUSH_REQUESTS,
-    LAST_FLUSH_TIME_US,
     demo_values_task,
     display_flush_task,
     fill_core1_stack_sentinel,
@@ -356,14 +356,8 @@ async fn main(spawner: Spawner) {
     let mut render_state = RenderState::new();
     let mut current_fps = 0.0f32;
     let mut average_fps = 0.0f32;
-    let mut last_completed_count = 0u32;
-    let mut fps_sample_count = 0u32;
-    let mut fps_sum = 0.0f32;
-    let mut last_fps_calc = Instant::now();
-
-    let mut render_time_us = 0u32;
-    let mut flush_time_us = 0u32;
-    let mut total_frame_time_us = 0u32;
+    let mut fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
+    let mut last_trace: Option<FrameTrace> = None;
     let mut last_profile_log = Instant::now();
 
     let mut frame_cycles_used = 0u32;
@@ -425,8 +419,8 @@ async fn main(spawner: Spawner) {
                 backlight_off_pending = false;
             }
             active_popup = None;
-            fps_sample_count = 0;
-            fps_sum = 0.0;
+            fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
+            current_fps = 0.0;
             average_fps = 0.0;
             log_info!(
                 "Page: {}",
@@ -585,16 +579,12 @@ async fn main(spawner: Spawner) {
         let now_ms = Instant::now().as_millis();
 
         let frame_count = COMPLETED_FRAMES.load(Ordering::Relaxed);
-        if last_fps_calc.elapsed() >= Duration::from_secs(1) {
-            current_fps = frame_count.wrapping_sub(last_completed_count) as f32
-                / last_fps_calc.elapsed().as_micros() as f32
-                * 1_000_000.0;
-            last_completed_count = frame_count;
-            last_fps_calc = Instant::now();
-
-            fps_sample_count += 1;
-            fps_sum += current_fps;
-            average_fps = fps_sum / fps_sample_count as f32;
+        if let Some(rate) = fps_meter
+            .sample(Instant::now().as_micros(), frame_count)
+            .expect("invalid completion rate")
+        {
+            current_fps = rate.current;
+            average_fps = rate.average;
         }
 
         let egt_danger_active = egt_temp >= EGT_DANGER_MANIFOLD;
@@ -636,6 +626,7 @@ async fn main(spawner: Spawner) {
         color_transitions.update(Instant::now());
 
         let render_start = Instant::now();
+        let render_cycles_start = cpu_profiling::read();
 
         let render_idx = render_frame.id().index();
         let token = lifecycle.begin(render_frame.id()).expect("render buffer is not free");
@@ -819,9 +810,7 @@ async fn main(spawner: Spawner) {
                         current_fps,
                         average_fps,
                         frame_count,
-                        render_time_us,
-                        flush_time_us,
-                        total_frame_time_us,
+                        trace: last_trace,
                         brightness_percent,
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
@@ -862,30 +851,49 @@ async fn main(spawner: Spawner) {
             draw_brightness_popup(&mut display, pct);
         }
 
-        render_time_us = render_start.elapsed().as_micros() as u32;
+        let render_end = Instant::now();
+        let render_cycles = cpu_profiling::elapsed(render_cycles_start, cpu_profiling::read());
         let frame_cycles_end = cpu_profiling::read();
         frame_cycles_used = cpu_profiling::elapsed(frame_cycles_start, frame_cycles_end);
 
         lifecycle.ready(token).expect("render buffer is not owned");
+        let wait_start = Instant::now();
         let next_frame = if let Some(expected) = flush_in_progress.take() {
-            wait_completed(&mut lifecycle, expected).await
+            let completed = wait_completed(&mut lifecycle, expected).await;
+            last_trace = Some(completed.trace);
+            completed.lease
         } else {
             spare_frame.take().expect("missing spare framebuffer")
         };
+        let blocked_us = wait_start.elapsed().as_micros();
         lifecycle.queue(token).expect("another frame is still in flight");
-        let request = render_frame.submit(token, Instant::now().as_micros());
+        let trace = RenderTrace {
+            start_us: render_start.as_micros(),
+            end_us: render_end.as_micros(),
+            queued_us: Instant::now().as_micros(),
+            blocked_us,
+            sample_us: measurements
+                .sensors
+                .iter()
+                .filter_map(|s| s.sampled_at_ms())
+                .min()
+                .and_then(|ms| ms.checked_mul(1000)),
+            active_cycles: u64::from(render_cycles),
+        };
+        let request = render_frame.submit(token, trace);
         assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
         BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
         wait_started(&mut lifecycle, token).await;
         if cfg!(feature = "serial-display") {
-            spare_frame = Some(wait_completed(&mut lifecycle, token).await);
+            let completed = wait_completed(&mut lifecycle, token).await;
+            last_trace = Some(completed.trace);
+            spare_frame = Some(completed.lease);
         } else {
             flush_in_progress = Some(token);
         }
         render_frame = next_frame;
 
-        flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
-        total_frame_time_us = frame_start.elapsed().as_micros() as u32;
+        let total_frame_time_us = frame_start.elapsed().as_micros().min(u32::MAX as u64) as u32;
 
         cpu0_util_percent = cpu_profiling::calc_util_percent(frame_cycles_used, total_frame_time_us);
         cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
@@ -894,9 +902,9 @@ async fn main(spawner: Spawner) {
             // Two log_info! lines to fit within 40-char message limit
             log_info!(
                 "r={}us f={}us t={}us {}fps",
-                render_time_us,
-                flush_time_us,
-                total_frame_time_us,
+                last_trace.map_or(0, |t| t.render_us()),
+                last_trace.map_or(0, |t| t.transfer_observed_us()),
+                last_trace.map_or(0, |t| t.total_us()),
                 current_fps as u32,
             );
             log_info!(

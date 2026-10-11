@@ -14,7 +14,6 @@ pub use flush::{
     COMPLETED_FRAMES,
     FLUSH_BUFFER_IDX,
     FLUSH_REQUESTS,
-    LAST_FLUSH_TIME_US,
     display_flush_task,
     wait_completed,
     wait_started,

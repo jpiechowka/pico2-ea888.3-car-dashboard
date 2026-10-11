@@ -7,7 +7,7 @@
 //! let (mut a, mut b) = (FrameBuffer::new(), FrameBuffer::new());
 //! let [mut lease, _] = FrameLease::pair(&mut a, &mut b);
 //! let token = FrameLifecycle::new().begin(lease.id()).unwrap();
-//! let request = lease.submit(token, 0);
+//! let request = lease.submit(token, dashboard_host_validation::display::telemetry::RenderTrace::instant(0));
 //! lease.buffer()[0] = 1;
 //! ```
 //!
@@ -17,7 +17,7 @@
 //! let (mut a, mut b) = (FrameBuffer::new(), FrameBuffer::new());
 //! let [lease, _] = FrameLease::pair(&mut a, &mut b);
 //! let token = FrameLifecycle::new().begin(lease.id()).unwrap();
-//! let request = lease.submit(token, 0);
+//! let request = lease.submit(token, dashboard_host_validation::display::telemetry::RenderTrace::instant(0));
 //! let pixels = request.pixels();
 //! let lease = request.into_lease();
 //! std::hint::black_box(pixels);

@@ -118,7 +118,14 @@ fn bounded_channel_moves_the_lease_and_retains_delayed_completion() {
     lifecycle.queue(token).unwrap();
     let requests = Channel::<CriticalSectionRawMutex, _, 1>::new();
     let completions = Channel::<CriticalSectionRawMutex, _, 1>::new();
-    assert!(requests.try_send(a.submit(token, 10)).is_ok());
+    assert!(
+        requests
+            .try_send(a.submit(
+                token,
+                dashboard_host_validation::display::telemetry::RenderTrace::instant(10)
+            ))
+            .is_ok()
+    );
     let request = requests.try_receive().unwrap();
     lifecycle.started(request.token()).unwrap();
     for _ in 0..100 {

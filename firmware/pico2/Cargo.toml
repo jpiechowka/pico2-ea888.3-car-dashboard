@@ -23,6 +23,8 @@ cpu300-spi75-1v30 = []  # 300 MHz @ 1.30V - 75 MHz SPI (300/4, embassy-rp max)
 simple-outline = []
 # Keep ownership checks while disabling render/transfer overlap for diagnostics.
 serial-display = []
+# Keep the last 64 coherent software transfer records in SRAM for probe capture.
+frame-trace = []
 
 [dependencies]
 embedded-graphics = "0.8.2"

@@ -3,6 +3,7 @@ use core::future::{Future, poll_fn};
 use core::pin::pin;
 
 use super::FrameBuffer;
+use super::telemetry::RenderTrace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BufferId {
@@ -174,13 +175,14 @@ impl<'a> FrameLease<'a> {
     pub fn submit(
         self,
         token: FrameToken,
-        queued_us: u64,
+        trace: RenderTrace,
     ) -> FrameRequest<'a> {
         assert_eq!(self.id, token.buffer, "frame token belongs to another buffer");
+        trace.validate().expect("invalid render timing");
         FrameRequest {
             lease: self,
             token,
-            queued_us,
+            trace,
         }
     }
 }
@@ -190,13 +192,13 @@ impl<'a> FrameLease<'a> {
 pub struct FrameRequest<'a> {
     lease: FrameLease<'a>,
     token: FrameToken,
-    queued_us: u64,
+    trace: RenderTrace,
 }
 
 impl<'a> FrameRequest<'a> {
     pub fn token(&self) -> FrameToken { self.token }
 
-    pub fn queued_us(&self) -> u64 { self.queued_us }
+    pub fn trace(&self) -> RenderTrace { self.trace }
 
     pub fn pixels(&self) -> &FrameBuffer { self.lease.buffer }
 

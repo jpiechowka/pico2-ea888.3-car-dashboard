@@ -1,6 +1,8 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
+use dashboard_pico2::display::framebuffer::FRAME_BYTES;
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle, FrameRequest, FrameToken};
+use dashboard_pico2::display::telemetry::FrameTrace;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, with_timeout};
@@ -14,8 +16,15 @@ static FLUSH_COMPLETED: Channel<CriticalSectionRawMutex, Completion, 1> = Channe
 pub static BUFFER_SWAPS: AtomicU32 = AtomicU32::new(0);
 pub static BUFFER_WAITS: AtomicU32 = AtomicU32::new(0);
 pub static FLUSH_BUFFER_IDX: AtomicUsize = AtomicUsize::new(0);
-pub static LAST_FLUSH_TIME_US: AtomicU32 = AtomicU32::new(0);
 pub static COMPLETED_FRAMES: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "frame-trace")]
+pub static FRAME_TRACES: embassy_sync::blocking_mutex::Mutex<
+    CriticalSectionRawMutex,
+    core::cell::RefCell<dashboard_pico2::display::telemetry::TraceRing<64>>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(
+    dashboard_pico2::display::telemetry::TraceRing::new(),
+));
 
 struct Started {
     token: FrameToken,
@@ -23,7 +32,12 @@ struct Started {
 }
 struct Completion {
     request: FrameRequest<'static>,
-    success: bool,
+    trace: Option<FrameTrace>,
+}
+
+pub struct CompletedFrame {
+    pub lease: FrameLease<'static>,
+    pub trace: FrameTrace,
 }
 
 // Timeout cancels only a channel receive. The flusher retains the actual buffer
@@ -48,12 +62,18 @@ pub async fn wait_started(
 pub async fn wait_completed(
     lifecycle: &mut FrameLifecycle,
     expected: FrameToken,
-) -> FrameLease<'static> {
+) -> CompletedFrame {
     BUFFER_WAITS.fetch_add(1, Ordering::Relaxed);
     match with_timeout(PROGRESS_DEADLINE, FLUSH_COMPLETED.receive()).await {
-        Ok(completion) if completion.request.token() == expected && completion.success => {
+        Ok(Completion {
+            request,
+            trace: Some(trace),
+        }) if request.token() == expected && trace.token() == expected => {
             lifecycle.complete(expected).expect("invalid frame completion");
-            completion.request.into_lease()
+            CompletedFrame {
+                lease: request.into_lease(),
+                trace,
+            }
         }
         _ => {
             lifecycle.quarantine(expected).expect("invalid completion quarantine");
@@ -84,20 +104,24 @@ pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
                 "unconsumed failed start"
             );
         }
-        if result.is_ok() {
-            let elapsed = Instant::now()
-                .as_micros()
-                .saturating_sub(started_us.unwrap_or(request.queued_us()));
-            LAST_FLUSH_TIME_US.store(elapsed.min(u32::MAX as u64) as u32, Ordering::Relaxed);
+        let trace = if result.is_ok() {
+            let trace = FrameTrace::finish(
+                token,
+                request.trace(),
+                started_us.expect("missing payload start"),
+                Instant::now().as_micros(),
+                FRAME_BYTES as u32,
+            )
+            .expect("invalid completed frame timing");
+            #[cfg(feature = "frame-trace")]
+            FRAME_TRACES.lock(|ring| assert!(ring.borrow_mut().push(trace), "stale frame trace"));
             COMPLETED_FRAMES.fetch_add(1, Ordering::Relaxed);
-        }
+            Some(trace)
+        } else {
+            None
+        };
         assert!(
-            FLUSH_COMPLETED
-                .try_send(Completion {
-                    request,
-                    success: result.is_ok()
-                })
-                .is_ok(),
+            FLUSH_COMPLETED.try_send(Completion { request, trace }).is_ok(),
             "unconsumed frame completion"
         );
     }
