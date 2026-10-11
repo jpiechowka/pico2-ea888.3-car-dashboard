@@ -5,6 +5,7 @@ pub struct Progress {
     pub rendering: u32,
     pub input: u32,
     pub completed: u32,
+    pub submitted: u32,
     pub display_pending: bool,
 }
 
@@ -67,7 +68,10 @@ impl ProgressMonitor {
         if current.input != self.previous.input {
             self.input_ms = now_ms;
         }
-        if current.completed != self.previous.completed || (current.display_pending && !self.previous.display_pending) {
+        if current.completed != self.previous.completed
+            || current.submitted != self.previous.submitted
+            || (current.display_pending && !self.previous.display_pending)
+        {
             self.completed_ms = now_ms;
         }
         self.previous = current;

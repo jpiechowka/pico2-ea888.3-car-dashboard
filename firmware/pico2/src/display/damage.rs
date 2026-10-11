@@ -9,6 +9,7 @@ use super::{FrameBuffer, HEIGHT, WIDTH};
 
 const TILE: usize = 16;
 const MAX_REGIONS: usize = 16;
+const MAX_PAYLOAD_STARTS: usize = 128;
 
 /// A nonempty panel rectangle. Coordinates and extents cannot leave the panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +127,7 @@ impl DamagePlan {
         }
         // Bound command/setup overhead for dense changes. This is a conservative
         // byte policy, not a measured SPI break-even point.
-        if plan.bytes() >= FRAME_BYTES * 3 / 4 {
+        if plan.bytes() >= FRAME_BYTES * 3 / 4 || plan.transfer_count() > MAX_PAYLOAD_STARTS {
             Self::full()
         } else {
             plan

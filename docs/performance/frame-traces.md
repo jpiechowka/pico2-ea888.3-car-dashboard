@@ -13,7 +13,7 @@ fields and the inverse-loop-time "Max FPS" estimate were removed.
 | Queued time | Timestamp immediately before submitting the buffer lease |
 | Started time | Timestamp after the first poll of the payload DMA future |
 | Completed time | Timestamp after the HAL write returns and CS is raised |
-| Payload bytes | RGB565 bytes written, currently 153600 for a full frame |
+| Payload bytes | Sum of RGB565 payloads across all windows; 153600 for a full frame |
 | Sample time/age | Oldest accepted timestamp among snapshot channels, to HAL return; absent before samples exist |
 
 Render, queue, start and completion ordering is checked. Invalid timestamps,

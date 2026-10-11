@@ -14,8 +14,11 @@ checks progress every 50 ms and feeds a two-second hardware deadline only while:
 Any fault latches until reset. No further feeding occurs, even if a counter
 later changes. This checks task operation: lack of valid ECU measurements must
 produce stale/unavailable data, not be confused with a dead acquisition task.
-Future no-damage display work must explicitly mark display idle, while keeping
-the acquisition and UI progress requirements.
+The no-damage display path marks display idle and sleeps for 16 ms while
+keeping acquisition, input and UI progress requirements. Queuing a later
+transfer starts a fresh completion deadline. The queue generation counter is
+observed as well as the pending flag, so a short idle transition missed between
+supervisor polls cannot give a new transfer the previous job's deadline.
 
 The transfer timeout cancels only channel reception. A stalled SPI/DMA future
 keeps its framebuffer until hardware reset. The watchdog is intended to cover

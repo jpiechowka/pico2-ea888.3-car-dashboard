@@ -28,6 +28,7 @@ use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
 use dashboard_pico2::display::FrameBuffer;
+use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
 use dashboard_pico2::input_model::{brightness_after, scroll_after};
@@ -40,7 +41,7 @@ use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::i2c::{self, InterruptHandler as I2cInterruptHandler};
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::spi::Spi;
-use embassy_time::{Duration, Instant};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics::prelude::*;
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
@@ -315,6 +316,7 @@ async fn main(spawner: Spawner) {
     let [mut render_frame, spare_frame] = FrameLease::pair(FRAME_A.take(), FRAME_B.take());
     let mut spare_frame = Some(spare_frame);
     let mut lifecycle = FrameLifecycle::new();
+    let mut panel_history = PanelHistory::new();
     run_boot_sequence(&mut flusher, render_frame.buffer())
         .await
         .expect("boot display failed");
@@ -637,6 +639,7 @@ async fn main(spawner: Spawner) {
 
         let render_idx = render_frame.id().index();
         let token = lifecycle.begin(render_frame.id()).expect("render buffer is not free");
+        panel_history.begin_render(token).expect("invalid render generation");
         let mut display = St7789Renderer::new(render_frame.buffer());
 
         if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
@@ -878,13 +881,25 @@ async fn main(spawner: Spawner) {
         let wait_start = Instant::now();
         let next_frame = if let Some(expected) = flush_in_progress.take() {
             let completed = wait_completed(&mut lifecycle, expected).await;
+            panel_history
+                .complete(expected)
+                .expect("invalid completed panel generation");
             last_trace = Some(completed.trace);
             completed.lease
         } else {
             spare_frame.take().expect("missing spare framebuffer")
         };
         let blocked_us = wait_start.elapsed().as_micros();
-        lifecycle.queue(token).expect("another frame is still in flight");
+        crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
+        let reference = panel_history
+            .reference()
+            .filter(|reference| reference.buffer == next_frame.id());
+        let plan = if cfg!(feature = "full-frame") || reference.is_none() {
+            DamagePlan::full()
+        } else {
+            DamagePlan::between(next_frame.pixels(), render_frame.pixels())
+        };
+        let idle = plan.is_empty();
         let trace = RenderTrace {
             start_us: render_start.as_micros(),
             end_us: render_end.as_micros(),
@@ -898,18 +913,34 @@ async fn main(spawner: Spawner) {
                 .and_then(|ms| ms.checked_mul(1000)),
             active_cycles: render_cycles,
         };
-        let request = render_frame.submit(token, trace);
-        assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
-        BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
-        wait_started(&mut lifecycle, token).await;
-        if cfg!(feature = "serial-display") {
-            let completed = wait_completed(&mut lifecycle, token).await;
-            last_trace = Some(completed.trace);
-            spare_frame = Some(completed.lease);
+        if idle {
+            lifecycle.discard(token).expect("cannot discard active frame");
+            spare_frame = Some(next_frame);
+            crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
+            // Keep the completed reference unchanged and reuse this render buffer.
+            // A timed suspension prevents a stationary scene from busy-spinning.
+            Timer::after_millis(16).await;
         } else {
-            flush_in_progress = Some(token);
+            panel_history
+                .queue(token, if plan.is_full() { None } else { reference })
+                .expect("partial update does not match panel generation");
+            lifecycle.queue(token).expect("another frame is still in flight");
+            crate::tasks::recovery::DISPLAY_PENDING.store(true, Ordering::Relaxed);
+            let request = render_frame.submit_plan(token, trace, plan);
+            assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
+            BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
+            wait_started(&mut lifecycle, token).await;
+            if cfg!(feature = "serial-display") {
+                let completed = wait_completed(&mut lifecycle, token).await;
+                panel_history.complete(token).expect("invalid serial panel generation");
+                crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
+                last_trace = Some(completed.trace);
+                spare_frame = Some(completed.lease);
+            } else {
+                flush_in_progress = Some(token);
+            }
+            render_frame = next_frame;
         }
-        render_frame = next_frame;
 
         let total_frame_time_us = frame_start.elapsed().as_micros().min(u32::MAX as u64) as u32;
 

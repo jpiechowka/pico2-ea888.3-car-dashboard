@@ -1,8 +1,8 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use dashboard_pico2::display::framebuffer::FRAME_BYTES;
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle, FrameRequest, FrameToken};
 use dashboard_pico2::display::telemetry::FrameTrace;
+use dashboard_pico2::display::transfer::flush_plan;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, with_timeout};
@@ -89,15 +89,14 @@ pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
         let token = request.token();
         FLUSH_BUFFER_IDX.store(token.buffer.index(), Ordering::Relaxed);
         let mut started_us = None;
-        let result = flusher
-            .flush_buffer(request.pixels(), || {
-                started_us = Some(Instant::now().as_micros());
-                assert!(
-                    FLUSH_STARTED.try_send(Started { token, armed: true }).is_ok(),
-                    "unconsumed frame start"
-                );
-            })
-            .await;
+        let result = flush_plan(flusher, request.pixels(), request.plan(), || {
+            started_us = Some(Instant::now().as_micros());
+            assert!(
+                FLUSH_STARTED.try_send(Started { token, armed: true }).is_ok(),
+                "unconsumed frame start"
+            );
+        })
+        .await;
         if started_us.is_none() {
             assert!(
                 FLUSH_STARTED.try_send(Started { token, armed: false }).is_ok(),
@@ -110,7 +109,7 @@ pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
                 request.trace(),
                 started_us.expect("missing payload start"),
                 Instant::now().as_micros(),
-                FRAME_BYTES as u32,
+                request.plan().bytes() as u32,
             )
             .expect("invalid completed frame timing");
             #[cfg(feature = "frame-trace")]

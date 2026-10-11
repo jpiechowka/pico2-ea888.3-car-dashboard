@@ -6,6 +6,7 @@ fn progress(sequence: u32) -> Progress {
         rendering: sequence,
         input: sequence,
         completed: sequence,
+        submitted: 0,
         display_pending: true,
     }
 }
@@ -80,4 +81,29 @@ fn clock_regression_and_deadline_edges_are_checked() {
     assert_eq!(monitor.observe(u64::MAX, current), Err(Fault::Display));
     let mut monitor = ProgressMonitor::new(0, progress(0));
     assert_eq!(monitor.observe(251, progress(1)), Err(Fault::Supervisor));
+}
+
+#[test]
+fn a_new_queue_generation_starts_its_deadline_even_if_idle_was_not_sampled() {
+    let mut initial = progress(0);
+    initial.submitted = u32::MAX;
+    let mut monitor = ProgressMonitor::new(0, initial);
+    let mut current = progress(1);
+    current.submitted = u32::MAX;
+    assert_eq!(monitor.observe(50, current), Ok(())); // previous job completed
+    current.acquisition += 1;
+    current.rendering += 1;
+    current.input += 1;
+    assert_eq!(monitor.observe(210, current), Ok(()));
+    // Idle -> queued happened between observations, with no new completion yet.
+    current.submitted = 0;
+    current.acquisition += 1;
+    current.rendering += 1;
+    current.input += 1;
+    assert_eq!(monitor.observe(300, current), Ok(()));
+    current.acquisition += 1;
+    current.rendering += 1;
+    current.input += 1;
+    assert_eq!(monitor.observe(549, current), Ok(()));
+    assert_eq!(monitor.observe(550, current), Err(Fault::Display));
 }

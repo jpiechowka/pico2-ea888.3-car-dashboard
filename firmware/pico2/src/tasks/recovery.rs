@@ -11,7 +11,7 @@ use crate::drivers::watchdog::RecoveryWatchdog;
 pub static ACQUISITION_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static RENDER_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static INPUT_PROGRESS: AtomicU32 = AtomicU32::new(0);
-pub static DISPLAY_PENDING: AtomicBool = AtomicBool::new(true);
+pub static DISPLAY_PENDING: AtomicBool = AtomicBool::new(false);
 
 fn progress() -> Progress {
     Progress {
@@ -20,6 +20,7 @@ fn progress() -> Progress {
         input: INPUT_PROGRESS.load(Ordering::Relaxed),
         completed: COMPLETED_FRAMES.load(Ordering::Relaxed),
         display_pending: DISPLAY_PENDING.load(Ordering::Relaxed),
+        submitted: crate::tasks::BUFFER_SWAPS.load(Ordering::Relaxed),
     }
 }
 

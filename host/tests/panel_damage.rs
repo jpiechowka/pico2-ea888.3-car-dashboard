@@ -63,6 +63,20 @@ fn stationary_panel_sends_nothing_and_dense_changes_fall_back_to_full() {
 }
 
 #[test]
+fn thin_vertical_stripes_cannot_create_thousands_of_dma_starts() {
+    let previous = Box::<FrameBuffer>::default();
+    let mut current = Box::<FrameBuffer>::default();
+    for y in 0..HEIGHT {
+        for x in (0..WIDTH).step_by(32) {
+            current[(y * WIDTH + x) * 2] = 0xFF;
+        }
+    }
+    let plan = DamagePlan::between(&previous, &current);
+    assert!(plan.is_full());
+    assert_eq!(plan.transfer_count(), 1);
+}
+
+#[test]
 fn every_corner_and_rgb565_byte_produces_exact_panel_content() {
     let mut panel = Box::new(FrameBuffer::new());
     let mut next = Box::new(FrameBuffer::new());
