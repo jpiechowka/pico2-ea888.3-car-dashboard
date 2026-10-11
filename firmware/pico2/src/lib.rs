@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod display;
+pub mod health;
 
 pub mod render;
 

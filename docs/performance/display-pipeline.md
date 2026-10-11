@@ -19,7 +19,7 @@ completion before rendering another frame.
 
 Channel-receive deadlines are 250 ms. A timeout does not cancel the SPI/DMA
 future or return its lease. The application stops on a protocol/transfer fault;
-independent watchdog recovery is the next required slice. The HAL's synchronous
+independent watchdog recovery is described in `progress-recovery.md`. The HAL's synchronous
 BSY and abort loops cannot be preempted by an async timeout.
 
 ## Source cross-check, 11 October 2026

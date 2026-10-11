@@ -29,6 +29,8 @@ pub mod colors;
 pub mod config;
 #[path = "../../firmware/pico2/src/state/extrema.rs"]
 pub mod extrema;
+#[path = "../../firmware/pico2/src/health.rs"]
+pub mod health;
 #[path = "../../firmware/pico2/src/render.rs"]
 pub mod render;
 #[path = "../../firmware/pico2/src/state/sensor_state.rs"]

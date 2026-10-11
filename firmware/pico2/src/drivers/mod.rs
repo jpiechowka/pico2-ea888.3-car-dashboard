@@ -1,5 +1,6 @@
 mod display;
 mod st7789;
+pub mod watchdog;
 
 pub use dashboard_pico2::display::St7789Renderer;
 pub use display::{display_spi_config, get_actual_spi_freq};

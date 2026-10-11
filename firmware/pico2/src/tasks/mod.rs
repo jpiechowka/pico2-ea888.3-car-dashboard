@@ -5,6 +5,7 @@ use static_cell::StaticCell;
 
 pub mod demo;
 pub mod flush;
+pub mod recovery;
 
 pub use demo::{DEMO_VALUES, demo_values_task};
 pub use flush::{

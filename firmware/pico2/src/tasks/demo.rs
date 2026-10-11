@@ -52,6 +52,7 @@ pub async fn demo_values_task(
         };
 
         sender.send(values);
+        crate::tasks::recovery::ACQUISITION_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
         let work_end = crate::profiling::read();
         total_work_cycles = total_work_cycles.wrapping_add(crate::profiling::elapsed(work_start, work_end));

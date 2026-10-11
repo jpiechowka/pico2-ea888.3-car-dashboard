@@ -265,6 +265,7 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
+    let watchdog = crate::drivers::watchdog::RecoveryWatchdog::start(p.WATCHDOG);
     let cpu_freq_hz = embassy_rp::clocks::clk_sys_freq();
 
     let animation_start = Instant::now();
@@ -313,6 +314,7 @@ async fn main(spawner: Spawner) {
     run_boot_sequence(&mut flusher, render_frame.buffer())
         .await
         .expect("boot display failed");
+    spawner.spawn(crate::tasks::recovery::recovery_task(watchdog).unwrap());
 
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
@@ -931,6 +933,7 @@ async fn main(spawner: Spawner) {
         prev_egt_danger_active = egt_danger_active;
 
         render_state.end_frame();
+        crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
         if (elapsed_ms / 1000).is_multiple_of(2) {
             led_b.set_low();
