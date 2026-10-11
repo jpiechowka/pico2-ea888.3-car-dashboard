@@ -289,6 +289,9 @@ async fn main(spawner: Spawner) {
 
     log_info!("Display initialized");
 
+    #[cfg(feature = "te-trace")]
+    spawner.spawn(crate::tasks::te::observe_te(Input::new(p.PIN_21, Pull::None)).unwrap());
+
     static FRAME_A: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
     static FRAME_B: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
     let [mut render_frame, spare_frame] = FrameLease::pair(FRAME_A.take(), FRAME_B.take());
@@ -760,6 +763,8 @@ async fn main(spawner: Spawner) {
         cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
+            #[cfg(feature = "te-trace")]
+            crate::tasks::te::log_status();
             // Two log_info! lines to fit within 40-char message limit
             log_info!(
                 "r={}us f={}us t={}us {}fps",

@@ -80,7 +80,7 @@ jobs:
           - profile: stock
             features: ""
           - profile: cpu300-spi75-1v30
-            features: frame-trace,cpu300-spi75-1v30
+            features: frame-trace,te-trace,cpu300-spi75-1v30
           - profile: serial-full-frame
             features: serial-display,full-frame
     steps:

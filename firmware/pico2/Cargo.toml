@@ -27,6 +27,8 @@ serial-display = []
 full-frame = []
 # Keep the last 64 coherent software transfer records in SRAM for probe capture.
 frame-trace = []
+# Observe GP21 TE edges; no refresh-rate registers or DMA scheduling changes.
+te-trace = []
 
 [dependencies]
 embedded-graphics = "0.8.2"

@@ -58,6 +58,11 @@ impl<'d> St7789Flusher<'d> {
         self.command(DISPON, &[]).await?;
         Timer::after_millis(10).await;
 
+        // TEM=0 (datasheet Mode 1): vertical blank only. SWRESET above ensures
+        // TE was disabled. Normal builds leave TE off; FRCTRL2 is unchanged.
+        #[cfg(feature = "te-trace")]
+        self.command(0x35, &[0x00]).await?;
+
         Ok(())
     }
 
