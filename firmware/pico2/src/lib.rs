@@ -5,6 +5,7 @@
 #![allow(clippy::cast_sign_loss)]
 
 pub mod config;
+pub mod display;
 
 pub mod render;
 

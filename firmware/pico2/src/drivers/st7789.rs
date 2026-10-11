@@ -1,17 +1,11 @@
+use dashboard_pico2::display::{FrameBuffer, HEIGHT, WIDTH};
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
 use embassy_rp::spi::{Async, Spi};
 use embassy_time::Timer;
-use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::pixelcolor::raw::RawU16;
-use embedded_graphics::prelude::*;
 
-pub const WIDTH: usize = 320;
-pub const HEIGHT: usize = 240;
-const BUFFER_SIZE: usize = WIDTH * HEIGHT * 2;
-
-pub static mut FRAMEBUFFER_A: [u8; BUFFER_SIZE] = [0u8; BUFFER_SIZE];
-pub static mut FRAMEBUFFER_B: [u8; BUFFER_SIZE] = [0u8; BUFFER_SIZE];
+pub static mut FRAMEBUFFER_A: FrameBuffer = FrameBuffer::new();
+pub static mut FRAMEBUFFER_B: FrameBuffer = FrameBuffer::new();
 
 const SWRESET: u8 = 0x01;
 const SLPOUT: u8 = 0x11;
@@ -35,7 +29,7 @@ impl DoubleBuffer {
     pub unsafe fn new() -> Self { Self { render_idx: 0 } }
 
     #[inline]
-    pub unsafe fn render_buffer(&mut self) -> &'static mut [u8] {
+    pub unsafe fn render_buffer(&mut self) -> &'static mut FrameBuffer {
         if self.render_idx == 0 {
             unsafe { &mut *core::ptr::addr_of_mut!(FRAMEBUFFER_A) }
         } else {
@@ -47,7 +41,7 @@ impl DoubleBuffer {
     pub unsafe fn get_buffer(
         &self,
         idx: usize,
-    ) -> &'static [u8] {
+    ) -> &'static FrameBuffer {
         if idx == 0 {
             unsafe { &*core::ptr::addr_of!(FRAMEBUFFER_A) }
         } else {
@@ -147,180 +141,13 @@ impl<'d> St7789Flusher<'d> {
 
     pub async fn flush_buffer(
         &mut self,
-        buffer: &[u8],
+        buffer: &FrameBuffer,
     ) {
         self.cs.set_low();
         self.dc.set_low();
         self.spi.blocking_write(&[RAMWR]).ok();
         self.dc.set_high();
-        self.spi.write(buffer).await.ok();
+        self.spi.write(&buffer[..]).await.ok();
         self.cs.set_high();
-    }
-}
-
-pub struct St7789Renderer<'a> {
-    framebuffer: &'a mut [u8],
-}
-
-impl<'a> St7789Renderer<'a> {
-    pub fn new(framebuffer: &'a mut [u8]) -> Self { Self { framebuffer } }
-
-    pub fn clear_buffer(
-        &mut self,
-        color: Rgb565,
-    ) {
-        let raw: RawU16 = color.into();
-        let pixel = raw.into_inner().to_be();
-        let word = (pixel as u32) | ((pixel as u32) << 16);
-
-        let ptr = self.framebuffer.as_mut_ptr() as *mut u32;
-        let word_count = self.framebuffer.len() / 4;
-
-        for i in 0..word_count {
-            unsafe { ptr.add(i).write(word) };
-        }
-    }
-
-    #[inline]
-    fn set_pixel(
-        &mut self,
-        x: i32,
-        y: i32,
-        color: Rgb565,
-    ) {
-        if x >= 0 && x < WIDTH as i32 && y >= 0 && y < HEIGHT as i32 {
-            let idx = (y as usize * WIDTH + x as usize) * 2;
-            let raw: RawU16 = color.into();
-            let bytes = raw.into_inner().to_be_bytes();
-            self.framebuffer[idx] = bytes[0];
-            self.framebuffer[idx + 1] = bytes[1];
-        }
-    }
-}
-
-impl OriginDimensions for St7789Renderer<'_> {
-    fn size(&self) -> Size { Size::new(WIDTH as u32, HEIGHT as u32) }
-}
-
-impl DrawTarget for St7789Renderer<'_> {
-    type Color = Rgb565;
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<I>(
-        &mut self,
-        pixels: I,
-    ) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(point, color) in pixels {
-            self.set_pixel(point.x, point.y, color);
-        }
-        Ok(())
-    }
-
-    fn fill_contiguous<I>(
-        &mut self,
-        area: &embedded_graphics::primitives::Rectangle,
-        colors: I,
-    ) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Self::Color>,
-    {
-        let drawable_area = area.intersection(&self.bounding_box());
-        if drawable_area.size == Size::zero() {
-            return Ok(());
-        }
-
-        let mut colors = colors.into_iter();
-        let source_width = area.size.width as usize;
-        let hidden_top = (drawable_area.top_left.y - area.top_left.y) as usize;
-        let hidden_left = (drawable_area.top_left.x - area.top_left.x) as usize;
-        let visible_width = drawable_area.size.width as usize;
-        let visible_height = drawable_area.size.height as usize;
-        let hidden_right = source_width - hidden_left - visible_width;
-
-        for _ in 0..hidden_top {
-            if colors.nth(source_width - 1).is_none() {
-                return Ok(());
-            }
-        }
-
-        let first_x = drawable_area.top_left.x as usize;
-        let first_y = drawable_area.top_left.y as usize;
-        for row in 0..visible_height {
-            if hidden_left > 0 && colors.nth(hidden_left - 1).is_none() {
-                return Ok(());
-            }
-            let mut idx = ((first_y + row) * WIDTH + first_x) * 2;
-            for _ in 0..visible_width {
-                let Some(color) = colors.next() else {
-                    return Ok(());
-                };
-                let raw: RawU16 = color.into();
-                let bytes = raw.into_inner().to_be_bytes();
-                self.framebuffer[idx] = bytes[0];
-                self.framebuffer[idx + 1] = bytes[1];
-                idx += 2;
-            }
-            if row + 1 < visible_height && hidden_right > 0 && colors.nth(hidden_right - 1).is_none() {
-                return Ok(());
-            }
-        }
-        Ok(())
-    }
-
-    fn fill_solid(
-        &mut self,
-        area: &embedded_graphics::primitives::Rectangle,
-        color: Self::Color,
-    ) -> Result<(), Self::Error> {
-        let drawable_area = area.intersection(&self.bounding_box());
-        if drawable_area.size == Size::zero() {
-            return Ok(());
-        }
-
-        let raw: RawU16 = color.into();
-        let pixel = raw.into_inner().to_be();
-        let pixel_bytes = pixel.to_ne_bytes();
-        let word = (pixel as u32) | ((pixel as u32) << 16);
-
-        let x_start = drawable_area.top_left.x as usize;
-        let width = drawable_area.size.width as usize;
-
-        for y in drawable_area.rows() {
-            let row_start = y as usize * WIDTH * 2;
-            let mut x = x_start;
-
-            if !x.is_multiple_of(2) && x < x_start + width {
-                let idx = row_start + x * 2;
-                self.framebuffer[idx] = pixel_bytes[0];
-                self.framebuffer[idx + 1] = pixel_bytes[1];
-                x += 1;
-            }
-
-            let word_end = x_start + width - ((x_start + width - x) % 2);
-            while x + 1 < word_end {
-                let idx = row_start + x * 2;
-                let ptr = unsafe { self.framebuffer.as_mut_ptr().add(idx) as *mut u32 };
-                unsafe { ptr.write_unaligned(word) };
-                x += 2;
-            }
-
-            if x < x_start + width {
-                let idx = row_start + x * 2;
-                self.framebuffer[idx] = pixel_bytes[0];
-                self.framebuffer[idx + 1] = pixel_bytes[1];
-            }
-        }
-        Ok(())
-    }
-
-    fn clear(
-        &mut self,
-        color: Self::Color,
-    ) -> Result<(), Self::Error> {
-        self.clear_buffer(color);
-        Ok(())
     }
 }

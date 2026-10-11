@@ -26,17 +26,14 @@ pub mod ui {
     pub use crate::styles::*;
 }
 
-pub mod renderer {
-    include!(concat!(env!("OUT_DIR"), "/renderer.rs"));
-}
+#[path = "../../firmware/pico2/src/display/framebuffer.rs"]
+pub mod renderer;
+pub use renderer::FRAME_BYTES;
 
-pub const FRAME_BYTES: usize = 320 * 240 * 2;
-
-#[repr(align(4))]
-pub struct AlignedFrame(pub [u8; FRAME_BYTES]);
+pub struct AlignedFrame(pub renderer::FrameBuffer);
 
 impl AlignedFrame {
-    pub fn boxed() -> Box<Self> { Box::new(Self([0; FRAME_BYTES])) }
+    pub fn boxed() -> Box<Self> { Box::new(Self(renderer::FrameBuffer::new())) }
 
     pub fn pixel(
         &self,

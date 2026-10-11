@@ -83,7 +83,7 @@ fn popup_removal_repairs_both_header_buffers_without_a_value_change() {
         widgets::draw_header(&mut St7789Renderer::new(&mut frames[buffer].0), FpsMode::Off, 0.0, 0.0);
         state.end_frame();
     }
-    let expected = frames[0].0;
+    let expected = frames[0].0.to_vec();
     state.update_popup(Some(1));
     for frame in &mut frames {
         frame.0[100..110].fill(0);

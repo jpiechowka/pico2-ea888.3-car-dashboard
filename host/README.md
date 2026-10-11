@@ -1,10 +1,10 @@
 # Host validation and benchmarks
 
 This independent host crate compiles the firmware's pure model, widget and
-renderer code without importing the RP2350 HAL. The temporary `build.rs`
-extraction ends when the display driver's pure renderer is separated from SPI.
-The aligned frame type avoids relying on accidental byte-array alignment, but
-does not prove the current firmware's global framebuffer API is sound.
+renderer code without importing the RP2350 HAL. The host imports the same
+`display/framebuffer.rs` module as the firmware. Its fixed-size aligned storage
+and renderer use safe Rust. DMA lifecycle tests are separate from pixel tests;
+neither can prove electrical timing on the physical display.
 
 From `host/`, run `cargo test --locked` for correctness and
 `cargo test --locked --benches` for the benchmark smoke check. The

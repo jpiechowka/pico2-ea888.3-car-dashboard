@@ -1,0 +1,11 @@
+{
+  "comparison": "fixed-size aligned storage with safe renderer writes",
+  "prior_commit": "0c63321",
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- '^(framebuffer|clipped_contiguous|boost_cell|mini_graph)/' --save-baseline stage04_storage_before --noplot",
+  "host": "Intel Core i9-13900HX, Windows 10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "fixture_sha256": "ab1d50a97cad1aa8100495768b756b5a21bbe83332642e45201efa760501c233",
+  "hardware_validation": false
+}
