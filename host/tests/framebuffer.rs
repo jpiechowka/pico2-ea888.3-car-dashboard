@@ -85,6 +85,50 @@ fn solid_fill_handles_odd_row_edges_without_touching_neighbours() {
 }
 
 #[test]
+fn solid_spans_match_nonzero_pixels_across_rows_and_alignments() {
+    for (x, y, width, height) in [
+        (0, 0, 320, 1),
+        (0, 1, 320, 3),
+        (0, 239, 320, 2),
+        (-7, 238, 400, 9),
+        (-3, -2, 329, 245),
+        (1, 6, 1, 3),
+        (2, 6, 3, 3),
+        (317, 237, 9, 4),
+        (319, 0, 1, 1),
+        (3, 5, 126, 4),
+        (2, 9, 128, 3),
+    ] {
+        for color in [Rgb565::new(7, 41, 19), Rgb565::RED, Rgb565::BLUE] {
+            let mut buffer = Box::<FrameBuffer>::default();
+            buffer.fill(0xA5);
+            St7789Renderer::new(&mut buffer)
+                .fill_solid(&Rectangle::new(Point::new(x, y), Size::new(width, height)), color)
+                .unwrap();
+            for py in 0..HEIGHT {
+                for px in 0..WIDTH {
+                    let inside = px as i64 >= i64::from(x)
+                        && (px as i64) < i64::from(x) + i64::from(width)
+                        && py as i64 >= i64::from(y)
+                        && (py as i64) < i64::from(y) + i64::from(height);
+                    let expected = if inside {
+                        color.into_storage().to_be_bytes()
+                    } else {
+                        [0xA5; 2]
+                    };
+                    let at = (py * WIDTH + px) * 2;
+                    assert_eq!(
+                        buffer[at..at + 2],
+                        expected,
+                        "rect=({x},{y},{width},{height}), pixel=({px},{py}), color={color:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn unrepresentable_geometry_cannot_overflow_or_consume_unbounded_colors() {
     for rect in [
         Rectangle::new(Point::new(i32::MAX, 0), Size::new(1, 1)),
