@@ -29,7 +29,8 @@ bounded debounced input batches.
 1. The [PIM715 schematic](https://cdn.shopify.com/s/files/1/0174/1800/files/pico_display_2_8_schematic.pdf?v=1728314048)
    connects GP20 to the AP2502 active-high EN input. RGB has a common 3V3 anode
    and 330-ohm cathode resistors to GP26 red, GP27 green and GP28 blue. These GPIO
-   channels are active low; High initializes them off.
+   channels are active low. Red and blue initialize High (off), then green
+   initializes Low (on) when firmware takes ownership.
 2. The [AP2502 datasheet](https://www.diodes.com/datasheet/download/AP2502.pdf),
    pages 2 and 5, specifies PWM up to 150 kHz, minimum high 1 us and low 100 ns.
    The retained 1 kHz configuration supplies 500 us high/low at Dim.
@@ -51,10 +52,16 @@ provide upstream reference. No dependency or clock profile was changed here.
 ## Indicator and physical limits
 
 The last completed frame's effective overlay determines the warning indicator.
-Its red phase lights red; its white phase turns red off. Blue is suppressed
+Its red phase lights red; its white phase turns red off. Green is suppressed
 throughout either warning phase. Feedback covering a warning, diagnostic pages
-and backlight Off use the normal one-second-on/one-second-off blue heartbeat.
+and backlight Off use continuous green. Blue remains off. Green indicates no
+visible warning; it does not certify sensor availability or engine health.
 Future queued/rendering frames cannot change the indicator early.
+
+The pure indicator state is exclusively Off, Green or Red. GPIO application
+disables the previous color before enabling another. Completion paths apply it
+before settings maintenance can await or continue, including serial and idle
+presentation. The encoder task and acquisition core never own these pins.
 
 Completion means the HAL returned after the transfer. LCD scanout follows its
 own timing, and GPIO/PWM application and optical response have additional delay.

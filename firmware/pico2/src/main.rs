@@ -31,7 +31,7 @@ use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
 use dashboard_pico2::settings::Settings;
 use dashboard_pico2::settings::policy::Policy;
-use dashboard_pico2::status_led::PresentedLed;
+use dashboard_pico2::status_led::{PresentedLed, StatusLed};
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -109,19 +109,22 @@ fn apply_backlight(
 
 fn apply_indicator(
     red: &mut Output<'_>,
-    blue: &mut Output<'_>,
+    green: &mut Output<'_>,
     presentation: &PresentedLed,
     backlight: &Backlight,
-    heartbeat_on: bool,
 ) {
-    let led = presentation.output(backlight.compare() != 0, heartbeat_on);
+    let led = presentation.output(backlight.compare() != 0);
     // Active-low cathodes. Disable the other color before enabling a new one.
-    if led.red {
-        blue.set_high();
+    if led == StatusLed::Red {
+        green.set_high();
         red.set_low();
     } else {
         red.set_high();
-        blue.set_level(if led.blue { Level::Low } else { Level::High });
+        green.set_level(if led == StatusLed::Green {
+            Level::Low
+        } else {
+            Level::High
+        });
     }
 }
 
@@ -335,8 +338,8 @@ async fn main(spawner: Spawner) {
     cpu_profiling::init(cpu_freq_hz);
 
     let mut led_r = Output::new(p.PIN_26, Level::High);
-    let mut _led_g = Output::new(p.PIN_27, Level::High);
-    let mut led_b = Output::new(p.PIN_28, Level::High);
+    let _led_b = Output::new(p.PIN_28, Level::High);
+    let mut led_g = Output::new(p.PIN_27, Level::Low);
 
     let cs = Output::new(p.PIN_17, Level::High);
     let dc = Output::new(p.PIN_16, Level::Low);
@@ -589,13 +592,7 @@ async fn main(spawner: Spawner) {
         }
         let now_ms = Instant::now().as_millis();
         apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-        apply_indicator(
-            &mut led_r,
-            &mut led_b,
-            &led_presentation,
-            &backlight,
-            (elapsed_ms / 1000).is_multiple_of(2),
-        );
+        apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
         // Brightness is runtime-only. Keep legacy journal fields canonical,
         // preserving saved boost/FPS without writing flash for every click.
         let desired = Settings::new(100, 100, show_boost_psi, fps_mode).expect("invalid live preferences");
@@ -755,13 +752,7 @@ async fn main(spawner: Spawner) {
             assert!(led_presentation.complete(expected), "wrong indicator completion");
             backlight.frame_completed(expected, Instant::now().as_millis());
             apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-            apply_indicator(
-                &mut led_r,
-                &mut led_b,
-                &led_presentation,
-                &backlight,
-                (elapsed_ms / 1000).is_multiple_of(2),
-            );
+            apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
             panel_history
                 .complete(expected)
                 .expect("invalid completed panel generation");
@@ -834,13 +825,7 @@ async fn main(spawner: Spawner) {
             assert!(led_presentation.unchanged(visible_overlay), "pending indicator at idle");
             backlight.frame_unchanged(Instant::now().as_millis());
             apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-            apply_indicator(
-                &mut led_r,
-                &mut led_b,
-                &led_presentation,
-                &backlight,
-                (elapsed_ms / 1000).is_multiple_of(2),
-            );
+            apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
             spare_frame = Some(next_frame);
             crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
             // Keep the completed reference unchanged and reuse this render buffer.
@@ -867,13 +852,7 @@ async fn main(spawner: Spawner) {
                 assert!(led_presentation.complete(token), "wrong serial indicator completion");
                 backlight.frame_completed(token, Instant::now().as_millis());
                 apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-                apply_indicator(
-                    &mut led_r,
-                    &mut led_b,
-                    &led_presentation,
-                    &backlight,
-                    (elapsed_ms / 1000).is_multiple_of(2),
-                );
+                apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
                 panel_history.complete(token).expect("invalid serial panel generation");
                 crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
                 last_trace = Some(completed.trace);
@@ -922,12 +901,6 @@ async fn main(spawner: Spawner) {
 
         crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
-        apply_indicator(
-            &mut led_r,
-            &mut led_b,
-            &led_presentation,
-            &backlight,
-            (elapsed_ms / 1000).is_multiple_of(2),
-        );
+        apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
     }
 }

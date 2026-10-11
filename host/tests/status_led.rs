@@ -8,6 +8,14 @@ use dashboard_host_validation::samples::SensorId;
 use dashboard_host_validation::status_led::{PresentedLed, StatusLed};
 
 #[test]
+fn normal_indicator_is_continuous_green_including_black_screen() {
+    let presenter = PresentedLed::new();
+    for backlight_on in [false, true] {
+        assert_eq!(presenter.output(backlight_on), StatusLed::Green);
+    }
+}
+
+#[test]
 fn indicator_changes_only_on_matching_completed_or_unchanged_presentation() {
     let mut presenter = PresentedLed::new();
     let first = FrameToken {
@@ -23,43 +31,34 @@ fn indicator_changes_only_on_matching_completed_or_unchanged_presentation() {
     assert!(!presenter.submit(second, None));
     assert!(!presenter.complete(second));
     assert!(!presenter.unchanged(warning));
-    assert_eq!(presenter.output(true, true), StatusLed { red: false, blue: true });
+    assert_eq!(presenter.output(true), StatusLed::Green);
     assert!(presenter.complete(first));
-    assert_eq!(presenter.output(true, true), StatusLed { red: true, blue: false });
+    assert_eq!(presenter.output(true), StatusLed::Red);
     assert!(presenter.submit(second, Some(Overlay::Brightness(Brightness::Full))));
     assert!(!presenter.complete(first));
-    assert_eq!(presenter.output(true, true), StatusLed { red: true, blue: false });
+    assert_eq!(presenter.output(true), StatusLed::Red);
     assert!(presenter.complete(second));
-    assert_eq!(presenter.output(true, true), StatusLed { red: false, blue: true });
+    assert_eq!(presenter.output(true), StatusLed::Green);
     assert!(presenter.unchanged(Some(Overlay::Critical(SensorId::Water, false))));
-    assert_eq!(
-        presenter.output(true, true),
-        StatusLed {
-            red: false,
-            blue: false
-        }
-    );
+    assert_eq!(presenter.output(true), StatusLed::Off);
 }
 
 #[test]
-fn visible_warning_blinks_red_without_blue_on_both_phases() {
-    for heartbeat in [false, true] {
+fn visible_warning_blinks_red_and_off_without_a_green_phase() {
+    for sensor in SensorId::ALL {
         assert_eq!(
-            StatusLed::for_overlay(Some(Overlay::Critical(SensorId::Water, true)), true, heartbeat),
-            StatusLed { red: true, blue: false }
+            StatusLed::for_overlay(Some(Overlay::Critical(sensor, true)), true),
+            StatusLed::Red
         );
         assert_eq!(
-            StatusLed::for_overlay(Some(Overlay::Critical(SensorId::Water, false)), true, heartbeat),
-            StatusLed {
-                red: false,
-                blue: false
-            }
+            StatusLed::for_overlay(Some(Overlay::Critical(sensor, false)), true),
+            StatusLed::Off
         );
     }
 }
 
 #[test]
-fn hidden_warnings_keep_normal_heartbeat_including_feedback_and_black_screen() {
+fn hidden_warnings_are_green_during_feedback_and_on_diagnostic_pages() {
     let mut model = AcquisitionModel::demo();
     for at in [0, 500, 1000] {
         model.ingest_batch([1.0, 140.0, 120.0, 130.0, 70.0, 1100.0, 11.0, 1.3], at);
@@ -69,13 +68,7 @@ fn hidden_warnings_keep_normal_heartbeat_including_feedback_and_black_screen() {
     for phase in [false, true] {
         for page in [Page::Debug, Page::Logs] {
             let visible = Overlay::for_page(page, None, alerts, phase);
-            assert_eq!(
-                StatusLed::for_overlay(visible, true, phase),
-                StatusLed {
-                    red: false,
-                    blue: phase
-                }
-            );
+            assert_eq!(StatusLed::for_overlay(visible, true), StatusLed::Green);
         }
         for feedback in [
             Overlay::Reset,
@@ -86,21 +79,9 @@ fn hidden_warnings_keep_normal_heartbeat_including_feedback_and_black_screen() {
             Overlay::Brightness(Brightness::Off),
         ] {
             let visible = Overlay::for_page(Page::Dashboard, Some(feedback), alerts, phase);
-            assert_eq!(
-                StatusLed::for_overlay(visible, true, phase),
-                StatusLed {
-                    red: false,
-                    blue: phase
-                }
-            );
+            assert_eq!(StatusLed::for_overlay(visible, true), StatusLed::Green);
         }
         let warning = Overlay::for_page(Page::Dashboard, None, alerts, phase);
-        assert_eq!(
-            StatusLed::for_overlay(warning, false, phase),
-            StatusLed {
-                red: false,
-                blue: phase
-            }
-        );
+        assert_eq!(StatusLed::for_overlay(warning, false), StatusLed::Green);
     }
 }
