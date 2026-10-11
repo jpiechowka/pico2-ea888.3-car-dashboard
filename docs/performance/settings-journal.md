@@ -7,6 +7,13 @@ do not demonstrate persistence on the board.
 
 ## Permanent envelope, schema 1
 
+Brightness is now runtime-only and starts at Full on each boot. The two legacy
+brightness bytes remain in schema 1 for backward compatibility: old records are
+validated normally, then the in-memory boot settings normalize both fields to
+100 while retaining boost unit and FPS mode. This normalization itself schedules
+no write. New unit/FPS saves encode 100/100; brightness clicks or rotation alone
+do not schedule flash operations. `SAVED` refers to the persistent preferences.
+
 Journal offsets are relative to the reserved 8192-byte region. Each 4096-byte
 sector holds eight 512-byte slots. A slot has distinct data and commit pages;
 each 256-byte page is programmed once after erase. No in-place commit-bit update.

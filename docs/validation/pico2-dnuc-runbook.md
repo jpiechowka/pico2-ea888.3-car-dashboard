@@ -125,9 +125,14 @@ video from power-on through the first usable frame.
 | X, on Dashboard | FPS Off -> Instant -> Average -> Both -> Off |
 | A, on Dashboard | BAR/PSI toggle; value and peak use the selected unit |
 | B, on Dashboard | Request statistics reset; successful reset follows acquisition acknowledgement |
-| Encoder clockwise, Dashboard/Debug | Brightness increases in 5% steps and clamps at 100% |
-| Encoder press, Dashboard/Debug | Backlight toggle; turning off waits for the 1.5-second popup |
+| Encoder rotation, Dashboard | No brightness change; reserved for future dashboard views |
+| Encoder press, Dashboard | Full (100% duty) -> Dim (50%) -> Off -> Full; named popups |
+| Dashboard Off | Two seconds after first popup transfer completes, remove popup, complete that frame, then switch off |
+| Encoder clockwise, Debug | Legacy brightness increases in 5% steps and clamps at 100% |
+| Encoder press, Debug | Existing backlight toggle and 1.5-second popup |
 | Encoder on Logs | Rotation scrolls; press has no action |
+| Visible dashboard warning | RGB LED blinks red with the completed popup phase; blue remains off in both phases |
+| Warning covered by feedback, Debug/Logs, or backlight Off | Normal blue heartbeat |
 
 Press/release once at a time, then test held buttons, quick repeated presses,
 rapid rotation, page changes during popups and unit changes. Leave the graph
@@ -141,14 +146,23 @@ software observations. Neither proves panel FPS or peak stack use.
 
 Test persistence at stock clocks:
 
-1. Select 50% brightness, a boost unit and FPS mode. After the last input wait
+1. Select Dim, a boost unit and FPS mode. After the last input wait
    until `SAVED` is actually visible. Debounce is 2 seconds and attempts are
    separated by at least 30 seconds; repeated changes can delay the next save.
-2. Power off/on. Require those settings to return; statistics are not persisted.
+2. Power off/on. Require Full brightness on every boot, and the saved boost unit
+   and FPS mode to return. Brightness and statistics are runtime-only.
 3. Reflash the same ELF without erase-all and check settings again.
 4. `VOLATILE` or `FAILED` is a failed persistence gate, even if rendering works.
    Save the log and board flash markings. Release writes require the reviewed
    flash identity/profile; do not bypass that check.
+
+Check that `BL: OFF` stays visible for two seconds, disappears before blackout,
+and the next click restores Full without stale popup pixels. Try another click,
+Y/page change, X/FPS and a reset acknowledgement while Off is pending: a click
+restores Full; page changes or replacement feedback cancel the pending shutdown
+and retain the previous lit level. Test this with a warning already blinking.
+The configured 50% duty is not a claim of half perceived luminance or the lowest
+usable brightness on this panel.
 
 The PIM715 wiring was checked against its
 [product/schematic](https://shop.pimoroni.com/products/pico-display-pack-2-8).

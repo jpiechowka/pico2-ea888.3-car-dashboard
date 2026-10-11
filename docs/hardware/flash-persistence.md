@@ -154,8 +154,10 @@ code is qualified by the current artifact gate.
 
 On blank/corrupt storage, validated defaults load. Storage errors, unsupported
 schema or ambiguous generations disable saving and keep the live UI usable.
-Valid brightness, restore brightness, boost unit and FPS preferences apply
-before normal presentation. Debug and logs expose DEFAULT, UNSAVED, SAVING,
+Valid boost unit and FPS preferences apply before normal presentation.
+Brightness starts at Full on every boot; legacy brightness fields are normalized
+in memory without scheduling a write, and live brightness is runtime-only.
+Debug and logs expose DEFAULT, UNSAVED, SAVING,
 SAVED, FAILED or VOLATILE. Saving is shown for an ordinary frame before pausing;
 only verified readback reports success. An immutable older save does not clear
 a newer UI change.

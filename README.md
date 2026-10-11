@@ -106,17 +106,28 @@ visible. See [startup status](docs/vehicle/startup-status.md) and
 | A | Dashboard boost unit: bar / PSI |
 | B | Request an acknowledged statistics reset on Dashboard |
 
-| Encoder input | Dashboard / Debug | Logs |
-|---|---|---|
-| Clockwise | Increase brightness by 5% | Newer entries |
-| Counter-clockwise | Decrease brightness by 5%, down to off | Older entries |
-| Press | Toggle backlight | No action |
+| Encoder input | Dashboard | Debug | Logs |
+|---|---|---|---|
+| Clockwise | Reserved for future views | Increase legacy brightness by 5% | Newer entries |
+| Counter-clockwise | Reserved for future views | Decrease legacy brightness by 5%, down to off | Older entries |
+| Press | Full -> Dim -> Off -> Full | Toggle backlight | No action |
 
 The normalized direction follows the documented preassembled 5880 encoder;
-physical direction remains an installation check. Press-to-off normally shows
-a 1.5-second popup before switching off. Button feedback takes priority over dashboard warnings; warnings resume blinking after feedback expires and stay off Debug/Logs.
-GP20 PWM is calculated for 1 kHz at every supported configured CPU rate. The
-45%-100% visible duty mapping remains pending measured low-duty validation.
+physical direction remains an installation check. Every boot starts at Full
+(100% PWM duty); Dim is exactly 50%, Off is 0%. Dashboard popups read `BL: FULL`,
+`BL: DIM` and `BL: OFF`. Off remains visible for two seconds after its first
+completed transfer, then a frame removing it completes before the backlight
+switches off. Another click returns to Full; changing pages or replacing the
+pending Off feedback cancels shutdown. There is currently one dashboard view,
+so Dashboard rotation has no effect until additional views are configured.
+
+Debug keeps its legacy 5% control scale and 1.5-second toggle popup. Button
+feedback takes priority over dashboard warnings; warnings resume blinking after
+feedback expires and stay off Debug/Logs. The RGB LED blinks red with the last
+completed warning frame, suppressing blue during both warning phases. Otherwise
+the existing blue heartbeat remains. GP20 PWM stays at 1 kHz. Brightness is
+runtime-only; unit and FPS choices remain persistent. See
+[backlight and indicator controls](docs/hardware/backlight-controls.md).
 
 The FPS modes count successful software transfers: Instant is the recent
 one-second-or-longer window; Average is since the last page change. An unchanged

@@ -11,7 +11,8 @@ remain unavailable until their pin mapping is established.
 1. [Adafruit's board guide](https://learn.adafruit.com/adafruit-i2c-qt-rotary-encoder?view=all)
    documents the address, GPIO24, firmware product check, and the reversed
    direction of the supplied PID5880 encoder. Raw deltas are now negated so
-   clockwise increases brightness. Direction remains to be checked physically.
+   clockwise increases the legacy Debug brightness setting. Dashboard rotation
+   is reserved for future views. Direction remains to be checked physically.
 2. [Arduino driver source](https://github.com/adafruit/Adafruit_Seesaw/blob/985b41efae3d9a8cba12a7b4d9ff0d226f9e0759/Adafruit_seesaw.cpp)
    and [encoder example](https://github.com/adafruit/Adafruit_Seesaw/blob/985b41efae3d9a8cba12a7b4d9ff0d226f9e0759/examples/encoder/encoder_basic/encoder_basic.ino)
    establish status/version, GPIO input/pull-up commands, four-byte big-endian
@@ -36,8 +37,10 @@ remain unavailable until their pin mapping is established.
 Each raw poll must be within +/-128 counts. Corrupt/extreme values are rejected
 before negation, including `i32::MIN`. Pending motion saturates at +/-128 and
 pending presses at eight; rejected/saturated events are counted. The UI consumes
-each coherent value/timestamp batch once and applies press parity to its backlight toggle. Brightness
-and scroll arithmetic uses wide intermediates and clamps its result. Oversized
+each coherent value/timestamp batch once. Dashboard applies every press through
+Full/Dim/Off; Debug preserves press parity for its on/off toggle. Dashboard
+rotation no longer changes brightness. Legacy Debug brightness and Logs scroll
+arithmetic use wide intermediates and clamp their result. Oversized
 register writes are rejected instead of silently truncated.
 
 Buttons must be stable for 50 ms. Held buttons at boot/reconnect do not generate
