@@ -1,5 +1,8 @@
 # Diagnostic lifetime telemetry
 
+The [validated collector](telemetry-windows.md) now checks complete versioned
+diagnostic groups alongside frame summaries, with explicit loss accounting.
+
 The single diagnostic owner keeps separate counters for capability pages
 00/20/40 and supported sensor queries 05/0F/42/5C. Counters survive transport
 epochs. They distinguish admission, completed request UART transmission,

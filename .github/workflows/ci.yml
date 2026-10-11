@@ -56,6 +56,9 @@ jobs:
       - name: Benchmark comparison contracts
         run: python3 scripts/test_benchmark_comparison.py
         working-directory: host
+      - name: Telemetry collector and producer contracts
+        run: python3 scripts/test_telemetry_export.py
+        working-directory: host
 
   clippy-pico2:
     name: Clippy (Pico 2)

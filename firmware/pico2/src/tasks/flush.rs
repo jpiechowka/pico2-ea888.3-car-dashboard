@@ -37,6 +37,16 @@ pub static FRAME_TRACES: embassy_sync::blocking_mutex::Mutex<
     dashboard_pico2::display::telemetry::TraceRing::new(),
 ));
 
+#[cfg(feature = "frame-trace")]
+static FRAME_WINDOW: static_cell::ConstStaticCell<dashboard_pico2::display::window::FrameWindow> =
+    static_cell::ConstStaticCell::new(dashboard_pico2::display::window::FrameWindow::new(0));
+#[cfg(feature = "frame-trace")]
+pub static FRAME_WINDOWS: embassy_sync::watch::Watch<
+    CriticalSectionRawMutex,
+    dashboard_pico2::display::window::WindowReport,
+    1,
+> = embassy_sync::watch::Watch::new();
+
 struct Started {
     token: FrameToken,
     armed: bool,
@@ -97,7 +107,21 @@ pub async fn wait_completed(
 
 #[embassy_executor::task]
 pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
+    #[cfg(feature = "frame-trace")]
+    let window = FRAME_WINDOW.take();
     loop {
+        // No bin scan, formatting or await occurs under the counter/Watch lock.
+        // The first window begins at boot time zero; idle windows remain visible.
+        #[cfg(feature = "frame-trace")]
+        if let Ok(Some(report)) = window.report(Instant::now().as_micros(), INPUT_COUNTS.lock(|slot| slot.get())) {
+            FRAME_WINDOWS.sender().send(report);
+        }
+        #[cfg(feature = "frame-trace")]
+        let request = match with_timeout(Duration::from_secs(1), FLUSH_REQUESTS.receive()).await {
+            Ok(request) => request,
+            Err(_) => continue,
+        };
+        #[cfg(not(feature = "frame-trace"))]
         let request = FLUSH_REQUESTS.receive().await;
         let token = request.token();
         FLUSH_BUFFER_IDX.store(token.buffer.index(), Ordering::Relaxed);
@@ -136,5 +160,11 @@ pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
             FLUSH_COMPLETED.try_send(Completion { request, trace }).is_ok(),
             "unconsumed frame completion"
         );
+        #[cfg(feature = "frame-trace")]
+        if let Some(trace) = trace {
+            // Telemetry rejection is counted, never a reason to release or
+            // cancel DMA. Only successful HAL completions reach this point.
+            let _ = window.record(trace);
+        }
     }
 }

@@ -65,6 +65,8 @@ pub mod settings;
 pub mod stack_samples;
 #[path = "../../firmware/pico2/src/ui/styles.rs"]
 pub mod styles;
+#[path = "../../firmware/pico2/src/telemetry_protocol.rs"]
+pub mod telemetry_protocol;
 #[path = "../../firmware/pico2/src/vehicle_status.rs"]
 pub mod vehicle_status;
 #[path = "../../firmware/pico2/src/widgets/mod.rs"]

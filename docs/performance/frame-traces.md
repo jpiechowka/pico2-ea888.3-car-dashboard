@@ -23,7 +23,9 @@ Errors keep the buffer in the failure/quarantine path. The optional `frame-trace
 feature retains 64 records in a bounded ring, tracks overwritten records, and
 rejects stale/duplicate sequences. This ring is intended for later probe
 inspection. A raw memory read concurrent with writes is not a coherent export;
-physical capture tooling and target measurements are still pending.
+physical capture tooling and target measurements are still pending. Separate
+[30-second summaries and validated RTT export](telemetry-windows.md) provide
+coherent, bounded long-duration software statistics.
 
 ## Input correlation
 

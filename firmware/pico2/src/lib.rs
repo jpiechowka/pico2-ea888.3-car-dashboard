@@ -21,6 +21,7 @@ pub mod metrics;
 pub mod render;
 pub mod samples;
 pub mod settings;
+pub mod telemetry_protocol;
 pub mod vehicle_status;
 pub mod widgets;
 

@@ -124,6 +124,15 @@ impl<const N: usize> Histogram<N> {
             p99: self.quantile(99),
         }
     }
+
+    pub fn clear(&mut self) {
+        self.bins.fill(0);
+        self.count = 0;
+        self.overflow = 0;
+        self.rejected = 0;
+        self.min = None;
+        self.max = None;
+    }
 }
 
 #[cfg(test)]

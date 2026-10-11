@@ -414,6 +414,8 @@ async fn main(spawner: Spawner) {
     let vehicle_link = None;
     #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
     let mut diagnostic_receiver = tasks::acquisition::VEHICLE_DIAGNOSTICS.dyn_receiver().unwrap();
+    #[cfg(feature = "frame-trace")]
+    let mut frame_window_receiver = tasks::flush::FRAME_WINDOWS.dyn_receiver().unwrap();
 
     loop {
         let frame_start = Instant::now();
@@ -877,6 +879,10 @@ async fn main(spawner: Spawner) {
         cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
+            #[cfg(feature = "frame-trace")]
+            if let Some(report) = frame_window_receiver.try_changed() {
+                profiling::telemetry_export::frames(report);
+            }
             #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
             if let Some((sequence, published_ms, snapshot)) = diagnostic_receiver.try_changed() {
                 profiling::telemetry_export::diagnostics(sequence, published_ms, snapshot);

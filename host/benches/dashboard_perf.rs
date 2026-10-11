@@ -599,7 +599,7 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window
 }
 criterion_main!(dashboard_perf);
 
@@ -629,5 +629,68 @@ fn input_mailbox(c: &mut Criterion) {
             current.publish_press();
             black_box(current.take());
         })
+    });
+}
+
+fn frame_window(c: &mut Criterion) {
+    use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
+    use dashboard_host_validation::display::telemetry::{FrameTrace, RenderTrace};
+    use dashboard_host_validation::display::window::{FrameWindow, WINDOW_US};
+    use dashboard_host_validation::input_trace::{InputCounters, InputTrace};
+    let trace = |id, at| {
+        FrameTrace::finish(
+            FrameToken {
+                buffer: BufferId::A,
+                sequence: id,
+            },
+            RenderTrace {
+                start_us: at,
+                end_us: at + 3,
+                queued_us: at + 5,
+                blocked_us: 2,
+                active_cycles: 50,
+                sample_us: Some(0),
+                input: Some(InputTrace {
+                    first_id: id,
+                    last_id: id,
+                    observed_us: 0,
+                    accepted_us: 1,
+                    consumed_us: 2,
+                    events: 1,
+                }),
+            },
+            at + 10,
+            at + 20,
+            153600,
+        )
+        .unwrap()
+    };
+    let first = trace(1, 100);
+    let second = trace(2, 115);
+    c.bench_function("frame_window/record_all_metrics", |b| {
+        b.iter_batched_ref(
+            || {
+                let mut w = Box::new(FrameWindow::new(0));
+                w.record(first).unwrap();
+                w
+            },
+            |w| black_box(w).record(black_box(second)).unwrap(),
+            criterion::BatchSize::PerIteration,
+        )
+    });
+    c.bench_function("frame_window/summarize_1500_frames", |b| {
+        b.iter_batched_ref(
+            || {
+                let mut w = Box::new(FrameWindow::new(0));
+                for id in 1..=1500 {
+                    w.record(trace(id, id * 10000)).unwrap();
+                }
+                w
+            },
+            |w| {
+                black_box(w.report(black_box(WINDOW_US), InputCounters::ZERO).unwrap().unwrap());
+            },
+            criterion::BatchSize::PerIteration,
+        )
     });
 }
