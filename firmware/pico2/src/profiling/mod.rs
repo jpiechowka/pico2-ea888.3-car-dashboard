@@ -2,6 +2,8 @@ use dashboard_pico2::cpu_cycles;
 mod log_buffer;
 use dashboard_pico2::memory;
 mod render_work;
+#[cfg(feature = "target-bench")]
+pub mod target_bench;
 #[cfg(feature = "frame-trace")]
 pub mod telemetry_export;
 pub use cpu_cycles::{calc_util_percent, elapsed, init, read};

@@ -2,11 +2,22 @@
 import copy
 import struct
 import sys
+from unittest.mock import patch
 from check_flash_lockout import check
+import check_memory_layout
 from elf_image import ElfImage
 
 elf = ElfImage(sys.argv[1])
 check(elf)
+bad_stack = copy.deepcopy(elf)
+bad_stack.symbols['_stack_start'] = 0
+with patch.object(check_memory_layout, 'ElfImage', return_value=bad_stack):
+    try:
+        check_memory_layout.check('in-memory corrupted ELF')
+    except AssertionError:
+        print('Rejected modified artifact: core0 stack top')
+    else:
+        raise AssertionError('missed core0 stack top')
 for fault in ("address", "size", "instruction", "vector", "relative_branch", "copy_start", "copy_end", "copy_source", "load"):
     bad = copy.deepcopy(elf)
     name = "SIO_IRQ_FIFO"

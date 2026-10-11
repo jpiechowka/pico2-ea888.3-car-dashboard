@@ -599,9 +599,41 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels
 }
 criterion_main!(dashboard_perf);
+
+fn target_kernels(c: &mut Criterion) {
+    use dashboard_host_validation::display::FrameBuffer;
+    use dashboard_host_validation::microbench::ITERATIONS;
+    use dashboard_host_validation::microbench::workload::{Fixture, Kernel};
+    for kind in Kernel::ALL {
+        let name = format!("target_kernel/{kind:?}_eight_iterations");
+        // Verify the same finite output before timing. Setup and full checksum
+        // are excluded, matching the target batch's computation boundary.
+        let mut check_frame = Box::new(FrameBuffer::new());
+        let mut check_fixture = Fixture::new();
+        for _ in 0..ITERATIONS {
+            check_fixture.run(kind, &mut check_frame);
+        }
+        assert_eq!(
+            check_fixture.checksum(kind, &check_frame).unwrap(),
+            kind.expected_checksum()
+        );
+        c.bench_function(&name, |b| {
+            b.iter_batched_ref(
+                || (Box::new(FrameBuffer::new()), Fixture::new()),
+                |(frame, fixture)| {
+                    for _ in 0..ITERATIONS {
+                        black_box(&mut *fixture).run(black_box(kind), black_box(frame));
+                    }
+                    black_box((&*frame, &*fixture));
+                },
+                criterion::BatchSize::PerIteration,
+            )
+        });
+    }
+}
 
 // Exact input_model.rs from 56af170, retained solely for the paired cost fixture.
 #[allow(dead_code)]

@@ -33,6 +33,8 @@ full-frame = []
 frame-trace = []
 # Observe GP21 TE edges; no refresh-rate registers or DMA scheduling changes.
 te-trace = []
+# Finite boot microbenchmarks on the caller-owned framebuffer. Default off.
+target-bench = []
 
 [dependencies]
 embedded-graphics = "0.8.2"

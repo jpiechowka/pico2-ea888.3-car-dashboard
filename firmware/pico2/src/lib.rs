@@ -17,6 +17,7 @@ pub mod logging;
 pub mod logging_view;
 pub mod maintenance;
 pub mod metrics;
+pub mod microbench;
 
 pub mod render;
 pub mod samples;

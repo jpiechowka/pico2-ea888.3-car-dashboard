@@ -25,9 +25,9 @@ pub fn init(freq_hz: u32) {
         let demcr_val = read_volatile(DEMCR);
         write_volatile(DEMCR, demcr_val | (1 << 24));
 
-        // Unlock CoreSight DWT Software Lock (required on Cortex-M33 Core 1;
-        // Core 0 may be unlocked by the debug probe, but Core 1 is not).
-        // Harmless no-op if LAR is not implemented on this silicon.
+        // Use the CoreSight software-lock key as supported by cortex-m's DWT
+        // helper. Availability is separately checked by target-bench; a write
+        // here alone is not evidence of a functioning cycle counter.
         const DWT_LAR: *mut u32 = 0xE000_1FB0 as *mut u32;
         write_volatile(DWT_LAR, 0xC5AC_CE55);
 

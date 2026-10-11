@@ -330,12 +330,13 @@ async fn main(spawner: Spawner) {
 
     log_info!("Display initialized");
 
-    #[cfg(feature = "te-trace")]
-    spawner.spawn(crate::tasks::te::observe_te(Input::new(p.PIN_21, Pull::None)).unwrap());
-
     static FRAME_A: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
     static FRAME_B: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
     let [mut render_frame, spare_frame] = FrameLease::pair(FRAME_A.take(), FRAME_B.take());
+    #[cfg(feature = "target-bench")]
+    profiling::target_bench::run(render_frame.buffer());
+    #[cfg(feature = "te-trace")]
+    spawner.spawn(crate::tasks::te::observe_te(Input::new(p.PIN_21, Pull::None)).unwrap());
     let mut spare_frame = Some(spare_frame);
     let mut lifecycle = FrameLifecycle::new();
     let mut panel_history = PanelHistory::new();

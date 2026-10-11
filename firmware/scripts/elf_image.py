@@ -3,18 +3,24 @@ from pathlib import Path
 import struct
 
 
+def require(condition, message="invalid ELF structure"):
+    """Artifact gates must remain active under python -O / PYTHONOPTIMIZE."""
+    if not condition:
+        raise AssertionError(message)
+
+
 class ElfImage:
     def __init__(self, path):
         self.data = data = Path(path).read_bytes()
-        assert data[:7] == b"\x7fELF\x01\x01\x01", "expected ELF32 little endian"
-        assert struct.unpack_from("<H", data, 18)[0] == 40, "expected ARM ELF"
+        require(data[:7] == b"\x7fELF\x01\x01\x01", "expected ELF32 little endian")
+        require(struct.unpack_from("<H", data, 18)[0] == 40, "expected ARM ELF")
         shoff = struct.unpack_from("<I", data, 32)[0]
         entsize, count, names_index = struct.unpack_from("<HHH", data, 46)
-        assert entsize == 40 and count > 0 and names_index < count
+        require(entsize == 40 and count > 0 and names_index < count)
         self.sections = [struct.unpack_from("<10I", data, shoff + i * entsize) for i in range(count)]
 
         def table(section):
-            assert section[4] + section[5] <= len(data), "truncated ELF table"
+            require(section[4] + section[5] <= len(data), "truncated ELF table")
             return data[section[4]:section[4] + section[5]]
 
         def string(blob, offset):
@@ -27,7 +33,7 @@ class ElfImage:
         for section in self.sections:
             if section[1] != 2:
                 continue
-            assert section[9] == 16, "unexpected symbol size"
+            require(section[9] == 16, "unexpected symbol size")
             strings = table(self.sections[section[6]])
             for offset in range(section[4], section[4] + section[5], 16):
                 name, value, size, info, _, index = struct.unpack_from("<IIIBBH", data, offset)
@@ -37,17 +43,17 @@ class ElfImage:
                     self.functions[name] = (value, size, index)
         phoff = struct.unpack_from("<I", data, 28)[0]
         phentsize, phcount = struct.unpack_from("<HH", data, 42)
-        assert phentsize == 32 and phcount > 0
+        require(phentsize == 32 and phcount > 0)
         self.segments = [struct.unpack_from("<8I", data, phoff + i * phentsize) for i in range(phcount)]
 
     def function_bytes(self, name):
         value, size, index = self.functions[name]
         section = self.sections[index]
         address = value & ~1
-        assert section[1] != 8 and section[3] <= address < address + size <= section[3] + section[5]
+        require(section[1] != 8 and section[3] <= address < address + size <= section[3] + section[5])
         offset = section[4] + address - section[3]
         result = self.data[offset:offset + size]
-        assert len(result) == size
+        require(len(result) == size)
         return result
 
     def section_bytes(self, name):

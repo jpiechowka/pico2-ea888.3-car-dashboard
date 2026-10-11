@@ -53,6 +53,8 @@ pub mod logging_view;
 pub mod maintenance;
 #[path = "../../firmware/pico2/src/metrics.rs"]
 pub mod metrics;
+#[path = "../../firmware/pico2/src/microbench.rs"]
+pub mod microbench;
 #[path = "../../firmware/pico2/src/render.rs"]
 pub mod render;
 #[path = "../../firmware/pico2/src/samples.rs"]

@@ -44,6 +44,9 @@ jobs:
       - name: Verify vendored HAL source
         run: python3 scripts/check_vendor.py
         working-directory: firmware
+      - name: Target artifact capture contracts
+        run: python3 scripts/test_target_capture.py
+        working-directory: firmware
       - name: Full outline contracts
         run: cargo test --locked --no-default-features
         working-directory: host
@@ -90,6 +93,9 @@ jobs:
       - name: Demo Clippy
         run: cargo clippy --locked -p dashboard-pico2 --features demo,frame-trace,te-trace -- -D warnings
         working-directory: firmware
+      - name: Target benchmark Clippy
+        run: cargo clippy --locked -p dashboard-pico2 --features target-bench,longan-rx12,frame-trace,te-trace -- -D warnings
+        working-directory: firmware
       - name: Mutually exclusive profile guards
         run: python3 scripts/check_feature_profiles.py
         working-directory: firmware
@@ -127,6 +133,9 @@ jobs:
           - profile: full-outline
             features: demo,frame-trace,te-trace
             extra_args: --no-default-features
+          - profile: target-bench
+            features: target-bench,longan-rx12,frame-trace,te-trace
+            extra_args: ""
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@master
@@ -143,4 +152,5 @@ jobs:
         run: |
           python3 scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
           python3 scripts/test_flash_lockout.py target/thumbv8m.main-none-eabihf/release/pico2
+          python3 -O scripts/test_flash_lockout.py target/thumbv8m.main-none-eabihf/release/pico2
         working-directory: firmware
