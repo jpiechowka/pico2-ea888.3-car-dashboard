@@ -406,6 +406,7 @@ fn graph_rejects_invalid_scales_and_unrepresentable_geometry() {
         (i32::MAX, 0, 64, 20, 0.0, 100.0),
         (0, i32::MAX, 64, 20, 0.0, 100.0),
         (0, 0, u32::MAX, 20, 0.0, 100.0),
+        (0, 0, i32::MAX as u32, 20, 0.0, 100.0),
     ] {
         let mut frame = AlignedFrame::boxed();
         primitives::draw_mini_graph(

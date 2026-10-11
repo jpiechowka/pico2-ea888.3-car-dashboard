@@ -89,8 +89,9 @@ pub fn draw_mini_graph<D, F>(
     let data_range = data_max - data_min;
     if w < 5
         || h < 5
-        || w > i32::MAX as u32
-        || h > i32::MAX as u32
+        // Keep raster work bounded and line deltas within the display geometry.
+        || w > crate::config::SCREEN_WIDTH
+        || h > crate::config::SCREEN_HEIGHT
         || !data_min.is_finite()
         || !data_max.is_finite()
         || !data_range.is_finite()
