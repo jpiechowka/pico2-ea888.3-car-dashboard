@@ -59,4 +59,5 @@ and firmware Clippy plus stock/300 release builds pass. Physical acceptance
 requires injecting each stall, measuring the reset delay, checking both cores
 and peripherals restart, and verifying cold/USB/SWD/watchdog boot and timer-wrap
 soak. The watchdog does not remove those hardware validation requirements.
-`nRecovery still depends on the shared reference clock; this cannot guarantee recovery from every hardware failure.
+
+Recovery still depends on the shared reference clock; this cannot guarantee recovery from every hardware failure.
