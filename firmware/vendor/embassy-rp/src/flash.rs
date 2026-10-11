@@ -1,4 +1,7 @@
 //! Flash driver.
+#[cfg(feature = "_rp235x")]
+#[path = "flash_probe.rs"]
+mod probe;
 use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
@@ -238,7 +241,10 @@ impl<'d, T: Instance, M: Mode, const FLASH_SIZE: usize> Flash<'d, T, M, FLASH_SI
     }
 
     /// Read SPI flash JEDEC ID
-    #[cfg(feature = "rp2040")]
+    ///
+    /// The local RP2350 implementation is limited to CS0 flash with no CS1
+    /// memory and the boot-ROM XIP format. The application checks this contract
+    /// before calling. See vendor/README.md and the linked RAM-code gate.
     pub fn blocking_jedec_id(&mut self) -> Result<u32, Error> {
         let mut jedec = None;
         unsafe {
@@ -696,6 +702,7 @@ mod ram_helpers {
     #[unsafe(link_section = ".data.ram_func")]
     #[cfg(feature = "_rp235x")]
     unsafe fn write_flash_inner(addr: u32, len: u32, data: Option<&[u8]>, ptrs: *const FlashFunctionPointers) {
+        let saved = XipState::capture();
         let data = data.map(|d| d.as_ptr()).unwrap_or(core::ptr::null());
         ((*ptrs).connect_internal_flash)();
         ((*ptrs).flash_exit_xip)();
@@ -707,6 +714,110 @@ mod ram_helpers {
         }
         ((*ptrs).flash_flush_cache)();
         ((*ptrs).flash_enter_cmd_xip)();
+        saved.restore();
+    }
+
+    // CS1/PSRAM is deliberately outside the local application's contract.
+    // Inline these helpers into RAM functions; final instruction bytes and
+    // transitive calls are verified in every deployable optimized artifact.
+    #[cfg(feature = "_rp235x")]
+    struct XipState {
+        timing: pac::qmi::regs::Timing,
+        rfmt: pac::qmi::regs::Rfmt,
+        rcmd: pac::qmi::regs::Rcmd,
+        direct: pac::qmi::regs::DirectCsr,
+        pads: [pac::pads::regs::GpioCtrl; 6],
+    }
+    #[cfg(feature = "_rp235x")]
+    impl XipState {
+        #[inline(always)]
+        fn capture() -> Self {
+            Self {
+                timing: pac::QMI.mem(0).timing().read(),
+                rfmt: pac::QMI.mem(0).rfmt().read(),
+                rcmd: pac::QMI.mem(0).rcmd().read(),
+                direct: pac::qmi::regs::DirectCsr(pac::QMI.direct_csr().read().0 & 0xffc0_0000),
+                pads: core::array::from_fn(|i| pac::PADS_QSPI.gpio(i).read()),
+            }
+        }
+
+        #[inline(always)]
+        fn restore(self) {
+            // Never apply fast timing to a different read command/format.
+            // No panic/return into flash on an unexpected boot2 restoration.
+            if pac::QMI.mem(0).rfmt().read() != self.rfmt || pac::QMI.mem(0).rcmd().read() != self.rcmd {
+                fail_stop();
+            }
+            pac::QMI.mem(0).timing().write_value(self.timing);
+            // EN, ASSERT_CS and AUTO_CS must remain clear, including when EN=0.
+            pac::QMI.direct_csr().write_value(self.direct);
+            for (i, pad) in self.pads.into_iter().enumerate() {
+                pac::PADS_QSPI.gpio(i).write_value(pad);
+            }
+            cortex_m::asm::dsb();
+            let direct = pac::QMI.direct_csr().read();
+            if pac::QMI.mem(0).timing().read() != self.timing
+                || direct.0 & 0xffc0_00cf != self.direct.0
+                || !direct.txempty() || !direct.rxempty()
+            {
+                fail_stop();
+            }
+            for (i, pad) in self.pads.into_iter().enumerate() {
+                if pac::PADS_QSPI.gpio(i).read() != pad { fail_stop(); }
+            }
+            cortex_m::asm::dsb();
+            cortex_m::asm::isb();
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[cfg(feature = "_rp235x")]
+    #[inline(always)]
+    fn fail_stop() -> ! {
+        // No panic, logging or flash access. The armed watchdog is the bound.
+        loop { cortex_m::asm::wfe(); }
+    }
+
+    #[cfg(feature = "_rp235x")]
+    struct Probe;
+    #[cfg(feature = "_rp235x")]
+    impl super::probe::Io for Probe {
+        #[inline(always)]
+        fn control(&mut self, value: u32) { pac::QMI.direct_csr().write_value(pac::qmi::regs::DirectCsr(value)); }
+        #[inline(always)]
+        fn status(&mut self) -> u32 { pac::QMI.direct_csr().read().0 }
+        #[inline(always)]
+        fn write(&mut self, byte: u8) { pac::QMI.direct_tx().write_value(pac::qmi::regs::DirectTx(u32::from(byte))); }
+        #[inline(always)]
+        fn read(&mut self) -> u8 { pac::QMI.direct_rx().read().0 as u8 }
+    }
+
+    /// Fixed read-only 9F transaction. Resolve ROM functions and copy the boot
+    /// setup into SRAM before entering the non-inlined XIP-off function.
+    #[cfg(feature = "_rp235x")]
+    pub unsafe fn flash_jedec_id() -> u32 {
+        let mut boot2 = [0u32; 64];
+        core::ptr::copy_nonoverlapping(BOOTRAM_BASE, boot2.as_mut_ptr(), 64);
+        let ptrs = flash_function_pointers_with_boot2(false, false, &boot2);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        jedec_id_inner(&ptrs)
+    }
+
+    #[cfg(feature = "_rp235x")]
+    #[inline(never)]
+    #[unsafe(link_section = ".data.ram_func")]
+    unsafe fn jedec_id_inner(ptrs: &FlashFunctionPointers<'_>) -> u32 {
+        let saved = XipState::capture();
+        (ptrs.connect_internal_flash)();
+        (ptrs.flash_exit_xip)();
+        let id = match super::probe::read_id(&mut Probe, 100_000) {
+            Some(id) => id,
+            None => fail_stop(),
+        };
+        (ptrs.flash_flush_cache)();
+        (ptrs.flash_enter_cmd_xip)();
+        saved.restore();
+        id
     }
 
     #[repr(C)]

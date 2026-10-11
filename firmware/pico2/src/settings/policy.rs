@@ -14,6 +14,21 @@ pub enum Status {
     Failed,
     Disabled,
 }
+impl Status {
+    pub const fn label(
+        self,
+        has_record: bool,
+    ) -> &'static str {
+        match self {
+            Self::Clean if has_record => "SAVED",
+            Self::Clean => "DEFAULT",
+            Self::Dirty => "UNSAVED",
+            Self::Saving => "SAVING",
+            Self::Failed => "FAILED",
+            Self::Disabled => "VOLATILE",
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolicyError {
     Clock,

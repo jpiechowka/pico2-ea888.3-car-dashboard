@@ -29,6 +29,8 @@ use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
 use dashboard_pico2::input_model::brightness_after;
+use dashboard_pico2::settings::Settings;
+use dashboard_pico2::settings::policy::Policy;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -46,7 +48,6 @@ use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_fre
 use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
-use crate::render::FpsMode;
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page};
 use crate::state::{ButtonState, Page, Popup, process_buttons};
 use crate::tasks::{
@@ -166,6 +167,17 @@ fn data_mode() -> dashboard_pico2::samples::DataMode {
     }
 }
 
+fn log_settings_error(error: &drivers::settings_flash::JournalError) {
+    use dashboard_pico2::settings::Error as JournalError;
+    use drivers::settings_flash::Error;
+    match error {
+        JournalError::Storage(Error::Hardware(cause)) => log_fault!("Flash: {:?}", cause),
+        JournalError::Storage(Error::Identity(id)) => log_fault!("Unknown flash: {:06x}", id),
+        JournalError::Storage(Error::DebugBuild) => log_info!("Debug settings: volatile"),
+        _ => log_fault!("Settings: {:?}", error),
+    }
+}
+
 #[cfg(all(feature = "demo", feature = "longan-rx12"))]
 compile_error!("Select either demo or longan-rx12; vehicle transport never falls back to demo.");
 
@@ -248,6 +260,23 @@ async fn main(spawner: Spawner) {
     log_info!("Previous reset: {}", reset_cause);
     let cpu_freq_hz = embassy_rp::clocks::clk_sys_freq();
 
+    let mut settings_flash = drivers::settings_flash::SettingsFlash::new(p.FLASH);
+    let (initial_settings, mut has_saved_settings, settings_enabled) = match settings_flash.load() {
+        Ok(loaded) => (loaded.unwrap_or_default(), loaded.is_some(), true),
+        Err(error) => {
+            log_settings_error(&error);
+            (Settings::default(), false, false)
+        }
+    };
+    let mut settings_policy = if settings_enabled {
+        Policy::new(initial_settings, Instant::now().as_millis())
+    } else {
+        Policy::disabled(initial_settings, Instant::now().as_millis())
+    };
+    let mut pending_save = None;
+    let mut last_settings_status = settings_policy.status();
+    log_info!("Settings: {}", last_settings_status.label(has_saved_settings));
+
     let animation_start = Instant::now();
     let stack = CORE1_STACK.init(embassy_rp::multicore::Stack::new());
     let stack_bottom = stack.mem.as_ptr() as u32;
@@ -286,7 +315,7 @@ async fn main(spawner: Spawner) {
     let mut pwm_config = PwmConfig::default();
     pwm_config.top = PWM_TOP;
     pwm_config.divider = backlight_divider.into();
-    pwm_config.compare_a = PWM_TOP + 1;
+    pwm_config.compare_a = brightness_compare(initial_settings.brightness());
     let mut backlight_pwm = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, pwm_config.clone());
     log_info!(
         "Configured CPU {} Hz, backlight PWM {} Hz",
@@ -340,8 +369,8 @@ async fn main(spawner: Spawner) {
     log_info!("Buttons initialized");
 
     let mut current_page = Page::Dashboard;
-    let mut fps_mode = FpsMode::Off;
-    let mut show_boost_psi = false;
+    let mut fps_mode = initial_settings.fps();
+    let mut show_boost_psi = initial_settings.boost_psi();
     let mut active_popup: Option<Popup> = None;
     let mut reset_requested = false;
 
@@ -359,8 +388,8 @@ async fn main(spawner: Spawner) {
     let mut flush_in_progress = None;
 
     // Brightness state (PWM backlight, encoder-controlled)
-    let mut brightness_percent: u32 = 100;
-    let mut saved_brightness: u32 = 100; // for toggle on/off
+    let mut brightness_percent = u32::from(initial_settings.brightness());
+    let mut saved_brightness = u32::from(initial_settings.restore_brightness());
     let mut backlight_off_pending = false; // deferred off: show popup first, then cut PWM
     let mut log_anchor: Option<u64> = None;
 
@@ -384,6 +413,9 @@ async fn main(spawner: Spawner) {
 
     loop {
         let frame_start = Instant::now();
+        // Give the SAVING state one normal presentation before maintenance.
+        // The immutable ticket also makes changes during that frame explicit.
+        let save_this_frame = pending_save.is_some();
         let frame_cycles_start = cpu_profiling::read();
 
         let elapsed_ms = animation_start.elapsed().as_millis() as u32;
@@ -464,7 +496,9 @@ async fn main(spawner: Spawner) {
                     let new_brightness = brightness_after(brightness_percent, enc_delta);
                     if new_brightness != brightness_percent {
                         brightness_percent = new_brightness;
-                        saved_brightness = brightness_percent;
+                        if brightness_percent != 0 {
+                            saved_brightness = brightness_percent;
+                        }
                         backlight_off_pending = false; // cancel any pending off
                         pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
@@ -481,7 +515,7 @@ async fn main(spawner: Spawner) {
                         // Don't touch PWM yet — keep backlight on for the popup
                     } else {
                         // Turning on: apply immediately
-                        brightness_percent = saved_brightness.max(5);
+                        brightness_percent = saved_brightness.max(1);
                         backlight_off_pending = false;
                         pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
@@ -528,6 +562,22 @@ async fn main(spawner: Spawner) {
             }
         }
         let now_ms = Instant::now().as_millis();
+        let desired = Settings::new(
+            brightness_percent as u8,
+            saved_brightness as u8,
+            show_boost_psi,
+            fps_mode,
+        )
+        .expect("invalid live preferences");
+        settings_policy.set(desired, now_ms).expect("settings clock regressed");
+        if pending_save.is_none() {
+            pending_save = settings_policy.begin(now_ms).expect("invalid save policy");
+        }
+        let settings_status = settings_policy.status();
+        if settings_status != last_settings_status {
+            log_info!("Settings: {}", settings_status.label(has_saved_settings));
+            last_settings_status = settings_status;
+        }
         #[cfg(feature = "longan-rx12")]
         if let Some(link) = link_receiver.try_changed() {
             vehicle_link = Some(link);
@@ -618,6 +668,7 @@ async fn main(spawner: Spawner) {
                         frame_count,
                         trace: last_trace,
                         brightness_percent,
+                        settings_status: settings_status.label(has_saved_settings),
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
                         render_buffer_idx: render_idx,
@@ -689,6 +740,34 @@ async fn main(spawner: Spawner) {
         };
         let blocked_us = wait_start.elapsed().as_micros();
         crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
+        if save_this_frame {
+            let ticket = pending_save.take().expect("missing save ticket");
+            // Both affine leases are owned here and the matching completion
+            // has returned. Queue no display work until all owners resume.
+            crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
+            let result = tasks::maintenance::run(|permit| settings_flash.save(ticket.settings(), permit)).await;
+            settings_policy
+                .finish(ticket, result.is_ok(), Instant::now().as_millis())
+                .expect("invalid save completion");
+            match result {
+                Ok(()) => {
+                    has_saved_settings = true;
+                    log_info!("Settings saved and verified");
+                }
+                Err(tasks::maintenance::SaveError::Preparation(error)) => log_fault!("Save preparation: {:?}", error),
+                Err(tasks::maintenance::SaveError::Operation(error)) => log_settings_error(&error),
+            }
+            btn_a_state = ButtonState::new();
+            btn_b_state = ButtonState::new();
+            btn_x_state = ButtonState::new();
+            btn_y_state = ButtonState::new();
+            // Render again with current wall-clock ages and post-park link
+            // quality. Never present this pre-maintenance sensor snapshot.
+            lifecycle.discard(token).expect("maintenance retained a live frame");
+            dashboard_cache.invalidate(render_idx);
+            spare_frame = Some(next_frame);
+            continue;
+        }
         let reference = panel_history
             .reference()
             .filter(|reference| reference.buffer == next_frame.id());

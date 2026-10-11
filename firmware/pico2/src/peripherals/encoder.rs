@@ -174,7 +174,15 @@ pub async fn encoder_task(mut i2c: I2c<'static, I2C0, Async>) {
     let mut connected = false;
     let mut button = DebouncedButton::new();
     let mut reported_error = false;
+    let mut last_resume = None;
     loop {
+        if crate::tasks::maintenance::input_boundary(&mut last_resume).await {
+            button = DebouncedButton::new();
+            ENCODER_EVENTS.clear();
+            // Reinitialization consumes motion accumulated while unobserved.
+            connected = false;
+            ENCODER_CONNECTED.store(false, Ordering::Relaxed);
+        }
         // No cancelling timeout: HAL I2C has no transfer-drop cleanup. A stuck
         // future retains its owner; the independent watchdog observes no input
         // progress and resets. Ordinary NACKs retry without resetting the board.

@@ -17,6 +17,7 @@ pub struct ProfilingData {
     pub frame_count: u32,
     pub trace: Option<FrameTrace>,
     pub brightness_percent: u32,
+    pub settings_status: &'static str,
 
     pub buffer_swaps: u32,
     pub buffer_waits: u32,
@@ -274,9 +275,9 @@ pub async fn draw_profiling_page<D>(
 
     s.clear();
     if data.brightness_percent == 0 {
-        let _ = write!(s, "BL: OFF");
+        let _ = write!(s, "BL: OFF {}", data.settings_status);
     } else {
-        let _ = write!(s, "BL: {}%", data.brightness_percent);
+        let _ = write!(s, "BL: {}% {}", data.brightness_percent, data.settings_status);
     }
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     let _ = y;

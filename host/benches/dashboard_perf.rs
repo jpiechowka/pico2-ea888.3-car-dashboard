@@ -535,12 +535,45 @@ fn settings_journal(c: &mut Criterion) {
     });
 }
 
+fn maintenance(c: &mut Criterion) {
+    use dashboard_host_validation::health::{Progress, ProgressMonitor};
+    use dashboard_host_validation::maintenance::{Command, Gate, Owner};
+    c.bench_function("settings/maintenance_transaction_model", |b| {
+        b.iter(|| {
+            let progress = black_box(Progress {
+                acquisition: 1,
+                rendering: 1,
+                input: 1,
+                completed: 0,
+                submitted: 0,
+                display_pending: false,
+            });
+            let mut health = ProgressMonitor::new(black_box(0), progress);
+            let ticket = health.begin_maintenance(black_box(1), progress).unwrap();
+            let mut gate = Gate::new();
+            let request = gate.begin(black_box(&ticket)).unwrap();
+            for owner in [Owner::Input, Owner::Acquisition] {
+                black_box(gate.acknowledge(Command::Park(request), black_box(owner), true));
+            }
+            gate.begin_write(black_box(100)).unwrap();
+            gate.writing(request, black_box(300)).unwrap();
+            gate.release(request).unwrap();
+            for owner in [Owner::Acquisition, Owner::Input] {
+                black_box(gate.acknowledge(Command::Resume(request), black_box(owner), true));
+            }
+            gate.finish(request, black_box(400)).unwrap();
+            health.end_maintenance(ticket, black_box(401), progress).unwrap();
+            black_box((health, gate));
+        });
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance
 }
 criterion_main!(dashboard_perf);

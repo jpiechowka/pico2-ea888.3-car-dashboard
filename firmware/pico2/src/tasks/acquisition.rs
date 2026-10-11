@@ -5,6 +5,7 @@ use dashboard_pico2::acquisition::AcquisitionModel;
 use dashboard_pico2::acquisition::DashboardSnapshot;
 #[cfg(feature = "longan-rx12")]
 use dashboard_pico2::diagnostics::service::{LinkSnapshot, Vehicle};
+use dashboard_pico2::maintenance::{Command, Owner};
 use dashboard_pico2::stack_samples::StackSamples;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -76,8 +77,91 @@ pub async fn acquisition_task(
         100
     };
     let mut stack_samples = StackSamples::new(stack_bottom, stack_top).expect("invalid core1 stack bounds");
+    let mut last_resume = None;
 
     loop {
+        if let Some(command) = super::maintenance::command() {
+            let request = match command {
+                Command::Park(r) | Command::Resume(r) => r,
+            };
+            if last_resume != Some(request) {
+                if matches!(command, Command::Park(_)) {
+                    #[cfg(feature = "longan-rx12")]
+                    let accepted = model.request_pause(Instant::now().as_millis()).is_ok();
+                    let mut published = false;
+                    while super::maintenance::command() == Some(Command::Park(request)) {
+                        let now = Instant::now().as_millis();
+                        #[cfg(feature = "longan-rx12")]
+                        let ready = {
+                            if accepted {
+                                core::future::poll_fn(|cx| {
+                                    model.step(cx, now);
+                                    core::task::Poll::Ready(())
+                                })
+                                .await;
+                            }
+                            accepted && model.paused()
+                        };
+                        #[cfg(not(feature = "longan-rx12"))]
+                        let ready = true;
+                        let in_time = now
+                            .checked_sub(request.started_ms())
+                            .is_some_and(|ms| ms <= dashboard_pico2::maintenance::PREPARE_MS);
+                        if ready && !published {
+                            // Publish intentional transport invalidation before
+                            // acknowledging park; retain original sample ages.
+                            sender.send(model.snapshot());
+                            #[cfg(feature = "longan-rx12")]
+                            link_sender.send(model.link());
+                            published = true;
+                            super::maintenance::acknowledge(
+                                Command::Park(request),
+                                Owner::Acquisition,
+                                in_time && super::maintenance::core1_ready(),
+                            );
+                        } else if !in_time {
+                            super::maintenance::acknowledge(Command::Park(request), Owner::Acquisition, false);
+                        }
+                        #[cfg(feature = "longan-rx12")]
+                        if !accepted
+                            || model.link().state == dashboard_pico2::diagnostics::service::LinkState::Quarantined
+                        {
+                            super::maintenance::acknowledge(Command::Park(request), Owner::Acquisition, false);
+                        }
+                        // Keep SIO/UART interrupts enabled. No HAL lockout or
+                        // progress increment here; recovery has a fixed grant.
+                        Timer::after_millis(1).await;
+                    }
+                }
+                #[cfg(feature = "longan-rx12")]
+                {
+                    // Another owner may reject preparation before our command
+                    // finishes. Even cancellation must complete the full frame.
+                    while model.link().state == dashboard_pico2::diagnostics::service::LinkState::Maintenance
+                        && !model.paused()
+                    {
+                        core::future::poll_fn(|cx| {
+                            model.step(cx, Instant::now().as_millis());
+                            core::task::Poll::Ready(())
+                        })
+                        .await;
+                        Timer::after_millis(1).await;
+                    }
+                    if model.paused() {
+                        model
+                            .resume(Instant::now().as_millis())
+                            .expect("invalid vehicle resume");
+                    }
+                }
+                last_resume = Some(request);
+                super::maintenance::acknowledge(
+                    Command::Resume(request),
+                    Owner::Acquisition,
+                    super::maintenance::core1_ready(),
+                );
+            }
+        }
+        // Start useful-work measurement only after cooperative park ends.
         let work_start = crate::profiling::read();
 
         if let Some(generation) = RESET_STATISTICS.try_take() {

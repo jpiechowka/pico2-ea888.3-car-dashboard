@@ -39,10 +39,10 @@ review before changing hashes. It is a fixed-code verification gate, not a
 general machine-code safety analyzer. Nine corrupted artifact fixtures are
 rejected. Stock, Longan and Demo300+both-traces pass identical code gates.
 
-The fork provenance manifest retains all 73 original file hashes and now records
-three modified source files plus the added UART helper. This prerequisite does
-not yet enable runtime flash writes; core0's actual linked flash helper must also
-be inspected when the journal is integrated.
+The fork provenance manifest retains all 73 original file hashes. The subsequent
+[core0 integration review](flash-core0.md) covers the newly linked JEDEC and
+erase/program helpers, expanding the gate to all four RAM functions and 17
+negative artifact fixtures.
 
 ## Reserved layout
 
@@ -58,9 +58,9 @@ An ordinary loader using only ELF/UF2 ranges should preserve those sectors;
 actual update preservation remains a hardware gate. Erase-all/flash-nuke clears
 settings. No persistence guarantee follows from a linker reservation alone.
 
-## Runtime integration requirements
+## Runtime ownership contract
 
-The next implementation stages must satisfy all of these before writing:
+The integrated save path enforces these rules before writing:
 
 1. One core0 flash owner limits all operations to the two journal sectors and
    verifies identity QMI mapping. No outer critical section/IRQ context: HAL
@@ -85,8 +85,8 @@ The next implementation stages must satisfy all of these before writing:
 HAL async erase/write call blocking operations. Timer cancellation cannot bound
 their ROM waits. W25Q32RV's manufacturer AC table gives 240 ms maximum 4 KiB erase
 and 2 ms page program under specified conditions, not under hardware failure.
-The current 250 ms supervisor-gap policy therefore needs explicit maintenance
-handling before this integration. Relevant upstream issues are
+The 250 ms normal supervisor-gap policy therefore has a separate finite
+maintenance ticket. Relevant upstream issues are
 [4464](https://github.com/embassy-rs/embassy/issues/4464) (blocking erase),
 [3764](https://github.com/embassy-rs/embassy/issues/3764) (translated XIP reads), and
 [4506](https://github.com/embassy-rs/embassy/issues/4506) (older release-build hang,
@@ -94,8 +94,7 @@ not a reproduced 0.10.0 defect).
 
 ## Shared maintenance models
 
-The host and firmware compile the same three prerequisite models. These do not
-yet authorize hardware writes:
+The host and firmware compile the same three prerequisite models:
 
 - `ProgressMonitor` grants a move-only ticket for at most 1000 ms total,
   including preparation, flash and resumption. Entry requires normal health and
@@ -118,9 +117,8 @@ queued old replies, inactive-Pump flush checks, fixed deadline boundaries,
 clock/generation failures, fresh progress and retained trace history. Both
 outline modes pass 228 runtime tests and two compile-fail checks. Strict host
 and Longan firmware lints pass. Longan release uses 381080 bytes static SRAM
-with 143208 bytes core0 headroom; the RAM lockout gate passes. Actual task
-acknowledgements, core0 flash helper and hardware validation remain separate
-integration requirements.
+with 143208 bytes core0 headroom at that prerequisite commit. See below for the
+later integrated artifact measurements. Hardware validation remains separate.
 
 ## Checked owner barrier and physical range
 
@@ -141,7 +139,55 @@ replay/cancellation/failure and clock regression within each phase. The range
 test checks every byte offset, page/sector boundary and oversized inputs.
 
 These shared tests establish software admission rules; actual owner
-acknowledgements and hardware operations require the integration checks above.
+acknowledgements and peripheral behavior still need hardware fault injection.
+
+## Integrated startup and save path
+
+Core0 owns the blocking Flash peripheral for its entire lifetime. With the
+startup watchdog armed, before core1 launch, it checks the secure ARM flash boot
+profile: normal 3.3 V QSPI mux, no configured CS1, identity address translation,
+empty direct FIFOs and zero XIP streaming. It executes the reviewed RAM JEDEC
+probe and permits the conservative two-sector layout only for EF/40/16.
+`get_sys_info` provides configured capacity, not chip detection; JEDEC is a
+separate check. Debug builds use volatile defaults because only release machine
+code is qualified by the current artifact gate.
+
+On blank/corrupt storage, validated defaults load. Storage errors, unsupported
+schema or ambiguous generations disable saving and keep the live UI usable.
+Valid brightness, restore brightness, boost unit and FPS preferences apply
+before normal presentation. Debug and logs expose DEFAULT, UNSAVED, SAVING,
+SAVED, FAILED or VOLATILE. Saving is shown for an ordinary frame before pausing;
+only verified readback reports success. An immutable older save does not clear
+a newer UI change.
+
+Main waits for the exact outstanding display completion and retains both affine
+leases before requesting maintenance. The supervisor grants one entry feed and
+then withholds all feeds until matching completion; the 2-second hardware
+watchdog remains active. Input acknowledges only between complete I2C iterations
+and after the peripheral reports idle. Acquisition stops admission, drains the
+whole UART command/flush/BUSY, invalidates transport samples and parks its work
+with IRQs enabled. Neither owner fakes normal progress while parked.
+
+Every page/erase rechecks the live 500 ms write permit, range/mapping/profile,
+all DMA channels idle, display DMA chaining disabled, SPI idle/TX empty, CS high
+and I2C idle. Program buffers must be entirely in SRAM. HAL performs its own
+core1 pause and global critical section; there is no outer critical section or
+manual pause. A mid-operation timeout cannot safely cancel ROM work. Failed
+restoration stays in RAM without feeding; failed owner resumption retains the
+health ticket until watchdog recovery.
+
+After the final synchronous operation and before yielding, TE records a gap.
+UART resumes through fresh discard/bootstrap. Encoder events/debounce and all
+four button states reset, while sample timestamps retain wall-clock age. Main
+discards the pre-maintenance render, invalidates its cache and renders again
+from the current quality/link state before submitting another frame.
+
+Independent source and linked-code reviews found no additional blocker. Both
+outlines pass 237 host runtime tests and two compile-fail checks; strict host
+and Longan Clippy pass. Release static SRAM is 380368 B stock, 383656 B Longan
+with TE, and 387160 B Demo300 with both traces; corresponding core0 headroom is
+143920, 140632 and 137128 B. These are linked allocations, not measured peak
+stack use. Serial/full-frame also passes the byte/layout gates.
 
 ## Hardware acceptance boundary
 

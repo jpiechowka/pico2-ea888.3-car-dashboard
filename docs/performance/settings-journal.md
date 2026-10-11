@@ -1,9 +1,9 @@
 # Settings journal and save policy
 
 This stage adds shared `settings/mod.rs` and `settings/policy.rs`. The host uses
-the production code against a NOR model. Hardware flash and task maintenance
-integration remain separate work; these tests do not demonstrate persistence on
-the board.
+the production code against a NOR model. The subsequent runtime integration is
+documented in [flash persistence](../hardware/flash-persistence.md); these tests
+do not demonstrate persistence on the board.
 
 ## Permanent envelope, schema 1
 
@@ -78,7 +78,7 @@ Fifteen new test functions cover the schema/controller contracts, including:
 
 Both outline modes pass 219 runtime tests and two compile-fail checks. Strict
 host/all-target and Longan firmware Clippy pass; existing upstream warnings remain.
-The pure module has not yet been connected to runtime flash ownership.
+Those measurements describe the pure-module prerequisite commit.
 
 Source-frozen Criterion `stage07_journal`, 30 samples per fixture on the existing
 Windows host:
@@ -94,4 +94,22 @@ correctness baselines, not measured speedups or device latency bounds. Raw sampl
 compiler/command and pre-run source archive are in `host/baselines/stage07_journal`.
 
 See [hardware integration requirements](../hardware/flash-persistence.md) for
-the remaining DMA/I2C/UART, supervisor, XIP and physical power-cut gates.
+the integrated DMA/I2C/UART, supervisor and XIP contract and remaining physical
+power-cut gates.
+
+## Maintenance model and integrated checkpoint
+
+Source-frozen `stage07_maintenance` repeats the same journal fixtures and adds
+one complete healthy supervisor grant, two-owner park, write admission/check,
+release, two-owner resume and health completion. It measures shared CPU model
+work only: no RTOS scheduling, spinlocks, hardware IO, ROM erase or watchdog.
+
+| Fixture | Host median, 30 samples |
+|---|---:|
+| Scan two full sectors | 14.062 us |
+| Complete rollover transaction against NOR memory model | 17.844 us |
+| Full maintenance model transition | 35.093 ns |
+
+The journal changes are within ordinary run-to-run variation; no isolated gain
+is claimed. The maintenance fixture is its first baseline. Raw samples, source
+archive, command and compiler identity are in `host/baselines/stage07_maintenance`.

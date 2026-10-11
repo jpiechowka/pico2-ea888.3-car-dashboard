@@ -1,4 +1,4 @@
-"""Verify the complete published HAL plus the local UART and RAM lockout delta.
+"""Verify the complete published HAL plus UART, RAM lockout and flash deltas.
 
 Optional --archive verifies the downloaded .crate and every original file too.
 No archive contents are extracted or executed.
@@ -20,7 +20,8 @@ def check(archive=None):
     manifest = json.loads((ROOT / "embassy-rp-provenance.json").read_text(encoding="utf-8"))
     original = manifest["original_files_sha256"]
     patched = manifest["patched_files_sha256"]
-    assert set(patched) == {"src/uart/buffered.rs", "src/uart/mod.rs", "src/uart/buffered_io.rs", "src/multicore.rs"}
+    assert set(patched) == {"src/uart/buffered.rs", "src/uart/mod.rs", "src/uart/buffered_io.rs",
+                            "src/multicore.rs", "src/flash.rs", "src/flash_probe.rs"}
     expected = original | patched
     for name in expected:
         path = PurePosixPath(name)
@@ -42,7 +43,7 @@ def check(archive=None):
                 assert name not in restored, "duplicate archive entry"
                 restored[name] = digest(tar.extractfile(member).read())
         assert restored == original, "original file manifest does not match published archive"
-    print(f"Verified {len(original)} original files, 3 modified files and 1 added UART helper; archive={'checked' if archive else 'not supplied'}")
+    print(f"Verified {len(original)} original files, 4 modified files and 2 added helpers; archive={'checked' if archive else 'not supplied'}")
 
 
 if __name__ == "__main__":

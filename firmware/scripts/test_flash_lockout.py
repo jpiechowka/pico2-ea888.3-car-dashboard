@@ -39,3 +39,26 @@ for fault in ("address", "size", "instruction", "vector", "relative_branch", "co
         print(f"Rejected modified artifact: {fault}")
     else:
         raise AssertionError(f"missed {fault}")
+
+for suffix in ("14jedec_id_inner", "17write_flash_inner"):
+    for fault in ("missing", "address", "size", "instruction"):
+        bad = copy.deepcopy(elf)
+        name = next(n for n in bad.functions if n.endswith(suffix) and not n.startswith("__"))
+        value, size, index = bad.functions[name]
+        if fault == "missing":
+            del bad.functions[name]
+        elif fault == "address":
+            bad.functions[name] = (0x10000101, size, index)
+        elif fault == "size":
+            bad.functions[name] = (value, size + 2, index)
+        else:
+            data = bytearray(bad.data)
+            section = bad.sections[index]
+            data[section[4] + (value & ~1) - section[3]] ^= 1
+            bad.data = bytes(data)
+        try:
+            check(bad)
+        except AssertionError:
+            print(f"Rejected modified core0 artifact: {suffix} {fault}")
+        else:
+            raise AssertionError(f"missed {suffix} {fault}")

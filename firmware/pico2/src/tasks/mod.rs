@@ -5,6 +5,7 @@ use static_cell::StaticCell;
 
 pub mod acquisition;
 pub mod flush;
+pub mod maintenance;
 pub mod recovery;
 #[cfg(feature = "te-trace")]
 pub mod te;

@@ -1,10 +1,12 @@
-# Local Embassy RP UART corrections
+# Local Embassy RP corrections
 
 Base: the complete published `embassy-rp 0.10.0` crate, upstream commit
 `84444a19eb57d978e3c09fcdc8e60cdd7278eb03`. Both original licenses are retained.
 `embassy-rp-provenance.json` records the download URL, archive SHA-256, all 73
-original file hashes and the three local UART file hashes. `.gitattributes`
-preserves these bytes across platforms. No other HAL module is changed.
+original file hashes and all six patched/added file hashes. `.gitattributes`
+preserves these bytes across platforms. UART, multicore and flash are the only
+modified HAL modules; UART ring operations and the fixed JEDEC transaction have
+additional shared helpers compiled by the host tests.
 
 Run `python scripts/check_vendor.py` from `firmware`. Supply
 `--archive /path/to/embassy-rp-0.10.0.crate` to also verify the original archive.
@@ -95,3 +97,33 @@ rotating wrap offsets, FIFO production plus consumer copies and sticky-error
 checks. It excludes actual registers, IRQ entry, waker scheduling and wire time.
 The 30-sample median is about 8.3 ns on the recorded host. This is a new fixture,
 not evidence of a speedup over the released driver or physical throughput.
+
+## RP2350 flash prerequisites
+
+The secure SIO pause wrapper and helper reside entirely in initialized SRAM.
+The release ELF gate checks their exact instruction bytes, complete startup
+copy, relative branch and IRQ25 vector. See
+[flash persistence](../../docs/hardware/flash-persistence.md) for the reproduced
+released-HAL placement defect and primary source references.
+
+`blocking_jedec_id` now supports RP2350 through the existing HAL lockout. Its
+fixed `9F 00 00 00` transaction has one 100,000-poll budget across all entry,
+TX, RX and final waits. It releases CS only after BUSY clears and both FIFOs
+are empty. Budget exhaustion or inconsistent state stays in RAM for watchdog
+recovery. The four-byte protocol is shared with host tests for wire order,
+ID bytes, every budget cutoff, delayed readiness and FIFO faults.
+
+Both JEDEC and erase/program RAM helpers preserve six QSPI pads, M0 read timing
+and direct timing. Copied boot2 must first restore the same read command/format;
+individual readbacks and DSB/ISB precede return. Unknown restoration never logs,
+panics or returns through flash. ROM functions are resolved and the 256-byte
+BOOTRAM setup copied to aligned stack storage before XIP changes. See
+[core0 flash review](../../docs/hardware/flash-core0.md) for the inspected bytes
+and source cross-checks.
+
+This is the application's single-CS, normal QSPI, 3.3 V Pico 2 contract. The
+caller must reject CS1/PSRAM/custom mappings, quiesce its owners, provide SRAM
+program data and retain a running watchdog. HAL pause/resume/DMA/ROM waits still
+have no software-returning timeout. Debug persistence is disabled until its
+distinct machine code is reviewed. Physical flash and recovery validation is
+pending; host protocol tests do not exercise QMI registers.

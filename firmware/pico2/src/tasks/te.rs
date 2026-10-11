@@ -11,6 +11,8 @@ use embassy_time::Instant;
 pub static TE_OBSERVATIONS: Mutex<CriticalSectionRawMutex, RefCell<TeObservations>> =
     Mutex::new(RefCell::new(TeObservations::new()));
 
+pub fn mark_maintenance_gap() { TE_OBSERVATIONS.lock(|edges| edges.borrow_mut().mark_gap()); }
+
 #[embassy_executor::task]
 pub async fn observe_te(mut pin: Input<'static>) {
     loop {
