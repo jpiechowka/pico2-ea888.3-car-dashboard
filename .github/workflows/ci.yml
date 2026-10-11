@@ -45,7 +45,9 @@ jobs:
         run: python3 scripts/check_vendor.py
         working-directory: firmware
       - name: Target artifact capture contracts
-        run: python3 scripts/test_target_capture.py
+        run: |
+          python3 scripts/test_target_capture.py
+          python3 -O scripts/test_validation_policy.py
         working-directory: firmware
       - name: Full outline contracts
         run: cargo test --locked --no-default-features
@@ -85,6 +87,7 @@ jobs:
       - name: Logging feature and flush policy
         run: |
           python3 scripts/test_logging_policy.py
+          python3 -O scripts/test_logging_policy.py
           python3 scripts/check_logging_policy.py
         working-directory: firmware
       - name: Vehicle transport Clippy

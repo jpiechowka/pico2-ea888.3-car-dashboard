@@ -1,4 +1,5 @@
 """Compile a positive control, then require the intended profile diagnostics."""
+from validation import require
 from itertools import combinations
 from pathlib import Path
 import subprocess
@@ -22,6 +23,6 @@ if __name__ == "__main__":
     cases.append(("demo,longan-rx12", "Select either demo or longan-rx12"))
     for features, diagnostic in cases:
         result = compile_features(features)
-        assert result.returncode and diagnostic in result.stderr, result.stdout + result.stderr
+        require(result.returncode and diagnostic in result.stderr, result.stdout + result.stderr)
         print("Rejected incompatible profile:", features)
     print("Positive control and all seven intended rejection diagnostics verified")

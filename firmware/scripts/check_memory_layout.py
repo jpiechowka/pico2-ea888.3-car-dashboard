@@ -5,7 +5,8 @@ Uses only Python's standard library; never executes target code.
 """
 
 import sys
-from elf_image import ElfImage, require
+from elf_image import ElfImage
+from validation import require
 from check_flash_lockout import check as check_flash_lockout
 
 

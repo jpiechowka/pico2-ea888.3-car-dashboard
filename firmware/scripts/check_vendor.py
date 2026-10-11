@@ -6,6 +6,7 @@ No archive contents are extracted or executed.
 import argparse
 import hashlib
 import json
+from validation import require
 from pathlib import Path, PurePosixPath
 import tarfile
 
@@ -20,29 +21,29 @@ def check(archive=None):
     manifest = json.loads((ROOT / "embassy-rp-provenance.json").read_text(encoding="utf-8"))
     original = manifest["original_files_sha256"]
     patched = manifest["patched_files_sha256"]
-    assert set(patched) == {"src/uart/buffered.rs", "src/uart/mod.rs", "src/uart/buffered_io.rs",
-                            "src/multicore.rs", "src/flash.rs", "src/flash_probe.rs"}
+    require(set(patched) == {"src/uart/buffered.rs", "src/uart/mod.rs", "src/uart/buffered_io.rs",
+                            "src/multicore.rs", "src/flash.rs", "src/flash_probe.rs"})
     expected = original | patched
     for name in expected:
         path = PurePosixPath(name)
-        assert not path.is_absolute() and ".." not in path.parts and "\\" not in name
+        require(not path.is_absolute() and ".." not in path.parts and "\\" not in name)
     tree = ROOT / "embassy-rp"
     actual = {p.relative_to(tree).as_posix(): digest(p.read_bytes()) for p in tree.rglob("*") if p.is_file()}
-    assert actual == expected, f"vendor mismatch: {sorted(k for k in actual.keys() | expected.keys() if actual.get(k) != expected.get(k))}"
+    require(actual == expected, f"vendor mismatch: {sorted(k for k in actual.keys() | expected.keys() if actual.get(k) != expected.get(k))}")
     if archive is not None:
-        assert digest(archive.read_bytes()) == manifest["archive_sha256"], "archive checksum mismatch"
+        require(digest(archive.read_bytes()) == manifest["archive_sha256"], "archive checksum mismatch")
         prefix = f'{manifest["crate"]}-{manifest["version"]}/'
         with tarfile.open(archive, "r:gz") as tar:
             restored = {}
             for member in tar.getmembers():
-                assert member.name.startswith(prefix), "unexpected archive root"
+                require(member.name.startswith(prefix), "unexpected archive root")
                 if member.isdir():
                     continue
-                assert member.isfile(), "unexpected archive entry type"
+                require(member.isfile(), "unexpected archive entry type")
                 name = member.name[len(prefix):]
-                assert name not in restored, "duplicate archive entry"
+                require(name not in restored, "duplicate archive entry")
                 restored[name] = digest(tar.extractfile(member).read())
-        assert restored == original, "original file manifest does not match published archive"
+        require(restored == original, "original file manifest does not match published archive")
     print(f"Verified {len(original)} original files, 4 modified files and 2 added helpers; archive={'checked' if archive else 'not supplied'}")
 
 

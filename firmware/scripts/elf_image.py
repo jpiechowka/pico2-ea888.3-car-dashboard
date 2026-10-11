@@ -1,12 +1,8 @@
 """Small read-only ELF32/ARM inspector shared by firmware artifact gates."""
 from pathlib import Path
 import struct
+from validation import require
 
-
-def require(condition, message="invalid ELF structure"):
-    """Artifact gates must remain active under python -O / PYTHONOPTIMIZE."""
-    if not condition:
-        raise AssertionError(message)
 
 
 class ElfImage:

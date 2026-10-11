@@ -6,7 +6,8 @@ these digests automatically. See docs/hardware/flash-persistence.md.
 import hashlib
 import struct
 import sys
-from elf_image import ElfImage, require
+from elf_image import ElfImage
+from validation import require
 
 
 def check(elf):
