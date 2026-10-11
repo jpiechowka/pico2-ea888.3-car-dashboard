@@ -5,6 +5,7 @@
 #![allow(clippy::cast_sign_loss)]
 
 pub mod acquisition;
+pub mod alarms;
 pub mod config;
 pub mod dashboard;
 pub mod diagnostics;

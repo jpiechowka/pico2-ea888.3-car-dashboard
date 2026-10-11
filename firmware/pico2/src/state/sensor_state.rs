@@ -151,6 +151,8 @@ impl SensorState {
 
     pub const fn value(&self) -> Option<f32> { self.value }
 
+    pub const fn sampled_at_ms(&self) -> Option<u64> { self.last_sample_ms }
+
     pub fn snapshot(&self) -> SensorSnapshot {
         let (graph, graph_start, graph_count, graph_min, graph_max) = self.get_graph_data();
         SensorSnapshot {

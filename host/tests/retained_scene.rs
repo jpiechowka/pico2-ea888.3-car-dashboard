@@ -164,7 +164,12 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
             6..=8 => Some(Overlay::Brightness((step % 101) as u8)),
             9..=11 => Some(Overlay::Fps(FpsMode::Combined)),
             12..=14 => Some(Overlay::BoostUnit(step % 2 == 0)),
-            15..=20 => Some(Overlay::Danger(step % 2 == 0)),
+            15..=20 => {
+                Some(Overlay::Critical(
+                    dashboard_host_validation::samples::SensorId::Egt,
+                    step % 2 == 0,
+                ))
+            }
             _ => None,
         };
         let scene = DashboardScene {

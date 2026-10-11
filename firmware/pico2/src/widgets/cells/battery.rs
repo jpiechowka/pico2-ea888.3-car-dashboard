@@ -4,20 +4,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
 
 use super::{SensorDisplayData, label_color_for_bg, label_style_for_text, peak_highlight_for_text};
-use crate::thresholds::{BATT_CRITICAL, BATT_WARNING};
-use crate::ui::{BLACK, CENTERED, LABEL_FONT, ORANGE, RED, VALUE_FONT_MEDIUM, WHITE};
+use crate::ui::{BLACK, CENTERED, LABEL_FONT, ORANGE, VALUE_FONT_MEDIUM, WHITE};
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
-
-pub fn is_critical_battery(value: f32) -> bool { value < BATT_CRITICAL }
-pub fn battery_color(value: f32) -> Rgb565 {
-    if value < BATT_CRITICAL {
-        RED
-    } else if value < BATT_WARNING {
-        ORANGE
-    } else {
-        BLACK
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_batt_cell<D>(
@@ -30,26 +18,13 @@ pub fn draw_batt_cell<D>(
     min_voltage: f32,
     max_voltage: f32,
     state: &SensorDisplayData<'_>,
-    blink_on: bool,
-    shake_offset: i32,
-    bg_override: Option<Rgb565>,
-    alarms_enabled: bool,
+    bg_color: Rgb565,
+    is_critical: bool,
 ) -> Rgb565
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let is_critical = alarms_enabled && is_critical_battery(voltage);
-    let mut bg_color = battery_color(voltage);
     let text = crate::widgets::cell_text::battery(voltage, min_voltage, max_voltage);
-
-    if let Some(override_color) = bg_override {
-        bg_color = override_color;
-    }
-
-    if is_critical && !blink_on {
-        bg_color = BLACK;
-    }
-
     draw_cell_background(display, x, y, w, h, bg_color);
 
     let base_text = label_color_for_bg(bg_color);
@@ -58,7 +33,7 @@ where
 
     let center_x = (x + w / 2) as i32;
     let center_y = (y + h / 2) as i32;
-    let value_x = center_x + shake_offset;
+    let value_x = center_x;
 
     Text::with_text_style("ECU V", Point::new(center_x, y as i32 + 14), label_style, CENTERED)
         .draw(display)

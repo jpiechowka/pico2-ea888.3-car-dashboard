@@ -12,9 +12,6 @@ mod screens;
 mod state;
 mod tasks;
 mod ui;
-mod widgets {
-    pub use dashboard_pico2::widgets::*;
-}
 
 mod config {
     pub use dashboard_pico2::config::*;
@@ -22,13 +19,10 @@ mod config {
 mod render {
     pub use dashboard_pico2::render::*;
 }
-mod thresholds {
-    pub use dashboard_pico2::thresholds::*;
-}
-
 use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
+use dashboard_pico2::colors::RED;
 use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
@@ -52,7 +46,7 @@ use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_fre
 use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
-use crate::render::{FpsMode, cell_idx};
+use crate::render::FpsMode;
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page};
 use crate::state::{ButtonState, Page, Popup, process_buttons};
 use crate::tasks::{
@@ -69,16 +63,7 @@ use crate::tasks::{
     wait_completed,
     wait_started,
 };
-use crate::thresholds::EGT_DANGER_MANIFOLD;
 use crate::ui::{BLACK, ColorTransition};
-use crate::widgets::{
-    battery_color,
-    draw_brightness_popup,
-    temp_color_egt,
-    temp_color_iat,
-    temp_color_oil_dsg,
-    temp_color_water,
-};
 
 #[unsafe(link_section = ".bi_entries")]
 #[used]
@@ -380,10 +365,8 @@ async fn main(spawner: Spawner) {
     let mut log_scroll_offset: i32 = 0;
     let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
 
-    let mut measurements = DashboardSnapshot {
-        mode: data_mode(),
-        ..DashboardSnapshot::EMPTY
-    };
+    let mut measurements = DashboardSnapshot::EMPTY;
+    measurements.mode = data_mode();
     let mut reset_requests = ResetRequests::default();
 
     log_info!("Main loop starting");
@@ -563,23 +546,6 @@ async fn main(spawner: Spawner) {
                 active_popup = Some(Popup::Reset(Instant::now()));
             }
         }
-        let [
-            _,
-            oil_state,
-            water_state,
-            dsg_state,
-            iat_state,
-            egt_state,
-            batt_state,
-            _,
-        ] = &measurements.sensors;
-        let oil_temp = oil_state.value().unwrap_or(0.0);
-        let water_temp = water_state.value().unwrap_or(0.0);
-        let dsg_temp = dsg_state.value().unwrap_or(0.0);
-        let iat_temp = iat_state.value().unwrap_or(0.0);
-        let egt_temp = egt_state.value().unwrap_or(0.0);
-        let batt_voltage = batt_state.value().unwrap_or(0.0);
-
         let now_ms = Instant::now().as_millis();
         #[cfg(feature = "longan-rx12")]
         if let Some(link) = link_receiver.try_changed() {
@@ -601,26 +567,11 @@ async fn main(spawner: Spawner) {
             average_fps = rate.average;
         }
 
-        // Vehicle EGT mapping and alarm policy have not been validated.
-        let egt_danger_active = measurements.mode == dashboard_pico2::samples::DataMode::Demo
-            && measurements
-                .value_at(dashboard_pico2::samples::SensorId::Egt, now_ms)
-                .is_some_and(|value| value >= EGT_DANGER_MANIFOLD);
-
-        color_transitions.set_target(cell_idx::LAMBDA, BLACK);
-        color_transitions.set_target(cell_idx::BATTERY, battery_color(batt_voltage));
-
-        let (water_target, _) = temp_color_water(water_temp);
-        let (oil_target, _) = temp_color_oil_dsg(oil_temp);
-        let (dsg_target, _) = temp_color_oil_dsg(dsg_temp);
-        let (iat_target, _) = temp_color_iat(iat_temp);
-        let (egt_target, _) = temp_color_egt(egt_temp);
-
-        color_transitions.set_target(cell_idx::COOLANT, water_target);
-        color_transitions.set_target(cell_idx::OIL, oil_target);
-        color_transitions.set_target(cell_idx::DSG, dsg_target);
-        color_transitions.set_target(cell_idx::IAT, iat_target);
-        color_transitions.set_target(cell_idx::EGT, egt_target);
+        let alerts = measurements.alerts_at(now_ms);
+        for (cell, sensor) in dashboard_pico2::dashboard::CELL_SENSORS.into_iter().enumerate() {
+            let id = dashboard_pico2::samples::SensorId::ALL[sensor];
+            color_transitions.set_target(cell, if alerts.active(id) { RED } else { BLACK });
+        }
 
         color_transitions.update(Instant::now());
 
@@ -635,21 +586,14 @@ async fn main(spawner: Spawner) {
 
         match current_page {
             Page::Dashboard => {
-                let overlay = active_popup
-                    .as_ref()
-                    .map(|popup| {
-                        match popup {
-                            Popup::Reset(_) => Overlay::Reset,
-                            Popup::Fps(_) => Overlay::Fps(fps_mode),
-                            Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
-                            Popup::Brightness(_, percent) => Overlay::Brightness((*percent).min(100) as u8),
-                        }
-                    })
-                    .or(if egt_danger_active {
-                        Some(Overlay::Danger(blink_on))
-                    } else {
-                        None
-                    });
+                let overlay = active_popup.as_ref().map(|popup| {
+                    match popup {
+                        Popup::Reset(_) => Overlay::Reset,
+                        Popup::Fps(_) => Overlay::Fps(fps_mode),
+                        Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
+                        Popup::Brightness(_, percent) => Overlay::Brightness((*percent).min(100) as u8),
+                    }
+                });
                 let scene = DashboardScene {
                     measurements: &measurements,
                     status: vehicle_status,
@@ -730,11 +674,20 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        // Brightness popup overlay on Debug page (not Logs — encoder controls scroll there)
-        if matches!(current_page, Page::Debug)
-            && let Some(Popup::Brightness(_, pct)) = active_popup
-        {
-            draw_brightness_popup(&mut display, pct);
+        // The same priority rule applies on every page. Render the critical
+        // overlay last so a brightness/unit/reset popup cannot cover it.
+        if current_page != Page::Dashboard {
+            let user = if matches!(current_page, Page::Debug) {
+                match active_popup {
+                    Some(Popup::Brightness(_, pct)) => Some(Overlay::Brightness(pct.min(100) as u8)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(overlay) = Overlay::prioritize(user, alerts, blink_on) {
+                overlay.draw(&mut display);
+            }
         }
 
         let render_end = Instant::now();

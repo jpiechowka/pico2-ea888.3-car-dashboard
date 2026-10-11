@@ -425,12 +425,32 @@ fn uart_ring(c: &mut Criterion) {
     });
 }
 
+fn alarm_policy(c: &mut Criterion) {
+    use dashboard_host_validation::alarms::{AlarmEngine, demo_contexts, demo_rules};
+    let mut model = AcquisitionModel::demo();
+    let snapshots = [0, 500, 1000].map(|at| {
+        model.ingest_batch([1.0, 140.0, 120.0, 130.0, 70.0, 1100.0, 11.0, 1.3], at);
+        model.snapshot()
+    });
+    let contexts = snapshots.map(|snapshot| demo_contexts(&snapshot));
+    let rules = demo_rules();
+    c.bench_function("alarms/eight_channel_three_samples", |b| {
+        b.iter(|| {
+            let mut engine = AlarmEngine::new(black_box(rules)).unwrap();
+            for (i, at) in [0, 500, 1000].into_iter().enumerate() {
+                black_box(engine.update(black_box(&snapshots[i]), black_box(&contexts[i]), at));
+            }
+            black_box(engine.snapshot())
+        })
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy
 }
 criterion_main!(dashboard_perf);

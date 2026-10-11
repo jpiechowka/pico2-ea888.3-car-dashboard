@@ -95,7 +95,7 @@ pub async fn acquisition_task(
                     30.0 + 40.0 * micromath::F32(t * 0.25).sin().0,
                     200.0 + 1000.0 * micromath::F32(t * 0.04).sin().0.abs(),
                     12.0 + 2.5 * micromath::F32(t * 0.15).sin().0,
-                    (14.0 + 4.0 * micromath::F32(t * 0.45).sin().0) / 14.7,
+                    1.0 + 0.25 * micromath::F32(t * 0.45).sin().0,
                 ],
                 Instant::now().as_millis(),
             );

@@ -1,4 +1,5 @@
 //! Single-owner measurement statistics, published as bounded coherent snapshots.
+use crate::alarms::{AlarmEngine, Alerts, Context, Inputs, demo_contexts_for, demo_rules};
 pub use crate::samples::SensorId;
 use crate::samples::{DataMode, Quality, Sample, SampleError, SampleMeta, Source};
 use crate::sensor_state::{PeakMode, SensorSnapshot, SensorState};
@@ -37,6 +38,7 @@ pub struct DashboardSnapshot {
     pub mode: DataMode,
     pub sequence: u64,
     pub reset_generation: u64,
+    pub(crate) alerts: Alerts,
 }
 
 impl DashboardSnapshot {
@@ -46,7 +48,23 @@ impl DashboardSnapshot {
         mode: DataMode::Vehicle,
         sequence: 0,
         reset_generation: 0,
+        alerts: Alerts::DISABLED,
     };
+
+    pub fn alerts_at(
+        &self,
+        now_ms: u64,
+    ) -> Alerts {
+        self.alerts.at(self, now_ms)
+    }
+
+    pub fn alarm_active_at(
+        &self,
+        id: SensorId,
+        now_ms: u64,
+    ) -> bool {
+        self.alerts.status_at(self, id, now_ms) == crate::alarms::Status::Active
+    }
 
     pub fn quality(
         &self,
@@ -61,14 +79,8 @@ impl DashboardSnapshot {
         id: SensorId,
         now_ms: u64,
     ) -> Option<f32> {
-        let meta = self.metadata[id as usize];
-        if self.quality(id, now_ms) != Quality::Valid
-            || !meta.source.matches(id, self.mode)
-            || self.sensor(id).sampled_at_ms() != meta.received_at_ms
-        {
-            return None;
-        }
-        self.sensor(id).value()
+        let sensor = self.sensor(id);
+        self.metadata[id as usize].value_at(id, self.mode, sensor.value(), sensor.sampled_at_ms(), now_ms)
     }
 
     pub fn sensor(
@@ -99,6 +111,8 @@ pub struct AcquisitionModel {
     mode: DataMode,
     sequence: u64,
     reset_generation: u64,
+    alarms: AlarmEngine,
+    contexts: [Option<Context>; SENSOR_COUNT],
 }
 
 impl Default for AcquisitionModel {
@@ -122,12 +136,15 @@ impl AcquisitionModel {
             mode: DataMode::Vehicle,
             sequence: 0,
             reset_generation: 0,
+            alarms: AlarmEngine::new([None; 8]).expect("empty alarm rules"),
+            contexts: [None; SENSOR_COUNT],
         }
     }
 
     pub fn demo() -> Self {
         Self {
             mode: DataMode::Demo,
+            alarms: AlarmEngine::new(demo_rules()).expect("demo alarm rules"),
             ..Self::new()
         }
     }
@@ -135,6 +152,17 @@ impl AcquisitionModel {
     pub fn ingest_sample(
         &mut self,
         sample: Sample,
+        now_ms: u64,
+    ) -> Result<(), SampleError> {
+        self.ingest_contextual(sample, None, now_ms)
+    }
+
+    /// Context must come from verified operating signals. Absent context keeps
+    /// contextual rules unavailable; no inference from voltage or lambda alone.
+    pub fn ingest_contextual(
+        &mut self,
+        sample: Sample,
+        context: Option<Context>,
         now_ms: u64,
     ) -> Result<(), SampleError> {
         let sensor = sample.value.sensor();
@@ -171,6 +199,8 @@ impl AcquisitionModel {
             quality: if valid { Quality::Valid } else { Quality::InvalidPayload },
         };
         self.sequence = next;
+        self.contexts[index] = context;
+        self.update_alarms(now_ms);
         if valid { Ok(()) } else { Err(SampleError::InvalidValue) }
     }
 
@@ -191,6 +221,8 @@ impl AcquisitionModel {
         meta.quality = quality;
         meta.status_at_ms = at_ms;
         self.sequence = next;
+        self.contexts[sensor as usize] = None;
+        self.update_alarms(at_ms);
         true
     }
 
@@ -224,6 +256,8 @@ impl AcquisitionModel {
         }
         if accepted {
             self.sequence = next_sequence;
+            self.contexts = demo_contexts_for(self.mode, &self.metadata);
+            self.update_alarms(captured_ms);
         }
         accepted
     }
@@ -250,7 +284,34 @@ impl AcquisitionModel {
             mode: self.mode,
             sequence: self.sequence,
             reset_generation: self.reset_generation,
+            alerts: self.alarms.snapshot(),
         }
+    }
+
+    fn update_alarms(
+        &mut self,
+        now_ms: u64,
+    ) {
+        if !self.alarms.enabled() {
+            return;
+        }
+        let values = core::array::from_fn(|i| {
+            self.metadata[i].value_at(
+                SensorId::ALL[i],
+                self.mode,
+                self.sensors[i].value(),
+                self.sensors[i].sampled_at_ms(),
+                now_ms,
+            )
+        });
+        self.alarms.update_inputs(
+            &Inputs {
+                metadata: &self.metadata,
+                values,
+            },
+            &self.contexts,
+            now_ms,
+        );
     }
 }
 

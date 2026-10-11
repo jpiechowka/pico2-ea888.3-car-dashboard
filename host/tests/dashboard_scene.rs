@@ -29,7 +29,7 @@ fn scene_cell_order_and_overlay_removal_match_a_fresh_frame() {
         Overlay::Fps(FpsMode::Combined),
         Overlay::BoostUnit(true),
         Overlay::Brightness(0),
-        Overlay::Danger(true),
+        Overlay::Critical(dashboard_host_validation::samples::SensorId::Egt, true),
     ] {
         scene.overlay = Some(overlay);
         scene.draw_full(&mut St7789Renderer::new(&mut frame.0));

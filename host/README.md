@@ -12,8 +12,10 @@ audited baseline intentionally has failing correctness contracts; the current
 regression suite is expected to pass. Save new candidate runs under a new name:
 
 ```text
-cargo bench --locked --bench dashboard_perf -- --save-baseline candidate-name
+python scripts/capture_benchmark.py candidate-name --filter 'scene/|acquisition/'
 ```
+
+The capture runner freezes source and compiler inputs before execution and rejects source changes during the run. Do not run builds/tests or other benchmarks concurrently with timing collection. Raw samples and the source archive are saved under `baselines/`.
 
 The frame-based history operation was replaced by a timestamped measurement
 operation. Compare the four UI fixtures and the sensor fixture separately:

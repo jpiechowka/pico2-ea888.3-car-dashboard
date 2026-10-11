@@ -192,7 +192,8 @@ fn concurrent_watch_publication_is_coherent_and_eventually_latest() {
 #[test]
 fn publication_copy_and_single_owner_storage_have_fixed_bounds() {
     assert!(
-        core::mem::size_of::<DashboardSnapshot>() <= 3072,
+        // Includes the acquisition-owned alarm states and expiration deadlines.
+        core::mem::size_of::<DashboardSnapshot>() <= 3200,
         "snapshot {} B",
         core::mem::size_of::<DashboardSnapshot>()
     );

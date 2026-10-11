@@ -13,46 +13,7 @@ use crate::vehicle_status::VehicleStatus;
 use crate::widgets::cell_text::{self, CellText};
 use crate::widgets::*;
 
-const CELL_SENSORS: [usize; 8] = [0, 7, 6, 2, 1, 3, 4, 5];
-
-struct Temperature {
-    label: &'static str,
-    colors: fn(f32) -> (Rgb565, Rgb565),
-    critical: fn(f32) -> bool,
-    low: Option<fn(f32) -> bool>,
-}
-const TEMPERATURES: [Temperature; 5] = [
-    Temperature {
-        label: "COOL",
-        colors: temp_color_water,
-        critical: is_critical_water,
-        low: None,
-    },
-    Temperature {
-        label: "OIL",
-        colors: temp_color_oil_dsg,
-        critical: is_critical_oil_dsg,
-        low: Some(is_low_temp_oil),
-    },
-    Temperature {
-        label: "DSG",
-        colors: temp_color_oil_dsg,
-        critical: is_critical_oil_dsg,
-        low: None,
-    },
-    Temperature {
-        label: "IAT",
-        colors: temp_color_iat,
-        critical: is_critical_iat,
-        low: None,
-    },
-    Temperature {
-        label: "EGT",
-        colors: temp_color_egt,
-        critical: is_critical_egt,
-        low: None,
-    },
-];
+pub const CELL_SENSORS: [usize; 8] = [0, 7, 6, 2, 1, 3, 4, 5];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Overlay {
@@ -60,7 +21,30 @@ pub enum Overlay {
     Fps(FpsMode),
     BoostUnit(bool),
     Brightness(u8),
-    Danger(bool),
+    Critical(SensorId, bool),
+}
+
+impl Overlay {
+    pub fn prioritize(
+        user: Option<Self>,
+        alerts: crate::alarms::Alerts,
+        blink: bool,
+    ) -> Option<Self> {
+        alerts.priority().map(|id| Self::Critical(id, blink)).or(user)
+    }
+
+    pub fn draw<D: DrawTarget<Color = Rgb565>>(
+        self,
+        display: &mut D,
+    ) {
+        match self {
+            Self::Reset => draw_reset_popup(display),
+            Self::Fps(mode) => draw_fps_toggle_popup(display, mode),
+            Self::BoostUnit(psi) => draw_boost_unit_popup(display, psi),
+            Self::Brightness(percent) => draw_brightness_popup(display, u32::from(percent.min(100))),
+            Self::Critical(sensor, blink) => draw_critical_popup(display, sensor, blink),
+        }
+    }
 }
 
 pub struct DashboardScene<'a> {
@@ -123,12 +107,17 @@ impl DashboardScene<'_> {
         let display = &mut clipped;
         let quality = self.quality(cell);
         if quality != Quality::Valid {
-            draw_unavailable(display, x, y, CELL_LABELS[cell], quality);
+            draw_unavailable(display, x, y, SensorId::ALL[sensor].label(), quality);
             return;
         }
-        let alarms_enabled = self.measurements.mode == DataMode::Demo;
+        let demo = self.measurements.mode == DataMode::Demo;
+        let critical = self.measurements.alarm_active_at(SensorId::ALL[sensor], self.now_ms);
         let data = display_data(state, self.now_ms);
-        let background = Some(if alarms_enabled { self.backgrounds[cell] } else { BLACK });
+        let background = if critical && self.blink_on {
+            self.backgrounds[cell]
+        } else {
+            BLACK
+        };
         match cell {
             0 => {
                 draw_boost_cell(
@@ -140,13 +129,13 @@ impl DashboardScene<'_> {
                     value,
                     maximum,
                     self.boost_psi,
-                    alarms_enabled && value >= BOOST_EASTER_EGG_BAR,
+                    demo && value >= BOOST_EASTER_EGG_BAR,
                     self.blink_on,
                     0,
                 )
             }
             1 => {
-                draw_lambda_cell(display, x, y, COL_WIDTH, ROW_HEIGHT, value, &data, 0, background);
+                draw_lambda_cell(display, x, y, COL_WIDTH, ROW_HEIGHT, value, &data, 0, Some(background));
             }
             2 => {
                 draw_batt_cell(
@@ -159,31 +148,23 @@ impl DashboardScene<'_> {
                     state.minimum().unwrap_or(0.0),
                     maximum,
                     &data,
-                    self.blink_on,
-                    0,
                     background,
-                    alarms_enabled,
+                    critical,
                 );
             }
             _ => {
-                let temperature = &TEMPERATURES[cell - 3];
                 draw_temp_cell(
                     display,
                     x,
                     y,
                     COL_WIDTH,
                     ROW_HEIGHT,
-                    temperature.label,
+                    SensorId::ALL[sensor].label(),
                     value,
                     maximum,
                     &data,
-                    temperature.colors,
-                    temperature.critical,
-                    temperature.low,
-                    self.blink_on,
-                    0,
                     background,
-                    alarms_enabled,
+                    critical,
                 );
             }
         }
@@ -193,14 +174,13 @@ impl DashboardScene<'_> {
         &self,
         display: &mut D,
     ) {
-        match self.overlay {
-            Some(Overlay::Reset) => draw_reset_popup(display),
-            Some(Overlay::Fps(mode)) => draw_fps_toggle_popup(display, mode),
-            Some(Overlay::BoostUnit(psi)) => draw_boost_unit_popup(display, psi),
-            Some(Overlay::Brightness(percent)) => draw_brightness_popup(display, u32::from(percent.min(100))),
-            Some(Overlay::Danger(blink)) => draw_danger_manifold_popup(display, blink),
-            None => {}
+        if let Some(overlay) = self.effective_overlay() {
+            overlay.draw(display);
         }
+    }
+
+    fn effective_overlay(&self) -> Option<Overlay> {
+        Overlay::prioritize(self.overlay, self.measurements.alerts_at(self.now_ms), self.blink_on)
     }
 
     pub fn draw_full<D: DrawTarget<Color = Rgb565>>(
@@ -216,8 +196,6 @@ impl DashboardScene<'_> {
         self.draw_overlay(display);
     }
 }
-
-const CELL_LABELS: [&str; 8] = ["BOOST REL", "LAMBDA", "ECU V", "COOL", "OIL", "DSG OIL", "IAT", "EGT"];
 
 fn draw_unavailable<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
@@ -305,7 +283,7 @@ struct CellKey {
     source: Source,
     text: CellText,
     background: Rgb565,
-    flags: [bool; 6],
+    flags: [bool; 3],
     trend: Option<bool>,
     graph: GraphKey,
 }
@@ -335,7 +313,7 @@ impl DashboardScene<'_> {
             source: self.measurements.metadata[CELL_SENSORS[cell]].source,
             text: core::array::from_fn(|_| heapless::String::new()),
             background: self.backgrounds[cell],
-            flags: [false; 6],
+            flags: [false; 3],
             trend: None,
             graph: GraphKey::new(None),
         };
@@ -344,51 +322,41 @@ impl DashboardScene<'_> {
             return key;
         }
         key.graph = GraphKey::new(if cell == 0 { None } else { Some(state) });
-        let alarms_enabled = self.measurements.mode == DataMode::Demo;
-        if !alarms_enabled {
+        let demo = self.measurements.mode == DataMode::Demo;
+        let critical = self
+            .measurements
+            .alarm_active_at(SensorId::ALL[CELL_SENSORS[cell]], self.now_ms);
+        if !critical || !self.blink_on {
             key.background = BLACK;
         }
-        let critical;
         match cell {
             0 => {
-                let animated = alarms_enabled && value >= BOOST_EASTER_EGG_BAR;
+                let animated = demo && value >= BOOST_EASTER_EGG_BAR;
                 key.text = cell_text::boost(value, maximum, self.boost_psi);
                 if animated {
                     key.text[2].clear();
                 }
                 key.background = BLACK;
-                key.flags = [self.boost_psi, animated, animated && self.blink_on, false, false, false];
-                critical = false;
+                key.flags = [self.boost_psi, animated, animated && self.blink_on];
             }
             1 => {
                 key.text = cell_text::lambda(value);
-                critical = false;
             }
             2 => {
                 key.text = cell_text::battery(value, state.minimum().unwrap_or(0.0), maximum);
-                key.flags[0] = alarms_enabled && is_critical_battery(value);
+                key.flags[0] = critical;
                 key.flags[1] = state.is_new_peak_at(self.now_ms);
                 key.trend = state.get_trend_at(self.now_ms);
-                critical = key.flags[0];
             }
             _ => {
-                let temperature = &TEMPERATURES[cell - 3];
-                let low = alarms_enabled && temperature.low.is_some_and(|test| test(value));
-                critical = alarms_enabled && (temperature.critical)(value);
                 key.text = cell_text::temperature(value, maximum, state.get_average());
                 key.flags = [
                     critical,
-                    alarms_enabled && (temperature.critical)(maximum),
-                    low,
-                    low && self.blink_on,
                     temp_uses_medium_font(value),
                     state.is_new_peak_at(self.now_ms),
                 ];
                 key.trend = state.get_trend_at(self.now_ms);
             }
-        }
-        if critical && !self.blink_on {
-            key.background = BLACK;
         }
         key
     }
@@ -439,9 +407,10 @@ impl DashboardCache {
         let Some(frame) = self.frames.get_mut(buffer) else {
             return Redraw::FULL;
         };
+        let overlay = scene.effective_overlay();
         // Removing/replacing any opaque overlay restores its entire underlay,
         // including static dividers and pixels outside cell interiors.
-        let clear = frame.header.is_none() || (frame.overlay.is_some() && frame.overlay != scene.overlay);
+        let clear = frame.header.is_none() || (frame.overlay.is_some() && frame.overlay != overlay);
         let header = (
             scene.measurements.mode,
             scene.status,
@@ -457,13 +426,13 @@ impl DashboardCache {
             }
             *cached = Some(key);
         }
-        let overlay = scene.overlay.is_some() && (clear || cells != 0 || frame.overlay != scene.overlay);
-        frame.overlay = scene.overlay;
+        let overlay_dirty = overlay.is_some() && (clear || cells != 0 || frame.overlay != overlay);
+        frame.overlay = overlay;
         Redraw {
             clear,
             header: header_dirty,
             cells,
-            overlay,
+            overlay: overlay_dirty,
         }
     }
 

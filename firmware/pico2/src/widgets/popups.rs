@@ -28,12 +28,12 @@ const RESET_TEXT1_POS: Point = Point::new(CENTER_X, CENTER_Y - 5);
 const RESET_TEXT2_POS: Point = Point::new(CENTER_X, CENTER_Y + 15);
 const FPS_TEXT_POS: Point = Point::new(CENTER_X, CENTER_Y + 5);
 
-const DANGER_POPUP_WIDTH: u32 = 210;
-const DANGER_POPUP_HEIGHT: u32 = 70;
-const DANGER_POPUP_X: i32 = (SCREEN_WIDTH - DANGER_POPUP_WIDTH) as i32 / 2;
-const DANGER_POPUP_Y: i32 = (SCREEN_HEIGHT - DANGER_POPUP_HEIGHT) as i32 / 2;
-const DANGER_TEXT1_POS: Point = Point::new(CENTER_X, CENTER_Y - 8);
-const DANGER_TEXT2_POS: Point = Point::new(CENTER_X, CENTER_Y + 15);
+const CRITICAL_POPUP_WIDTH: u32 = 210;
+const CRITICAL_POPUP_HEIGHT: u32 = 70;
+const CRITICAL_POPUP_X: i32 = (SCREEN_WIDTH - CRITICAL_POPUP_WIDTH) as i32 / 2;
+const CRITICAL_POPUP_Y: i32 = (SCREEN_HEIGHT - CRITICAL_POPUP_HEIGHT) as i32 / 2;
+const CRITICAL_TEXT1_POS: Point = Point::new(CENTER_X, CENTER_Y - 8);
+const CRITICAL_TEXT2_POS: Point = Point::new(CENTER_X, CENTER_Y + 15);
 
 const WHITE_FILL: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_fill(WHITE);
 const RED_FILL: PrimitiveStyle<Rgb565> = PrimitiveStyle::with_fill(RED);
@@ -48,10 +48,10 @@ const FPS_BORDER_SIZE: Size = Size::new(FPS_POPUP_WIDTH + 6, FPS_POPUP_HEIGHT + 
 const FPS_BG_POS: Point = Point::new(FPS_POPUP_X, FPS_POPUP_Y);
 const FPS_BG_SIZE: Size = Size::new(FPS_POPUP_WIDTH, FPS_POPUP_HEIGHT);
 
-const DANGER_BORDER_POS: Point = Point::new(DANGER_POPUP_X - 3, DANGER_POPUP_Y - 3);
-const DANGER_BORDER_SIZE: Size = Size::new(DANGER_POPUP_WIDTH + 6, DANGER_POPUP_HEIGHT + 6);
-const DANGER_BG_POS: Point = Point::new(DANGER_POPUP_X, DANGER_POPUP_Y);
-const DANGER_BG_SIZE: Size = Size::new(DANGER_POPUP_WIDTH, DANGER_POPUP_HEIGHT);
+const CRITICAL_BORDER_POS: Point = Point::new(CRITICAL_POPUP_X - 3, CRITICAL_POPUP_Y - 3);
+const CRITICAL_BORDER_SIZE: Size = Size::new(CRITICAL_POPUP_WIDTH + 6, CRITICAL_POPUP_HEIGHT + 6);
+const CRITICAL_BG_POS: Point = Point::new(CRITICAL_POPUP_X, CRITICAL_POPUP_Y);
+const CRITICAL_BG_SIZE: Size = Size::new(CRITICAL_POPUP_WIDTH, CRITICAL_POPUP_HEIGHT);
 
 pub fn draw_reset_popup<D>(display: &mut D)
 where
@@ -118,8 +118,9 @@ pub fn draw_boost_unit_popup<D>(
         .ok();
 }
 
-pub fn draw_danger_manifold_popup<D>(
+pub fn draw_critical_popup<D>(
     display: &mut D,
+    sensor: crate::samples::SensorId,
     blink_on: bool,
 ) where
     D: DrawTarget<Color = Rgb565>,
@@ -132,20 +133,20 @@ pub fn draw_danger_manifold_popup<D>(
 
     let border_style = if blink_on { WHITE_FILL } else { RED_FILL };
 
-    Rectangle::new(DANGER_BORDER_POS, DANGER_BORDER_SIZE)
+    Rectangle::new(CRITICAL_BORDER_POS, CRITICAL_BORDER_SIZE)
         .into_styled(border_style)
         .draw(display)
         .ok();
 
-    Rectangle::new(DANGER_BG_POS, DANGER_BG_SIZE)
+    Rectangle::new(CRITICAL_BG_POS, CRITICAL_BG_SIZE)
         .into_styled(bg_style)
         .draw(display)
         .ok();
 
-    Text::with_text_style("WARNING", DANGER_TEXT1_POS, text_style, CENTERED)
+    Text::with_text_style("WARNING", CRITICAL_TEXT1_POS, text_style, CENTERED)
         .draw(display)
         .ok();
-    Text::with_text_style("DANGER TO MANIFOLD", DANGER_TEXT2_POS, text_style, CENTERED)
+    Text::with_text_style(sensor.label(), CRITICAL_TEXT2_POS, text_style, CENTERED)
         .draw(display)
         .ok();
 }

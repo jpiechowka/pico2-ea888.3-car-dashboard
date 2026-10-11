@@ -31,6 +31,19 @@ impl SensorId {
         Self::Lambda,
     ];
 
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Boost => "BOOST REL",
+            Self::Oil => "OIL",
+            Self::Water => "COOL",
+            Self::Dsg => "DSG OIL",
+            Self::Iat => "IAT",
+            Self::Egt => "EGT",
+            Self::Battery => "ECU V",
+            Self::Lambda => "LAMBDA",
+        }
+    }
+
     /// Provisional presentation limits, not proven vehicle polling rates.
     pub const fn stale_after_ms(self) -> u64 {
         match self {
@@ -176,6 +189,23 @@ impl SampleMeta {
         source: Source::Unknown,
         quality: Quality::Unknown,
     };
+
+    pub fn value_at(
+        self,
+        sensor: SensorId,
+        mode: DataMode,
+        value: Option<f32>,
+        sampled_at_ms: Option<u64>,
+        now_ms: u64,
+    ) -> Option<f32> {
+        if self.quality_at(sensor, now_ms) != Quality::Valid
+            || !self.source.matches(sensor, mode)
+            || sampled_at_ms != self.received_at_ms
+        {
+            return None;
+        }
+        value.filter(|value| value.is_finite())
+    }
 
     pub fn quality_at(
         self,

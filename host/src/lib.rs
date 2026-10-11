@@ -25,6 +25,8 @@
 
 #[path = "../../firmware/pico2/src/acquisition.rs"]
 pub mod acquisition;
+#[path = "../../firmware/pico2/src/alarms.rs"]
+pub mod alarms;
 #[path = "../../firmware/pico2/src/ui/colors.rs"]
 pub mod colors;
 #[path = "../../firmware/pico2/src/config/mod.rs"]
