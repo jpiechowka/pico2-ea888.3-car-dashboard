@@ -46,25 +46,6 @@ fn representable_rectangle(area: &embedded_graphics::primitives::Rectangle) -> b
         && area.top_left.y.checked_add(height).is_some()
 }
 
-/// Fill whole RGB565 pixels, beginning at a word-aligned framebuffer address.
-/// Callers clip first and handle an odd-x leading pixel before using this span.
-#[inline]
-fn fill_aligned_pixels(
-    bytes: &mut [u8],
-    pixel: [u8; 2],
-) {
-    debug_assert_eq!(bytes.as_ptr().align_offset(4), 0);
-    debug_assert!(bytes.len().is_multiple_of(2));
-    let word = [pixel[0], pixel[1], pixel[0], pixel[1]];
-    let (pairs, tail) = bytes.as_chunks_mut::<4>();
-    for pair in pairs {
-        *pair = word;
-    }
-    if !tail.is_empty() {
-        tail.copy_from_slice(&pixel);
-    }
-}
-
 pub struct St7789Renderer<'a> {
     framebuffer: &'a mut FrameBuffer,
 }
@@ -77,7 +58,12 @@ impl<'a> St7789Renderer<'a> {
         color: Rgb565,
     ) {
         let raw: RawU16 = color.into();
-        fill_aligned_pixels(&mut self.framebuffer[..], raw.into_inner().to_be_bytes());
+        let pixel = raw.into_inner().to_be();
+        let word = (pixel as u32) | ((pixel as u32) << 16);
+
+        for pair in self.framebuffer.as_chunks_mut::<4>().0 {
+            pair.copy_from_slice(&word.to_ne_bytes());
+        }
     }
 
     #[inline]
@@ -186,28 +172,36 @@ impl DrawTarget for St7789Renderer<'_> {
         }
 
         let raw: RawU16 = color.into();
-        let pixel = raw.into_inner().to_be_bytes();
+        let pixel = raw.into_inner().to_be();
+        let pixel_bytes = pixel.to_ne_bytes();
+        let word = (pixel as u32) | ((pixel as u32) << 16);
+
         let x_start = drawable_area.top_left.x as usize;
         let width = drawable_area.size.width as usize;
 
-        if width == WIDTH {
-            // A clipped full-width rectangle has no row gaps. Borrow its whole
-            // contiguous span once, just as a full-frame clear does.
-            let start = drawable_area.top_left.y as usize * WIDTH * 2;
-            let end = start + drawable_area.size.height as usize * WIDTH * 2;
-            fill_aligned_pixels(&mut self.framebuffer[start..end], pixel);
-            return Ok(());
-        }
-
         for y in drawable_area.rows() {
-            let start = (y as usize * WIDTH + x_start) * 2;
-            let mut span = &mut self.framebuffer[start..start + width * 2];
-            if !x_start.is_multiple_of(2) {
-                let (head, rest) = span.split_at_mut(2);
-                head.copy_from_slice(&pixel);
-                span = rest;
+            let row_start = y as usize * WIDTH * 2;
+            let mut x = x_start;
+
+            if !x.is_multiple_of(2) && x < x_start + width {
+                let idx = row_start + x * 2;
+                self.framebuffer[idx] = pixel_bytes[0];
+                self.framebuffer[idx + 1] = pixel_bytes[1];
+                x += 1;
             }
-            fill_aligned_pixels(span, pixel);
+
+            let word_end = x_start + width - ((x_start + width - x) % 2);
+            while x + 1 < word_end {
+                let idx = row_start + x * 2;
+                self.framebuffer[idx..idx + 4].copy_from_slice(&word.to_ne_bytes());
+                x += 2;
+            }
+
+            if x < x_start + width {
+                let idx = row_start + x * 2;
+                self.framebuffer[idx] = pixel_bytes[0];
+                self.framebuffer[idx + 1] = pixel_bytes[1];
+            }
         }
         Ok(())
     }
