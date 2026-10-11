@@ -71,6 +71,9 @@ jobs:
   build-pico2:
     name: Build Pico 2 (${{ matrix.profile }})
     runs-on: ubuntu-latest
+    env:
+      # Keep linker symbols for the layout check; target code is still optimized.
+      CARGO_PROFILE_RELEASE_STRIP: none
     strategy:
       matrix:
         include:
@@ -89,4 +92,7 @@ jobs:
           workspaces: firmware
       - name: Build pico2
         run: cargo build --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features "${{ matrix.features }}"
+        working-directory: firmware
+      - name: Check linked RAM boundaries
+        run: python3 scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
         working-directory: firmware

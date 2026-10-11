@@ -72,6 +72,16 @@ SECTIONS {
 
 } INSERT AFTER .uninit;
 
+/* cortex-m-rt 0.7.7 provides these from the current location counter after
+ * .uninit. The FLASH insertion above changes that counter. Anchor the RAM
+ * boundaries explicitly so heap diagnostics and future stack guards use RAM. */
+__sheap = ALIGN(__euninit, 8);
+_stack_end = __sheap;
+ASSERT(__sheap >= ORIGIN(RAM) && __sheap <= ORIGIN(RAM) + LENGTH(RAM),
+       "static RAM boundary is outside RAM");
+ASSERT(_stack_start >= __sheap + 32K,
+       "less than 32 KiB remains for the core 0 stack");
+
 PROVIDE(start_to_end = __end_block_addr - __start_block_addr);
 PROVIDE(end_to_start = __start_block_addr - __end_block_addr);
 
