@@ -301,6 +301,33 @@ fn newest_graph_impulse_is_visible_at_full_history_capacity() {
     assert!(steady.0 != impulse.0, "newest impulse must change graph pixels");
 }
 
+#[test]
+fn newest_graph_point_reaches_right_edge_at_every_partial_and_wrapped_count() {
+    for count in 1..=60 {
+        for start in [0, 17, 59] {
+            let mut samples = [f32::NAN; 60];
+            samples[(start + count - 1) % 60] = 100.0;
+            let mut frame = AlignedFrame::boxed();
+            primitives::draw_mini_graph(
+                &mut St7789Renderer::new(&mut frame.0),
+                10,
+                20,
+                64,
+                20,
+                &samples,
+                60,
+                start,
+                count,
+                0.0,
+                100.0,
+                |_| Rgb565::WHITE,
+            );
+            // Graph padding is two pixels; inclusive right edge is x+w-3.
+            assert_eq!(frame.pixel(71, 22), 0xFFFF, "count={count}, start={start}");
+        }
+    }
+}
+
 fn graph_frame(
     samples: &[f32],
     size: usize,

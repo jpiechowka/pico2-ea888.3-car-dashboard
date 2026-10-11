@@ -107,12 +107,27 @@ pub fn draw_mini_graph<D, F>(
     let graph_height = h as i32 - 4;
     let graph_x = x + 2;
     let graph_y = y + 2;
-    let x_step = (graph_width - 1) as f32 / (count - 1).max(1) as f32;
+    // Exact quotient/remainder spacing, with division only once per graph.
+    // Repeated floating point multiplication could miss the newest endpoint.
+    let intervals = (count - 1).max(1);
+    let x_step = (graph_width - 1) as usize / intervals;
+    let x_remainder = (graph_width - 1) as usize % intervals;
+    let mut x_error = 0;
+    let mut next_x = graph_x;
     let mut previous = None;
 
     // Sixty history samples fit the graph. Drawing every sample preserves
     // short spikes; invalid measurements break the line instead of bridging it.
     for i in 0..count {
+        let screen_x = if count == 1 { max_x } else { next_x };
+        if i + 1 < count {
+            next_x += x_step as i32;
+            x_error += x_remainder;
+            if x_error >= intervals {
+                x_error -= intervals;
+                next_x += 1;
+            }
+        }
         let buffer_idx = (start_idx + i) % buffer_size;
         let value = buffer[buffer_idx];
         if !value.is_finite() {
@@ -120,11 +135,6 @@ pub fn draw_mini_graph<D, F>(
             continue;
         }
 
-        let screen_x = if count == 1 {
-            max_x
-        } else {
-            graph_x + ((i as f32 * x_step) as i32).clamp(0, graph_width - 1)
-        };
         let screen_y = if data_range > 0.0 {
             let fraction = (value.clamp(data_min, data_max) - data_min) / data_range;
             max_y - ((fraction * (graph_height - 1) as f32) as i32).clamp(0, graph_height - 1)

@@ -177,18 +177,8 @@ pub async fn acquisition_task(
         }
         #[cfg(not(feature = "longan-rx12"))]
         if cfg!(feature = "demo") {
-            let t = start_time.elapsed().as_millis() as f32 / 1000.0;
             model.ingest_batch(
-                [
-                    (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
-                    60.0 + 55.0 * micromath::F32(t * 0.3).sin().0,
-                    88.0 + 7.0 * micromath::F32(t * 0.4).sin().0,
-                    75.0 + 40.0 * micromath::F32(t * 0.35).sin().0,
-                    30.0 + 40.0 * micromath::F32(t * 0.25).sin().0,
-                    200.0 + 1000.0 * micromath::F32(t * 0.04).sin().0.abs(),
-                    12.0 + 2.5 * micromath::F32(t * 0.15).sin().0,
-                    1.0 + 0.25 * micromath::F32(t * 0.45).sin().0,
-                ],
+                dashboard_pico2::demo::values(start_time.elapsed().as_millis()),
                 Instant::now().as_millis(),
             );
         }

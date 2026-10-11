@@ -1,156 +1,127 @@
-use embassy_time::Instant;
+//! Absolute-time animation: repaint frequency cannot change the trajectory.
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::IntoStorage;
+use embedded_graphics::prelude::RgbColor;
 
+use crate::colors::BLACK;
 use crate::render::CELL_COUNT;
 
 const COLOR_TRANSITION_DURATION_MS: u32 = 300;
 
-const COLOR_SNAP_THRESHOLD: i32 = 2;
+pub const fn blink_on(elapsed_ms: u64) -> bool { (elapsed_ms / 200).is_multiple_of(2) }
+
+#[derive(Clone, Copy)]
+struct Transition {
+    from: Rgb565,
+    current: Rgb565,
+    target: Rgb565,
+    started_ms: u64,
+}
+
+impl Transition {
+    const IDLE: Self = Self {
+        from: BLACK,
+        current: BLACK,
+        target: BLACK,
+        started_ms: 0,
+    };
+
+    fn advance(
+        &mut self,
+        now_ms: u64,
+    ) -> bool {
+        let before = self.current;
+        if before != self.target {
+            let elapsed = now_ms
+                .saturating_sub(self.started_ms)
+                .min(u64::from(COLOR_TRANSITION_DURATION_MS)) as u32;
+            let channel = |from: u8, to: u8| {
+                // Round once from the fixed origin; never accumulate quantized
+                // per-frame steps. All intermediates fit comfortably in u32.
+                ((u32::from(from) * (COLOR_TRANSITION_DURATION_MS - elapsed)
+                    + u32::from(to) * elapsed
+                    + COLOR_TRANSITION_DURATION_MS / 2)
+                    / COLOR_TRANSITION_DURATION_MS) as u8
+            };
+            self.current = Rgb565::new(
+                channel(self.from.r(), self.target.r()),
+                channel(self.from.g(), self.target.g()),
+                channel(self.from.b(), self.target.b()),
+            );
+        }
+        before != self.current
+    }
+}
 
 pub struct ColorTransition {
-    current_colors: [Rgb565; CELL_COUNT],
-    target_colors: [Rgb565; CELL_COUNT],
-    transitioning: [bool; CELL_COUNT],
-    last_update: Option<Instant>,
+    cells: [Transition; CELL_COUNT],
+    last_update_ms: Option<u64>,
 }
 
 impl ColorTransition {
     pub const fn new() -> Self {
-        use dashboard_pico2::colors::BLACK;
         Self {
-            current_colors: [BLACK; CELL_COUNT],
-            target_colors: [BLACK; CELL_COUNT],
-            transitioning: [false; CELL_COUNT],
-            last_update: None,
+            cells: [Transition::IDLE; CELL_COUNT],
+            last_update_ms: None,
         }
+    }
+
+    fn accept_time(
+        &mut self,
+        now_ms: u64,
+    ) -> bool {
+        if self.last_update_ms.is_some_and(|last| now_ms < last) {
+            return false;
+        }
+        self.last_update_ms = Some(now_ms);
+        true
     }
 
     pub fn set_target(
         &mut self,
         cell_idx: usize,
         target: Rgb565,
+        now_ms: u64,
     ) -> bool {
-        if self.target_colors[cell_idx] == target {
-            false
-        } else {
-            self.target_colors[cell_idx] = target;
-            self.transitioning[cell_idx] = true;
-            true
+        if cell_idx >= CELL_COUNT || !self.accept_time(now_ms) {
+            return false;
         }
+        let cell = &mut self.cells[cell_idx];
+        if cell.target == target {
+            return false;
+        }
+        // Retarget from the old trajectory at this instant, even if no frame
+        // was painted in between. Idle time never counts toward the new fade.
+        cell.advance(now_ms);
+        cell.from = cell.current;
+        cell.target = target;
+        cell.started_ms = now_ms;
+        true
     }
 
-    #[inline]
-    pub const fn get_current(
+    pub fn get_current(
         &self,
         cell_idx: usize,
     ) -> Rgb565 {
-        self.current_colors[cell_idx]
+        self.cells.get(cell_idx).map_or(BLACK, |cell| cell.current)
     }
 
     pub fn update(
         &mut self,
-        now: Instant,
+        now_ms: u64,
     ) -> u8 {
-        let delta_ms = if let Some(last) = self.last_update {
-            now.duration_since(last).as_millis() as u32
-        } else {
-            16
-        };
-        self.last_update = Some(now);
-
-        let t = (delta_ms as f32 / COLOR_TRANSITION_DURATION_MS as f32).min(1.0);
-
-        let mut changed: u8 = 0;
-
-        for i in 0..CELL_COUNT {
-            if self.transitioning[i] {
-                let current = self.current_colors[i];
-                let target = self.target_colors[i];
-
-                if current == target {
-                    self.transitioning[i] = false;
-                    continue;
-                }
-
-                let new_color = lerp_rgb565(current, target, t);
-
-                if colors_close_enough(new_color, target) {
-                    self.current_colors[i] = target;
-                    self.transitioning[i] = false;
-                } else {
-                    self.current_colors[i] = new_color;
-                }
-
-                changed |= 1 << i;
+        if !self.accept_time(now_ms) {
+            return 0;
+        }
+        let mut changed = 0;
+        for (index, cell) in self.cells.iter_mut().enumerate() {
+            if cell.advance(now_ms) {
+                changed |= 1 << index;
             }
         }
-
         changed
     }
 }
 
 impl Default for ColorTransition {
     fn default() -> Self { Self::new() }
-}
-
-fn lerp_rgb565(
-    from: Rgb565,
-    to: Rgb565,
-    t: f32,
-) -> Rgb565 {
-    let from_raw = from.into_storage();
-    let to_raw = to.into_storage();
-
-    let from_r = i32::from((from_raw >> 11) & 0x1F);
-    let from_g = i32::from((from_raw >> 5) & 0x3F);
-    let from_b = i32::from(from_raw & 0x1F);
-
-    let to_r = i32::from((to_raw >> 11) & 0x1F);
-    let to_g = i32::from((to_raw >> 5) & 0x3F);
-    let to_b = i32::from(to_raw & 0x1F);
-
-    let t_fixed = (t * 256.0) as i32;
-
-    let compute_step = |delta: i32| -> i32 {
-        if delta == 0 || t_fixed == 0 {
-            0
-        } else {
-            let step = (delta * t_fixed) >> 8;
-            if step == 0 {
-                if delta > 0 { 1 } else { -1 }
-            } else {
-                step
-            }
-        }
-    };
-
-    let new_r = from_r + compute_step(to_r - from_r);
-    let new_g = from_g + compute_step(to_g - from_g);
-    let new_b = from_b + compute_step(to_b - from_b);
-
-    let r = new_r.clamp(0, 31) as u16;
-    let g = new_g.clamp(0, 63) as u16;
-    let b = new_b.clamp(0, 31) as u16;
-
-    Rgb565::new(r as u8, g as u8, b as u8)
-}
-
-fn colors_close_enough(
-    a: Rgb565,
-    b: Rgb565,
-) -> bool {
-    let a_raw = a.into_storage();
-    let b_raw = b.into_storage();
-
-    let a_r = i32::from((a_raw >> 11) & 0x1F);
-    let a_g = i32::from((a_raw >> 5) & 0x3F);
-    let a_b = i32::from(a_raw & 0x1F);
-
-    let b_r = i32::from((b_raw >> 11) & 0x1F);
-    let b_g = i32::from((b_raw >> 5) & 0x3F);
-    let b_b = i32::from(b_raw & 0x1F);
-
-    let diff = (a_r - b_r).abs() + (a_g - b_g).abs() + (a_b - b_b).abs();
-    diff <= COLOR_SNAP_THRESHOLD
 }

@@ -8,6 +8,7 @@ pub mod acquisition;
 pub mod alarms;
 pub mod config;
 pub mod dashboard;
+pub mod demo;
 pub mod diagnostics;
 pub mod display;
 pub mod health;
@@ -43,6 +44,7 @@ mod state {
 }
 
 mod ui {
+    pub mod animations;
     pub mod colors;
     pub mod styles;
     pub use colors::*;
@@ -51,4 +53,4 @@ mod ui {
 
 pub use profiling::{cpu_cycles, cycle_segments, memory, stack_samples};
 pub use state::{extrema, pages, popup, sensor_state};
-pub use ui::{colors, styles};
+pub use ui::{animations, colors, styles};

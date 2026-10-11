@@ -27,6 +27,8 @@
 pub mod acquisition;
 #[path = "../../firmware/pico2/src/alarms.rs"]
 pub mod alarms;
+#[path = "../../firmware/pico2/src/ui/animations.rs"]
+pub mod animations;
 #[path = "../../firmware/pico2/src/ui/colors.rs"]
 pub mod colors;
 #[path = "../../firmware/pico2/src/config/mod.rs"]
@@ -35,6 +37,8 @@ pub mod config;
 pub mod cycle_segments;
 #[path = "../../firmware/pico2/src/dashboard.rs"]
 pub mod dashboard;
+#[path = "../../firmware/pico2/src/demo.rs"]
+pub mod demo;
 #[path = "../../firmware/pico2/src/diagnostics/mod.rs"]
 pub mod diagnostics;
 #[path = "../../firmware/pico2/src/state/extrema.rs"]

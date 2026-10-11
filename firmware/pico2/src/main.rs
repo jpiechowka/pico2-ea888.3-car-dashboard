@@ -425,8 +425,8 @@ async fn main(spawner: Spawner) {
         let save_this_frame = pending_save.is_some();
         let frame_cycles_start = cpu_profiling::read();
 
-        let elapsed_ms = animation_start.elapsed().as_millis() as u32;
-        let blink_on = (elapsed_ms / 200).is_multiple_of(2);
+        let elapsed_ms = animation_start.elapsed().as_millis();
+        let blink_on = dashboard_pico2::animations::blink_on(elapsed_ms);
 
         let input = process_buttons(
             &mut btn_x_state,
@@ -657,10 +657,10 @@ async fn main(spawner: Spawner) {
         input_tracker.exclude_obscured(matches!(visible_overlay, Some(Overlay::Critical(..))));
         for (cell, sensor) in dashboard_pico2::dashboard::CELL_SENSORS.into_iter().enumerate() {
             let id = dashboard_pico2::samples::SensorId::ALL[sensor];
-            color_transitions.set_target(cell, if alerts.active(id) { RED } else { BLACK });
+            color_transitions.set_target(cell, if alerts.active(id) { RED } else { BLACK }, now_ms);
         }
 
-        color_transitions.update(Instant::now());
+        color_transitions.update(now_ms);
 
         let render_start = Instant::now();
         let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());

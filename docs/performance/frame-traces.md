@@ -41,10 +41,11 @@ retains the oldest observation and latest acceptance/consumption in a coalesced
 batch, and attaches it once to the submitted frame token. Old A/B completions
 cannot acquire newer input metadata. A failed transfer contributes no latency
 sample. Ignored controls, saturated/rejected encoder polls, reconnect discards
-and inputs producing no framebuffer damage have separate counters. A critical
-overlay conservatively excludes the entire pending batch and increments
-`obscured_events`, including when unrelated pixels change. This prevents a
-deferred backlight-off press from receiving credit while its popup is hidden.
+and inputs producing no framebuffer damage have separate counters. A resolved
+visible Dashboard warning conservatively excludes the pending batch and increments
+`obscured_events`, including when unrelated pixels change. User feedback takes
+priority, so visible feedback and diagnostic page changes remain eligible even
+while an alarm is active.
 Batch observation latency uses the oldest observation, while consume latency
 uses the latest consumption; neither is a per-detent distribution.
 Brightness changes may also affect PWM before any framebuffer transfer.
