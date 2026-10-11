@@ -479,12 +479,68 @@ fn logging(c: &mut Criterion) {
     });
 }
 
+fn settings_journal(c: &mut Criterion) {
+    use dashboard_host_validation::settings::{self, PAGE_SIZE, SECTOR_SIZE, STORAGE_SIZE, Settings, Storage};
+    #[derive(Clone)]
+    struct Memory([u8; STORAGE_SIZE]);
+    impl Storage for Memory {
+        type Error = ();
+
+        fn read(
+            &mut self,
+            offset: u32,
+            out: &mut [u8],
+        ) -> Result<(), ()> {
+            out.copy_from_slice(&self.0[offset as usize..offset as usize + out.len()]);
+            Ok(())
+        }
+
+        fn program(
+            &mut self,
+            offset: u32,
+            page: &[u8; PAGE_SIZE],
+        ) -> Result<(), ()> {
+            let slice = &mut self.0[offset as usize..offset as usize + PAGE_SIZE];
+            for (byte, source) in slice.iter_mut().zip(page) {
+                *byte &= source;
+            }
+            Ok(())
+        }
+
+        fn erase(
+            &mut self,
+            offset: u32,
+        ) -> Result<(), ()> {
+            self.0[offset as usize..offset as usize + SECTOR_SIZE].fill(255);
+            Ok(())
+        }
+    }
+    let mut seeded = Memory([255; STORAGE_SIZE]);
+    for n in 1..=16 {
+        settings::save(&mut seeded, Settings::new(n, 100, false, FpsMode::Off).unwrap()).unwrap();
+    }
+    let mut reader = seeded.clone();
+    c.bench_function("settings/load_full_journal", |b| {
+        b.iter(|| black_box(settings::load(black_box(&mut reader)).unwrap()));
+    });
+    let desired = Settings::new(17, 100, true, FpsMode::Combined).unwrap();
+    c.bench_function("settings/rollover_transaction_model", |b| {
+        b.iter_batched(
+            || seeded.clone(),
+            |mut flash| {
+                black_box(settings::save(black_box(&mut flash), black_box(desired)).unwrap());
+            },
+            criterion::BatchSize::PerIteration,
+        );
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal
 }
 criterion_main!(dashboard_perf);

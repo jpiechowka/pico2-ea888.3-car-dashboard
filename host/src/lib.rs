@@ -53,6 +53,8 @@ pub mod render;
 pub mod samples;
 #[path = "../../firmware/pico2/src/state/sensor_state.rs"]
 pub mod sensor_state;
+#[path = "../../firmware/pico2/src/settings/mod.rs"]
+pub mod settings;
 #[path = "../../firmware/pico2/src/profiling/stack_samples.rs"]
 pub mod stack_samples;
 #[path = "../../firmware/pico2/src/ui/styles.rs"]

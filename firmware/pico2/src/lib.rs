@@ -17,6 +17,7 @@ pub mod logging_view;
 
 pub mod render;
 pub mod samples;
+pub mod settings;
 pub mod vehicle_status;
 pub mod widgets;
 
