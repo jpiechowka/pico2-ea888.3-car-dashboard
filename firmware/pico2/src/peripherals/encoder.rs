@@ -209,8 +209,8 @@ pub async fn encoder_task(mut i2c: I2c<'static, I2C0, Async>) {
             ENCODER_EVENTS.clear();
             if !reported_error {
                 match error {
-                    EncoderError::Bus(cause) => log_info!("Encoder bus: {:?}", cause),
-                    _ => log_info!("Encoder unavailable: {:?}", error),
+                    EncoderError::Bus(cause) => crate::log_fault!("Encoder bus: {:?}", cause),
+                    _ => crate::log_fault!("Encoder unavailable: {:?}", error),
                 }
                 reported_error = true;
             }

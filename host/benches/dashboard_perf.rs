@@ -445,12 +445,46 @@ fn alarm_policy(c: &mut Criterion) {
     });
 }
 
+fn logging(c: &mut Criterion) {
+    use dashboard_host_validation::logging::{Level, LogStore};
+    use dashboard_host_validation::logging_view::LogPage;
+    let store = LogStore::<CriticalSectionRawMutex>::new();
+    for n in 0..128 {
+        store.push(Level::Info, n, format_args!("Transport observation {n}"));
+    }
+    c.bench_function("logging/insert_and_snapshot", |b| {
+        b.iter(|| {
+            let timestamp = black_box(1234);
+            store.push(
+                Level::Info,
+                timestamp,
+                format_args!("Transport observation {timestamp}"),
+            );
+            black_box(LogPage::capture(&store, None));
+        });
+    });
+    // Selection/calibration of the insertion fixture cannot change pixel work.
+    let render_store = LogStore::<CriticalSectionRawMutex>::new();
+    for n in 0..128 {
+        render_store.push(Level::Info, n, format_args!("Transport observation {n}"));
+    }
+    render_store.push(Level::Fault, 1234, format_args!("Transport fault"));
+    let page = LogPage::capture(&render_store, None);
+    let mut frame = AlignedFrame::boxed();
+    c.bench_function("logging/full_page", |b| {
+        b.iter(|| {
+            page.draw_full(&mut St7789Renderer::new(&mut frame.0));
+            black_box(&frame.0);
+        });
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging
 }
 criterion_main!(dashboard_perf);

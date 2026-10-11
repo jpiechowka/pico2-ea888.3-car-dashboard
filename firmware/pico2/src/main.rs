@@ -28,7 +28,7 @@ use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
-use dashboard_pico2::input_model::{brightness_after, scroll_after};
+use dashboard_pico2::input_model::brightness_after;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -362,8 +362,7 @@ async fn main(spawner: Spawner) {
     let mut brightness_percent: u32 = 100;
     let mut saved_brightness: u32 = 100; // for toggle on/off
     let mut backlight_off_pending = false; // deferred off: show popup first, then cut PWM
-    let mut log_scroll_offset: i32 = 0;
-    let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
+    let mut log_anchor: Option<u64> = None;
 
     let mut measurements = DashboardSnapshot::EMPTY;
     measurements.mode = data_mode();
@@ -452,27 +451,10 @@ async fn main(spawner: Spawner) {
 
         match current_page {
             Page::Logs => {
-                // Anchor scroll position when new log entries arrive while scrolled,
-                // so the visible entries don't shift under the user.
-                if let Ok(buf) = crate::profiling::LOG_BUFFER.try_lock() {
-                    let current_count = buf.count();
-                    if log_scroll_offset > 0 && current_count > prev_log_count {
-                        log_scroll_offset = log_scroll_offset.saturating_add((current_count - prev_log_count) as i32);
-                    }
-                    prev_log_count = current_count;
-
-                    // Clamp to valid range so excess rotations don't accumulate
-                    let max_offset = current_count.saturating_sub(13);
-                    log_scroll_offset = log_scroll_offset.clamp(0, max_offset as i32);
-                }
-
-                // Rotation scrolls logs
+                // Pin the visible end sequence; ring count stops growing at
+                // capacity and cannot anchor a view during overwrites.
                 if enc_delta != 0 {
-                    log_scroll_offset = scroll_after(
-                        log_scroll_offset,
-                        enc_delta,
-                        crate::profiling::LOG_ENTRIES.saturating_sub(13),
-                    );
+                    crate::profiling::LOGS.scroll(&mut log_anchor, enc_delta);
                 }
                 // Button does nothing on Logs page
             }
@@ -511,8 +493,7 @@ async fn main(spawner: Spawner) {
 
         // Reset log scroll when leaving Logs page
         if input.new_page.is_some() {
-            log_scroll_offset = 0;
-            prev_log_count = 0;
+            log_anchor = None;
         }
 
         if let Some(ref popup) = active_popup
@@ -670,7 +651,7 @@ async fn main(spawner: Spawner) {
                 dashboard_cache.invalidate(render_idx);
                 display.clear(BLACK).ok();
                 render_work.checkpoint().await;
-                draw_logs_page(&mut display, log_scroll_offset, &mut render_work).await;
+                draw_logs_page(&mut display, log_anchor, &mut render_work).await;
             }
         }
 

@@ -125,6 +125,13 @@ pub async fn acquisition_task(
             #[cfg(feature = "longan-rx12")]
             {
                 let link = model.link();
+                if let Some(fault) = link.last_fault
+                    && previous_link.is_none_or(|previous: LinkSnapshot| {
+                        previous.faults != link.faults || previous.last_fault != link.last_fault
+                    })
+                {
+                    crate::log_fault!("Link: {:?}", fault);
+                }
                 if previous_link != Some(link) {
                     link_sender.send(link);
                     previous_link = Some(link);

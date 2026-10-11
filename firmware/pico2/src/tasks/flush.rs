@@ -54,6 +54,7 @@ pub async fn wait_started(
         }
         _ => {
             lifecycle.quarantine(expected).expect("invalid start quarantine");
+            crate::log_fault!("Display start failed");
             panic!("display did not start the requested frame");
         }
     }
@@ -77,6 +78,7 @@ pub async fn wait_completed(
         }
         _ => {
             lifecycle.quarantine(expected).expect("invalid completion quarantine");
+            crate::log_fault!("Display completion failed");
             panic!("display did not complete the requested frame");
         }
     }

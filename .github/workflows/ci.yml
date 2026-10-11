@@ -73,6 +73,11 @@ jobs:
       - name: UART ownership compile guards
         run: python3 scripts/check_uart_api.py
         working-directory: firmware
+      - name: Logging feature and flush policy
+        run: |
+          python3 scripts/test_logging_policy.py
+          python3 scripts/check_logging_policy.py
+        working-directory: firmware
       - name: Vehicle transport Clippy
         run: cargo clippy --locked -p dashboard-pico2 --features longan-rx12 -- -D warnings
         working-directory: firmware

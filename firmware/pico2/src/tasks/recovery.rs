@@ -28,7 +28,8 @@ fn progress() -> Progress {
 pub async fn recovery_task(mut watchdog: RecoveryWatchdog) {
     let mut monitor = ProgressMonitor::new(Instant::now().as_millis(), progress());
     loop {
-        if monitor.observe(Instant::now().as_millis(), progress()).is_err() {
+        if let Err(fault) = monitor.observe(Instant::now().as_millis(), progress()) {
+            crate::log_fault!("Watchdog: {:?}", fault);
             // Retain all owners and stop feeding. The watchdog is configured to
             // reset both cores and peripherals without executor/IRQ progress.
             // This still depends on clk_ref and needs physical fault injection.
