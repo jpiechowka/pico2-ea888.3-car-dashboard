@@ -181,3 +181,37 @@ The new `host/baselines/stage06_session` fixture includes a complete coolant
 transaction, typed statistics and a snapshot, after capability discovery outside
 the measured loop: local median 420 ns over 30 samples. Raw measurements, hashes
 and command are preserved. This is a host CPU baseline, without transport waits.
+## Adapter bootstrap and UART write ownership
+
+The shared `bootstrap` module implements one bounded mode transition for a
+preprovisioned Longan firmware: 50 ms of command guard quiet (maximum 1 s),
+separate `+++`, the complete setting banner, an `AT` round trip, then `AT+Q`
+and the complete `OK\r\nENTER DATA MODE\r\n` response. Quiet never establishes
+record alignment. Expected replies are exact and incremental; unexpected bytes
+fail closed. Bytes following the final banner go straight to RX12. Commands
+have unique lifetime tokens, 100 ms TX and 500 ms total reply budgets. Partial
+reply progress does not extend a deadline. Stale acknowledgements cannot move
+the active clock or phase. Clock regression and identity exhaustion are terminal.
+
+The shared `serial_tx::Pump` retains every partial write offset and copied byte
+across Pending polls. It allows only one short record, then requires software
+flush and a separate observed `BUSY == false` before reporting its token. Abort
+stops the uncopied remainder and drains the queued prefix within the original
+100 ms deadline. Invalid progress, a regressed clock or a stalled write
+quarantines further writes until the owner is recreated after reset. Empty-ring
+flush alone is never CAN acknowledgement or even final UART stop-bit completion.
+
+Eight host handshake tests, five pump tests and an internal identity-exhaustion
+test cover strict replies, every final-banner split, binary carry-over, partial
+banners across loss, stale/duplicate TX callbacks, quiet flooding, exact deadline
+edges, every record size and partial-copy width, abort, BUSY, impossible write
+counts and near-maximum timestamps. These are shared software tests. They cannot
+validate the installed bridge firmware, electrical link, IRQ timing or ECU.
+
+Commands match the [vendor protocol documentation](https://docs.longan-labs.cc/1030001/)
+and [exact public firmware](https://github.com/Longan-Labs/Serial_CAN_Bus/blob/c11ae43a81e9f9fc87fae56f70c6a14ccff53ce9/Serial_CAN_Firmware/cmdMode.cpp).
+The runtime recovery handshake does not write baud, CAN rate or filters to
+EEPROM. Those must be provisioned and physically verified separately; repeated
+recovery must not wear EEPROM or assume a successful AT response proves hardware
+filter configuration. Default baud is 9600, while the planned explicit deployment
+profile uses preprovisioned 115200. No automatic baud scan is implied.

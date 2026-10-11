@@ -1,9 +1,11 @@
 //! Bounded, hardware-independent classical CAN diagnostic transport.
+pub mod bootstrap;
 pub mod client;
 pub mod isotp;
 pub mod longan;
 pub mod obd;
 pub mod request;
+pub mod serial_tx;
 pub mod session;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
