@@ -22,6 +22,21 @@ Pololu VOUT (regulated 5 V, switched domain)
   -> 5 V distribution and the specified PTC protection
   -> Pico 2 VSYS and Longan Serial CAN module VCC on versions requiring 5 V.
 
+This direct-VSYS net is for vehicle power with USB DISCONNECTED. Before
+USB programming, disconnect the regulator/Longan 5 V distribution from
+Pico VSYS and isolate the adapter UART connection as required to prevent
+an unpowered adapter being driven through its signal pins.
+
+USB VBUS feeds VSYS through the Pico's on-board D1 diode. With the net above
+still connected, USB can power Longan and drive the disabled regulator's
+output even when the vehicle switch is off. Switch-off isolation therefore
+does not hold in that configuration. Pico 2 datasheet section 5.5 specifies
+an additional external Schottky diode or its P-channel MOSFET alternative
+for two-source power ORing. Keep Longan on the switched side of any such
+isolation; verify reverse-current blocking and UART power sequencing on
+the actual circuit before permitting simultaneous USB and vehicle power.
+No dual-source circuit has been specified or validated for this assembly.
+
 The Longan 1030002 kit contains a Serial CAN module and an OBD connector.
 Its module VCC is not a 12 V VIN input. Do not connect OBD-II pin 16 or the
 switched vehicle supply directly to module VCC. Route its supply from the
