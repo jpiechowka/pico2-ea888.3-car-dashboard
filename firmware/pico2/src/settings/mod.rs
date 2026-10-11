@@ -30,6 +30,16 @@ impl Default for Settings {
     }
 }
 impl Settings {
+    /// Retain the journal format and durable unit/FPS choices, but always boot
+    /// fully lit. Runtime brightness changes no longer schedule flash writes.
+    pub const fn for_boot(self) -> Self {
+        Self {
+            brightness: 100,
+            restore_brightness: 100,
+            ..self
+        }
+    }
+
     pub fn new(
         brightness: u8,
         restore_brightness: u8,

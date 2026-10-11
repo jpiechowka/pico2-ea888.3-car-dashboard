@@ -6,6 +6,7 @@
 
 pub mod acquisition;
 pub mod alarms;
+pub mod backlight;
 pub mod config;
 pub mod dashboard;
 pub mod demo;
@@ -23,6 +24,7 @@ pub mod microbench;
 pub mod render;
 pub mod samples;
 pub mod settings;
+pub mod status_led;
 pub mod telemetry_protocol;
 pub mod vehicle_status;
 pub mod widgets;

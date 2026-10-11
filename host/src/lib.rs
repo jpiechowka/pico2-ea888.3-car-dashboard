@@ -29,6 +29,8 @@ pub mod acquisition;
 pub mod alarms;
 #[path = "../../firmware/pico2/src/ui/animations.rs"]
 pub mod animations;
+#[path = "../../firmware/pico2/src/backlight.rs"]
+pub mod backlight;
 #[path = "../../firmware/pico2/src/ui/colors.rs"]
 pub mod colors;
 #[path = "../../firmware/pico2/src/config/mod.rs"]
@@ -73,6 +75,8 @@ pub mod sensor_state;
 pub mod settings;
 #[path = "../../firmware/pico2/src/profiling/stack_samples.rs"]
 pub mod stack_samples;
+#[path = "../../firmware/pico2/src/status_led.rs"]
+pub mod status_led;
 #[path = "../../firmware/pico2/src/ui/styles.rs"]
 pub mod styles;
 #[path = "../../firmware/pico2/src/telemetry_protocol.rs"]

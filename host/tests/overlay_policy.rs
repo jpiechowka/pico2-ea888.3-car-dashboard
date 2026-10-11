@@ -1,4 +1,5 @@
 use dashboard_host_validation::acquisition::AcquisitionModel;
+use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_host_validation::display::St7789Renderer;
 use dashboard_host_validation::input_trace::{InputTracker, Observation};
@@ -26,10 +27,13 @@ fn diagnostics_never_inherit_a_warning_or_dashboard_feedback() {
             Some(Overlay::Reset),
             Some(Overlay::Fps(FpsMode::Average)),
             Some(Overlay::BoostUnit(true)),
-            Some(Overlay::Brightness(0)),
+            Some(Overlay::Brightness(Brightness::Percent(0))),
+            Some(Overlay::Brightness(Brightness::Full)),
+            Some(Overlay::Brightness(Brightness::Dim)),
+            Some(Overlay::Brightness(Brightness::Off)),
         ] {
             assert_eq!(Overlay::for_page(Page::Logs, popup, alerts, blink), None);
-            let expected = if popup == Some(Overlay::Brightness(0)) {
+            let expected = if popup == Some(Overlay::Brightness(Brightness::Percent(0))) {
                 popup
             } else {
                 None
@@ -50,7 +54,26 @@ fn feedback_expiration_resumes_warning_at_wall_clock_deadline() {
         (Popup::Fps(1000), Overlay::Fps(FpsMode::Average), 3000),
         (Popup::Reset(1000), Overlay::Reset, 3000),
         (Popup::BoostUnit(1000), Overlay::BoostUnit(true), 3000),
-        (Popup::Brightness(1000, 0), Overlay::Brightness(0), 1500),
+        (
+            Popup::Brightness(1000, Brightness::Percent(0)),
+            Overlay::Brightness(Brightness::Percent(0)),
+            1500,
+        ),
+        (
+            Popup::Brightness(1000, Brightness::Full),
+            Overlay::Brightness(Brightness::Full),
+            1500,
+        ),
+        (
+            Popup::Brightness(1000, Brightness::Dim),
+            Overlay::Brightness(Brightness::Dim),
+            1500,
+        ),
+        (
+            Popup::Brightness(1000, Brightness::Off),
+            Overlay::Brightness(Brightness::Off),
+            2000,
+        ),
     ] {
         // Many/few intermediate paints cannot change the exact deadline.
         for now in [1000, 1001, 1000 + duration - 1, 1000 + duration, 1000 + duration + 500] {
@@ -120,7 +143,7 @@ fn warning_feedback_and_page_round_trip_repair_both_buffers() {
 fn visible_feedback_and_page_changes_remain_correlated_with_input() {
     let alerts = alarm_model().snapshot().alerts_at(1000);
     for (page, user) in [
-        (Page::Dashboard, Some(Overlay::Brightness(0))),
+        (Page::Dashboard, Some(Overlay::Brightness(Brightness::Percent(0)))),
         (Page::Dashboard, Some(Overlay::Reset)),
         (Page::Dashboard, Some(Overlay::Fps(FpsMode::Off))),
         (Page::Debug, None),

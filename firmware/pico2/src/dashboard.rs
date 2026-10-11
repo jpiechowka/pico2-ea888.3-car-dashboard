@@ -3,6 +3,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 
 use crate::acquisition::DashboardSnapshot;
+use crate::backlight::Brightness;
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::pages::Page;
 use crate::render::{FpsMode, FpsText, format_fps};
@@ -21,7 +22,7 @@ pub enum Overlay {
     Reset,
     Fps(FpsMode),
     BoostUnit(bool),
-    Brightness(u8),
+    Brightness(Brightness),
     Critical(SensorId, bool),
 }
 
@@ -43,7 +44,7 @@ impl Overlay {
     ) -> Option<Self> {
         match page {
             Page::Dashboard => Self::prioritize(user, alerts, blink),
-            Page::Debug => user.filter(|overlay| matches!(overlay, Self::Brightness(_))),
+            Page::Debug => user.filter(|overlay| matches!(overlay, Self::Brightness(Brightness::Percent(_)))),
             Page::Logs => None,
         }
     }
@@ -56,7 +57,7 @@ impl Overlay {
             Self::Reset => draw_reset_popup(display),
             Self::Fps(mode) => draw_fps_toggle_popup(display, mode),
             Self::BoostUnit(psi) => draw_boost_unit_popup(display, psi),
-            Self::Brightness(percent) => draw_brightness_popup(display, u32::from(percent.min(100))),
+            Self::Brightness(value) => draw_brightness_popup(display, value),
             Self::Critical(sensor, blink) => draw_critical_popup(display, sensor, blink),
         }
     }

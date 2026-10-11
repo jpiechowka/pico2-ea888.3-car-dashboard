@@ -1,4 +1,5 @@
 use dashboard_host_validation::acquisition::AcquisitionModel;
+use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_host_validation::display::St7789Renderer;
 use dashboard_host_validation::display::damage::DamagePlan;
@@ -161,7 +162,9 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
         let snapshot = model.snapshot();
         let overlay = match step % 37 {
             3..=5 => Some(Overlay::Reset),
-            6..=8 => Some(Overlay::Brightness((step % 101) as u8)),
+            6 => Some(Overlay::Brightness(Brightness::Full)),
+            7 => Some(Overlay::Brightness(Brightness::Dim)),
+            8 => Some(Overlay::Brightness(Brightness::Off)),
             9..=11 => Some(Overlay::Fps(FpsMode::Combined)),
             12..=14 => Some(Overlay::BoostUnit(step % 2 == 0)),
             15..=20 => {

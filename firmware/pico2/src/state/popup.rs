@@ -2,13 +2,13 @@ pub const POPUP_DURATION_MS: u64 = 3000;
 /// Shorter duration for transient feedback popups (brightness adjustment).
 pub const POPUP_DURATION_SHORT_MS: u64 = 1500;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Popup {
     Reset(u64),
     Fps(u64),
     BoostUnit(u64),
-    /// Monotonic milliseconds and brightness percentage.
-    Brightness(u64, u32),
+    /// Monotonic milliseconds and page-specific brightness feedback.
+    Brightness(u64, crate::backlight::Brightness),
 }
 
 impl Popup {
@@ -25,6 +25,7 @@ impl Popup {
         now_ms: u64,
     ) -> bool {
         let duration = match self {
+            Self::Brightness(_, crate::backlight::Brightness::Off) => 2000,
             Self::Brightness(..) => POPUP_DURATION_SHORT_MS,
             _ => POPUP_DURATION_MS,
         };

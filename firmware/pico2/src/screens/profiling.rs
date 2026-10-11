@@ -16,7 +16,7 @@ pub struct ProfilingData {
     pub average_fps: f32,
     pub frame_count: u32,
     pub trace: Option<FrameTrace>,
-    pub brightness_percent: u32,
+    pub brightness: dashboard_pico2::backlight::Brightness,
     pub settings_status: &'static str,
 
     pub buffer_swaps: u32,
@@ -274,11 +274,7 @@ pub async fn draw_profiling_page<D>(
     y += line_height;
 
     s.clear();
-    if data.brightness_percent == 0 {
-        let _ = write!(s, "BL: OFF {}", data.settings_status);
-    } else {
-        let _ = write!(s, "BL: {}% {}", data.brightness_percent, data.settings_status);
-    }
+    let _ = write!(s, "{} {}", data.brightness.label(), data.settings_status);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     let _ = y;
 

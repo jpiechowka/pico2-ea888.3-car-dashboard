@@ -1,4 +1,5 @@
 use dashboard_host_validation::acquisition::AcquisitionModel;
+use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::dashboard::{DashboardScene, Overlay};
 use dashboard_host_validation::display::St7789Renderer;
 use dashboard_host_validation::render::FpsMode;
@@ -28,7 +29,7 @@ fn scene_cell_order_and_overlay_removal_match_a_fresh_frame() {
         Overlay::Reset,
         Overlay::Fps(FpsMode::Combined),
         Overlay::BoostUnit(true),
-        Overlay::Brightness(0),
+        Overlay::Brightness(Brightness::Percent(0)),
         Overlay::Critical(dashboard_host_validation::samples::SensorId::Egt, true),
     ] {
         scene.overlay = Some(overlay);

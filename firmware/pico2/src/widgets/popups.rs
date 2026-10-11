@@ -1,12 +1,9 @@
-use core::fmt::Write;
-
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_10X20;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
-use heapless::String;
 
 use crate::config::{CENTER_X, CENTER_Y, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::render::FpsMode;
@@ -153,7 +150,7 @@ pub fn draw_critical_popup<D>(
 
 pub fn draw_brightness_popup<D>(
     display: &mut D,
-    brightness_percent: u32,
+    brightness: crate::backlight::Brightness,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -168,12 +165,7 @@ pub fn draw_brightness_popup<D>(
         .draw(display)
         .ok();
 
-    let mut label: String<20> = String::new();
-    if brightness_percent == 0 {
-        let _ = write!(label, "BL: OFF");
-    } else {
-        let _ = write!(label, "BL: {}%", brightness_percent);
-    }
+    let label = brightness.label();
     Text::with_text_style(label.as_str(), FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();

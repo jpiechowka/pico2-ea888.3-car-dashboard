@@ -2,6 +2,7 @@
 use std::hint::black_box;
 
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
+use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::colors;
 use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_host_validation::display::{FrameBuffer, St7789Renderer};
@@ -88,7 +89,7 @@ impl Raster {
             },
             overlay: match step {
                 1 => Some(Overlay::Reset),
-                3 => Some(Overlay::Brightness(30)),
+                3 => Some(Overlay::Brightness(Brightness::Percent(30))),
                 4 => Some(Overlay::Critical(SensorId::Egt, true)),
                 5 => Some(Overlay::Critical(SensorId::Egt, false)),
                 6 => Some(Overlay::Fps(FpsMode::Combined)),

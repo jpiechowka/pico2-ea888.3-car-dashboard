@@ -22,15 +22,16 @@ mod render {
 use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
+use dashboard_pico2::backlight::Backlight;
 use dashboard_pico2::colors::RED;
 use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
-use dashboard_pico2::input_model::brightness_after;
 use dashboard_pico2::settings::Settings;
 use dashboard_pico2::settings::policy::Policy;
+use dashboard_pico2::status_led::PresentedLed;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -44,7 +45,7 @@ use embedded_graphics::prelude::*;
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
-use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
+use crate::config::backlight::{PWM_TOP, pwm_divider, pwm_frequency_hz};
 use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
@@ -94,6 +95,35 @@ compile_error!(
     "Only one overclock feature can be enabled at a time. Choose one of: cpu250-spi62-1v10, cpu280-spi70-1v30, \
      cpu290-spi72-1v30, cpu300-spi75-1v30"
 );
+
+fn apply_backlight(
+    pwm: &mut Pwm<'_>,
+    config: &mut PwmConfig,
+    backlight: &Backlight,
+) {
+    if config.compare_a != backlight.compare() {
+        config.compare_a = backlight.compare();
+        pwm.set_config(config);
+    }
+}
+
+fn apply_indicator(
+    red: &mut Output<'_>,
+    blue: &mut Output<'_>,
+    presentation: &PresentedLed,
+    backlight: &Backlight,
+    heartbeat_on: bool,
+) {
+    let led = presentation.output(backlight.compare() != 0, heartbeat_on);
+    // Active-low cathodes. Disable the other color before enabling a new one.
+    if led.red {
+        blue.set_high();
+        red.set_low();
+    } else {
+        red.set_high();
+        blue.set_level(if led.blue { Level::Low } else { Level::High });
+    }
+}
 
 fn vreg_setting_mv() -> Option<u32> {
     // HAL validates the RP2350 VSEL encoding. This is a setting, not an ADC reading.
@@ -268,6 +298,7 @@ async fn main(spawner: Spawner) {
             (Settings::default(), false, false)
         }
     };
+    let initial_settings = initial_settings.for_boot();
     let mut settings_policy = if settings_enabled {
         Policy::new(initial_settings, Instant::now().as_millis())
     } else {
@@ -303,7 +334,7 @@ async fn main(spawner: Spawner) {
 
     cpu_profiling::init(cpu_freq_hz);
 
-    let mut _led_r = Output::new(p.PIN_26, Level::High);
+    let mut led_r = Output::new(p.PIN_26, Level::High);
     let mut _led_g = Output::new(p.PIN_27, Level::High);
     let mut led_b = Output::new(p.PIN_28, Level::High);
 
@@ -311,11 +342,12 @@ async fn main(spawner: Spawner) {
     let dc = Output::new(p.PIN_16, Level::Low);
 
     // Backlight via PWM for brightness control (GP20 = PWM slice 2, channel A)
+    let mut backlight = Backlight::new();
     let backlight_divider = pwm_divider(cpu_freq_hz).expect("Unsupported backlight PWM clock");
     let mut pwm_config = PwmConfig::default();
     pwm_config.top = PWM_TOP;
     pwm_config.divider = backlight_divider.into();
-    pwm_config.compare_a = brightness_compare(initial_settings.brightness());
+    pwm_config.compare_a = backlight.compare();
     let mut backlight_pwm = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, pwm_config.clone());
     log_info!(
         "Configured CPU {} Hz, backlight PWM {} Hz",
@@ -382,6 +414,7 @@ async fn main(spawner: Spawner) {
     let mut average_fps = 0.0f32;
     let mut fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
     let mut last_trace: Option<FrameTrace> = None;
+    let mut led_presentation = PresentedLed::new();
     let mut last_profile_log = Instant::now();
 
     let mut frame_cycles_used = 0u32;
@@ -390,10 +423,6 @@ async fn main(spawner: Spawner) {
 
     let mut flush_in_progress = None;
 
-    // Brightness state (PWM backlight, encoder-controlled)
-    let mut brightness_percent = u32::from(initial_settings.brightness());
-    let mut saved_brightness = u32::from(initial_settings.restore_brightness());
-    let mut backlight_off_pending = false; // deferred off: show popup first, then cut PWM
     let mut log_anchor: Option<u64> = None;
 
     let mut measurements = DashboardSnapshot::EMPTY;
@@ -463,12 +492,7 @@ async fn main(spawner: Spawner) {
         }
         if let Some(new_page) = input.new_page {
             current_page = new_page;
-            // If backlight-off was deferred and popup is being cleared, apply PWM now
-            if backlight_off_pending {
-                pwm_config.compare_a = 0;
-                backlight_pwm.set_config(&pwm_config);
-                backlight_off_pending = false;
-            }
+            backlight.interrupt_feedback();
             active_popup = None;
             fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
             current_fps = 0.0;
@@ -491,19 +515,13 @@ async fn main(spawner: Spawner) {
             log_info!("Stats reset requested");
         }
         if let Some(popup) = input.show_popup {
-            // If a non-brightness popup replaces a pending backlight-off, apply it now
-            if backlight_off_pending && !matches!(popup, Popup::Brightness(_, _)) {
-                pwm_config.compare_a = 0;
-                backlight_pwm.set_config(&pwm_config);
-                backlight_off_pending = false;
-            }
+            backlight.interrupt_feedback();
             active_popup = Some(popup);
         }
 
         // --- Encoder events (rotation + button press) ---
         let encoder = ENCODER_EVENTS.take_observed();
         let (enc_delta, enc_presses) = (encoder.delta, encoder.presses);
-        let enc_button = enc_presses % 2 == 1;
         let mut motion_applied = false;
         let mut press_applied = false;
 
@@ -518,39 +536,12 @@ async fn main(spawner: Spawner) {
                 }
                 // Button does nothing on Logs page
             }
-            _ => {
-                // Rotation adjusts brightness in 5% steps
-                if enc_delta != 0 {
-                    let new_brightness = brightness_after(brightness_percent, enc_delta);
-                    if new_brightness != brightness_percent {
-                        motion_applied = true;
-                        brightness_percent = new_brightness;
-                        if brightness_percent != 0 {
-                            saved_brightness = brightness_percent;
-                        }
-                        backlight_off_pending = false; // cancel any pending off
-                        pwm_config.compare_a = brightness_compare(brightness_percent as u8);
-                        backlight_pwm.set_config(&pwm_config);
-                        active_popup = Some(Popup::Brightness(Instant::now().as_millis(), brightness_percent));
-                    }
-                }
-                // Button toggles backlight on/off
-                if enc_button {
-                    press_applied = true;
-                    if brightness_percent > 0 {
-                        // Turning off: defer PWM change until popup expires so user sees it
-                        saved_brightness = brightness_percent;
-                        brightness_percent = 0;
-                        backlight_off_pending = true;
-                        // Don't touch PWM yet — keep backlight on for the popup
-                    } else {
-                        // Turning on: apply immediately
-                        brightness_percent = saved_brightness.max(1);
-                        backlight_off_pending = false;
-                        pwm_config.compare_a = brightness_compare(brightness_percent as u8);
-                        backlight_pwm.set_config(&pwm_config);
-                    }
-                    active_popup = Some(Popup::Brightness(Instant::now().as_millis(), brightness_percent));
+            Page::Dashboard | Page::Debug => {
+                let effect = backlight.encoder(current_page, enc_delta, enc_presses, Instant::now().as_millis());
+                motion_applied = effect.motion_applied;
+                press_applied = effect.press_applied;
+                if let Some(popup) = effect.popup {
+                    active_popup = Some(popup);
                 }
             }
         }
@@ -570,15 +561,8 @@ async fn main(spawner: Spawner) {
         }
 
         if let Some(ref popup) = active_popup
-            && popup.is_expired_at(Instant::now().as_millis())
+            && backlight.expire_popup(*popup, Instant::now().as_millis())
         {
-            // If a backlight-off was deferred and this is the Brightness popup expiring,
-            // apply the PWM change now (don't apply on other popup types)
-            if backlight_off_pending && matches!(popup, Popup::Brightness(_, _)) {
-                pwm_config.compare_a = 0;
-                backlight_pwm.set_config(&pwm_config);
-                backlight_off_pending = false;
-            }
             active_popup = None;
         }
 
@@ -599,22 +583,22 @@ async fn main(spawner: Spawner) {
                 }
             }
             if current_page == Page::Dashboard {
-                if backlight_off_pending {
-                    pwm_config.compare_a = 0;
-                    backlight_pwm.set_config(&pwm_config);
-                    backlight_off_pending = false;
-                }
+                backlight.interrupt_feedback();
                 active_popup = Some(Popup::Reset(Instant::now().as_millis()));
             }
         }
         let now_ms = Instant::now().as_millis();
-        let desired = Settings::new(
-            brightness_percent as u8,
-            saved_brightness as u8,
-            show_boost_psi,
-            fps_mode,
-        )
-        .expect("invalid live preferences");
+        apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
+        apply_indicator(
+            &mut led_r,
+            &mut led_b,
+            &led_presentation,
+            &backlight,
+            (elapsed_ms / 1000).is_multiple_of(2),
+        );
+        // Brightness is runtime-only. Keep legacy journal fields canonical,
+        // preserving saved boost/FPS without writing flash for every click.
+        let desired = Settings::new(100, 100, show_boost_psi, fps_mode).expect("invalid live preferences");
         settings_policy.set(desired, now_ms).expect("settings clock regressed");
         if pending_save.is_none() {
             pending_save = settings_policy.begin(now_ms).expect("invalid save policy");
@@ -650,7 +634,7 @@ async fn main(spawner: Spawner) {
                 Popup::Reset(_) => Overlay::Reset,
                 Popup::Fps(_) => Overlay::Fps(fps_mode),
                 Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
-                Popup::Brightness(_, percent) => Overlay::Brightness((*percent).min(100) as u8),
+                Popup::Brightness(_, brightness) => Overlay::Brightness(*brightness),
             }
         });
         let visible_overlay = Overlay::for_page(current_page, user_overlay, alerts, blink_on);
@@ -715,7 +699,7 @@ async fn main(spawner: Spawner) {
                         average_fps,
                         frame_count,
                         trace: last_trace,
-                        brightness_percent,
+                        brightness: backlight.brightness(),
                         settings_status: settings_status.label(has_saved_settings),
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
@@ -768,6 +752,16 @@ async fn main(spawner: Spawner) {
         let wait_start = Instant::now();
         let next_frame = if let Some(expected) = flush_in_progress.take() {
             let completed = wait_completed(&mut lifecycle, expected).await;
+            assert!(led_presentation.complete(expected), "wrong indicator completion");
+            backlight.frame_completed(expected, Instant::now().as_millis());
+            apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
+            apply_indicator(
+                &mut led_r,
+                &mut led_b,
+                &led_presentation,
+                &backlight,
+                (elapsed_ms / 1000).is_multiple_of(2),
+            );
             panel_history
                 .complete(expected)
                 .expect("invalid completed panel generation");
@@ -837,6 +831,16 @@ async fn main(spawner: Spawner) {
         };
         if idle {
             lifecycle.discard(token).expect("cannot discard active frame");
+            assert!(led_presentation.unchanged(visible_overlay), "pending indicator at idle");
+            backlight.frame_unchanged(Instant::now().as_millis());
+            apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
+            apply_indicator(
+                &mut led_r,
+                &mut led_b,
+                &led_presentation,
+                &backlight,
+                (elapsed_ms / 1000).is_multiple_of(2),
+            );
             spare_frame = Some(next_frame);
             crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
             // Keep the completed reference unchanged and reuse this render buffer.
@@ -849,12 +853,27 @@ async fn main(spawner: Spawner) {
             lifecycle.queue(token).expect("another frame is still in flight");
             crate::tasks::recovery::DISPLAY_PENDING.store(true, Ordering::Relaxed);
             let request = render_frame.submit_plan(token, trace, plan);
+            assert!(
+                led_presentation.submit(token, visible_overlay),
+                "pending indicator submission"
+            );
+            backlight.frame_submitted(token);
             input_tracker.submitted();
             assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
             BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
             wait_started(&mut lifecycle, token).await;
             if cfg!(feature = "serial-display") {
                 let completed = wait_completed(&mut lifecycle, token).await;
+                assert!(led_presentation.complete(token), "wrong serial indicator completion");
+                backlight.frame_completed(token, Instant::now().as_millis());
+                apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
+                apply_indicator(
+                    &mut led_r,
+                    &mut led_b,
+                    &led_presentation,
+                    &backlight,
+                    (elapsed_ms / 1000).is_multiple_of(2),
+                );
                 panel_history.complete(token).expect("invalid serial panel generation");
                 crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
                 last_trace = Some(completed.trace);
@@ -903,10 +922,12 @@ async fn main(spawner: Spawner) {
 
         crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
-        if (elapsed_ms / 1000).is_multiple_of(2) {
-            led_b.set_low();
-        } else {
-            led_b.set_high();
-        }
+        apply_indicator(
+            &mut led_r,
+            &mut led_b,
+            &led_presentation,
+            &backlight,
+            (elapsed_ms / 1000).is_multiple_of(2),
+        );
     }
 }

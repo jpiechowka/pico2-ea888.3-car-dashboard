@@ -1,5 +1,6 @@
 use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::alarms::{AlarmEngine, Context, EgtLocation, Limit, Rule, Status};
+use dashboard_host_validation::backlight::Brightness;
 use dashboard_host_validation::samples::{SensorId, Source};
 
 fn policy(
@@ -467,7 +468,7 @@ fn user_feedback_precedes_warning_and_clear_restores_both_retained_buffers() {
         Some(Overlay::Reset),
         Some(Overlay::Fps(FpsMode::Combined)),
         Some(Overlay::BoostUnit(true)),
-        Some(Overlay::Brightness(0)),
+        Some(Overlay::Brightness(Brightness::Percent(0))),
     ] {
         assert_eq!(
             Overlay::prioritize(popup, alerts, true),
@@ -484,7 +485,7 @@ fn user_feedback_precedes_warning_and_clear_restores_both_retained_buffers() {
         fps_instant: 0.0,
         fps_average: 0.0,
         backgrounds: [colors::RED; 8],
-        overlay: Some(Overlay::Brightness(0)),
+        overlay: Some(Overlay::Brightness(Brightness::Percent(0))),
     };
     let mut cache = DashboardCache::new();
     let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
@@ -494,7 +495,7 @@ fn user_feedback_precedes_warning_and_clear_restores_both_retained_buffers() {
         (Some(Overlay::Fps(FpsMode::Average)), false),
         (Some(Overlay::Reset), true),
         (Some(Overlay::BoostUnit(true)), false),
-        (Some(Overlay::Brightness(0)), true),
+        (Some(Overlay::Brightness(Brightness::Percent(0))), true),
         (None, false),
         (None, true),
     ] {
