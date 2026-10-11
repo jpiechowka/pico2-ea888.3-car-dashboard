@@ -225,6 +225,11 @@ fn dashboard_scene(c: &mut Criterion) {
     );
     let alternate = model.snapshot();
     for retained in [false, true] {
+        // Independent initial pixels/cache: filtering or the preceding full
+        // renderer must not leave the retained case with a mismatched cache.
+        let mut frame = AlignedFrame::boxed();
+        let mut cache = DashboardCache::new();
+        cache.draw(&mut St7789Renderer::new(&mut frame.0), 0, &scene);
         let label = if retained {
             "scene/retained_one_cell"
         } else {
@@ -599,9 +604,35 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels, mixed_scene_replay, coverage::benchmarks
 }
 criterion_main!(dashboard_perf);
+
+mod coverage;
+mod scene_replay;
+
+fn mixed_scene_replay(c: &mut Criterion) {
+    scene_replay::verify();
+    let snapshots = scene_replay::snapshots();
+    let initial = scene_replay::model().snapshot();
+    for retained in [false, true] {
+        let mode = if retained { "retained" } else { "full" };
+        c.bench_function(&format!("scene/{mode}_all_changed_eight_frames"), |b| {
+            b.iter_batched_ref(
+                || scene_replay::Raster::new(&initial),
+                |raster| raster.run(black_box(&snapshots), black_box(retained)),
+                criterion::BatchSize::PerIteration,
+            )
+        });
+        c.bench_function(&format!("replay/demo_model_to_{mode}_eight_frames"), |b| {
+            b.iter_batched_ref(
+                || (scene_replay::model(), scene_replay::Raster::new(&initial)),
+                |(model, raster)| scene_replay::run_model(black_box(model), black_box(raster), black_box(retained)),
+                criterion::BatchSize::PerIteration,
+            )
+        });
+    }
+}
 
 fn target_kernels(c: &mut Criterion) {
     use dashboard_host_validation::display::FrameBuffer;
