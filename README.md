@@ -41,6 +41,11 @@ feature conflicts, UART ownership, nonblocking logging, vendor hashes, linked
 RAM/flash boundaries and corrupted artifact rejection. Host checks and target
 builds do not execute the hardware.
 
+The [overhaul acceptance record](docs/validation/overhaul-2026-10-11.md) maps
+the implemented stages and review corrections to local test/build evidence and
+the remaining hardware gates. The [fixed workload matrix](docs/performance/benchmark-coverage.md)
+states exactly what each group of host benchmarks measures.
+
 For USB programming, first follow the power-domain isolation in the
 [wiring and inspection record](hardware/wiring-diagram.txt): direct VSYS wiring
 can backfeed the adapter/regulator from USB. With the assembly isolated and
