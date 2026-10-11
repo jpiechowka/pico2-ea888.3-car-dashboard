@@ -40,8 +40,44 @@ impl FpsMode {
     }
 }
 
-#[cfg(target_os = "none")]
-use micromath::F32Ext;
+use core::fmt::Write;
+
+use heapless::String;
+
+pub type FpsText = String<16>;
+
+/// The cache and renderer use identical visible text, including tie rounding.
+pub fn format_fps(
+    mode: FpsMode,
+    instant: f32,
+    average: f32,
+) -> FpsText {
+    fn value(
+        output: &mut FpsText,
+        fps: f32,
+    ) {
+        if fps.is_finite() && (0.0..=9_999.0).contains(&fps) {
+            let fps = if fps == 0.0 { 0.0 } else { fps };
+            let _ = write!(output, "{fps:.0}");
+        } else {
+            let _ = output.push_str("--");
+        }
+    }
+    let mut text = FpsText::new();
+    match mode {
+        FpsMode::Off => {}
+        FpsMode::Instant => value(&mut text, instant),
+        FpsMode::Average => value(&mut text, average),
+        FpsMode::Combined => {
+            value(&mut text, instant);
+            let _ = text.push('/');
+            value(&mut text, average);
+        }
+    }
+    // Longest valid text: "9999/9999 AVG" (13 bytes).
+    let _ = text.push_str(mode.suffix());
+    text
+}
 
 pub const CELL_COUNT: usize = 8;
 
@@ -57,42 +93,18 @@ pub mod cell_idx {
 
 pub struct RenderState {
     dividers_drawn: bool,
-    headers: [Option<HeaderSnapshot>; 2],
+    headers: [Option<FpsText>; 2],
     prev_popup_kind: Option<u8>,
     popup_just_closed: bool,
     first_frame: bool,
     display_cleared: bool,
 }
 
-#[derive(Clone, Copy)]
-struct HeaderSnapshot {
-    mode: FpsMode,
-    instant: u32,
-    average: u32,
-}
-
-impl HeaderSnapshot {
-    fn changed(
-        self,
-        previous: Self,
-    ) -> bool {
-        if self.mode != previous.mode {
-            return true;
-        }
-        match self.mode {
-            FpsMode::Off => false,
-            FpsMode::Instant => self.instant != previous.instant,
-            FpsMode::Average => self.average != previous.average,
-            FpsMode::Combined => self.instant != previous.instant || self.average != previous.average,
-        }
-    }
-}
-
 impl RenderState {
     pub const fn new() -> Self {
         Self {
             dividers_drawn: false,
-            headers: [None; 2],
+            headers: [None, None],
             prev_popup_kind: None,
             popup_just_closed: false,
             first_frame: true,
@@ -116,16 +128,10 @@ impl RenderState {
         let Some(header) = self.headers.get_mut(buffer_id) else {
             return true;
         };
-        let current = HeaderSnapshot {
-            mode: fps_mode,
-            instant: fps_instant.round() as u32,
-            average: fps_average.round() as u32,
-        };
+        let current = format_fps(fps_mode, fps_instant, fps_average);
 
-        let dirty = self.first_frame
-            || self.popup_just_closed
-            || self.display_cleared
-            || header.is_none_or(|previous| current.changed(previous));
+        let dirty =
+            self.first_frame || self.popup_just_closed || self.display_cleared || header.as_ref() != Some(&current);
 
         *header = Some(current);
         dirty
@@ -140,6 +146,7 @@ impl RenderState {
         self.prev_popup_kind = popup_kind;
 
         if changed && was_visible {
+            self.headers = [None, None];
             self.popup_just_closed = true;
             self.dividers_drawn = false;
         }

@@ -1,13 +1,10 @@
-use core::fmt::Write;
-
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
-use heapless::String;
 
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH};
-use crate::render::FpsMode;
+use crate::render::{FpsMode, format_fps};
 use crate::ui::{CENTERED, GRAY, LABEL_STYLE_WHITE, RED, RIGHT_ALIGNED, TITLE_STYLE_WHITE};
 
 const HEADER_TITLE_POS: Point = Point::new(160, 19);
@@ -45,19 +42,7 @@ pub fn draw_header<D>(
         .ok();
 
     if fps_mode.is_visible() {
-        let mut fps_str: String<16> = String::new();
-        match fps_mode {
-            FpsMode::Off => {}
-            FpsMode::Instant => {
-                let _ = write!(fps_str, "{:.0}{}", fps_instant, fps_mode.suffix());
-            }
-            FpsMode::Average => {
-                let _ = write!(fps_str, "{:.0}{}", fps_average, fps_mode.suffix());
-            }
-            FpsMode::Combined => {
-                let _ = write!(fps_str, "{:.0}/{:.0}{}", fps_instant, fps_average, fps_mode.suffix());
-            }
-        }
+        let fps_str = format_fps(fps_mode, fps_instant, fps_average);
         Text::with_text_style(&fps_str, HEADER_FPS_POS, LABEL_STYLE_WHITE, RIGHT_ALIGNED)
             .draw(display)
             .ok();

@@ -67,7 +67,8 @@ fn header_only_tracks_values_visible_in_each_fps_mode() {
     assert!(state.check_header_dirty(0, FpsMode::Instant, 80.0, 79.0));
     state.end_frame();
     assert!(!state.check_header_dirty(0, FpsMode::Instant, 80.2, 99.0));
-    assert!(state.check_header_dirty(0, FpsMode::Instant, 80.5, 99.0));
+    assert!(!state.check_header_dirty(0, FpsMode::Instant, 80.5, 99.0));
+    assert!(state.check_header_dirty(0, FpsMode::Instant, 80.6, 99.0));
     state.end_frame();
     assert!(state.check_header_dirty(0, FpsMode::Average, 80.5, 99.0));
     state.end_frame();
