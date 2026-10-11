@@ -112,5 +112,7 @@ jobs:
         run: cargo build --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features "${{ matrix.features }}"
         working-directory: firmware
       - name: Check linked RAM boundaries
-        run: python3 scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
+        run: |
+          python3 scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
+          python3 scripts/test_flash_lockout.py target/thumbv8m.main-none-eabihf/release/pico2
         working-directory: firmware

@@ -157,8 +157,22 @@ unsafe fn SIO_IRQ_PROC1() {
 }
 
 #[cfg(all(feature = "rt", feature = "_rp235x"))]
+// The pause acknowledgement permits core0 to disable XIP. Both the generated
+// interrupt trampoline and this body must stay in SRAM, including the parked
+// FIFO/WFE loop. All callees in that interval are inline; inspect the linked
+// optimized instructions when upgrading the compiler or HAL.
+#[unsafe(link_section = ".data.ram_func")]
 #[interrupt]
 unsafe fn SIO_IRQ_FIFO() {
+    sio_fifo_ram();
+}
+
+// cortex-m-rt's interrupt macro rejects inline attributes. Use a normal private
+// helper for the non-inlining boundary, with the trampoline in SRAM as well.
+#[cfg(all(feature = "rt", feature = "_rp235x"))]
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+unsafe fn sio_fifo_ram() {
     let sio = pac::SIO;
     // Clear IRQ
     sio.fifo().st().write(|w| w.set_wof(false));

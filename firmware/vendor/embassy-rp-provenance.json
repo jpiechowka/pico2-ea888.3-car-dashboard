@@ -82,6 +82,7 @@
   "patched_files_sha256": {
     "src/uart/buffered.rs": "7c45108670110627abf0129b2d0564e497ecfcff0aa41270c8d771054de9d3fe",
     "src/uart/mod.rs": "07589bb6b559e8556baf1f7c9c2f9b5fcdfd1be5b2591c8a7699c4a40733a684",
-    "src/uart/buffered_io.rs": "59df101eb441253fca61181467ce074a8691e083c837af1a38da64ff7e42a549"
+    "src/uart/buffered_io.rs": "59df101eb441253fca61181467ce074a8691e083c837af1a38da64ff7e42a549",
+    "src/multicore.rs": "9fb684e2bd7e17494d28b6b1c76175666346dd1dbded9a023322775bc83e8f42"
   }
 }

@@ -2,9 +2,10 @@ MEMORY {
     /*
      * The RP2350 has either external or internal flash.
      *
-     * 2 MiB is a safe default here, although a Pico 2 has 4 MiB.
+     * Keep the existing 2 MiB contract (Pico 2 has 4 MiB), reserving the
+     * final two 4 KiB sectors for settings. They have no ELF load contents.
      */
-    FLASH : ORIGIN = 0x10000000, LENGTH = 2048K
+    FLASH : ORIGIN = 0x10000000, LENGTH = 2040K
     /*
      * RAM consists of 8 banks, SRAM0-SRAM7, with a striped mapping.
      * This is usually good for performance, as it distributes load on
@@ -20,6 +21,11 @@ MEMORY {
     SRAM4 : ORIGIN = 0x20080000, LENGTH = 4K
     SRAM5 : ORIGIN = 0x20081000, LENGTH = 4K
 }
+
+__settings_start = 0x101FE000;
+__settings_end = 0x10200000;
+ASSERT(ORIGIN(FLASH) + LENGTH(FLASH) == __settings_start,
+       "program FLASH overlaps reserved settings");
 
 SECTIONS {
     /* ### Boot ROM info

@@ -4,37 +4,14 @@ Run on an unstripped ARM build (CARGO_PROFILE_RELEASE_STRIP=none).
 Uses only Python's standard library; never executes target code.
 """
 
-import pathlib
-import struct
 import sys
+from elf_image import ElfImage
+from check_flash_lockout import check as check_flash_lockout
 
 
 def check(path):
-    data = pathlib.Path(path).read_bytes()
-    assert data[:7] == b"\x7fELF\x01\x01\x01", "expected ELF32 little endian"
-    assert struct.unpack_from("<H", data, 18)[0] == 40, "expected ARM ELF"
-    shoff = struct.unpack_from("<I", data, 32)[0]
-    entsize, count, names_index = struct.unpack_from("<HHH", data, 46)
-    assert entsize == 40 and count > 0 and names_index < count
-    sections = [struct.unpack_from("<10I", data, shoff + i * entsize) for i in range(count)]
-
-    def table(section):
-        return data[section[4]:section[4] + section[5]]
-
-    def string(blob, offset):
-        return blob[offset:blob.index(b"\0", offset)].decode("ascii")
-
-    names = table(sections[names_index])
-    named = {string(names, s[0]): s for s in sections}
-    symbols = {}
-    for section in sections:
-        if section[1] != 2:
-            continue
-        assert section[9] == 16, "unexpected symbol size"
-        strings = table(sections[section[6]])
-        for offset in range(section[4], section[4] + section[5], 16):
-            name, value, _, _, _, _ = struct.unpack_from("<IIIBBH", data, offset)
-            symbols[string(strings, name)] = value
+    elf = ElfImage(path)
+    sections, named, symbols = elf.sections, elf.named, elf.symbols
 
     ram_start, ram_end = 0x20000000, 0x20080000
     ram_sections = [s for s in sections if s[2] & 2 and ram_start <= s[3] < ram_end]
@@ -50,7 +27,19 @@ def check(path):
         assert symbols[name] == expected, f"{name}=0x{symbols[name]:08x}, expected=0x{expected:08x}"
     assert symbols.get("_stack_start") == ram_end, "unexpected core 0 stack top"
     assert ram_end - aligned_end >= 32768, "less than 32 KiB core 0 stack headroom"
-    assert 0x10000000 <= named[".end_block"][3] < 0x10200000, "boot info outside flash"
+    flash_start, journal_start = 0x10000000, 0x101FE000
+    assert flash_start <= named[".end_block"][3] < journal_start, "boot info outside program flash"
+    # Physical LOAD addresses include the flash copy of RAM .data/ram_func.
+    # Checking only virtual .text addresses can miss journal overlap.
+    for kind, _, _, physical, size, _, _, _ in elf.segments:
+        if kind == 1 and size and flash_start <= physical < 0x20000000:
+            assert physical + size <= journal_start, "flash LOAD overlaps reserved settings"
+    handlers = {name: addr for name, addr in symbols.items()
+                if name == "SIO_IRQ_FIFO" or "__cortex_m_rt_SIO_IRQ_FIFO" in name or "sio_fifo_ram" in name}
+    assert "SIO_IRQ_FIFO" in handlers and any("sio_fifo_ram" in n for n in handlers), "missing lockout trampoline or body"
+    for name, addr in handlers.items():
+        assert ram_start <= (addr & ~1) < ram_end, f"lockout handler executes outside RAM: {name} at {addr:#x}"
+    check_flash_lockout(elf)
     print(f"static RAM {aligned_end - ram_start} B; core 0 headroom {ram_end - aligned_end} B; boundaries verified")
 
 

@@ -1,0 +1,87 @@
+
+target/thumbv8m.main-none-eabihf/release/pico2:	file format elf32-littlearm
+
+Disassembly of section .data:
+
+20000000 <__sdata>:
+20000000:      	push	{r7, lr}
+20000002:      	mov	r7, sp
+20000004:      	pop.w	{r7, lr}
+20000008:      	b	0x2000000c <embassy_rp::multicore::sio_fifo_ram> @ imm = #0x0
+2000000a:      	nop
+
+2000000c <embassy_rp::multicore::sio_fifo_ram>:
+2000000c:      	push	{r7, lr}
+2000000e:      	mov	r7, sp
+20000010:      	movs	r0, #0x50
+20000012:      	movt	r0, #0xd000
+20000016:      	movs	r1, #0x0
+20000018:      	str	r1, [r0]
+2000001a:      	ldr	r1, [r0]
+2000001c:      	lsls	r1, r1, #0x1f
+2000001e:      	it	eq
+20000020:      	popeq	{r7, pc}
+20000022:      	movw	r1, #0xbeef
+20000026:      	movw	r2, #0x4110
+2000002a:      	movw	r12, #0xef00
+2000002e:      	movt	r1, #0xdead
+20000032:      	movt	r2, #0x2152
+20000036:      	movw	lr, #0xcafe
+2000003a:      	movt	r12, #0xe000
+2000003e:      	b	0x20000042 <embassy_rp::multicore::sio_fifo_ram+0x36> @ imm = #0x0
+20000040:      	wfe
+20000042:      	ldr	r3, [r0]
+20000044:      	lsls	r3, r3, #0x1f
+20000046:      	beq	0x20000040 <embassy_rp::multicore::sio_fifo_ram+0x34> @ imm = #-0xa
+20000048:      	ldr	r3, [r0, #0x8]
+2000004a:      	cmp	r3, r1
+2000004c:      	bne	0x20000084 <embassy_rp::multicore::sio_fifo_ram+0x78> @ imm = #0x34
+2000004e:      	cpsid i
+20000050:      	ldr	r3, [r0]
+20000052:      	lsls	r3, r3, #0x1e
+20000054:      	bmi	0x20000060 <embassy_rp::multicore::sio_fifo_ram+0x54> @ imm = #0x8
+20000056:      	nop
+20000058:      	nop
+2000005a:      	ldr	r3, [r0]
+2000005c:      	lsls	r3, r3, #0x1e
+2000005e:      	bpl	0x20000058 <embassy_rp::multicore::sio_fifo_ram+0x4c> @ imm = #-0xa
+20000060:      	str	r1, [r0, #0x4]
+20000062:      	sev
+20000064:      	ldr	r3, [r0]
+20000066:      	lsls	r3, r3, #0x1f
+20000068:      	bne	0x20000074 <embassy_rp::multicore::sio_fifo_ram+0x68> @ imm = #0x8
+2000006a:      	nop
+2000006c:      	wfe
+2000006e:      	ldr	r3, [r0]
+20000070:      	lsls	r3, r3, #0x1f
+20000072:      	beq	0x2000006c <embassy_rp::multicore::sio_fifo_ram+0x60> @ imm = #-0xa
+20000074:      	ldr	r3, [r0, #0x8]
+20000076:      	cmp	r3, r2
+20000078:      	beq	0x20000098 <embassy_rp::multicore::sio_fifo_ram+0x8c> @ imm = #0x1c
+2000007a:      	nop
+2000007c:      	ldr	r3, [r0]
+2000007e:      	lsls	r3, r3, #0x1f
+20000080:      	beq	0x2000006c <embassy_rp::multicore::sio_fifo_ram+0x60> @ imm = #-0x18
+20000082:      	b	0x20000074 <embassy_rp::multicore::sio_fifo_ram+0x68> @ imm = #-0x12
+20000084:      	cmp.w	lr, r3, lsr #16
+20000088:      	itt	eq
+2000008a:      	uxtheq	r3, r3
+2000008c:      	streq.w	r3, [r12]
+20000090:      	ldr	r3, [r0]
+20000092:      	lsls	r3, r3, #0x1f
+20000094:      	bne	0x20000042 <embassy_rp::multicore::sio_fifo_ram+0x36> @ imm = #-0x56
+20000096:      	b	0x200000b2 <embassy_rp::multicore::sio_fifo_ram+0xa6> @ imm = #0x18
+20000098:      	cpsie i
+2000009a:      	ldr	r3, [r0]
+2000009c:      	lsls	r3, r3, #0x1e
+2000009e:      	bmi	0x200000a8 <embassy_rp::multicore::sio_fifo_ram+0x9c> @ imm = #0x6
+200000a0:      	nop
+200000a2:      	ldr	r3, [r0]
+200000a4:      	lsls	r3, r3, #0x1e
+200000a6:      	bpl	0x200000a0 <embassy_rp::multicore::sio_fifo_ram+0x94> @ imm = #-0xa
+200000a8:      	str	r2, [r0, #0x4]
+200000aa:      	sev
+200000ac:      	ldr	r3, [r0]
+200000ae:      	lsls	r3, r3, #0x1f
+200000b0:      	bne	0x20000042 <embassy_rp::multicore::sio_fifo_ram+0x36> @ imm = #-0x72
+200000b2:      	pop	{r7, pc}
