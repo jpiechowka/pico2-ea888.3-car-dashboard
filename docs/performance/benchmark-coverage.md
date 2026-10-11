@@ -7,7 +7,7 @@ Each case uses 30 samples, one second of warmup and two seconds of measurement.
 The [capture policy](benchmark-policy.md) requires frozen source, compiler and
 runner identity for comparisons.
 
-These are CPU measurements. Logical gaps in a replay do not sleep, perform UART
+These are host execution timings using elapsed wall time. Logical gaps in a replay do not sleep, perform UART
 I/O or represent elapsed benchmark time. No host result establishes ECU support,
 RP2350 cycles, DMA overlap or physical FPS.
 
