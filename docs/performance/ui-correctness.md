@@ -32,7 +32,7 @@ gain from this specific change. The baseline and intermediate runs also had
 different dependency and host conditions. Pixel checks for bar, 2.0 bar to
 29.0 PSI, and 0.1 bar to 1.5 PSI now pass.
 
-## Mini graph endpoint
+## Mini graph endpoint (initial, incomplete fix)
 
 The renderer now draws the final ring sample after its two-step decimation
 when that endpoint would otherwise be skipped. It rejects zero, oversized,
@@ -42,6 +42,23 @@ the audited baseline and 1.495 us in the run before the change. The latest
 measurement is essentially unchanged from the immediate predecessor; both
 current and baseline runs include other timing differences. Full and wrapped
 rings, a two-sample graph, and malformed metadata have host pixel checks.
+
+## Review correction: preserve every graph sample
+
+The follow-up review reproduced missing odd-index spikes and the blank
+one-sample graph. Drawing the last point alone did not satisfy the report.
+The renderer now draws every sample, including wrapped rings and isolated
+points. Invalid values break the line; invalid scales and overflowing geometry
+are rejected. Constant data uses the middle row and small finite ranges use
+the available height.
+
+A paired run of the unchanged 60-sample fixture measured approximately
+1.44 us before and 2.89 us after this correction. Criterion reports about
+100% more time. The earlier result omitted roughly half the input samples;
+the extra cost is retained for correctness. Raw runs are committed under
+`host/baselines/review_graph_before` and `review_graph_complete`. This is a
+host cost, with no measured implication for physical FPS. The 27 UI tests
+and stock firmware release build pass at this checkpoint.
 
 Reproduce from `host/` after restoring the committed baseline:
 

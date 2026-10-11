@@ -350,3 +350,110 @@ fn malformed_graph_ring_metadata_draws_nothing() {
         assert!(frame.0.iter().all(|byte| *byte == 0), "{size}, {start}, {count}");
     }
 }
+
+#[test]
+fn every_graph_sample_can_show_an_isolated_spike_after_ring_wrap() {
+    for start in [0, 17, 59] {
+        let flat = [0.0; 60];
+        let reference = graph_frame(&flat, 60, start, 60);
+        for offset in 0..60 {
+            let mut samples = flat;
+            samples[(start + offset) % 60] = 100.0;
+            assert!(
+                graph_frame(&samples, 60, start, 60).0 != reference.0,
+                "lost spike at offset {offset}, ring start {start}"
+            );
+        }
+    }
+}
+
+#[test]
+fn single_graph_sample_is_visible_at_the_newest_edge() {
+    let frame = graph_frame(&[100.0], 1, 0, 1);
+    assert_eq!(frame.pixel(61, 2), Rgb565::WHITE.into_storage());
+}
+
+#[test]
+fn constant_graph_uses_the_middle_row() {
+    let mut frame = AlignedFrame::boxed();
+    primitives::draw_mini_graph(
+        &mut St7789Renderer::new(&mut frame.0),
+        0,
+        0,
+        64,
+        20,
+        &[5.0; 60],
+        60,
+        0,
+        60,
+        5.0,
+        5.0,
+        |_| Rgb565::WHITE,
+    );
+    for x in 2..62 {
+        assert_eq!(frame.pixel(x, 9), Rgb565::WHITE.into_storage());
+    }
+}
+
+#[test]
+fn graph_rejects_invalid_scales_and_unrepresentable_geometry() {
+    for (x, y, w, h, min, max) in [
+        (0, 0, 64, 20, f32::NAN, 100.0),
+        (0, 0, 64, 20, 0.0, f32::INFINITY),
+        (0, 0, 64, 20, 100.0, 0.0),
+        (0, 0, 64, 20, -f32::MAX, f32::MAX),
+        (i32::MAX, 0, 64, 20, 0.0, 100.0),
+        (0, i32::MAX, 64, 20, 0.0, 100.0),
+        (0, 0, u32::MAX, 20, 0.0, 100.0),
+    ] {
+        let mut frame = AlignedFrame::boxed();
+        primitives::draw_mini_graph(
+            &mut St7789Renderer::new(&mut frame.0),
+            x,
+            y,
+            w,
+            h,
+            &[0.0, 100.0],
+            2,
+            0,
+            2,
+            min,
+            max,
+            |_| Rgb565::WHITE,
+        );
+        assert!(frame.0.iter().all(|byte| *byte == 0));
+    }
+}
+
+#[test]
+fn nonfinite_graph_sample_breaks_the_line_without_fabricating_a_point() {
+    let frame = graph_frame(&[0.0, f32::NAN, 100.0], 3, 0, 3);
+    assert_eq!(frame.pixel(2, 17), Rgb565::WHITE.into_storage());
+    assert_eq!(frame.pixel(61, 2), Rgb565::WHITE.into_storage());
+    for x in 3..61 {
+        for y in 2..18 {
+            assert_eq!(frame.pixel(x, y), 0);
+        }
+    }
+}
+
+#[test]
+fn small_finite_graph_range_still_uses_the_full_height() {
+    let mut frame = AlignedFrame::boxed();
+    primitives::draw_mini_graph(
+        &mut St7789Renderer::new(&mut frame.0),
+        0,
+        0,
+        64,
+        20,
+        &[12.0, 12.05],
+        2,
+        0,
+        2,
+        12.0,
+        12.05,
+        |_| Rgb565::WHITE,
+    );
+    assert_eq!(frame.pixel(2, 17), Rgb565::WHITE.into_storage());
+    assert_eq!(frame.pixel(61, 2), Rgb565::WHITE.into_storage());
+}
