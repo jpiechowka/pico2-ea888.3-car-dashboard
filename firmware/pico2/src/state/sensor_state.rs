@@ -1,3 +1,4 @@
+use super::extrema::{Extrema, valid_sample};
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 
 const AVG_BUFFER_SIZE: usize = 60;
@@ -12,9 +13,17 @@ pub const PEAK_HOLD_MS: u64 = 750;
 
 const TREND_SAMPLE_PERIOD_MS: u64 = 200;
 const TREND_WINDOW_MS: u64 = 2_000;
-const MAX_ABS_SAMPLE: f32 = 1_000_000.0;
+
+#[derive(Clone, Copy)]
+pub enum PeakMode {
+    None,
+    Maximum,
+    Range,
+}
 
 pub struct SensorState {
+    value: Option<f32>,
+    extrema: Extrema,
     history: [f32; HISTORY_SIZE],
     history_time_ms: [u64; HISTORY_SIZE],
     history_index: usize,
@@ -44,6 +53,8 @@ pub struct SensorState {
 impl SensorState {
     pub const fn new() -> Self {
         Self {
+            value: None,
+            extrema: Extrema::new(),
             history: [0.0; HISTORY_SIZE],
             history_time_ms: [0; HISTORY_SIZE],
             history_index: 0,
@@ -68,6 +79,27 @@ impl SensorState {
         }
     }
 
+    pub const fn value(&self) -> Option<f32> { self.value }
+
+    pub fn minimum(&self) -> Option<f32> { self.extrema.min() }
+
+    pub fn maximum(&self) -> Option<f32> { self.extrema.max() }
+
+    /// Apply all measurement-derived state through the same acceptance gate.
+    pub fn ingest(
+        &mut self,
+        value: f32,
+        sampled_at_ms: u64,
+        peak_mode: PeakMode,
+    ) -> bool {
+        let peak = match peak_mode {
+            PeakMode::None => false,
+            PeakMode::Maximum => self.extrema.would_raise(value),
+            PeakMode::Range => self.extrema.would_extend(value),
+        };
+        self.update_at(value, peak, sampled_at_ms)
+    }
+
     pub fn with_trend_threshold(threshold: f32) -> Self {
         let mut state = Self::new();
         if threshold.is_finite() && threshold >= 0.0 {
@@ -83,13 +115,12 @@ impl SensorState {
         is_max_updated: bool,
         sampled_at_ms: u64,
     ) -> bool {
-        if !value.is_finite()
-            || value.abs() > MAX_ABS_SAMPLE
-            || self.last_sample_ms.is_some_and(|last| sampled_at_ms <= last)
-        {
+        if !valid_sample(value) || self.last_sample_ms.is_some_and(|last| sampled_at_ms <= last) {
             return false;
         }
         self.last_sample_ms = Some(sampled_at_ms);
+        self.value = Some(value);
+        self.extrema.record(value);
 
         if is_max_updated {
             let until = sampled_at_ms.saturating_add(PEAK_HOLD_MS);
@@ -242,6 +273,24 @@ impl SensorState {
     pub fn reset_peak(&mut self) {
         self.is_new_peak = false;
         self.peak_until_ms = None;
+    }
+
+    pub fn reset_trend(&mut self) {
+        self.history_count = 0;
+        self.history_index = 0;
+        self.trend_last_sample_ms = None;
+    }
+
+    /// Keep the accepted current measurement; restart derived statistics.
+    pub fn reset_statistics(&mut self) {
+        self.reset_average();
+        self.reset_graph();
+        self.reset_peak();
+        self.reset_trend();
+        self.extrema = Extrema::new();
+        if let Some(value) = self.value {
+            self.extrema.reset_to(value);
+        }
     }
 
     pub fn get_trend(&self) -> Option<bool> {

@@ -5,6 +5,8 @@
 pub mod colors;
 #[path = "../../firmware/pico2/src/config/mod.rs"]
 pub mod config;
+#[path = "../../firmware/pico2/src/state/extrema.rs"]
+pub mod extrema;
 #[path = "../../firmware/pico2/src/render.rs"]
 pub mod render;
 #[path = "../../firmware/pico2/src/state/sensor_state.rs"]
@@ -34,11 +36,13 @@ pub const FRAME_BYTES: usize = 320 * 240 * 2;
 pub struct AlignedFrame(pub [u8; FRAME_BYTES]);
 
 impl AlignedFrame {
-    pub fn boxed() -> Box<Self> {
-        Box::new(Self([0; FRAME_BYTES]))
-    }
+    pub fn boxed() -> Box<Self> { Box::new(Self([0; FRAME_BYTES])) }
 
-    pub fn pixel(&self, x: usize, y: usize) -> u16 {
+    pub fn pixel(
+        &self,
+        x: usize,
+        y: usize,
+    ) -> u16 {
         let index = (y * 320 + x) * 2;
         u16::from_be_bytes([self.0[index], self.0[index + 1]])
     }

@@ -46,7 +46,7 @@ use crate::peripherals::{ENCODER_BUTTON, ENCODER_DELTA, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::render::{FpsMode, RenderState, cell_idx};
 use crate::screens::{ProfilingData, clear_framebuffers, draw_logs_page, draw_profiling_page, run_boot_sequence};
-use crate::state::{ButtonState, Page, Popup, SensorState, process_buttons};
+use crate::state::{ButtonState, Page, PeakMode, Popup, SensorState, process_buttons};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
@@ -69,7 +69,6 @@ use crate::thresholds::{
     BATT_CRITICAL,
     BATT_WARNING,
     BOOST_EASTER_EGG_BAR,
-    BOOST_EASTER_EGG_PSI,
     EGT_DANGER_MANIFOLD,
 };
 use crate::ui::{BLACK, BLUE, ColorTransition, DARK_TEAL, GREEN, ORANGE, RED};
@@ -372,15 +371,7 @@ async fn main(spawner: Spawner) {
     let mut log_scroll_offset: i32 = 0;
     let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
 
-    let mut boost = 0.5f32;
-    let mut oil_temp = 60.0f32;
-    let mut water_temp = 88.0f32;
-    let mut dsg_temp = 75.0f32;
-    let mut iat_temp = 30.0f32;
-    let mut egt_temp = 200.0f32;
-    let mut batt_voltage = 12.0f32;
-    let mut afr = 14.0f32;
-
+    let mut boost_state = SensorState::new();
     let mut oil_state = SensorState::new();
     let mut water_state = SensorState::new();
     let mut dsg_state = SensorState::new();
@@ -388,15 +379,6 @@ async fn main(spawner: Spawner) {
     let mut egt_state = SensorState::with_trend_threshold(5.0);
     let mut batt_state = SensorState::with_trend_threshold(0.05);
     let mut afr_state = SensorState::with_trend_threshold(0.1);
-
-    let mut boost_max = 0.0f32;
-    let mut oil_max = 0.0f32;
-    let mut water_max = 0.0f32;
-    let mut dsg_max = 0.0f32;
-    let mut iat_max = f32::MIN;
-    let mut egt_max = 0.0f32;
-    let mut batt_min = f32::MAX;
-    let mut batt_max = 0.0f32;
 
     log_info!("Main loop starting");
 
@@ -561,88 +543,49 @@ async fn main(spawner: Spawner) {
         };
         render_state.update_popup(popup_kind);
 
-        let mut sample_timestamp_ms = None;
-        if let Some(demo_values) = demo_receiver.try_get() {
-            sample_timestamp_ms = Some(demo_values.captured_ms);
-            boost = demo_values.boost;
-            oil_temp = demo_values.oil_temp;
-            water_temp = demo_values.water_temp;
-            dsg_temp = demo_values.dsg_temp;
-            iat_temp = demo_values.iat_temp;
-            egt_temp = demo_values.egt_temp;
-            batt_voltage = demo_values.batt_voltage;
-            afr = demo_values.afr;
+        if let Some(values) = demo_receiver.try_changed() {
+            let at_ms = values.captured_ms;
+            boost_state.ingest(values.boost, at_ms, PeakMode::None);
+            oil_state.ingest(values.oil_temp, at_ms, PeakMode::Maximum);
+            water_state.ingest(values.water_temp, at_ms, PeakMode::Maximum);
+            dsg_state.ingest(values.dsg_temp, at_ms, PeakMode::Maximum);
+            iat_state.ingest(values.iat_temp, at_ms, PeakMode::Maximum);
+            egt_state.ingest(values.egt_temp, at_ms, PeakMode::Maximum);
+            batt_state.ingest(values.batt_voltage, at_ms, PeakMode::Range);
+            afr_state.ingest(values.afr, at_ms, PeakMode::None);
         }
 
         if reset_requested {
-            oil_state.reset_average();
-            oil_state.reset_graph();
-            oil_state.reset_peak();
-            water_state.reset_average();
-            water_state.reset_graph();
-            water_state.reset_peak();
-            dsg_state.reset_average();
-            dsg_state.reset_graph();
-            dsg_state.reset_peak();
-            iat_state.reset_average();
-            iat_state.reset_graph();
-            iat_state.reset_peak();
-            egt_state.reset_average();
-            egt_state.reset_graph();
-            egt_state.reset_peak();
-            batt_state.reset_average();
-            batt_state.reset_graph();
-            batt_state.reset_peak();
-            afr_state.reset_average();
-            afr_state.reset_graph();
-            afr_state.reset_peak();
-
-            boost_max = boost;
-            oil_max = oil_temp;
-            water_max = water_temp;
-            dsg_max = dsg_temp;
-            iat_max = iat_temp;
-            egt_max = egt_temp;
-            batt_min = batt_voltage;
-            batt_max = batt_voltage;
-
+            for state in [
+                &mut boost_state,
+                &mut oil_state,
+                &mut water_state,
+                &mut dsg_state,
+                &mut iat_state,
+                &mut egt_state,
+                &mut batt_state,
+                &mut afr_state,
+            ] {
+                state.reset_statistics();
+            }
             reset_requested = false;
             log_info!("Stats reset");
         }
 
-        let show_boost_easter_egg = if show_boost_psi {
-            boost * 14.5038 >= BOOST_EASTER_EGG_PSI
-        } else {
-            boost >= BOOST_EASTER_EGG_BAR
-        };
+        let boost = boost_state.value().unwrap_or(0.0);
+        let oil_temp = oil_state.value().unwrap_or(0.0);
+        let water_temp = water_state.value().unwrap_or(0.0);
+        let dsg_temp = dsg_state.value().unwrap_or(0.0);
+        let iat_temp = iat_state.value().unwrap_or(0.0);
+        let egt_temp = egt_state.value().unwrap_or(0.0);
+        let batt_voltage = batt_state.value().unwrap_or(0.0);
+        let afr = afr_state.value().unwrap_or(0.0);
+        // Presentation units never change this canonical measurement threshold.
+        let show_boost_easter_egg = boost >= BOOST_EASTER_EGG_BAR;
 
-        let oil_updated = oil_temp > oil_max;
-        let water_updated = water_temp > water_max;
-        let dsg_updated = dsg_temp > dsg_max;
-        let iat_updated = iat_temp > iat_max;
-        let egt_updated = egt_temp > egt_max;
-        let batt_updated = batt_voltage > batt_max || batt_voltage < batt_min;
-
-        boost_max = boost_max.max(boost);
-        oil_max = oil_max.max(oil_temp);
-        water_max = water_max.max(water_temp);
-        dsg_max = dsg_max.max(dsg_temp);
-        iat_max = iat_max.max(iat_temp);
-        egt_max = egt_max.max(egt_temp);
-        batt_min = batt_min.min(batt_voltage);
-        batt_max = batt_max.max(batt_voltage);
-
-        if let Some(sampled_at_ms) = sample_timestamp_ms {
-            oil_state.update_at(oil_temp, oil_updated, sampled_at_ms);
-            water_state.update_at(water_temp, water_updated, sampled_at_ms);
-            dsg_state.update_at(dsg_temp, dsg_updated, sampled_at_ms);
-            iat_state.update_at(iat_temp, iat_updated, sampled_at_ms);
-            egt_state.update_at(egt_temp, egt_updated, sampled_at_ms);
-            batt_state.update_at(batt_voltage, batt_updated, sampled_at_ms);
-            afr_state.update_at(afr, false, sampled_at_ms);
-        }
         let now_ms = Instant::now().as_millis();
         for state in [
+            &mut boost_state,
             &mut oil_state,
             &mut water_state,
             &mut dsg_state,
@@ -732,7 +675,7 @@ async fn main(spawner: Spawner) {
                     COL_WIDTH,
                     ROW_HEIGHT,
                     boost,
-                    boost_max,
+                    boost_state.maximum().unwrap_or(0.0),
                     show_boost_psi,
                     show_boost_easter_egg,
                     blink_on,
@@ -759,8 +702,8 @@ async fn main(spawner: Spawner) {
                     COL_WIDTH,
                     ROW_HEIGHT,
                     batt_voltage,
-                    batt_min,
-                    batt_max,
+                    batt_state.minimum().unwrap_or(0.0),
+                    batt_state.maximum().unwrap_or(0.0),
                     &to_display_data(&batt_state),
                     blink_on,
                     0,
@@ -775,7 +718,7 @@ async fn main(spawner: Spawner) {
                     ROW_HEIGHT,
                     "COOL",
                     water_temp,
-                    water_max,
+                    water_state.maximum().unwrap_or(0.0),
                     &to_display_data(&water_state),
                     temp_color_water,
                     is_critical_water,
@@ -793,7 +736,7 @@ async fn main(spawner: Spawner) {
                     ROW_HEIGHT,
                     "OIL",
                     oil_temp,
-                    oil_max,
+                    oil_state.maximum().unwrap_or(0.0),
                     &to_display_data(&oil_state),
                     temp_color_oil_dsg,
                     is_critical_oil_dsg,
@@ -811,7 +754,7 @@ async fn main(spawner: Spawner) {
                     ROW_HEIGHT,
                     "DSG",
                     dsg_temp,
-                    dsg_max,
+                    dsg_state.maximum().unwrap_or(0.0),
                     &to_display_data(&dsg_state),
                     temp_color_oil_dsg,
                     is_critical_oil_dsg,
@@ -829,7 +772,7 @@ async fn main(spawner: Spawner) {
                     ROW_HEIGHT,
                     "IAT",
                     iat_temp,
-                    iat_max,
+                    iat_state.maximum().unwrap_or(0.0),
                     &to_display_data(&iat_state),
                     temp_color_iat,
                     is_critical_iat,
@@ -847,7 +790,7 @@ async fn main(spawner: Spawner) {
                     ROW_HEIGHT,
                     "EGT",
                     egt_temp,
-                    egt_max,
+                    egt_state.maximum().unwrap_or(0.0),
                     &to_display_data(&egt_state),
                     temp_color_egt,
                     is_critical_egt,

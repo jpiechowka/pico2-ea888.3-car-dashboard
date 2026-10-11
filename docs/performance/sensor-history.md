@@ -17,8 +17,12 @@ one millisecond must eventually carry a separate sequence number if needed.
 | Trend | At most one point per 200 ms; 50 points | Compare accepted points aged 0-2 s with those aged >2-4 s; no arrow without both windows |
 | Peak highlight | 750 ms from the measurement timestamp | Expires even if no new measurement arrives |
 
-The first valid sample fills each empty statistic immediately. A reset empties
-the average and graph and clears the peak highlight; the next **new** sample
+The first valid sample fills each empty statistic immediately and initializes
+both extrema, including negative temperatures, without a peak flash. Current
+value, extrema and history share one acceptance check. The maximum, range and
+no-highlight policies are explicit. A reset retains the current value, seeds
+extrema from it, empties the average, graph and trend, and clears the peak
+highlight; the next **new** sample
 starts each window. A long gap inserts at most one point when measurements
 resume. The graph's horizontal spacing therefore represents accepted points,
 not elapsed time across a gap. Source freshness and a time-aware panel view
@@ -50,6 +54,12 @@ run of this renamed case measured 3.974 ns; an earlier same-name trial of the
 new implementation measured 5.682 ns. The spread shows that single-run host
 timing is noisy. None includes the demo producer,
 cross-core handoff, rendering, SPI/DMA or a physical frame completion.
+
+The follow-up extrema integration reuses the same timestamp benchmark fixture.
+Its paired medians were 4.057 ns before and 4.369 ns after adding accepted
+current-value and extrema storage. Criterion reported a 6.4% time increase
+(4.2%-8.9% interval). The added state is retained for correctness. Raw runs are
+in `host/baselines/review_extrema_before` and `review_extrema_complete`.
 
 To repeat the new case:
 

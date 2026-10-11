@@ -16,6 +16,7 @@ mod profiling {
 }
 
 mod state {
+    pub mod extrema;
     pub mod pages;
     pub mod sensor_state;
 }
@@ -25,5 +26,5 @@ mod ui {
 }
 
 pub use profiling::{cpu_cycles, memory};
-pub use state::{pages, sensor_state};
+pub use state::{extrema, pages, sensor_state};
 pub use ui::colors;
