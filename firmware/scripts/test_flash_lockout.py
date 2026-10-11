@@ -7,11 +7,16 @@ from elf_image import ElfImage
 
 elf = ElfImage(sys.argv[1])
 check(elf)
-for fault in ("address", "size", "instruction", "vector", "relative_branch"):
+for fault in ("address", "size", "instruction", "vector", "relative_branch", "copy_start", "copy_end", "copy_source", "load"):
     bad = copy.deepcopy(elf)
     name = "SIO_IRQ_FIFO"
     value, size, index = bad.functions[name]
-    if fault == "address":
+    if fault.startswith("copy_"):
+        symbol = {"copy_start": "__sdata", "copy_end": "__edata", "copy_source": "__sidata"}[fault]
+        bad.symbols[symbol] += 4
+    elif fault == "load":
+        bad.segments = []
+    elif fault == "address":
         bad.functions[name] = (0x10000101, size, index)
     elif fault == "size":
         bad.functions[name] = (value, size + 2, index)

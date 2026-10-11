@@ -10,6 +10,16 @@ from elf_image import ElfImage
 
 
 def check(elf):
+    data = elf.named[".data"]
+    assert data[1] == 1 and data[2] & 7 == 7, "RAM pause section must be allocated writable executable PROGBITS"
+    assert elf.symbols["__sdata"] == data[3] and elf.symbols["__edata"] == data[3] + data[5], "startup must copy all pause code"
+    copies = [segment for segment in elf.segments
+              if segment[0] == 1 and segment[2] <= data[3] and data[3] + data[5] <= segment[2] + segment[4]
+              and segment[1] + data[3] - segment[2] == data[4]]
+    assert len(copies) == 1, "RAM code has no unique initialized LOAD mapping"
+    segment = copies[0]
+    lma = segment[3] + data[3] - segment[2]
+    assert elf.symbols["__sidata"] == lma and 0x10000000 <= lma < lma + data[5] <= 0x101FE000, "startup RAM copy source mismatch"
     helpers = [name for name in elf.functions if "multicore12sio_fifo_ram" in name]
     assert len(helpers) == 1, "missing or ambiguous pause helper"
     helper = helpers[0]

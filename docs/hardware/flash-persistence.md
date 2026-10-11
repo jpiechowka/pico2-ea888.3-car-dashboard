@@ -33,9 +33,10 @@ The [saved optimized disassembly](flash-lockout-arm.txt) shows:
 
 `check_flash_lockout.py` checks complete symbol extents, initialized `.data`
 placement, vector, relative branch destination and exact reviewed instruction
-digests. This deliberately fails on different generated code: re-disassemble and
+digests. It also verifies `.data` flags, complete startup copy bounds, and the
+unique initialized LOAD mapping against `__sidata`. This deliberately fails on different generated code: re-disassemble and
 review before changing hashes. It is a fixed-code verification gate, not a
-general machine-code safety analyzer. Five corrupted artifact fixtures are
+general machine-code safety analyzer. Nine corrupted artifact fixtures are
 rejected. Stock, Longan and Demo300+both-traces pass identical code gates.
 
 The fork provenance manifest retains all 73 original file hashes and now records
