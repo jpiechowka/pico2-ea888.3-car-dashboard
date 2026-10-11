@@ -41,10 +41,14 @@ is a separate acquisition stage; the current producer is still synthetic Demo.
 
 ## Verification and baseline
 
-Seven host tests cover between-frame peaks, 20/40/60 Hz and irregular readers,
+Eight host tests cover between-frame peaks, 20/40/60 Hz and irregular readers,
 130 seconds of history including ring wrap, malformed/late/retried channels,
 coalesced reset acknowledgements/replays, expired indicators, bounded storage,
 and 10000 concurrent publications with coherent values/timestamps/sequences.
+Producer and reader use independent deadlines on a 1 ms simulated timeline;
+the 130-second regular reader counts are asserted as 2601/5201/7801, including
+the read at time zero. Reset success is shown only when the latest requested
+generation is acknowledged, never merely because the button was pressed.
 The rest of the host suite and strict host/firmware Clippy pass. Stock and
 300 MHz target release builds link. None is a physical concurrency test.
 

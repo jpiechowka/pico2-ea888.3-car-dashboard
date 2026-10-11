@@ -26,7 +26,7 @@ mod thresholds {
 
 use core::sync::atomic::Ordering;
 
-use dashboard_pico2::acquisition::DashboardSnapshot;
+use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::sensor_state::SensorSnapshot;
@@ -380,7 +380,7 @@ async fn main(spawner: Spawner) {
     let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
 
     let mut measurements = DashboardSnapshot::EMPTY;
-    let mut reset_generation = 0u64;
+    let mut reset_requests = ResetRequests::default();
 
     log_info!("Main loop starting");
 
@@ -536,28 +536,30 @@ async fn main(spawner: Spawner) {
             clear_frames_remaining = 2;
         }
 
-        let popup_kind = if active_popup.is_some() {
-            active_popup.as_ref().map(Popup::kind)
-        } else if prev_egt_danger_active {
-            Some(3u8)
-        } else {
-            None
-        };
-        render_state.update_popup(popup_kind);
-
-        if let Some(snapshot) = demo_receiver.try_changed() {
-            let previous_reset = measurements.reset_generation;
-            if measurements.accept(snapshot) && measurements.reset_generation > previous_reset {
-                clear_frames_remaining = 2;
-                log_info!("Stats reset acknowledged");
-            }
-        }
-
         if reset_requested {
-            reset_generation = reset_generation.checked_add(1).expect("reset generation exhausted");
-            crate::tasks::demo::RESET_STATISTICS.signal(reset_generation);
+            crate::tasks::demo::RESET_STATISTICS.signal(reset_requests.request());
             reset_requested = false;
         }
+        if let Some(snapshot) = demo_receiver.try_changed()
+            && measurements.accept(snapshot)
+            && reset_requests.acknowledge(measurements.reset_generation)
+        {
+            clear_frames_remaining = 2;
+            log_info!("Stats reset acknowledged");
+            if current_page == Page::Dashboard {
+                if backlight_off_pending {
+                    pwm_config.compare_a = 0;
+                    backlight_pwm.set_config(&pwm_config);
+                    backlight_off_pending = false;
+                }
+                active_popup = Some(Popup::Reset(Instant::now()));
+            }
+        }
+        let popup_kind = active_popup
+            .as_ref()
+            .map(Popup::kind)
+            .or(if prev_egt_danger_active { Some(3) } else { None });
+        render_state.update_popup(popup_kind);
 
         let [
             boost_state,

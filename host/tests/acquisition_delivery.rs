@@ -1,4 +1,4 @@
-use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot, SensorId};
+use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot, ResetRequests, SensorId};
 use dashboard_host_validation::sensor_state::{PeakMode, SensorState};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -30,21 +30,31 @@ fn display_cadence_never_changes_statistics() {
         let mut display = DashboardSnapshot::EMPTY;
         let mut next_read = 0;
         let mut reads = 0;
-        for at in (0..=130_000u64).step_by(10) {
+        for at in 0..=130_000u64 {
             let value = if at % 1130 == 20 {
                 125.0
             } else {
                 (at % 2510) as f32 / 100.0 - 10.0
             };
-            reference.ingest(value, at, PeakMode::Maximum);
-            model.ingest_batch([value; 8], at);
-            watch.sender().send(model.snapshot());
+            if at.is_multiple_of(10) {
+                reference.ingest(value, at, PeakMode::Maximum);
+                model.ingest_batch([value; 8], at);
+                watch.sender().send(model.snapshot());
+            }
             if at >= next_read {
-                assert!(display.accept(receiver.try_changed().unwrap()));
+                if let Some(snapshot) = receiver.try_changed() {
+                    assert!(display.accept(snapshot));
+                }
                 assert_eq!(*display.sensor(SensorId::Oil), reference.snapshot());
-                next_read = at + periods[reads % periods.len()];
+                next_read += periods[reads % periods.len()];
                 reads += 1;
             }
+        }
+        match periods {
+            [50] => assert_eq!(reads, 2601),
+            [25] => assert_eq!(reads, 5201),
+            [16, 17, 17] => assert_eq!(reads, 7801),
+            _ => {}
         }
         if let Some(snapshot) = receiver.try_changed() {
             display.accept(snapshot);
@@ -53,6 +63,20 @@ fn display_cadence_never_changes_statistics() {
         assert_eq!(display.sensor(SensorId::Oil).maximum(), Some(125.0));
         assert_eq!(display.sensor(SensorId::Oil).get_graph_data().2, 60);
     }
+}
+
+#[test]
+fn reset_success_waits_for_the_latest_requested_generation() {
+    let mut requests = ResetRequests::default();
+    assert!(!requests.acknowledge(0));
+    assert!(!requests.acknowledge(1));
+    assert_eq!(requests.request(), 1);
+    assert!(!requests.acknowledge(0));
+    assert!(!requests.acknowledge(2));
+    assert_eq!(requests.request(), 2);
+    assert!(!requests.acknowledge(1));
+    assert!(requests.acknowledge(2));
+    assert!(!requests.acknowledge(2));
 }
 
 #[test]

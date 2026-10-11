@@ -50,7 +50,6 @@ pub fn process_buttons(
 
     if btn_b_state.just_pressed(btn_b_pressed) && current_page == Page::Dashboard {
         result.reset_requested = true;
-        result.show_popup = Some(Popup::Reset(Instant::now()));
     }
 
     result

@@ -3,6 +3,31 @@ use crate::sensor_state::{PeakMode, SensorSnapshot, SensorState};
 
 pub const SENSOR_COUNT: usize = 8;
 
+#[derive(Default)]
+pub struct ResetRequests {
+    requested: u64,
+    acknowledged: u64,
+}
+
+impl ResetRequests {
+    pub fn request(&mut self) -> u64 {
+        self.requested = self.requested.checked_add(1).expect("reset generation exhausted");
+        self.requested
+    }
+
+    /// Show success once, only after the latest actual request is acknowledged.
+    pub fn acknowledge(
+        &mut self,
+        generation: u64,
+    ) -> bool {
+        if generation != self.requested || generation <= self.acknowledged {
+            return false;
+        }
+        self.acknowledged = generation;
+        true
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(usize)]
 pub enum SensorId {
