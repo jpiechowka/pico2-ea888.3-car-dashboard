@@ -87,6 +87,8 @@ fn solid_fill_handles_odd_row_edges_without_touching_neighbours() {
 #[test]
 fn unrepresentable_geometry_cannot_overflow_or_consume_unbounded_colors() {
     for rect in [
+        Rectangle::new(Point::new(i32::MAX, 0), Size::new(1, 1)),
+        Rectangle::new(Point::new(0, i32::MAX), Size::new(1, 1)),
         Rectangle::new(Point::new(i32::MAX, i32::MAX), Size::new(u32::MAX, u32::MAX)),
         Rectangle::new(Point::new(i32::MIN, i32::MIN), Size::new(u32::MAX, u32::MAX)),
         Rectangle::new(Point::new(-1, -1), Size::new(u32::MAX, u32::MAX)),

@@ -34,15 +34,16 @@ impl DerefMut for FrameBuffer {
 }
 
 fn representable_rectangle(area: &embedded_graphics::primitives::Rectangle) -> bool {
-    // embedded-graphics computes the inclusive bottom-right corner in i32.
+    // embedded-graphics first adds size, then subtracts one for the inclusive
+    // bottom-right corner. That intermediate must also fit in i32.
     // Reject invalid geometry before calling its intersection/row helpers.
     let (Ok(width), Ok(height)) = (i32::try_from(area.size.width), i32::try_from(area.size.height)) else {
         return false;
     };
     width > 0
         && height > 0
-        && area.top_left.x.checked_add(width - 1).is_some()
-        && area.top_left.y.checked_add(height - 1).is_some()
+        && area.top_left.x.checked_add(width).is_some()
+        && area.top_left.y.checked_add(height).is_some()
 }
 
 pub struct St7789Renderer<'a> {
