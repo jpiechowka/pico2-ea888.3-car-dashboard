@@ -111,6 +111,30 @@ fn randomized_damage_union_and_window_budget_never_lose_a_pixel() {
     }
 }
 
+#[test]
+fn first_and_last_bytes_of_every_tile_band_reconstruct_exact_pixels() {
+    let previous = Box::<FrameBuffer>::default();
+    let mut next = Box::<FrameBuffer>::default();
+    let mut panel = Box::<FrameBuffer>::default();
+    for band_y in (0..HEIGHT).step_by(16) {
+        for (x, y) in [(0, band_y), (319, band_y), (0, band_y + 15), (319, band_y + 15)] {
+            for byte in 0..2 {
+                let at = (y * WIDTH + x) * 2 + byte;
+                next[at] = 0x80;
+                let plan = DamagePlan::between(&previous, &next);
+                assert_eq!(
+                    plan.regions(),
+                    &[Region::new((x / 16 * 16) as u16, band_y as u16, 16, 16).unwrap()]
+                );
+                apply(&mut panel, &next, &plan);
+                assert!(panel == next, "pixel ({x}, {y}), byte {byte}");
+                next[at] = 0;
+                panel[at] = 0;
+            }
+        }
+    }
+}
+
 fn token(
     buffer: BufferId,
     sequence: u64,

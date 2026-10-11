@@ -158,7 +158,14 @@ fn acquisition(c: &mut Criterion) {
 fn damage_planning(c: &mut Criterion) {
     let previous = AlignedFrame::boxed();
     let mut current = AlignedFrame::boxed();
-    for (label, mode) in [("stationary", 0), ("one_cell", 1), ("dense", 2)] {
+    for (label, mode) in [
+        ("stationary", 0),
+        ("one_cell", 1),
+        ("dense", 2),
+        ("first_byte", 3),
+        ("last_byte", 4),
+        ("last_byte_each_band", 5),
+    ] {
         current.0.fill(0);
         if mode == 1 {
             for y in 32..128 {
@@ -168,7 +175,24 @@ fn damage_planning(c: &mut Criterion) {
             }
         } else if mode == 2 {
             current.0.fill(0xFF);
+        } else if mode == 3 {
+            current.0[0] = 0x80;
+        } else if mode == 4 {
+            current.0[FRAME_BYTES - 1] = 0x80;
+        } else if mode == 5 {
+            for end in (16 * 320 * 2..=FRAME_BYTES).step_by(16 * 320 * 2) {
+                current.0[end - 1] = 0x80;
+            }
         }
+        let plan = DamagePlan::between(&previous.0, &current.0);
+        let expected_bytes = match mode {
+            0 => 0,
+            1 => 80 * 96 * 2,
+            3 | 4 => 16 * 16 * 2,
+            // The tall last-column region exceeds the bounded row-start budget.
+            _ => FRAME_BYTES,
+        };
+        assert_eq!(plan.bytes(), expected_bytes, "damage preflight: {label}");
         c.bench_function(&format!("damage/{label}"), |b| {
             b.iter(|| black_box(DamagePlan::between(black_box(&previous.0), black_box(&current.0))));
         });
