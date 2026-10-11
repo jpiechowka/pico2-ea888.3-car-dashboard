@@ -34,13 +34,13 @@ pub struct ProfilingData {
     pub frame_cycles: u32,
 
     pub requested_cpu_mhz: u32,
-    pub actual_cpu_mhz: u32,
+    pub configured_cpu_mhz: u32,
 
-    pub requested_spi_mhz: u32,
-    pub actual_spi_mhz: u32,
+    pub requested_spi_hz: u32,
+    pub configured_spi_hz: u32,
 
     pub requested_voltage_mv: u32,
-    pub actual_voltage_mv: u32,
+    pub vreg_setting_mv: Option<u32>,
 }
 
 #[allow(clippy::manual_checked_ops)]
@@ -199,18 +199,29 @@ pub fn draw_profiling_page<D>(
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "CPU: {} MHz", data.requested_cpu_mhz);
+    let _ = write!(s, "CPU:{}/{}M", data.configured_cpu_mhz, data.requested_cpu_mhz);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 
     s.clear();
-    let act_v = data.actual_voltage_mv / 100;
-    let _ = write!(s, "Volt: {}.{}V", act_v / 10, act_v % 10);
+    match data.vreg_setting_mv {
+        Some(mv) => {
+            let _ = write!(s, "Vset:{}/{}mV", mv, data.requested_voltage_mv);
+        }
+        None => {
+            let _ = write!(s, "Vset:--/{}mV", data.requested_voltage_mv);
+        }
+    }
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "SPI: {} MHz", data.requested_spi_mhz);
+    let _ = write!(
+        s,
+        "SPI:{:.1}/{:.1}M",
+        data.configured_spi_hz as f32 / 1_000_000.0,
+        data.requested_spi_hz as f32 / 1_000_000.0
+    );
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     y += line_height;
 

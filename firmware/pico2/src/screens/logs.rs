@@ -32,20 +32,20 @@ pub fn draw_logs_page<D>(
     if let Ok(buffer) = LOG_BUFFER.try_lock() {
         let total = buffer.count();
 
-        if total == 0 {
+        if buffer.is_empty() {
             let empty_style = MonoTextStyle::new(LABEL_FONT, WHITE);
             Text::new("No log entries", Point::new(4, 120), empty_style)
                 .draw(display)
                 .ok();
         } else {
             let visible = VISIBLE_LINES.min(total);
-            let max_offset = if total > visible { total - visible } else { 0 };
-            let offset = (scroll_offset as usize).min(max_offset);
+            let max_offset = total.saturating_sub(visible);
+            let offset = (scroll_offset.max(0) as usize).min(max_offset);
 
             // Determine start index: skip older entries based on scroll position.
             // iter() yields oldest-first. We want to show entries from
             // (total - visible - offset) to (total - 1 - offset).
-            let skip = if total > visible { total - visible - offset } else { 0 };
+            let skip = max_offset - offset;
 
             let line_height = 14;
             let mut y = 28;

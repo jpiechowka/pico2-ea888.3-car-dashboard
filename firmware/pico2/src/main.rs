@@ -127,11 +127,11 @@ compile_error!(
      cpu290-spi72-1v30, cpu300-spi75-1v30"
 );
 
-fn read_vreg_voltage_mv() -> u32 {
-    const VREG: *const u32 = 0x4010_000C as *const u32;
-    let vreg_val = unsafe { core::ptr::read_volatile(VREG) };
-    let vsel = (vreg_val >> 4) & 0x1F;
-    550 + (vsel * 50)
+fn vreg_setting_mv() -> Option<u32> {
+    // HAL validates the RP2350 VSEL encoding. This is a setting, not an ADC reading.
+    embassy_rp::clocks::core_voltage()
+        .ok()
+        .map(|voltage| 550 + u32::from(voltage as u8) * 50)
 }
 
 const fn requested_voltage_mv() -> u32 {
@@ -469,7 +469,7 @@ async fn main(spawner: Spawner) {
                     prev_log_count = current_count;
 
                     // Clamp to valid range so excess rotations don't accumulate
-                    let max_offset = if current_count > 13 { current_count - 13 } else { 0 };
+                    let max_offset = current_count.saturating_sub(13);
                     log_scroll_offset = log_scroll_offset.clamp(0, max_offset as i32);
                 }
 
@@ -821,7 +821,7 @@ async fn main(spawner: Spawner) {
                 let mem_stats = crate::profiling::MemoryStats::collect();
 
                 let requested_spi_hz = display_spi_config().frequency;
-                let actual_spi_hz = get_actual_spi_freq(cpu_freq_hz);
+                let actual_spi_hz = get_actual_spi_freq(embassy_rp::clocks::clk_peri_freq());
 
                 draw_profiling_page(
                     &mut display,
@@ -851,11 +851,11 @@ async fn main(spawner: Spawner) {
                         cpu1_util_percent,
                         frame_cycles: frame_cycles_used,
                         requested_cpu_mhz: requested_cpu_mhz(),
-                        actual_cpu_mhz: cpu_freq_hz / 1_000_000,
-                        requested_spi_mhz: requested_spi_hz / 1_000_000,
-                        actual_spi_mhz: actual_spi_hz / 1_000_000,
+                        configured_cpu_mhz: cpu_freq_hz / 1_000_000,
+                        requested_spi_hz,
+                        configured_spi_hz: actual_spi_hz,
                         requested_voltage_mv: requested_voltage_mv(),
-                        actual_voltage_mv: read_vreg_voltage_mv(),
+                        vreg_setting_mv: vreg_setting_mv(),
                     },
                 );
             }
@@ -866,10 +866,10 @@ async fn main(spawner: Spawner) {
         }
 
         // Brightness popup overlay on Debug page (not Logs — encoder controls scroll there)
-        if matches!(current_page, Page::Debug) {
-            if let Some(Popup::Brightness(_, pct)) = active_popup {
-                draw_brightness_popup(&mut display, pct);
-            }
+        if matches!(current_page, Page::Debug)
+            && let Some(Popup::Brightness(_, pct)) = active_popup
+        {
+            draw_brightness_popup(&mut display, pct);
         }
 
         render_time_us = render_start.elapsed().as_micros() as u32;

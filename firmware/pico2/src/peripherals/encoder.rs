@@ -178,10 +178,10 @@ pub async fn encoder_task(mut i2c: I2c<'static, I2C0, Async>) {
 
     loop {
         // Read encoder delta
-        if let Ok(delta) = read_delta(&mut i2c).await {
-            if delta != 0 {
-                ENCODER_DELTA.fetch_add(delta, Ordering::Relaxed);
-            }
+        if let Ok(delta) = read_delta(&mut i2c).await
+            && delta != 0
+        {
+            ENCODER_DELTA.fetch_add(delta, Ordering::Relaxed);
         }
 
         // Read button state for edge detection
