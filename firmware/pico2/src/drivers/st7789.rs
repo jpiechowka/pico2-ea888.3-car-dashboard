@@ -15,6 +15,7 @@ const DISPON: u8 = 0x29;
 const RAMWR: u8 = 0x2C;
 const MADCTL: u8 = 0x36;
 const COLMOD: u8 = 0x3A;
+const RAMCTRL: u8 = 0xB0;
 
 const MADCTL_MX: u8 = 0x40;
 const MADCTL_MV: u8 = 0x20;
@@ -42,6 +43,9 @@ impl<'d> St7789Flusher<'d> {
         Timer::after_millis(10).await;
 
         self.command(COLMOD, &[0x55]).await?;
+        // EPF=00: do not inject green's low bit into red/blue when expanding
+        // RGB565. MCU mode and MSB-first byte order are preserved (Pimoroni #1040).
+        self.command(RAMCTRL, &[0x00, 0xC0]).await?;
 
         self.command(MADCTL, &[MADCTL_MV | MADCTL_MX]).await?;
 
