@@ -1,0 +1,26 @@
+"""Corrupted source and accidentally accepted invalid profiles must fail at -O."""
+from pathlib import Path
+import runpy
+import subprocess
+import unittest
+from unittest.mock import patch
+import check_vendor
+
+
+class ValidationPolicy(unittest.TestCase):
+    def test_modified_vendor_source_is_rejected(self):
+        original = Path.read_bytes
+        changed = check_vendor.ROOT / 'embassy-rp/src/lib.rs'
+        with patch.object(Path, 'read_bytes', lambda p: original(p) + (b'changed' if p == changed else b'')):
+            with self.assertRaisesRegex(AssertionError, 'vendor mismatch'):
+                check_vendor.check()
+
+    def test_invalid_feature_compile_success_is_rejected(self):
+        accepted = subprocess.CompletedProcess([], 0, '', '')
+        with patch('subprocess.run', return_value=accepted):
+            with self.assertRaises(AssertionError):
+                runpy.run_path(str(Path(__file__).with_name('check_feature_profiles.py')), run_name='__main__')
+
+
+if __name__ == '__main__':
+    unittest.main()

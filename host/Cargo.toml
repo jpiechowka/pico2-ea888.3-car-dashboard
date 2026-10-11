@@ -1,0 +1,27 @@
+[package]
+name = "dashboard-host-validation"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+bench = false
+
+[features]
+default = ["simple-outline"]
+simple-outline = []
+
+[dependencies]
+embedded-graphics = "=0.8.2"
+heapless = "=0.9.3"
+micromath = "=2.1.0"
+profont = "=0.7.0"
+embassy-sync = "=0.8.0"
+
+[dev-dependencies]
+embassy-hal-internal = "=0.5.0"
+criterion = "=0.8.2"
+critical-section = { version = "=1.2.0", features = ["std"] }
+
+[[bench]]
+name = "dashboard_perf"
+harness = false

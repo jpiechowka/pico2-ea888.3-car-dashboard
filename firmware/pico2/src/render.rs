@@ -40,12 +40,49 @@ impl FpsMode {
     }
 }
 
-use micromath::F32Ext;
+use core::fmt::Write;
+
+use heapless::String;
+
+pub type FpsText = String<16>;
+
+/// The cache and renderer use identical visible text, including tie rounding.
+pub fn format_fps(
+    mode: FpsMode,
+    instant: f32,
+    average: f32,
+) -> FpsText {
+    fn value(
+        output: &mut FpsText,
+        fps: f32,
+    ) {
+        if fps.is_finite() && (0.0..=9_999.0).contains(&fps) {
+            let fps = if fps == 0.0 { 0.0 } else { fps };
+            let _ = write!(output, "{fps:.0}");
+        } else {
+            let _ = output.push_str("--");
+        }
+    }
+    let mut text = FpsText::new();
+    match mode {
+        FpsMode::Off => {}
+        FpsMode::Instant => value(&mut text, instant),
+        FpsMode::Average => value(&mut text, average),
+        FpsMode::Combined => {
+            value(&mut text, instant);
+            let _ = text.push('/');
+            value(&mut text, average);
+        }
+    }
+    // Longest valid text: "9999/9999 AVG" (13 bytes).
+    let _ = text.push_str(mode.suffix());
+    text
+}
 
 pub const CELL_COUNT: usize = 8;
 
 pub mod cell_idx {
-    pub const AFR: usize = 1;
+    pub const LAMBDA: usize = 1;
     pub const BATTERY: usize = 2;
     pub const COOLANT: usize = 3;
     pub const OIL: usize = 4;
@@ -56,9 +93,7 @@ pub mod cell_idx {
 
 pub struct RenderState {
     dividers_drawn: bool,
-    prev_fps_mode: FpsMode,
-    prev_fps_instant_rounded: u32,
-    prev_fps_average_rounded: u32,
+    headers: [Option<FpsText>; 2],
     prev_popup_kind: Option<u8>,
     popup_just_closed: bool,
     first_frame: bool,
@@ -69,9 +104,7 @@ impl RenderState {
     pub const fn new() -> Self {
         Self {
             dividers_drawn: false,
-            prev_fps_mode: FpsMode::Off,
-            prev_fps_instant_rounded: 0,
-            prev_fps_average_rounded: 0,
+            headers: [None, None],
             prev_popup_kind: None,
             popup_just_closed: false,
             first_frame: true,
@@ -87,31 +120,20 @@ impl RenderState {
 
     pub fn check_header_dirty(
         &mut self,
+        buffer_id: usize,
         fps_mode: FpsMode,
         fps_instant: f32,
         fps_average: f32,
     ) -> bool {
-        let instant_rounded = fps_instant.round() as u32;
-        let average_rounded = fps_average.round() as u32;
-
-        let fps_changed = match fps_mode {
-            FpsMode::Off => false,
-            FpsMode::Instant => instant_rounded != self.prev_fps_instant_rounded,
-            FpsMode::Average => average_rounded != self.prev_fps_average_rounded,
-            FpsMode::Combined => {
-                instant_rounded != self.prev_fps_instant_rounded || average_rounded != self.prev_fps_average_rounded
-            }
+        let Some(header) = self.headers.get_mut(buffer_id) else {
+            return true;
         };
+        let current = format_fps(fps_mode, fps_instant, fps_average);
 
-        let dirty = self.first_frame
-            || self.popup_just_closed
-            || self.display_cleared
-            || fps_mode != self.prev_fps_mode
-            || fps_changed;
+        let dirty =
+            self.first_frame || self.popup_just_closed || self.display_cleared || header.as_ref() != Some(&current);
 
-        self.prev_fps_mode = fps_mode;
-        self.prev_fps_instant_rounded = instant_rounded;
-        self.prev_fps_average_rounded = average_rounded;
+        *header = Some(current);
         dirty
     }
 
@@ -124,6 +146,7 @@ impl RenderState {
         self.prev_popup_kind = popup_kind;
 
         if changed && was_visible {
+            self.headers = [None, None];
             self.popup_just_closed = true;
             self.dividers_drawn = false;
         }

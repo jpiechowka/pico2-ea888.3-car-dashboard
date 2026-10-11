@@ -1,0 +1,1073 @@
+{
+  "schema": 1,
+  "scope": "Local software validation only; hardware not executed; remote CI not observed",
+  "completed_utc": "2026-10-11T07:51:37.672996+00:00",
+  "firmware_rust_source_commit": "29d14bee3665e61d4d427f2659f245570617270f",
+  "validation_gates_commit": "ae6f27e17ac56bd71e8f0f7695fa0426b17ab127",
+  "toolchain": "nightly-2026-10-11",
+  "rustc": "1.101.0-nightly (6f5da406b 2026-10-10)",
+  "artifacts": [
+    {
+      "profile": "stock",
+      "features": "",
+      "extra": "",
+      "sha256": "2f5b434e5f802dac5aeea4f34af84a7818f8f5fe332e380d15de7119f9d8c9a4",
+      "static_ram": 381040,
+      "core0_headroom": 143248
+    },
+    {
+      "profile": "cpu250",
+      "features": "cpu250-spi62-1v10",
+      "extra": "",
+      "sha256": "b9732f3de166822b78862ff6949f04d509215a187415eeaf88d0267d03f06231",
+      "static_ram": 381040,
+      "core0_headroom": 143248
+    },
+    {
+      "profile": "cpu280",
+      "features": "cpu280-spi70-1v30",
+      "extra": "",
+      "sha256": "29f92af121677ba5b15d5e9c03017cee2224194d9d7638f3bea909e98814cfa4",
+      "static_ram": 381040,
+      "core0_headroom": 143248
+    },
+    {
+      "profile": "cpu290",
+      "features": "cpu290-spi72-1v30",
+      "extra": "",
+      "sha256": "33856bc61610181f3e92af912bde5872bd7eb1e3f5fdd117de3b6c4b11117e66",
+      "static_ram": 381040,
+      "core0_headroom": 143248
+    },
+    {
+      "profile": "cpu300-demo",
+      "features": "demo,frame-trace,te-trace,cpu300-spi75-1v30",
+      "extra": "",
+      "sha256": "e8e1cee83c0115097d6e07f1b5e3e28c7ed1580494d7d6d73b5b0b209f614f3c",
+      "static_ram": 428480,
+      "core0_headroom": 95808
+    },
+    {
+      "profile": "serial-full-frame",
+      "features": "serial-display,full-frame",
+      "extra": "",
+      "sha256": "55b55a3f2510765344c2664224a9ae581294933c5c9c1e06527197702f9ab193",
+      "static_ram": 381040,
+      "core0_headroom": 143248
+    },
+    {
+      "profile": "longan-traces",
+      "features": "longan-rx12,frame-trace,te-trace",
+      "extra": "",
+      "sha256": "50e8fc6097b4bf0457bc89b1ee3dac4f1325bf846f47be1d8600ee90f9d8750c",
+      "static_ram": 438456,
+      "core0_headroom": 85832
+    },
+    {
+      "profile": "full-outline",
+      "features": "demo,frame-trace,te-trace",
+      "extra": "--no-default-features",
+      "sha256": "00c1f8a86f47fd84a57e3ad51f98c01edf2218f48e6828e673f4d3b92eb03d86",
+      "static_ram": 428480,
+      "core0_headroom": 95808
+    },
+    {
+      "profile": "target-bench",
+      "features": "target-bench,longan-rx12,frame-trace,te-trace",
+      "extra": "",
+      "sha256": "b44bb2fad052b4d5c3f2b263892c47992e541c9679b27a9361416e1643e7a1af",
+      "static_ram": 438456,
+      "core0_headroom": 85832
+    }
+  ],
+  "commands": [
+    {
+      "label": "fmt-firmware",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.298
+    },
+    {
+      "label": "fmt-host",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "cwd": "host",
+      "exit": 0,
+      "seconds": 0.34
+    },
+    {
+      "label": "host-tests-default",
+      "command": [
+        "cargo",
+        "test",
+        "--locked"
+      ],
+      "cwd": "host",
+      "exit": 0,
+      "seconds": 8.891,
+      "passed_including_doc": 262
+    },
+    {
+      "label": "host-tests-full-outline",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--no-default-features"
+      ],
+      "cwd": "host",
+      "exit": 0,
+      "seconds": 8.492,
+      "passed_including_doc": 262
+    },
+    {
+      "label": "host-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "host",
+      "exit": 0,
+      "seconds": 0.265
+    },
+    {
+      "label": "host-benchmark-smoke",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--benches"
+      ],
+      "cwd": "host",
+      "exit": 0,
+      "seconds": 1.634
+    },
+    {
+      "label": "test_benchmark_comparison",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_benchmark_comparison.py"
+      ],
+      "cwd": "host",
+      "exit": 0,
+      "seconds": 0.203
+    },
+    {
+      "label": "test_telemetry_export",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_telemetry_export.py"
+      ],
+      "cwd": "host",
+      "exit": 0,
+      "seconds": 0.27
+    },
+    {
+      "label": "test_target_capture",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_target_capture.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.224
+    },
+    {
+      "label": "test_validation_policy",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_validation_policy.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.154
+    },
+    {
+      "label": "test_logging_policy",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_logging_policy.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.104
+    },
+    {
+      "label": "check_vendor",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_vendor.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.085
+    },
+    {
+      "label": "check_logging_policy",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_logging_policy.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.242
+    },
+    {
+      "label": "check_uart_api",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_uart_api.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 2.997
+    },
+    {
+      "label": "check_feature_profiles",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_feature_profiles.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 11.583
+    },
+    {
+      "label": "test_validation_policy-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_validation_policy.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.591
+    },
+    {
+      "label": "test_logging_policy-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_logging_policy.py"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.096
+    },
+    {
+      "label": "clippy-stock",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 1.662
+    },
+    {
+      "label": "clippy-longan",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "longan-rx12",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 1.554
+    },
+    {
+      "label": "clippy-demo",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "demo,frame-trace,te-trace",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 1.547
+    },
+    {
+      "label": "clippy-target-bench",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--features",
+        "target-bench,longan-rx12,frame-trace,te-trace",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.281
+    },
+    {
+      "label": "build-stock",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 5.435,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-stock",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\stock.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.059
+    },
+    {
+      "label": "negative-elf-stock",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\stock.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.142
+    },
+    {
+      "label": "negative-elf-stock-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\stock.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.146
+    },
+    {
+      "label": "build-cpu250",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "cpu250-spi62-1v10"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 5.437,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-cpu250",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu250.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.05
+    },
+    {
+      "label": "negative-elf-cpu250",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu250.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.143
+    },
+    {
+      "label": "negative-elf-cpu250-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu250.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.143
+    },
+    {
+      "label": "build-cpu280",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "cpu280-spi70-1v30"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 5.369,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-cpu280",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu280.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.051
+    },
+    {
+      "label": "negative-elf-cpu280",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu280.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.146
+    },
+    {
+      "label": "negative-elf-cpu280-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu280.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.134
+    },
+    {
+      "label": "build-cpu290",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "cpu290-spi72-1v30"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 5.393,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-cpu290",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu290.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.051
+    },
+    {
+      "label": "negative-elf-cpu290",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu290.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.146
+    },
+    {
+      "label": "negative-elf-cpu290-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu290.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.153
+    },
+    {
+      "label": "build-cpu300-demo",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "demo,frame-trace,te-trace,cpu300-spi75-1v30"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 5.761,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-cpu300-demo",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu300-demo.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.049
+    },
+    {
+      "label": "negative-elf-cpu300-demo",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu300-demo.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.125
+    },
+    {
+      "label": "negative-elf-cpu300-demo-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\cpu300-demo.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.128
+    },
+    {
+      "label": "build-serial-full-frame",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "serial-display,full-frame"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 5.353,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-serial-full-frame",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\serial-full-frame.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.051
+    },
+    {
+      "label": "negative-elf-serial-full-frame",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\serial-full-frame.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.136
+    },
+    {
+      "label": "negative-elf-serial-full-frame-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\serial-full-frame.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.14
+    },
+    {
+      "label": "build-longan-traces",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "longan-rx12,frame-trace,te-trace"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 6.439,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-longan-traces",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\longan-traces.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.047
+    },
+    {
+      "label": "negative-elf-longan-traces",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\longan-traces.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.138
+    },
+    {
+      "label": "negative-elf-longan-traces-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\longan-traces.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.133
+    },
+    {
+      "label": "build-full-outline",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "demo,frame-trace,te-trace",
+        "--no-default-features"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 5.585,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-full-outline",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\full-outline.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.052
+    },
+    {
+      "label": "negative-elf-full-outline",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\full-outline.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.139
+    },
+    {
+      "label": "negative-elf-full-outline-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\full-outline.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.134
+    },
+    {
+      "label": "build-target-bench",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "dashboard-pico2",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--release",
+        "--features",
+        "target-bench,longan-rx12,frame-trace,te-trace"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.237,
+      "environment_overrides": {
+        "CARGO_PROFILE_RELEASE_STRIP": "none"
+      }
+    },
+    {
+      "label": "memory-target-bench",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/check_memory_layout.py",
+        "$REPO\\firmware\\target\\final-validation\\target-bench.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.054
+    },
+    {
+      "label": "negative-elf-target-bench",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\target-bench.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.146
+    },
+    {
+      "label": "negative-elf-target-bench-optimized",
+      "command": [
+        "C:\\Users\\Johnny\\scoop\\apps\\python\\current\\python.exe",
+        "-O",
+        "scripts/test_flash_lockout.py",
+        "$REPO\\firmware\\target\\final-validation\\target-bench.elf"
+      ],
+      "cwd": "firmware",
+      "exit": 0,
+      "seconds": 0.144
+    }
+  ],
+  "host_after_scene_fixture": [
+    {
+      "label": "host-tests-default-coverage",
+      "command": [
+        "cargo",
+        "test",
+        "--locked"
+      ],
+      "exit": 0,
+      "seconds": 6.855,
+      "passed_including_doc": 268,
+      "cwd": "host"
+    },
+    {
+      "label": "host-tests-full-outline-coverage",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--no-default-features"
+      ],
+      "exit": 0,
+      "seconds": 10.014,
+      "passed_including_doc": 268,
+      "cwd": "host"
+    },
+    {
+      "label": "host-clippy-coverage",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0,
+      "seconds": 0.246,
+      "cwd": "host"
+    },
+    {
+      "label": "host-benchmark-smoke-coverage",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--benches"
+      ],
+      "exit": 0,
+      "seconds": 2.644,
+      "cwd": "host"
+    },
+    {
+      "label": "host-fmt-coverage",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit": 0,
+      "seconds": 0.395,
+      "cwd": "host"
+    },
+    {
+      "label": "coverage-outline-tests-final",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--no-default-features",
+        "--test",
+        "benchmark_coverage",
+        "--test",
+        "benchmark_scene_replay"
+      ],
+      "exit": 0,
+      "cwd": "host"
+    },
+    {
+      "label": "coverage-outline-smoke-final",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--no-default-features",
+        "--benches"
+      ],
+      "exit": 0,
+      "cwd": "host"
+    },
+    {
+      "label": "coverage-default-clippy-final",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0,
+      "cwd": "host"
+    },
+    {
+      "label": "coverage-fmt-final",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit": 0,
+      "cwd": "host"
+    },
+    {
+      "label": "coverage-default-smoke-final",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--benches"
+      ],
+      "exit": 0,
+      "cwd": "host"
+    }
+  ],
+  "log_sha256": {
+    "build-cpu250.log": "9558df398c3317028d6e65f5285b03fba124b41ff1e95e8c1801d62e835fbb7e",
+    "build-cpu280.log": "fd816765df97c392493846ac2ea6df22b4693587c48d1076928cfb416a048c49",
+    "build-cpu290.log": "f34f767192d3e06f3eb6ab49d77dfbd9f7fe55dfec6e998db511c66f618b6d6f",
+    "build-cpu300-demo.log": "9ab3960724f2c05078293293dcac8243e1380e77faa42aea2b82e6751fc25fa7",
+    "build-full-outline.log": "d29f63f227448e8659839a23d082f9147fb3995084ec334c009a6d52f26efc4c",
+    "build-longan-traces.log": "7c74f82373a73d4034697a49304629cca19001b9a48fe2c085db81519b74a950",
+    "build-serial-full-frame.log": "1e94895fcfb323ee46696e67add32d71851b8d1b662139a3df566b44a3406900",
+    "build-stock.log": "f2ced19bb28be16d96d7034ad075edbfe74d2aec01e2cc98a9b83dbe0dd6e2bf",
+    "build-target-bench.log": "46071275aab7dabcdc2433c18bb828f32ce08fbda46c76c0a1053a2788293471",
+    "check_feature_profiles.log": "cd9b7ea7358731898a8576347cf9f0df69ab84a9408d4d9029e1800ab1ed628a",
+    "check_logging_policy.log": "0db80e39f8a2c92e332bc27cbea4852032c4d0736cebe855d2bedbf2601e9213",
+    "check_uart_api.log": "758eccc888c9e0c45d885d14331eb928f3fa7d8373cdc81ba62588e6f4e5c86e",
+    "check_vendor.log": "0df591ae4c41e4511b4b77568e168c8460e5e51efa0aba45b3af23d6cd3fd7e9",
+    "clippy-demo.log": "e38326984cddcecc74435337401942c3360e9515e45e2644f712061fb446fae1",
+    "clippy-longan.log": "05550f01123dff4de7038893fc883f45e9c00d31e784711f4b705f4ee1617bb1",
+    "clippy-stock.log": "4d0187d87d1da31ab7744f22a442c6dd3b2718d71d763e76eff1de0a01c17d75",
+    "clippy-target-bench.log": "a0c8042a1794da4f8107d11609c47ba4d17bcc64deda57646881357c097d7bd4",
+    "coverage-default-clippy-final.log": "52f9b17fb347a996475d657f25f62a33b21231ae32d6375da7d69aa57455232e",
+    "coverage-default-smoke-final.log": "f2d5708749297e4fcdb7c8a1d90bd7d5bc2842cb588478b654adb38b17a9d23b",
+    "coverage-fmt-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "coverage-outline-smoke-final.log": "0eff342a65676ebfb1571356c6bad1de20610dc710d27d15f0d25d09af45d1d5",
+    "coverage-outline-tests-final.log": "9eaa906fd1b79587aeb7b4a4d4ecafe9763802645d2568a59cc27b78720b2f89",
+    "fmt-firmware.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "fmt-host.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "host-benchmark-smoke-coverage.log": "9baa20b2284d99583147e08cb6ddc7cdac41625f73909039e12ee2681f982c23",
+    "host-benchmark-smoke-final.log": "f3fe2e3382eb90dbdd39c8e17489f0a020f8f967dfc583fd722ba72529fe71f4",
+    "host-benchmark-smoke.log": "3ad707a316ea07a902f7827b20b2838e34713d85dd6464b695660f488ab9c24e",
+    "host-clippy-coverage.log": "52f9b17fb347a996475d657f25f62a33b21231ae32d6375da7d69aa57455232e",
+    "host-clippy-final.log": "d32cb2346084548f5d2aa3389aa276dd2a48d498a25316db90419067d81bc4d1",
+    "host-clippy.log": "4e5127f6763ee148417e66542e2c774041d5cb9ae6cc0a361f3249e7add60712",
+    "host-fmt-coverage.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "host-fmt-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "host-tests-default-coverage.log": "e32ade424a15ec577b47d3819906fbbecf5bbfff867ec66486b35de42a4e429d",
+    "host-tests-default-final.log": "7ed9c7384d27c3d998cc02e242860fdba182cbed1b1fc0b8f483e7f05f0363ee",
+    "host-tests-default.log": "50f7f6dfd64589af27044e15eb357af42d599c7de02a79ab67c3f664384140d2",
+    "host-tests-full-outline-coverage.log": "a23c73e01e0645c7ec7eaf20b084e45644b73c988972a225ebb0c4bf4115b8eb",
+    "host-tests-full-outline-final.log": "216aeea123cd1d752c7516226e0f2e551cbbb467a0dde8f375901cc2ce981087",
+    "host-tests-full-outline.log": "b03dc509880501e8686829fe350c4b076350dff4ea119643fa05db290692b9f3",
+    "memory-cpu250.log": "88a736f9de1bc845fdef2a633e4490f3c21c34b78f9cf24f76f05d7f93404cbc",
+    "memory-cpu280.log": "88a736f9de1bc845fdef2a633e4490f3c21c34b78f9cf24f76f05d7f93404cbc",
+    "memory-cpu290.log": "88a736f9de1bc845fdef2a633e4490f3c21c34b78f9cf24f76f05d7f93404cbc",
+    "memory-cpu300-demo.log": "9fc4e33656988d0e8e95fbc3cec2beabd697ad4a2600a19c5d45d7653cdc939b",
+    "memory-full-outline.log": "9fc4e33656988d0e8e95fbc3cec2beabd697ad4a2600a19c5d45d7653cdc939b",
+    "memory-longan-traces.log": "52628e83d0b6cbdf5cbea3d983f0b32394d954d4f51260abf9dc0c26ee6736bb",
+    "memory-serial-full-frame.log": "88a736f9de1bc845fdef2a633e4490f3c21c34b78f9cf24f76f05d7f93404cbc",
+    "memory-stock.log": "88a736f9de1bc845fdef2a633e4490f3c21c34b78f9cf24f76f05d7f93404cbc",
+    "memory-target-bench.log": "52628e83d0b6cbdf5cbea3d983f0b32394d954d4f51260abf9dc0c26ee6736bb",
+    "negative-elf-cpu250-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-cpu250.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-cpu280-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-cpu280.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-cpu290-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-cpu290.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-cpu300-demo-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-cpu300-demo.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-full-outline-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-full-outline.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-longan-traces-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-longan-traces.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-serial-full-frame-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-serial-full-frame.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-stock-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-stock.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-target-bench-optimized.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "negative-elf-target-bench.log": "4f3d3449bbca3ced1a64490bdef96dd0d25a4bb459930bcbdc24ef2e05cc3f4b",
+    "test_benchmark_comparison.log": "7f8b74dcf8ad13d9d3e8cbc99c8b89fbe2a3072e5f063e52e2e0c6243dfa8165",
+    "test_logging_policy-optimized.log": "4cd49ad0c73a8aa832fab522c6a78b7c7920d0020aa82b81b4234fa118a1a5f0",
+    "test_logging_policy.log": "4cd49ad0c73a8aa832fab522c6a78b7c7920d0020aa82b81b4234fa118a1a5f0",
+    "test_target_capture.log": "4d3da7fe88723d8527042ebd7e144a8b94a1f3f5c84324900ae5b89e4f7eb042",
+    "test_telemetry_export.log": "0587f4c404b26784de7f3f59694affbf51699f76269e1178456b82d43087b031",
+    "test_validation_policy-optimized.log": "4a0ae94eb83b9e7241e6988a3c1e89c8229064c6031100f84c0fbaa683416db1",
+    "test_validation_policy.log": "4a0ae94eb83b9e7241e6988a3c1e89c8229064c6031100f84c0fbaa683416db1"
+  },
+  "host_fixture_commit": "0f60e0614fe934352d4f871f3eeac7cadc0f8278",
+  "release_build_environment_overrides": {
+    "CARGO_PROFILE_RELEASE_STRIP": "none"
+  },
+  "host_benchmark_comparison": {
+    "cwd": "host",
+    "command": [
+      "python",
+      "scripts/compare_benchmarks.py",
+      "baselines/stage08_final_a",
+      "baselines/stage08_final_b",
+      "--budget-percent",
+      "20",
+      "--gate"
+    ],
+    "exit": 0,
+    "cases": 72,
+    "samples_per_case": 30,
+    "identical_source_files": 179,
+    "completed_utc": "2026-10-11T08:32:02.411151+00:00",
+    "captures": {
+      "stage08_final_a": {
+        "metadata.json": "518b7c650689c4509456bd57bbae29d25cec356c4e95e42520494d643a0c0aca",
+        "run-inputs.json": "627aa39553c9725c3ffb9460efb67d997713b4d73aa4ac2c6a2ef12e2a4b12df",
+        "source.zip": "f29905bdab7cbd8b213fafb74452fb18c4bab346431ebdf8a35cc1e97387738e"
+      },
+      "stage08_final_b": {
+        "metadata.json": "b72e36bf84a47df225c30becd03c47970b2124b4d7eb19dc7cf6753aee113511",
+        "run-inputs.json": "be9cd4ebfe56ec91b897552d0991e3aa41f3e665f575ae7970403a298385cacc",
+        "source.zip": "4e06dd51b7717ba2d2a38b9b87fea759e60e9b787eb85d6554daf5902ed39f1c"
+      }
+    }
+  }
+}

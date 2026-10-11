@@ -12,7 +12,6 @@ mod screens;
 mod state;
 mod tasks;
 mod ui;
-mod widgets;
 
 mod config {
     pub use dashboard_pico2::config::*;
@@ -20,12 +19,18 @@ mod config {
 mod render {
     pub use dashboard_pico2::render::*;
 }
-mod thresholds {
-    pub use dashboard_pico2::thresholds::*;
-}
-
 use core::sync::atomic::Ordering;
 
+use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
+use dashboard_pico2::colors::RED;
+use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
+use dashboard_pico2::display::FrameBuffer;
+use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
+use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
+use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
+use dashboard_pico2::input_model::brightness_after;
+use dashboard_pico2::settings::Settings;
+use dashboard_pico2::settings::policy::Policy;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -34,67 +39,32 @@ use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::i2c::{self, InterruptHandler as I2cInterruptHandler};
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::spi::Spi;
-use embassy_time::{Duration, Instant};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics::prelude::*;
 use panic_probe as _;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
-use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
-use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
-use crate::peripherals::{ENCODER_BUTTON, ENCODER_DELTA, encoder_task};
+use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
+use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
+use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
-use crate::render::{FpsMode, RenderState, cell_idx};
-use crate::screens::{ProfilingData, clear_framebuffers, draw_logs_page, draw_profiling_page, run_boot_sequence};
-use crate::state::{ButtonState, Page, Popup, SensorState, process_buttons};
+use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page};
+use crate::state::{ButtonState, Page, Popup, process_buttons};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
+    COMPLETED_FRAMES,
     CORE1_STACK,
-    DEMO_VALUES,
+    DASHBOARD_VALUES,
     EXECUTOR_CORE1,
     FLUSH_BUFFER_IDX,
-    FLUSH_DONE,
-    FLUSH_SIGNAL,
-    LAST_FLUSH_TIME_US,
-    demo_values_task,
+    FLUSH_REQUESTS,
+    acquisition_task,
     display_flush_task,
-    fill_core1_stack_sentinel,
+    wait_completed,
+    wait_started,
 };
-use crate::thresholds::{
-    AFR_LEAN_CRITICAL,
-    AFR_OPTIMAL_MAX,
-    AFR_RICH,
-    AFR_RICH_AF,
-    BATT_CRITICAL,
-    BATT_WARNING,
-    BOOST_EASTER_EGG_BAR,
-    BOOST_EASTER_EGG_PSI,
-    EGT_DANGER_MANIFOLD,
-};
-use crate::ui::{BLACK, BLUE, ColorTransition, DARK_TEAL, GREEN, ORANGE, RED};
-use crate::widgets::{
-    SensorDisplayData,
-    draw_afr_cell,
-    draw_batt_cell,
-    draw_boost_cell,
-    draw_boost_unit_popup,
-    draw_brightness_popup,
-    draw_danger_manifold_popup,
-    draw_dividers,
-    draw_fps_toggle_popup,
-    draw_header,
-    draw_reset_popup,
-    draw_temp_cell,
-    is_critical_egt,
-    is_critical_iat,
-    is_critical_oil_dsg,
-    is_critical_water,
-    is_low_temp_oil,
-    temp_color_egt,
-    temp_color_iat,
-    temp_color_oil_dsg,
-    temp_color_water,
-};
+use crate::ui::{BLACK, ColorTransition};
 
 #[unsafe(link_section = ".bi_entries")]
 #[used]
@@ -104,8 +74,6 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_cargo_version!(),
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
-
-pub use crate::drivers::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 
 #[cfg(any(
     all(
@@ -127,11 +95,11 @@ compile_error!(
      cpu290-spi72-1v30, cpu300-spi75-1v30"
 );
 
-fn read_vreg_voltage_mv() -> u32 {
-    const VREG: *const u32 = 0x4010_000C as *const u32;
-    let vreg_val = unsafe { core::ptr::read_volatile(VREG) };
-    let vsel = (vreg_val >> 4) & 0x1F;
-    550 + (vsel * 50)
+fn vreg_setting_mv() -> Option<u32> {
+    // HAL validates the RP2350 VSEL encoding. This is a setting, not an ADC reading.
+    embassy_rp::clocks::core_voltage()
+        .ok()
+        .map(|voltage| 550 + u32::from(voltage as u8) * 50)
 }
 
 const fn requested_voltage_mv() -> u32 {
@@ -191,15 +159,39 @@ const fn requested_cpu_mhz() -> u32 {
     }
 }
 
+fn data_mode() -> dashboard_pico2::samples::DataMode {
+    if cfg!(feature = "demo") {
+        dashboard_pico2::samples::DataMode::Demo
+    } else {
+        dashboard_pico2::samples::DataMode::Vehicle
+    }
+}
+
+fn log_settings_error(error: &drivers::settings_flash::JournalError) {
+    use dashboard_pico2::settings::Error as JournalError;
+    use drivers::settings_flash::Error;
+    match error {
+        JournalError::Storage(Error::Hardware(cause)) => log_fault!("Flash: {:?}", cause),
+        JournalError::Storage(Error::Identity(id)) => log_fault!("Unknown flash: {:06x}", id),
+        JournalError::Storage(Error::DebugBuild) => log_info!("Debug settings: volatile"),
+        _ => log_fault!("Settings: {:?}", error),
+    }
+}
+
+#[cfg(all(feature = "demo", feature = "longan-rx12"))]
+compile_error!("Select either demo or longan-rx12; vehicle transport never falls back to demo.");
+
 fn core1_main(
     animation_start: Instant,
     cpu_freq_hz: u32,
-    stack_base: u32,
+    stack_bottom: u32,
+    stack_top: u32,
+    resources: tasks::acquisition::Resources,
 ) -> ! {
     cpu_profiling::init(cpu_freq_hz);
     let executor = EXECUTOR_CORE1.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(demo_values_task(animation_start, stack_base).unwrap());
+        spawner.spawn(acquisition_task(animation_start, stack_bottom, stack_top, resources).unwrap());
     })
 }
 
@@ -263,15 +255,50 @@ async fn main(spawner: Spawner) {
         embassy_rp::init(config)
     };
 
-    let cpu_freq_hz = requested_cpu_mhz() * 1_000_000;
+    let watchdog = crate::drivers::watchdog::RecoveryWatchdog::start(p.WATCHDOG);
+    let reset_cause = watchdog.reset_label();
+    log_info!("Previous reset: {}", reset_cause);
+    let cpu_freq_hz = embassy_rp::clocks::clk_sys_freq();
+
+    let mut settings_flash = drivers::settings_flash::SettingsFlash::new(p.FLASH);
+    let (initial_settings, mut has_saved_settings, settings_enabled) = match settings_flash.load() {
+        Ok(loaded) => (loaded.unwrap_or_default(), loaded.is_some(), true),
+        Err(error) => {
+            log_settings_error(&error);
+            (Settings::default(), false, false)
+        }
+    };
+    let mut settings_policy = if settings_enabled {
+        Policy::new(initial_settings, Instant::now().as_millis())
+    } else {
+        Policy::disabled(initial_settings, Instant::now().as_millis())
+    };
+    let mut pending_save = None;
+    let mut last_settings_status = settings_policy.status();
+    log_info!("Settings: {}", last_settings_status.label(has_saved_settings));
 
     let animation_start = Instant::now();
     let stack = CORE1_STACK.init(embassy_rp::multicore::Stack::new());
-    let stack_base = stack as *const _ as u32;
-    // Fill stack with sentinel pattern for high-water-mark detection
-    unsafe { fill_core1_stack_sentinel(stack_base as *mut u32) };
+    let stack_bottom = stack.mem.as_ptr() as u32;
+    let stack_top = stack_bottom
+        .checked_add(stack.mem.len() as u32)
+        .expect("invalid core1 stack bounds");
+    let acquisition_resources = tasks::acquisition::Resources {
+        #[cfg(feature = "longan-rx12")]
+        uart: drivers::longan::Resources {
+            uart: p.UART0,
+            tx: p.PIN_0,
+            rx: p.PIN_1,
+        },
+    };
     embassy_rp::multicore::spawn_core1(p.CORE1, stack, move || {
-        core1_main(animation_start, cpu_freq_hz, stack_base);
+        core1_main(
+            animation_start,
+            cpu_freq_hz,
+            stack_bottom,
+            stack_top,
+            acquisition_resources,
+        );
     });
 
     cpu_profiling::init(cpu_freq_hz);
@@ -284,23 +311,36 @@ async fn main(spawner: Spawner) {
     let dc = Output::new(p.PIN_16, Level::Low);
 
     // Backlight via PWM for brightness control (GP20 = PWM slice 2, channel A)
+    let backlight_divider = pwm_divider(cpu_freq_hz).expect("Unsupported backlight PWM clock");
     let mut pwm_config = PwmConfig::default();
-    pwm_config.top = 999;
-    pwm_config.compare_a = 1000; // 100% duty — fully on during boot
+    pwm_config.top = PWM_TOP;
+    pwm_config.divider = backlight_divider.into();
+    pwm_config.compare_a = brightness_compare(initial_settings.brightness());
     let mut backlight_pwm = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, pwm_config.clone());
+    log_info!(
+        "Configured CPU {} Hz, backlight PWM {} Hz",
+        cpu_freq_hz,
+        pwm_frequency_hz(cpu_freq_hz, backlight_divider)
+    );
 
     let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, Irqs, display_spi_config());
 
     let mut flusher = St7789Flusher::new(spi, dc, cs);
-    flusher.init().await;
+    flusher.init().await.expect("display initialization failed");
 
     log_info!("Display initialized");
 
-    let mut double_buffer = unsafe { DoubleBuffer::new() };
-
-    clear_framebuffers(&mut flusher, &mut double_buffer).await;
-
-    run_boot_sequence(&mut flusher, &mut double_buffer).await;
+    static FRAME_A: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
+    static FRAME_B: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
+    let [mut render_frame, spare_frame] = FrameLease::pair(FRAME_A.take(), FRAME_B.take());
+    #[cfg(feature = "target-bench")]
+    profiling::target_bench::run(render_frame.buffer());
+    #[cfg(feature = "te-trace")]
+    spawner.spawn(crate::tasks::te::observe_te(Input::new(p.PIN_21, Pull::None)).unwrap());
+    let mut spare_frame = Some(spare_frame);
+    let mut lifecycle = FrameLifecycle::new();
+    let mut panel_history = PanelHistory::new();
+    spawner.spawn(crate::tasks::recovery::recovery_task(watchdog).unwrap());
 
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
@@ -330,65 +370,35 @@ async fn main(spawner: Spawner) {
     log_info!("Buttons initialized");
 
     let mut current_page = Page::Dashboard;
-    let mut clear_frames_remaining: u8 = 2;
-    let mut fps_mode = FpsMode::Off;
-    let mut show_boost_psi = false;
+    let mut fps_mode = initial_settings.fps();
+    let mut show_boost_psi = initial_settings.boost_psi();
     let mut active_popup: Option<Popup> = None;
-    let mut prev_egt_danger_active = false;
     let mut reset_requested = false;
+    let mut input_tracker = dashboard_pico2::input_trace::InputTracker::new();
+    let mut reset_input: Option<(dashboard_pico2::input_trace::Observation, u64)> = None;
 
-    let mut render_state = RenderState::new();
-    let mut frame_count = 0u32;
+    let mut dashboard_cache = DashboardCache::new();
     let mut current_fps = 0.0f32;
     let mut average_fps = 0.0f32;
-    let mut fps_frame_count = 0u32;
-    let mut fps_sample_count = 0u32;
-    let mut fps_sum = 0.0f32;
-    let mut last_fps_calc = Instant::now();
-
-    let mut render_time_us = 0u32;
-    let mut flush_time_us = 0u32;
-    let mut total_frame_time_us = 0u32;
+    let mut fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
+    let mut last_trace: Option<FrameTrace> = None;
     let mut last_profile_log = Instant::now();
 
     let mut frame_cycles_used = 0u32;
     let mut cpu0_util_percent = 0u32;
     let mut cpu1_util_percent = 0u32;
 
-    let mut flush_in_progress = false;
+    let mut flush_in_progress = None;
 
     // Brightness state (PWM backlight, encoder-controlled)
-    let mut brightness_percent: u32 = 100;
-    let mut saved_brightness: u32 = 100; // for toggle on/off
+    let mut brightness_percent = u32::from(initial_settings.brightness());
+    let mut saved_brightness = u32::from(initial_settings.restore_brightness());
     let mut backlight_off_pending = false; // deferred off: show popup first, then cut PWM
-    let mut log_scroll_offset: i32 = 0;
-    let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
+    let mut log_anchor: Option<u64> = None;
 
-    let mut boost = 0.5f32;
-    let mut oil_temp = 60.0f32;
-    let mut water_temp = 88.0f32;
-    let mut dsg_temp = 75.0f32;
-    let mut iat_temp = 30.0f32;
-    let mut egt_temp = 200.0f32;
-    let mut batt_voltage = 12.0f32;
-    let mut afr = 14.0f32;
-
-    let mut oil_state = SensorState::new();
-    let mut water_state = SensorState::new();
-    let mut dsg_state = SensorState::new();
-    let mut iat_state = SensorState::new();
-    let mut egt_state = SensorState::new();
-    let mut batt_state = SensorState::new();
-    let mut afr_state = SensorState::new();
-
-    let mut boost_max = 0.0f32;
-    let mut oil_max = 0.0f32;
-    let mut water_max = 0.0f32;
-    let mut dsg_max = 0.0f32;
-    let mut iat_max = f32::MIN;
-    let mut egt_max = 0.0f32;
-    let mut batt_min = f32::MAX;
-    let mut batt_max = 0.0f32;
+    let mut measurements = DashboardSnapshot::EMPTY;
+    measurements.mode = data_mode();
+    let mut reset_requests = ResetRequests::default();
 
     log_info!("Main loop starting");
 
@@ -396,10 +406,23 @@ async fn main(spawner: Spawner) {
 
     let animation_start = Instant::now();
 
-    let mut demo_receiver = DEMO_VALUES.dyn_receiver().unwrap();
+    let mut measurement_receiver = DASHBOARD_VALUES.dyn_receiver().unwrap();
+    #[cfg(feature = "longan-rx12")]
+    let mut link_receiver = tasks::acquisition::VEHICLE_LINK.dyn_receiver().unwrap();
+    #[cfg(feature = "longan-rx12")]
+    let mut vehicle_link = None;
+    #[cfg(not(feature = "longan-rx12"))]
+    let vehicle_link = None;
+    #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+    let mut diagnostic_receiver = tasks::acquisition::VEHICLE_DIAGNOSTICS.dyn_receiver().unwrap();
+    #[cfg(feature = "frame-trace")]
+    let mut frame_window_receiver = tasks::flush::FRAME_WINDOWS.dyn_receiver().unwrap();
 
     loop {
         let frame_start = Instant::now();
+        // Give the SAVING state one normal presentation before maintenance.
+        // The immutable ticket also makes changes during that frame explicit.
+        let save_this_frame = pending_save.is_some();
         let frame_cycles_start = cpu_profiling::read();
 
         let elapsed_ms = animation_start.elapsed().as_millis() as u32;
@@ -417,15 +440,29 @@ async fn main(spawner: Spawner) {
             current_page,
             fps_mode,
         );
+        let consumed_us = Instant::now().as_micros();
+        input_tracker.ignore(input.ignored);
+        if let Some(observation) = input.observations {
+            input_tracker.consume(observation, consumed_us);
+        }
+        if let Some(observation) = input.reset_observation {
+            if let Some((old, consumed)) = &mut reset_input {
+                if old.merge(observation) {
+                    *consumed = consumed_us;
+                } else {
+                    input_tracker.ignore(observation.events);
+                }
+            } else {
+                reset_input = Some((observation, consumed_us));
+            }
+        }
 
         if let Some(new_mode) = input.new_fps_mode {
             fps_mode = new_mode;
-            clear_frames_remaining = 2;
             log_info!("FPS: {}", fps_mode.label());
         }
         if let Some(new_page) = input.new_page {
             current_page = new_page;
-            clear_frames_remaining = 2;
             // If backlight-off was deferred and popup is being cleared, apply PWM now
             if backlight_off_pending {
                 pwm_config.compare_a = 0;
@@ -433,8 +470,8 @@ async fn main(spawner: Spawner) {
                 backlight_off_pending = false;
             }
             active_popup = None;
-            fps_sample_count = 0;
-            fps_sum = 0.0;
+            fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
+            current_fps = 0.0;
             average_fps = 0.0;
             log_info!(
                 "Page: {}",
@@ -464,52 +501,42 @@ async fn main(spawner: Spawner) {
         }
 
         // --- Encoder events (rotation + button press) ---
-        let enc_delta = ENCODER_DELTA.swap(0, Ordering::Relaxed);
-        let enc_button = ENCODER_BUTTON.swap(false, Ordering::Relaxed);
+        let encoder = ENCODER_EVENTS.take_observed();
+        let (enc_delta, enc_presses) = (encoder.delta, encoder.presses);
+        let enc_button = enc_presses % 2 == 1;
+        let mut motion_applied = false;
+        let mut press_applied = false;
 
         match current_page {
             Page::Logs => {
-                // Anchor scroll position when new log entries arrive while scrolled,
-                // so the visible entries don't shift under the user.
-                if let Ok(buf) = crate::profiling::LOG_BUFFER.try_lock() {
-                    let current_count = buf.count();
-                    if log_scroll_offset > 0 && current_count > prev_log_count {
-                        log_scroll_offset += (current_count - prev_log_count) as i32;
-                    }
-                    prev_log_count = current_count;
-
-                    // Clamp to valid range so excess rotations don't accumulate
-                    let max_offset = if current_count > 13 { current_count - 13 } else { 0 };
-                    log_scroll_offset = log_scroll_offset.clamp(0, max_offset as i32);
-                }
-
-                // Rotation scrolls logs
+                // Pin the visible end sequence; ring count stops growing at
+                // capacity and cannot anchor a view during overwrites.
                 if enc_delta != 0 {
-                    log_scroll_offset = (log_scroll_offset - enc_delta).max(0);
+                    let old_anchor = log_anchor;
+                    crate::profiling::LOGS.scroll(&mut log_anchor, enc_delta);
+                    motion_applied = old_anchor != log_anchor;
                 }
                 // Button does nothing on Logs page
             }
             _ => {
                 // Rotation adjusts brightness in 5% steps
                 if enc_delta != 0 {
-                    let new_brightness = (brightness_percent as i32 + enc_delta * 5).clamp(0, 100) as u32;
+                    let new_brightness = brightness_after(brightness_percent, enc_delta);
                     if new_brightness != brightness_percent {
+                        motion_applied = true;
                         brightness_percent = new_brightness;
-                        saved_brightness = brightness_percent;
+                        if brightness_percent != 0 {
+                            saved_brightness = brightness_percent;
+                        }
                         backlight_off_pending = false; // cancel any pending off
-                        // Remap 1-100% to 450-1000 compare (LED needs ~45% duty minimum)
-                        pwm_config.compare_a = if brightness_percent == 0 {
-                            0
-                        } else {
-                            (450 + brightness_percent as u16 * 550 / 100).min(1000)
-                        };
+                        pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
                         active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
-                        clear_frames_remaining = 2;
                     }
                 }
                 // Button toggles backlight on/off
                 if enc_button {
+                    press_applied = true;
                     if brightness_percent > 0 {
                         // Turning off: defer PWM change until popup expires so user sees it
                         saved_brightness = brightness_percent;
@@ -518,21 +545,28 @@ async fn main(spawner: Spawner) {
                         // Don't touch PWM yet — keep backlight on for the popup
                     } else {
                         // Turning on: apply immediately
-                        brightness_percent = saved_brightness.max(5);
+                        brightness_percent = saved_brightness.max(1);
                         backlight_off_pending = false;
-                        pwm_config.compare_a = (450 + brightness_percent as u16 * 550 / 100).min(1000);
+                        pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
                     }
                     active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
-                    clear_frames_remaining = 2;
+                }
+            }
+        }
+        for (observation, applied) in [(encoder.motion, motion_applied), (encoder.button, press_applied)] {
+            if let Some(observation) = observation {
+                if applied {
+                    input_tracker.consume(observation, Instant::now().as_micros());
+                } else {
+                    input_tracker.ignore(observation.events);
                 }
             }
         }
 
         // Reset log scroll when leaving Logs page
         if input.new_page.is_some() {
-            log_scroll_offset = 0;
-            prev_log_count = 0;
+            log_anchor = None;
         }
 
         if let Some(ref popup) = active_popup
@@ -546,334 +580,145 @@ async fn main(spawner: Spawner) {
                 backlight_off_pending = false;
             }
             active_popup = None;
-            clear_frames_remaining = 2;
-        }
-
-        let popup_kind = if active_popup.is_some() {
-            active_popup.as_ref().map(Popup::kind)
-        } else if prev_egt_danger_active {
-            Some(3u8)
-        } else {
-            None
-        };
-        render_state.update_popup(popup_kind);
-
-        if let Some(demo_values) = demo_receiver.try_get() {
-            boost = demo_values.boost;
-            oil_temp = demo_values.oil_temp;
-            water_temp = demo_values.water_temp;
-            dsg_temp = demo_values.dsg_temp;
-            iat_temp = demo_values.iat_temp;
-            egt_temp = demo_values.egt_temp;
-            batt_voltage = demo_values.batt_voltage;
-            afr = demo_values.afr;
         }
 
         if reset_requested {
-            oil_state.reset_average();
-            oil_state.reset_graph();
-            oil_state.reset_peak();
-            water_state.reset_average();
-            water_state.reset_graph();
-            water_state.reset_peak();
-            dsg_state.reset_average();
-            dsg_state.reset_graph();
-            dsg_state.reset_peak();
-            iat_state.reset_average();
-            iat_state.reset_graph();
-            iat_state.reset_peak();
-            egt_state.reset_average();
-            egt_state.reset_graph();
-            egt_state.reset_peak();
-            batt_state.reset_average();
-            batt_state.reset_graph();
-            batt_state.reset_peak();
-            afr_state.reset_average();
-            afr_state.reset_graph();
-            afr_state.reset_peak();
-
-            boost_max = boost;
-            oil_max = oil_temp;
-            water_max = water_temp;
-            dsg_max = dsg_temp;
-            iat_max = iat_temp;
-            egt_max = egt_temp;
-            batt_min = batt_voltage;
-            batt_max = batt_voltage;
-
+            crate::tasks::acquisition::RESET_STATISTICS.signal(reset_requests.request());
             reset_requested = false;
-            log_info!("Stats reset");
+        }
+        if let Some(snapshot) = measurement_receiver.try_changed()
+            && measurements.accept(snapshot)
+            && reset_requests.acknowledge(measurements.reset_generation)
+        {
+            log_info!("Stats reset acknowledged");
+            if let Some((observation, consumed_us)) = reset_input.take() {
+                if current_page == Page::Dashboard {
+                    input_tracker.apply(observation, consumed_us, Instant::now().as_micros());
+                } else {
+                    input_tracker.ignore(observation.events);
+                }
+            }
+            if current_page == Page::Dashboard {
+                if backlight_off_pending {
+                    pwm_config.compare_a = 0;
+                    backlight_pwm.set_config(&pwm_config);
+                    backlight_off_pending = false;
+                }
+                active_popup = Some(Popup::Reset(Instant::now()));
+            }
+        }
+        let now_ms = Instant::now().as_millis();
+        let desired = Settings::new(
+            brightness_percent as u8,
+            saved_brightness as u8,
+            show_boost_psi,
+            fps_mode,
+        )
+        .expect("invalid live preferences");
+        settings_policy.set(desired, now_ms).expect("settings clock regressed");
+        if pending_save.is_none() {
+            pending_save = settings_policy.begin(now_ms).expect("invalid save policy");
+        }
+        let settings_status = settings_policy.status();
+        if settings_status != last_settings_status {
+            log_info!("Settings: {}", settings_status.label(has_saved_settings));
+            last_settings_status = settings_status;
+        }
+        #[cfg(feature = "longan-rx12")]
+        if let Some(link) = link_receiver.try_changed() {
+            vehicle_link = Some(link);
+        }
+        let vehicle_status = dashboard_pico2::vehicle_status::VehicleStatus::derive(
+            cfg!(feature = "longan-rx12"),
+            vehicle_link,
+            &measurements,
+            now_ms,
+        );
+
+        let frame_count = COMPLETED_FRAMES.load(Ordering::Relaxed);
+        if let Some(rate) = fps_meter
+            .sample(Instant::now().as_micros(), frame_count)
+            .expect("invalid completion rate")
+        {
+            current_fps = rate.current;
+            average_fps = rate.average;
         }
 
-        let show_boost_easter_egg = if show_boost_psi {
-            boost * 14.5038 >= BOOST_EASTER_EGG_PSI
-        } else {
-            boost >= BOOST_EASTER_EGG_BAR
-        };
-
-        let oil_updated = oil_temp > oil_max;
-        let water_updated = water_temp > water_max;
-        let dsg_updated = dsg_temp > dsg_max;
-        let iat_updated = iat_temp > iat_max;
-        let egt_updated = egt_temp > egt_max;
-        let batt_updated = batt_voltage > batt_max || batt_voltage < batt_min;
-
-        boost_max = boost_max.max(boost);
-        oil_max = oil_max.max(oil_temp);
-        water_max = water_max.max(water_temp);
-        dsg_max = dsg_max.max(dsg_temp);
-        iat_max = iat_max.max(iat_temp);
-        egt_max = egt_max.max(egt_temp);
-        batt_min = batt_min.min(batt_voltage);
-        batt_max = batt_max.max(batt_voltage);
-
-        oil_state.update(oil_temp, oil_updated);
-        water_state.update(water_temp, water_updated);
-        dsg_state.update(dsg_temp, dsg_updated);
-        iat_state.update(iat_temp, iat_updated);
-        egt_state.update(egt_temp, egt_updated);
-        batt_state.update(batt_voltage, batt_updated);
-        afr_state.update(afr, false);
-
-        fps_frame_count += 1;
-        if last_fps_calc.elapsed() >= Duration::from_secs(1) {
-            current_fps = fps_frame_count as f32 / last_fps_calc.elapsed().as_millis() as f32 * 1000.0;
-            fps_frame_count = 0;
-            last_fps_calc = Instant::now();
-
-            fps_sample_count += 1;
-            fps_sum += current_fps;
-            average_fps = fps_sum / fps_sample_count as f32;
+        let alerts = measurements.alerts_at(now_ms);
+        input_tracker.exclude_obscured(alerts.priority().is_some());
+        for (cell, sensor) in dashboard_pico2::dashboard::CELL_SENSORS.into_iter().enumerate() {
+            let id = dashboard_pico2::samples::SensorId::ALL[sensor];
+            color_transitions.set_target(cell, if alerts.active(id) { RED } else { BLACK });
         }
-
-        let egt_danger_active = egt_temp >= EGT_DANGER_MANIFOLD;
-
-        let afr_target = if afr < AFR_RICH_AF {
-            BLUE
-        } else if afr < AFR_RICH {
-            DARK_TEAL
-        } else if afr < AFR_OPTIMAL_MAX {
-            GREEN
-        } else if afr <= AFR_LEAN_CRITICAL {
-            ORANGE
-        } else {
-            RED
-        };
-        color_transitions.set_target(cell_idx::AFR, afr_target);
-
-        let batt_target = if batt_voltage < BATT_CRITICAL {
-            RED
-        } else if batt_voltage < BATT_WARNING {
-            ORANGE
-        } else {
-            BLACK
-        };
-        color_transitions.set_target(cell_idx::BATTERY, batt_target);
-
-        let (water_target, _) = temp_color_water(water_temp);
-        let (oil_target, _) = temp_color_oil_dsg(oil_temp);
-        let (dsg_target, _) = temp_color_oil_dsg(dsg_temp);
-        let (iat_target, _) = temp_color_iat(iat_temp);
-        let (egt_target, _) = temp_color_egt(egt_temp);
-
-        color_transitions.set_target(cell_idx::COOLANT, water_target);
-        color_transitions.set_target(cell_idx::OIL, oil_target);
-        color_transitions.set_target(cell_idx::DSG, dsg_target);
-        color_transitions.set_target(cell_idx::IAT, iat_target);
-        color_transitions.set_target(cell_idx::EGT, egt_target);
 
         color_transitions.update(Instant::now());
 
         let render_start = Instant::now();
+        let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
+        let mut render_work = cpu_profiling::RenderWork::new(cpu_freq_hz);
 
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut display = St7789Renderer::new(buffer);
-
-        if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
-            display.clear(BLACK).ok();
-            render_state.mark_display_cleared();
-
-            if render_state.popup_just_closed() && clear_frames_remaining == 0 {
-                clear_frames_remaining = 1;
-            } else {
-                clear_frames_remaining = clear_frames_remaining.saturating_sub(1);
-            }
-        }
+        let render_idx = render_frame.id().index();
+        let token = lifecycle.begin(render_frame.id()).expect("render buffer is not free");
+        panel_history.begin_render(token).expect("invalid render generation");
+        let mut display = St7789Renderer::new(render_frame.buffer());
 
         match current_page {
             Page::Dashboard => {
-                if render_state.check_header_dirty(fps_mode, current_fps, average_fps) {
-                    draw_header(&mut display, fps_mode, current_fps, average_fps);
-                }
-
-                draw_boost_cell(
-                    &mut display,
-                    0,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    boost,
-                    boost_max,
-                    show_boost_psi,
-                    show_boost_easter_egg,
-                    blink_on,
-                    0,
-                );
-
-                draw_afr_cell(
-                    &mut display,
-                    COL_WIDTH,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    afr,
-                    &to_display_data(&afr_state),
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::AFR)),
-                );
-
-                draw_batt_cell(
-                    &mut display,
-                    COL_WIDTH * 2,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    batt_voltage,
-                    batt_min,
-                    batt_max,
-                    &to_display_data(&batt_state),
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::BATTERY)),
-                );
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH * 3,
-                    HEADER_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "COOL",
-                    water_temp,
-                    water_max,
-                    &to_display_data(&water_state),
-                    temp_color_water,
-                    is_critical_water,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::COOLANT)),
-                );
-
-                draw_temp_cell(
-                    &mut display,
-                    0,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "OIL",
-                    oil_temp,
-                    oil_max,
-                    &to_display_data(&oil_state),
-                    temp_color_oil_dsg,
-                    is_critical_oil_dsg,
-                    Some(is_low_temp_oil),
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::OIL)),
-                );
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "DSG",
-                    dsg_temp,
-                    dsg_max,
-                    &to_display_data(&dsg_state),
-                    temp_color_oil_dsg,
-                    is_critical_oil_dsg,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::DSG)),
-                );
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH * 2,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "IAT",
-                    iat_temp,
-                    iat_max,
-                    &to_display_data(&iat_state),
-                    temp_color_iat,
-                    is_critical_iat,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::IAT)),
-                );
-
-                draw_temp_cell(
-                    &mut display,
-                    COL_WIDTH * 3,
-                    HEADER_HEIGHT + ROW_HEIGHT,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    "EGT",
-                    egt_temp,
-                    egt_max,
-                    &to_display_data(&egt_state),
-                    temp_color_egt,
-                    is_critical_egt,
-                    None::<fn(f32) -> bool>,
-                    blink_on,
-                    0,
-                    Some(color_transitions.get_current(cell_idx::EGT)),
-                );
-
-                if render_state.need_dividers() {
-                    draw_dividers(&mut display);
-                    render_state.mark_dividers_drawn();
-                }
-
-                if let Some(ref popup) = active_popup {
+                let overlay = active_popup.as_ref().map(|popup| {
                     match popup {
-                        Popup::Reset(_) => draw_reset_popup(&mut display),
-                        Popup::Fps(_) => draw_fps_toggle_popup(&mut display, fps_mode),
-                        Popup::BoostUnit(_) => draw_boost_unit_popup(&mut display, show_boost_psi),
-                        Popup::Brightness(_, pct) => draw_brightness_popup(&mut display, *pct),
+                        Popup::Reset(_) => Overlay::Reset,
+                        Popup::Fps(_) => Overlay::Fps(fps_mode),
+                        Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
+                        Popup::Brightness(_, percent) => Overlay::Brightness((*percent).min(100) as u8),
                     }
-                } else if egt_danger_active {
-                    draw_danger_manifold_popup(&mut display, blink_on);
+                });
+                let scene = DashboardScene {
+                    measurements: &measurements,
+                    status: vehicle_status,
+                    now_ms,
+                    blink_on,
+                    boost_psi: show_boost_psi,
+                    fps_mode,
+                    fps_instant: current_fps,
+                    fps_average: average_fps,
+                    backgrounds: core::array::from_fn(|cell| color_transitions.get_current(cell)),
+                    overlay,
+                };
+                let redraw = dashboard_cache.prepare(render_idx, &scene);
+                redraw.begin(&mut display, &scene);
+                render_work.checkpoint().await;
+                for cell in 0..8 {
+                    if redraw.cells & (1 << cell) != 0 {
+                        scene.draw_cell(&mut display, cell);
+                        render_work.checkpoint().await;
+                    }
                 }
+                redraw.finish(&mut display, &scene);
             }
 
             Page::Debug => {
+                dashboard_cache.invalidate(render_idx);
+                display.clear(BLACK).ok();
+                render_work.checkpoint().await;
                 let mem_stats = crate::profiling::MemoryStats::collect();
 
                 let requested_spi_hz = display_spi_config().frequency;
-                let actual_spi_hz = get_actual_spi_freq(cpu_freq_hz);
+                let actual_spi_hz = get_actual_spi_freq(embassy_rp::clocks::clk_peri_freq());
 
                 draw_profiling_page(
                     &mut display,
                     &ProfilingData {
                         current_fps,
+                        reset_cause,
+                        vehicle_status: vehicle_status.label(),
                         average_fps,
                         frame_count,
-                        render_time_us,
-                        flush_time_us,
-                        total_frame_time_us,
+                        trace: last_trace,
                         brightness_percent,
+                        settings_status: settings_status.label(has_saved_settings),
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
-                        render_buffer_idx: double_buffer.render_idx(),
+                        render_buffer_idx: render_idx,
                         flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
                         core0_stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
                             1
@@ -889,54 +734,168 @@ async fn main(spawner: Spawner) {
                         cpu1_util_percent,
                         frame_cycles: frame_cycles_used,
                         requested_cpu_mhz: requested_cpu_mhz(),
-                        actual_cpu_mhz: cpu_freq_hz / 1_000_000,
-                        requested_spi_mhz: requested_spi_hz / 1_000_000,
-                        actual_spi_mhz: actual_spi_hz / 1_000_000,
+                        configured_cpu_mhz: cpu_freq_hz / 1_000_000,
+                        requested_spi_hz,
+                        configured_spi_hz: actual_spi_hz,
                         requested_voltage_mv: requested_voltage_mv(),
-                        actual_voltage_mv: read_vreg_voltage_mv(),
+                        vreg_setting_mv: vreg_setting_mv(),
                     },
-                );
+                    &mut render_work,
+                )
+                .await;
             }
 
             Page::Logs => {
-                draw_logs_page(&mut display, log_scroll_offset);
+                dashboard_cache.invalidate(render_idx);
+                display.clear(BLACK).ok();
+                render_work.checkpoint().await;
+                draw_logs_page(&mut display, log_anchor, &mut render_work).await;
             }
         }
 
-        // Brightness popup overlay on Debug page (not Logs — encoder controls scroll there)
-        if matches!(current_page, Page::Debug) {
-            if let Some(Popup::Brightness(_, pct)) = active_popup {
-                draw_brightness_popup(&mut display, pct);
+        // The same priority rule applies on every page. Render the critical
+        // overlay last so a brightness/unit/reset popup cannot cover it.
+        if current_page != Page::Dashboard {
+            let user = if matches!(current_page, Page::Debug) {
+                match active_popup {
+                    Some(Popup::Brightness(_, pct)) => Some(Overlay::Brightness(pct.min(100) as u8)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(overlay) = Overlay::prioritize(user, alerts, blink_on) {
+                overlay.draw(&mut display);
             }
         }
 
-        render_time_us = render_start.elapsed().as_micros() as u32;
-        let frame_cycles_end = cpu_profiling::read();
-        frame_cycles_used = cpu_profiling::elapsed(frame_cycles_start, frame_cycles_end);
+        let render_end = Instant::now();
+        let render_cycles = render_work.finish();
+        frame_cycles_used = (u64::from(input_cycles) + render_cycles).min(u32::MAX as u64) as u32;
 
-        if flush_in_progress {
-            FLUSH_DONE.wait().await;
-            BUFFER_WAITS.fetch_add(1, Ordering::Relaxed);
+        lifecycle.ready(token).expect("render buffer is not owned");
+        let wait_start = Instant::now();
+        let next_frame = if let Some(expected) = flush_in_progress.take() {
+            let completed = wait_completed(&mut lifecycle, expected).await;
+            panel_history
+                .complete(expected)
+                .expect("invalid completed panel generation");
+            last_trace = Some(completed.trace);
+            completed.lease
+        } else {
+            spare_frame.take().expect("missing spare framebuffer")
+        };
+        let blocked_us = wait_start.elapsed().as_micros();
+        crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
+        if save_this_frame {
+            input_tracker.maintenance_gap();
+            tasks::flush::publish_input_counts(input_tracker.counters());
+            let ticket = pending_save.take().expect("missing save ticket");
+            // Both affine leases are owned here and the matching completion
+            // has returned. Queue no display work until all owners resume.
+            crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
+            let result = tasks::maintenance::run(|permit| settings_flash.save(ticket.settings(), permit)).await;
+            settings_policy
+                .finish(ticket, result.is_ok(), Instant::now().as_millis())
+                .expect("invalid save completion");
+            match result {
+                Ok(()) => {
+                    has_saved_settings = true;
+                    log_info!("Settings saved and verified");
+                }
+                Err(tasks::maintenance::SaveError::Preparation(error)) => log_fault!("Save preparation: {:?}", error),
+                Err(tasks::maintenance::SaveError::Operation(error)) => log_settings_error(&error),
+            }
+            btn_a_state = ButtonState::new();
+            btn_b_state = ButtonState::new();
+            btn_x_state = ButtonState::new();
+            btn_y_state = ButtonState::new();
+            // Render again with current wall-clock ages and post-park link
+            // quality. Never present this pre-maintenance sensor snapshot.
+            lifecycle.discard(token).expect("maintenance retained a live frame");
+            dashboard_cache.invalidate(render_idx);
+            spare_frame = Some(next_frame);
+            continue;
+        }
+        let reference = panel_history
+            .reference()
+            .filter(|reference| reference.buffer == next_frame.id());
+        let plan = if cfg!(feature = "full-frame") || reference.is_none() {
+            DamagePlan::full()
+        } else {
+            DamagePlan::between(next_frame.pixels(), render_frame.pixels())
+        };
+        let idle = plan.is_empty();
+        if idle {
+            input_tracker.no_damage();
+        }
+        tasks::flush::publish_input_counts(input_tracker.counters());
+        let trace = RenderTrace {
+            start_us: render_start.as_micros(),
+            end_us: render_end.as_micros(),
+            queued_us: Instant::now().as_micros(),
+            blocked_us,
+            sample_us: measurements
+                .sensors
+                .iter()
+                .filter_map(|s| s.sampled_at_ms())
+                .min()
+                .and_then(|ms| ms.checked_mul(1000)),
+            active_cycles: render_cycles,
+            input: input_tracker.pending(),
+        };
+        if idle {
+            lifecycle.discard(token).expect("cannot discard active frame");
+            spare_frame = Some(next_frame);
+            crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
+            // Keep the completed reference unchanged and reuse this render buffer.
+            // A timed suspension prevents a stationary scene from busy-spinning.
+            Timer::after_millis(16).await;
+        } else {
+            panel_history
+                .queue(token, if plan.is_full() { None } else { reference })
+                .expect("partial update does not match panel generation");
+            lifecycle.queue(token).expect("another frame is still in flight");
+            crate::tasks::recovery::DISPLAY_PENDING.store(true, Ordering::Relaxed);
+            let request = render_frame.submit_plan(token, trace, plan);
+            input_tracker.submitted();
+            assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
+            BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
+            wait_started(&mut lifecycle, token).await;
+            if cfg!(feature = "serial-display") {
+                let completed = wait_completed(&mut lifecycle, token).await;
+                panel_history.complete(token).expect("invalid serial panel generation");
+                crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
+                last_trace = Some(completed.trace);
+                spare_frame = Some(completed.lease);
+            } else {
+                flush_in_progress = Some(token);
+            }
+            render_frame = next_frame;
         }
 
-        let completed_idx = double_buffer.swap();
-        BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
-        FLUSH_SIGNAL.signal(completed_idx);
-        flush_in_progress = true;
-
-        flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
-        total_frame_time_us = frame_start.elapsed().as_micros() as u32;
+        let total_frame_time_us = frame_start.elapsed().as_micros().min(u32::MAX as u64) as u32;
 
         cpu0_util_percent = cpu_profiling::calc_util_percent(frame_cycles_used, total_frame_time_us);
         cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
+            #[cfg(feature = "frame-trace")]
+            if let Some(report) = frame_window_receiver.try_changed() {
+                profiling::telemetry_export::frames(report);
+            }
+            #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+            if let Some((sequence, published_ms, snapshot)) = diagnostic_receiver.try_changed() {
+                profiling::telemetry_export::diagnostics(sequence, published_ms, snapshot);
+            }
+            #[cfg(feature = "te-trace")]
+            crate::tasks::te::log_status();
             // Two log_info! lines to fit within 40-char message limit
             log_info!(
                 "r={}us f={}us t={}us {}fps",
-                render_time_us,
-                flush_time_us,
-                total_frame_time_us,
+                last_trace.map_or(0, |t| t.render_us()),
+                last_trace.map_or(0, |t| t.transfer_observed_us()),
+                last_trace.map_or(0, |t| t.total_us()),
                 current_fps as u32,
             );
             log_info!(
@@ -951,30 +910,12 @@ async fn main(spawner: Spawner) {
             last_profile_log = Instant::now();
         }
 
-        prev_egt_danger_active = egt_danger_active;
-
-        render_state.end_frame();
-        frame_count = frame_count.wrapping_add(1);
+        crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
         if (elapsed_ms / 1000).is_multiple_of(2) {
             led_b.set_low();
         } else {
             led_b.set_high();
         }
-    }
-}
-
-fn to_display_data(state: &SensorState) -> SensorDisplayData<'_> {
-    let (buffer, start_idx, count, min, max) = state.get_graph_data();
-    SensorDisplayData {
-        trend: state.get_trend(),
-        is_new_peak: state.is_new_peak,
-        graph_buffer: buffer,
-        graph_buffer_size: crate::state::GRAPH_HISTORY_SIZE,
-        graph_start_idx: start_idx,
-        graph_count: count,
-        graph_min: min,
-        graph_max: max,
-        average: state.get_average(),
     }
 }

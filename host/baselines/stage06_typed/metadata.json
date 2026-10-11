@@ -1,0 +1,26 @@
+{
+  "prior_commit": "4e338d2",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- 'acquisition/|scene/' --save-baseline stage06_typed",
+  "median_ns": {
+    "acquisition_batch_and_snapshot": 436.50816900024904,
+    "acquisition_typed_sample_and_snapshot": 277.5249833293508,
+    "acquisition_watch_copy_roundtrip": 77.73332882178994,
+    "scene_full_dashboard": 105480.21196283391,
+    "scene_full_one_cell": 104312.93650793651,
+    "scene_retained_one_cell": 11216.80564784053,
+    "scene_retained_stationary": 1954.6726904190932
+  },
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "6bc41d7dc49cea36d2a0aebac367a25f749ff2ec5c9518097c4461624948dea7",
+    "host/Cargo.lock": "a04237b83ebb425d62fb36c816df8fe5ee4330469de9c2c2cb2bc8c325531e16",
+    "firmware/pico2/src/acquisition.rs": "be6241ac3294978ccb21915ecd130fd9c44f77f235f5288af4d5ce2e67b237ef",
+    "firmware/pico2/src/samples.rs": "e19216faa321c70492b54cfced34e8748714ebcf18b2f90fbecd09454c009011",
+    "firmware/pico2/src/dashboard.rs": "edb8ebf96162213a7902bb770546cb6c6419942f8ace88e0e24d133f29163b67",
+    "firmware/pico2/src/widgets/cell_text.rs": "f6357acb509688a92abcd5a274c7d01854b7e751343789a515bae967877ef7ad"
+  }
+}

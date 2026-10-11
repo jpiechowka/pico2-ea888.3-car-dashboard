@@ -1,0 +1,18 @@
+//! The shared encoder is exercised by the host collector integration test.
+pub fn frames(value: dashboard_pico2::display::window::WindowReport) {
+    if dashboard_pico2::telemetry_protocol::frames(value, |line| defmt::info!("{}", line)).is_err() {
+        defmt::error!("Frame telemetry encoding failed");
+    }
+}
+#[cfg(feature = "longan-rx12")]
+pub fn diagnostics(
+    sequence: u64,
+    published_ms: u64,
+    value: dashboard_pico2::diagnostics::session::Telemetry,
+) {
+    if dashboard_pico2::telemetry_protocol::diagnostics(sequence, published_ms, value, |line| defmt::info!("{}", line))
+        .is_err()
+    {
+        defmt::error!("Diagnostic telemetry encoding failed");
+    }
+}

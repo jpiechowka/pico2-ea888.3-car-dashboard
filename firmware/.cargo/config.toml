@@ -4,7 +4,7 @@ DEFMT_LOG = "debug"
 [build]
 target = "thumbv8m.main-none-eabihf"
 
-[target.thumbv8m.main-none-eabihf]
+[target."thumbv8m.main-none-eabihf"]
 rustflags = [
     "-C", "link-arg=--nmagic",
     "-C", "link-arg=-Tlink.x",
@@ -22,7 +22,7 @@ pico2-fast-run = "run -p dashboard-pico2 --release --features simple-outline"
 # Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
 # All use simple-outline for best FPS
 
-# 250 MHz @ 1.10V (62.5 MHz SPI - ST7789 datasheet max)
+# 250 MHz @ 1.10V (experimental 62.5 MHz SPI; panel timing unverified)
 pico2-250-62-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu250-spi62-1v10"
 pico2-250-62-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu250-spi62-1v10"
 
@@ -34,6 +34,6 @@ pico2-280-70-1v30-run = "run -p dashboard-pico2 --release --features simple-outl
 pico2-290-72-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu290-spi72-1v30"
 pico2-290-72-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu290-spi72-1v30"
 
-# 300 MHz @ 1.30V (75 MHz SPI - embassy-rp max)
+# 300 MHz @ 1.30V (75 MHz SPI - unverified panel timing)
 pico2-300-75-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"
 pico2-300-75-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"

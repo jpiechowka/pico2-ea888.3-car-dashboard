@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
 members = ["pico2"]
+exclude = ["vendor/embassy-rp"]
+
+[patch.crates-io]
+# Published 0.10.0 plus reviewed UART, multicore and flash corrections.
+# See vendor/README.md and the source/ELF integrity gates.
+embassy-rp = { path = "vendor/embassy-rp" }
 
 [profile.release]
 codegen-units = 1

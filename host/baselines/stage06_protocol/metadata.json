@@ -1,0 +1,23 @@
+{
+  "prior_commit": "5b979d5",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- protocol/ --save-baseline stage06_protocol",
+  "median_ns": {
+    "protocol_isotp_128_bytes": 366.50457283746687,
+    "protocol_rx12_record": 27.334879857623974,
+    "protocol_single_frame_obd": 33.59035622000738
+  },
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "4f322aff85abb2d9ad06cd3af7493de51c658e293373a06257490732bd152ba6",
+    "host/Cargo.lock": "a04237b83ebb425d62fb36c816df8fe5ee4330469de9c2c2cb2bc8c325531e16",
+    "firmware/pico2/src/diagnostics/isotp.rs": "461a7c84f5bd6276501f4c822f0148b5e717b1c8abaa81b95334fb029917330f",
+    "firmware/pico2/src/diagnostics/longan.rs": "c5f2c61f4850aaefcc20c901d868a9af2a389a2e21287cdf064d250c6921fa28",
+    "firmware/pico2/src/diagnostics/mod.rs": "25b5f3c8af7ccb5283c12ec2ef7cc892721db878e61c8142ad2f8fc430d2a34a",
+    "firmware/pico2/src/diagnostics/obd.rs": "7aa9e3fbf9872cb41f046a5e7828636b6b7dcda63fb36b20405adcb06a0de472",
+    "firmware/pico2/src/diagnostics/request.rs": "c21b2f5ba5ce80320b8d8dc642fcbf532b8f1408e2b2f476d953820f0926ccd6"
+  }
+}

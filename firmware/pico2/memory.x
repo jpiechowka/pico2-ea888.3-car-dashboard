@@ -2,9 +2,10 @@ MEMORY {
     /*
      * The RP2350 has either external or internal flash.
      *
-     * 2 MiB is a safe default here, although a Pico 2 has 4 MiB.
+     * Keep the existing 2 MiB contract (Pico 2 has 4 MiB), reserving the
+     * final two 4 KiB sectors for settings. They have no ELF load contents.
      */
-    FLASH : ORIGIN = 0x10000000, LENGTH = 2048K
+    FLASH : ORIGIN = 0x10000000, LENGTH = 2040K
     /*
      * RAM consists of 8 banks, SRAM0-SRAM7, with a striped mapping.
      * This is usually good for performance, as it distributes load on
@@ -21,6 +22,11 @@ MEMORY {
     SRAM5 : ORIGIN = 0x20081000, LENGTH = 4K
 }
 
+__settings_start = 0x101FE000;
+__settings_end = 0x10200000;
+ASSERT(ORIGIN(FLASH) + LENGTH(FLASH) == __settings_start,
+       "program FLASH overlaps reserved settings");
+
 SECTIONS {
     /* ### Boot ROM info
      *
@@ -36,8 +42,9 @@ SECTIONS {
 
 } INSERT AFTER .vector_table;
 
-/* move .text to start /after/ the boot info */
-_stext = ADDR(.start_block) + SIZEOF(.start_block);
+/* Move .text after boot info. cortex-m-rt 0.7.7 checks section alignment;
+ * the boot info size alone can leave _stext at a four-byte-only address. */
+_stext = ALIGN(ADDR(.start_block) + SIZEOF(.start_block), 16);
 
 SECTIONS {
     /* ### Picotool 'Binary Info' Entries
@@ -70,6 +77,16 @@ SECTIONS {
     } > FLASH
 
 } INSERT AFTER .uninit;
+
+/* cortex-m-rt 0.7.7 provides these from the current location counter after
+ * .uninit. The FLASH insertion above changes that counter. Anchor the RAM
+ * boundaries explicitly so heap diagnostics and future stack guards use RAM. */
+__sheap = ALIGN(__euninit, 8);
+_stack_end = __sheap;
+ASSERT(__sheap >= ORIGIN(RAM) && __sheap <= ORIGIN(RAM) + LENGTH(RAM),
+       "static RAM boundary is outside RAM");
+ASSERT(_stack_start >= __sheap + 32K,
+       "less than 32 KiB remains for the core 0 stack");
 
 PROVIDE(start_to_end = __end_block_addr - __start_block_addr);
 PROVIDE(end_to_start = __start_block_addr - __end_block_addr);

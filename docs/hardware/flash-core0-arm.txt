@@ -1,0 +1,589 @@
+200000b4 <embassy_rp::flash::ram_helpers::jedec_id_inner>:
+200000b4: b5f0         	push	{r4, r5, r6, r7, lr}
+200000b6: af03         	add	r7, sp, #0xc
+200000b8: e92d 0f00    	push.w	{r8, r9, r10, r11}
+200000bc: b089         	sub	sp, #0x24
+200000be: f240 0900    	movw	r9, #0x0
+200000c2: f2c4 090d    	movt	r9, #0x400d
+200000c6: 4604         	mov	r4, r0
+200000c8: f8d9 000c    	ldr.w	r0, [r9, #0xc]
+200000cc: 2504         	movs	r5, #0x4
+200000ce: 9002         	str	r0, [sp, #0x8]
+200000d0: f8d9 8010    	ldr.w	r8, [r9, #0x10]
+200000d4: f8d9 0014    	ldr.w	r0, [r9, #0x14]
+200000d8: f2c4 0504    	movt	r5, #0x4004
+200000dc: 9008         	str	r0, [sp, #0x20]
+200000de: f8d9 a000    	ldr.w	r10, [r9]
+200000e2: 682e         	ldr	r6, [r5]
+200000e4: 6868         	ldr	r0, [r5, #0x4]
+200000e6: f240 0b01    	movw	r11, #0x1
+200000ea: 9007         	str	r0, [sp, #0x1c]
+200000ec: 68a8         	ldr	r0, [r5, #0x8]
+200000ee: f36f 0a15    	bfc	r10, #0, #22
+200000f2: 9006         	str	r0, [sp, #0x18]
+200000f4: 68e8         	ldr	r0, [r5, #0xc]
+200000f6: f2c0 3b00    	movt	r11, #0x300
+200000fa: 9005         	str	r0, [sp, #0x14]
+200000fc: 6928         	ldr	r0, [r5, #0x10]
+200000fe: 9004         	str	r0, [sp, #0x10]
+20000100: 6968         	ldr	r0, [r5, #0x14]
+20000102: 9003         	str	r0, [sp, #0xc]
+20000104: 6820         	ldr	r0, [r4]
+20000106: 4780         	blx	r0
+20000108: 6860         	ldr	r0, [r4, #0x4]
+2000010a: 4780         	blx	r0
+2000010c: f248 6096    	movw	r0, #0x8696
+20000110: f2c0 0001    	movt	r0, #0x1
+20000114: f8c9 b000    	str.w	r11, [r9]
+20000118: f8d9 1000    	ldr.w	r1, [r9]
+2000011c: 078a         	lsls	r2, r1, #0x1e
+2000011e: f100 020a    	add.w	r2, r0, #0xa
+20000122: d531         	bpl	0x20000188 <embassy_rp::flash::ram_helpers::jedec_id_inner+0xd4> @ imm = #0x62
+20000124: f8d9 1000    	ldr.w	r1, [r9]
+20000128: 078b         	lsls	r3, r1, #0x1e
+2000012a: d533         	bpl	0x20000194 <embassy_rp::flash::ram_helpers::jedec_id_inner+0xe0> @ imm = #0x66
+2000012c: f8d9 1000    	ldr.w	r1, [r9]
+20000130: 078b         	lsls	r3, r1, #0x1e
+20000132: d535         	bpl	0x200001a0 <embassy_rp::flash::ram_helpers::jedec_id_inner+0xec> @ imm = #0x6a
+20000134: f8d9 1000    	ldr.w	r1, [r9]
+20000138: 078b         	lsls	r3, r1, #0x1e
+2000013a: d537         	bpl	0x200001ac <embassy_rp::flash::ram_helpers::jedec_id_inner+0xf8> @ imm = #0x6e
+2000013c: f8d9 1000    	ldr.w	r1, [r9]
+20000140: 078b         	lsls	r3, r1, #0x1e
+20000142: d539         	bpl	0x200001b8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x104> @ imm = #0x72
+20000144: f8d9 1000    	ldr.w	r1, [r9]
+20000148: 078b         	lsls	r3, r1, #0x1e
+2000014a: d53b         	bpl	0x200001c4 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x110> @ imm = #0x76
+2000014c: f8d9 1000    	ldr.w	r1, [r9]
+20000150: 078b         	lsls	r3, r1, #0x1e
+20000152: d53d         	bpl	0x200001d0 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x11c> @ imm = #0x7a
+20000154: f8d9 1000    	ldr.w	r1, [r9]
+20000158: 078b         	lsls	r3, r1, #0x1e
+2000015a: d53f         	bpl	0x200001dc <embassy_rp::flash::ram_helpers::jedec_id_inner+0x128> @ imm = #0x7e
+2000015c: f8d9 1000    	ldr.w	r1, [r9]
+20000160: 078b         	lsls	r3, r1, #0x1e
+20000162: d561         	bpl	0x20000228 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x174> @ imm = #0xc2
+20000164: f8d9 1000    	ldr.w	r1, [r9]
+20000168: 078a         	lsls	r2, r1, #0x1e
+2000016a: d539         	bpl	0x200001e0 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x12c> @ imm = #0x72
+2000016c: 2800         	cmp	r0, #0x0
+2000016e: d061         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0xc2
+20000170: f8d9 1000    	ldr.w	r1, [r9]
+20000174: 380b         	subs	r0, #0xb
+20000176: 078a         	lsls	r2, r1, #0x1e
+20000178: d4ce         	bmi	0x20000118 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x64> @ imm = #-0x64
+2000017a: 300a         	adds	r0, #0xa
+2000017c: 43c9         	mvns	r1, r1
+2000017e: f411 3f84    	tst.w	r1, #0x10800
+20000182: d157         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0xae
+20000184: e030         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0x60
+20000186: bf00         	nop
+20000188: 1e50         	subs	r0, r2, #0x1
+2000018a: 43c9         	mvns	r1, r1
+2000018c: f411 3f84    	tst.w	r1, #0x10800
+20000190: d150         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0xa0
+20000192: e029         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0x52
+20000194: 1e90         	subs	r0, r2, #0x2
+20000196: 43c9         	mvns	r1, r1
+20000198: f411 3f84    	tst.w	r1, #0x10800
+2000019c: d14a         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x94
+2000019e: e023         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0x46
+200001a0: 1ed0         	subs	r0, r2, #0x3
+200001a2: 43c9         	mvns	r1, r1
+200001a4: f411 3f84    	tst.w	r1, #0x10800
+200001a8: d144         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x88
+200001aa: e01d         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0x3a
+200001ac: 1f10         	subs	r0, r2, #0x4
+200001ae: 43c9         	mvns	r1, r1
+200001b0: f411 3f84    	tst.w	r1, #0x10800
+200001b4: d13e         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x7c
+200001b6: e017         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0x2e
+200001b8: 1f50         	subs	r0, r2, #0x5
+200001ba: 43c9         	mvns	r1, r1
+200001bc: f411 3f84    	tst.w	r1, #0x10800
+200001c0: d138         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x70
+200001c2: e011         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0x22
+200001c4: 1f90         	subs	r0, r2, #0x6
+200001c6: 43c9         	mvns	r1, r1
+200001c8: f411 3f84    	tst.w	r1, #0x10800
+200001cc: d132         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x64
+200001ce: e00b         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0x16
+200001d0: 1fd0         	subs	r0, r2, #0x7
+200001d2: 43c9         	mvns	r1, r1
+200001d4: f411 3f84    	tst.w	r1, #0x10800
+200001d8: d12c         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x58
+200001da: e005         	b	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #0xa
+200001dc: f1a2 0008    	sub.w	r0, r2, #0x8
+200001e0: 43c9         	mvns	r1, r1
+200001e2: f411 3f84    	tst.w	r1, #0x10800
+200001e6: d125         	bne	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x4a
+200001e8: f10b 0104    	add.w	r1, r11, #0x4
+200001ec: 3801         	subs	r0, #0x1
+200001ee: f8c9 1000    	str.w	r1, [r9]
+200001f2: 1c41         	adds	r1, r0, #0x1
+200001f4: d01e         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x3c
+200001f6: f8d9 1000    	ldr.w	r1, [r9]
+200001fa: 0549         	lsls	r1, r1, #0x15
+200001fc: d51f         	bpl	0x2000023e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x18a> @ imm = #0x3e
+200001fe: b1c8         	cbz	r0, 0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x32
+20000200: f8d9 1000    	ldr.w	r1, [r9]
+20000204: 0549         	lsls	r1, r1, #0x15
+20000206: d517         	bpl	0x20000238 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x184> @ imm = #0x2e
+20000208: 2801         	cmp	r0, #0x1
+2000020a: d013         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x26
+2000020c: f8d9 1000    	ldr.w	r1, [r9]
+20000210: 0549         	lsls	r1, r1, #0x15
+20000212: d513         	bpl	0x2000023c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x188> @ imm = #0x26
+20000214: 2802         	cmp	r0, #0x2
+20000216: d00d         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #0x1a
+20000218: f8d9 1000    	ldr.w	r1, [r9]
+2000021c: 3804         	subs	r0, #0x4
+2000021e: 0549         	lsls	r1, r1, #0x15
+20000220: d4e7         	bmi	0x200001f2 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x13e> @ imm = #-0x32
+20000222: 3001         	adds	r0, #0x1
+20000224: e00b         	b	0x2000023e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x18a> @ imm = #0x16
+20000226: bf00         	nop
+20000228: f1a2 0009    	sub.w	r0, r2, #0x9
+2000022c: 43c9         	mvns	r1, r1
+2000022e: f411 3f84    	tst.w	r1, #0x10800
+20000232: d0d9         	beq	0x200001e8 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x134> @ imm = #-0x4e
+20000234: bf20         	wfe
+20000236: e7fd         	b	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x6
+20000238: 3801         	subs	r0, #0x1
+2000023a: e000         	b	0x2000023e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x18a> @ imm = #0x0
+2000023c: 3802         	subs	r0, #0x2
+2000023e: 219f         	movs	r1, #0x9f
+20000240: 3801         	subs	r0, #0x1
+20000242: f8c9 1004    	str.w	r1, [r9, #0x4]
+20000246: 1c41         	adds	r1, r0, #0x1
+20000248: d0f4         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x18
+2000024a: f8d9 1000    	ldr.w	r1, [r9]
+2000024e: 03c9         	lsls	r1, r1, #0xf
+20000250: d517         	bpl	0x20000282 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x1ce> @ imm = #0x2e
+20000252: 2800         	cmp	r0, #0x0
+20000254: d0ee         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x24
+20000256: f8d9 1000    	ldr.w	r1, [r9]
+2000025a: 03c9         	lsls	r1, r1, #0xf
+2000025c: d50e         	bpl	0x2000027c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x1c8> @ imm = #0x1c
+2000025e: 2801         	cmp	r0, #0x1
+20000260: d0e8         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x30
+20000262: f8d9 1000    	ldr.w	r1, [r9]
+20000266: 03c9         	lsls	r1, r1, #0xf
+20000268: d50a         	bpl	0x20000280 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x1cc> @ imm = #0x14
+2000026a: 2802         	cmp	r0, #0x2
+2000026c: d0e2         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x3c
+2000026e: f8d9 1000    	ldr.w	r1, [r9]
+20000272: 3804         	subs	r0, #0x4
+20000274: 03c9         	lsls	r1, r1, #0xf
+20000276: d4e6         	bmi	0x20000246 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x192> @ imm = #-0x34
+20000278: 3001         	adds	r0, #0x1
+2000027a: e002         	b	0x20000282 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x1ce> @ imm = #0x4
+2000027c: 3801         	subs	r0, #0x1
+2000027e: e000         	b	0x20000282 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x1ce> @ imm = #0x0
+20000280: 3802         	subs	r0, #0x2
+20000282: f8d9 1008    	ldr.w	r1, [r9, #0x8]
+20000286: 3801         	subs	r0, #0x1
+20000288: 1c41         	adds	r1, r0, #0x1
+2000028a: d0d3         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x5a
+2000028c: f8d9 1000    	ldr.w	r1, [r9]
+20000290: 0549         	lsls	r1, r1, #0x15
+20000292: d518         	bpl	0x200002c6 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x212> @ imm = #0x30
+20000294: 2800         	cmp	r0, #0x0
+20000296: d0cd         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x66
+20000298: f8d9 1000    	ldr.w	r1, [r9]
+2000029c: 0549         	lsls	r1, r1, #0x15
+2000029e: d50f         	bpl	0x200002c0 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x20c> @ imm = #0x1e
+200002a0: 2801         	cmp	r0, #0x1
+200002a2: d0c7         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x72
+200002a4: f8d9 1000    	ldr.w	r1, [r9]
+200002a8: 0549         	lsls	r1, r1, #0x15
+200002aa: d50b         	bpl	0x200002c4 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x210> @ imm = #0x16
+200002ac: 2802         	cmp	r0, #0x2
+200002ae: d0c1         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x7e
+200002b0: f8d9 1000    	ldr.w	r1, [r9]
+200002b4: 3804         	subs	r0, #0x4
+200002b6: 0549         	lsls	r1, r1, #0x15
+200002b8: d4e6         	bmi	0x20000288 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x1d4> @ imm = #-0x34
+200002ba: 3001         	adds	r0, #0x1
+200002bc: e003         	b	0x200002c6 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x212> @ imm = #0x6
+200002be: bf00         	nop
+200002c0: 3801         	subs	r0, #0x1
+200002c2: e000         	b	0x200002c6 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x212> @ imm = #0x0
+200002c4: 3802         	subs	r0, #0x2
+200002c6: 2100         	movs	r1, #0x0
+200002c8: 3801         	subs	r0, #0x1
+200002ca: f8c9 1004    	str.w	r1, [r9, #0x4]
+200002ce: 1c41         	adds	r1, r0, #0x1
+200002d0: d0b0         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0xa0
+200002d2: f8d9 1000    	ldr.w	r1, [r9]
+200002d6: 03c9         	lsls	r1, r1, #0xf
+200002d8: d519         	bpl	0x2000030e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x25a> @ imm = #0x32
+200002da: 2800         	cmp	r0, #0x0
+200002dc: d0aa         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0xac
+200002de: f8d9 1000    	ldr.w	r1, [r9]
+200002e2: 03c9         	lsls	r1, r1, #0xf
+200002e4: d510         	bpl	0x20000308 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x254> @ imm = #0x20
+200002e6: 2801         	cmp	r0, #0x1
+200002e8: d0a4         	beq	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0xb8
+200002ea: f8d9 1000    	ldr.w	r1, [r9]
+200002ee: 03c9         	lsls	r1, r1, #0xf
+200002f0: d50c         	bpl	0x2000030c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x258> @ imm = #0x18
+200002f2: 2802         	cmp	r0, #0x2
+200002f4: f43f af9e    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0xc4
+200002f8: f8d9 1000    	ldr.w	r1, [r9]
+200002fc: 3804         	subs	r0, #0x4
+200002fe: 03c9         	lsls	r1, r1, #0xf
+20000300: d4e5         	bmi	0x200002ce <embassy_rp::flash::ram_helpers::jedec_id_inner+0x21a> @ imm = #-0x36
+20000302: 3001         	adds	r0, #0x1
+20000304: e003         	b	0x2000030e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x25a> @ imm = #0x6
+20000306: bf00         	nop
+20000308: 3801         	subs	r0, #0x1
+2000030a: e000         	b	0x2000030e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x25a> @ imm = #0x0
+2000030c: 3802         	subs	r0, #0x2
+2000030e: f8d9 3008    	ldr.w	r3, [r9, #0x8]
+20000312: 3801         	subs	r0, #0x1
+20000314: 1c41         	adds	r1, r0, #0x1
+20000316: f43f af8d    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0xe6
+2000031a: f8d9 1000    	ldr.w	r1, [r9]
+2000031e: 0549         	lsls	r1, r1, #0x15
+20000320: d51b         	bpl	0x2000035a <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2a6> @ imm = #0x36
+20000322: 2800         	cmp	r0, #0x0
+20000324: f43f af86    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0xf4
+20000328: f8d9 1000    	ldr.w	r1, [r9]
+2000032c: 0549         	lsls	r1, r1, #0x15
+2000032e: d511         	bpl	0x20000354 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2a0> @ imm = #0x22
+20000330: 2801         	cmp	r0, #0x1
+20000332: f43f af7f    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x102
+20000336: f8d9 1000    	ldr.w	r1, [r9]
+2000033a: 0549         	lsls	r1, r1, #0x15
+2000033c: d50c         	bpl	0x20000358 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2a4> @ imm = #0x18
+2000033e: 2802         	cmp	r0, #0x2
+20000340: f43f af78    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x110
+20000344: f8d9 1000    	ldr.w	r1, [r9]
+20000348: 3804         	subs	r0, #0x4
+2000034a: 0549         	lsls	r1, r1, #0x15
+2000034c: d4e2         	bmi	0x20000314 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x260> @ imm = #-0x3c
+2000034e: 3001         	adds	r0, #0x1
+20000350: e003         	b	0x2000035a <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2a6> @ imm = #0x6
+20000352: bf00         	nop
+20000354: 3801         	subs	r0, #0x1
+20000356: e000         	b	0x2000035a <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2a6> @ imm = #0x0
+20000358: 3802         	subs	r0, #0x2
+2000035a: 2100         	movs	r1, #0x0
+2000035c: 3801         	subs	r0, #0x1
+2000035e: f8c9 1004    	str.w	r1, [r9, #0x4]
+20000362: 1c41         	adds	r1, r0, #0x1
+20000364: f43f af66    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x134
+20000368: f8d9 1000    	ldr.w	r1, [r9]
+2000036c: 03c9         	lsls	r1, r1, #0xf
+2000036e: d51a         	bpl	0x200003a6 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2f2> @ imm = #0x34
+20000370: 2800         	cmp	r0, #0x0
+20000372: f43f af5f    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x142
+20000376: f8d9 1000    	ldr.w	r1, [r9]
+2000037a: 03c9         	lsls	r1, r1, #0xf
+2000037c: d510         	bpl	0x200003a0 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2ec> @ imm = #0x20
+2000037e: 2801         	cmp	r0, #0x1
+20000380: f43f af58    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x150
+20000384: f8d9 1000    	ldr.w	r1, [r9]
+20000388: 03c9         	lsls	r1, r1, #0xf
+2000038a: d50b         	bpl	0x200003a4 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2f0> @ imm = #0x16
+2000038c: 2802         	cmp	r0, #0x2
+2000038e: f43f af51    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x15e
+20000392: f8d9 1000    	ldr.w	r1, [r9]
+20000396: 3804         	subs	r0, #0x4
+20000398: 03c9         	lsls	r1, r1, #0xf
+2000039a: d4e2         	bmi	0x20000362 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2ae> @ imm = #-0x3c
+2000039c: 3001         	adds	r0, #0x1
+2000039e: e002         	b	0x200003a6 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2f2> @ imm = #0x4
+200003a0: 3801         	subs	r0, #0x1
+200003a2: e000         	b	0x200003a6 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2f2> @ imm = #0x0
+200003a4: 3802         	subs	r0, #0x2
+200003a6: f8d9 c008    	ldr.w	r12, [r9, #0x8]
+200003aa: 3801         	subs	r0, #0x1
+200003ac: 1c41         	adds	r1, r0, #0x1
+200003ae: f43f af41    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x17e
+200003b2: f8d9 1000    	ldr.w	r1, [r9]
+200003b6: 0549         	lsls	r1, r1, #0x15
+200003b8: d51b         	bpl	0x200003f2 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x33e> @ imm = #0x36
+200003ba: 2800         	cmp	r0, #0x0
+200003bc: f43f af3a    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x18c
+200003c0: f8d9 1000    	ldr.w	r1, [r9]
+200003c4: 0549         	lsls	r1, r1, #0x15
+200003c6: d511         	bpl	0x200003ec <embassy_rp::flash::ram_helpers::jedec_id_inner+0x338> @ imm = #0x22
+200003c8: 2801         	cmp	r0, #0x1
+200003ca: f43f af33    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x19a
+200003ce: f8d9 1000    	ldr.w	r1, [r9]
+200003d2: 0549         	lsls	r1, r1, #0x15
+200003d4: d50c         	bpl	0x200003f0 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x33c> @ imm = #0x18
+200003d6: 2802         	cmp	r0, #0x2
+200003d8: f43f af2c    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x1a8
+200003dc: f8d9 1000    	ldr.w	r1, [r9]
+200003e0: 3804         	subs	r0, #0x4
+200003e2: 0549         	lsls	r1, r1, #0x15
+200003e4: d4e2         	bmi	0x200003ac <embassy_rp::flash::ram_helpers::jedec_id_inner+0x2f8> @ imm = #-0x3c
+200003e6: 3001         	adds	r0, #0x1
+200003e8: e003         	b	0x200003f2 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x33e> @ imm = #0x6
+200003ea: bf00         	nop
+200003ec: 3801         	subs	r0, #0x1
+200003ee: e000         	b	0x200003f2 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x33e> @ imm = #0x0
+200003f0: 3802         	subs	r0, #0x2
+200003f2: 2100         	movs	r1, #0x0
+200003f4: 3801         	subs	r0, #0x1
+200003f6: f8c9 1004    	str.w	r1, [r9, #0x4]
+200003fa: 1c41         	adds	r1, r0, #0x1
+200003fc: f43f af1a    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x1cc
+20000400: f8d9 1000    	ldr.w	r1, [r9]
+20000404: 03c9         	lsls	r1, r1, #0xf
+20000406: d51a         	bpl	0x2000043e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x38a> @ imm = #0x34
+20000408: 2800         	cmp	r0, #0x0
+2000040a: f43f af13    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x1da
+2000040e: f8d9 1000    	ldr.w	r1, [r9]
+20000412: 03c9         	lsls	r1, r1, #0xf
+20000414: d510         	bpl	0x20000438 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x384> @ imm = #0x20
+20000416: 2801         	cmp	r0, #0x1
+20000418: f43f af0c    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x1e8
+2000041c: f8d9 1000    	ldr.w	r1, [r9]
+20000420: 03c9         	lsls	r1, r1, #0xf
+20000422: d50b         	bpl	0x2000043c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x388> @ imm = #0x16
+20000424: 2802         	cmp	r0, #0x2
+20000426: f43f af05    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x1f6
+2000042a: f8d9 1000    	ldr.w	r1, [r9]
+2000042e: 3804         	subs	r0, #0x4
+20000430: 03c9         	lsls	r1, r1, #0xf
+20000432: d4e2         	bmi	0x200003fa <embassy_rp::flash::ram_helpers::jedec_id_inner+0x346> @ imm = #-0x3c
+20000434: 3001         	adds	r0, #0x1
+20000436: e002         	b	0x2000043e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x38a> @ imm = #0x4
+20000438: 3801         	subs	r0, #0x1
+2000043a: e000         	b	0x2000043e <embassy_rp::flash::ram_helpers::jedec_id_inner+0x38a> @ imm = #0x0
+2000043c: 3802         	subs	r0, #0x2
+2000043e: f8d9 b008    	ldr.w	r11, [r9, #0x8]
+20000442: 2800         	cmp	r0, #0x0
+20000444: f43f aef6    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x214
+20000448: f8d9 1000    	ldr.w	r1, [r9]
+2000044c: 078a         	lsls	r2, r1, #0x1e
+2000044e: d515         	bpl	0x2000047c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x3c8> @ imm = #0x2a
+20000450: 2801         	cmp	r0, #0x1
+20000452: f43f aeef    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x222
+20000456: f8d9 1000    	ldr.w	r1, [r9]
+2000045a: 078a         	lsls	r2, r1, #0x1e
+2000045c: d50e         	bpl	0x2000047c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x3c8> @ imm = #0x1c
+2000045e: 2802         	cmp	r0, #0x2
+20000460: f43f aee8    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x230
+20000464: f8d9 1000    	ldr.w	r1, [r9]
+20000468: 078a         	lsls	r2, r1, #0x1e
+2000046a: d507         	bpl	0x2000047c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x3c8> @ imm = #0xe
+2000046c: 3804         	subs	r0, #0x4
+2000046e: 1c41         	adds	r1, r0, #0x1
+20000470: f43f aee0    	beq.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x240
+20000474: f8d9 1000    	ldr.w	r1, [r9]
+20000478: 078a         	lsls	r2, r1, #0x1e
+2000047a: d4e2         	bmi	0x20000442 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x38e> @ imm = #-0x3c
+2000047c: 43c8         	mvns	r0, r1
+2000047e: f410 3f84    	tst.w	r0, #0x10800
+20000482: f47f aed7    	bne.w	0x20000234 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x180> @ imm = #-0x252
+20000486: f04f 7040    	mov.w	r0, #0x3000000
+2000048a: e9cd c300    	strd	r12, r3, [sp]
+2000048e: f8c9 0000    	str.w	r0, [r9]
+20000492: 6920         	ldr	r0, [r4, #0x10]
+20000494: 4780         	blx	r0
+20000496: 6960         	ldr	r0, [r4, #0x14]
+20000498: 4780         	blx	r0
+2000049a: f8d9 0010    	ldr.w	r0, [r9, #0x10]
+2000049e: 4540         	cmp	r0, r8
+200004a0: d152         	bne	0x20000548 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x494> @ imm = #0xa4
+200004a2: f8d9 0014    	ldr.w	r0, [r9, #0x14]
+200004a6: 9908         	ldr	r1, [sp, #0x20]
+200004a8: 4288         	cmp	r0, r1
+200004aa: d14d         	bne	0x20000548 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x494> @ imm = #0x9a
+200004ac: 9a02         	ldr	r2, [sp, #0x8]
+200004ae: f8c9 200c    	str.w	r2, [r9, #0xc]
+200004b2: f8c9 a000    	str.w	r10, [r9]
+200004b6: 602e         	str	r6, [r5]
+200004b8: 9807         	ldr	r0, [sp, #0x1c]
+200004ba: 6068         	str	r0, [r5, #0x4]
+200004bc: 9806         	ldr	r0, [sp, #0x18]
+200004be: 60a8         	str	r0, [r5, #0x8]
+200004c0: 9805         	ldr	r0, [sp, #0x14]
+200004c2: 60e8         	str	r0, [r5, #0xc]
+200004c4: 9804         	ldr	r0, [sp, #0x10]
+200004c6: 6128         	str	r0, [r5, #0x10]
+200004c8: 9803         	ldr	r0, [sp, #0xc]
+200004ca: 6168         	str	r0, [r5, #0x14]
+200004cc: f3bf 8f4f    	dsb	sy
+200004d0: f8d9 0000    	ldr.w	r0, [r9]
+200004d4: f8d9 100c    	ldr.w	r1, [r9, #0xc]
+200004d8: 4291         	cmp	r1, r2
+200004da: d137         	bne	0x2000054c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x498> @ imm = #0x6e
+200004dc: 2100         	movs	r1, #0x0
+200004de: f6cf 71c0    	movt	r1, #0xffc0
+200004e2: 31cf         	adds	r1, #0xcf
+200004e4: 4001         	ands	r1, r0
+200004e6: 4551         	cmp	r1, r10
+200004e8: d130         	bne	0x2000054c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x498> @ imm = #0x60
+200004ea: f400 3084    	and	r0, r0, #0x10800
+200004ee: f5b0 3f84    	cmp.w	r0, #0x10800
+200004f2: d12b         	bne	0x2000054c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x498> @ imm = #0x56
+200004f4: 6828         	ldr	r0, [r5]
+200004f6: 42b0         	cmp	r0, r6
+200004f8: d12a         	bne	0x20000550 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x49c> @ imm = #0x54
+200004fa: 6868         	ldr	r0, [r5, #0x4]
+200004fc: 9907         	ldr	r1, [sp, #0x1c]
+200004fe: 4288         	cmp	r0, r1
+20000500: d126         	bne	0x20000550 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x49c> @ imm = #0x4c
+20000502: 68a8         	ldr	r0, [r5, #0x8]
+20000504: 9906         	ldr	r1, [sp, #0x18]
+20000506: 4288         	cmp	r0, r1
+20000508: d122         	bne	0x20000550 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x49c> @ imm = #0x44
+2000050a: 68e8         	ldr	r0, [r5, #0xc]
+2000050c: 9905         	ldr	r1, [sp, #0x14]
+2000050e: 4288         	cmp	r0, r1
+20000510: d11e         	bne	0x20000550 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x49c> @ imm = #0x3c
+20000512: 6928         	ldr	r0, [r5, #0x10]
+20000514: 9904         	ldr	r1, [sp, #0x10]
+20000516: 4288         	cmp	r0, r1
+20000518: d11a         	bne	0x20000550 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x49c> @ imm = #0x34
+2000051a: 6968         	ldr	r0, [r5, #0x14]
+2000051c: 9903         	ldr	r1, [sp, #0xc]
+2000051e: 4288         	cmp	r0, r1
+20000520: d116         	bne	0x20000550 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x49c> @ imm = #0x2c
+20000522: 9a01         	ldr	r2, [sp, #0x4]
+20000524: 9900         	ldr	r1, [sp]
+20000526: 0212         	lsls	r2, r2, #0x8
+20000528: b2c9         	uxtb	r1, r1
+2000052a: b292         	uxth	r2, r2
+2000052c: fa5f f08b    	uxtb.w	r0, r11
+20000530: 4411         	add	r1, r2
+20000532: f3bf 8f4f    	dsb	sy
+20000536: f3bf 8f6f    	isb	sy
+2000053a: ea40 2001    	orr.w	r0, r0, r1, lsl #8
+2000053e: b009         	add	sp, #0x24
+20000540: e8bd 0f00    	pop.w	{r8, r9, r10, r11}
+20000544: bdf0         	pop	{r4, r5, r6, r7, pc}
+20000546: bf00         	nop
+20000548: bf20         	wfe
+2000054a: e7fd         	b	0x20000548 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x494> @ imm = #-0x6
+2000054c: bf20         	wfe
+2000054e: e7fd         	b	0x2000054c <embassy_rp::flash::ram_helpers::jedec_id_inner+0x498> @ imm = #-0x6
+20000550: bf20         	wfe
+20000552: e7fd         	b	0x20000550 <embassy_rp::flash::ram_helpers::jedec_id_inner+0x49c> @ imm = #-0x6
+
+20000554 <embassy_rp::flash::ram_helpers::write_flash_inner>:
+20000554: b5f0         	push	{r4, r5, r6, r7, lr}
+20000556: af03         	add	r7, sp, #0xc
+20000558: e92d 0f00    	push.w	{r8, r9, r10, r11}
+2000055c: b08b         	sub	sp, #0x2c
+2000055e: f240 0b00    	movw	r11, #0x0
+20000562: 920a         	str	r2, [sp, #0x28]
+20000564: f2c4 0b0d    	movt	r11, #0x400d
+20000568: 4688         	mov	r8, r1
+2000056a: f8db 100c    	ldr.w	r1, [r11, #0xc]
+2000056e: f240 0904    	movw	r9, #0x4
+20000572: 9101         	str	r1, [sp, #0x4]
+20000574: f8db a010    	ldr.w	r10, [r11, #0x10]
+20000578: f8db 1014    	ldr.w	r1, [r11, #0x14]
+2000057c: f2c4 0904    	movt	r9, #0x4004
+20000580: 9109         	str	r1, [sp, #0x24]
+20000582: f8db 1000    	ldr.w	r1, [r11]
+20000586: 461c         	mov	r4, r3
+20000588: 9102         	str	r1, [sp, #0x8]
+2000058a: f8d9 1000    	ldr.w	r1, [r9]
+2000058e: 4606         	mov	r6, r0
+20000590: 9103         	str	r1, [sp, #0xc]
+20000592: f8d9 1004    	ldr.w	r1, [r9, #0x4]
+20000596: 9104         	str	r1, [sp, #0x10]
+20000598: f8d9 1008    	ldr.w	r1, [r9, #0x8]
+2000059c: 9105         	str	r1, [sp, #0x14]
+2000059e: f8d9 100c    	ldr.w	r1, [r9, #0xc]
+200005a2: 9106         	str	r1, [sp, #0x18]
+200005a4: f8d9 1010    	ldr.w	r1, [r9, #0x10]
+200005a8: 9107         	str	r1, [sp, #0x1c]
+200005aa: f8d9 1014    	ldr.w	r1, [r9, #0x14]
+200005ae: 9108         	str	r1, [sp, #0x20]
+200005b0: 6819         	ldr	r1, [r3]
+200005b2: 4788         	blx	r1
+200005b4: 6860         	ldr	r0, [r4, #0x4]
+200005b6: 4780         	blx	r0
+200005b8: 68a5         	ldr	r5, [r4, #0x8]
+200005ba: b12d         	cbz	r5, 0x200005c8 <embassy_rp::flash::ram_helpers::write_flash_inner+0x74> @ imm = #0xa
+200005bc: 4630         	mov	r0, r6
+200005be: 4641         	mov	r1, r8
+200005c0: f04f 4200    	mov.w	r2, #0x80000000
+200005c4: 2300         	movs	r3, #0x0
+200005c6: 47a8         	blx	r5
+200005c8: 68e3         	ldr	r3, [r4, #0xc]
+200005ca: b11b         	cbz	r3, 0x200005d4 <embassy_rp::flash::ram_helpers::write_flash_inner+0x80> @ imm = #0x6
+200005cc: 990a         	ldr	r1, [sp, #0x28]
+200005ce: 4630         	mov	r0, r6
+200005d0: 4642         	mov	r2, r8
+200005d2: 4798         	blx	r3
+200005d4: 6920         	ldr	r0, [r4, #0x10]
+200005d6: 4780         	blx	r0
+200005d8: 6960         	ldr	r0, [r4, #0x14]
+200005da: 4780         	blx	r0
+200005dc: f8db 0010    	ldr.w	r0, [r11, #0x10]
+200005e0: 4550         	cmp	r0, r10
+200005e2: d155         	bne	0x20000690 <embassy_rp::flash::ram_helpers::write_flash_inner+0x13c> @ imm = #0xaa
+200005e4: f8db 0014    	ldr.w	r0, [r11, #0x14]
+200005e8: 9909         	ldr	r1, [sp, #0x24]
+200005ea: 4288         	cmp	r0, r1
+200005ec: d150         	bne	0x20000690 <embassy_rp::flash::ram_helpers::write_flash_inner+0x13c> @ imm = #0xa0
+200005ee: 9b02         	ldr	r3, [sp, #0x8]
+200005f0: 9e01         	ldr	r6, [sp, #0x4]
+200005f2: f36f 0315    	bfc	r3, #0, #22
+200005f6: f8cb 600c    	str.w	r6, [r11, #0xc]
+200005fa: f8cb 3000    	str.w	r3, [r11]
+200005fe: 9a03         	ldr	r2, [sp, #0xc]
+20000600: f8c9 2000    	str.w	r2, [r9]
+20000604: 9c04         	ldr	r4, [sp, #0x10]
+20000606: f8c9 4004    	str.w	r4, [r9, #0x4]
+2000060a: 9d05         	ldr	r5, [sp, #0x14]
+2000060c: f8c9 5008    	str.w	r5, [r9, #0x8]
+20000610: f8dd 8018    	ldr.w	r8, [sp, #0x18]
+20000614: f8c9 800c    	str.w	r8, [r9, #0xc]
+20000618: f8dd e01c    	ldr.w	lr, [sp, #0x1c]
+2000061c: f8c9 e010    	str.w	lr, [r9, #0x10]
+20000620: f8dd c020    	ldr.w	r12, [sp, #0x20]
+20000624: f8c9 c014    	str.w	r12, [r9, #0x14]
+20000628: f3bf 8f4f    	dsb	sy
+2000062c: f8db 0000    	ldr.w	r0, [r11]
+20000630: f8db 100c    	ldr.w	r1, [r11, #0xc]
+20000634: 42b1         	cmp	r1, r6
+20000636: d12d         	bne	0x20000694 <embassy_rp::flash::ram_helpers::write_flash_inner+0x140> @ imm = #0x5a
+20000638: 2100         	movs	r1, #0x0
+2000063a: f6cf 71c0    	movt	r1, #0xffc0
+2000063e: 31cf         	adds	r1, #0xcf
+20000640: 4001         	ands	r1, r0
+20000642: 4299         	cmp	r1, r3
+20000644: d126         	bne	0x20000694 <embassy_rp::flash::ram_helpers::write_flash_inner+0x140> @ imm = #0x4c
+20000646: f400 3084    	and	r0, r0, #0x10800
+2000064a: f5b0 3f84    	cmp.w	r0, #0x10800
+2000064e: d121         	bne	0x20000694 <embassy_rp::flash::ram_helpers::write_flash_inner+0x140> @ imm = #0x42
+20000650: f8d9 0000    	ldr.w	r0, [r9]
+20000654: 4290         	cmp	r0, r2
+20000656: d11f         	bne	0x20000698 <embassy_rp::flash::ram_helpers::write_flash_inner+0x144> @ imm = #0x3e
+20000658: f8d9 0004    	ldr.w	r0, [r9, #0x4]
+2000065c: 42a0         	cmp	r0, r4
+2000065e: d11b         	bne	0x20000698 <embassy_rp::flash::ram_helpers::write_flash_inner+0x144> @ imm = #0x36
+20000660: f8d9 0008    	ldr.w	r0, [r9, #0x8]
+20000664: 42a8         	cmp	r0, r5
+20000666: d117         	bne	0x20000698 <embassy_rp::flash::ram_helpers::write_flash_inner+0x144> @ imm = #0x2e
+20000668: f8d9 000c    	ldr.w	r0, [r9, #0xc]
+2000066c: 4540         	cmp	r0, r8
+2000066e: d113         	bne	0x20000698 <embassy_rp::flash::ram_helpers::write_flash_inner+0x144> @ imm = #0x26
+20000670: f8d9 0010    	ldr.w	r0, [r9, #0x10]
+20000674: 4570         	cmp	r0, lr
+20000676: d10f         	bne	0x20000698 <embassy_rp::flash::ram_helpers::write_flash_inner+0x144> @ imm = #0x1e
+20000678: f8d9 0014    	ldr.w	r0, [r9, #0x14]
+2000067c: 4560         	cmp	r0, r12
+2000067e: d10b         	bne	0x20000698 <embassy_rp::flash::ram_helpers::write_flash_inner+0x144> @ imm = #0x16
+20000680: f3bf 8f4f    	dsb	sy
+20000684: f3bf 8f6f    	isb	sy
+20000688: b00b         	add	sp, #0x2c
+2000068a: e8bd 0f00    	pop.w	{r8, r9, r10, r11}
+2000068e: bdf0         	pop	{r4, r5, r6, r7, pc}
+20000690: bf20         	wfe
+20000692: e7fd         	b	0x20000690 <embassy_rp::flash::ram_helpers::write_flash_inner+0x13c> @ imm = #-0x6
+20000694: bf20         	wfe
+20000696: e7fd         	b	0x20000694 <embassy_rp::flash::ram_helpers::write_flash_inner+0x140> @ imm = #-0x6
+20000698: bf20         	wfe
+2000069a: e7fd         	b	0x20000698 <embassy_rp::flash::ram_helpers::write_flash_inner+0x144> @ imm = #-0x6

@@ -30,7 +30,9 @@ pub fn display_spi_config() -> SpiConfig {
     config
 }
 
-pub fn get_actual_spi_freq(sys_clk_hz: u32) -> u32 {
+/// Divider-derived SPI rate, using clk_peri as specified by the HAL.
+/// This is not a physical clock measurement.
+pub fn get_actual_spi_freq(peripheral_clk_hz: u32) -> u32 {
     const SPI0_BASE: u32 = 0x4008_0000;
     const SSPCR0_OFFSET: u32 = 0x00;
     const SSPCPSR_OFFSET: u32 = 0x10;
@@ -46,6 +48,6 @@ pub fn get_actual_spi_freq(sys_clk_hz: u32) -> u32 {
             return 0;
         }
 
-        sys_clk_hz / (cpsdvsr * (scr + 1))
+        peripheral_clk_hz / (cpsdvsr * (scr + 1))
     }
 }

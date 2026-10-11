@@ -14,41 +14,146 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-11
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all --check
         working-directory: firmware
+      - name: Check host formatting
+        run: cargo fmt --all --check
+        working-directory: host
+
+  host:
+    name: Host contracts and benchmark smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-11
+          components: clippy
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: host
+      - name: Host contracts
+        run: cargo test --locked
+        working-directory: host
+      - name: Verify vendored HAL source
+        run: python3 scripts/check_vendor.py
+        working-directory: firmware
+      - name: Target artifact capture contracts
+        run: |
+          python3 scripts/test_target_capture.py
+          python3 -O scripts/test_validation_policy.py
+        working-directory: firmware
+      - name: Full outline contracts
+        run: cargo test --locked --no-default-features
+        working-directory: host
+      - name: Host Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: host
+      - name: Benchmark smoke
+        run: cargo test --locked --benches
+        working-directory: host
+      - name: Benchmark comparison contracts
+        run: python3 scripts/test_benchmark_comparison.py
+        working-directory: host
+      - name: Telemetry collector and producer contracts
+        run: python3 scripts/test_telemetry_export.py
+        working-directory: host
 
   clippy-pico2:
     name: Clippy (Pico 2)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-11
           components: clippy
           targets: thumbv8m.main-none-eabihf
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware
       - name: Clippy (pico2)
-        run: cargo clippy -p dashboard-pico2 --target thumbv8m.main-none-eabihf -- -D warnings
+        run: cargo clippy --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf -- -D warnings
+        working-directory: firmware
+      - name: UART ownership compile guards
+        run: python3 scripts/check_uart_api.py
+        working-directory: firmware
+      - name: Logging feature and flush policy
+        run: |
+          python3 scripts/test_logging_policy.py
+          python3 -O scripts/test_logging_policy.py
+          python3 scripts/check_logging_policy.py
+        working-directory: firmware
+      - name: Vehicle transport Clippy
+        run: cargo clippy --locked -p dashboard-pico2 --features longan-rx12 -- -D warnings
+        working-directory: firmware
+      - name: Demo Clippy
+        run: cargo clippy --locked -p dashboard-pico2 --features demo,frame-trace,te-trace -- -D warnings
+        working-directory: firmware
+      - name: Target benchmark Clippy
+        run: cargo clippy --locked -p dashboard-pico2 --features target-bench,longan-rx12,frame-trace,te-trace -- -D warnings
+        working-directory: firmware
+      - name: Mutually exclusive profile guards
+        run: python3 scripts/check_feature_profiles.py
         working-directory: firmware
 
   build-pico2:
-    name: Build Pico 2
+    name: Build Pico 2 (${{ matrix.profile }})
     runs-on: ubuntu-latest
+    env:
+      # Keep linker symbols for the layout check; target code is still optimized.
+      CARGO_PROFILE_RELEASE_STRIP: none
+    strategy:
+      matrix:
+        include:
+          - profile: stock
+            features: ""
+            extra_args: ""
+          - profile: cpu250-spi62-1v10
+            features: cpu250-spi62-1v10
+            extra_args: ""
+          - profile: cpu280-spi70-1v30
+            features: cpu280-spi70-1v30
+            extra_args: ""
+          - profile: cpu290-spi72-1v30
+            features: cpu290-spi72-1v30
+            extra_args: ""
+          - profile: cpu300-spi75-1v30
+            features: demo,frame-trace,te-trace,cpu300-spi75-1v30
+            extra_args: ""
+          - profile: serial-full-frame
+            features: serial-display,full-frame
+            extra_args: ""
+          - profile: longan-rx12
+            features: longan-rx12,frame-trace,te-trace
+            extra_args: ""
+          - profile: full-outline
+            features: demo,frame-trace,te-trace
+            extra_args: --no-default-features
+          - profile: target-bench
+            features: target-bench,longan-rx12,frame-trace,te-trace
+            extra_args: ""
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-11
           targets: thumbv8m.main-none-eabihf
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware
       - name: Build pico2
-        run: cargo build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release
+        run: cargo build --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features "${{ matrix.features }}" ${{ matrix.extra_args }}
+        working-directory: firmware
+      - name: Check linked RAM boundaries
+        run: |
+          python3 scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
+          python3 scripts/test_flash_lockout.py target/thumbv8m.main-none-eabihf/release/pico2
+          python3 -O scripts/test_flash_lockout.py target/thumbv8m.main-none-eabihf/release/pico2
         working-directory: firmware

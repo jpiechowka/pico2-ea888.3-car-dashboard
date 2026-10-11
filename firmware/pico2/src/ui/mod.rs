@@ -1,20 +1,5 @@
 mod animations;
-mod colors;
-mod styles;
 
 pub use animations::ColorTransition;
-pub use colors::{BLACK, BLUE, DARK_TEAL, GRAY, GREEN, ORANGE, PINK, RED, WHITE, YELLOW};
-pub use styles::{
-    CENTERED,
-    LABEL_FONT,
-    LABEL_STYLE_BLACK,
-    LABEL_STYLE_ORANGE,
-    LABEL_STYLE_WHITE,
-    LEFT_ALIGNED,
-    RIGHT_ALIGNED,
-    TITLE_STYLE_WHITE,
-    VALUE_FONT,
-    VALUE_FONT_MEDIUM,
-    VALUE_STYLE_BLACK,
-    VALUE_STYLE_WHITE,
-};
+pub use dashboard_pico2::colors::{BLACK, GREEN, WHITE, YELLOW};
+pub use dashboard_pico2::styles::LABEL_FONT;

@@ -17,7 +17,7 @@ pub struct ColorTransition {
 
 impl ColorTransition {
     pub const fn new() -> Self {
-        use super::colors::BLACK;
+        use dashboard_pico2::colors::BLACK;
         Self {
             current_colors: [BLACK; CELL_COUNT],
             target_colors: [BLACK; CELL_COUNT],

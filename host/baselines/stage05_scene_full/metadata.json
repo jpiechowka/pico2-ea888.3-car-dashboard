@@ -1,0 +1,15 @@
+{
+  "prior_commit": "9b808e276862cb18e34d873adfd44beb623ac15c",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- scene/full_dashboard --save-baseline stage05_scene_full",
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "3638c5004930e99c3bf1c1dd41d36e896c61277d8f6e198f97130b13a6103259",
+    "firmware/pico2/src/dashboard.rs": "12d2a31320c394e5fe046f44455a558f03f16f2f589993fbe3baac1eb09ffe1f"
+  },
+  "median_ns": 83100.8682788783,
+  "note": "Full redraw of fixed same scene, before retained cells. Compare pixel-equivalent output, not physical FPS."
+}

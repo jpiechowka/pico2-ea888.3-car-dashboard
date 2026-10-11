@@ -1,0 +1,20 @@
+{
+  "mode": "Windows process affinity",
+  "logical_cpu": 0,
+  "affinity_mask": 1,
+  "inherited_by_child_processes": true,
+  "shell_pid": 27352,
+  "started_utc": "2026-10-11T11:16:27.6775205Z",
+  "finished_utc": "2026-10-11T11:17:33.6902005Z",
+  "observed_final_mask": 1,
+  "capture_exit_code": 0,
+  "command": [
+    "python",
+    "scripts/capture_benchmark.py",
+    "audit2_pinned_repeat",
+    "--runner-id",
+    "ea888-workstation-01",
+    "--filter",
+    "^(framebuffer/|fill_solid/|alarms/|client/isotp_128_bytes|scene/retained_one_cell)"
+  ]
+}

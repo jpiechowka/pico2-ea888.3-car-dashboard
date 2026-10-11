@@ -1,26 +1,15 @@
-mod afr;
 mod battery;
 mod boost;
+mod lambda;
 mod temp;
 
-pub use afr::draw_afr_cell;
 pub use battery::draw_batt_cell;
 pub use boost::draw_boost_cell;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::IntoStorage;
-pub use temp::{
-    draw_temp_cell,
-    is_critical_egt,
-    is_critical_iat,
-    is_critical_oil_dsg,
-    is_critical_water,
-    is_low_temp_oil,
-    temp_color_egt,
-    temp_color_iat,
-    temp_color_oil_dsg,
-    temp_color_water,
-};
+pub use lambda::draw_lambda_cell;
+pub use temp::{draw_temp_cell, temp_uses_medium_font};
 
 use crate::ui::{
     BLACK,

@@ -1,5 +1,6 @@
 use core::fmt::Write;
 
+use dashboard_pico2::display::telemetry::FrameTrace;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
@@ -9,13 +10,14 @@ use crate::ui::{BLACK, GREEN, LABEL_FONT, WHITE, YELLOW};
 
 #[derive(Clone, Copy, Default)]
 pub struct ProfilingData {
+    pub reset_cause: &'static str,
+    pub vehicle_status: &'static str,
     pub current_fps: f32,
     pub average_fps: f32,
     pub frame_count: u32,
-    pub render_time_us: u32,
-    pub flush_time_us: u32,
-    pub total_frame_time_us: u32,
+    pub trace: Option<FrameTrace>,
     pub brightness_percent: u32,
+    pub settings_status: &'static str,
 
     pub buffer_swaps: u32,
     pub buffer_waits: u32,
@@ -34,19 +36,20 @@ pub struct ProfilingData {
     pub frame_cycles: u32,
 
     pub requested_cpu_mhz: u32,
-    pub actual_cpu_mhz: u32,
+    pub configured_cpu_mhz: u32,
 
-    pub requested_spi_mhz: u32,
-    pub actual_spi_mhz: u32,
+    pub requested_spi_hz: u32,
+    pub configured_spi_hz: u32,
 
     pub requested_voltage_mv: u32,
-    pub actual_voltage_mv: u32,
+    pub vreg_setting_mv: Option<u32>,
 }
 
 #[allow(clippy::manual_checked_ops)]
-pub fn draw_profiling_page<D>(
+pub async fn draw_profiling_page<D>(
     display: &mut D,
     data: &ProfilingData,
+    work: &mut crate::profiling::RenderWork,
 ) where
     D: DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>,
 {
@@ -62,59 +65,71 @@ pub fn draw_profiling_page<D>(
 
     let mut y = 12;
 
-    Text::new("TIMING", Point::new(col1, y), header_style)
+    Text::new("SOFTWARE TIMING", Point::new(col1, y), header_style)
         .draw(display)
         .ok();
+    work.checkpoint().await;
     y += line_height;
 
     let mut s: String<24> = String::new();
-    let _ = write!(s, "FPS: {:.1}", data.current_fps);
+    let _ = write!(s, "Done FPS: {:.1}", data.current_fps);
     Text::new(&s, Point::new(col1, y), highlight_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(s, "Avg. FPS: {:.1}", data.average_fps);
     Text::new(&s, Point::new(col1, y), highlight_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(s, "Frame: {}", data.frame_count);
     Text::new(&s, Point::new(col1, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Render: {} us", data.render_time_us);
+    let _ = write!(s, "Render: {} us", data.trace.map_or(0, |t| t.render_us()));
     Text::new(&s, Point::new(col1, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Flush: {} us", data.flush_time_us);
+    let _ = write!(s, "Flush*: {} us", data.trace.map_or(0, |t| t.transfer_observed_us()));
     Text::new(&s, Point::new(col1, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Total: {} us", data.total_frame_time_us);
+    let _ = write!(s, "Frame: {} us", data.trace.map_or(0, |t| t.total_us()));
     Text::new(&s, Point::new(col1, y), highlight_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
-    let max_fps = if data.total_frame_time_us > 0 {
-        1_000_000.0 / data.total_frame_time_us as f32
-    } else {
-        0.0
-    };
     s.clear();
-    let _ = write!(s, "Max: {:.0} FPS", max_fps);
+    match data.trace.and_then(|t| t.sample_age_us()) {
+        Some(age) => {
+            let _ = write!(s, "Age*: {} ms", age / 1000);
+        }
+        None => {
+            let _ = write!(s, "Age*: --");
+        }
+    }
     Text::new(&s, Point::new(col1, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height + 4;
 
     Text::new("BUFFERS", Point::new(col1, y), header_style)
         .draw(display)
         .ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(s, "Swaps: {}", data.buffer_swaps);
     Text::new(&s, Point::new(col1, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
@@ -125,11 +140,13 @@ pub fn draw_profiling_page<D>(
         value_style
     };
     Text::new(&s, Point::new(col1, y), waits_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(s, "Render: buf{}", data.render_buffer_idx);
     Text::new(&s, Point::new(col1, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
@@ -141,12 +158,13 @@ pub fn draw_profiling_page<D>(
     Text::new("CORE 0", Point::new(col2, y), header_style)
         .draw(display)
         .ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(
         s,
-        "Util: {}.{}%",
+        "UI work: {}.{}%",
         data.cpu0_util_percent / 10,
         data.cpu0_util_percent % 10
     );
@@ -156,27 +174,35 @@ pub fn draw_profiling_page<D>(
         value_style
     };
     Text::new(&s, Point::new(col2, y), util0_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(s, "Cycles: {}K", data.frame_cycles / 1000);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
-    y += line_height;
-
-    s.clear();
-    let _ = write!(s, "Stack: {}K/{}K", data.core0_stack_used_kb, data.core0_stack_total_kb);
-    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
-    y += line_height + 4;
-
-    Text::new("CORE 1", Point::new(col2, y), header_style)
-        .draw(display)
-        .ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(
         s,
-        "Util: {}.{}%",
+        "SP now: {}K/{}K",
+        data.core0_stack_used_kb, data.core0_stack_total_kb
+    );
+    Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    work.checkpoint().await;
+    y += line_height + 4;
+
+    Text::new("CORE 1", Point::new(col2, y), header_style)
+        .draw(display)
+        .ok();
+    work.checkpoint().await;
+    y += line_height;
+
+    s.clear();
+    let _ = write!(
+        s,
+        "Acq work: {}.{}%",
         data.cpu1_util_percent / 10,
         data.cpu1_util_percent % 10
     );
@@ -186,54 +212,83 @@ pub fn draw_profiling_page<D>(
         value_style
     };
     Text::new(&s, Point::new(col2, y), util1_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "Stack: {}K/{}K", data.core1_stack_used_kb, data.core1_stack_total_kb);
+    let _ = write!(
+        s,
+        "SP seen: {}K/{}K",
+        data.core1_stack_used_kb, data.core1_stack_total_kb
+    );
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height + 4;
 
     Text::new("SYSTEM", Point::new(col2, y), header_style)
         .draw(display)
         .ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "CPU: {} MHz", data.requested_cpu_mhz);
+    let _ = write!(s, "CPU:{}/{}M", data.configured_cpu_mhz, data.requested_cpu_mhz);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
-    let act_v = data.actual_voltage_mv / 100;
-    let _ = write!(s, "Volt: {}.{}V", act_v / 10, act_v % 10);
+    match data.vreg_setting_mv {
+        Some(mv) => {
+            let _ = write!(s, "Vset:{}/{}mV", mv, data.requested_voltage_mv);
+        }
+        None => {
+            let _ = write!(s, "Vset:--/{}mV", data.requested_voltage_mv);
+        }
+    }
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
-    let _ = write!(s, "SPI: {} MHz", data.requested_spi_mhz);
+    let _ = write!(
+        s,
+        "SPI:{:.1}/{:.1}M",
+        data.configured_spi_hz as f32 / 1_000_000.0,
+        data.requested_spi_hz as f32 / 1_000_000.0
+    );
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(s, "RAM: {}K/{}K", data.static_ram_kb, data.ram_total_kb);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     let _ = write!(s, "FB: 2x{}K", crate::profiling::FRAMEBUFFER_SIZE / 1024);
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
+    work.checkpoint().await;
     y += line_height;
 
     s.clear();
     if data.brightness_percent == 0 {
-        let _ = write!(s, "BL: OFF");
+        let _ = write!(s, "BL: OFF {}", data.settings_status);
     } else {
-        let _ = write!(s, "BL: {}%", data.brightness_percent);
+        let _ = write!(s, "BL: {}% {}", data.brightness_percent, data.settings_status);
     }
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     let _ = y;
 
-    Text::new("Press Y for Logs", Point::new(col1, 226), header_style)
+    s.clear();
+    let _ = write!(s, "Reset: {}", data.reset_cause);
+    Text::new(&s, Point::new(col1, 198), value_style).draw(display).ok();
+    Text::new(data.vehicle_status, Point::new(col1, 212), highlight_style)
+        .draw(display)
+        .ok();
+    Text::new("*HAL return, not scanout; Y: Logs", Point::new(col1, 226), header_style)
         .draw(display)
         .ok();
 }

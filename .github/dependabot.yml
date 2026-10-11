@@ -11,6 +11,16 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "cargo"
+    directory: "/host"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    groups:
+      host-rust-dependencies:
+        patterns:
+          - "*"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

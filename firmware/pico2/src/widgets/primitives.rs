@@ -82,60 +82,66 @@ pub fn draw_mini_graph<D, F>(
     D: DrawTarget<Color = Rgb565>,
     F: Fn(f32) -> Rgb565,
 {
-    if count < 2 {
+    if count == 0 || buffer_size == 0 || buffer_size > buffer.len() || count > buffer_size || start_idx >= buffer_size {
         return;
     }
 
-    if w < 5 || h < 5 {
+    let data_range = data_max - data_min;
+    if w < 5
+        || h < 5
+        // Keep raster work bounded and line deltas within the display geometry.
+        || w > crate::config::SCREEN_WIDTH
+        || h > crate::config::SCREEN_HEIGHT
+        || !data_min.is_finite()
+        || !data_max.is_finite()
+        || !data_range.is_finite()
+        || data_range < 0.0
+    {
         return;
     }
 
+    let (Some(max_x), Some(max_y)) = (x.checked_add(w as i32 - 3), y.checked_add(h as i32 - 3)) else {
+        return;
+    };
     let graph_width = w as i32 - 4;
     let graph_height = h as i32 - 4;
     let graph_x = x + 2;
     let graph_y = y + 2;
-
-    let max_x = graph_x + graph_width - 1;
-    let max_y = graph_y + graph_height - 1;
-
-    let data_range = data_max - data_min;
-    let y_scale = if data_range > 0.1 {
-        (graph_height - 1) as f32 / data_range
-    } else {
-        0.0
-    };
-
-    let step = 2usize;
     let x_step = (graph_width - 1) as f32 / (count - 1).max(1) as f32;
+    let mut previous = None;
 
-    let mut prev_screen_x = 0i32;
-    let mut prev_screen_y = 0i32;
-    let mut first_point = true;
-
-    for i in (0..count).step_by(step) {
+    // Sixty history samples fit the graph. Drawing every sample preserves
+    // short spikes; invalid measurements break the line instead of bridging it.
+    for i in 0..count {
         let buffer_idx = (start_idx + i) % buffer_size;
         let value = buffer[buffer_idx];
+        if !value.is_finite() {
+            previous = None;
+            continue;
+        }
 
-        let screen_x = (graph_x + (i as f32 * x_step) as i32).min(max_x);
-        let screen_y = if y_scale > 0.0 {
-            (graph_y + graph_height - 1 - ((value - data_min) * y_scale) as i32).clamp(graph_y, max_y)
+        let screen_x = if count == 1 {
+            max_x
+        } else {
+            graph_x + ((i as f32 * x_step) as i32).clamp(0, graph_width - 1)
+        };
+        let screen_y = if data_range > 0.0 {
+            let fraction = (value.clamp(data_min, data_max) - data_min) / data_range;
+            max_y - ((fraction * (graph_height - 1) as f32) as i32).clamp(0, graph_height - 1)
         } else {
             graph_y + (graph_height - 1) / 2
         };
 
+        let point = Point::new(screen_x, screen_y);
         let line_color = color_fn(value);
         let line_style = PrimitiveStyle::with_stroke(line_color, 1);
 
-        if !first_point {
-            Line::new(Point::new(prev_screen_x, prev_screen_y), Point::new(screen_x, screen_y))
-                .into_styled(line_style)
-                .draw(display)
-                .ok();
+        if let Some(previous) = previous {
+            Line::new(previous, point).into_styled(line_style).draw(display).ok();
+        } else {
+            Pixel(point, line_color).draw(display).ok();
         }
-
-        prev_screen_x = screen_x;
-        prev_screen_y = screen_y;
-        first_point = false;
+        previous = Some(point);
     }
 }
 

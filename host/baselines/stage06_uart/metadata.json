@@ -1,0 +1,19 @@
+{
+  "prior_commit": "0e88efc",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- uart/ --save-baseline stage06_uart",
+  "median_ns": {
+    "uart_rx12_ring_copy": 8.306514637327709
+  },
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "ae528a1cea3d353c48b5add551512c7670a1347b9130c17455b0c711206c749b",
+    "host/Cargo.lock": "e7866ea81cb15d4af424aab329f87fdc62cad6ff2686fccd7c32be275e5872d6",
+    "firmware/vendor/embassy-rp/src/uart/buffered_io.rs": "59df101eb441253fca61181467ce074a8691e083c837af1a38da64ff7e42a549",
+    "firmware/vendor/embassy-rp/src/uart/buffered.rs": "7c45108670110627abf0129b2d0564e497ecfcff0aa41270c8d771054de9d3fe",
+    "firmware/vendor/embassy-rp/src/uart/mod.rs": "07589bb6b559e8556baf1f7c9c2f9b5fcdfd1be5b2591c8a7699c4a40733a684"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "base_commit": "01b49e06d0907e99f76e45bd136095865c2ad39c",
+  "note": "Same fixture after adding128 payload-start cap. Host variation prevents attributing small changes to cap.",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- damage --save-baseline stage05_bounded",
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "6a0c6c0afc1d54329f4b60cc0162205238cb64f1c4743367731cf4f46a1873e4",
+    "firmware/pico2/src/display/damage.rs": "2b1eef831a2403c76a7c477e93e12d1d63531211fc2869332736646ec2e68f68"
+  },
+  "results": [
+    {
+      "case": "stationary",
+      "median_ns": 2906.2687312687312
+    },
+    {
+      "case": "one_cell",
+      "median_ns": 2791.6182062178486
+    },
+    {
+      "case": "dense",
+      "median_ns": 281.47500986486864
+    }
+  ]
+}

@@ -1,2 +1,5 @@
 [toolchain]
-channel = "nightly"
+channel = "nightly-2026-10-11"
+components = ["clippy", "rustfmt", "llvm-tools-preview"]
+targets = ["thumbv8m.main-none-eabihf"]
+profile = "minimal"

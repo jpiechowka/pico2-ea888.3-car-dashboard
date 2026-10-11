@@ -29,14 +29,4 @@ impl Popup {
         };
         self.start_time().elapsed() >= duration
     }
-
-    #[inline]
-    pub const fn kind(&self) -> u8 {
-        match self {
-            Self::Reset(_) => 0,
-            Self::Fps(_) => 1,
-            Self::BoostUnit(_) => 2,
-            Self::Brightness(..) => 4,
-        }
-    }
 }
