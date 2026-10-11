@@ -1,0 +1,20 @@
+{
+  "prior_commit": "a23f958",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- scene/ --save-baseline stage05_retained",
+  "median_ns": {
+    "scene_full_dashboard": 108802.32843137255,
+    "scene_full_one_cell": 124451.61377708978,
+    "scene_retained_one_cell": 11403.513095483606,
+    "scene_retained_stationary": 1863.5112758240025
+  },
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "e957a8d5e510a62b08592e7385bbfd4628563685bf4d324b26f98fd265f87a65",
+    "firmware/pico2/src/dashboard.rs": "2455a40a04e8005c65d6ac409f862492826b8eff3b2d08b61240a79f6304be53",
+    "firmware/pico2/src/widgets/cell_text.rs": "69431b5400090748a5c6eeab715f5a410bd9c62ee808c29aad0ac0e95adc487d"
+  }
+}

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
-use dashboard_host_validation::dashboard::DashboardScene;
+use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
 use dashboard_host_validation::display::damage::DamagePlan;
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::renderer::St7789Renderer;
@@ -173,6 +173,53 @@ fn dashboard_scene(c: &mut Criterion) {
             black_box(&frame.0);
         });
     });
+    let mut cache = DashboardCache::new();
+    cache.draw(&mut St7789Renderer::new(&mut frame.0), 0, &scene);
+    c.bench_function("scene/retained_stationary", |b| {
+        b.iter(|| {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), 0, black_box(&scene));
+            black_box(&frame.0);
+        });
+    });
+    // The paired changing fixtures toggle only boost. Acquisition is outside
+    // the measured region, and both paths render exactly the same scenes.
+    model.ingest_batch(
+        [
+            1.7,
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+        ],
+        2000,
+    );
+    let alternate = model.snapshot();
+    for retained in [false, true] {
+        let label = if retained {
+            "scene/retained_one_cell"
+        } else {
+            "scene/full_one_cell"
+        };
+        let mut toggle = false;
+        c.bench_function(label, |b| {
+            b.iter(|| {
+                toggle = !toggle;
+                let scene = DashboardScene {
+                    measurements: if toggle { &snapshot } else { &alternate },
+                    ..scene
+                };
+                if retained {
+                    cache.draw(&mut St7789Renderer::new(&mut frame.0), 0, black_box(&scene));
+                } else {
+                    black_box(&scene).draw_full(&mut St7789Renderer::new(&mut frame.0));
+                }
+                black_box(&frame.0);
+            });
+        });
+    }
 }
 
 criterion_group! {

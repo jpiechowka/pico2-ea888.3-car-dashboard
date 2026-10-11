@@ -1,11 +1,8 @@
-use core::fmt::Write;
-
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
-use heapless::String;
 
 use super::{SensorDisplayData, label_color_for_bg, label_style_for_text, peak_highlight_for_text};
 use crate::thresholds::{
@@ -29,6 +26,8 @@ use crate::ui::{BLACK, BLUE, CENTERED, GREEN, LABEL_FONT, ORANGE, RED, VALUE_FON
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
 
 const TEMP_LARGE_VALUE_THRESHOLD: f32 = 999.5;
+
+pub fn temp_uses_medium_font(value: f32) -> bool { value >= TEMP_LARGE_VALUE_THRESHOLD }
 
 const TEMP_VALUE_Y_LARGE: i32 = -12;
 
@@ -199,11 +198,10 @@ where
         draw_trend_arrow(display, arrow_x, y as i32 + 10, rising, base_text);
     }
 
-    let mut value_str: String<16> = String::new();
-    let _ = write!(value_str, "{temp:.0}C");
+    let text = crate::widgets::cell_text::temperature(temp, max_temp, state.average);
     let value_color = if state.is_new_peak { peak_color } else { base_text };
 
-    let (value_font, value_y_offset) = if temp >= TEMP_LARGE_VALUE_THRESHOLD {
+    let (value_font, value_y_offset) = if temp_uses_medium_font(temp) {
         (VALUE_FONT_MEDIUM, TEMP_VALUE_Y_MEDIUM)
     } else {
         (VALUE_FONT, TEMP_VALUE_Y_LARGE)
@@ -211,7 +209,7 @@ where
 
     draw_value_with_outline(
         display,
-        &value_str,
+        &text[0],
         Point::new(value_x, center_y + value_y_offset),
         value_font,
         value_color,
@@ -260,18 +258,14 @@ where
     };
     let max_style = MonoTextStyle::new(LABEL_FONT, max_color);
 
-    if let Some(avg) = state.average {
-        let mut avg_str: String<16> = String::new();
-        let _ = write!(avg_str, "AVG {avg:.0}C");
-        Text::with_text_style(&avg_str, Point::new(center_x, (y + h) as i32 - 22), avg_style, CENTERED)
+    if state.average.is_some() {
+        Text::with_text_style(&text[1], Point::new(center_x, (y + h) as i32 - 22), avg_style, CENTERED)
             .draw(display)
             .ok();
     }
 
-    let mut max_str: String<16> = String::new();
-    let _ = write!(max_str, "MAX {max_temp:.0}C");
     let max_pos = Point::new(center_x, (y + h) as i32 - 6);
-    let max_text = Text::with_text_style(&max_str, max_pos, max_style, CENTERED);
+    let max_text = Text::with_text_style(&text[2], max_pos, max_style, CENTERED);
 
     if max_warning {
         let bb = max_text.bounding_box();

@@ -85,8 +85,39 @@ The shared `DashboardScene` now drives both the device and host reference
 renderer, consolidating five temperature-cell call paths. Its full redraw
 baseline is 83.101 us for the fixed eight-cell scene in
 `host/baselines/stage05_scene_full`, preserved before retained-cell work.
-Retained widget rasterization and full-scene overlay/page replay are the next
-slice. Physical acceptance still requires CS/SPI/TE traces, orientation and
+Each framebuffer now retains exact formatted text, colors, time-expiring peak
+and trend indicators, font/critical flags, canonical graph values and overlays.
+The cache uses the same text formatters as the widgets. Removing or replacing
+an opaque popup restores the full underlay; another page invalidates only the
+buffer it overwrites. Equal images still emit no SPI commands.
+
+Four retained-scene tests exercise 240 scripted scenes, alternating and repeated
+buffer selection, unit/FPS changes, every popup, history/reset, page overwrites,
+peak/trend expiry without a new snapshot and long-to-short signed values. Every
+retained frame and its damage-applied panel equals a fresh full redraw. Cell
+interiors are clipped and cleared: the regression test first demonstrated that
+a long negative boost string could overwrite the next cell.
+
+The same fixture after cell clipping and shared formatting has a full redraw
+median of 108.802 us, about 31% above the earlier 83.101 us. This correctness
+cost is retained explicitly. The current paired fixtures measure:
+
+| Current fixture | Full redraw | Retained redraw | Reduction in host CPU time |
+| --- | ---: | ---: | ---: |
+| Unchanged eight-cell scene | 108.802 us | 1.864 us | 98.3% |
+| Only boost changes each iteration | 124.452 us | 11.404 us | 90.8% |
+
+Raw 30-sample measurements, exact command and source hashes are preserved in
+`host/baselines/stage05_retained`. Acquisition, damage planning and transfer are
+outside these render timings. The paired paths use identical scene fixtures;
+only one buffer is used to isolate rendering cost. These are local host results
+with observed run-to-run variation, not throughput or FPS on RP2350.
+
+102 runtime tests and two compile-fail checks pass in both outline modes.
+Strict host/firmware Clippy passes. The stock release ELF reports 373440 bytes
+static RAM and 150848 bytes core-0 headroom, an increase of 5608 static bytes
+from the partial-only checkpoint. Headroom is linker capacity, not measured
+worst-case stack use. Physical acceptance still requires CS/SPI/TE traces, orientation and
 stride verification on the actual panel, p95/p99 update intervals, input
 latency, tearing observations and stock/overclock stability. No physical FPS
 or 60 Hz target achievement is claimed.

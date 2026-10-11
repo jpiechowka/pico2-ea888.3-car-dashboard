@@ -1,15 +1,27 @@
-use core::fmt::Write;
-
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
-use heapless::String;
 
 use super::{SensorDisplayData, label_color_for_bg, label_style_for_text};
-use crate::thresholds::{AFR_LEAN_CRITICAL, AFR_OPTIMAL_MAX, AFR_RICH, AFR_RICH_AF, AFR_STOICH};
+use crate::thresholds::{AFR_LEAN_CRITICAL, AFR_OPTIMAL_MAX, AFR_RICH, AFR_RICH_AF};
 use crate::ui::{BLACK, BLUE, CENTERED, DARK_TEAL, GREEN, LABEL_FONT, ORANGE, RED, VALUE_FONT};
 use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_value_with_outline};
+
+pub fn is_critical_afr(value: f32) -> bool { value > AFR_LEAN_CRITICAL }
+pub fn afr_color_status(value: f32) -> (Rgb565, &'static str) {
+    if value < AFR_RICH_AF {
+        (BLUE, "RICH AF")
+    } else if value < AFR_RICH {
+        (DARK_TEAL, "RICH")
+    } else if value < AFR_OPTIMAL_MAX {
+        (GREEN, "OPTIMAL")
+    } else if value <= AFR_LEAN_CRITICAL {
+        (ORANGE, "LEAN")
+    } else {
+        (RED, "LEAN AF")
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_afr_cell<D>(
@@ -27,18 +39,9 @@ pub fn draw_afr_cell<D>(
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let is_critical = afr > AFR_LEAN_CRITICAL;
-    let (mut bg_color, status) = if afr < AFR_RICH_AF {
-        (BLUE, "RICH AF")
-    } else if afr < AFR_RICH {
-        (DARK_TEAL, "RICH")
-    } else if afr < AFR_OPTIMAL_MAX {
-        (GREEN, "OPTIMAL")
-    } else if afr <= AFR_LEAN_CRITICAL {
-        (ORANGE, "LEAN")
-    } else {
-        (RED, "LEAN AF")
-    };
+    let is_critical = is_critical_afr(afr);
+    let (mut bg_color, status) = afr_color_status(afr);
+    let text = crate::widgets::cell_text::afr(afr);
 
     if let Some(override_color) = bg_override {
         bg_color = override_color;
@@ -61,23 +64,17 @@ where
         .draw(display)
         .ok();
 
-    let mut value_str: String<16> = String::new();
-    let _ = write!(value_str, "{afr:.1}");
-
     draw_value_with_outline(
         display,
-        &value_str,
+        &text[0],
         Point::new(value_x, center_y - 14),
         VALUE_FONT,
         text_color,
         CENTERED,
     );
 
-    let lambda = afr / AFR_STOICH;
-    let mut lambda_str: String<16> = String::new();
-    let _ = write!(lambda_str, "L {lambda:.2}");
     let lambda_style = MonoTextStyle::new(LABEL_FONT, text_color);
-    Text::with_text_style(&lambda_str, Point::new(center_x, center_y + 4), lambda_style, CENTERED)
+    Text::with_text_style(&text[1], Point::new(center_x, center_y + 4), lambda_style, CENTERED)
         .draw(display)
         .ok();
 

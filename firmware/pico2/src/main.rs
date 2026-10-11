@@ -29,7 +29,7 @@ mod thresholds {
 use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
-use dashboard_pico2::dashboard::{DashboardScene, Overlay};
+use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
@@ -52,7 +52,7 @@ use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_fre
 use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
-use crate::render::{FpsMode, RenderState, cell_idx};
+use crate::render::{FpsMode, cell_idx};
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, run_boot_sequence};
 use crate::state::{ButtonState, Page, Popup, process_buttons};
 use crate::tasks::{
@@ -69,19 +69,12 @@ use crate::tasks::{
     wait_completed,
     wait_started,
 };
-use crate::thresholds::{
-    AFR_LEAN_CRITICAL,
-    AFR_OPTIMAL_MAX,
-    AFR_RICH,
-    AFR_RICH_AF,
-    BATT_CRITICAL,
-    BATT_WARNING,
-    EGT_DANGER_MANIFOLD,
-};
-use crate::ui::{BLACK, BLUE, ColorTransition, DARK_TEAL, GREEN, ORANGE, RED};
+use crate::thresholds::EGT_DANGER_MANIFOLD;
+use crate::ui::{BLACK, ColorTransition};
 use crate::widgets::{
+    afr_color_status,
+    battery_color,
     draw_brightness_popup,
-    draw_dividers,
     temp_color_egt,
     temp_color_iat,
     temp_color_oil_dsg,
@@ -335,14 +328,12 @@ async fn main(spawner: Spawner) {
     log_info!("Buttons initialized");
 
     let mut current_page = Page::Dashboard;
-    let mut clear_frames_remaining: u8 = 2;
     let mut fps_mode = FpsMode::Off;
     let mut show_boost_psi = false;
     let mut active_popup: Option<Popup> = None;
-    let mut prev_egt_danger_active = false;
     let mut reset_requested = false;
 
-    let mut render_state = RenderState::new();
+    let mut dashboard_cache = DashboardCache::new();
     let mut current_fps = 0.0f32;
     let mut average_fps = 0.0f32;
     let mut fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
@@ -395,12 +386,10 @@ async fn main(spawner: Spawner) {
 
         if let Some(new_mode) = input.new_fps_mode {
             fps_mode = new_mode;
-            clear_frames_remaining = 2;
             log_info!("FPS: {}", fps_mode.label());
         }
         if let Some(new_page) = input.new_page {
             current_page = new_page;
-            clear_frames_remaining = 2;
             // If backlight-off was deferred and popup is being cleared, apply PWM now
             if backlight_off_pending {
                 pwm_config.compare_a = 0;
@@ -479,7 +468,6 @@ async fn main(spawner: Spawner) {
                         pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
                         active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
-                        clear_frames_remaining = 2;
                     }
                 }
                 // Button toggles backlight on/off
@@ -498,7 +486,6 @@ async fn main(spawner: Spawner) {
                         backlight_pwm.set_config(&pwm_config);
                     }
                     active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
-                    clear_frames_remaining = 2;
                 }
             }
         }
@@ -520,7 +507,6 @@ async fn main(spawner: Spawner) {
                 backlight_off_pending = false;
             }
             active_popup = None;
-            clear_frames_remaining = 2;
         }
 
         if reset_requested {
@@ -531,7 +517,6 @@ async fn main(spawner: Spawner) {
             && measurements.accept(snapshot)
             && reset_requests.acknowledge(measurements.reset_generation)
         {
-            clear_frames_remaining = 2;
             log_info!("Stats reset acknowledged");
             if current_page == Page::Dashboard {
                 if backlight_off_pending {
@@ -542,12 +527,6 @@ async fn main(spawner: Spawner) {
                 active_popup = Some(Popup::Reset(Instant::now()));
             }
         }
-        let popup_kind = active_popup
-            .as_ref()
-            .map(Popup::kind)
-            .or(if prev_egt_danger_active { Some(3) } else { None });
-        render_state.update_popup(popup_kind);
-
         let [
             _,
             oil_state,
@@ -579,27 +558,8 @@ async fn main(spawner: Spawner) {
 
         let egt_danger_active = egt_temp >= EGT_DANGER_MANIFOLD;
 
-        let afr_target = if afr < AFR_RICH_AF {
-            BLUE
-        } else if afr < AFR_RICH {
-            DARK_TEAL
-        } else if afr < AFR_OPTIMAL_MAX {
-            GREEN
-        } else if afr <= AFR_LEAN_CRITICAL {
-            ORANGE
-        } else {
-            RED
-        };
-        color_transitions.set_target(cell_idx::AFR, afr_target);
-
-        let batt_target = if batt_voltage < BATT_CRITICAL {
-            RED
-        } else if batt_voltage < BATT_WARNING {
-            ORANGE
-        } else {
-            BLACK
-        };
-        color_transitions.set_target(cell_idx::BATTERY, batt_target);
+        color_transitions.set_target(cell_idx::AFR, afr_color_status(afr).0);
+        color_transitions.set_target(cell_idx::BATTERY, battery_color(batt_voltage));
 
         let (water_target, _) = temp_color_water(water_temp);
         let (oil_target, _) = temp_color_oil_dsg(oil_temp);
@@ -623,19 +583,6 @@ async fn main(spawner: Spawner) {
         let token = lifecycle.begin(render_frame.id()).expect("render buffer is not free");
         panel_history.begin_render(token).expect("invalid render generation");
         let mut display = St7789Renderer::new(render_frame.buffer());
-
-        if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
-            display.clear(BLACK).ok();
-            render_state.mark_display_cleared();
-
-            if render_state.popup_just_closed() && clear_frames_remaining == 0 {
-                clear_frames_remaining = 1;
-            } else {
-                clear_frames_remaining = clear_frames_remaining.saturating_sub(1);
-            }
-        }
-
-        render_work.checkpoint().await;
 
         match current_page {
             Page::Dashboard => {
@@ -665,21 +612,22 @@ async fn main(spawner: Spawner) {
                     backgrounds: core::array::from_fn(|cell| color_transitions.get_current(cell)),
                     overlay,
                 };
-                if render_state.check_header_dirty(render_idx, fps_mode, current_fps, average_fps) {
-                    scene.draw_header(&mut display);
-                }
+                let redraw = dashboard_cache.prepare(render_idx, &scene);
+                redraw.begin(&mut display, &scene);
+                render_work.checkpoint().await;
                 for cell in 0..8 {
-                    scene.draw_cell(&mut display, cell);
-                    render_work.checkpoint().await;
+                    if redraw.cells & (1 << cell) != 0 {
+                        scene.draw_cell(&mut display, cell);
+                        render_work.checkpoint().await;
+                    }
                 }
-                if render_state.need_dividers() {
-                    draw_dividers(&mut display);
-                    render_state.mark_dividers_drawn();
-                }
-                scene.draw_overlay(&mut display);
+                redraw.finish(&mut display, &scene);
             }
 
             Page::Debug => {
+                dashboard_cache.invalidate(render_idx);
+                display.clear(BLACK).ok();
+                render_work.checkpoint().await;
                 let mem_stats = crate::profiling::MemoryStats::collect();
 
                 let requested_spi_hz = display_spi_config().frequency;
@@ -723,6 +671,9 @@ async fn main(spawner: Spawner) {
             }
 
             Page::Logs => {
+                dashboard_cache.invalidate(render_idx);
+                display.clear(BLACK).ok();
+                render_work.checkpoint().await;
                 draw_logs_page(&mut display, log_scroll_offset, &mut render_work).await;
             }
         }
@@ -829,9 +780,6 @@ async fn main(spawner: Spawner) {
             last_profile_log = Instant::now();
         }
 
-        prev_egt_danger_active = egt_danger_active;
-
-        render_state.end_frame();
         crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
         if (elapsed_ms / 1000).is_multiple_of(2) {

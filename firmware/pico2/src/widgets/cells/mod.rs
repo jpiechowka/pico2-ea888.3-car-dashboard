@@ -3,8 +3,8 @@ mod battery;
 mod boost;
 mod temp;
 
-pub use afr::draw_afr_cell;
-pub use battery::draw_batt_cell;
+pub use afr::{afr_color_status, draw_afr_cell, is_critical_afr};
+pub use battery::{battery_color, draw_batt_cell, is_critical_battery};
 pub use boost::draw_boost_cell;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -20,6 +20,7 @@ pub use temp::{
     temp_color_iat,
     temp_color_oil_dsg,
     temp_color_water,
+    temp_uses_medium_font,
 };
 
 use crate::ui::{
