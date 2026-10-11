@@ -46,6 +46,10 @@ the implemented stages and review corrections to local test/build evidence and
 the remaining hardware gates. The [fixed workload matrix](docs/performance/benchmark-coverage.md)
 states exactly what each group of host benchmarks measures.
 
+For hands-on testing, follow the [Pico 2 and DNUC validation runbook](docs/validation/pico2-dnuc-runbook.md)
+for isolated bench flashing, controls, RTT/timing capture, Longan qualification
+and parked vehicle evidence collection.
+
 For USB programming, first follow the power-domain isolation in the
 [wiring and inspection record](hardware/wiring-diagram.txt): direct VSYS wiring
 can backfeed the adapter/regulator from USB. With the assembly isolated and
