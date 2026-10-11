@@ -1,8 +1,8 @@
 # Progress supervision and RP2350 recovery
 
 The watchdog starts immediately after HAL initialization and before core 1 is
-launched. The initial 15-second limit covers startup, including the current
-roughly 13-second cosmetic boot sequence. Once that finishes, a core-0 task
+launched. The initial 15-second limit bounds startup failure; there is no
+cosmetic boot delay. After display initialization, a core-0 task
 checks progress every 50 ms and feeds a two-second hardware deadline only while:
 
 - acquisition task progress has changed within 500 ms;

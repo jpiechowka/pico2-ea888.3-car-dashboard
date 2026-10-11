@@ -23,7 +23,7 @@ pub use cells::{
     temp_color_water,
     temp_uses_medium_font,
 };
-pub use header::{draw_dividers, draw_header, draw_mode_header};
+pub use header::{draw_dividers, draw_header, draw_mode_header, draw_status_header};
 pub use popups::{
     draw_boost_unit_popup,
     draw_brightness_popup,

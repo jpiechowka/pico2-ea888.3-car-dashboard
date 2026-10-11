@@ -44,4 +44,14 @@ impl RecoveryWatchdog {
     }
 
     pub fn feed(&mut self) { self.watchdog.feed(Duration::from_secs(2)); }
+
+    /// Hardware only distinguishes watchdog force/timer from other causes.
+    /// Do not label every non-watchdog reset as a power-on reset.
+    pub fn reset_label(&self) -> &'static str {
+        match self.watchdog.reset_reason() {
+            Some(embassy_rp::watchdog::ResetReason::Forced) => "WD FORCED",
+            Some(embassy_rp::watchdog::ResetReason::TimedOut) => "WD TIMEOUT",
+            None => "OTHER",
+        }
+    }
 }

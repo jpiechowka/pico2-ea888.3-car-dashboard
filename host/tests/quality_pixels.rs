@@ -12,6 +12,7 @@ fn scene(
 ) -> DashboardScene<'_> {
     DashboardScene {
         measurements: snapshot,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::derive(false, None, snapshot, now_ms),
         now_ms,
         blink_on: true,
         boost_psi: false,

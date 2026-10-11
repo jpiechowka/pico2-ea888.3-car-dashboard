@@ -53,7 +53,7 @@ use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actu
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::render::{FpsMode, cell_idx};
-use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, run_boot_sequence};
+use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page};
 use crate::state::{ButtonState, Page, Popup, process_buttons};
 use crate::tasks::{
     BUFFER_SWAPS,
@@ -259,6 +259,8 @@ async fn main(spawner: Spawner) {
     };
 
     let watchdog = crate::drivers::watchdog::RecoveryWatchdog::start(p.WATCHDOG);
+    let reset_cause = watchdog.reset_label();
+    log_info!("Previous reset: {}", reset_cause);
     let cpu_freq_hz = embassy_rp::clocks::clk_sys_freq();
 
     let animation_start = Instant::now();
@@ -323,9 +325,6 @@ async fn main(spawner: Spawner) {
     let mut spare_frame = Some(spare_frame);
     let mut lifecycle = FrameLifecycle::new();
     let mut panel_history = PanelHistory::new();
-    run_boot_sequence(&mut flusher, render_frame.buffer())
-        .await
-        .expect("boot display failed");
     spawner.spawn(crate::tasks::recovery::recovery_task(watchdog).unwrap());
 
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
@@ -394,6 +393,12 @@ async fn main(spawner: Spawner) {
     let animation_start = Instant::now();
 
     let mut measurement_receiver = DASHBOARD_VALUES.dyn_receiver().unwrap();
+    #[cfg(feature = "longan-rx12")]
+    let mut link_receiver = tasks::acquisition::VEHICLE_LINK.dyn_receiver().unwrap();
+    #[cfg(feature = "longan-rx12")]
+    let mut vehicle_link = None;
+    #[cfg(not(feature = "longan-rx12"))]
+    let vehicle_link = None;
 
     loop {
         let frame_start = Instant::now();
@@ -576,6 +581,16 @@ async fn main(spawner: Spawner) {
         let batt_voltage = batt_state.value().unwrap_or(0.0);
 
         let now_ms = Instant::now().as_millis();
+        #[cfg(feature = "longan-rx12")]
+        if let Some(link) = link_receiver.try_changed() {
+            vehicle_link = Some(link);
+        }
+        let vehicle_status = dashboard_pico2::vehicle_status::VehicleStatus::derive(
+            cfg!(feature = "longan-rx12"),
+            vehicle_link,
+            &measurements,
+            now_ms,
+        );
 
         let frame_count = COMPLETED_FRAMES.load(Ordering::Relaxed);
         if let Some(rate) = fps_meter
@@ -637,6 +652,7 @@ async fn main(spawner: Spawner) {
                     });
                 let scene = DashboardScene {
                     measurements: &measurements,
+                    status: vehicle_status,
                     now_ms,
                     blink_on,
                     boost_psi: show_boost_psi,
@@ -671,6 +687,8 @@ async fn main(spawner: Spawner) {
                     &mut display,
                     &ProfilingData {
                         current_fps,
+                        reset_cause,
+                        vehicle_status: vehicle_status.label(),
                         average_fps,
                         frame_count,
                         trace: last_trace,

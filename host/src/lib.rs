@@ -51,6 +51,8 @@ pub mod sensor_state;
 pub mod stack_samples;
 #[path = "../../firmware/pico2/src/ui/styles.rs"]
 pub mod styles;
+#[path = "../../firmware/pico2/src/vehicle_status.rs"]
+pub mod vehicle_status;
 #[path = "../../firmware/pico2/src/widgets/mod.rs"]
 pub mod widgets;
 pub use widgets::primitives;

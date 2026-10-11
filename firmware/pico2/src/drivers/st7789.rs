@@ -1,7 +1,5 @@
-use dashboard_pico2::display::FrameBuffer;
-use dashboard_pico2::display::damage::DamagePlan;
 use dashboard_pico2::display::pipeline::after_first_poll;
-use dashboard_pico2::display::transfer::{PanelBus, flush_plan};
+use dashboard_pico2::display::transfer::PanelBus;
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
 use embassy_rp::spi::{Async, Error, Spi};
@@ -64,17 +62,6 @@ impl<'d> St7789Flusher<'d> {
         self.command(0x35, &[0x00]).await?;
 
         Ok(())
-    }
-
-    /// The callback follows the first poll of the payload write, which arms DMA
-    /// in the locked RP HAL. Completion includes its SPI BSY wait before CS rises.
-    /// Do not wrap this in a cancelling timeout and return the buffer to rendering.
-    pub async fn flush_buffer(
-        &mut self,
-        buffer: &FrameBuffer,
-        on_started: impl FnOnce(),
-    ) -> Result<(), Error> {
-        flush_plan(self, buffer, &DamagePlan::full(), on_started).await
     }
 }
 

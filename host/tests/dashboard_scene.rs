@@ -12,6 +12,7 @@ fn scene_cell_order_and_overlay_removal_match_a_fresh_frame() {
     let mut scene = DashboardScene {
         measurements: &snapshot,
         now_ms: 0,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
         blink_on: true,
         boost_psi: false,
         fps_mode: FpsMode::Off,

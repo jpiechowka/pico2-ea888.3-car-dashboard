@@ -184,6 +184,7 @@ fn dashboard_scene(c: &mut Criterion) {
     let scene = DashboardScene {
         measurements: &snapshot,
         now_ms: 2000,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
         blink_on: true,
         boost_psi: false,
         fps_mode: FpsMode::Off,

@@ -113,7 +113,11 @@ On startup, the firmware displays two boot screens:
 1. **Loading Screen** (~6 seconds) - Console-style initialization messages displayed sequentially
 2. **Welcome Screen** (7 seconds) - AEZAKMI logo with animated blinking stars (4s filling + 3s blinking)
 
-After the boot sequence (~13 seconds total), the main dashboard is displayed.
+The dashboard starts after display and input setup without a cosmetic boot delay.
+The header reports actual transport/sample state. Stock firmware shows unavailable
+vehicle channels; `demo` is explicit, and `longan-rx12` enables unqualified raw
+adapter bring-up. See [startup status](docs/vehicle/startup-status.md) and
+[transport qualification](docs/vehicle/diagnostic-transport.md).
 
 ### Controls
 

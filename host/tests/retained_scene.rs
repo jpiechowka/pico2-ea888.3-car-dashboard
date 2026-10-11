@@ -13,6 +13,7 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     let scene = DashboardScene {
         measurements: &snapshot,
         now_ms: 0,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
         blink_on: true,
         boost_psi: false,
         fps_mode: FpsMode::Off,
@@ -56,6 +57,7 @@ fn retained_peak_and_trend_expire_without_a_new_snapshot() {
     let mut scene = DashboardScene {
         measurements: &snapshot,
         now_ms: 5800,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
         blink_on: true,
         boost_psi: false,
         fps_mode: FpsMode::Off,
@@ -87,6 +89,7 @@ fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
     let mut scene = DashboardScene {
         measurements: &first,
         now_ms: 0,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
         blink_on: true,
         boost_psi: false,
         fps_mode: FpsMode::Off,
@@ -167,6 +170,7 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
         let scene = DashboardScene {
             measurements: &snapshot,
             now_ms: now,
+            status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
             blink_on: step % 2 == 0,
             boost_psi: step % 7 < 3,
             fps_mode: if step % 11 == 0 {

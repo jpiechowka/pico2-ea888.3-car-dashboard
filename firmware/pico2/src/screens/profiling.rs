@@ -10,6 +10,8 @@ use crate::ui::{BLACK, GREEN, LABEL_FONT, WHITE, YELLOW};
 
 #[derive(Clone, Copy, Default)]
 pub struct ProfilingData {
+    pub reset_cause: &'static str,
+    pub vehicle_status: &'static str,
     pub current_fps: f32,
     pub average_fps: f32,
     pub frame_count: u32,
@@ -279,6 +281,12 @@ pub async fn draw_profiling_page<D>(
     Text::new(&s, Point::new(col2, y), value_style).draw(display).ok();
     let _ = y;
 
+    s.clear();
+    let _ = write!(s, "Reset: {}", data.reset_cause);
+    Text::new(&s, Point::new(col1, 198), value_style).draw(display).ok();
+    Text::new(data.vehicle_status, Point::new(col1, 212), highlight_style)
+        .draw(display)
+        .ok();
     Text::new("*HAL return, not scanout; Y: Logs", Point::new(col1, 226), header_style)
         .draw(display)
         .ok();

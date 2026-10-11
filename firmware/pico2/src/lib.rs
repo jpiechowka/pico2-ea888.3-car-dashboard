@@ -14,6 +14,7 @@ pub mod input_model;
 
 pub mod render;
 pub mod samples;
+pub mod vehicle_status;
 pub mod widgets;
 
 pub use config::sensors as thresholds;

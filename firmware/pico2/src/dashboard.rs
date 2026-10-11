@@ -9,6 +9,7 @@ use crate::samples::{DataMode, Quality, SensorId, Source};
 use crate::sensor_state::SensorSnapshot;
 use crate::thresholds::BOOST_EASTER_EGG_BAR;
 use crate::ui::BLACK;
+use crate::vehicle_status::VehicleStatus;
 use crate::widgets::cell_text::{self, CellText};
 use crate::widgets::*;
 
@@ -64,6 +65,7 @@ pub enum Overlay {
 
 pub struct DashboardScene<'a> {
     pub measurements: &'a DashboardSnapshot,
+    pub status: VehicleStatus,
     pub now_ms: u64,
     pub blink_on: bool,
     pub boost_psi: bool,
@@ -87,9 +89,10 @@ impl DashboardScene<'_> {
         &self,
         display: &mut D,
     ) {
-        draw_mode_header(
+        draw_status_header(
             display,
             self.measurements.mode,
+            self.status,
             self.fps_mode,
             self.fps_instant,
             self.fps_average,
@@ -392,7 +395,7 @@ impl DashboardScene<'_> {
 }
 
 struct CachedFrame {
-    header: Option<(DataMode, FpsText)>,
+    header: Option<(DataMode, VehicleStatus, FpsText)>,
     cells: [Option<CellKey>; 8],
     overlay: Option<Overlay>,
 }
@@ -441,6 +444,7 @@ impl DashboardCache {
         let clear = frame.header.is_none() || (frame.overlay.is_some() && frame.overlay != scene.overlay);
         let header = (
             scene.measurements.mode,
+            scene.status,
             format_fps(scene.fps_mode, scene.fps_instant, scene.fps_average),
         );
         let header_dirty = clear || frame.header.as_ref() != Some(&header);
