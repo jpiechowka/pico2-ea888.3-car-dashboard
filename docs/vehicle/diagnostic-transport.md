@@ -215,3 +215,42 @@ EEPROM. Those must be provisioned and physically verified separately; repeated
 recovery must not wear EEPROM or assume a successful AT response proves hardware
 filter configuration. Default baud is 9600, while the planned explicit deployment
 profile uses preprovisioned 115200. No automatic baud scan is implied.
+
+## Shared vehicle service
+
+`Vehicle<Port>` owns bootstrap, RX12 phase, the write pump, transaction scheduling
+and acquisition history. One pass reads at most 32 bytes and performs at most
+four TX phase transitions. The real hardware wrapper must provide bounded,
+cancel-safe buffered operations. Software flush and observed UART BUSY clear
+precede transaction acknowledgement; early replies remain queued until then.
+
+Default `Profile::UNQUALIFIED` allows only the handshake and a 16-record raw
+trace. It never polls CAN or publishes vehicle values. An explicitly selected
+`PaddedStandardDataDlc8` contract requires external qualification of the missing
+DLC/flags and selected responder filters. The type cannot prove those facts.
+Unexpected responders under that contract invalidate the transport.
+
+The review reproduced a causal bug: the final 21-byte banner plus an old RX12
+reply straddled the read budget, so its last byte could complete under a new
+request. Admission now requires an observed empty host read and a complete
+record boundary. Every partial-record split is covered by replay tests. Active
+transaction deadlines advance even with receive backlog. Incomplete records
+have a fixed, inclusive 100 ms first-byte budget; expiry invalidates the epoch
+and requires a new handshake, without shifting byte phase. This is a host policy,
+not an adapter timing guarantee. Unobserved adapter/FIFO data and identical late
+ECU replies remain indistinguishable without wire transaction IDs/timestamps.
+
+RX loss invalidates parser/session before bounded discard. Recovery drains any
+queued TX prefix and waits 250..30000 ms between failed attempts, with no EEPROM
+writes. A stalled TX, invalid IO count, regressed clock or exhausted identity
+quarantines the owner until reset. ECU silence merely times out a query; it does
+not restart the adapter. Watchdog progress must track service execution rather
+than ECU activity. Raw trace overwrites are counted separately from byte loss.
+
+Fourteen service replay tests and one terminal-error precedence unit test cover
+these policies. The total suite has 179 runtime tests and two compile-fail checks
+in both outline modes; strict lints and stock release/ELF checks pass. The new
+30-sample `host/baselines/stage06_service` fixture measures two service passes,
+a synthetic coolant transaction and a snapshot after discovery. Its median is
+about 569 ns, with raw samples and source hashes retained. It excludes UART
+wire/IRQ time and is not a comparison to the smaller session-only fixture.

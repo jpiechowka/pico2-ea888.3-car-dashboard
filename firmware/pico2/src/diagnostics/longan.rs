@@ -47,6 +47,10 @@ impl Rx12 {
 
     pub const fn epoch(&self) -> u64 { self.epoch }
 
+    /// Whether all bytes already consumed belong to complete qualified records.
+    /// This says nothing about bytes still queued in the port or adapter.
+    pub const fn at_boundary(&self) -> bool { self.synchronized && self.len == 0 }
+
     /// Caller must have consumed the complete, qualified ENTER DATA MODE
     /// transition. Silence, plausible identifiers and fixed byte counts are not
     /// evidence of this boundary. Retain following bytes from the same RX chunk.

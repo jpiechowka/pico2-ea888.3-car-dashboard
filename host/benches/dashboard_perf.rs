@@ -354,6 +354,37 @@ fn vehicle_session(c: &mut Criterion) {
     });
 }
 
+mod vehicle_port;
+
+fn vehicle_service(c: &mut Criterion) {
+    use std::task::{Context, Waker};
+
+    use dashboard_host_validation::diagnostics::service::{Profile, ReceiveContract, Vehicle};
+    let mut vehicle = Vehicle::new(
+        vehicle_port::ScriptedPort::new(),
+        Profile {
+            responder: 0x7E8,
+            receive: ReceiveContract::PaddedStandardDataDlc8,
+        },
+        0,
+    )
+    .unwrap();
+    let mut cx = Context::from_waker(Waker::noop());
+    for now in [0, 50, 51, 52, 53, 54, 55, 56] {
+        vehicle.step(&mut cx, now);
+    }
+    assert_eq!(vehicle.link().diagnostics.completed, 1);
+    let mut now = 2_000;
+    c.bench_function("vehicle/coolant_io_session_snapshot", |b| {
+        b.iter(|| {
+            vehicle.step(&mut cx, black_box(now));
+            vehicle.step(&mut cx, black_box(now + 1));
+            black_box(vehicle.snapshot());
+            now += 2_000;
+        });
+    });
+}
+
 fn uart_ring(c: &mut Criterion) {
     use core::sync::atomic::AtomicU8;
     use core::task::Poll;
@@ -399,6 +430,6 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, uart_ring
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring
 }
 criterion_main!(dashboard_perf);

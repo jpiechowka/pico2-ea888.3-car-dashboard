@@ -1,0 +1,30 @@
+{
+  "prior_commit": "ea6aa49",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- vehicle/ --save-baseline stage06_service",
+  "median_ns": {
+    "vehicle_coolant_io_session_snapshot": 568.8916197438925
+  },
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "110aa28ad7d372c91db4d59c5ca61d9cecd39ebcc55261880fef86aa193d19f9",
+    "host/benches/vehicle_port/mod.rs": "aa70b6c40ac20f0c157398872f45fe1e999eed2a7b0160fa5c89c1fe0f81ee94",
+    "host/Cargo.lock": "e7866ea81cb15d4af424aab329f87fdc62cad6ff2686fccd7c32be275e5872d6",
+    "firmware/pico2/src/acquisition.rs": "be6241ac3294978ccb21915ecd130fd9c44f77f235f5288af4d5ce2e67b237ef",
+    "firmware/pico2/src/samples.rs": "e19216faa321c70492b54cfced34e8748714ebcf18b2f90fbecd09454c009011",
+    "firmware/pico2/src/state/sensor_state.rs": "d2fa80a0d2c2abfcb51e0588cc8962a7b699d9aa9e3abab89912e9140e2d74e1",
+    "firmware/pico2/src/diagnostics/bootstrap.rs": "9acb2f4a54a782451b8d0382b56fc3c0776e0ede9978406eaaa251160727655c",
+    "firmware/pico2/src/diagnostics/client.rs": "eefff46b807f9899f23f6c844ce1d3e31632e81ad7a6bab24ecf4cf4e5f73ed0",
+    "firmware/pico2/src/diagnostics/isotp.rs": "461a7c84f5bd6276501f4c822f0148b5e717b1c8abaa81b95334fb029917330f",
+    "firmware/pico2/src/diagnostics/longan.rs": "38a112d76d27cd8b900670acbdaff63e933fbe72561657c6b01b56f7385d403f",
+    "firmware/pico2/src/diagnostics/mod.rs": "b87afd209ebe5a2a723df39f5cafed34a3ac6a308acd7a6c668921d90ccc91dc",
+    "firmware/pico2/src/diagnostics/obd.rs": "7aa9e3fbf9872cb41f046a5e7828636b6b7dcda63fb36b20405adcb06a0de472",
+    "firmware/pico2/src/diagnostics/request.rs": "c21b2f5ba5ce80320b8d8dc642fcbf532b8f1408e2b2f476d953820f0926ccd6",
+    "firmware/pico2/src/diagnostics/serial_tx.rs": "7bff55d25df941312a0db1539b52ae663549b23401abc04129fc2a323d87bd94",
+    "firmware/pico2/src/diagnostics/service.rs": "ca5da9d578935a3925b6fd8c89319fa0e942a2471aea9c4335cfc5f08a75b4ec",
+    "firmware/pico2/src/diagnostics/session.rs": "59fdedc0b8058d8c925b049580f89c6f6cf81c25876e8813b31832723852b0ca"
+  }
+}

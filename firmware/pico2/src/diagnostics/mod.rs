@@ -6,6 +6,7 @@ pub mod longan;
 pub mod obd;
 pub mod request;
 pub mod serial_tx;
+pub mod service;
 pub mod session;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

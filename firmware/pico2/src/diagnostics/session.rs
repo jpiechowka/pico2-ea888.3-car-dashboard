@@ -70,6 +70,8 @@ impl Session {
 
     pub const fn counters(&self) -> Counters { self.counters }
 
+    pub const fn requires_new_epoch(&self) -> bool { self.client.requires_new_epoch() }
+
     pub fn reset_statistics(
         &mut self,
         generation: u64,
@@ -162,10 +164,12 @@ impl Session {
         }
     }
 
-    pub fn poll(
+    /// Advance active transaction deadlines even when receive backlog prevents
+    /// admitting a new request. This method never schedules a request.
+    pub fn tick(
         &mut self,
         now: u64,
-    ) -> Result<Option<TxAction>, SessionError> {
+    ) -> Result<(), SessionError> {
         self.clock(now)?;
         let result = self.client.tick(now);
         let event = self.client_result(result, now)?;
@@ -173,6 +177,14 @@ impl Session {
         if self.client.requires_new_epoch() {
             return Err(SessionError::Client(ClientError::WireFault));
         }
+        Ok(())
+    }
+
+    pub fn poll(
+        &mut self,
+        now: u64,
+    ) -> Result<Option<TxAction>, SessionError> {
+        self.tick(now)?;
         if self.client.active() || now < self.next_query {
             return Ok(None);
         }
