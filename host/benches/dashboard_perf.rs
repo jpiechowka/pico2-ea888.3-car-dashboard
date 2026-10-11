@@ -8,6 +8,7 @@ use dashboard_host_validation::diagnostics::client::{Client, Event};
 use dashboard_host_validation::diagnostics::isotp::{IsoTpRx, RxEvent};
 use dashboard_host_validation::diagnostics::longan::Rx12;
 use dashboard_host_validation::diagnostics::request::{Reply, Request};
+use dashboard_host_validation::diagnostics::session::Session;
 use dashboard_host_validation::diagnostics::{CanFrame, obd};
 use dashboard_host_validation::display::damage::DamagePlan;
 use dashboard_host_validation::render::FpsMode;
@@ -329,12 +330,32 @@ fn diagnostic_client(c: &mut Criterion) {
     });
 }
 
+fn vehicle_session(c: &mut Criterion) {
+    let mut session = Session::new(0x7E8, 1).unwrap();
+    let tx = session.poll(0).unwrap().unwrap();
+    session.tx_completed(tx.token, 1).unwrap();
+    session
+        .receive(&CanFrame::new(0x7E8, &[6, 0x41, 0, 8, 0, 0, 0, 0]).unwrap(), 1, 2)
+        .unwrap();
+    let coolant = CanFrame::new(0x7E8, &[3, 0x41, 5, 135, 0, 0, 0, 0]).unwrap();
+    let mut now = 2_000;
+    c.bench_function("session/coolant_transaction_and_snapshot", |b| {
+        b.iter(|| {
+            let tx = session.poll(black_box(now)).unwrap().unwrap();
+            black_box(session.tx_completed(tx.token, now + 1).unwrap());
+            black_box(session.receive(black_box(&coolant), 1, now + 2).unwrap());
+            black_box(session.snapshot());
+            now += 2_000;
+        });
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session
 }
 criterion_main!(dashboard_perf);

@@ -141,3 +141,43 @@ source hashes and command: single-frame transaction plus OBD decode approximatel
 72 ns, and 128-byte transaction with all FC acknowledgements approximately
 630 ns. These measure more work than the lower-level parser fixtures and are
 not an optimization comparison or a physical latency claim.
+
+## Capability-scoped polling and publication
+
+`Session` binds one physical responder 7E8..7EF to its corresponding request
+address (response ID minus eight). Seven cyclic slots discover 00/20/40 and poll
+05/0F/42/5C. Later capability pages require an advertised continuation bit;
+unsupported status requires a valid bitmap. A timeout or negative response
+cannot establish unsupported status. Cyclic selection lets already-discovered
+channels run while another capability page fails.
+
+Provisional periods are 1000 ms for coolant/intake, 500 ms for ECU voltage and
+1500 ms for engine oil, measured from successful receipt. Successful transactions
+have a 20 ms gap. Failed requests back off 250..8000 ms and impose a 1000 ms
+global quiet interval. These reduce load and late-reply overlap; they do not
+solve the wire protocol's missing transaction identifiers. No channel becomes
+valid until its exact decoded reply is accepted by the typed acquisition model.
+
+Timeout/malformed refreshes suppress the displayed value and preserve last-good
+history/extrema. Negative replies leave the channel unknown. Known wire loss,
+abandoned transmission or clock regression invalidates every current channel
+and blocks polling until a newer qualified transport epoch. Recovery discards
+capabilities, preserves request generations and rediscovers support. Service
+progress during ECU sleep is separate from receiving measurements.
+
+Timestamps record software receipt, not ECU measurement time or CAN bus arrival.
+The existing UI staleness limits remain independent of scheduling. DSG/EGT,
+boost and measured lambda stay unknown because no qualified decoder is enabled.
+
+Eight session replay tests cover discovery, fair polling, absent pages, malformed
+widths, last-good statistics, repeated silence/backoff, negatives, wrong ECU and
+epoch, stale TX completion and clock failure. The clock-failure fixture first
+reproduced stale valid status, then passed after centralized fatal invalidation.
+142 runtime tests plus two compile-fail checks pass in both outline modes, with
+strict lints and the stock target release/ELF gate. Independent review identified
+no remaining actionable defect in this slice. UART integration is still separate.
+
+The new `host/baselines/stage06_session` fixture includes a complete coolant
+transaction, typed statistics and a snapshot, after capability discovery outside
+the measured loop: local median 420 ns over 30 samples. Raw measurements, hashes
+and command are preserved. This is a host CPU baseline, without transport waits.

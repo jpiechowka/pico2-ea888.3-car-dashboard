@@ -127,6 +127,14 @@ impl Client {
 
     pub const fn response_id(&self) -> u16 { self.rx_id }
 
+    pub const fn requires_new_epoch(&self) -> bool { self.wire_fault }
+
+    /// Known byte loss or an abandoned UART write invalidates all local tokens.
+    pub fn invalidate_transport(&mut self) {
+        self.clear();
+        self.wire_fault = true;
+    }
+
     fn clear(&mut self) {
         self.active = None;
         self.pending_tx = None;

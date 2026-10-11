@@ -4,6 +4,7 @@ pub mod isotp;
 pub mod longan;
 pub mod obd;
 pub mod request;
+pub mod session;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameError {
