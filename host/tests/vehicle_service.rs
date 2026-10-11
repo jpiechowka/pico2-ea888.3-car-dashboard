@@ -200,6 +200,102 @@ fn unqualified_profile_records_raw_data_but_never_polls_can_or_publishes_values(
 }
 
 #[test]
+fn maintenance_drains_every_byte_then_flush_and_busy_without_consuming_replies() {
+    let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
+    coolant_request(&mut vehicle, &hw);
+    hw.0.borrow_mut().limit = 1;
+    hw.0.borrow_mut().flush_ready = false;
+    tick(&mut vehicle, 79); // Only four of fourteen bytes have reached the UART.
+    assert_eq!(hw.0.borrow().sent.len(), 4);
+    vehicle.request_pause(79).unwrap();
+    assert!(!vehicle.paused());
+    assert!(vehicle.request_pause(80).is_err()); // cannot renew the drain deadline
+    hw.feed(&record(0x7E8, [3, 0x41, 5, 135, 0, 0, 0, 0]));
+    for now in 80..85 {
+        tick(&mut vehicle, now);
+    }
+    assert_eq!(hw.take_tx(), [0, 0, 7, 0xE0, 0, 0, 2, 1, 5, 0, 0, 0, 0, 0]);
+    assert!(!vehicle.paused());
+    assert_eq!(hw.0.borrow().rx.len(), 12);
+    hw.0.borrow_mut().flush_ready = true;
+    hw.0.borrow_mut().busy = true;
+    tick(&mut vehicle, 85);
+    assert!(!vehicle.paused());
+    hw.0.borrow_mut().busy = false;
+    tick(&mut vehicle, 86);
+    assert!(vehicle.paused());
+    assert_eq!(vehicle.link().state, LinkState::Maintenance);
+    assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 86), None);
+    let reads = hw.0.borrow().reads;
+    for now in 87..1000 {
+        tick(&mut vehicle, now);
+    }
+    assert_eq!(hw.0.borrow().reads, reads);
+    assert!(hw.take_tx().is_empty());
+    vehicle.resume(1000).unwrap();
+    assert!(!vehicle.paused());
+    assert!(vehicle.resume(1000).is_err());
+    hw.0.borrow_mut().limit = 24;
+    handshake(&mut vehicle, &hw, 1000);
+    tick(&mut vehicle, 1057);
+    // Fresh epoch discovers capabilities, never reuses the old coolant reply.
+    assert_eq!(hw.take_tx(), [0, 0, 7, 0xE0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 1057), None);
+}
+
+#[test]
+fn maintenance_can_pause_unqualified_or_recovering_owners_without_polling() {
+    for online in [false, true] {
+        let (mut vehicle, hw) = new(ReceiveContract::Unqualified);
+        if online {
+            handshake(&mut vehicle, &hw, 0);
+        }
+        vehicle.request_pause(60).unwrap();
+        hw.0.borrow_mut().flush_ready = false;
+        tick(&mut vehicle, 60);
+        assert!(!vehicle.paused());
+        hw.0.borrow_mut().flush_ready = true;
+        hw.0.borrow_mut().busy = true;
+        tick(&mut vehicle, 61);
+        assert!(!vehicle.paused());
+        hw.0.borrow_mut().busy = false;
+        tick(&mut vehicle, 62);
+        assert!(vehicle.paused());
+        hw.0.borrow_mut().rx_error = Some(IoError::Overrun);
+        tick(&mut vehicle, 100);
+        assert!(vehicle.paused()); // loss during park is discarded on fresh bootstrap
+        vehicle.resume(100).unwrap();
+        handshake(&mut vehicle, &hw, 100);
+        assert_eq!(vehicle.link().state, LinkState::Unqualified);
+        assert!(hw.take_tx().is_empty());
+    }
+}
+
+#[test]
+fn maintenance_never_recovers_a_quarantine_or_hides_a_tx_deadline() {
+    for flush_stall in [false, true] {
+        let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
+        coolant_request(&mut vehicle, &hw);
+        hw.0.borrow_mut().flush_ready = !flush_stall;
+        hw.0.borrow_mut().busy = !flush_stall;
+        vehicle.request_pause(79).unwrap();
+        tick(&mut vehicle, 79);
+        assert!(!vehicle.paused());
+        assert!(vehicle.resume(79).is_err()); // cannot cancel an incomplete frame
+        tick(&mut vehicle, 179); // original TX began at78, not pause at79
+        assert_eq!(vehicle.link().state, LinkState::Quarantined);
+        assert!(vehicle.request_pause(180).is_err());
+        assert!(vehicle.resume(180).is_err());
+        tick(&mut vehicle, 100_000);
+        assert_eq!(vehicle.link().state, LinkState::Quarantined);
+    }
+    let (mut vehicle, _) = new(ReceiveContract::Unqualified);
+    vehicle.request_pause(5).unwrap();
+    tick(&mut vehicle, 4);
+    assert_eq!(vehicle.link().state, LinkState::Quarantined);
+}
+
+#[test]
 fn qualified_session_discovers_support_and_reports_only_the_matching_value() {
     let (mut vehicle, hw) = new(ReceiveContract::PaddedStandardDataDlc8);
     coolant_request(&mut vehicle, &hw);

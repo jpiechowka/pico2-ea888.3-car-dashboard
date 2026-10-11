@@ -28,6 +28,7 @@ fn startup_raw_and_recovery_states_never_claim_vehicle_data() {
         (LinkState::Unqualified, VehicleStatus::Raw),
         (LinkState::Polling, VehicleStatus::Waiting),
         (LinkState::Quarantined, VehicleStatus::ResetRequired),
+        (LinkState::Maintenance, VehicleStatus::Maintenance),
     ] {
         assert_eq!(VehicleStatus::derive(true, Some(link(state)), &samples, 0), expected);
     }
@@ -96,6 +97,7 @@ fn each_link_status_repairs_both_retained_headers_without_sensor_changes() {
         VehicleStatus::Stale,
         VehicleStatus::ResetRequired,
         VehicleStatus::Retrying,
+        VehicleStatus::Maintenance,
         VehicleStatus::Starting,
     ] {
         let scene = DashboardScene {

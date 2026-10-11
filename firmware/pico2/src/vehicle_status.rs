@@ -14,6 +14,7 @@ pub enum VehicleStatus {
     Data,
     Stale,
     ResetRequired,
+    Maintenance,
 }
 impl VehicleStatus {
     pub const fn label(self) -> &'static str {
@@ -27,6 +28,7 @@ impl VehicleStatus {
             Self::Data => "DATA",
             Self::Stale => "STALE",
             Self::ResetRequired => "RESET REQ",
+            Self::Maintenance => "MAINT",
         }
     }
 
@@ -50,6 +52,7 @@ impl VehicleStatus {
             LinkState::Quiet | LinkState::Handshake => Self::Starting,
             LinkState::Unqualified => Self::Raw,
             LinkState::Quarantined => Self::ResetRequired,
+            LinkState::Maintenance => Self::Maintenance,
             LinkState::Polling => {
                 if SensorId::ALL.iter().any(|&id| samples.value_at(id, now).is_some()) {
                     Self::Data

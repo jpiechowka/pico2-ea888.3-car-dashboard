@@ -79,6 +79,12 @@ pub enum LinkState {
     Unqualified,
     Polling,
     Quarantined,
+    Maintenance,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseError {
+    State,
+    Clock,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
@@ -118,6 +124,8 @@ enum OwnerState {
     Recover { since: u64, wait: u64 },
     Running,
     Quarantined,
+    Draining { since: u64 },
+    Parked,
 }
 
 pub struct Vehicle<P> {
@@ -181,10 +189,89 @@ impl<P: Port> Vehicle<P> {
 
     pub fn raw(&self) -> impl Iterator<Item = &RawObservation> { self.raw.iter() }
 
+    /// Stop admission, but finish the entire current command including bytes
+    /// not yet copied into the UART. `fail`/Pump::abort cannot serve this role.
+    pub fn request_pause(
+        &mut self,
+        now: u64,
+    ) -> Result<(), PauseError> {
+        if now < self.last_ms {
+            self.fail(Fault::Clock, self.last_ms, true);
+            return Err(PauseError::Clock);
+        }
+        if !matches!(self.owner, OwnerState::Running | OwnerState::Recover { .. }) {
+            return Err(PauseError::State);
+        }
+        self.last_ms = now;
+        self.owner = OwnerState::Draining { since: now };
+        Ok(())
+    }
+
+    pub fn paused(&self) -> bool { matches!(self.owner, OwnerState::Parked) }
+
+    /// A park can only end after wire idle. Fresh discard and bootstrap are
+    /// performed by subsequent service passes; terminal quarantine survives.
+    pub fn resume(
+        &mut self,
+        now: u64,
+    ) -> Result<(), PauseError> {
+        if now < self.last_ms {
+            self.fail(Fault::Clock, self.last_ms, true);
+            return Err(PauseError::Clock);
+        }
+        if !self.paused() {
+            return Err(PauseError::State);
+        }
+        self.last_ms = now;
+        self.owner = OwnerState::Recover { since: now, wait: 0 };
+        Ok(())
+    }
+
+    fn drain_for_pause(
+        &mut self,
+        cx: &mut Context<'_>,
+        now: u64,
+        since: u64,
+    ) {
+        self.transmit(cx, now);
+        if !matches!(self.owner, OwnerState::Draining { .. }) {
+            return;
+        }
+        if now - since > serial_tx::DEADLINE_MS {
+            self.fail(Fault::TxProgress(serial_tx::Error::Timeout), now, true);
+            return;
+        }
+        if self.tx.active() {
+            return;
+        }
+        // Check the software ring even without a current Pump. This is an
+        // independent guard against an unexpectedly buffered previous write.
+        match self.port.poll_flush(cx) {
+            Poll::Pending => return,
+            Poll::Ready(Err(error)) => {
+                self.fail(Fault::Tx(error), now, true);
+                return;
+            }
+            Poll::Ready(Ok(())) => {}
+        }
+        if self.port.busy() {
+            return;
+        }
+        self.online_since = None;
+        self.rx_partial_since = None;
+        self.rx.fault();
+        self.bootstrap.fault(bootstrap::Error::ReceiveLoss);
+        match self.session.transport_fault(now) {
+            Ok(()) => self.owner = OwnerState::Parked,
+            Err(error) => self.fail(Fault::Session(error), now, true),
+        }
+    }
+
     pub fn link(&self) -> LinkSnapshot {
         let state = match self.owner {
             OwnerState::Recover { .. } => LinkState::Recovering,
             OwnerState::Quarantined => LinkState::Quarantined,
+            OwnerState::Draining { .. } | OwnerState::Parked => LinkState::Maintenance,
             OwnerState::Running => {
                 match self.bootstrap.status() {
                     bootstrap::Status::Quiet => LinkState::Quiet,
@@ -343,6 +430,9 @@ impl<P: Port> Vehicle<P> {
                     match self.tx.wire_idle(now) {
                         Err(error) => Err(error),
                         Ok(Completion::Aborted) => return,
+                        // The completed action must not schedule another FC or
+                        // command while a maintenance drain is in progress.
+                        Ok(Completion::Sent(_)) if matches!(self.owner, OwnerState::Draining { .. }) => return,
                         Ok(Completion::Sent(Token::Bootstrap(token))) => {
                             let result = self.bootstrap.tx_completed(token, now);
                             self.boot_event(result, now);
@@ -458,6 +548,14 @@ impl<P: Port> Vehicle<P> {
             return;
         }
         self.last_ms = now;
+        match self.owner {
+            OwnerState::Parked => return,
+            OwnerState::Draining { since } => {
+                self.drain_for_pause(cx, now, since);
+                return;
+            }
+            _ => {}
+        }
         if matches!(self.owner, OwnerState::Running)
             && let Some(error) = self.port.rx_error()
         {

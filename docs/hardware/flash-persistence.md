@@ -92,7 +92,37 @@ handling before this integration. Relevant upstream issues are
 [4506](https://github.com/embassy-rs/embassy/issues/4506) (older release-build hang,
 not a reproduced 0.10.0 defect).
 
-## Acceptance boundary
+## Shared maintenance models
+
+The host and firmware compile the same three prerequisite models. These do not
+yet authorize hardware writes:
+
+- `ProgressMonitor` grants a move-only ticket for at most 1000 ms total,
+  including preparation, flash and resumption. Entry requires normal health and
+  an idle display. Observe calls during the window do not make watchdog feeding
+  eligible. Nested, expired, replayed or exhausted tickets fail closed; faults
+  remain latched. No display submission or completion is allowed in the window.
+  Exit rebases task liveness once, preserving all sensor timestamps. Another
+  grant requires fresh progress from acquisition, rendering and input.
+- `Vehicle` stops admission and completes every byte of an existing UART
+  command, software flush and BUSY-clear under its original 100 ms deadline.
+  Old TX completion callbacks cannot schedule more traffic. Only then does it
+  invalidate the receive/session epoch and park. Resume requires bounded
+  discard and a fresh bootstrap. Terminal quarantine is never reset by a save.
+- `TeObservations` keeps raw history, counts maintenance gaps, discards the
+  first pending edge result after a gap and requires two new observations
+  before exposing another interval. It never cancels the HAL edge future.
+
+Nine added host tests cover these contracts including partial 14-byte commands,
+queued old replies, inactive-Pump flush checks, fixed deadline boundaries,
+clock/generation failures, fresh progress and retained trace history. Both
+outline modes pass 228 runtime tests and two compile-fail checks. Strict host
+and Longan firmware lints pass. Longan release uses 381080 bytes static SRAM
+with 143208 bytes core0 headroom; the RAM lockout gate passes. Actual task
+acknowledgements, core0 flash helper and hardware validation remain separate
+integration requirements.
+
+## Hardware acceptance boundary
 
 Host journal power-cut models, release code gates and builds cannot qualify the
 board. Still required: actual flash revision, clock/supply limits, cold-cache

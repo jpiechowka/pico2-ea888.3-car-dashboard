@@ -107,3 +107,94 @@ fn a_new_queue_generation_starts_its_deadline_even_if_idle_was_not_sampled() {
     assert_eq!(monitor.observe(549, current), Ok(()));
     assert_eq!(monitor.observe(550, current), Err(Fault::Display));
 }
+
+fn idle(sequence: u32) -> Progress {
+    Progress {
+        display_pending: false,
+        completed: 0,
+        ..progress(sequence)
+    }
+}
+
+#[test]
+fn maintenance_is_one_finite_window_without_watchdog_feeds() {
+    let mut monitor = ProgressMonitor::new(0, idle(0));
+    let ticket = monitor.begin_maintenance(50, idle(1)).unwrap();
+    assert!(!monitor.feeding_allowed());
+    // Intentional flash stalls may exceed the normal supervisor/task limits.
+    assert_eq!(monitor.observe(900, idle(1)), Ok(()));
+    assert_eq!(monitor.end_maintenance(ticket, 1050, idle(1)), Ok(()));
+    assert!(monitor.feeding_allowed());
+    assert_eq!(monitor.observe(1250, idle(1)), Ok(()));
+    assert_eq!(monitor.observe(1450, idle(1)), Ok(()));
+    assert_eq!(monitor.observe(1550, idle(1)), Err(Fault::Acquisition));
+}
+
+#[test]
+fn expired_or_nested_maintenance_latches_and_cannot_be_renewed() {
+    let mut monitor = ProgressMonitor::new(0, idle(0));
+    let ticket = monitor.begin_maintenance(0, idle(0)).unwrap();
+    assert_eq!(monitor.observe(1001, idle(100)), Err(Fault::Maintenance));
+    assert_eq!(
+        monitor.end_maintenance(ticket, 1001, idle(100)),
+        Err(Fault::Maintenance)
+    );
+    assert!(!monitor.feeding_allowed());
+    assert!(monitor.begin_maintenance(1001, idle(100)).is_err());
+
+    let mut monitor = ProgressMonitor::new(0, idle(0));
+    let ticket = monitor.begin_maintenance(0, idle(0)).unwrap();
+    assert!(monitor.begin_maintenance(1, idle(1)).is_err());
+    assert_eq!(monitor.end_maintenance(ticket, 2, idle(2)), Err(Fault::Maintenance));
+}
+
+#[test]
+fn maintenance_requires_healthy_idle_owners_and_fresh_progress_between_windows() {
+    let mut monitor = ProgressMonitor::new(0, idle(0));
+    assert!(monitor.begin_maintenance(251, idle(1)).is_err());
+    assert_eq!(monitor.observe(251, idle(1)), Err(Fault::Supervisor));
+    let mut monitor = ProgressMonitor::new(0, progress(0));
+    assert!(monitor.begin_maintenance(1, progress(1)).is_err());
+    assert_eq!(monitor.observe(2, idle(2)), Err(Fault::Display));
+    for stuck in 0..3 {
+        let mut monitor = ProgressMonitor::new(0, idle(0));
+        let ticket = monitor.begin_maintenance(0, idle(0)).unwrap();
+        monitor.end_maintenance(ticket, 100, idle(1)).unwrap();
+        let mut next = idle(2);
+        match stuck {
+            0 => next.acquisition = 1,
+            1 => next.rendering = 1,
+            _ => next.input = 1,
+        }
+        assert!(monitor.begin_maintenance(150, next).is_err());
+        assert!(!monitor.feeding_allowed());
+    }
+    let mut monitor = ProgressMonitor::new(0, idle(0));
+    let first = monitor.begin_maintenance(0, idle(0)).unwrap();
+    let first_id = first.generation();
+    monitor.end_maintenance(first, 1000, idle(1)).unwrap();
+    let second = monitor.begin_maintenance(1050, idle(2)).unwrap();
+    assert!(second.generation() > first_id);
+    monitor.end_maintenance(second, 1051, idle(2)).unwrap();
+}
+
+#[test]
+fn maintenance_detects_clock_and_unexpected_display_activity() {
+    for mutation in 0..3 {
+        let mut monitor = ProgressMonitor::new(100, idle(0));
+        let ticket = monitor.begin_maintenance(100, idle(0)).unwrap();
+        let mut current = idle(0);
+        match mutation {
+            0 => current.display_pending = true,
+            1 => current.submitted = 1,
+            _ => current.completed = 1,
+        }
+        assert_eq!(monitor.end_maintenance(ticket, 101, current), Err(Fault::Display));
+    }
+    let mut monitor = ProgressMonitor::new(100, idle(0));
+    let ticket = monitor.begin_maintenance(100, idle(0)).unwrap();
+    assert_eq!(monitor.end_maintenance(ticket, 99, idle(0)), Err(Fault::Clock));
+    let mut monitor = ProgressMonitor::new(u64::MAX - 1000, idle(0));
+    let ticket = monitor.begin_maintenance(u64::MAX - 1000, idle(0)).unwrap();
+    assert_eq!(monitor.end_maintenance(ticket, u64::MAX, idle(0)), Ok(()));
+}
