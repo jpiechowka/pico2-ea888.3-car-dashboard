@@ -21,6 +21,12 @@ pub static DASHBOARD_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1
 pub static RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 #[cfg(feature = "longan-rx12")]
 pub static VEHICLE_LINK: Watch<CriticalSectionRawMutex, LinkSnapshot, 1> = Watch::new();
+#[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+pub static VEHICLE_DIAGNOSTICS: Watch<
+    CriticalSectionRawMutex,
+    (u64, u64, dashboard_pico2::diagnostics::session::Telemetry),
+    1,
+> = Watch::new();
 
 pub struct Resources {
     #[cfg(feature = "longan-rx12")]
@@ -78,6 +84,8 @@ pub async fn acquisition_task(
     };
     let mut stack_samples = StackSamples::new(stack_bottom, stack_top).expect("invalid core1 stack bounds");
     let mut last_resume = None;
+    #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+    let mut diagnostic_export = 0u64;
 
     loop {
         if let Some(command) = super::maintenance::command() {
@@ -225,10 +233,21 @@ pub async fn acquisition_task(
         }
         crate::tasks::recovery::ACQUISITION_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
+        let util_due = last_util_calc.elapsed() >= Duration::from_secs(1);
+        #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+        if util_due && let Some(sequence) = diagnostic_export.checked_add(1) {
+            // Build outside the critical section; include export work in the
+            // segmented core1 cycle count, and keep publish/session time apart.
+            let snapshot = model.telemetry();
+            VEHICLE_DIAGNOSTICS
+                .dyn_sender()
+                .send((sequence, Instant::now().as_millis(), snapshot));
+            diagnostic_export = sequence;
+        }
         let work_end = crate::profiling::read();
         total_work_cycles = total_work_cycles.wrapping_add(crate::profiling::elapsed(work_start, work_end));
 
-        if last_util_calc.elapsed() >= Duration::from_secs(1) {
+        if util_due {
             let util = crate::profiling::calc_util_percent(
                 total_work_cycles,
                 last_util_calc.elapsed().as_micros().min(u32::MAX as u64) as u32,

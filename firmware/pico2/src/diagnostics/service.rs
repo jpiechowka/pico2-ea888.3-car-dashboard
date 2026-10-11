@@ -180,6 +180,8 @@ impl<P: Port> Vehicle<P> {
 
     pub fn snapshot(&self) -> DashboardSnapshot { self.session.snapshot() }
 
+    pub fn telemetry(&self) -> super::session::Telemetry { self.session.telemetry() }
+
     pub fn reset_statistics(
         &mut self,
         generation: u64,

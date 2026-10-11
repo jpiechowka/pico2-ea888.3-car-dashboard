@@ -5,11 +5,12 @@ use super::client::{Client, ClientError, Event, Failure, TxAction, TxToken};
 use super::obd::{self, Capabilities, Decoded, Support};
 use super::request::Request;
 use crate::acquisition::{AcquisitionModel, DashboardSnapshot};
+use crate::metrics::{Distribution, Histogram};
 use crate::samples::{Quality, Sample, SensorId, Source};
 
 pub const QUERY_GAP_MS: u64 = 20;
 pub const FAILURE_QUIET_MS: u64 = 1_000;
-const PIDS: [u8; 7] = [0, 0x20, 0x40, 5, 0x0F, 0x42, 0x5C];
+pub const PIDS: [u8; 7] = [0, 0x20, 0x40, 5, 0x0F, 0x42, 0x5C];
 const PERIODS_MS: [u64; 7] = [0, 0, 0, 1_000, 1_000, 500, 1_500];
 const CHANNELS: [(u8, SensorId); 4] = [
     (5, SensorId::Water),
@@ -24,11 +25,64 @@ pub enum SessionError {
 }
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Counters {
+    pub requested: u32,
+    pub transmitted: u32,
+    pub abandoned: u32,
     pub completed: u32,
     pub negative: u32,
     pub timeouts: u32,
     pub malformed: u32,
     pub transport_faults: u32,
+    pub replies: u32,
+    pub last_reply_ms: Option<u64>,
+    pub min_reply_ms: Option<u64>,
+    pub max_reply_ms: Option<u64>,
+}
+#[derive(Clone, Copy)]
+enum Outcome {
+    Positive,
+    Negative,
+    Timeout,
+    Malformed,
+}
+impl Counters {
+    fn finish(
+        &mut self,
+        outcome: Outcome,
+        reply_ms: Option<u64>,
+    ) {
+        let count = match outcome {
+            Outcome::Positive => &mut self.completed,
+            Outcome::Negative => &mut self.negative,
+            Outcome::Timeout => &mut self.timeouts,
+            Outcome::Malformed => &mut self.malformed,
+        };
+        *count = count.saturating_add(1);
+        if let Some(ms) = reply_ms {
+            self.replies = self.replies.saturating_add(1);
+            self.last_reply_ms = Some(ms);
+            self.min_reply_ms = Some(self.min_reply_ms.map_or(ms, |old| old.min(ms)));
+            self.max_reply_ms = Some(self.max_reply_ms.map_or(ms, |old| old.max(ms)));
+        }
+    }
+}
+struct ActiveTiming {
+    index: usize,
+    request_tx: TxToken,
+    sent_ms: Option<u64>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelTelemetry {
+    pub pid: u8,
+    pub counters: Counters,
+    pub reply_ms: Distribution,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Telemetry {
+    pub ecu: u16,
+    pub epoch: u64,
+    pub at_ms: u64,
+    pub channels: [ChannelTelemetry; 7],
 }
 #[derive(Clone, Copy, Default)]
 struct Slot {
@@ -46,6 +100,9 @@ pub struct Session {
     next_query: u64,
     last_ms: u64,
     counters: Counters,
+    channels: [Counters; 7],
+    timing: Option<ActiveTiming>,
+    reply_ms: [Histogram<160>; 7],
 }
 impl Session {
     pub fn new(
@@ -63,12 +120,53 @@ impl Session {
             next_query: 0,
             last_ms: 0,
             counters: Counters::default(),
+            channels: [Counters::default(); 7],
+            timing: None,
+            reply_ms: core::array::from_fn(|_| Histogram::new()),
         })
     }
 
     pub fn snapshot(&self) -> DashboardSnapshot { self.model.snapshot() }
 
     pub const fn counters(&self) -> Counters { self.counters }
+
+    /// Lifetime counters, including discovery pages, retained across epochs.
+    pub fn channel(
+        &self,
+        pid: u8,
+    ) -> Option<Counters> {
+        PIDS.iter()
+            .position(|&known| known == pid)
+            .map(|index| self.channels[index])
+    }
+
+    /// Call outside latency-sensitive receive work; percentile scans are bounded.
+    pub fn telemetry(&self) -> Telemetry {
+        Telemetry {
+            ecu: self.client.response_id(),
+            epoch: self.client.epoch(),
+            at_ms: self.last_ms,
+            channels: core::array::from_fn(|index| {
+                ChannelTelemetry {
+                    pid: PIDS[index],
+                    counters: self.channels[index],
+                    reply_ms: self.reply_ms[index].summary(),
+                }
+            }),
+        }
+    }
+
+    fn abandon(
+        &mut self,
+        fault: bool,
+    ) {
+        if let Some(active) = self.timing.take() {
+            let channel = &mut self.channels[active.index];
+            channel.abandoned = channel.abandoned.saturating_add(1);
+            channel.transport_faults = channel.transport_faults.saturating_add(u32::from(fault));
+            self.counters.abandoned = self.counters.abandoned.saturating_add(1);
+        }
+    }
 
     pub const fn requires_new_epoch(&self) -> bool { self.client.requires_new_epoch() }
 
@@ -94,6 +192,7 @@ impl Session {
         now: u64,
     ) -> Result<(), SessionError> {
         if now < self.last_ms {
+            self.abandon(true);
             self.client.invalidate_transport();
             self.fault_all(Quality::TransportError, self.last_ms);
             return Err(SessionError::Client(ClientError::Clock));
@@ -113,6 +212,7 @@ impl Session {
                 ClientError::Clock | ClientError::Exhausted | ClientError::WireFault
             ) {
                 self.last_ms = self.last_ms.max(now);
+                self.abandon(true);
                 self.client.invalidate_transport();
                 self.fault_all(Quality::TransportError, self.last_ms);
             }
@@ -125,6 +225,7 @@ impl Session {
         now: u64,
     ) -> Result<(), SessionError> {
         self.clock(now)?;
+        self.abandon(true);
         self.client.invalidate_transport();
         self.fault_all(Quality::TransportError, now);
         self.counters.transport_faults = self.counters.transport_faults.saturating_add(1);
@@ -144,6 +245,7 @@ impl Session {
         }
         self.clock(now)?;
         self.client.change_epoch(epoch, now).map_err(SessionError::Client)?;
+        self.abandon(false);
         self.capabilities = Capabilities::new(self.client.response_id(), epoch).unwrap();
         self.slots = [Slot::default(); 7];
         self.cursor = 0;
@@ -193,6 +295,13 @@ impl Session {
             if self.eligible(index) && self.slots[index].due <= now {
                 let result = self.client.start(Request::Obd(PIDS[index]), now);
                 let tx = self.client_result(result, now)?;
+                self.timing = Some(ActiveTiming {
+                    index,
+                    request_tx: tx.token,
+                    sent_ms: None,
+                });
+                self.channels[index].requested = self.channels[index].requested.saturating_add(1);
+                self.counters.requested = self.counters.requested.saturating_add(1);
                 self.cursor = (index + 1) % PIDS.len();
                 return Ok(Some(tx));
             }
@@ -222,6 +331,17 @@ impl Session {
         let result = self.client.tx_completed(token, now);
         let event = self.client_result(result, now)?;
         self.clock(now)?;
+        // Only an accepted completion for the original request starts RTT.
+        // Flow-control, duplicate and stale tokens never reset this timestamp.
+        if let Some(active) = &mut self.timing
+            && active.request_tx == token
+            && active.sent_ms.is_none()
+            && !matches!(event, Event::Failed { .. })
+        {
+            active.sent_ms = Some(now);
+            self.channels[active.index].transmitted = self.channels[active.index].transmitted.saturating_add(1);
+            self.counters.transmitted = self.counters.transmitted.saturating_add(1);
+        }
         Ok(self.event(event, now))
     }
 
@@ -230,11 +350,23 @@ impl Session {
         request: Request,
         now: u64,
         failure: Option<Quality>,
+        outcome: Outcome,
     ) {
         let Request::Obd(pid) = request else { return };
         let Some(index) = PIDS.iter().position(|&known| known == pid) else {
             return;
         };
+        let reply_ms = self
+            .timing
+            .take()
+            .filter(|active| active.index == index && matches!(outcome, Outcome::Positive | Outcome::Negative))
+            .and_then(|active| active.sent_ms)
+            .and_then(|sent| now.checked_sub(sent));
+        self.channels[index].finish(outcome, reply_ms);
+        self.counters.finish(outcome, reply_ms);
+        if let Some(ms) = reply_ms {
+            self.reply_ms[index].record(ms);
+        }
         let slot = &mut self.slots[index];
         if let Some(quality) = failure {
             slot.failures = slot.failures.saturating_add(1);
@@ -249,7 +381,6 @@ impl Session {
             slot.discovered = index < 3;
             slot.due = now.saturating_add(PERIODS_MS[index]);
             self.next_query = now.saturating_add(QUERY_GAP_MS);
-            self.counters.completed = self.counters.completed.saturating_add(1);
         }
         if self.client.requires_new_epoch() {
             self.fault_all(Quality::TransportError, now);
@@ -298,14 +429,15 @@ impl Session {
                     }
                     Err(_) => false,
                 };
-                if !valid {
-                    self.counters.malformed = self.counters.malformed.saturating_add(1);
-                }
-                self.finish(response.request, now, (!valid).then_some(Quality::InvalidPayload));
+                self.finish(
+                    response.request,
+                    now,
+                    (!valid).then_some(Quality::InvalidPayload),
+                    if valid { Outcome::Positive } else { Outcome::Malformed },
+                );
             }
             Event::Negative { request, .. } => {
-                self.counters.negative = self.counters.negative.saturating_add(1);
-                self.finish(request, now, Some(Quality::Unknown));
+                self.finish(request, now, Some(Quality::Unknown), Outcome::Negative);
             }
             Event::Failed { request, reason } => {
                 let timeout = matches!(
@@ -316,13 +448,16 @@ impl Session {
                         | Failure::Transport(super::isotp::IsoError::Timeout)
                 );
                 let quality = if timeout {
-                    self.counters.timeouts = self.counters.timeouts.saturating_add(1);
                     Quality::TransportError
                 } else {
-                    self.counters.malformed = self.counters.malformed.saturating_add(1);
                     Quality::InvalidPayload
                 };
-                self.finish(request, now, Some(quality));
+                self.finish(
+                    request,
+                    now,
+                    Some(quality),
+                    if timeout { Outcome::Timeout } else { Outcome::Malformed },
+                );
             }
         }
         None

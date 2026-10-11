@@ -410,6 +410,8 @@ async fn main(spawner: Spawner) {
     let mut vehicle_link = None;
     #[cfg(not(feature = "longan-rx12"))]
     let vehicle_link = None;
+    #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+    let mut diagnostic_receiver = tasks::acquisition::VEHICLE_DIAGNOSTICS.dyn_receiver().unwrap();
 
     loop {
         let frame_start = Instant::now();
@@ -825,6 +827,10 @@ async fn main(spawner: Spawner) {
         cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
+            #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
+            if let Some((sequence, published_ms, snapshot)) = diagnostic_receiver.try_changed() {
+                profiling::telemetry_export::diagnostics(sequence, published_ms, snapshot);
+            }
             #[cfg(feature = "te-trace")]
             crate::tasks::te::log_status();
             // Two log_info! lines to fit within 40-char message limit

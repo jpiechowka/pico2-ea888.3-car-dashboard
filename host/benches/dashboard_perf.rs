@@ -353,6 +353,31 @@ fn vehicle_session(c: &mut Criterion) {
             now += 2_000;
         });
     });
+    // Independent fixed seed: changing Criterion's filter or preceding run
+    // length must not change this export workload.
+    let mut export_session = Session::new(0x7E8, 1).unwrap();
+    for step in 0..56u64 {
+        let now = step * 2_000;
+        let tx = export_session.poll(now).unwrap().unwrap();
+        export_session.tx_completed(tx.token, now + 1).unwrap();
+        let pid = tx.frame.data()[2];
+        let value: &[u8] = match pid {
+            0 => &[8, 2, 0, 1],
+            0x20 => &[0, 0, 0, 1],
+            0x40 => &[0x40, 0, 0, 0x10],
+            0x42 => &[0x36, 0xB0],
+            _ => &[130],
+        };
+        let mut bytes = [0u8; 8];
+        bytes[..3].copy_from_slice(&[value.len() as u8 + 2, 0x41, pid]);
+        bytes[3..3 + value.len()].copy_from_slice(value);
+        export_session
+            .receive(&CanFrame::new(0x7E8, &bytes).unwrap(), 1, now + 2 + step % 7 * 60)
+            .unwrap();
+    }
+    c.bench_function("session/diagnostic_distribution_export", |b| {
+        b.iter(|| black_box(black_box(&export_session).telemetry()));
+    });
 }
 
 mod vehicle_port;
