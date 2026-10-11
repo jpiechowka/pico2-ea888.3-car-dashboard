@@ -65,5 +65,5 @@ Reproduce from `host/` after restoring the committed baseline:
 ```text
 python scripts/restore_baseline.py ae94c721
 cargo test --locked --test ui_contract
-cargo bench --locked --bench dashboard_perf -- --baseline ae94c721 --noplot
+cargo bench --locked --bench dashboard_perf -- '^(framebuffer|clipped_contiguous|boost_cell|mini_graph)/' --baseline ae94c721 --noplot
 ```

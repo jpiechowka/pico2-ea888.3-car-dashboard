@@ -8,17 +8,26 @@ does not prove the current firmware's global framebuffer API is sound.
 
 From `host/`, run `cargo test --locked` for correctness and
 `cargo test --locked --benches` for the benchmark smoke check. The
-audited baseline intentionally has failing correctness contracts. For a named
-performance baseline use:
+audited baseline intentionally has failing correctness contracts; the current
+regression suite is expected to pass. Save new candidate runs under a new name:
 
 ```text
-cargo bench --locked --bench dashboard_perf -- --save-baseline ae94c721
+cargo bench --locked --bench dashboard_perf -- --save-baseline candidate-name
 ```
 
-After a fresh checkout, run `python scripts/restore_baseline.py ae94c721` to
-load the committed measurements into Criterion's ignored `target/` tree.
-Compare a candidate with `--baseline ae94c721` on the same machine and fixture
-version. The committed baseline is a historical reference from one Windows
+The frame-based history operation was replaced by a timestamped measurement
+operation. Compare the four UI fixtures and the sensor fixture separately:
+
+```text
+python scripts/restore_baseline.py ae94c721
+cargo bench --locked --bench dashboard_perf -- '^(framebuffer|clipped_contiguous|boost_cell|mini_graph)/' --baseline ae94c721 --noplot
+python scripts/restore_baseline.py stage03_timestamp
+cargo bench --locked --bench dashboard_perf -- sensor_state --baseline stage03_timestamp --noplot
+```
+
+This restores committed measurements into Criterion's ignored `target/` tree.
+Do not overwrite the historical baseline with current code. Use the same
+machine and fixture version for comparisons. The baseline is from one Windows
 host, not a cross-machine speed target. Host nanoseconds cannot establish
 RP2350 frame rate, DMA overlap, display scan rate, input latency or ECU
 compatibility.

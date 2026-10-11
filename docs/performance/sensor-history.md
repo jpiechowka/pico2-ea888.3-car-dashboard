@@ -66,5 +66,6 @@ To repeat the new case:
 ```text
 cd host
 cargo test --locked
+python scripts/restore_baseline.py stage03_timestamp
 cargo bench --locked --bench dashboard_perf -- sensor_state --baseline stage03_timestamp --noplot
 ```
