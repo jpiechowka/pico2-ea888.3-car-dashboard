@@ -22,6 +22,34 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
         working-directory: firmware
+      - name: Check host formatting
+        run: cargo fmt --all --check
+        working-directory: host
+
+  host:
+    name: Host contracts and benchmark smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-10
+          components: clippy
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: host
+      - name: Host contracts
+        run: cargo test --locked
+        working-directory: host
+      - name: Full outline contracts
+        run: cargo test --locked --no-default-features
+        working-directory: host
+      - name: Host Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: host
+      - name: Benchmark smoke
+        run: cargo test --locked --benches
+        working-directory: host
 
   clippy-pico2:
     name: Clippy (Pico 2)
@@ -37,12 +65,19 @@ jobs:
         with:
           workspaces: firmware
       - name: Clippy (pico2)
-        run: cargo clippy -p dashboard-pico2 --target thumbv8m.main-none-eabihf -- -D warnings
+        run: cargo clippy --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf -- -D warnings
         working-directory: firmware
 
   build-pico2:
-    name: Build Pico 2
+    name: Build Pico 2 (${{ matrix.profile }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - profile: stock
+            features: ""
+          - profile: cpu300-spi75-1v30
+            features: cpu300-spi75-1v30
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@master
@@ -53,5 +88,5 @@ jobs:
         with:
           workspaces: firmware
       - name: Build pico2
-        run: cargo build -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release
+        run: cargo build --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features "${{ matrix.features }}"
         working-directory: firmware

@@ -1,4 +1,5 @@
-use std::{env, fs, path::PathBuf};
+use std::path::PathBuf;
+use std::{env, fs};
 
 fn main() {
     let project = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest directory"));
@@ -13,10 +14,8 @@ fn main() {
         .find(marker)
         .expect("renderer boundary changed; update host harness");
     let generated = format!(
-        "use embedded_graphics::pixelcolor::{{Rgb565, raw::RawU16}};\n\
-         use embedded_graphics::prelude::*;\n\
-         pub const WIDTH: usize = 320;\n\
-         pub const HEIGHT: usize = 240;\n{}",
+        "use embedded_graphics::pixelcolor::{{Rgb565, raw::RawU16}};\nuse embedded_graphics::prelude::*;\npub const \
+         WIDTH: usize = 320;\npub const HEIGHT: usize = 240;\n{}",
         &source[offset..]
     );
     let output = PathBuf::from(env::var("OUT_DIR").expect("output directory"));
