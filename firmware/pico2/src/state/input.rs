@@ -1,3 +1,4 @@
+use dashboard_pico2::input_trace::Observation;
 use embassy_time::Instant;
 
 use super::{ButtonState, Page, Popup};
@@ -10,8 +11,9 @@ pub struct InputResult {
     pub boost_unit_toggled: bool,
     pub reset_requested: bool,
     pub show_popup: Option<Popup>,
-    pub clear_frames: bool,
-    pub reset_fps_average: bool,
+    pub observations: Option<Observation>,
+    pub reset_observation: Option<Observation>,
+    pub ignored: u32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -29,26 +31,43 @@ pub fn process_buttons(
 ) -> InputResult {
     let mut result = InputResult::default();
 
-    if btn_x_state.just_pressed(btn_x_pressed) && current_page == Page::Dashboard {
+    let observations = [
+        btn_x_state.observe(btn_x_pressed),
+        btn_y_state.observe(btn_y_pressed),
+        btn_a_state.observe(btn_a_pressed),
+        btn_b_state.observe(btn_b_pressed),
+    ];
+    for (index, observation) in observations.into_iter().enumerate() {
+        let Some(observation) = observation else {
+            continue;
+        };
+        if index != 1 && current_page != Page::Dashboard {
+            result.ignored += 1;
+            continue;
+        }
+        if index == 3 {
+            result.reset_observation = Some(observation);
+        } else if !Observation::append(&mut result.observations, observation) {
+            result.ignored += observation.events;
+        }
+    }
+    if observations[0].is_some() && current_page == Page::Dashboard {
         let new_mode = current_fps_mode.next();
         result.new_fps_mode = Some(new_mode);
         result.show_popup = Some(Popup::Fps(Instant::now()));
-        result.clear_frames = true;
     }
 
-    if btn_y_state.just_pressed(btn_y_pressed) {
+    if observations[1].is_some() {
         let new_page = current_page.toggle();
         result.new_page = Some(new_page);
-        result.clear_frames = true;
-        result.reset_fps_average = true;
     }
 
-    if btn_a_state.just_pressed(btn_a_pressed) && current_page == Page::Dashboard {
+    if observations[2].is_some() && current_page == Page::Dashboard {
         result.boost_unit_toggled = true;
         result.show_popup = Some(Popup::BoostUnit(Instant::now()));
     }
 
-    if btn_b_state.just_pressed(btn_b_pressed) && current_page == Page::Dashboard {
+    if observations[3].is_some() && current_page == Page::Dashboard {
         result.reset_requested = true;
     }
 

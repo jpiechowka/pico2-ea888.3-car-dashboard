@@ -14,6 +14,7 @@ fn frame(sequence: u64) -> FrameTrace {
             blocked_us: 25,
             sample_us: Some(90),
             active_cycles: 200,
+            input: None,
         },
         180,
         220,

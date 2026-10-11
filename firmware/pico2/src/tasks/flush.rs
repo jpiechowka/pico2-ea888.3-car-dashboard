@@ -17,6 +17,17 @@ pub static BUFFER_SWAPS: AtomicU32 = AtomicU32::new(0);
 pub static BUFFER_WAITS: AtomicU32 = AtomicU32::new(0);
 pub static FLUSH_BUFFER_IDX: AtomicUsize = AtomicUsize::new(0);
 pub static COMPLETED_FRAMES: AtomicU32 = AtomicU32::new(0);
+pub static INPUT_COUNTS: embassy_sync::blocking_mutex::Mutex<
+    CriticalSectionRawMutex,
+    core::cell::Cell<dashboard_pico2::input_trace::InputCounters>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(dashboard_pico2::input_trace::InputCounters::ZERO));
+
+pub fn publish_input_counts(mut counts: dashboard_pico2::input_trace::InputCounters) {
+    let (dropped, discarded) = crate::peripherals::ENCODER_EVENTS.counters();
+    counts.encoder_dropped = u64::from(dropped);
+    counts.encoder_discarded = u64::from(discarded);
+    INPUT_COUNTS.lock(|slot| slot.set(counts));
+}
 
 #[cfg(feature = "frame-trace")]
 pub static FRAME_TRACES: embassy_sync::blocking_mutex::Mutex<

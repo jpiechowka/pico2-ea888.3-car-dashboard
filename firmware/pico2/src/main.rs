@@ -373,6 +373,8 @@ async fn main(spawner: Spawner) {
     let mut show_boost_psi = initial_settings.boost_psi();
     let mut active_popup: Option<Popup> = None;
     let mut reset_requested = false;
+    let mut input_tracker = dashboard_pico2::input_trace::InputTracker::new();
+    let mut reset_input: Option<(dashboard_pico2::input_trace::Observation, u64)> = None;
 
     let mut dashboard_cache = DashboardCache::new();
     let mut current_fps = 0.0f32;
@@ -435,6 +437,22 @@ async fn main(spawner: Spawner) {
             current_page,
             fps_mode,
         );
+        let consumed_us = Instant::now().as_micros();
+        input_tracker.ignore(input.ignored);
+        if let Some(observation) = input.observations {
+            input_tracker.consume(observation, consumed_us);
+        }
+        if let Some(observation) = input.reset_observation {
+            if let Some((old, consumed)) = &mut reset_input {
+                if old.merge(observation) {
+                    *consumed = consumed_us;
+                } else {
+                    input_tracker.ignore(observation.events);
+                }
+            } else {
+                reset_input = Some((observation, consumed_us));
+            }
+        }
 
         if let Some(new_mode) = input.new_fps_mode {
             fps_mode = new_mode;
@@ -480,15 +498,20 @@ async fn main(spawner: Spawner) {
         }
 
         // --- Encoder events (rotation + button press) ---
-        let (enc_delta, enc_presses) = ENCODER_EVENTS.take();
+        let encoder = ENCODER_EVENTS.take_observed();
+        let (enc_delta, enc_presses) = (encoder.delta, encoder.presses);
         let enc_button = enc_presses % 2 == 1;
+        let mut motion_applied = false;
+        let mut press_applied = false;
 
         match current_page {
             Page::Logs => {
                 // Pin the visible end sequence; ring count stops growing at
                 // capacity and cannot anchor a view during overwrites.
                 if enc_delta != 0 {
+                    let old_anchor = log_anchor;
                     crate::profiling::LOGS.scroll(&mut log_anchor, enc_delta);
+                    motion_applied = old_anchor != log_anchor;
                 }
                 // Button does nothing on Logs page
             }
@@ -497,6 +520,7 @@ async fn main(spawner: Spawner) {
                 if enc_delta != 0 {
                     let new_brightness = brightness_after(brightness_percent, enc_delta);
                     if new_brightness != brightness_percent {
+                        motion_applied = true;
                         brightness_percent = new_brightness;
                         if brightness_percent != 0 {
                             saved_brightness = brightness_percent;
@@ -509,6 +533,7 @@ async fn main(spawner: Spawner) {
                 }
                 // Button toggles backlight on/off
                 if enc_button {
+                    press_applied = true;
                     if brightness_percent > 0 {
                         // Turning off: defer PWM change until popup expires so user sees it
                         saved_brightness = brightness_percent;
@@ -523,6 +548,15 @@ async fn main(spawner: Spawner) {
                         backlight_pwm.set_config(&pwm_config);
                     }
                     active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
+                }
+            }
+        }
+        for (observation, applied) in [(encoder.motion, motion_applied), (encoder.button, press_applied)] {
+            if let Some(observation) = observation {
+                if applied {
+                    input_tracker.consume(observation, Instant::now().as_micros());
+                } else {
+                    input_tracker.ignore(observation.events);
                 }
             }
         }
@@ -554,6 +588,13 @@ async fn main(spawner: Spawner) {
             && reset_requests.acknowledge(measurements.reset_generation)
         {
             log_info!("Stats reset acknowledged");
+            if let Some((observation, consumed_us)) = reset_input.take() {
+                if current_page == Page::Dashboard {
+                    input_tracker.apply(observation, consumed_us, Instant::now().as_micros());
+                } else {
+                    input_tracker.ignore(observation.events);
+                }
+            }
             if current_page == Page::Dashboard {
                 if backlight_off_pending {
                     pwm_config.compare_a = 0;
@@ -601,6 +642,7 @@ async fn main(spawner: Spawner) {
         }
 
         let alerts = measurements.alerts_at(now_ms);
+        input_tracker.exclude_obscured(alerts.priority().is_some());
         for (cell, sensor) in dashboard_pico2::dashboard::CELL_SENSORS.into_iter().enumerate() {
             let id = dashboard_pico2::samples::SensorId::ALL[sensor];
             color_transitions.set_target(cell, if alerts.active(id) { RED } else { BLACK });
@@ -743,6 +785,8 @@ async fn main(spawner: Spawner) {
         let blocked_us = wait_start.elapsed().as_micros();
         crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
         if save_this_frame {
+            input_tracker.maintenance_gap();
+            tasks::flush::publish_input_counts(input_tracker.counters());
             let ticket = pending_save.take().expect("missing save ticket");
             // Both affine leases are owned here and the matching completion
             // has returned. Queue no display work until all owners resume.
@@ -779,6 +823,10 @@ async fn main(spawner: Spawner) {
             DamagePlan::between(next_frame.pixels(), render_frame.pixels())
         };
         let idle = plan.is_empty();
+        if idle {
+            input_tracker.no_damage();
+        }
+        tasks::flush::publish_input_counts(input_tracker.counters());
         let trace = RenderTrace {
             start_us: render_start.as_micros(),
             end_us: render_end.as_micros(),
@@ -791,6 +839,7 @@ async fn main(spawner: Spawner) {
                 .min()
                 .and_then(|ms| ms.checked_mul(1000)),
             active_cycles: render_cycles,
+            input: input_tracker.pending(),
         };
         if idle {
             lifecycle.discard(token).expect("cannot discard active frame");
@@ -806,6 +855,7 @@ async fn main(spawner: Spawner) {
             lifecycle.queue(token).expect("another frame is still in flight");
             crate::tasks::recovery::DISPLAY_PENDING.store(true, Ordering::Relaxed);
             let request = render_frame.submit_plan(token, trace, plan);
+            input_tracker.submitted();
             assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
             BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
             wait_started(&mut lifecycle, token).await;

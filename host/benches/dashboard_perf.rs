@@ -599,6 +599,35 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox
 }
 criterion_main!(dashboard_perf);
+
+// Exact input_model.rs from 56af170, retained solely for the paired cost fixture.
+#[allow(dead_code)]
+mod input_legacy;
+
+fn input_mailbox(c: &mut Criterion) {
+    let legacy = input_legacy::EncoderEvents::new();
+    let current = dashboard_host_validation::input_model::EncoderEvents::new();
+    legacy.publish_delta(5);
+    legacy.publish_press();
+    current.publish_delta(5);
+    current.publish_press();
+    assert_eq!(legacy.take(), (5, 1));
+    assert_eq!(current.take(), (5, 1));
+    c.bench_function("input/legacy_atomic_roundtrip", |b| {
+        b.iter(|| {
+            legacy.publish_delta(black_box(5));
+            legacy.publish_press();
+            black_box(legacy.take());
+        })
+    });
+    c.bench_function("input/coherent_mailbox_roundtrip", |b| {
+        b.iter(|| {
+            current.publish_delta(black_box(5));
+            current.publish_press();
+            black_box(current.take());
+        })
+    });
+}

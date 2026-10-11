@@ -43,6 +43,8 @@ pub mod extrema;
 pub mod health;
 #[path = "../../firmware/pico2/src/input_model.rs"]
 pub mod input_model;
+#[path = "../../firmware/pico2/src/input_trace.rs"]
+pub mod input_trace;
 #[path = "../../firmware/pico2/src/logging.rs"]
 pub mod logging;
 #[path = "../../firmware/pico2/src/logging_view.rs"]

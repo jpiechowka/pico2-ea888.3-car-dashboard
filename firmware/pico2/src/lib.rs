@@ -12,6 +12,7 @@ pub mod diagnostics;
 pub mod display;
 pub mod health;
 pub mod input_model;
+pub mod input_trace;
 pub mod logging;
 pub mod logging_view;
 pub mod maintenance;

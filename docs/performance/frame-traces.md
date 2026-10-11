@@ -15,6 +15,7 @@ fields and the inverse-loop-time "Max FPS" estimate were removed.
 | Completed time | Timestamp after the HAL write returns and CS is raised |
 | Payload bytes | Sum of RGB565 payloads across all windows; 153600 for a full frame |
 | Sample time/age | Oldest accepted timestamp among snapshot channels, to HAL return; absent before samples exist |
+| Input batch | Unique applied batch IDs, earliest software observation, latest debounce acceptance/consumption and event count |
 
 Render, queue, start and completion ordering is checked. Invalid timestamps,
 invalid byte counts, and zero frame sequences cannot create a `FrameTrace`.
@@ -23,6 +24,42 @@ feature retains 64 records in a bounded ring, tracks overwritten records, and
 rejects stale/duplicate sequences. This ring is intended for later probe
 inspection. A raw memory read concurrent with writes is not a coherent export;
 physical capture tooling and target measurements are still pending.
+
+## Input correlation
+
+Button observation begins at the last stable candidate edge seen by the polling
+code, with millisecond origin precision. Encoder motion begins at successful
+I2C delta-read completion; encoder button origin is the debounce candidate.
+These do not include unobserved physical edge or polling delay before detection.
+Motion and press values and their timestamps are consumed under one short
+critical section. No lock spans I2C, drawing, logging or an await.
+
+The render owner assigns monotonic batch IDs when applying UI changes. A trace
+retains the oldest observation and latest acceptance/consumption in a coalesced
+batch, and attaches it once to the submitted frame token. Old A/B completions
+cannot acquire newer input metadata. A failed transfer contributes no latency
+sample. Ignored controls, saturated/rejected encoder polls, reconnect discards
+and inputs producing no framebuffer damage have separate counters. A critical
+overlay conservatively excludes the entire pending batch and increments
+`obscured_events`, including when unrelated pixels change. This prevents a
+deferred backlight-off press from receiving credit while its popup is hidden.
+Batch observation latency uses the oldest observation, while consume latency
+uses the latest consumption; neither is a per-detent distribution.
+Brightness changes may also affect PWM before any framebuffer transfer.
+
+A requested statistics reset retains its original observation/consumption and
+enters a frame only when the matching acknowledgement is applied on Dashboard.
+If the page changed, it is counted as ignored for presentation timing. Settings
+maintenance retains pending input metadata across the discarded render, keeps
+wall-clock age, and records a gap. HAL completion remains different from actual
+visible response; simultaneous controls may replace an intermediate state.
+
+`stage08_input` retains policy 2 source archives and 30 samples per paired host
+case. The exact old mailbox source from `56af170` is a benchmark-only fixture.
+For one motion, press and consume roundtrip, its median is 15.437 ns; the new
+coherent mailbox is 34.803 ns. This is an explicit CPU cost for coherent timing
+and guarded counters, using the host critical-section backend. It is not an
+RP2350 interrupt-duration measurement or an input-latency guarantee.
 
 ## Completion rate
 
@@ -48,6 +85,6 @@ trusted acquisition reference on hardware.
 
 Five host fixtures verify interval arithmetic, malformed and extreme clocks,
 bounded ring overwrite/replay, weighted rate windows, stalls and count wrap.
-All 77 host runtime tests and two compile-fail tests pass in both outline modes.
+At the initial frame-trace checkpoint, all 77 host runtime tests and two compile-fail tests passed in both outline modes.
 Strict Clippy and stock plus `frame-trace,serial-display,cpu300-spi75-1v30`
 release builds pass. This is compilation and host verification only.

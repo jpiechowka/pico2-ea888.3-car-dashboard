@@ -1,5 +1,10 @@
 //! Bounded input contracts shared by physical buttons and the optional encoder.
-use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use core::cell::RefCell;
+
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+use crate::input_trace::Observation;
 
 const MAX_DELTA: i32 = 128;
 const MAX_PRESSES: u32 = 8;
@@ -19,10 +24,21 @@ pub fn decode_encoder_delta(bytes: [u8; 4]) -> Option<i32> {
     (-MAX_DELTA..=MAX_DELTA).contains(&raw).then(|| -raw)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EncoderBatch {
+    pub delta: i32,
+    pub presses: u8,
+    pub motion: Option<Observation>,
+    pub button: Option<Observation>,
+}
+struct EncoderState {
+    batch: EncoderBatch,
+    dropped: u32,
+    discarded: u32,
+    last_us: u64,
+}
 pub struct EncoderEvents {
-    delta: AtomicI32,
-    presses: AtomicU32,
-    dropped: AtomicU32,
+    state: Mutex<CriticalSectionRawMutex, RefCell<EncoderState>>,
 }
 impl Default for EncoderEvents {
     fn default() -> Self { Self::new() }
@@ -30,60 +46,112 @@ impl Default for EncoderEvents {
 impl EncoderEvents {
     pub const fn new() -> Self {
         Self {
-            delta: AtomicI32::new(0),
-            presses: AtomicU32::new(0),
-            dropped: AtomicU32::new(0),
+            state: Mutex::new(RefCell::new(EncoderState {
+                batch: EncoderBatch {
+                    delta: 0,
+                    presses: 0,
+                    motion: None,
+                    button: None,
+                },
+                dropped: 0,
+                discarded: 0,
+                last_us: 0,
+            })),
         }
+    }
+
+    fn mutate<R>(
+        &self,
+        f: impl FnOnce(&mut EncoderState) -> R,
+    ) -> R {
+        self.state.lock(|state| f(&mut state.borrow_mut()))
     }
 
     pub fn publish_delta(
         &self,
         delta: i32,
     ) {
-        if !(-MAX_DELTA..=MAX_DELTA).contains(&delta) {
-            self.drop_event();
-            return;
-        }
-        let old = self
-            .delta
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                Some((v + delta).clamp(-MAX_DELTA, MAX_DELTA))
-            })
-            .unwrap();
-        if !(-MAX_DELTA..=MAX_DELTA).contains(&(old + delta)) {
-            self.drop_event();
-        }
+        self.publish_delta_at(delta, 0);
     }
 
-    pub fn publish_press(&self) {
-        if self
-            .presses
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                (v < MAX_PRESSES).then_some(v + 1)
-            })
-            .is_err()
-        {
-            self.drop_event();
-        }
+    pub fn publish_delta_at(
+        &self,
+        delta: i32,
+        now_us: u64,
+    ) {
+        self.mutate(|state| {
+            if !(-MAX_DELTA..=MAX_DELTA).contains(&delta) || now_us < state.last_us {
+                state.dropped = state.dropped.saturating_add(1);
+                return;
+            }
+            state.last_us = now_us;
+            if delta == 0 {
+                return;
+            }
+            let sum = state.batch.delta + delta;
+            let next = sum.clamp(-MAX_DELTA, MAX_DELTA);
+            if sum != next {
+                state.dropped = state.dropped.saturating_add(1);
+            }
+            if next == state.batch.delta {
+                return;
+            }
+            if Observation::append(&mut state.batch.motion, Observation::new(now_us, now_us).unwrap()) {
+                state.batch.delta = next;
+            } else {
+                state.dropped = state.dropped.saturating_add(1);
+            }
+        });
     }
 
-    pub fn drop_event(&self) {
-        let _ = self
-            .dropped
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_add(1)));
+    pub fn publish_press(&self) { self.publish_press_at(Observation::new(0, 0).unwrap()); }
+
+    pub fn publish_press_at(
+        &self,
+        observation: Observation,
+    ) {
+        self.mutate(|state| {
+            if observation.events != 1
+                || observation.observed_us > observation.accepted_us
+                || observation.accepted_us < state.last_us
+                || u32::from(state.batch.presses) == MAX_PRESSES
+            {
+                state.dropped = state.dropped.saturating_add(1);
+                return;
+            }
+            if Observation::append(&mut state.batch.button, observation) {
+                state.batch.presses += 1;
+                state.last_us = observation.accepted_us;
+            } else {
+                state.dropped = state.dropped.saturating_add(1);
+            }
+        });
     }
 
-    pub fn dropped(&self) -> u32 { self.dropped.load(Ordering::Relaxed) }
+    pub fn drop_event(&self) { self.mutate(|state| state.dropped = state.dropped.saturating_add(1)); }
 
-    /// Independent event streams, not a sensor snapshot. Each swap consumes once.
+    pub fn dropped(&self) -> u32 { self.mutate(|state| state.dropped) }
+
+    pub fn discarded(&self) -> u32 { self.mutate(|state| state.discarded) }
+
+    pub fn counters(&self) -> (u32, u32) { self.mutate(|state| (state.dropped, state.discarded)) }
+
+    pub fn take_observed(&self) -> EncoderBatch { self.mutate(|state| core::mem::take(&mut state.batch)) }
+
     pub fn take(&self) -> (i32, u8) {
-        (
-            self.delta.swap(0, Ordering::Relaxed),
-            self.presses.swap(0, Ordering::Relaxed) as u8,
-        )
+        let batch = self.take_observed();
+        (batch.delta, batch.presses)
     }
 
-    pub fn clear(&self) { self.take(); }
+    pub fn clear(&self) {
+        self.mutate(|state| {
+            let batch = core::mem::take(&mut state.batch);
+            state.discarded = state
+                .discarded
+                .saturating_add(batch.motion.map_or(0, |v| v.events))
+                .saturating_add(batch.button.map_or(0, |v| v.events));
+        });
+    }
 }
 
 pub fn brightness_after(
@@ -118,6 +186,14 @@ impl DebouncedButton {
             since_ms: 0,
             last_ms: 0,
         }
+    }
+
+    pub fn update_with_origin(
+        &mut self,
+        pressed: bool,
+        now_ms: u64,
+    ) -> Option<u64> {
+        self.update(pressed, now_ms).then_some(self.since_ms)
     }
 
     pub fn update(

@@ -119,3 +119,31 @@ fn concurrent_input_is_consumed_or_counted_as_dropped_without_wrap() {
     consumed += delta as u64 + u64::from(presses);
     assert_eq!(consumed + u64::from(events.dropped()), 100_000);
 }
+
+#[test]
+fn encoder_values_and_software_observations_are_consumed_coherently() {
+    use dashboard_host_validation::input_trace::Observation;
+    let events = EncoderEvents::new();
+    events.publish_delta_at(2, 100);
+    events.publish_press_at(Observation::new(90, 150).unwrap());
+    events.publish_delta_at(1, 149); // stale producer time cannot modify data
+    let batch = events.take_observed();
+    assert_eq!((batch.delta, batch.presses), (2, 1));
+    assert_eq!(batch.motion.unwrap().observed_us, 100);
+    assert_eq!(batch.button.unwrap().observed_us, 90);
+    assert_eq!(batch.button.unwrap().accepted_us, 150);
+    assert_eq!(events.dropped(), 1);
+    let empty = events.take_observed();
+    assert_eq!(
+        (empty.delta, empty.presses, empty.motion, empty.button),
+        (0, 0, None, None)
+    );
+    events.publish_delta_at(-1, 160);
+    events.publish_delta_at(1, 170);
+    let cancelled = events.take_observed();
+    assert_eq!(cancelled.delta, 0);
+    assert_eq!(cancelled.motion.unwrap().events, 2); // count no-effect observations explicitly
+    events.publish_press_at(Observation::new(180, 230).unwrap());
+    events.clear();
+    assert_eq!(events.discarded(), 1);
+}

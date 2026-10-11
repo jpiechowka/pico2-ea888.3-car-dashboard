@@ -17,6 +17,7 @@ pub struct RenderTrace {
     pub blocked_us: u64,
     pub sample_us: Option<u64>,
     pub active_cycles: u64,
+    pub input: Option<crate::input_trace::InputTrace>,
 }
 
 impl RenderTrace {
@@ -28,6 +29,7 @@ impl RenderTrace {
             blocked_us: 0,
             sample_us: None,
             active_cycles: 0,
+            input: None,
         }
     }
 
@@ -35,6 +37,7 @@ impl RenderTrace {
         if self.start_us > self.end_us
             || self.end_us > self.queued_us
             || self.sample_us.is_some_and(|at| at > self.start_us)
+            || self.input.is_some_and(|trace| !trace.valid_before(self.start_us))
         {
             return Err(TelemetryError::Clock);
         }
@@ -101,6 +104,12 @@ impl FrameTrace {
     pub fn total_us(&self) -> u64 { self.completed_us - self.render.start_us }
 
     pub fn sample_age_us(&self) -> Option<u64> { self.render.sample_us.map(|at| self.completed_us - at) }
+
+    pub fn input_age_us(&self) -> Option<u64> { self.render.input.map(|input| self.completed_us - input.observed_us) }
+
+    pub fn input_after_consume_us(&self) -> Option<u64> {
+        self.render.input.map(|input| self.completed_us - input.consumed_us)
+    }
 }
 
 /// Oldest entries are overwritten; rejected stale/duplicate records do not count.

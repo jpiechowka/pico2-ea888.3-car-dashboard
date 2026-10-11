@@ -36,7 +36,7 @@ remain unavailable until their pin mapping is established.
 Each raw poll must be within +/-128 counts. Corrupt/extreme values are rejected
 before negation, including `i32::MIN`. Pending motion saturates at +/-128 and
 pending presses at eight; rejected/saturated events are counted. The UI consumes
-each stream once and applies press parity to its backlight toggle. Brightness
+each coherent value/timestamp batch once and applies press parity to its backlight toggle. Brightness
 and scroll arithmetic uses wide intermediates and clamps its result. Oversized
 register writes are rejected instead of silently truncated.
 
@@ -46,10 +46,17 @@ on reconnect, clears pending events on failure, and retries ordinary errors
 every 200 ms. Completed failures count as useful input-task progress; absence
 alone does not cause a watchdog reset. A genuinely wedged I2C future does.
 
-Six host tests cover identity/endianness/direction, all integer extremes,
+Host tests cover identity/endianness/direction, all integer extremes,
 saturation/drop accounting, debounce/held reconnects/clock regression, and
 100000 concurrently produced motion/press events. Watchdog tests independently
 stall input while other tasks advance. Host tests do not prove bus recovery,
 debounce timing under load, or physical direction. Validate unplug/replug, wrong
 device/address, held/bouncing button, stuck SDA/SCL, and watchdog reset on the
 actual assembly before hardware acceptance.
+
+The timestamped mailbox replaces independent atomics with a bounded blocking
+critical section, using the same reviewed RP2350 multicore provider as other
+shared state. Only fixed scalar metadata moves under the lock. Rejected clock
+regressions and reconnect discards are counted, and values cannot be consumed
+with timestamps from a different batch. See [input correlation and its measured
+host cost](../performance/frame-traces.md#input-correlation).

@@ -2,11 +2,12 @@
 //!
 //! Minimal no_std driver that communicates with the seesaw firmware
 //! over I2C to read encoder rotation (delta) and button press state.
-//! Publishes events via atomics for consumption by the main render loop.
+//! Publishes values and software timestamps in one bounded critical section.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use dashboard_pico2::input_model::{DebouncedButton, EncoderEvents, decode_encoder_delta, valid_encoder_identity};
+use dashboard_pico2::input_trace::Observation;
 use embassy_rp::i2c::{Async, I2c};
 use embassy_rp::peripherals::I2C0;
 use embassy_time::{Instant, Timer};
@@ -162,7 +163,7 @@ async fn read_button(i2c: &mut I2c<'_, I2C0, Async>) -> Result<bool, EncoderErro
 }
 
 /// Async task that polls the seesaw encoder at ~50Hz and publishes
-/// rotation deltas and button press events via atomics.
+/// rotation deltas and button press events with coherent software timestamps.
 ///
 /// This task runs on Core 0 and should be spawned after display init
 /// is complete so encoder events don't fire during boot.
@@ -198,14 +199,20 @@ pub async fn encoder_task(mut i2c: I2c<'static, I2C0, Async>) {
                 log_info!("Encoder connected");
             }
             let delta = read_delta(&mut i2c).await?;
+            let delta_at = Instant::now().as_micros();
             let pressed = read_button(&mut i2c).await?;
             if let Some(delta) = delta {
-                ENCODER_EVENTS.publish_delta(delta);
+                ENCODER_EVENTS.publish_delta_at(delta, delta_at);
             } else {
                 ENCODER_EVENTS.drop_event();
             }
-            if button.update(pressed, Instant::now().as_millis()) {
-                ENCODER_EVENTS.publish_press();
+            let now = Instant::now();
+            if let Some(since) = button.update_with_origin(pressed, now.as_millis())
+                && let Some(observation) = since
+                    .checked_mul(1000)
+                    .and_then(|at| Observation::new(at, now.as_micros()))
+            {
+                ENCODER_EVENTS.publish_press_at(observation);
             }
             Ok::<(), EncoderError>(())
         }
