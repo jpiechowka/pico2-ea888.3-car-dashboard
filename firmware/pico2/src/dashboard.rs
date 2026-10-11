@@ -4,6 +4,7 @@ use embedded_graphics::prelude::*;
 
 use crate::acquisition::DashboardSnapshot;
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
+use crate::pages::Page;
 use crate::render::{FpsMode, FpsText, format_fps};
 use crate::samples::{DataMode, Quality, SensorId, Source};
 use crate::sensor_state::SensorSnapshot;
@@ -30,7 +31,21 @@ impl Overlay {
         alerts: crate::alarms::Alerts,
         blink: bool,
     ) -> Option<Self> {
-        alerts.priority().map(|id| Self::Critical(id, blink)).or(user)
+        user.or_else(|| alerts.priority().map(|id| Self::Critical(id, blink)))
+    }
+
+    /// Warnings belong to the dashboard; diagnostic pages stay unobstructed.
+    pub fn for_page(
+        page: Page,
+        user: Option<Self>,
+        alerts: crate::alarms::Alerts,
+        blink: bool,
+    ) -> Option<Self> {
+        match page {
+            Page::Dashboard => Self::prioritize(user, alerts, blink),
+            Page::Debug => user.filter(|overlay| matches!(overlay, Self::Brightness(_))),
+            Page::Logs => None,
+        }
     }
 
     pub fn draw<D: DrawTarget<Color = Rgb565>>(
@@ -180,7 +195,12 @@ impl DashboardScene<'_> {
     }
 
     fn effective_overlay(&self) -> Option<Overlay> {
-        Overlay::prioritize(self.overlay, self.measurements.alerts_at(self.now_ms), self.blink_on)
+        Overlay::for_page(
+            Page::Dashboard,
+            self.overlay,
+            self.measurements.alerts_at(self.now_ms),
+            self.blink_on,
+        )
     }
 
     pub fn draw_full<D: DrawTarget<Color = Rgb565>>(

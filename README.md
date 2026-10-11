@@ -114,7 +114,7 @@ visible. See [startup status](docs/vehicle/startup-status.md) and
 
 The normalized direction follows the documented preassembled 5880 encoder;
 physical direction remains an installation check. Press-to-off normally shows
-a 1.5-second popup before switching off. Critical overlays have priority.
+a 1.5-second popup before switching off. Button feedback takes priority over dashboard warnings; warnings resume blinking after feedback expires and stay off Debug/Logs.
 GP20 PWM is calculated for 1 kHz at every supported configured CPU rate. The
 45%-100% visible duty mapping remains pending measured low-duty validation.
 

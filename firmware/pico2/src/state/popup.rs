@@ -1,32 +1,34 @@
-use embassy_time::{Duration, Instant};
-
-pub const POPUP_DURATION: Duration = Duration::from_secs(3);
+pub const POPUP_DURATION_MS: u64 = 3000;
 /// Shorter duration for transient feedback popups (brightness adjustment).
-pub const POPUP_DURATION_SHORT: Duration = Duration::from_millis(1500);
+pub const POPUP_DURATION_SHORT_MS: u64 = 1500;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Popup {
-    Reset(Instant),
-    Fps(Instant),
-    BoostUnit(Instant),
-    /// Brightness popup stores (timestamp, brightness_percent).
-    Brightness(Instant, u32),
+    Reset(u64),
+    Fps(u64),
+    BoostUnit(u64),
+    /// Monotonic milliseconds and brightness percentage.
+    Brightness(u64, u32),
 }
 
 impl Popup {
     #[inline]
-    pub const fn start_time(&self) -> Instant {
+    pub const fn start_time(&self) -> u64 {
         match self {
             Self::Reset(t) | Self::Fps(t) | Self::BoostUnit(t) | Self::Brightness(t, _) => *t,
         }
     }
 
     #[inline]
-    pub fn is_expired(&self) -> bool {
+    pub fn is_expired_at(
+        &self,
+        now_ms: u64,
+    ) -> bool {
         let duration = match self {
-            Self::Brightness(..) => POPUP_DURATION_SHORT,
-            _ => POPUP_DURATION,
+            Self::Brightness(..) => POPUP_DURATION_SHORT_MS,
+            _ => POPUP_DURATION_MS,
         };
-        self.start_time().elapsed() >= duration
+        // Invalid time cannot keep feedback covering a warning indefinitely.
+        now_ms.checked_sub(self.start_time()).is_none_or(|age| age >= duration)
     }
 }

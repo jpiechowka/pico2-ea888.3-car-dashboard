@@ -54,7 +54,7 @@ pub fn process_buttons(
     if observations[0].is_some() && current_page == Page::Dashboard {
         let new_mode = current_fps_mode.next();
         result.new_fps_mode = Some(new_mode);
-        result.show_popup = Some(Popup::Fps(Instant::now()));
+        result.show_popup = Some(Popup::Fps(Instant::now().as_millis()));
     }
 
     if observations[1].is_some() {
@@ -64,7 +64,7 @@ pub fn process_buttons(
 
     if observations[2].is_some() && current_page == Page::Dashboard {
         result.boost_unit_toggled = true;
-        result.show_popup = Some(Popup::BoostUnit(Instant::now()));
+        result.show_popup = Some(Popup::BoostUnit(Instant::now().as_millis()));
     }
 
     if observations[3].is_some() && current_page == Page::Dashboard {

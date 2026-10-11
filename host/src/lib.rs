@@ -55,6 +55,10 @@ pub mod maintenance;
 pub mod metrics;
 #[path = "../../firmware/pico2/src/microbench.rs"]
 pub mod microbench;
+#[path = "../../firmware/pico2/src/state/pages.rs"]
+pub mod pages;
+#[path = "../../firmware/pico2/src/state/popup.rs"]
+pub mod popup;
 #[path = "../../firmware/pico2/src/render.rs"]
 pub mod render;
 #[path = "../../firmware/pico2/src/samples.rs"]

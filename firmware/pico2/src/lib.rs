@@ -38,6 +38,7 @@ mod profiling {
 mod state {
     pub mod extrema;
     pub mod pages;
+    pub mod popup;
     pub mod sensor_state;
 }
 
@@ -49,5 +50,5 @@ mod ui {
 }
 
 pub use profiling::{cpu_cycles, cycle_segments, memory, stack_samples};
-pub use state::{extrema, pages, sensor_state};
+pub use state::{extrema, pages, popup, sensor_state};
 pub use ui::{colors, styles};

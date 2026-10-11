@@ -531,7 +531,7 @@ async fn main(spawner: Spawner) {
                         backlight_off_pending = false; // cancel any pending off
                         pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
-                        active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
+                        active_popup = Some(Popup::Brightness(Instant::now().as_millis(), brightness_percent));
                     }
                 }
                 // Button toggles backlight on/off
@@ -550,7 +550,7 @@ async fn main(spawner: Spawner) {
                         pwm_config.compare_a = brightness_compare(brightness_percent as u8);
                         backlight_pwm.set_config(&pwm_config);
                     }
-                    active_popup = Some(Popup::Brightness(Instant::now(), brightness_percent));
+                    active_popup = Some(Popup::Brightness(Instant::now().as_millis(), brightness_percent));
                 }
             }
         }
@@ -570,7 +570,7 @@ async fn main(spawner: Spawner) {
         }
 
         if let Some(ref popup) = active_popup
-            && popup.is_expired()
+            && popup.is_expired_at(Instant::now().as_millis())
         {
             // If a backlight-off was deferred and this is the Brightness popup expiring,
             // apply the PWM change now (don't apply on other popup types)
@@ -604,7 +604,7 @@ async fn main(spawner: Spawner) {
                     backlight_pwm.set_config(&pwm_config);
                     backlight_off_pending = false;
                 }
-                active_popup = Some(Popup::Reset(Instant::now()));
+                active_popup = Some(Popup::Reset(Instant::now().as_millis()));
             }
         }
         let now_ms = Instant::now().as_millis();
@@ -645,7 +645,16 @@ async fn main(spawner: Spawner) {
         }
 
         let alerts = measurements.alerts_at(now_ms);
-        input_tracker.exclude_obscured(alerts.priority().is_some());
+        let user_overlay = active_popup.as_ref().map(|popup| {
+            match popup {
+                Popup::Reset(_) => Overlay::Reset,
+                Popup::Fps(_) => Overlay::Fps(fps_mode),
+                Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
+                Popup::Brightness(_, percent) => Overlay::Brightness((*percent).min(100) as u8),
+            }
+        });
+        let visible_overlay = Overlay::for_page(current_page, user_overlay, alerts, blink_on);
+        input_tracker.exclude_obscured(matches!(visible_overlay, Some(Overlay::Critical(..))));
         for (cell, sensor) in dashboard_pico2::dashboard::CELL_SENSORS.into_iter().enumerate() {
             let id = dashboard_pico2::samples::SensorId::ALL[sensor];
             color_transitions.set_target(cell, if alerts.active(id) { RED } else { BLACK });
@@ -664,14 +673,6 @@ async fn main(spawner: Spawner) {
 
         match current_page {
             Page::Dashboard => {
-                let overlay = active_popup.as_ref().map(|popup| {
-                    match popup {
-                        Popup::Reset(_) => Overlay::Reset,
-                        Popup::Fps(_) => Overlay::Fps(fps_mode),
-                        Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
-                        Popup::Brightness(_, percent) => Overlay::Brightness((*percent).min(100) as u8),
-                    }
-                });
                 let scene = DashboardScene {
                     measurements: &measurements,
                     status: vehicle_status,
@@ -682,7 +683,7 @@ async fn main(spawner: Spawner) {
                     fps_instant: current_fps,
                     fps_average: average_fps,
                     backgrounds: core::array::from_fn(|cell| color_transitions.get_current(cell)),
-                    overlay,
+                    overlay: user_overlay,
                 };
                 let redraw = dashboard_cache.prepare(render_idx, &scene);
                 redraw.begin(&mut display, &scene);
@@ -753,20 +754,10 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        // The same priority rule applies on every page. Render the critical
-        // overlay last so a brightness/unit/reset popup cannot cover it.
-        if current_page != Page::Dashboard {
-            let user = if matches!(current_page, Page::Debug) {
-                match active_popup {
-                    Some(Popup::Brightness(_, pct)) => Some(Overlay::Brightness(pct.min(100) as u8)),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            if let Some(overlay) = Overlay::prioritize(user, alerts, blink_on) {
-                overlay.draw(&mut display);
-            }
+        if current_page != Page::Dashboard
+            && let Some(overlay) = visible_overlay
+        {
+            overlay.draw(&mut display);
         }
 
         let render_end = Instant::now();

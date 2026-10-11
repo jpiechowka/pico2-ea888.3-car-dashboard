@@ -20,7 +20,7 @@ Demo rules in `alarms::demo_rules` are synthetic UI fixtures, not driving recomm
 
 ## Rendering
 
-Widgets receive the evaluated state and no longer contain guessed coolant, shared oil/DSG, EGT or voltage thresholds. Old peak values do not imply a current contextual alarm. Critical overlays take precedence over brightness, unit, FPS and reset popups on Dashboard, Debug and Logs. Multiple active channels use deterministic order: coolant, oil, DSG, EGT, lambda, voltage, boost, IAT. This ordering is a UI policy, not a calibrated severity ranking. Explicit backlight off remains off.
+Widgets receive the evaluated state and no longer contain guessed coolant, shared oil/DSG, EGT or voltage thresholds. Old peak values do not imply a current contextual alarm. Warnings appear only on Dashboard. Brightness, unit, FPS and reset feedback takes precedence until its wall-clock deadline (1.5 seconds for brightness, 3 seconds otherwise), then any active warning resumes its current blink phase. Debug permits brightness feedback; Logs stays unobstructed. Page changes clear transient feedback without clearing alarm state. Multiple active channels use deterministic order: coolant, oil, DSG, EGT, lambda, voltage, boost, IAT. This ordering is a UI policy, not a calibrated severity ranking. Explicit backlight off remains off.
 
 The retained cache uses the effective overlay, including sensor and blink state. Removing or replacing a warning restores the entire underlay on each framebuffer. Host tests render both buffers and compare with complete redraws.
 

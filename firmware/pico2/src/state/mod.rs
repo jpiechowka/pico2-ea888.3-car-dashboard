@@ -1,9 +1,7 @@
 mod button;
 mod input;
-mod pages;
-mod popup;
 
 pub use button::ButtonState;
+pub use dashboard_pico2::pages::Page;
+pub use dashboard_pico2::popup::Popup;
 pub use input::process_buttons;
-pub use pages::Page;
-pub use popup::Popup;

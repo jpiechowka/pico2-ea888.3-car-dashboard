@@ -450,7 +450,7 @@ fn acquisition_evaluates_normal_samples_and_faults_before_watch_coalescing() {
 }
 
 #[test]
-fn critical_priority_and_clear_restore_both_retained_buffers() {
+fn user_feedback_precedes_warning_and_clear_restores_both_retained_buffers() {
     use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
     use dashboard_host_validation::display::St7789Renderer;
     use dashboard_host_validation::render::FpsMode;
@@ -471,7 +471,7 @@ fn critical_priority_and_clear_restore_both_retained_buffers() {
     ] {
         assert_eq!(
             Overlay::prioritize(popup, alerts, true),
-            Some(Overlay::Critical(SensorId::Water, true))
+            popup.or(Some(Overlay::Critical(SensorId::Water, true)))
         );
     }
     let mut scene = DashboardScene {
@@ -489,12 +489,26 @@ fn critical_priority_and_clear_restore_both_retained_buffers() {
     let mut cache = DashboardCache::new();
     let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
     let mut full = AlignedFrame::boxed();
-    for blink in [true, false, true] {
+    for (popup, blink) in [
+        (None, true),
+        (Some(Overlay::Fps(FpsMode::Average)), false),
+        (Some(Overlay::Reset), true),
+        (Some(Overlay::BoostUnit(true)), false),
+        (Some(Overlay::Brightness(0)), true),
+        (None, false),
+        (None, true),
+    ] {
+        scene.overlay = popup;
         scene.blink_on = blink;
         for (i, frame) in frames.iter_mut().enumerate() {
             cache.draw(&mut St7789Renderer::new(&mut frame.0), i, &scene);
             scene.draw_full(&mut St7789Renderer::new(&mut full.0));
             assert!(frame.0 == full.0);
+            // Independent overlay oracle: shared full/retained rendering must
+            // not agree on the same wrong priority decision.
+            let expected = popup.unwrap_or(Overlay::Critical(SensorId::Water, blink));
+            expected.draw(&mut St7789Renderer::new(&mut full.0));
+            assert!(frame.0 == full.0, "feedback/warning priority on buffer {i}");
         }
     }
     for at in [1100, 1500, 1600] {

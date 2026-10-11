@@ -1,7 +1,7 @@
 use dashboard_host_validation::input_trace::{InputTracker, Observation};
 
 #[test]
-fn critical_overlay_excludes_deferred_off_even_when_other_pixels_change() {
+fn visible_warning_without_feedback_excludes_unrelated_input_damage() {
     use dashboard_host_validation::AlignedFrame;
     use dashboard_host_validation::acquisition::AcquisitionModel;
     use dashboard_host_validation::dashboard::Overlay;
@@ -15,7 +15,7 @@ fn critical_overlay_excludes_deferred_off_even_when_other_pixels_change() {
     let alerts = model.snapshot().alerts_at(1000);
     let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
     for (frame, blink) in frames.iter_mut().zip([true, false]) {
-        let overlay = Overlay::prioritize(Some(Overlay::Brightness(0)), alerts, blink).unwrap();
+        let overlay = Overlay::prioritize(None, alerts, blink).unwrap();
         assert!(matches!(overlay, Overlay::Critical(_, _)));
         overlay.draw(&mut St7789Renderer::new(&mut frame.0));
     }

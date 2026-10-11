@@ -185,8 +185,9 @@ impl InputTracker {
         }
     }
 
-    /// A critical overlay can hide the only acknowledgement of a deferred
-    /// action. Conservatively exclude the entire batch on these frames, even
+    /// A visible critical overlay can hide an action's changed pixels.
+    /// Callers must use the resolved page/feedback policy, not alarm presence.
+    /// Conservatively exclude the entire batch on these frames, even
     /// when unrelated pixels change. Never infer causality from global damage.
     pub fn exclude_obscured(
         &mut self,
