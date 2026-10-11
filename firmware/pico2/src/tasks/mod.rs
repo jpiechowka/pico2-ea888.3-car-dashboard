@@ -10,11 +10,13 @@ pub use demo::{DEMO_VALUES, demo_values_task};
 pub use flush::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
+    COMPLETED_FRAMES,
     FLUSH_BUFFER_IDX,
-    FLUSH_DONE,
-    FLUSH_SIGNAL,
+    FLUSH_REQUESTS,
     LAST_FLUSH_TIME_US,
     display_flush_task,
+    wait_completed,
+    wait_started,
 };
 
 pub static EXECUTOR_CORE1: StaticCell<Executor> = StaticCell::new();

@@ -26,6 +26,8 @@ mod thresholds {
 
 use core::sync::atomic::Ordering;
 
+use dashboard_pico2::display::FrameBuffer;
+use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -37,29 +39,31 @@ use embassy_rp::spi::Spi;
 use embassy_time::{Duration, Instant};
 use embedded_graphics::prelude::*;
 use panic_probe as _;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
-use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
+use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actual_spi_freq};
 use crate::peripherals::{ENCODER_BUTTON, ENCODER_DELTA, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::render::{FpsMode, RenderState, cell_idx};
-use crate::screens::{ProfilingData, clear_framebuffers, draw_logs_page, draw_profiling_page, run_boot_sequence};
+use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, run_boot_sequence};
 use crate::state::{ButtonState, Page, PeakMode, Popup, SensorState, process_buttons};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
+    COMPLETED_FRAMES,
     CORE1_STACK,
     DEMO_VALUES,
     EXECUTOR_CORE1,
     FLUSH_BUFFER_IDX,
-    FLUSH_DONE,
-    FLUSH_SIGNAL,
+    FLUSH_REQUESTS,
     LAST_FLUSH_TIME_US,
     demo_values_task,
     display_flush_task,
     fill_core1_stack_sentinel,
+    wait_completed,
+    wait_started,
 };
 use crate::thresholds::{
     AFR_LEAN_CRITICAL,
@@ -104,8 +108,6 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_cargo_version!(),
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
-
-pub use crate::drivers::{FRAMEBUFFER_A, FRAMEBUFFER_B};
 
 #[cfg(any(
     all(
@@ -299,15 +301,18 @@ async fn main(spawner: Spawner) {
     let spi = Spi::new_txonly(p.SPI0, p.PIN_18, p.PIN_19, p.DMA_CH0, Irqs, display_spi_config());
 
     let mut flusher = St7789Flusher::new(spi, dc, cs);
-    flusher.init().await;
+    flusher.init().await.expect("display initialization failed");
 
     log_info!("Display initialized");
 
-    let mut double_buffer = unsafe { DoubleBuffer::new() };
-
-    clear_framebuffers(&mut flusher, &mut double_buffer).await;
-
-    run_boot_sequence(&mut flusher, &mut double_buffer).await;
+    static FRAME_A: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
+    static FRAME_B: ConstStaticCell<FrameBuffer> = ConstStaticCell::new(FrameBuffer::new());
+    let [mut render_frame, spare_frame] = FrameLease::pair(FRAME_A.take(), FRAME_B.take());
+    let mut spare_frame = Some(spare_frame);
+    let mut lifecycle = FrameLifecycle::new();
+    run_boot_sequence(&mut flusher, render_frame.buffer())
+        .await
+        .expect("boot display failed");
 
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
@@ -345,10 +350,9 @@ async fn main(spawner: Spawner) {
     let mut reset_requested = false;
 
     let mut render_state = RenderState::new();
-    let mut frame_count = 0u32;
     let mut current_fps = 0.0f32;
     let mut average_fps = 0.0f32;
-    let mut fps_frame_count = 0u32;
+    let mut last_completed_count = 0u32;
     let mut fps_sample_count = 0u32;
     let mut fps_sum = 0.0f32;
     let mut last_fps_calc = Instant::now();
@@ -362,7 +366,7 @@ async fn main(spawner: Spawner) {
     let mut cpu0_util_percent = 0u32;
     let mut cpu1_util_percent = 0u32;
 
-    let mut flush_in_progress = false;
+    let mut flush_in_progress = None;
 
     // Brightness state (PWM backlight, encoder-controlled)
     let mut brightness_percent: u32 = 100;
@@ -597,10 +601,12 @@ async fn main(spawner: Spawner) {
             state.tick(now_ms);
         }
 
-        fps_frame_count += 1;
+        let frame_count = COMPLETED_FRAMES.load(Ordering::Relaxed);
         if last_fps_calc.elapsed() >= Duration::from_secs(1) {
-            current_fps = fps_frame_count as f32 / last_fps_calc.elapsed().as_millis() as f32 * 1000.0;
-            fps_frame_count = 0;
+            current_fps = frame_count.wrapping_sub(last_completed_count) as f32
+                / last_fps_calc.elapsed().as_micros() as f32
+                * 1_000_000.0;
+            last_completed_count = frame_count;
             last_fps_calc = Instant::now();
 
             fps_sample_count += 1;
@@ -648,8 +654,9 @@ async fn main(spawner: Spawner) {
 
         let render_start = Instant::now();
 
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut display = St7789Renderer::new(buffer);
+        let render_idx = render_frame.id().index();
+        let token = lifecycle.begin(render_frame.id()).expect("render buffer is not free");
+        let mut display = St7789Renderer::new(render_frame.buffer());
 
         if render_state.is_first_frame() || render_state.popup_just_closed() || clear_frames_remaining > 0 {
             display.clear(BLACK).ok();
@@ -664,7 +671,7 @@ async fn main(spawner: Spawner) {
 
         match current_page {
             Page::Dashboard => {
-                if render_state.check_header_dirty(double_buffer.render_idx(), fps_mode, current_fps, average_fps) {
+                if render_state.check_header_dirty(render_idx, fps_mode, current_fps, average_fps) {
                     draw_header(&mut display, fps_mode, current_fps, average_fps);
                 }
 
@@ -835,7 +842,7 @@ async fn main(spawner: Spawner) {
                         brightness_percent,
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
-                        render_buffer_idx: double_buffer.render_idx(),
+                        render_buffer_idx: render_idx,
                         flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
                         core0_stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
                             1
@@ -876,15 +883,23 @@ async fn main(spawner: Spawner) {
         let frame_cycles_end = cpu_profiling::read();
         frame_cycles_used = cpu_profiling::elapsed(frame_cycles_start, frame_cycles_end);
 
-        if flush_in_progress {
-            FLUSH_DONE.wait().await;
-            BUFFER_WAITS.fetch_add(1, Ordering::Relaxed);
-        }
-
-        let completed_idx = double_buffer.swap();
+        lifecycle.ready(token).expect("render buffer is not owned");
+        let next_frame = if let Some(expected) = flush_in_progress.take() {
+            wait_completed(&mut lifecycle, expected).await
+        } else {
+            spare_frame.take().expect("missing spare framebuffer")
+        };
+        lifecycle.queue(token).expect("another frame is still in flight");
+        let request = render_frame.submit(token, Instant::now().as_micros());
+        assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
         BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
-        FLUSH_SIGNAL.signal(completed_idx);
-        flush_in_progress = true;
+        wait_started(&mut lifecycle, token).await;
+        if cfg!(feature = "serial-display") {
+            spare_frame = Some(wait_completed(&mut lifecycle, token).await);
+        } else {
+            flush_in_progress = Some(token);
+        }
+        render_frame = next_frame;
 
         flush_time_us = LAST_FLUSH_TIME_US.load(Ordering::Relaxed);
         total_frame_time_us = frame_start.elapsed().as_micros() as u32;
@@ -916,7 +931,6 @@ async fn main(spawner: Spawner) {
         prev_egt_danger_active = egt_danger_active;
 
         render_state.end_frame();
-        frame_count = frame_count.wrapping_add(1);
 
         if (elapsed_ms / 1000).is_multiple_of(2) {
             led_b.set_low();

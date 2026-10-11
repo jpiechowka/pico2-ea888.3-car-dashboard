@@ -1,11 +1,9 @@
+use dashboard_pico2::display::pipeline::after_first_poll;
 use dashboard_pico2::display::{FrameBuffer, HEIGHT, WIDTH};
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
-use embassy_rp::spi::{Async, Spi};
+use embassy_rp::spi::{Async, Error, Spi};
 use embassy_time::Timer;
-
-pub static mut FRAMEBUFFER_A: FrameBuffer = FrameBuffer::new();
-pub static mut FRAMEBUFFER_B: FrameBuffer = FrameBuffer::new();
 
 const SWRESET: u8 = 0x01;
 const SLPOUT: u8 = 0x11;
@@ -20,45 +18,6 @@ const COLMOD: u8 = 0x3A;
 
 const MADCTL_MX: u8 = 0x40;
 const MADCTL_MV: u8 = 0x20;
-
-pub struct DoubleBuffer {
-    render_idx: usize,
-}
-
-impl DoubleBuffer {
-    pub unsafe fn new() -> Self { Self { render_idx: 0 } }
-
-    #[inline]
-    pub unsafe fn render_buffer(&mut self) -> &'static mut FrameBuffer {
-        if self.render_idx == 0 {
-            unsafe { &mut *core::ptr::addr_of_mut!(FRAMEBUFFER_A) }
-        } else {
-            unsafe { &mut *core::ptr::addr_of_mut!(FRAMEBUFFER_B) }
-        }
-    }
-
-    #[inline]
-    pub unsafe fn get_buffer(
-        &self,
-        idx: usize,
-    ) -> &'static FrameBuffer {
-        if idx == 0 {
-            unsafe { &*core::ptr::addr_of!(FRAMEBUFFER_A) }
-        } else {
-            unsafe { &*core::ptr::addr_of!(FRAMEBUFFER_B) }
-        }
-    }
-
-    #[inline]
-    pub fn swap(&mut self) -> usize {
-        let completed_idx = self.render_idx;
-        self.render_idx = 1 - self.render_idx;
-        completed_idx
-    }
-
-    #[inline]
-    pub const fn render_idx(&self) -> usize { self.render_idx }
-}
 
 pub struct St7789Flusher<'d> {
     spi: Spi<'d, SPI0, Async>,
@@ -75,79 +34,79 @@ impl<'d> St7789Flusher<'d> {
         Self { spi, dc, cs }
     }
 
-    pub async fn init(&mut self) {
-        self.write_command(SWRESET).await;
+    pub async fn init(&mut self) -> Result<(), Error> {
+        self.write_command(SWRESET).await?;
         Timer::after_millis(150).await;
 
-        self.write_command(SLPOUT).await;
+        self.write_command(SLPOUT).await?;
         Timer::after_millis(10).await;
 
-        self.write_command(COLMOD).await;
-        self.write_data(&[0x55]).await;
+        self.write_command(COLMOD).await?;
+        self.write_data(&[0x55]).await?;
 
-        self.write_command(MADCTL).await;
-        self.write_data(&[MADCTL_MV | MADCTL_MX]).await;
+        self.write_command(MADCTL).await?;
+        self.write_data(&[MADCTL_MV | MADCTL_MX]).await?;
 
-        self.write_command(INVON).await;
+        self.write_command(INVON).await?;
         Timer::after_millis(10).await;
 
-        self.write_command(NORON).await;
+        self.write_command(NORON).await?;
         Timer::after_millis(10).await;
 
-        self.write_command(DISPON).await;
+        self.write_command(DISPON).await?;
         Timer::after_millis(10).await;
 
-        self.set_window(0, 0, WIDTH as u16, HEIGHT as u16).await;
+        self.set_full_window().await
     }
 
     async fn write_command(
         &mut self,
         cmd: u8,
-    ) {
+    ) -> Result<(), Error> {
         self.cs.set_low();
         self.dc.set_low();
-        self.spi.write(&[cmd]).await.ok();
+        let result = self.spi.write(&[cmd]).await;
         self.cs.set_high();
+        result
     }
 
     async fn write_data(
         &mut self,
         data: &[u8],
-    ) {
+    ) -> Result<(), Error> {
         self.cs.set_low();
         self.dc.set_high();
-        self.spi.write(data).await.ok();
+        let result = self.spi.write(data).await;
         self.cs.set_high();
+        result
     }
 
-    async fn set_window(
-        &mut self,
-        x: u16,
-        y: u16,
-        w: u16,
-        h: u16,
-    ) {
-        let x1 = x + w - 1;
-        let y1 = y + h - 1;
-
-        self.write_command(CASET).await;
-        self.write_data(&[(x >> 8) as u8, x as u8, (x1 >> 8) as u8, x1 as u8])
-            .await;
-
-        self.write_command(RASET).await;
-        self.write_data(&[(y >> 8) as u8, y as u8, (y1 >> 8) as u8, y1 as u8])
-            .await;
+    async fn set_full_window(&mut self) -> Result<(), Error> {
+        let x1 = (WIDTH - 1) as u16;
+        let y1 = (HEIGHT - 1) as u16;
+        self.write_command(CASET).await?;
+        self.write_data(&[0, 0, (x1 >> 8) as u8, x1 as u8]).await?;
+        self.write_command(RASET).await?;
+        self.write_data(&[0, 0, (y1 >> 8) as u8, y1 as u8]).await
     }
 
+    /// The callback follows the first poll of the payload write, which arms DMA
+    /// in the locked RP HAL. Completion includes its SPI BSY wait before CS rises.
+    /// Do not wrap this in a cancelling timeout and return the buffer to rendering.
     pub async fn flush_buffer(
         &mut self,
         buffer: &FrameBuffer,
-    ) {
+        on_started: impl FnOnce(),
+    ) -> Result<(), Error> {
         self.cs.set_low();
         self.dc.set_low();
-        self.spi.blocking_write(&[RAMWR]).ok();
+        if let Err(error) = self.spi.write(&[RAMWR]).await {
+            self.cs.set_high();
+            return Err(error);
+        }
         self.dc.set_high();
-        self.spi.write(&buffer[..]).await.ok();
+        let result = after_first_poll(self.spi.write(&buffer[..]), on_started).await;
         self.cs.set_high();
+        result
     }
 }

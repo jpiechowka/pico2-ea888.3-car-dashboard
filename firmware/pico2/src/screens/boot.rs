@@ -1,9 +1,9 @@
+use dashboard_pico2::display::FrameBuffer;
+use embassy_rp::spi::Error;
 use embassy_time::Instant;
-use embedded_graphics::prelude::*;
 
 use super::{INIT_MESSAGES, MAX_VISIBLE_LINES, draw_loading_frame, draw_welcome_frame};
-use crate::drivers::{DoubleBuffer, St7789Flusher, St7789Renderer};
-use crate::ui::BLACK;
+use crate::drivers::{St7789Flusher, St7789Renderer};
 
 const WELCOME_DURATION_MS: u64 = 7000;
 
@@ -11,12 +11,9 @@ const READY_PAUSE_MS: u64 = 500;
 
 pub async fn run_boot_sequence(
     flusher: &mut St7789Flusher<'_>,
-    double_buffer: &mut DoubleBuffer,
-) {
+    buffer: &mut FrameBuffer,
+) -> Result<(), Error> {
     {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut renderer = St7789Renderer::new(buffer);
-
         let mut visible_lines: [&str; MAX_VISIBLE_LINES] = [""; MAX_VISIBLE_LINES];
         let mut line_count: usize = 0;
         let boot_start = Instant::now();
@@ -35,8 +32,8 @@ pub async fn run_boot_sequence(
             let msg_start = Instant::now();
             loop {
                 let elapsed_ms = boot_start.elapsed().as_millis() as u32;
-                draw_loading_frame(&mut renderer, &visible_lines, line_count, elapsed_ms);
-                flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+                draw_loading_frame(&mut St7789Renderer::new(buffer), &visible_lines, line_count, elapsed_ms);
+                flusher.flush_buffer(buffer, || {}).await?;
 
                 if msg_start.elapsed().as_millis() >= *duration_ms {
                     break;
@@ -47,8 +44,8 @@ pub async fn run_boot_sequence(
         let pause_start = Instant::now();
         loop {
             let elapsed_ms = boot_start.elapsed().as_millis() as u32;
-            draw_loading_frame(&mut renderer, &visible_lines, line_count, elapsed_ms);
-            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+            draw_loading_frame(&mut St7789Renderer::new(buffer), &visible_lines, line_count, elapsed_ms);
+            flusher.flush_buffer(buffer, || {}).await?;
 
             if pause_start.elapsed().as_millis() >= READY_PAUSE_MS {
                 break;
@@ -57,9 +54,6 @@ pub async fn run_boot_sequence(
     }
 
     {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        let mut renderer = St7789Renderer::new(buffer);
-
         let start = Instant::now();
 
         loop {
@@ -68,27 +62,9 @@ pub async fn run_boot_sequence(
                 break;
             }
 
-            draw_welcome_frame(&mut renderer, elapsed_ms);
-            flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
+            draw_welcome_frame(&mut St7789Renderer::new(buffer), elapsed_ms);
+            flusher.flush_buffer(buffer, || {}).await?;
         }
     }
-}
-
-pub async fn clear_framebuffers(
-    flusher: &mut St7789Flusher<'_>,
-    double_buffer: &mut DoubleBuffer,
-) {
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        St7789Renderer::new(buffer).clear(BLACK).ok();
-    }
-    flusher.flush_buffer(unsafe { double_buffer.get_buffer(0) }).await;
-    double_buffer.swap();
-
-    {
-        let buffer = unsafe { double_buffer.render_buffer() };
-        St7789Renderer::new(buffer).clear(BLACK).ok();
-    }
-    flusher.flush_buffer(unsafe { double_buffer.get_buffer(1) }).await;
-    double_buffer.swap();
+    Ok(())
 }
