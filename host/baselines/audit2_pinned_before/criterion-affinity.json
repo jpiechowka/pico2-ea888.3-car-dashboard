@@ -1,0 +1,8 @@
+{
+  "Id": 31836,
+  "ProcessName": "dashboard_perf-fa87a0a4c3ebb8de",
+  "ProcessorAffinity": {
+    "value": 1
+  },
+  "Path": "D:\\GitHub\\pico2-ea888.3-car-dashboard\\host\\target\\release\\build\\dashboard-host-validation\\fa87a0a4c3ebb8de\\out\\dashboard_perf-fa87a0a4c3ebb8de.exe"
+}

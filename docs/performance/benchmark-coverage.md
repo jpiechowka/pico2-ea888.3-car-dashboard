@@ -1,6 +1,6 @@
 # Fixed host workload coverage
 
-The final host suite contains 72 Criterion cases on the production pure Rust
+The current host suite contains 75 Criterion cases on the production pure Rust
 modules. The fixture sources are in `host/benches/dashboard_perf.rs`,
 `scene_replay/` and `coverage/`. The latter two are also compiled by host tests.
 Each case uses 30 samples, one second of warmup and two seconds of measurement.
@@ -19,7 +19,7 @@ RP2350 cycles, DMA overlap or physical FPS.
 | Text and widgets | Production boost, lambda, battery and temperature cell drawing; poisoned cell interiors must be completely repaired; PSI peak, normal labels and outlined values; same-rounded text and changing digit width |
 | History | New measurement; no-new-sample tick and snapshot; constant and newest-impulse 60-point graphs; ring wrap/eviction in the bundled target-history and eight-frame replay |
 | View model and cache | Typed/batch ingestion, Watch copy, alarms, cold software cache, same physical-buffer unit change, valid/stale/invalid/recovered transitions and dirty-cell counts |
-| Damage | Stationary, one cell, dense, one digit, wider number, sparse separated cells, separated-cell full fallback and popup removal; every planned byte range replays to exact full pixels |
+| Damage | Stationary, one cell, dense, first byte, last byte, last byte of every 16-row band, one digit, wider number, sparse separated cells, separated-cell full fallback and popup removal; every planned byte range replays to exact full pixels |
 | Transport | RX12, ISO-TP single/128-byte messages, client success, NRC rejection, malformed framing, first-response timeout and NRC78 followed by rejection; terminal cases reject late results |
 | Model to image | Eight-frame Demo acquisition and 17-step slow/bursty RX12/Session replays, each with paired full and retained paths; state, age, quality, peaks and pixels checked |
 | Ownership and observability | UART ring copy, session/vehicle service, input mailbox, diagnostic distributions, frame windows, bounded logging and settings/maintenance models |
@@ -30,6 +30,15 @@ Published timing captures state their exact feature flags; do not infer the
 other configuration's timing from a smoke run. Software `DashboardCache` coldness
 does not measure CPU or XIP cache coldness. Actual serial/overlap/partial DMA
 timings remain a [target and hardware gate](target-benchmarks.md).
+
+The three byte-position cases were added after the historical 72-case final
+captures. They exercise early exit and late differences, including a change at
+the end of every tile band. The companion pixel test changes both RGB565 bytes
+at every band corner and reconstructs exact panel content. The solid-fill test
+also checks 33 color/geometry combinations against an independent coordinate
+oracle on a nonzero background. See the [follow-up measurements](follow-up-host-results-2026-10-11.md)
+for the rejected experiments and timing limits; older captures retain their
+original workload identity.
 
 ## Fill work counts
 

@@ -1,0 +1,12 @@
+{
+  "mode": "Windows process affinity",
+  "logical_cpu": 0,
+  "affinity_mask": 1,
+  "inherited_by_child_processes": true,
+  "shell_pid": 33968,
+  "started_utc": "2026-10-11T11:04:34.6731357Z",
+  "finished_utc": "2026-10-11T11:14:16.1798570Z",
+  "observed_final_mask": 1,
+  "capture_exit_code": 0,
+  "command": "python scripts/capture_benchmark.py audit2_pinned_after --runner-id ea888-workstation-01"
+}

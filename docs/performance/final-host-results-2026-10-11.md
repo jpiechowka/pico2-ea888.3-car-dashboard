@@ -1,5 +1,11 @@
 # Final host performance checkpoint
 
+This is the historical stage-08 checkpoint. The later
+[75-case follow-up](follow-up-host-results-2026-10-11.md) retains additional
+experiments, failed timing gates and the decision to restore the same renderer.
+Its unstable runner measurements do not replace or extend this pair's observed
+repeatability range.
+
 Source: `0f60e0614fe934352d4f871f3eeac7cadc0f8278`. Runner:
 `ea888-workstation-01`, Windows 11 build 22631, Intel family 6/model 183/stepping 1.
 Compiler: nightly-2026-10-11, rustc `1.101.0-nightly (6f5da406b 2026-10-10)`,
