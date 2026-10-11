@@ -122,6 +122,27 @@ with 143208 bytes core0 headroom; the RAM lockout gate passes. Actual task
 acknowledgements, core0 flash helper and hardware validation remain separate
 integration requirements.
 
+## Checked owner barrier and physical range
+
+The shared `maintenance::Gate` adds a generation and phase checked barrier for
+the input and acquisition owners. Both must acknowledge the current Park before
+writing; stale, duplicate, failed or previous-phase replies cannot grant it.
+Preparation has 400 ms, synchronous work has 500 ms from admission, and the
+existing health ticket caps the whole window at 1000 ms. Release also works
+after rejected preparation, but both owners must acknowledge Resume before the
+ticket can end. Write/resume expiry and backwards initiator time remain fatal
+across release. No lock or hardware wait is hidden in this model.
+
+`settings::region::Range` independently confines reads, aligned 256-byte page
+programs and aligned 4096-byte erases to the reserved 8192 bytes. It checks zero
+length, addition/conversion overflow and end bounds before adding the physical
+base. Five barrier tests exercise both owner orders, exact deadline boundaries,
+replay/cancellation/failure and clock regression within each phase. The range
+test checks every byte offset, page/sector boundary and oversized inputs.
+
+These shared tests establish software admission rules; actual owner
+acknowledgements and hardware operations require the integration checks above.
+
 ## Hardware acceptance boundary
 
 Host journal power-cut models, release code gates and builds cannot qualify the

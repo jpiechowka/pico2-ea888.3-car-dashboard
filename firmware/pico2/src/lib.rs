@@ -14,6 +14,7 @@ pub mod health;
 pub mod input_model;
 pub mod logging;
 pub mod logging_view;
+pub mod maintenance;
 
 pub mod render;
 pub mod samples;

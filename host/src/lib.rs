@@ -47,6 +47,8 @@ pub mod input_model;
 pub mod logging;
 #[path = "../../firmware/pico2/src/logging_view.rs"]
 pub mod logging_view;
+#[path = "../../firmware/pico2/src/maintenance.rs"]
+pub mod maintenance;
 #[path = "../../firmware/pico2/src/render.rs"]
 pub mod render;
 #[path = "../../firmware/pico2/src/samples.rs"]

@@ -3,6 +3,7 @@
 //! corruption detection, not authentication or a guarantee against any brownout.
 use crate::render::FpsMode;
 pub mod policy;
+pub mod region;
 
 pub const PAGE_SIZE: usize = 256;
 pub const SECTOR_SIZE: usize = 4096;
