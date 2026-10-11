@@ -3,7 +3,7 @@ use core::fmt::Write;
 
 use heapless::String;
 
-use crate::thresholds::{AFR_STOICH, BAR_TO_PSI};
+use crate::thresholds::BAR_TO_PSI;
 
 pub type CellText = [String<16>; 4];
 fn empty() -> CellText { core::array::from_fn(|_| String::new()) }
@@ -25,10 +25,9 @@ pub fn boost(
     }
     text
 }
-pub fn afr(value: f32) -> CellText {
+pub fn lambda(value: f32) -> CellText {
     let mut text = empty();
-    let _ = write!(text[0], "{value:.1}");
-    let _ = write!(text[1], "L {:.2}", value / AFR_STOICH);
+    let _ = write!(text[0], "{value:.3}");
     text
 }
 pub fn battery(

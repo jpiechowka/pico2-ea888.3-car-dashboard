@@ -5,6 +5,7 @@ use embedded_graphics::text::Text;
 
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::render::{FpsMode, format_fps};
+use crate::samples::DataMode;
 use crate::ui::{CENTERED, GRAY, LABEL_STYLE_WHITE, RED, RIGHT_ALIGNED, TITLE_STYLE_WHITE};
 
 const HEADER_TITLE_POS: Point = Point::new(160, 19);
@@ -32,12 +33,26 @@ pub fn draw_header<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
+    draw_mode_header(display, DataMode::Demo, fps_mode, fps_instant, fps_average);
+}
+
+pub fn draw_mode_header<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    mode: DataMode,
+    fps_mode: FpsMode,
+    fps_instant: f32,
+    fps_average: f32,
+) {
     Rectangle::new(HEADER_RECT_POS, HEADER_RECT_SIZE)
         .into_styled(HEADER_FILL_STYLE)
         .draw(display)
         .ok();
 
-    Text::with_text_style("OBD Sim", HEADER_TITLE_POS, TITLE_STYLE_WHITE, CENTERED)
+    let title = match mode {
+        DataMode::Vehicle => "VEHICLE",
+        DataMode::Demo => "DEMO",
+    };
+    Text::with_text_style(title, HEADER_TITLE_POS, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
 

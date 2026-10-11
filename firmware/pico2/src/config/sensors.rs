@@ -52,20 +52,6 @@ pub const BATT_WARNING: f32 = 12.5;
 
 const _: () = assert!(BATT_CRITICAL < BATT_WARNING);
 
-pub const AFR_RICH_AF: f32 = 12.0;
-
-pub const AFR_RICH: f32 = 14.0;
-
-pub const AFR_OPTIMAL_MAX: f32 = 14.9;
-
-pub const AFR_LEAN_CRITICAL: f32 = 15.5;
-
-pub const AFR_STOICH: f32 = 14.7;
-
-const _: () = assert!(AFR_RICH_AF < AFR_RICH);
-const _: () = assert!(AFR_RICH < AFR_OPTIMAL_MAX);
-const _: () = assert!(AFR_OPTIMAL_MAX < AFR_LEAN_CRITICAL);
-
 pub const BOOST_EASTER_EGG_BAR: f32 = 1.95;
 
 pub const BOOST_EASTER_EGG_PSI: f32 = 29.0;

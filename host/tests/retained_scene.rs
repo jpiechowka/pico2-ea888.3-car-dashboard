@@ -7,8 +7,8 @@ use dashboard_host_validation::{AlignedFrame, colors};
 
 #[test]
 fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
-    let mut model = AcquisitionModel::new();
-    model.ingest_batch([-12345.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7], 0);
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([-12345.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let snapshot = model.snapshot();
     let scene = DashboardScene {
         measurements: &snapshot,
@@ -30,11 +30,12 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
         }
     }
     // Reuse the actual pixels, then shorten both current and maximum text.
-    model.ingest_batch([0.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7], 1);
+    model.ingest_batch([0.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 1);
     model.reset_statistics(1);
     let shortened = model.snapshot();
     let scene = DashboardScene {
         measurements: &shortened,
+        now_ms: 1,
         ..scene
     };
     let mut clean = AlignedFrame::boxed();
@@ -46,10 +47,10 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
 
 #[test]
 fn retained_peak_and_trend_expire_without_a_new_snapshot() {
-    let mut model = AcquisitionModel::new();
+    let mut model = AcquisitionModel::demo();
     for sample in 0..30 {
         let oil = 90.0 + sample as f32;
-        model.ingest_batch([1.0, oil, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7], sample * 200);
+        model.ingest_batch([1.0, oil, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], sample * 200);
     }
     let snapshot = model.snapshot();
     let mut scene = DashboardScene {
@@ -69,7 +70,7 @@ fn retained_peak_and_trend_expire_without_a_new_snapshot() {
     let mut retained = AlignedFrame::boxed();
     let mut reference = AlignedFrame::boxed();
     cache.draw(&mut St7789Renderer::new(&mut retained.0), 0, &scene);
-    for now in [6550, 10_001] {
+    for now in [6550, 7801] {
         scene.now_ms = now;
         let redraw = cache.draw(&mut St7789Renderer::new(&mut retained.0), 0, &scene);
         assert_ne!(redraw.cells & (1 << 4), 0, "oil's timed state must invalidate at {now}");
@@ -80,8 +81,8 @@ fn retained_peak_and_trend_expire_without_a_new_snapshot() {
 
 #[test]
 fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
-    let mut model = AcquisitionModel::new();
-    model.ingest_batch([1.0001, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7], 0);
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.0001, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let first = model.snapshot();
     let mut scene = DashboardScene {
         measurements: &first,
@@ -115,6 +116,7 @@ fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
     );
     let next = model.snapshot();
     scene.measurements = &next;
+    scene.now_ms = 1;
     for buffer in [0, 1] {
         assert_eq!(cache.prepare(buffer, &scene).cells & 1, 0);
     }
@@ -127,7 +129,7 @@ fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
 
 #[test]
 fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_change() {
-    let mut model = AcquisitionModel::new();
+    let mut model = AcquisitionModel::demo();
     let mut cache = DashboardCache::new();
     let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
     let mut panel = AlignedFrame::boxed();
@@ -145,7 +147,7 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
                     -20.0 + wave * 3.0,
                     970.0 + wave * 3.0,
                     11.0 + wave / 8.0,
-                    10.0 + wave / 3.0,
+                    (10.0 + wave / 3.0) / 14.7,
                 ],
                 now,
             );

@@ -41,6 +41,8 @@ pub mod health;
 pub mod input_model;
 #[path = "../../firmware/pico2/src/render.rs"]
 pub mod render;
+#[path = "../../firmware/pico2/src/samples.rs"]
+pub mod samples;
 #[path = "../../firmware/pico2/src/state/sensor_state.rs"]
 pub mod sensor_state;
 #[path = "../../firmware/pico2/src/profiling/stack_samples.rs"]

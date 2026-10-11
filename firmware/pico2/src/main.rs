@@ -60,11 +60,11 @@ use crate::tasks::{
     BUFFER_WAITS,
     COMPLETED_FRAMES,
     CORE1_STACK,
-    DEMO_VALUES,
+    DASHBOARD_VALUES,
     EXECUTOR_CORE1,
     FLUSH_BUFFER_IDX,
     FLUSH_REQUESTS,
-    demo_values_task,
+    acquisition_task,
     display_flush_task,
     wait_completed,
     wait_started,
@@ -72,7 +72,6 @@ use crate::tasks::{
 use crate::thresholds::EGT_DANGER_MANIFOLD;
 use crate::ui::{BLACK, ColorTransition};
 use crate::widgets::{
-    afr_color_status,
     battery_color,
     draw_brightness_popup,
     temp_color_egt,
@@ -174,6 +173,14 @@ const fn requested_cpu_mhz() -> u32 {
     }
 }
 
+fn data_mode() -> dashboard_pico2::samples::DataMode {
+    if cfg!(feature = "demo") {
+        dashboard_pico2::samples::DataMode::Demo
+    } else {
+        dashboard_pico2::samples::DataMode::Vehicle
+    }
+}
+
 fn core1_main(
     animation_start: Instant,
     cpu_freq_hz: u32,
@@ -183,7 +190,7 @@ fn core1_main(
     cpu_profiling::init(cpu_freq_hz);
     let executor = EXECUTOR_CORE1.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(demo_values_task(animation_start, stack_bottom, stack_top).unwrap());
+        spawner.spawn(acquisition_task(animation_start, stack_bottom, stack_top, data_mode()).unwrap());
     })
 }
 
@@ -356,7 +363,10 @@ async fn main(spawner: Spawner) {
     let mut log_scroll_offset: i32 = 0;
     let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
 
-    let mut measurements = DashboardSnapshot::EMPTY;
+    let mut measurements = DashboardSnapshot {
+        mode: data_mode(),
+        ..DashboardSnapshot::EMPTY
+    };
     let mut reset_requests = ResetRequests::default();
 
     log_info!("Main loop starting");
@@ -365,7 +375,7 @@ async fn main(spawner: Spawner) {
 
     let animation_start = Instant::now();
 
-    let mut demo_receiver = DEMO_VALUES.dyn_receiver().unwrap();
+    let mut measurement_receiver = DASHBOARD_VALUES.dyn_receiver().unwrap();
 
     loop {
         let frame_start = Instant::now();
@@ -513,10 +523,10 @@ async fn main(spawner: Spawner) {
         }
 
         if reset_requested {
-            crate::tasks::demo::RESET_STATISTICS.signal(reset_requests.request());
+            crate::tasks::acquisition::RESET_STATISTICS.signal(reset_requests.request());
             reset_requested = false;
         }
-        if let Some(snapshot) = demo_receiver.try_changed()
+        if let Some(snapshot) = measurement_receiver.try_changed()
             && measurements.accept(snapshot)
             && reset_requests.acknowledge(measurements.reset_generation)
         {
@@ -538,7 +548,7 @@ async fn main(spawner: Spawner) {
             iat_state,
             egt_state,
             batt_state,
-            afr_state,
+            _,
         ] = &measurements.sensors;
         let oil_temp = oil_state.value().unwrap_or(0.0);
         let water_temp = water_state.value().unwrap_or(0.0);
@@ -546,7 +556,6 @@ async fn main(spawner: Spawner) {
         let iat_temp = iat_state.value().unwrap_or(0.0);
         let egt_temp = egt_state.value().unwrap_or(0.0);
         let batt_voltage = batt_state.value().unwrap_or(0.0);
-        let afr = afr_state.value().unwrap_or(0.0);
 
         let now_ms = Instant::now().as_millis();
 
@@ -559,9 +568,13 @@ async fn main(spawner: Spawner) {
             average_fps = rate.average;
         }
 
-        let egt_danger_active = egt_temp >= EGT_DANGER_MANIFOLD;
+        // Vehicle EGT mapping and alarm policy have not been validated.
+        let egt_danger_active = measurements.mode == dashboard_pico2::samples::DataMode::Demo
+            && measurements
+                .value_at(dashboard_pico2::samples::SensorId::Egt, now_ms)
+                .is_some_and(|value| value >= EGT_DANGER_MANIFOLD);
 
-        color_transitions.set_target(cell_idx::AFR, afr_color_status(afr).0);
+        color_transitions.set_target(cell_idx::LAMBDA, BLACK);
         color_transitions.set_target(cell_idx::BATTERY, battery_color(batt_voltage));
 
         let (water_target, _) = temp_color_water(water_temp);

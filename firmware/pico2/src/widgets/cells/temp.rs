@@ -153,6 +153,7 @@ pub fn draw_temp_cell<D, F, C, L>(
     blink_on: bool,
     shake_offset: i32,
     bg_override: Option<Rgb565>,
+    alarms_enabled: bool,
 ) -> Rgb565
 where
     D: DrawTarget<Color = Rgb565>,
@@ -161,9 +162,9 @@ where
     L: Fn(f32) -> bool,
 {
     let (mut bg_color, _) = color_fn(temp);
-    let is_critical = critical_fn(temp);
-    let max_is_critical = critical_fn(max_temp);
-    let is_low = low_fn.as_ref().is_some_and(|f| f(temp));
+    let is_critical = alarms_enabled && critical_fn(temp);
+    let max_is_critical = alarms_enabled && critical_fn(max_temp);
+    let is_low = alarms_enabled && low_fn.as_ref().is_some_and(|f| f(temp));
 
     if let Some(override_color) = bg_override {
         bg_color = override_color;

@@ -9,7 +9,7 @@ fn between_frame_peak_survives_coalesced_publication() {
     let watch = Watch::<CriticalSectionRawMutex, DashboardSnapshot, 1>::new();
     let sender = watch.sender();
     let mut receiver = watch.receiver().unwrap();
-    let mut model = AcquisitionModel::new();
+    let mut model = AcquisitionModel::demo();
     for (at, value) in [(0, 1.0), (20, 2.0), (30, 1.0)] {
         model.ingest_batch([value; 8], at);
         sender.send(model.snapshot());
@@ -25,7 +25,7 @@ fn display_cadence_never_changes_statistics() {
     for periods in [&[50][..], &[25][..], &[16, 17, 17][..], &[1, 250, 37, 3, 1000][..]] {
         let watch = Watch::<CriticalSectionRawMutex, DashboardSnapshot, 1>::new();
         let mut receiver = watch.receiver().unwrap();
-        let mut model = AcquisitionModel::new();
+        let mut model = AcquisitionModel::demo();
         let mut reference = SensorState::new();
         let mut display = DashboardSnapshot::EMPTY;
         let mut next_read = 0;
@@ -81,7 +81,7 @@ fn reset_success_waits_for_the_latest_requested_generation() {
 
 #[test]
 fn invalid_and_out_of_order_samples_are_isolated_per_channel() {
-    let mut model = AcquisitionModel::new();
+    let mut model = AcquisitionModel::demo();
     assert!(model.ingest_batch([5.0; 8], 100));
     let before = model.snapshot();
     for (values, at) in [
@@ -107,7 +107,7 @@ fn invalid_and_out_of_order_samples_are_isolated_per_channel() {
 #[test]
 fn reset_generation_is_acknowledged_atomically_and_replays_do_nothing() {
     let commands = Signal::<CriticalSectionRawMutex, u64>::new();
-    let mut model = AcquisitionModel::new();
+    let mut model = AcquisitionModel::demo();
     model.ingest_batch([1.0; 8], 0);
     model.ingest_batch([20.0; 8], 10);
     model.ingest_batch([2.0; 8], 20);
@@ -141,7 +141,7 @@ fn reset_generation_is_acknowledged_atomically_and_replays_do_nothing() {
 
 #[test]
 fn snapshot_indicators_expire_without_a_new_measurement() {
-    let mut model = AcquisitionModel::new();
+    let mut model = AcquisitionModel::demo();
     for at in (0..=4000).step_by(200) {
         model.ingest_batch([at as f32; 8], at);
     }
@@ -164,7 +164,7 @@ fn concurrent_watch_publication_is_coherent_and_eventually_latest() {
     let mut receiver = watch.receiver().unwrap();
     std::thread::scope(|scope| {
         scope.spawn(|| {
-            let mut model = AcquisitionModel::new();
+            let mut model = AcquisitionModel::demo();
             for i in 1..=10_000u64 {
                 model.ingest_batch([i as f32; 8], i * 10);
                 watch.sender().send(model.snapshot());
@@ -191,6 +191,10 @@ fn concurrent_watch_publication_is_coherent_and_eventually_latest() {
 
 #[test]
 fn publication_copy_and_single_owner_storage_have_fixed_bounds() {
-    assert!(core::mem::size_of::<DashboardSnapshot>() <= 3072);
+    assert!(
+        core::mem::size_of::<DashboardSnapshot>() <= 3072,
+        "snapshot {} B",
+        core::mem::size_of::<DashboardSnapshot>()
+    );
     assert!(core::mem::size_of::<AcquisitionModel>() <= 12_288);
 }

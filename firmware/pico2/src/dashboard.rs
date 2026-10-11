@@ -5,6 +5,7 @@ use embedded_graphics::prelude::*;
 use crate::acquisition::DashboardSnapshot;
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
 use crate::render::{FpsMode, FpsText, format_fps};
+use crate::samples::{DataMode, Quality, SensorId, Source};
 use crate::sensor_state::SensorSnapshot;
 use crate::thresholds::BOOST_EASTER_EGG_BAR;
 use crate::ui::BLACK;
@@ -86,7 +87,13 @@ impl DashboardScene<'_> {
         &self,
         display: &mut D,
     ) {
-        draw_header(display, self.fps_mode, self.fps_instant, self.fps_average);
+        draw_mode_header(
+            display,
+            self.measurements.mode,
+            self.fps_mode,
+            self.fps_instant,
+            self.fps_average,
+        );
     }
 
     pub fn draw_cell<D: DrawTarget<Color = Rgb565>>(
@@ -111,8 +118,14 @@ impl DashboardScene<'_> {
         let mut clipped = display.clipped(&bounds);
         clipped.clear(BLACK).ok();
         let display = &mut clipped;
+        let quality = self.quality(cell);
+        if quality != Quality::Valid {
+            draw_unavailable(display, x, y, CELL_LABELS[cell], quality);
+            return;
+        }
+        let alarms_enabled = self.measurements.mode == DataMode::Demo;
         let data = display_data(state, self.now_ms);
-        let background = Some(self.backgrounds[cell]);
+        let background = Some(if alarms_enabled { self.backgrounds[cell] } else { BLACK });
         match cell {
             0 => {
                 draw_boost_cell(
@@ -124,24 +137,13 @@ impl DashboardScene<'_> {
                     value,
                     maximum,
                     self.boost_psi,
-                    value >= BOOST_EASTER_EGG_BAR,
+                    alarms_enabled && value >= BOOST_EASTER_EGG_BAR,
                     self.blink_on,
                     0,
                 )
             }
             1 => {
-                draw_afr_cell(
-                    display,
-                    x,
-                    y,
-                    COL_WIDTH,
-                    ROW_HEIGHT,
-                    value,
-                    &data,
-                    self.blink_on,
-                    0,
-                    background,
-                );
+                draw_lambda_cell(display, x, y, COL_WIDTH, ROW_HEIGHT, value, &data, 0, background);
             }
             2 => {
                 draw_batt_cell(
@@ -157,6 +159,7 @@ impl DashboardScene<'_> {
                     self.blink_on,
                     0,
                     background,
+                    alarms_enabled,
                 );
             }
             _ => {
@@ -177,6 +180,7 @@ impl DashboardScene<'_> {
                     self.blink_on,
                     0,
                     background,
+                    alarms_enabled,
                 );
             }
         }
@@ -208,6 +212,40 @@ impl DashboardScene<'_> {
         draw_dividers(display);
         self.draw_overlay(display);
     }
+}
+
+const CELL_LABELS: [&str; 8] = ["BOOST REL", "LAMBDA", "ECU V", "COOL", "OIL", "DSG OIL", "IAT", "EGT"];
+
+fn draw_unavailable<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    x: u32,
+    y: u32,
+    label: &str,
+    quality: Quality,
+) {
+    use embedded_graphics::text::Text;
+
+    use crate::ui::{CENTERED, LABEL_STYLE_WHITE, VALUE_STYLE_WHITE};
+    let center = x as i32 + COL_WIDTH as i32 / 2;
+    Text::with_text_style(label, Point::new(center, y as i32 + 14), LABEL_STYLE_WHITE, CENTERED)
+        .draw(display)
+        .ok();
+    Text::with_text_style(
+        "--",
+        Point::new(center, y as i32 + ROW_HEIGHT as i32 / 2),
+        VALUE_STYLE_WHITE,
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
+    Text::with_text_style(
+        quality.label(),
+        Point::new(center, (y + ROW_HEIGHT) as i32 - 10),
+        LABEL_STYLE_WHITE,
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
 }
 
 fn display_data(
@@ -260,14 +298,28 @@ impl GraphKey {
 
 #[derive(Clone, PartialEq, Eq)]
 struct CellKey {
+    quality: Quality,
+    source: Source,
     text: CellText,
     background: Rgb565,
     flags: [bool; 6],
     trend: Option<bool>,
-    status: &'static str,
     graph: GraphKey,
 }
 impl DashboardScene<'_> {
+    fn quality(
+        &self,
+        cell: usize,
+    ) -> Quality {
+        let id = SensorId::ALL[CELL_SENSORS[cell]];
+        let quality = self.measurements.quality(id, self.now_ms);
+        if quality == Quality::Valid && self.measurements.value_at(id, self.now_ms).is_none() {
+            Quality::InvalidPayload
+        } else {
+            quality
+        }
+    }
+
     fn cell_key(
         &self,
         cell: usize,
@@ -276,17 +328,27 @@ impl DashboardScene<'_> {
         let value = state.value().unwrap_or(0.0);
         let maximum = state.maximum().unwrap_or(0.0);
         let mut key = CellKey {
+            quality: self.quality(cell),
+            source: self.measurements.metadata[CELL_SENSORS[cell]].source,
             text: core::array::from_fn(|_| heapless::String::new()),
             background: self.backgrounds[cell],
             flags: [false; 6],
             trend: None,
-            status: "",
-            graph: GraphKey::new(if cell == 0 { None } else { Some(state) }),
+            graph: GraphKey::new(None),
         };
+        if key.quality != Quality::Valid {
+            key.background = BLACK;
+            return key;
+        }
+        key.graph = GraphKey::new(if cell == 0 { None } else { Some(state) });
+        let alarms_enabled = self.measurements.mode == DataMode::Demo;
+        if !alarms_enabled {
+            key.background = BLACK;
+        }
         let critical;
         match cell {
             0 => {
-                let animated = value >= BOOST_EASTER_EGG_BAR;
+                let animated = alarms_enabled && value >= BOOST_EASTER_EGG_BAR;
                 key.text = cell_text::boost(value, maximum, self.boost_psi);
                 if animated {
                     key.text[2].clear();
@@ -296,25 +358,24 @@ impl DashboardScene<'_> {
                 critical = false;
             }
             1 => {
-                key.text = cell_text::afr(value);
-                key.status = afr_color_status(value).1;
-                critical = is_critical_afr(value);
+                key.text = cell_text::lambda(value);
+                critical = false;
             }
             2 => {
                 key.text = cell_text::battery(value, state.minimum().unwrap_or(0.0), maximum);
-                key.flags[0] = is_critical_battery(value);
+                key.flags[0] = alarms_enabled && is_critical_battery(value);
                 key.flags[1] = state.is_new_peak_at(self.now_ms);
                 key.trend = state.get_trend_at(self.now_ms);
                 critical = key.flags[0];
             }
             _ => {
                 let temperature = &TEMPERATURES[cell - 3];
-                let low = temperature.low.is_some_and(|test| test(value));
-                critical = (temperature.critical)(value);
+                let low = alarms_enabled && temperature.low.is_some_and(|test| test(value));
+                critical = alarms_enabled && (temperature.critical)(value);
                 key.text = cell_text::temperature(value, maximum, state.get_average());
                 key.flags = [
                     critical,
-                    (temperature.critical)(maximum),
+                    alarms_enabled && (temperature.critical)(maximum),
                     low,
                     low && self.blink_on,
                     temp_uses_medium_font(value),
@@ -331,7 +392,7 @@ impl DashboardScene<'_> {
 }
 
 struct CachedFrame {
-    header: Option<FpsText>,
+    header: Option<(DataMode, FpsText)>,
     cells: [Option<CellKey>; 8],
     overlay: Option<Overlay>,
 }
@@ -378,7 +439,10 @@ impl DashboardCache {
         // Removing/replacing any opaque overlay restores its entire underlay,
         // including static dividers and pixels outside cell interiors.
         let clear = frame.header.is_none() || (frame.overlay.is_some() && frame.overlay != scene.overlay);
-        let header = format_fps(scene.fps_mode, scene.fps_instant, scene.fps_average);
+        let header = (
+            scene.measurements.mode,
+            format_fps(scene.fps_mode, scene.fps_instant, scene.fps_average),
+        );
         let header_dirty = clear || frame.header.as_ref() != Some(&header);
         frame.header = Some(header);
         let mut cells = 0;

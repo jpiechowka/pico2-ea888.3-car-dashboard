@@ -7,6 +7,7 @@ use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
 use dashboard_host_validation::display::damage::DamagePlan;
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::renderer::St7789Renderer;
+use dashboard_host_validation::samples::{Quantity, Sample, Source};
 use dashboard_host_validation::sensor_state::SensorState;
 use dashboard_host_validation::{AlignedFrame, FRAME_BYTES, primitives, widgets};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -109,11 +110,26 @@ fn widgets_and_history(c: &mut Criterion) {
 }
 
 fn acquisition(c: &mut Criterion) {
-    let mut model = AcquisitionModel::new();
+    let mut vehicle = AcquisitionModel::new();
+    let mut sequence = 0;
+    c.bench_function("acquisition/typed_sample_and_snapshot", |b| {
+        b.iter(|| {
+            sequence += 1;
+            let sample = Sample {
+                value: Quantity::CoolantC(black_box(95.0)),
+                received_at_ms: sequence * 10,
+                sequence,
+                source: Source::Obd { ecu: 0x7E8, pid: 0x05 },
+            };
+            vehicle.ingest_sample(black_box(sample), sequence * 10).unwrap();
+            black_box(vehicle.snapshot());
+        });
+    });
+    let mut model = AcquisitionModel::demo();
     let mut at = 0u64;
     c.bench_function("acquisition/batch_and_snapshot", |b| {
         b.iter(|| {
-            model.ingest_batch(black_box([1.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7]), at);
+            model.ingest_batch(black_box([1.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0]), at);
             at += 10;
             black_box(model.snapshot());
         });
@@ -150,9 +166,9 @@ fn damage_planning(c: &mut Criterion) {
 }
 
 fn dashboard_scene(c: &mut Criterion) {
-    let mut model = AcquisitionModel::new();
+    let mut model = AcquisitionModel::demo();
     for sample in 0..200 {
-        model.ingest_batch([1.2, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7], sample * 10);
+        model.ingest_batch([1.2, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], sample * 10);
     }
     let snapshot = model.snapshot();
     let scene = DashboardScene {

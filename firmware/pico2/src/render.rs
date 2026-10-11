@@ -82,7 +82,7 @@ pub fn format_fps(
 pub const CELL_COUNT: usize = 8;
 
 pub mod cell_idx {
-    pub const AFR: usize = 1;
+    pub const LAMBDA: usize = 1;
     pub const BATTERY: usize = 2;
     pub const COOLANT: usize = 3;
     pub const OIL: usize = 4;

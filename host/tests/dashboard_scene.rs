@@ -6,8 +6,8 @@ use dashboard_host_validation::{AlignedFrame, colors};
 
 #[test]
 fn scene_cell_order_and_overlay_removal_match_a_fresh_frame() {
-    let mut model = AcquisitionModel::new();
-    model.ingest_batch([1.2, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7], 0);
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.2, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let snapshot = model.snapshot();
     let mut scene = DashboardScene {
         measurements: &snapshot,

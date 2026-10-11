@@ -14,11 +14,6 @@ pub use layout::{
     TREND_THRESHOLD,
 };
 pub use sensors::{
-    AFR_LEAN_CRITICAL,
-    AFR_OPTIMAL_MAX,
-    AFR_RICH,
-    AFR_RICH_AF,
-    AFR_STOICH,
     BAR_TO_PSI,
     BATT_CRITICAL,
     BATT_WARNING,

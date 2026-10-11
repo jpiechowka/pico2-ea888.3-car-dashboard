@@ -12,6 +12,7 @@ pub mod health;
 pub mod input_model;
 
 pub mod render;
+pub mod samples;
 pub mod widgets;
 
 pub use config::sensors as thresholds;

@@ -1,14 +1,14 @@
-mod afr;
 mod battery;
 mod boost;
+mod lambda;
 mod temp;
 
-pub use afr::{afr_color_status, draw_afr_cell, is_critical_afr};
 pub use battery::{battery_color, draw_batt_cell, is_critical_battery};
 pub use boost::draw_boost_cell;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::IntoStorage;
+pub use lambda::draw_lambda_cell;
 pub use temp::{
     draw_temp_cell,
     is_critical_egt,

@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{AcquisitionModel, DashboardSnapshot};
+use dashboard_pico2::samples::DataMode;
 use dashboard_pico2::stack_samples::StackSamples;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -10,23 +11,35 @@ use embassy_time::{Duration, Instant, Timer};
 use crate::log_info;
 use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT};
 
-pub static DEMO_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1> = Watch::new();
+pub static DASHBOARD_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1> = Watch::new();
 // Only the newest requested generation matters. The acquisition owner echoes
 // its acknowledgement in the same snapshot as the reset statistics.
 pub static RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 
 #[embassy_executor::task]
-pub async fn demo_values_task(
+pub async fn acquisition_task(
     start_time: Instant,
     stack_bottom: u32,
     stack_top: u32,
+    mode: DataMode,
 ) {
-    let sender = DEMO_VALUES.dyn_sender();
-    log_info!("Demo task started");
+    let sender = DASHBOARD_VALUES.dyn_sender();
+    log_info!(
+        "Acquisition: {}",
+        if mode == DataMode::Demo {
+            "DEMO"
+        } else {
+            "VEHICLE unavailable"
+        }
+    );
 
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
-    let mut model = AcquisitionModel::new();
+    let mut model = if mode == DataMode::Demo {
+        AcquisitionModel::demo()
+    } else {
+        AcquisitionModel::new()
+    };
     let mut stack_samples = StackSamples::new(stack_bottom, stack_top).expect("invalid core1 stack bounds");
 
     loop {
@@ -38,19 +51,21 @@ pub async fn demo_values_task(
         if let Some(generation) = RESET_STATISTICS.try_take() {
             model.reset_statistics(generation);
         }
-        model.ingest_batch(
-            [
-                (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
-                60.0 + 55.0 * micromath::F32(t * 0.3).sin().0,
-                88.0 + 7.0 * micromath::F32(t * 0.4).sin().0,
-                75.0 + 40.0 * micromath::F32(t * 0.35).sin().0,
-                30.0 + 40.0 * micromath::F32(t * 0.25).sin().0,
-                200.0 + 1000.0 * micromath::F32(t * 0.04).sin().0.abs(),
-                12.0 + 2.5 * micromath::F32(t * 0.15).sin().0,
-                14.0 + 4.0 * micromath::F32(t * 0.45).sin().0,
-            ],
-            Instant::now().as_millis(),
-        );
+        if mode == DataMode::Demo {
+            model.ingest_batch(
+                [
+                    (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
+                    60.0 + 55.0 * micromath::F32(t * 0.3).sin().0,
+                    88.0 + 7.0 * micromath::F32(t * 0.4).sin().0,
+                    75.0 + 40.0 * micromath::F32(t * 0.35).sin().0,
+                    30.0 + 40.0 * micromath::F32(t * 0.25).sin().0,
+                    200.0 + 1000.0 * micromath::F32(t * 0.04).sin().0.abs(),
+                    12.0 + 2.5 * micromath::F32(t * 0.15).sin().0,
+                    (14.0 + 4.0 * micromath::F32(t * 0.45).sin().0) / 14.7,
+                ],
+                Instant::now().as_millis(),
+            );
+        }
         // Statistics include every accepted sample before Watch can coalesce.
         sender.send(model.snapshot());
         crate::tasks::recovery::ACQUISITION_PROGRESS.fetch_add(1, Ordering::Relaxed);
@@ -75,6 +90,6 @@ pub async fn demo_values_task(
             last_util_calc = Instant::now();
         }
 
-        Timer::after_millis(10).await;
+        Timer::after_millis(if mode == DataMode::Demo { 10 } else { 100 }).await;
     }
 }

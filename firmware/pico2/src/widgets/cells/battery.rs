@@ -33,11 +33,12 @@ pub fn draw_batt_cell<D>(
     blink_on: bool,
     shake_offset: i32,
     bg_override: Option<Rgb565>,
+    alarms_enabled: bool,
 ) -> Rgb565
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let is_critical = is_critical_battery(voltage);
+    let is_critical = alarms_enabled && is_critical_battery(voltage);
     let mut bg_color = battery_color(voltage);
     let text = crate::widgets::cell_text::battery(voltage, min_voltage, max_voltage);
 
@@ -59,7 +60,7 @@ where
     let center_y = (y + h / 2) as i32;
     let value_x = center_x + shake_offset;
 
-    Text::with_text_style("BATT", Point::new(center_x, y as i32 + 14), label_style, CENTERED)
+    Text::with_text_style("ECU V", Point::new(center_x, y as i32 + 14), label_style, CENTERED)
         .draw(display)
         .ok();
 
