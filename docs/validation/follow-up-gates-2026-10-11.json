@@ -651,5 +651,6 @@
     }
   ],
   "timing_acceptance": "No new timing gate accepted. Band shortcut rejected; fill candidate reverted. All unfavorable measurements retained.",
-  "final_inputs_equal_audit2_before": true
+  "final_inputs_equal_audit2_before": true,
+  "input_identity_scope": "The exact 179-file match was checked in the working tree at validation time, before switching branches. The subsequent master checkout converted 86 text inputs to CRLF; comparison against the frozen archive found no other content difference. Raw captures and their digests remain unchanged. This is not a new timing capture or a relaxation of comparison policy."
 }

@@ -9,9 +9,9 @@ acceptance was inconclusive and it was reverted in `95b5a38`. The new tests and
 all raw experiments are retained. No failed gate has been waived or relabeled
 as a passing performance result.
 
-The final 179 benchmark input hashes exactly match `audit2_before`. The damage
-and framebuffer production files are therefore restored byte for byte. The
-new tests separately cover band corners, both pixel bytes and 33 nonzero
+Immediately after the revert, all 179 working-tree benchmark input hashes
+exactly matched `audit2_before`, including the restored damage and framebuffer
+files. The new tests separately cover band corners, both pixel bytes and 33 nonzero
 solid-fill color/geometry combinations. They pass on the restored code.
 
 The earlier [72-case checkpoint](final-host-results-2026-10-11.md) remains a
@@ -43,6 +43,15 @@ recorded `head` identifies the checkout base; the frozen `source.zip` and
 per-file hashes identify the actual measured source. Each directory keeps all
 four Criterion JSON records per case, pre-run inputs and completion metadata.
 No unfavorable capture or sample was discarded.
+
+This byte-identity check describes the captured working tree at validation
+time. The repository requests CRLF text on checkout. Switching to the merged
+`master` subsequently changed 86 input hashes solely through newline conversion;
+all 179 files were checked against the frozen archive and had no other content
+difference. This is not a new timing capture. Use the original source archives
+for exact captured bytes and retain the comparator's strict hash checks;
+newline normalization is not an exemption from comparison identity. The seven
+published capture directories preserve their original bytes across checkout.
 
 The CPU-pinned captures used a PowerShell process affinity mask of 1, inherited
 by Python/Cargo/Criterion and restored on exit. Both complete pinned runs have
