@@ -4,6 +4,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
+pub mod acquisition;
 pub mod config;
 pub mod display;
 pub mod health;

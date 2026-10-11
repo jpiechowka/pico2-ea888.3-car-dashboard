@@ -2,9 +2,12 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_host_validation::renderer::St7789Renderer;
 use dashboard_host_validation::sensor_state::SensorState;
 use dashboard_host_validation::{AlignedFrame, FRAME_BYTES, primitives, widgets};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::watch::Watch;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -102,12 +105,33 @@ fn widgets_and_history(c: &mut Criterion) {
     });
 }
 
+fn acquisition(c: &mut Criterion) {
+    let mut model = AcquisitionModel::new();
+    let mut at = 0u64;
+    c.bench_function("acquisition/batch_and_snapshot", |b| {
+        b.iter(|| {
+            model.ingest_batch(black_box([1.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 14.7]), at);
+            at += 10;
+            black_box(model.snapshot());
+        });
+    });
+    let watch = Watch::<CriticalSectionRawMutex, DashboardSnapshot, 1>::new();
+    let mut receiver = watch.receiver().unwrap();
+    let snapshot = model.snapshot();
+    c.bench_function("acquisition/watch_copy_roundtrip", |b| {
+        b.iter(|| {
+            watch.sender().send(black_box(snapshot));
+            black_box(receiver.try_changed().unwrap());
+        });
+    });
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history
+    targets = framebuffer, widgets_and_history, acquisition
 }
 criterion_main!(dashboard_perf);

@@ -21,6 +21,76 @@ pub enum PeakMode {
     Range,
 }
 
+/// Presentation data only. Sampling rings and accumulation stay with the
+/// acquisition owner; a coalesced snapshot already includes every accepted peak.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SensorSnapshot {
+    value: Option<f32>,
+    minimum: Option<f32>,
+    maximum: Option<f32>,
+    average: Option<f32>,
+    trend: Option<bool>,
+    sampled_at_ms: Option<u64>,
+    peak_until_ms: Option<u64>,
+    graph: [f32; GRAPH_HISTORY_SIZE],
+    graph_start: usize,
+    graph_count: usize,
+    graph_min: f32,
+    graph_max: f32,
+}
+
+impl SensorSnapshot {
+    pub const EMPTY: Self = Self {
+        value: None,
+        minimum: None,
+        maximum: None,
+        average: None,
+        trend: None,
+        sampled_at_ms: None,
+        peak_until_ms: None,
+        graph: [0.0; GRAPH_HISTORY_SIZE],
+        graph_start: 0,
+        graph_count: 0,
+        graph_min: f32::MAX,
+        graph_max: f32::MIN,
+    };
+
+    pub fn value(&self) -> Option<f32> { self.value }
+
+    pub fn minimum(&self) -> Option<f32> { self.minimum }
+
+    pub fn maximum(&self) -> Option<f32> { self.maximum }
+
+    pub fn get_average(&self) -> Option<f32> { self.average }
+
+    pub fn sampled_at_ms(&self) -> Option<u64> { self.sampled_at_ms }
+
+    pub fn get_trend_at(
+        &self,
+        now_ms: u64,
+    ) -> Option<bool> {
+        let age = now_ms.checked_sub(self.sampled_at_ms?)?;
+        if age <= TREND_WINDOW_MS { self.trend } else { None }
+    }
+
+    pub fn is_new_peak_at(
+        &self,
+        now_ms: u64,
+    ) -> bool {
+        self.sampled_at_ms.is_some_and(|at| at <= now_ms) && self.peak_until_ms.is_some_and(|until| now_ms < until)
+    }
+
+    pub fn get_graph_data(&self) -> (&[f32; GRAPH_HISTORY_SIZE], usize, usize, f32, f32) {
+        (
+            &self.graph,
+            self.graph_start,
+            self.graph_count,
+            self.graph_min,
+            self.graph_max,
+        )
+    }
+}
+
 pub struct SensorState {
     value: Option<f32>,
     extrema: Extrema,
@@ -80,6 +150,24 @@ impl SensorState {
     }
 
     pub const fn value(&self) -> Option<f32> { self.value }
+
+    pub fn snapshot(&self) -> SensorSnapshot {
+        let (graph, graph_start, graph_count, graph_min, graph_max) = self.get_graph_data();
+        SensorSnapshot {
+            value: self.value,
+            minimum: self.minimum(),
+            maximum: self.maximum(),
+            average: self.get_average(),
+            trend: self.get_trend(),
+            sampled_at_ms: self.last_sample_ms,
+            peak_until_ms: self.peak_until_ms,
+            graph: *graph,
+            graph_start,
+            graph_count,
+            graph_min,
+            graph_max,
+        }
+    }
 
     pub fn minimum(&self) -> Option<f32> { self.extrema.min() }
 

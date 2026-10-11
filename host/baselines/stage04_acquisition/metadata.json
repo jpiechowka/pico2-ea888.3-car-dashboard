@@ -1,0 +1,11 @@
+{
+  "description": "Single acquisition owner computes all statistics before coalesced Watch publication; new fixtures, no historical speedup comparison",
+  "prior_commit": "66d3f32",
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- acquisition --save-baseline stage04_acquisition",
+  "host": "Intel Core i9-13900HX, Windows 10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "fixture_sha256": "94f017e210a6faa2903e737590618e86b82ddff213b30ce1d2befcb39f421bb3",
+  "hardware_validation": false
+}

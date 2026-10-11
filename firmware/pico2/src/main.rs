@@ -26,8 +26,10 @@ mod thresholds {
 
 use core::sync::atomic::Ordering;
 
+use dashboard_pico2::acquisition::DashboardSnapshot;
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
+use dashboard_pico2::sensor_state::SensorSnapshot;
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -48,7 +50,7 @@ use crate::peripherals::{ENCODER_BUTTON, ENCODER_DELTA, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::render::{FpsMode, RenderState, cell_idx};
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page, run_boot_sequence};
-use crate::state::{ButtonState, Page, PeakMode, Popup, SensorState, process_buttons};
+use crate::state::{ButtonState, Page, Popup, process_buttons};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
@@ -377,14 +379,8 @@ async fn main(spawner: Spawner) {
     let mut log_scroll_offset: i32 = 0;
     let mut prev_log_count: usize = 0; // for anchoring scroll when new logs arrive
 
-    let mut boost_state = SensorState::new();
-    let mut oil_state = SensorState::new();
-    let mut water_state = SensorState::new();
-    let mut dsg_state = SensorState::new();
-    let mut iat_state = SensorState::new();
-    let mut egt_state = SensorState::with_trend_threshold(5.0);
-    let mut batt_state = SensorState::with_trend_threshold(0.05);
-    let mut afr_state = SensorState::with_trend_threshold(0.1);
+    let mut measurements = DashboardSnapshot::EMPTY;
+    let mut reset_generation = 0u64;
 
     log_info!("Main loop starting");
 
@@ -549,35 +545,30 @@ async fn main(spawner: Spawner) {
         };
         render_state.update_popup(popup_kind);
 
-        if let Some(values) = demo_receiver.try_changed() {
-            let at_ms = values.captured_ms;
-            boost_state.ingest(values.boost, at_ms, PeakMode::None);
-            oil_state.ingest(values.oil_temp, at_ms, PeakMode::Maximum);
-            water_state.ingest(values.water_temp, at_ms, PeakMode::Maximum);
-            dsg_state.ingest(values.dsg_temp, at_ms, PeakMode::Maximum);
-            iat_state.ingest(values.iat_temp, at_ms, PeakMode::Maximum);
-            egt_state.ingest(values.egt_temp, at_ms, PeakMode::Maximum);
-            batt_state.ingest(values.batt_voltage, at_ms, PeakMode::Range);
-            afr_state.ingest(values.afr, at_ms, PeakMode::None);
+        if let Some(snapshot) = demo_receiver.try_changed() {
+            let previous_reset = measurements.reset_generation;
+            if measurements.accept(snapshot) && measurements.reset_generation > previous_reset {
+                clear_frames_remaining = 2;
+                log_info!("Stats reset acknowledged");
+            }
         }
 
         if reset_requested {
-            for state in [
-                &mut boost_state,
-                &mut oil_state,
-                &mut water_state,
-                &mut dsg_state,
-                &mut iat_state,
-                &mut egt_state,
-                &mut batt_state,
-                &mut afr_state,
-            ] {
-                state.reset_statistics();
-            }
+            reset_generation = reset_generation.checked_add(1).expect("reset generation exhausted");
+            crate::tasks::demo::RESET_STATISTICS.signal(reset_generation);
             reset_requested = false;
-            log_info!("Stats reset");
         }
 
+        let [
+            boost_state,
+            oil_state,
+            water_state,
+            dsg_state,
+            iat_state,
+            egt_state,
+            batt_state,
+            afr_state,
+        ] = &measurements.sensors;
         let boost = boost_state.value().unwrap_or(0.0);
         let oil_temp = oil_state.value().unwrap_or(0.0);
         let water_temp = water_state.value().unwrap_or(0.0);
@@ -590,18 +581,6 @@ async fn main(spawner: Spawner) {
         let show_boost_easter_egg = boost >= BOOST_EASTER_EGG_BAR;
 
         let now_ms = Instant::now().as_millis();
-        for state in [
-            &mut boost_state,
-            &mut oil_state,
-            &mut water_state,
-            &mut dsg_state,
-            &mut iat_state,
-            &mut egt_state,
-            &mut batt_state,
-            &mut afr_state,
-        ] {
-            state.tick(now_ms);
-        }
 
         let frame_count = COMPLETED_FRAMES.load(Ordering::Relaxed);
         if last_fps_calc.elapsed() >= Duration::from_secs(1) {
@@ -698,7 +677,7 @@ async fn main(spawner: Spawner) {
                     COL_WIDTH,
                     ROW_HEIGHT,
                     afr,
-                    &to_display_data(&afr_state),
+                    &to_display_data(afr_state, now_ms),
                     blink_on,
                     0,
                     Some(color_transitions.get_current(cell_idx::AFR)),
@@ -713,7 +692,7 @@ async fn main(spawner: Spawner) {
                     batt_voltage,
                     batt_state.minimum().unwrap_or(0.0),
                     batt_state.maximum().unwrap_or(0.0),
-                    &to_display_data(&batt_state),
+                    &to_display_data(batt_state, now_ms),
                     blink_on,
                     0,
                     Some(color_transitions.get_current(cell_idx::BATTERY)),
@@ -728,7 +707,7 @@ async fn main(spawner: Spawner) {
                     "COOL",
                     water_temp,
                     water_state.maximum().unwrap_or(0.0),
-                    &to_display_data(&water_state),
+                    &to_display_data(water_state, now_ms),
                     temp_color_water,
                     is_critical_water,
                     None::<fn(f32) -> bool>,
@@ -746,7 +725,7 @@ async fn main(spawner: Spawner) {
                     "OIL",
                     oil_temp,
                     oil_state.maximum().unwrap_or(0.0),
-                    &to_display_data(&oil_state),
+                    &to_display_data(oil_state, now_ms),
                     temp_color_oil_dsg,
                     is_critical_oil_dsg,
                     Some(is_low_temp_oil),
@@ -764,7 +743,7 @@ async fn main(spawner: Spawner) {
                     "DSG",
                     dsg_temp,
                     dsg_state.maximum().unwrap_or(0.0),
-                    &to_display_data(&dsg_state),
+                    &to_display_data(dsg_state, now_ms),
                     temp_color_oil_dsg,
                     is_critical_oil_dsg,
                     None::<fn(f32) -> bool>,
@@ -782,7 +761,7 @@ async fn main(spawner: Spawner) {
                     "IAT",
                     iat_temp,
                     iat_state.maximum().unwrap_or(0.0),
-                    &to_display_data(&iat_state),
+                    &to_display_data(iat_state, now_ms),
                     temp_color_iat,
                     is_critical_iat,
                     None::<fn(f32) -> bool>,
@@ -800,7 +779,7 @@ async fn main(spawner: Spawner) {
                     "EGT",
                     egt_temp,
                     egt_state.maximum().unwrap_or(0.0),
-                    &to_display_data(&egt_state),
+                    &to_display_data(egt_state, now_ms),
                     temp_color_egt,
                     is_critical_egt,
                     None::<fn(f32) -> bool>,
@@ -943,13 +922,16 @@ async fn main(spawner: Spawner) {
     }
 }
 
-fn to_display_data(state: &SensorState) -> SensorDisplayData<'_> {
+fn to_display_data(
+    state: &SensorSnapshot,
+    now_ms: u64,
+) -> SensorDisplayData<'_> {
     let (buffer, start_idx, count, min, max) = state.get_graph_data();
     SensorDisplayData {
-        trend: state.get_trend(),
-        is_new_peak: state.is_new_peak,
+        trend: state.get_trend_at(now_ms),
+        is_new_peak: state.is_new_peak_at(now_ms),
         graph_buffer: buffer,
-        graph_buffer_size: crate::state::GRAPH_HISTORY_SIZE,
+        graph_buffer_size: dashboard_pico2::sensor_state::GRAPH_HISTORY_SIZE,
         graph_start_idx: start_idx,
         graph_count: count,
         graph_min: min,

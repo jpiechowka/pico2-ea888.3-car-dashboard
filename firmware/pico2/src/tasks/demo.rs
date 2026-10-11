@@ -1,26 +1,18 @@
 use core::sync::atomic::Ordering;
 
+use dashboard_pico2::acquisition::{AcquisitionModel, DashboardSnapshot};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::log_info;
 use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT, core1_stack_hwm_bytes};
 
-#[derive(Clone, Copy, Default)]
-pub struct DemoSensorValues {
-    pub captured_ms: u64,
-    pub boost: f32,
-    pub oil_temp: f32,
-    pub water_temp: f32,
-    pub dsg_temp: f32,
-    pub iat_temp: f32,
-    pub egt_temp: f32,
-    pub batt_voltage: f32,
-    pub afr: f32,
-}
-
-pub static DEMO_VALUES: Watch<CriticalSectionRawMutex, DemoSensorValues, 2> = Watch::new();
+pub static DEMO_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1> = Watch::new();
+// Only the newest requested generation matters. The acquisition owner echoes
+// its acknowledgement in the same snapshot as the reset statistics.
+pub static RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 
 #[embassy_executor::task]
 pub async fn demo_values_task(
@@ -32,6 +24,7 @@ pub async fn demo_values_task(
 
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
+    let mut model = AcquisitionModel::new();
 
     loop {
         let work_start = crate::profiling::read();
@@ -39,19 +32,24 @@ pub async fn demo_values_task(
         let elapsed_ms = start_time.elapsed().as_millis() as u32;
         let t = elapsed_ms as f32 / 1000.0;
 
-        let values = DemoSensorValues {
-            captured_ms: Instant::now().as_millis(),
-            boost: (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
-            oil_temp: 60.0 + 55.0 * micromath::F32(t * 0.3).sin().0,
-            water_temp: 88.0 + 7.0 * micromath::F32(t * 0.4).sin().0,
-            dsg_temp: 75.0 + 40.0 * micromath::F32(t * 0.35).sin().0,
-            iat_temp: 30.0 + 40.0 * micromath::F32(t * 0.25).sin().0,
-            egt_temp: 200.0 + 1000.0 * micromath::F32(t * 0.04).sin().0.abs(),
-            batt_voltage: 12.0 + 2.5 * micromath::F32(t * 0.15).sin().0,
-            afr: 14.0 + 4.0 * micromath::F32(t * 0.45).sin().0,
-        };
-
-        sender.send(values);
+        if let Some(generation) = RESET_STATISTICS.try_take() {
+            model.reset_statistics(generation);
+        }
+        model.ingest_batch(
+            [
+                (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
+                60.0 + 55.0 * micromath::F32(t * 0.3).sin().0,
+                88.0 + 7.0 * micromath::F32(t * 0.4).sin().0,
+                75.0 + 40.0 * micromath::F32(t * 0.35).sin().0,
+                30.0 + 40.0 * micromath::F32(t * 0.25).sin().0,
+                200.0 + 1000.0 * micromath::F32(t * 0.04).sin().0.abs(),
+                12.0 + 2.5 * micromath::F32(t * 0.15).sin().0,
+                14.0 + 4.0 * micromath::F32(t * 0.45).sin().0,
+            ],
+            Instant::now().as_millis(),
+        );
+        // Statistics include every accepted sample before Watch can coalesce.
+        sender.send(model.snapshot());
         crate::tasks::recovery::ACQUISITION_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
         let work_end = crate::profiling::read();
