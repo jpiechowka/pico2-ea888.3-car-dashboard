@@ -181,16 +181,20 @@ fn data_mode() -> dashboard_pico2::samples::DataMode {
     }
 }
 
+#[cfg(all(feature = "demo", feature = "longan-rx12"))]
+compile_error!("Select either demo or longan-rx12; vehicle transport never falls back to demo.");
+
 fn core1_main(
     animation_start: Instant,
     cpu_freq_hz: u32,
     stack_bottom: u32,
     stack_top: u32,
+    resources: tasks::acquisition::Resources,
 ) -> ! {
     cpu_profiling::init(cpu_freq_hz);
     let executor = EXECUTOR_CORE1.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(acquisition_task(animation_start, stack_bottom, stack_top, data_mode()).unwrap());
+        spawner.spawn(acquisition_task(animation_start, stack_bottom, stack_top, resources).unwrap());
     })
 }
 
@@ -263,8 +267,22 @@ async fn main(spawner: Spawner) {
     let stack_top = stack_bottom
         .checked_add(stack.mem.len() as u32)
         .expect("invalid core1 stack bounds");
+    let acquisition_resources = tasks::acquisition::Resources {
+        #[cfg(feature = "longan-rx12")]
+        uart: drivers::longan::Resources {
+            uart: p.UART0,
+            tx: p.PIN_0,
+            rx: p.PIN_1,
+        },
+    };
     embassy_rp::multicore::spawn_core1(p.CORE1, stack, move || {
-        core1_main(animation_start, cpu_freq_hz, stack_bottom, stack_top);
+        core1_main(
+            animation_start,
+            cpu_freq_hz,
+            stack_bottom,
+            stack_top,
+            acquisition_resources,
+        );
     });
 
     cpu_profiling::init(cpu_freq_hz);

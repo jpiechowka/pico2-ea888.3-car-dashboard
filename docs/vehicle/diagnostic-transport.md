@@ -254,3 +254,45 @@ in both outline modes; strict lints and stock release/ELF checks pass. The new
 a synthetic coolant transaction and a snapshot after discovery. Its median is
 about 569 ns, with raw samples and source hashes retained. It excludes UART
 wire/IRQ time and is not a comparison to the smaller session-only fixture.
+
+## Core 1 runtime and qualification gate
+
+Build `--features longan-rx12` to instantiate the bridge owner. It is mutually
+exclusive with `demo`; the stock build leaves vehicle data unavailable. Only
+uninitialized UART0/GP0 TX/GP1 RX tokens cross into core 1. `HardwarePort::new`
+asserts core 1 before constructing the reviewed, non-Send/non-Sync buffered HAL
+and enabling its IRQ there. Static buffers are 1024 RX bytes and 64 TX bytes.
+The deployment profile is preprovisioned 115200 8N1 and `UNQUALIFIED`, so enabling
+this feature does not enable CAN requests or manufacture missing RX12 metadata.
+
+The acquisition task runs one bounded service pass followed by a 1 ms timer.
+There is no overdue tick catch-up loop. It publishes coherent changed snapshots
+at most every 10 ms and retains every accepted sample in owner-local history
+before coalescing. Link state/counters are published separately; the 16-record
+raw trace remains in owner storage. Statistics resets remain acknowledged by
+generation. Service watchdog progress advances even when the ECU is asleep,
+the adapter is disconnected or the port has been quarantined.
+Quarantine deliberately requires a user/power reset; it does not trip the
+task-progress watchdog or repeatedly emit recovery commands. That watchdog is
+reserved for stalled essential execution. Detailed link-state presentation is
+added with the following UI/recovery stage.
+
+Each IO method polls exactly one buffered HAL future, then drops it. The exact
+vendored implementation copies no bytes on Pending and retains no DMA/user
+slice. This does not generalize to arbitrary implementations of the async IO
+traits. Blocking TX, legacy NB TX, `send_break`, `read_exact` and `write_all` are
+excluded. The wrapper separates software flush from physical UART BUSY clear.
+
+The [async IO 0.7.0 release notes](https://github.com/rust-embedded/embedded-hal/blob/master/embedded-io-async/CHANGELOG.md),
+[current trait documentation](https://docs.rs/embedded-io-async/0.7.0/embedded_io_async/),
+locked trait source and actual HAL read/write/flush paths were checked. Adding
+the direct optional trait dependency changes no resolved crate version.
+
+Local strict Clippy passes stock, Demo and Longan configurations, and combined
+Demo/Longan selection is rejected. Optimized linked static RAM/headroom is
+374392/149896 bytes stock, 377048/147240 bytes Longan, and 383832/140456 bytes
+Longan with both traces at 300 MHz. Host replays cover the shared owner; target
+builds only check compilation/layout. Physical IRQ masking, FIFO overrun,
+baud/CAN configuration, exact ECU response identity and actual FPS remain open.
+In particular, the 1024-byte ring does not relax the roughly 347 us remaining
+FIFO budget at the HAL's 28/32-byte RX threshold and 115200 8N1.

@@ -16,6 +16,8 @@ path = "src/main.rs"
 default = ["simple-outline"]
 # Explicit synthetic backend. Vehicle never falls back to synthetic values.
 demo = []
+# Explicit preprovisioned adapter bring-up. Receive metadata remains unqualified.
+longan-rx12 = ["dep:embedded-io-async"]
 # Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
 # All profiles use simple-outline by default for best FPS
 cpu250-spi62-1v10 = []  # 250 MHz @ 1.10V - 62.5 MHz SPI (ST7789 datasheet max)
@@ -35,6 +37,7 @@ te-trace = []
 [dependencies]
 embedded-graphics = "0.8.2"
 embedded-hal-async = "1.0.0"
+embedded-io-async = { version = "0.7.0", optional = true }
 heapless = "0.9.3"
 micromath = "2.1.0"
 profont = "0.7.0"

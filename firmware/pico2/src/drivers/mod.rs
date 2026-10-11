@@ -1,4 +1,6 @@
 mod display;
+#[cfg(feature = "longan-rx12")]
+pub mod longan;
 mod st7789;
 pub mod watchdog;
 

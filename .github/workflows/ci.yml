@@ -73,6 +73,9 @@ jobs:
       - name: UART ownership compile guards
         run: python3 scripts/check_uart_api.py
         working-directory: firmware
+      - name: Vehicle transport Clippy
+        run: cargo clippy --locked -p dashboard-pico2 --features longan-rx12 -- -D warnings
+        working-directory: firmware
 
   build-pico2:
     name: Build Pico 2 (${{ matrix.profile }})
@@ -89,6 +92,8 @@ jobs:
             features: demo,frame-trace,te-trace,cpu300-spi75-1v30
           - profile: serial-full-frame
             features: serial-display,full-frame
+          - profile: longan-rx12
+            features: longan-rx12,frame-trace
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@master

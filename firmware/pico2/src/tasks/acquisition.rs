@@ -1,7 +1,10 @@
 use core::sync::atomic::Ordering;
 
-use dashboard_pico2::acquisition::{AcquisitionModel, DashboardSnapshot};
-use dashboard_pico2::samples::DataMode;
+#[cfg(not(feature = "longan-rx12"))]
+use dashboard_pico2::acquisition::AcquisitionModel;
+use dashboard_pico2::acquisition::DashboardSnapshot;
+#[cfg(feature = "longan-rx12")]
+use dashboard_pico2::diagnostics::service::{LinkSnapshot, Vehicle};
 use dashboard_pico2::stack_samples::StackSamples;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -15,19 +18,28 @@ pub static DASHBOARD_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1
 // Only the newest requested generation matters. The acquisition owner echoes
 // its acknowledgement in the same snapshot as the reset statistics.
 pub static RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64> = Signal::new();
+#[cfg(feature = "longan-rx12")]
+pub static VEHICLE_LINK: Watch<CriticalSectionRawMutex, LinkSnapshot, 1> = Watch::new();
+
+pub struct Resources {
+    #[cfg(feature = "longan-rx12")]
+    pub uart: crate::drivers::longan::Resources,
+}
 
 #[embassy_executor::task]
 pub async fn acquisition_task(
     start_time: Instant,
     stack_bottom: u32,
     stack_top: u32,
-    mode: DataMode,
+    resources: Resources,
 ) {
     let sender = DASHBOARD_VALUES.dyn_sender();
     log_info!(
         "Acquisition: {}",
-        if mode == DataMode::Demo {
+        if cfg!(feature = "demo") {
             "DEMO"
+        } else if cfg!(feature = "longan-rx12") {
+            "VEHICLE raw UART, unqualified"
         } else {
             "VEHICLE unavailable"
         }
@@ -35,23 +47,45 @@ pub async fn acquisition_task(
 
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
-    let mut model = if mode == DataMode::Demo {
+    #[cfg(not(feature = "longan-rx12"))]
+    let Resources {} = resources;
+    #[cfg(not(feature = "longan-rx12"))]
+    let mut model = if cfg!(feature = "demo") {
         AcquisitionModel::demo()
     } else {
         AcquisitionModel::new()
+    };
+    #[cfg(feature = "longan-rx12")]
+    let mut model = Vehicle::new(
+        crate::drivers::longan::HardwarePort::new(resources.uart),
+        dashboard_pico2::config::vehicle::PROFILE,
+        Instant::now().as_millis(),
+    )
+    .expect("invalid vehicle profile");
+    #[cfg(feature = "longan-rx12")]
+    let link_sender = VEHICLE_LINK.dyn_sender();
+    #[cfg(feature = "longan-rx12")]
+    let mut previous_link = None;
+    let mut previous_snapshot = None;
+    let mut last_publication = Instant::now();
+    let interval_ms = if cfg!(feature = "longan-rx12") {
+        1
+    } else if cfg!(feature = "demo") {
+        10
+    } else {
+        100
     };
     let mut stack_samples = StackSamples::new(stack_bottom, stack_top).expect("invalid core1 stack bounds");
 
     loop {
         let work_start = crate::profiling::read();
 
-        let elapsed_ms = start_time.elapsed().as_millis() as u32;
-        let t = elapsed_ms as f32 / 1000.0;
-
         if let Some(generation) = RESET_STATISTICS.try_take() {
             model.reset_statistics(generation);
         }
-        if mode == DataMode::Demo {
+        #[cfg(not(feature = "longan-rx12"))]
+        if cfg!(feature = "demo") {
+            let t = start_time.elapsed().as_millis() as f32 / 1000.0;
             model.ingest_batch(
                 [
                     (0.3 + 2.2 * micromath::F32(t * 0.5).sin().0.abs()).min(2.0),
@@ -66,8 +100,38 @@ pub async fn acquisition_task(
                 Instant::now().as_millis(),
             );
         }
+        #[cfg(feature = "longan-rx12")]
+        {
+            let _ = start_time;
+            let now = Instant::now().as_millis();
+            // Always Ready: exposes this executor's waker to bounded HAL polls
+            // without suspending between the segmented cycle measurements.
+            core::future::poll_fn(|cx| {
+                model.step(cx, now);
+                core::task::Poll::Ready(())
+            })
+            .await;
+        }
         // Statistics include every accepted sample before Watch can coalesce.
-        sender.send(model.snapshot());
+        // At most 100 Hz publication; no repeated 3 KB critical-section copy
+        // when the backend has neither new data, faults nor a reset ack.
+        if previous_snapshot.is_none() || last_publication.elapsed() >= Duration::from_millis(10) {
+            let snapshot = model.snapshot();
+            let identity = (snapshot.sequence, snapshot.reset_generation);
+            if previous_snapshot != Some(identity) {
+                sender.send(snapshot);
+                previous_snapshot = Some(identity);
+            }
+            #[cfg(feature = "longan-rx12")]
+            {
+                let link = model.link();
+                if previous_link != Some(link) {
+                    link_sender.send(link);
+                    previous_link = Some(link);
+                }
+            }
+            last_publication = Instant::now();
+        }
         crate::tasks::recovery::ACQUISITION_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
         let work_end = crate::profiling::read();
@@ -90,6 +154,7 @@ pub async fn acquisition_task(
             last_util_calc = Instant::now();
         }
 
-        Timer::after_millis(if mode == DataMode::Demo { 10 } else { 100 }).await;
+        // Never run a burst of overdue catch-up ticks after scheduling delays.
+        Timer::after_millis(interval_ms).await;
     }
 }

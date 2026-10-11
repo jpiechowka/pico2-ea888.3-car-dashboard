@@ -1,6 +1,7 @@
 pub mod backlight;
 pub mod layout;
 pub mod sensors;
+pub mod vehicle;
 
 pub use layout::{
     CENTER_X,
