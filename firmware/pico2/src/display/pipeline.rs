@@ -3,6 +3,7 @@ use core::future::{Future, poll_fn};
 use core::pin::pin;
 
 use super::FrameBuffer;
+use super::damage::DamagePlan;
 use super::telemetry::RenderTrace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +104,13 @@ impl FrameLifecycle {
         self.transition(token, BufferState::Ready(token), BufferState::Queued(token))
     }
 
+    pub fn discard(
+        &mut self,
+        token: FrameToken,
+    ) -> Result<(), LifecycleError> {
+        self.transition(token, BufferState::Ready(token), BufferState::Free)
+    }
+
     pub fn started(
         &mut self,
         token: FrameToken,
@@ -172,17 +180,30 @@ impl<'a> FrameLease<'a> {
 
     pub fn buffer(&mut self) -> &mut FrameBuffer { self.buffer }
 
+    pub fn pixels(&self) -> &FrameBuffer { self.buffer }
+
     pub fn submit(
         self,
         token: FrameToken,
         trace: RenderTrace,
     ) -> FrameRequest<'a> {
+        self.submit_plan(token, trace, DamagePlan::full())
+    }
+
+    pub fn submit_plan(
+        self,
+        token: FrameToken,
+        trace: RenderTrace,
+        plan: DamagePlan,
+    ) -> FrameRequest<'a> {
         assert_eq!(self.id, token.buffer, "frame token belongs to another buffer");
+        assert!(!plan.is_empty(), "empty plans must not be queued");
         trace.validate().expect("invalid render timing");
         FrameRequest {
             lease: self,
             token,
             trace,
+            plan,
         }
     }
 }
@@ -193,12 +214,15 @@ pub struct FrameRequest<'a> {
     lease: FrameLease<'a>,
     token: FrameToken,
     trace: RenderTrace,
+    plan: DamagePlan,
 }
 
 impl<'a> FrameRequest<'a> {
     pub fn token(&self) -> FrameToken { self.token }
 
     pub fn trace(&self) -> RenderTrace { self.trace }
+
+    pub fn plan(&self) -> &DamagePlan { &self.plan }
 
     pub fn pixels(&self) -> &FrameBuffer { self.lease.buffer }
 

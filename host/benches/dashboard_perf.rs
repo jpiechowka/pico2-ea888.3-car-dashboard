@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dashboard_host_validation::acquisition::{AcquisitionModel, DashboardSnapshot};
+use dashboard_host_validation::display::damage::DamagePlan;
 use dashboard_host_validation::renderer::St7789Renderer;
 use dashboard_host_validation::sensor_state::SensorState;
 use dashboard_host_validation::{AlignedFrame, FRAME_BYTES, primitives, widgets};
@@ -126,12 +127,32 @@ fn acquisition(c: &mut Criterion) {
     });
 }
 
+fn damage_planning(c: &mut Criterion) {
+    let previous = AlignedFrame::boxed();
+    let mut current = AlignedFrame::boxed();
+    for (label, mode) in [("stationary", 0), ("one_cell", 1), ("dense", 2)] {
+        current.0.fill(0);
+        if mode == 1 {
+            for y in 32..128 {
+                for x in 160..240 {
+                    current.0[(y * 320 + x) * 2] = 0xF8;
+                }
+            }
+        } else if mode == 2 {
+            current.0.fill(0xFF);
+        }
+        c.bench_function(&format!("damage/{label}"), |b| {
+            b.iter(|| black_box(DamagePlan::between(black_box(&previous.0), black_box(&current.0))));
+        });
+    }
+}
+
 criterion_group! {
     name = dashboard_perf;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning
 }
 criterion_main!(dashboard_perf);

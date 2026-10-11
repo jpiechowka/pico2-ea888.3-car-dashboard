@@ -1,0 +1,29 @@
+{
+  "timestamp_utc": "2026-10-11T01:25:50.115886+00:00",
+  "base_commit": "a5d88f7edfbd50148b696468f40c0256e795f82a",
+  "note": "Initial damage planner. New baseline; no historical speedup claim.",
+  "host": "Intel Core i9-13900HX, Windows10.0.22631",
+  "criterion": "0.8.2",
+  "samples": 30,
+  "hardware_validation": false,
+  "toolchain": "nightly-2026-10-10",
+  "command": "cargo bench --locked --bench dashboard_perf -- damage --save-baseline stage05_initial",
+  "sha256": {
+    "host/benches/dashboard_perf.rs": "ab1bed8545118b555b0d9c9ddb75e37073b2f77d249f525876ac75160508a76f",
+    "firmware/pico2/src/display/damage.rs": "a1e8c66c3a1550beecdb65b165c40bea85d1a8e12cbbb837314e11a18e94192f"
+  },
+  "results": [
+    {
+      "case": "stationary",
+      "median_ns": 3063.2179764479692
+    },
+    {
+      "case": "one_cell",
+      "median_ns": 2890.997748381649
+    },
+    {
+      "case": "dense",
+      "median_ns": 283.16934131193614
+    }
+  ]
+}
