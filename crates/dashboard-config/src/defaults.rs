@@ -54,14 +54,66 @@ pub fn default_widget(
 }
 
 pub fn default_config() -> Config {
-    let mut views = heapless::Vec::new();
-    views
+    let mut config = empty_config();
+    fill_default_config(&mut config);
+    config
+}
+
+// Legally initialized storage only. It is private and is not a validated
+// document or a public default. No placeholder may be published by a slot.
+pub(crate) const fn empty_config() -> Config {
+    Config {
+        version: 0,
+        catalogue_version: 0,
+        boot_view: 0,
+        views: heapless::Vec::new(),
+        widgets: heapless::Vec::new(),
+        sources: [ChannelSource {
+            definition: DefinitionId::Disabled,
+            access: Access::None,
+            decoder: Decoder::None,
+            evidence: Evidence::Disabled,
+            route: Route::Unknown,
+            poll: Poll::Off,
+            freshness_ms: 0,
+        }; 8],
+        warnings: WarningPresentation {
+            scope: WarningScope::AllViews,
+            mode: WarningMode::CycleOne,
+            page_ms: 0,
+        },
+        fuel: Fuel::EquivalentGasoline,
+        warning_colors: WarningColors {
+            foreground: Color(0),
+            background: Color(0),
+        },
+        controls: ControlMap {
+            hold_ms: 0,
+            screens: [ScreenBindings {
+                buttons: [ButtonBinding {
+                    tap: ControlAction::None,
+                    hold: ControlAction::None,
+                }; 4],
+                encoder_rotation: RotationAction::None,
+                encoder_click: ControlAction::None,
+            }; 3],
+        },
+    }
+}
+
+pub(crate) fn fill_default_config(config: &mut Config) {
+    config.version = VERSION;
+    config.catalogue_version = CATALOGUE_VERSION;
+    config.boot_view = 1;
+    config.views.clear();
+    config
+        .views
         .push(View {
             id: 1,
             name: "Overview".try_into().expect("bounded built-in view"),
         })
         .expect("built-in view count");
-    let mut widgets = heapless::Vec::new();
+    config.widgets.clear();
     for (slot, channel) in [
         Channel::Boost,
         Channel::Lambda,
@@ -75,7 +127,8 @@ pub fn default_config() -> Config {
     .into_iter()
     .enumerate()
     {
-        widgets
+        config
+            .widgets
             .push(default_widget(
                 channel,
                 slot as u16 + 1,
@@ -99,20 +152,15 @@ pub fn default_config() -> Config {
         ObdVoltage42,
         SimosLambda10c0,
     ];
-    Config {
-        version: VERSION,
-        catalogue_version: CATALOGUE_VERSION,
-        boot_view: 1,
-        views,
-        widgets,
-        sources: core::array::from_fn(|i| definition(ids[i]).source(Channel::ALL[i])),
-        warnings: WarningPresentation {
-            scope: WarningScope::AllViews,
-            mode: WarningMode::CycleOne,
-            page_ms: 2000,
-        },
-        fuel: Fuel::EquivalentGasoline,
-        warning_colors: WarningColors::default(),
-        controls: ControlMap::default(),
+    for (i, id) in ids.into_iter().enumerate() {
+        config.sources[i] = definition(id).source(Channel::ALL[i]);
     }
+    config.warnings = WarningPresentation {
+        scope: WarningScope::AllViews,
+        mode: WarningMode::CycleOne,
+        page_ms: 2000,
+    };
+    config.fuel = Fuel::EquivalentGasoline;
+    config.warning_colors = WarningColors::default();
+    config.controls = ControlMap::default();
 }

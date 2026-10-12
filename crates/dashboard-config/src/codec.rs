@@ -31,6 +31,14 @@ fn crc_parts(parts: &[&[u8]]) -> u32 {
 }
 
 pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
+    let (version, payload) = inspect_envelope(bytes, cfg!(feature = "json"))?;
+    decode_payload(version, payload)
+}
+
+pub(crate) fn inspect_envelope(
+    bytes: &[u8],
+    allow_legacy: bool,
+) -> Result<(u16, &[u8]), ConfigError> {
     if bytes.len() < HEADER_BYTES || bytes.len() > MAX_FILE_BYTES {
         return Err(ConfigError::Length);
     }
@@ -38,7 +46,7 @@ pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
         return Err(ConfigError::Header);
     }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != VERSION && !(cfg!(feature = "json") && matches!(version, 1 | 2)) {
+    if version != VERSION && !(allow_legacy && matches!(version, 1 | 2)) {
         return Err(ConfigError::Version);
     }
     let len = usize::from(u16::from_le_bytes([bytes[6], bytes[7]]));
@@ -49,53 +57,66 @@ pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
     if checksum != crc_parts(&[&bytes[..8], &bytes[HEADER_BYTES..]]) {
         return Err(ConfigError::Checksum);
     }
+    Ok((version, &bytes[HEADER_BYTES..]))
+}
+
+fn decode_payload(
+    _version: u16,
+    payload: &[u8],
+) -> Result<ValidatedConfig, ConfigError> {
     #[cfg(feature = "json")]
-    if matches!(version, 1 | 2) {
-        if version == 2 {
-            let (config, rest) = postcard::take_from_bytes::<crate::legacy::LegacyConfigV2>(&bytes[HEADER_BYTES..])
+    if matches!(_version, 1 | 2) {
+        if _version == 2 {
+            let (config, rest) = postcard::take_from_bytes::<crate::legacy::LegacyConfigV2>(payload)
                 .map_err(|_| ConfigError::Payload)?;
             if !rest.is_empty() {
                 return Err(ConfigError::Payload);
             }
-            postcard::serialize_with_flavor(
-                &config,
-                Compare {
-                    remaining: &bytes[HEADER_BYTES..],
-                },
-            )
-            .map_err(|_| ConfigError::Payload)?;
+            compare_canonical(&config, payload)?;
             return config.upgrade();
         }
-        let (config, rest) = postcard::take_from_bytes::<crate::legacy::LegacyConfig>(&bytes[HEADER_BYTES..])
-            .map_err(|_| ConfigError::Payload)?;
+        let (config, rest) =
+            postcard::take_from_bytes::<crate::legacy::LegacyConfig>(payload).map_err(|_| ConfigError::Payload)?;
         if !rest.is_empty() {
             return Err(ConfigError::Payload);
         }
-        postcard::serialize_with_flavor(
-            &config,
-            Compare {
-                remaining: &bytes[HEADER_BYTES..],
-            },
-        )
-        .map_err(|_| ConfigError::Payload)?;
+        compare_canonical(&config, payload)?;
         return config.upgrade();
     }
-    let (config, remainder) =
-        postcard::take_from_bytes::<Config>(&bytes[HEADER_BYTES..]).map_err(|_| ConfigError::Payload)?;
+    let (config, remainder) = postcard::take_from_bytes::<Config>(payload).map_err(|_| ConfigError::Payload)?;
     if !remainder.is_empty() {
         return Err(ConfigError::Payload);
     }
     // Postcard usize lengths accept a wider varint on a 64-bit host than on
     // Pico/Wasm. Require the canonical representation on every platform. This
     // streaming comparison adds no payload-sized temporary or allocation.
-    postcard::serialize_with_flavor(
-        &config,
-        Compare {
-            remaining: &bytes[HEADER_BYTES..],
-        },
-    )
-    .map_err(|_| ConfigError::Payload)?;
+    compare_canonical(&config, payload)?;
     validate(config).map_err(ConfigError::Validation)
+}
+
+pub(crate) fn compare_canonical<T: serde::Serialize>(
+    config: &T,
+    payload: &[u8],
+) -> Result<(), ConfigError> {
+    postcard::serialize_with_flavor(config, Compare { remaining: payload }).map_err(|_| ConfigError::Payload)
+}
+
+pub(crate) fn decode_current_into(
+    bytes: &[u8],
+    config: &mut Config,
+) -> Result<f32, ConfigError> {
+    use serde::de::DeserializeSeed;
+    let (_, payload) = inspect_envelope(bytes, false)?;
+    let mut deserializer = postcard::Deserializer::from_bytes(payload);
+    crate::decode_in_place::ConfigSeed(config)
+        .deserialize(&mut deserializer)
+        .map_err(|_| ConfigError::Payload)?;
+    let remainder = deserializer.finalize().map_err(|_| ConfigError::Payload)?;
+    if !remainder.is_empty() {
+        return Err(ConfigError::Payload);
+    }
+    compare_canonical(config, payload)?;
+    crate::validate::validate_ref(config).map_err(ConfigError::Validation)
 }
 
 struct Compare<'a> {

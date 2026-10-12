@@ -7,6 +7,7 @@ mod appearance;
 mod catalog;
 mod codec;
 pub mod controls;
+mod decode_in_place;
 mod defaults;
 mod fuel;
 #[cfg(feature = "json")]

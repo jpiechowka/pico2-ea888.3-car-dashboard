@@ -1,0 +1,11 @@
+# Bounded configuration storage
+
+The shared configuration library offers `ConfigSlot` for loading one configuration into its final storage. A caller can initialize it with `ConfigSlot::new()` in constant static storage, obtain exclusive access during startup, and call `load_at_boot(bytes)`. The result is an immutable `&BootConfig` borrowing that slot. Rust prevents another load while a previously returned result is still in use.
+
+The slot's initialized placeholder is private. Loading checks file size, magic, envelope version, exact length and checksum before parsing. The Postcard seed assigns fields individually and fills the bounded view and widget collections one element at a time. Complete input consumption, streaming comparison with canonical serialization and the shared semantic validator are required before a reference escapes. A failed load replaces every field with the reviewed default and publishes the original fault alongside it. The slot exposes no storage getter, mutable validated reference or unchecked conversion.
+
+`ConfigSlot` accepts only current version 3 EAV files, including in host builds with the JSON feature enabled. Owned `decode`, `load_at_boot`, `validate` and `default_config` remain available. Host JSON import and owned binary import continue to upgrade the frozen version 1 and 2 formats. JSON uses derived serde; the explicit seed is private and supports the Postcard sequence representation only.
+
+The wire version and serialized defaults remain unchanged. Capacity remains eight views and sixty-four widgets, with a 16 KiB EAV limit, 128 KiB JSON limit and existing 10,240-byte ARM object guards. The slot path uses no heap, configuration-sized decode temporary or configuration-sized canonicality buffer. Its defaults and semantic validation are shared with the owned APIs.
+
+Creating a local slot still puts its storage on the caller's stack. Firmware must claim a single constant static slot before publishing it to either core; this library addition does not itself change the firmware startup integration. Compiler frame analysis and target admission must cover that integration before it is qualified. Device stack high-water measurements and interrupt or exception overlap remain separate checks, and are not established by host tests or object sizes.

@@ -1,5 +1,9 @@
 use crate::*;
 
+#[path = "slot.rs"]
+mod slot;
+pub use slot::ConfigSlot;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorCode {
     Version,
@@ -130,6 +134,11 @@ fn text_valid(
 /// Validation is bounded by eight views and sixty-four widget instances. The
 /// quadratic ID checks use no secondary heap or target-sized scratch buffer.
 pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
+    let stoich = validate_ref(&config)?;
+    Ok(ValidatedConfig { config, stoich })
+}
+
+pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
     let error = ValidationError::new;
     if config.version != VERSION {
         return Err(error(ErrorCode::Version, Field::Version));
@@ -296,6 +305,5 @@ pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
             return Err(at(ErrorCode::Bounds, Field::SourceFreshness));
         }
     }
-    let stoich = crate::fuel::stoichiometry(config.fuel)?;
-    Ok(ValidatedConfig { config, stoich })
+    crate::fuel::stoichiometry(config.fuel)
 }
