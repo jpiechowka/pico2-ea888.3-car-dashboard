@@ -90,10 +90,31 @@ pub struct WarningPage {
     pub number: u8,
     pub total: u8,
     pub blink: bool,
+    pub colors: dashboard_config::WarningColors,
     // Identity remains tied to the actual rules, even for duplicate text.
     rules: u64,
 }
 impl WarningPage {
+    /// Explicit preview sample; no alarm identity and never an acquisition result.
+    pub fn palette_sample(
+        colors: dashboard_config::WarningColors,
+        blink: bool,
+    ) -> Self {
+        Self {
+            lines: [
+                PopupText::new("COLOUR PREVIEW").expect("fixed label"),
+                PopupText::EMPTY,
+                PopupText::EMPTY,
+            ],
+            count: 1,
+            number: 1,
+            total: 1,
+            blink,
+            colors,
+            rules: 0,
+        }
+    }
+
     pub fn lines(&self) -> &[PopupText] { &self.lines[..usize::from(self.count)] }
 }
 
@@ -213,6 +234,11 @@ impl WarningPager {
             number: (index / per_page) as u8 + 1,
             total: total as u8,
             blink,
+            colors: if presentation.mode == WarningMode::CycleOne {
+                config.config().widgets[usize::from(eligible[index])].colors.warning
+            } else {
+                config.config().warning_colors
+            },
             rules: 0,
         };
         for &rule in eligible.iter().skip(index).take(per_page) {

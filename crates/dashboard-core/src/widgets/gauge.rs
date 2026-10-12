@@ -340,8 +340,22 @@ fn endpoint(
     use core::fmt::Write;
     for decimals in (0..=3).rev() {
         let mut text = heapless::String::new();
-        if value.is_finite() && write!(text, "{value:.decimals$}").is_ok() && text.len() as u32 * 4 <= width {
-            return text;
+        if value.is_finite() && write!(text, "{value:.decimals$}").is_ok() {
+            if text.contains('.') {
+                while text.ends_with('0') {
+                    text.pop();
+                }
+                if text.ends_with('.') {
+                    text.pop();
+                }
+            }
+            if text == "-0" {
+                text.clear();
+                text.push('0').ok();
+            }
+            if text.len() as u32 * 4 <= width {
+                return text;
+            }
         }
     }
     heapless::String::try_from("--").unwrap()
@@ -351,8 +365,11 @@ fn endpoint(
 mod tests {
     #[test]
     fn compact_endpoint_labels_distinguish_narrow_scales_and_fit_extremes() {
-        assert_eq!(super::endpoint(1.230, 36), "1.230");
+        assert_eq!(super::endpoint(1.230, 36), "1.23");
         assert_eq!(super::endpoint(1.234, 36), "1.234");
+        assert_eq!(super::endpoint(1200., 36), "1200");
+        assert_eq!(super::endpoint(-0., 36), "0");
+        assert_eq!(super::endpoint(0.0001, 36), "0");
         for value in [-1_000_000.0, -2000.0, 0.0, 2000.0, 1_000_000.0] {
             assert!(super::endpoint(value, 36).len() * 4 <= 36);
         }

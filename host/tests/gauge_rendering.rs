@@ -7,6 +7,33 @@ use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
 #[test]
+fn widget_background_palette_is_rendered_and_invalidated_on_both_buffers() {
+    let config = validate(default_config()).unwrap();
+    let model = AcquisitionModel::demo();
+    let snapshot = model.snapshot();
+    let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut cache = DashboardCache::new();
+    let mut raw = config.config().clone();
+    raw.widgets[0].colors.background = Color::rgb(0, 16, 32);
+    let custom = validate(raw).unwrap();
+    for config in [&config, &custom] {
+        let scene = scene(config, &snapshot, 0);
+        let mut full = AlignedFrame::boxed();
+        scene.draw_full(&mut St7789Renderer::new(&mut full.0));
+        // Blank interior pixel is independent of text and of unavailable status.
+        let pixel = (130 * 320 + 3) * 2;
+        assert_eq!(
+            &full.0[pixel..pixel + 2],
+            &config.config().widgets[0].colors.background.0.to_be_bytes()
+        );
+        for (i, frame) in frames.iter_mut().enumerate() {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), i, &scene);
+            assert!(full.0 == frame.0);
+        }
+    }
+}
+
+#[test]
 fn indicator_level_has_independent_endpoint_and_failure_oracles() {
     use dashboard_host_validation::widgets::gauge::Reading;
     for (value, expected) in [
@@ -249,6 +276,247 @@ fn needle_changes_below_numeric_rounding_and_when_only_scale_changes() {
         let mut full = AlignedFrame::boxed();
         scene.draw_full(&mut St7789Renderer::new(&mut full.0));
         for (i, frame) in buffers.iter_mut().enumerate() {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), i, &scene);
+            assert!(frame.0 == full.0);
+        }
+    }
+}
+
+#[test]
+fn vehicle_gauges_expand_only_on_accepted_samples_and_reset_with_statistics() {
+    use dashboard_host_validation::samples::{DataMode, Quality, Quantity, Sample, SensorId, Source};
+    use dashboard_host_validation::widgets::gauge::Reading;
+    let mut raw = default_config();
+    raw.widgets.clear();
+    let mut w = default_widget(
+        Channel::Water,
+        1,
+        1,
+        Placement {
+            column: 0,
+            row: 0,
+            span: Span::TwoByTwo,
+        },
+    );
+    w.gauge = Gauge {
+        kind: GaugeKind::Circular,
+        min: 60.,
+        max: 110.,
+        expand: true,
+    };
+    w.colors.background = Color::rgb(0, 16, 32);
+    raw.widgets.push(w).unwrap();
+    let config = validate(raw).unwrap();
+    let w = &config.config().widgets[0];
+    let mut model = AcquisitionModel::configured(&config, 0x7E8);
+    let mut cache = DashboardCache::new();
+    let mut buffers = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    for (sequence, value) in [90., 120., 95., f32::NAN, 100.].into_iter().enumerate() {
+        let now = sequence as u64 * 100;
+        let sample = Sample {
+            value: Quantity::CoolantC(value),
+            sequence: sequence as u64 + 1,
+            received_at_ms: now,
+            source: Source::Obd { ecu: 0x7E8, pid: 5 },
+        };
+        assert_eq!(model.ingest_sample(sample, now).is_ok(), value.is_finite());
+        let snapshot = model.snapshot();
+        assert_eq!(snapshot.mode, DataMode::Vehicle);
+        let reading = Reading::new(w, &snapshot, now);
+        assert_eq!(
+            (reading.min, reading.max),
+            (60., if sequence == 0 { 110. } else { 120. })
+        );
+        if !value.is_finite() {
+            assert!(reading.value.is_none());
+        }
+        let mut scene = scene(&config, &snapshot, now);
+        scene.status = dashboard_host_validation::vehicle_status::VehicleStatus::Data;
+        let mut full = AlignedFrame::boxed();
+        scene.draw_full(&mut St7789Renderer::new(&mut full.0));
+        for (i, frame) in buffers.iter_mut().enumerate() {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), i, &scene);
+            assert!(full.0 == frame.0);
+        }
+    }
+    assert!(model.mark_fault(SensorId::Water, Quality::TransportError, 501));
+    assert_eq!(Reading::new(w, &model.snapshot(), 501).value, None);
+    assert!(model.reset_statistics(1));
+    assert!(!model.reset_statistics(1));
+    let reading = Reading::new(w, &model.snapshot(), 501);
+    assert_eq!((reading.min, reading.max), (60., 110.));
+    assert_eq!(reading.value, None);
+}
+
+#[test]
+fn public_gauge_draw_caps_geometry_before_iteration_and_handles_tiny_regions() {
+    use dashboard_host_validation::widgets::gauge::{Reading, draw};
+    use embedded_graphics::prelude::*;
+    use embedded_graphics::primitives::Rectangle;
+    for kind in GaugeKind::ALL {
+        for (point, size) in [
+            (Point::new(i32::MAX, i32::MAX), Size::new(u32::MAX, u32::MAX)),
+            (Point::zero(), Size::zero()),
+            (Point::zero(), Size::new(19, 27)),
+            (Point::new(10, 30), Size::new(u32::MAX, u32::MAX)),
+        ] {
+            let mut frame = AlignedFrame::boxed();
+            draw(
+                &mut St7789Renderer::new(&mut frame.0),
+                kind,
+                Rectangle::new(point, size),
+                Reading {
+                    min: -1.,
+                    max: 3.,
+                    value: Some(1.),
+                },
+                "-1000000.000",
+                false,
+                (colors::WHITE, colors::RED, colors::GRAY, colors::WHITE),
+            );
+            if size.width < 20 || point.x == i32::MAX {
+                assert!(frame.0.iter().all(|b| *b == 0));
+            } else {
+                for y in 0..240 {
+                    for x in 0..320 {
+                        if !(10..166).contains(&x) || !(30..228).contains(&y) {
+                            assert_eq!(&frame.0[(y * 320 + x) * 2..(y * 320 + x) * 2 + 2], &[0, 0]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn each_active_palette_role_has_its_own_pixels_without_leaking_from_the_cell() {
+    for role in ColorRole::ALL
+        .into_iter()
+        .filter(|r| !matches!(r, ColorRole::WarningForeground | ColorRole::WarningBackground))
+    {
+        let mut raw = default_config();
+        raw.widgets.clear();
+        let mut w = default_widget(
+            if role == ColorRole::Peak {
+                Channel::Oil
+            } else {
+                Channel::Boost
+            },
+            1,
+            1,
+            Placement {
+                column: 0,
+                row: 0,
+                span: Span::TwoByTwo,
+            },
+        );
+        w.display.graph = true;
+        w.display.trend = true;
+        w.display.average = true;
+        w.display.extrema = true;
+        if matches!(role, ColorRole::Gauge | ColorRole::Track | ColorRole::Ticks) {
+            w.gauge.kind = GaugeKind::Circular;
+        }
+        let colour = if matches!(role, ColorRole::Background | ColorRole::Track) {
+            Color::rgb(0, 0, 96)
+        } else {
+            Color(0x07E0)
+        };
+        role.set(&mut w.colors, colour);
+        raw.widgets.push(w).unwrap();
+        let config = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo();
+        model.ingest_batch([0.5; 8], 0);
+        model.ingest_batch([2.; 8], 2000);
+        let now = if role == ColorRole::Peak {
+            2001
+        } else {
+            model.ingest_batch([1.5; 8], 4000);
+            4100
+        };
+        let snapshot = model.snapshot();
+        let mut frame = AlignedFrame::boxed();
+        scene(&config, &snapshot, now).draw_cell(&mut St7789Renderer::new(&mut frame.0), 0);
+        assert!(
+            frame.0.as_chunks::<2>().0.iter().any(|p| *p == colour.0.to_be_bytes()),
+            "missing {role:?}"
+        );
+        assert!(
+            frame.0[26 * 640..]
+                .as_chunks::<640>()
+                .0
+                .iter()
+                .all(|row| row[320..].iter().all(|b| *b == 0))
+        );
+    }
+}
+
+#[test]
+fn warning_foreground_only_phase_and_overlay_palette_change_repaint_both_buffers() {
+    use dashboard_host_validation::dashboard::Overlay;
+    use dashboard_host_validation::view_state::WarningPager;
+    let mut raw = default_config();
+    raw.widgets.clear();
+    raw.warnings.mode = WarningMode::ListThree;
+    let mut w = default_widget(
+        Channel::Oil,
+        1,
+        1,
+        Placement {
+            column: 0,
+            row: 0,
+            span: Span::TwoByTwo,
+        },
+    );
+    for role in ColorRole::ALL {
+        role.set(&mut w.colors, Color(65535));
+    }
+    w.colors.background = Color(0xF800);
+    w.colors.track = Color(0);
+    w.colors.warning = WarningColors {
+        foreground: Color(0),
+        background: Color(0xF800),
+    };
+    w.warning.on_ms = 1;
+    raw.widgets.push(w).unwrap();
+    let config = validate(raw).unwrap();
+    let mut changed = config.config().clone();
+    changed.warning_colors.background = Color::rgb(0, 0, 96);
+    let changed = validate(changed).unwrap();
+    let mut model = AcquisitionModel::demo_configured(&config);
+    for at in [0, 1] {
+        model.ingest_batch([150.; 8], at);
+    }
+    let snapshot = model.snapshot();
+    let mut cache = DashboardCache::new();
+    let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut previous = None;
+    for (config, now, blink, popup) in [
+        (&config, 1, false, false),
+        (&config, 2, true, false),
+        (&config, 3, true, true),
+        (&changed, 4, true, true),
+        (&changed, 5, false, false),
+        (&changed, 4000, true, false),
+    ] {
+        let mut scene = scene(config, &snapshot, now);
+        scene.blink_on = blink;
+        if popup {
+            scene.overlay = WarningPager::new()
+                .select(config, &snapshot, 1, now, blink)
+                .map(Overlay::Warnings);
+        }
+        let mut full = AlignedFrame::boxed();
+        scene.draw_full(&mut St7789Renderer::new(&mut full.0));
+        if let Some(old) = previous {
+            assert!(
+                old != full.0.to_vec(),
+                "visible transition did not change pixels at {now}"
+            );
+        }
+        previous = Some(full.0.to_vec());
+        for (i, frame) in frames.iter_mut().enumerate() {
             cache.draw(&mut St7789Renderer::new(&mut frame.0), i, &scene);
             assert!(frame.0 == full.0);
         }

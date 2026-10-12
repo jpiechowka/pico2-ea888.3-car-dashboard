@@ -54,8 +54,16 @@ background, border, label, value, secondary text, graph, gauge, track, ticks,
 average, minimum, maximum, trend, peak highlight and warning foreground/background.
 Combined/list warnings have a separate foreground/background pair; cycle-one
 warnings use their widget pair. The blink phase exchanges the two warning
-colours. Validate active text/indicator contrast on the quantized colours;
-disabled role settings remain editable after enabling the role. Invalid edits
+colours. Validate all stored text/indicator colours on the quantized panel values at a
+conservative 3:1 ratio; indicator versus track and each warning pair are checked
+separately. Border and track are decorative. All palette controls remain editable,
+including currently inactive roles, so changing a style cannot trap a palette.
+The bounded Q16 sRGB tables follow the
+[W3C luminance formula](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html).
+This is a product visibility guard, not a WCAG conformance claim. Warning widgets
+switch directly between readable palette endpoints, replacing the firmware-only
+red fade; popup blinking exchanges its foreground and background. No per-frame
+colour conversion or extra cross-core ownership is introduced. Invalid edits
 remain explicitly marked, inspectable, and blocked from save/export.
 
 ### Reviewable stages

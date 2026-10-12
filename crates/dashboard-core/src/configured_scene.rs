@@ -1,7 +1,7 @@
 //! Bounded view geometry and one widget renderer for device and browser.
 use core::fmt::Write;
 
-use dashboard_config::{Channel, Fuel, GraphRange, ValidatedConfig, Widget};
+use dashboard_config::{Channel, Fuel, GraphRange, ValidatedConfig, Widget, WidgetColors};
 use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -12,7 +12,7 @@ use crate::acquisition::DashboardSnapshot;
 use crate::dashboard::DashboardScene;
 use crate::samples::{DataMode, Quality, SensorId};
 use crate::thresholds::BAR_TO_PSI;
-use crate::ui::{BLACK, CENTERED, GRAY, LABEL_FONT, LEFT_ALIGNED, RED, RIGHT_ALIGNED, WHITE};
+use crate::ui::{CENTERED, LABEL_FONT, LEFT_ALIGNED, RED, RIGHT_ALIGNED, WHITE};
 use crate::widgets::cell_text::CellText;
 use crate::widgets::primitives::{draw_mini_graph, draw_trend_arrow};
 use crate::widgets::value_text::draw_fitted_value;
@@ -231,6 +231,37 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     let Some(widget) = layout.widget(slot) else {
         return;
     };
+    draw_widget_palette(display, scene, slot, layout, widget.colors);
+}
+
+/// Browser-only diagnostic projection: geometry still comes from a validated
+/// isolated widget. Arbitrary RGB565 colours cannot affect bounds or work, and
+/// remain visible under the caller's explicit INVALID watermark.
+pub fn draw_diagnostic_widget<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    scene: &DashboardScene<'_>,
+    slot: usize,
+    colors: WidgetColors,
+) {
+    if let Some(layout) = &scene.layout {
+        draw_widget_palette(display, scene, slot, layout, colors);
+    }
+}
+
+pub(crate) fn panel_color(color: dashboard_config::Color) -> Rgb565 {
+    embedded_graphics::pixelcolor::raw::RawU16::new(color.0).into()
+}
+
+fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    scene: &DashboardScene<'_>,
+    slot: usize,
+    layout: &Layout<'_>,
+    palette: WidgetColors,
+) {
+    let Some(widget) = layout.widget(slot) else {
+        return;
+    };
     let Some(rect) = widget.placement.rect() else {
         return;
     };
@@ -239,9 +270,9 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
         Size::new(u32::from(rect.width), u32::from(rect.height)),
     );
     let mut clipped = display.clipped(&outer);
-    clipped.clear(BLACK).ok();
+    clipped.clear(panel_color(palette.background)).ok();
     outer
-        .into_styled(PrimitiveStyle::with_stroke(GRAY, 1))
+        .into_styled(PrimitiveStyle::with_stroke(panel_color(palette.border), 1))
         .draw(&mut clipped)
         .ok();
     let interior = Rectangle::new(outer.top_left + Point::new(2, 2), outer.size - Size::new(4, 4));
@@ -249,14 +280,15 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     let id = SensorId::from_channel(widget.channel);
     let quality = scene.quality(slot);
     let valid = quality == Quality::Valid;
-    let background = if valid && scene.blink_on && layout.alarm_active(slot, scene.measurements, scene.now_ms) {
-        scene.backgrounds[slot]
+    let warning = valid && scene.blink_on && layout.alarm_active(slot, scene.measurements, scene.now_ms);
+    let background = panel_color(if warning {
+        palette.warning.background
     } else {
-        BLACK
-    };
+        palette.background
+    });
+    let foreground = |color| panel_color(if warning { palette.warning.foreground } else { color });
     display.clear(background).ok();
-    let color = crate::widgets::label_color_for_bg(background);
-    let style = MonoTextStyle::new(LABEL_FONT, color);
+    let style = MonoTextStyle::new(LABEL_FONT, foreground(palette.label));
     let center = i32::from(rect.x + rect.width / 2);
     let mut y = i32::from(rect.y) + 3;
     Text::with_text_style(&widget.label, Point::new(center, y + 8), style, CENTERED)
@@ -266,7 +298,7 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     let state = scene.measurements.sensor(id);
     if widget.shows_trend() {
         if valid && let Some(rising) = state.get_trend_at(scene.now_ms) {
-            draw_trend_arrow(&mut display, center, y + 4, rising, color);
+            draw_trend_arrow(&mut display, center, y + 4, rising, foreground(palette.trend));
         }
         y += 10;
     }
@@ -300,7 +332,7 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
                 Size::new(interior.size.width, available),
             ),
             scale,
-            color,
+            foreground(palette.value),
         )
     } else {
         crate::widgets::gauge::draw(
@@ -313,7 +345,16 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
             crate::widgets::gauge::Reading::new(widget, scene.measurements, scene.now_ms),
             &text[0],
             scene.boost_psi && widget.channel == Channel::Boost,
-            (color, crate::ui::RED, GRAY, color),
+            (
+                foreground(palette.value),
+                foreground(palette.gauge),
+                if warning {
+                    background
+                } else {
+                    panel_color(palette.track)
+                },
+                foreground(palette.ticks),
+            ),
         );
         available
     };
@@ -322,7 +363,7 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
         Text::with_text_style(
             &text[1],
             Point::new(center, y + 8),
-            footer_style(&text[1], interior.size.width, color),
+            footer_style(&text[1], interior.size.width, foreground(palette.secondary)),
             CENTERED,
         )
         .draw(&mut display)
@@ -349,22 +390,18 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
             count,
             min,
             max,
-            |_| color,
+            |_| foreground(palette.graph),
         );
     }
     let mut y = footer_top;
     for (index, row) in text.iter().enumerate().skip(2).filter(|(_, s)| !s.is_empty()) {
-        let row_color = if color == WHITE && valid {
-            if index == 2 {
-                crate::ui::ORANGE
-            } else if matches!(index, 3 | 4) && state.is_new_peak_at(scene.now_ms) {
-                crate::ui::YELLOW
-            } else {
-                color
-            }
-        } else {
-            color
-        };
+        let row_color = foreground(match index {
+            2 => palette.average,
+            3 | 4 if valid && state.is_new_peak_at(scene.now_ms) => palette.peak,
+            3 => palette.minimum,
+            4 => palette.maximum,
+            _ => palette.secondary,
+        });
         Text::with_text_style(
             row,
             Point::new(center, y + 8),

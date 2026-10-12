@@ -106,6 +106,7 @@ pub enum WidgetField {
     GraphMaximum,
     GaugeMinimum,
     GaugeMaximum,
+    Color(ColorRole),
     WarningMessage,
     WarningTrigger,
     WarningClear,
@@ -140,6 +141,7 @@ pub enum RawField {
     Fuel(FuelField),
     Source(Channel, SourceField),
     WarningPageMilliseconds,
+    WarningColor { foreground: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1058,7 +1060,7 @@ fn check_raw_target(
                 _ => {}
             }
         }
-        RawField::WarningPageMilliseconds => {}
+        RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => {}
     }
     Ok(())
 }
@@ -1082,6 +1084,7 @@ fn apply_raw(
             match field {
                 WidgetField::Label => widget.label = bounded(text)?,
                 WidgetField::Decimals => widget.display.decimals = text.trim().parse().map_err(|_| parse_error())?,
+                WidgetField::Color(role) => role.set(&mut widget.colors, Color::parse(text).ok_or_else(parse_error)?),
                 WidgetField::GaugeMinimum => widget.gauge.min = number()?,
                 WidgetField::GaugeMaximum => widget.gauge.max = number()?,
                 WidgetField::GraphMinimum | WidgetField::GraphMaximum => {
@@ -1145,6 +1148,14 @@ fn apply_raw(
             }
         }
         RawField::WarningPageMilliseconds => config.warnings.page_ms = integer()?,
+        RawField::WarningColor { foreground } => {
+            let color = Color::parse(text).ok_or_else(parse_error)?;
+            if foreground {
+                config.warning_colors.foreground = color;
+            } else {
+                config.warning_colors.background = color;
+            }
+        }
     }
     Ok(())
 }

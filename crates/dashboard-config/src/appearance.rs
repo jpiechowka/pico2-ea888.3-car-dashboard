@@ -208,7 +208,7 @@ impl Default for WidgetColors {
     fn default() -> Self {
         Self {
             background: Color(0),
-            border: Color::rgb(60, 60, 60),
+            border: Color(0x4208),
             label: Color(0xFFFF),
             value: Color(0xFFFF),
             secondary: Color(0xFFFF),
@@ -225,3 +225,172 @@ impl Default for WidgetColors {
         }
     }
 }
+
+/// Independent editable colour roles. Stored even when a display option is hidden.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorRole {
+    Background,
+    Border,
+    Label,
+    Value,
+    Secondary,
+    Graph,
+    Gauge,
+    Track,
+    Ticks,
+    Average,
+    Minimum,
+    Maximum,
+    Trend,
+    Peak,
+    WarningForeground,
+    WarningBackground,
+}
+impl ColorRole {
+    pub const ALL: [Self; 16] = [
+        Self::Background,
+        Self::Border,
+        Self::Label,
+        Self::Value,
+        Self::Secondary,
+        Self::Graph,
+        Self::Gauge,
+        Self::Track,
+        Self::Ticks,
+        Self::Average,
+        Self::Minimum,
+        Self::Maximum,
+        Self::Trend,
+        Self::Peak,
+        Self::WarningForeground,
+        Self::WarningBackground,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Background => "Background",
+            Self::Border => "Border",
+            Self::Label => "Label",
+            Self::Value => "Primary value",
+            Self::Secondary => "Units / AFR",
+            Self::Graph => "History line",
+            Self::Gauge => "Gauge indicator",
+            Self::Track => "Gauge track",
+            Self::Ticks => "Scale labels / ticks",
+            Self::Average => "Average",
+            Self::Minimum => "Minimum",
+            Self::Maximum => "Maximum",
+            Self::Trend => "Trend arrow",
+            Self::Peak => "New peak",
+            Self::WarningForeground => "Warning text",
+            Self::WarningBackground => "Warning background",
+        }
+    }
+
+    pub const fn get(
+        self,
+        colors: &WidgetColors,
+    ) -> Color {
+        match self {
+            Self::Background => colors.background,
+            Self::Border => colors.border,
+            Self::Label => colors.label,
+            Self::Value => colors.value,
+            Self::Secondary => colors.secondary,
+            Self::Graph => colors.graph,
+            Self::Gauge => colors.gauge,
+            Self::Track => colors.track,
+            Self::Ticks => colors.ticks,
+            Self::Average => colors.average,
+            Self::Minimum => colors.minimum,
+            Self::Maximum => colors.maximum,
+            Self::Trend => colors.trend,
+            Self::Peak => colors.peak,
+            Self::WarningForeground => colors.warning.foreground,
+            Self::WarningBackground => colors.warning.background,
+        }
+    }
+
+    pub fn set(
+        self,
+        colors: &mut WidgetColors,
+        color: Color,
+    ) {
+        match self {
+            Self::Background => colors.background = color,
+            Self::Border => colors.border = color,
+            Self::Label => colors.label = color,
+            Self::Value => colors.value = color,
+            Self::Secondary => colors.secondary = color,
+            Self::Graph => colors.graph = color,
+            Self::Gauge => colors.gauge = color,
+            Self::Track => colors.track = color,
+            Self::Ticks => colors.ticks = color,
+            Self::Average => colors.average = color,
+            Self::Minimum => colors.minimum = color,
+            Self::Maximum => colors.maximum = color,
+            Self::Trend => colors.trend = color,
+            Self::Peak => colors.peak = color,
+            Self::WarningForeground => colors.warning.foreground = color,
+            Self::WarningBackground => colors.warning.background = color,
+        }
+    }
+}
+
+impl WidgetColors {
+    /// All stored foregrounds remain legible so switching styles/options cannot
+    /// turn a valid document into an unrepairable typed edit. Decorative border
+    /// and track may be subtle; the indicator must contrast with track and fill.
+    pub fn invalid_role(self) -> Option<ColorRole> {
+        use ColorRole::*;
+        for role in [
+            Label, Value, Secondary, Graph, Gauge, Ticks, Average, Minimum, Maximum, Trend, Peak,
+        ] {
+            if !role.get(&self).contrasts(self.background) {
+                return Some(role);
+            }
+        }
+        if !self.gauge.contrasts(self.track) {
+            return Some(Gauge);
+        }
+        if !self.warning.foreground.contrasts(self.warning.background) {
+            return Some(WarningForeground);
+        }
+        None
+    }
+}
+
+impl Color {
+    /// Product visibility guard, not a WCAG conformance claim. sRGB luminance
+    /// of the actual quantized RGB565 colour, with a conservative 3:1 boundary.
+    /// Q16 tables use the W3C/IEC sRGB transfer function, rounded to nearest.
+    /// No powf, allocation or frame-time conversion is required on the Pico.
+    pub fn contrasts(
+        self,
+        other: Self,
+    ) -> bool {
+        let a = self.luminance();
+        let b = other.luminance();
+        // One Q16 unit on each side bounds table and arithmetic rounding.
+        a.max(b) + 3276 >= 3 * (a.min(b) + 3278)
+    }
+
+    fn luminance(self) -> u32 {
+        (2126 * u32::from(LINEAR_5[usize::from(self.0 >> 11)])
+            + 7152 * u32::from(LINEAR_6[usize::from((self.0 >> 5) & 63)])
+            + 722 * u32::from(LINEAR_5[usize::from(self.0 & 31)]))
+            / 10000
+    }
+}
+
+const LINEAR_5: [u16; 32] = [
+    0, 159, 340, 599, 997, 1453, 2013, 2681, 3570, 4488, 5530, 6700, 8177, 9635, 11235, 12980, 15122, 17187, 19407,
+    21787, 24658, 27386, 30282, 33350, 37008, 40449, 44069, 47871, 52369, 56567, 60955, 65535,
+];
+
+const LINEAR_6: [u16; 64] = [
+    0, 80, 159, 241, 340, 458, 599, 761, 947, 1156, 1391, 1651, 1937, 2250, 2592, 2961, 3464, 3900, 4366, 4864, 5392,
+    5953, 6547, 7174, 7834, 8528, 9258, 10022, 10822, 11658, 12530, 13440, 14629, 15623, 16656, 17727, 18837, 19987,
+    21177, 22407, 23678, 24990, 26344, 27739, 29176, 30656, 32179, 33745, 35764, 37429, 39138, 40891, 42690, 44534,
+    46423, 48359, 50341, 52369, 54445, 56567, 58737, 60955, 63221, 65535,
+];

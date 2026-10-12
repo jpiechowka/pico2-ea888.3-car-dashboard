@@ -1455,3 +1455,115 @@ fn decimal_raw_and_json_graph_bounds_reject_the_same_equal_endpoints() {
     assert_eq!(imported.revision(), revision);
     assert_eq!(imported.history_len(), (0, 0));
 }
+
+#[test]
+fn colour_raw_edits_are_repairable_atomic_quantized_and_retire_callbacks() {
+    let mut editor = Editor::default();
+    editor
+        .select(Selection {
+            view: 1,
+            widget: Some(1),
+        })
+        .unwrap();
+    let original = editor.export_binary().unwrap();
+    let field = RawField::Widget(1, WidgetField::Color(ColorRole::Value));
+    let old = editor.field_token();
+    editor.set_raw(old, field, "#000000".into()).unwrap();
+    assert!(editor.has_invalid_draft());
+    assert!(editor.export_binary().is_err());
+    assert!(editor.begin_save().is_err());
+    assert_eq!(editor.preview().config().widgets[0].colors.value, Color(65535));
+    assert_eq!(editor.diagnostic().unwrap().config.widgets[0].colors.value, Color(0));
+    assert!(matches!(
+        editor.set_raw(old, field, "#FFFFFF".into()),
+        Err(EditorError::StaleToken)
+    ));
+    for bad in ["#FFF", "#GG0000", "#00000000", "#000000\n"] {
+        editor.set_raw(editor.field_token(), field, bad.into()).unwrap();
+        assert!(editor.has_invalid_draft());
+    }
+    editor.set_raw(editor.field_token(), field, "#11FF99".into()).unwrap();
+    assert!(!editor.has_invalid_draft());
+    assert_eq!(
+        editor.preview().config().widgets[0].colors.value.hex().as_str(),
+        "#10FF9C"
+    );
+    let exported = editor.export_binary().unwrap();
+    editor.undo().unwrap();
+    assert_eq!(editor.export_binary().unwrap(), original);
+    editor.redo().unwrap();
+    assert_eq!(editor.export_binary().unwrap(), exported);
+    let saved = editor.begin_save().unwrap().json().to_owned();
+    assert_eq!(
+        Editor::from_saved_state(saved.as_bytes())
+            .unwrap()
+            .export_binary()
+            .unwrap(),
+        exported
+    );
+    let global = RawField::WarningColor { foreground: true };
+    editor.set_raw(editor.field_token(), global, "#FF0000".into()).unwrap();
+    assert!(editor.has_invalid_draft());
+    editor
+        .set_raw(
+            editor.field_token(),
+            RawField::WarningColor { foreground: false },
+            "#000000".into(),
+        )
+        .unwrap();
+    assert!(!editor.has_invalid_draft(), "repair pair atomically");
+}
+
+#[test]
+fn light_background_can_be_repaired_across_all_roles_without_discarding_edits() {
+    let mut editor = Editor::default();
+    editor
+        .select(Selection {
+            view: 1,
+            widget: Some(1),
+        })
+        .unwrap();
+    let field = |role| RawField::Widget(1, WidgetField::Color(role));
+    editor
+        .set_raw(editor.field_token(), field(ColorRole::Background), "#FFFFFF".into())
+        .unwrap();
+    assert!(editor.has_invalid_draft());
+    for role in [
+        ColorRole::Label,
+        ColorRole::Value,
+        ColorRole::Secondary,
+        ColorRole::Graph,
+        ColorRole::Gauge,
+        ColorRole::Ticks,
+        ColorRole::Average,
+        ColorRole::Minimum,
+        ColorRole::Maximum,
+        ColorRole::Trend,
+        ColorRole::Peak,
+    ] {
+        editor
+            .set_raw(editor.field_token(), field(role), "#000000".into())
+            .unwrap();
+    }
+    // Last remaining failure is black indicator against the stored dark track.
+    assert!(editor.has_invalid_draft());
+    editor
+        .set_raw(editor.field_token(), field(ColorRole::Track), "#FFFFFF".into())
+        .unwrap();
+    assert!(!editor.has_invalid_draft());
+    assert_eq!(editor.preview().config().widgets[0].colors.background, Color(65535));
+    for colour in ["#080808", "#101010", "#181818", "#202020"] {
+        editor
+            .set_raw(editor.field_token(), field(ColorRole::Value), colour.into())
+            .unwrap();
+        assert!(
+            !editor.has_invalid_draft(),
+            "successive picker revisions must stay usable"
+        );
+    }
+    for kind in GaugeKind::ALL {
+        let mut widget = editor.preview().config().widgets[0].clone();
+        widget.gauge.kind = kind;
+        editor.apply(Edit::UpdateWidget(widget)).unwrap();
+    }
+}

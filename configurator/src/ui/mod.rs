@@ -7,7 +7,7 @@ mod widget_menu;
 
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
-use fields::{Choice, TextField, Toggle, choices, error_text};
+use fields::{Choice, ColorField, TextField, Toggle, choices, error_text};
 use inspector::{FuelSettings, Inspector, SourceSettings, WarningSettingsPanel};
 use leptos::leptos_dom::helpers::{event_target_checked, event_target_value};
 use leptos::prelude::*;
@@ -253,7 +253,7 @@ pub fn Studio() -> impl IntoView {
                     <div class="draft-alert" hidden=move || !ui.invalid() role="alert">
                         <strong>"INVALID PREVIEW · inspection only"</strong>
                         <p>{move || ui.editor.with(|e| e.draft_error().map(error_text).unwrap_or_default())}</p>
-                        <p>"Rejected labels and in-bounds placements are shown, including overlaps. Invalid numeric or style settings use safe fallbacks; source and fuel settings use the last valid values. Warning simulation is suspended. Unsupported glyphs appear as ? and long text is clipped. Exact rejected inputs are listed below."</p>
+                        <p>"Rejected labels and in-bounds placements are shown, including overlaps. Invalid numbers use safe bounds; source and fuel use the last valid settings. Parsed colours are shown even when unreadable. Edited warning colours show a sample popup. Live warning simulation is suspended. Unsupported glyphs appear as ? and long text is clipped. Exact rejected inputs are listed below."</p>
                         <p>{move ||if ui.layout_locked(){"Correct the highlighted text fields or discard the invalid edits to unlock layout controls."}else{"Drag, resize or remove widgets to repair the layout. Right-click an overlap to select a covered widget. Save and export unlock once every error is resolved."}}</p>
                         <ul class="draft-details">{move ||ui.editor.with(|e|e.diagnostic().map(|draft|draft.descriptions(e.preview()).into_iter().map(|line|view!{<li>{line}</li>}).collect_view()))}</ul>
                         <button on:click=move |_| { ui.run(Editor::discard_raw); }>"Discard invalid edits"</button>

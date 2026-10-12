@@ -193,13 +193,7 @@ impl Preview {
             fps_mode: FpsMode::Off,
             fps_instant: 0.0,
             fps_average: 0.0,
-            backgrounds: core::array::from_fn(|slot| {
-                if blink && layout.alarm_active(slot, &snapshot, now) {
-                    RED
-                } else {
-                    BLACK
-                }
-            }),
+            backgrounds: [BLACK; 8], // Configured renderer resolves palettes itself.
             overlay: warning.map(Overlay::Warnings),
         };
         scene.draw_full(&mut St7789Renderer::new(&mut self.framebuffer));
@@ -267,14 +261,16 @@ impl Preview {
                 backgrounds: [BLACK; 8],
                 overlay: None,
             };
-            scene.draw_cell(&mut display, 0);
+            dashboard_core::configured_scene::draw_diagnostic_widget(&mut display, &scene, 0, widget.colors);
             let rect = widget.placement.rect().expect("isolated widget has valid geometry");
             let label = Rectangle::new(
                 Point::new(i32::from(rect.x) + 2, i32::from(rect.y) + 2),
                 Size::new(u32::from(rect.width) - 4, 12),
             );
             let mut clipped = display.clipped(&label);
-            clipped.clear(BLACK).ok();
+            clipped
+                .clear(embedded_graphics::pixelcolor::raw::RawU16::new(widget.colors.background.0).into())
+                .ok();
             // Bound work to one screen-width line. Controls/unsupported glyphs
             // are shown as '?'; the exact original text is listed outside canvas.
             let text: String = draft
@@ -286,11 +282,35 @@ impl Preview {
             Text::with_text_style(
                 &text,
                 Point::new(i32::from(rect.x + rect.width / 2), i32::from(rect.y) + 11),
-                MonoTextStyle::new(&FONT_6X10, WHITE),
+                MonoTextStyle::new(
+                    &FONT_6X10,
+                    embedded_graphics::pixelcolor::raw::RawU16::new(widget.colors.label.0).into(),
+                ),
                 dashboard_core::ui::CENTERED,
             )
             .draw(&mut clipped)
             .ok();
+        }
+        // Inspect even an unreadable rejected warning pair, under the explicit
+        // invalid banner. Geometry/message are fixed; raw hex is listed in UI.
+        let palette = if draft.config.warning_colors != accepted.config().warning_colors {
+            Some(draft.config.warning_colors)
+        } else {
+            draft.config.widgets.iter().filter(|w| w.view == view).find_map(|w| {
+                accepted
+                    .config()
+                    .widgets
+                    .iter()
+                    .find(|old| old.id == w.id)
+                    .filter(|old| old.colors.warning != w.colors.warning)
+                    .map(|_| w.colors.warning)
+            })
+        };
+        if let Some(colors) = palette {
+            dashboard_core::widgets::draw_warning_page(
+                &mut display,
+                WarningPage::palette_sample(colors, (options.sample_ms / 500).is_multiple_of(2)),
+            );
         }
         // This watermark is part of the pixels as well as the browser chrome,
         // so even a copied canvas cannot be mistaken for an accepted preview.

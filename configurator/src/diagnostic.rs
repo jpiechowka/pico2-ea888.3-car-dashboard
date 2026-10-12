@@ -56,7 +56,7 @@ impl Draft {
                             RawField::Fuel(_) => w.channel == Channel::Lambda,
                             RawField::Source(channel, _) => channel == w.channel,
                             RawField::ViewName(id) => id == w.view,
-                            RawField::WarningPageMilliseconds => true,
+                            RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => true,
                         }
                     })
             })
@@ -113,6 +113,19 @@ impl Draft {
                 if previous.label != widget.label {
                     lines.push(format!("Widget {} label: {:?}", widget.id, widget.label));
                 }
+                if previous.gauge != widget.gauge {
+                    lines.push(format!("Widget {} gauge: {:?}", widget.id, widget.gauge));
+                }
+                for role in ColorRole::ALL {
+                    if role.get(&previous.colors) != role.get(&widget.colors) {
+                        lines.push(format!(
+                            "Widget {} {}: {}",
+                            widget.id,
+                            role.label(),
+                            role.get(&widget.colors).hex()
+                        ));
+                    }
+                }
                 if previous.display != widget.display {
                     lines.push(format!("Widget {} display: {:?}", widget.id, widget.display));
                 }
@@ -123,6 +136,13 @@ impl Draft {
         }
         if self.config.fuel != accepted.config().fuel {
             lines.push(format!("Fuel and AFR: {:?}", self.config.fuel));
+        }
+        if self.config.warning_colors != accepted.config().warning_colors {
+            lines.push(format!(
+                "Combined warning colours: {} on {}",
+                self.config.warning_colors.foreground.hex(),
+                self.config.warning_colors.background.hex()
+            ));
         }
         if self.config.warnings != accepted.config().warnings {
             lines.push(format!("Warning presentation: {:?}", self.config.warnings));
@@ -176,6 +196,7 @@ pub(crate) fn isolated_widget(
     {
         safe.display.graph_range = GraphRange::Auto;
     }
+    safe.colors = WidgetColors::default();
     safe.warning = default_widget(safe.channel, safe.id, safe.view, safe.placement).warning;
     safe.warning.enabled = false;
     config.widgets.push(safe).ok()?;

@@ -193,11 +193,12 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     page: crate::view_state::WarningPage,
 ) {
     use core::fmt::Write;
-    let (background, text, border) = if page.blink {
-        (RED_FILL, TITLE_STYLE_WHITE, WHITE_FILL)
-    } else {
-        (WHITE_FILL, TITLE_STYLE_RED, RED_FILL)
-    };
+    let fg = crate::configured_scene::panel_color(page.colors.foreground);
+    let bg = crate::configured_scene::panel_color(page.colors.background);
+    let (fg, bg) = if page.blink { (fg, bg) } else { (bg, fg) };
+    let background = PrimitiveStyle::with_fill(bg);
+    let border = PrimitiveStyle::with_fill(fg);
+    let text = MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_10X20, fg);
     let outer = Rectangle::new(Point::new(CENTER_X - 108, CENTER_Y - 68), Size::new(216, 136));
     let mut display = display.clipped(&outer);
     outer.into_styled(border).draw(&mut display).ok();

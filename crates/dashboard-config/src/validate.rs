@@ -13,6 +13,7 @@ pub enum ErrorCode {
     SourceMetadata,
     Hysteresis,
     FuelBasis,
+    Contrast,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +32,8 @@ pub enum Field {
     Afr,
     GraphRange,
     GaugeRange,
+    Color(ColorRole),
+    WarningColors,
     WarningMode,
     WarningTrigger,
     WarningClear,
@@ -185,6 +188,9 @@ pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
         if !text_valid(&widget.label, 12 * usize::from(widget.placement.span.columns())) {
             return Err(at(ErrorCode::Text, Field::Label));
         }
+        if let Some(role) = widget.colors.invalid_role() {
+            return Err(at(ErrorCode::Contrast, Field::Color(role)));
+        }
         let display = widget.display;
         if !widget.gauge.valid(widget.channel) {
             return Err(at(ErrorCode::Bounds, Field::GaugeRange));
@@ -238,6 +244,13 @@ pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
     }
     if !(500..=10_000).contains(&config.warnings.page_ms) {
         return Err(error(ErrorCode::Bounds, Field::WarningPage));
+    }
+    if !config
+        .warning_colors
+        .foreground
+        .contrasts(config.warning_colors.background)
+    {
+        return Err(error(ErrorCode::Contrast, Field::WarningColors));
     }
     for channel in Channel::ALL {
         let source = config.sources[channel.index()];

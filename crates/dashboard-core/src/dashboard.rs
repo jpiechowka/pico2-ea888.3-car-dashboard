@@ -404,12 +404,19 @@ impl DashboardScene<'_> {
             ));
             key.flags[2] = self.boost_psi && widget.channel == dashboard_config::Channel::Boost;
         }
-        if key.quality != Quality::Valid {
-            key.background = BLACK;
-            return Some(key);
-        }
         if let Some(layout) = &self.layout {
             let widget = layout.widget(cell)?;
+            key.flags[1] = key.quality == Quality::Valid
+                && self.blink_on
+                && layout.alarm_active(cell, self.measurements, self.now_ms);
+            key.background = configured_scene::panel_color(if key.flags[1] {
+                widget.colors.warning.background
+            } else {
+                widget.colors.background
+            });
+            if key.quality != Quality::Valid {
+                return Some(key);
+            }
             key.text = configured_scene::widget_text(
                 widget,
                 self.measurements,
@@ -421,9 +428,10 @@ impl DashboardScene<'_> {
             key.graph = GraphKey::new(widget.shows_graph().then_some(state));
             key.flags[0] = widget.shows_extrema() && state.is_new_peak_at(self.now_ms);
             key.trend = widget.shows_trend().then(|| state.get_trend_at(self.now_ms)).flatten();
-            if !self.blink_on || !layout.alarm_active(cell, self.measurements, self.now_ms) {
-                key.background = BLACK;
-            }
+            return Some(key);
+        }
+        if key.quality != Quality::Valid {
+            key.background = BLACK;
             return Some(key);
         }
         key.graph = GraphKey::new(if cell == 0 { None } else { Some(state) });

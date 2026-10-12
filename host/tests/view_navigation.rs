@@ -407,3 +407,56 @@ fn all64_warnings_are_reached_in_both_modes_and_feedback_restarts_cleanly() {
         assert!(pager.select(&cfg, &model.snapshot(), 1, u64::MAX, false).is_none());
     }
 }
+
+#[test]
+fn warning_palettes_follow_actual_rule_and_list_mode_even_for_a_single_line() {
+    use dashboard_host_validation::AlignedFrame;
+    use dashboard_host_validation::display::St7789Renderer;
+    use dashboard_host_validation::widgets::draw_warning_page;
+    for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
+        let base = config(mode, WarningScope::AllViews);
+        let mut raw = base.config().clone();
+        // Only the other view's rule is enabled: never borrow current-view colour.
+        for w in &mut raw.widgets {
+            w.warning.enabled = w.view == 9;
+        }
+        raw.widgets[4].colors.warning = WarningColors {
+            foreground: Color(0),
+            background: Color(0x07FF),
+        };
+        raw.warning_colors = WarningColors {
+            foreground: Color(0),
+            background: Color(0xFFE0),
+        };
+        let config = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo_configured(&config);
+        for at in [0, 1] {
+            model.ingest_batch([1., 150., 95., 80., 30., 700., 13.8, 1.], at);
+        }
+        let mut pager = WarningPager::new();
+        let expected = if mode == WarningMode::CycleOne {
+            config.config().widgets[4].colors.warning
+        } else {
+            config.config().warning_colors
+        };
+        for (at, blink) in [(1, true), (2, false)] {
+            let page = pager.select(&config, &model.snapshot(), 1, at, blink).unwrap();
+            assert_eq!(page.lines().len(), 1);
+            assert_eq!(page.lines()[0].as_str(), "OIL 4");
+            assert_eq!(page.colors, expected);
+            let mut frame = AlignedFrame::boxed();
+            draw_warning_page(&mut St7789Renderer::new(&mut frame.0), page);
+            let at = (60 * 320 + 60) * 2;
+            let background = if blink {
+                expected.background
+            } else {
+                expected.foreground
+            };
+            assert_eq!(&frame.0[at..at + 2], &background.0.to_be_bytes());
+        }
+        let mut old = pager.select(&config, &model.snapshot(), 1, 3, true).unwrap();
+        let before = old;
+        old.colors.background = Color(0xF800);
+        assert_ne!(old, before, "overlay retained key must include palette");
+    }
+}

@@ -23,6 +23,7 @@ pub fn raw_value(
                 .map(|w| {
                     match field {
                         WidgetField::Label => w.label.to_string(),
+                        WidgetField::Color(role) => role.get(&w.colors).hex().to_string(),
                         WidgetField::Decimals => w.display.decimals.to_string(),
                         WidgetField::GaugeMinimum => w.gauge.min.to_string(),
                         WidgetField::GaugeMaximum => w.gauge.max.to_string(),
@@ -49,6 +50,15 @@ pub fn raw_value(
                 .unwrap_or_default()
         }
         RawField::WarningPageMilliseconds => c.warnings.page_ms.to_string(),
+        RawField::WarningColor { foreground } => {
+            if foreground {
+                c.warning_colors.foreground
+            } else {
+                c.warning_colors.background
+            }
+            .hex()
+            .to_string()
+        }
         RawField::Fuel(field) => {
             match c.fuel {
                 Fuel::Stoichiometric { ratio } => ratio.to_string(),
@@ -195,6 +205,10 @@ pub fn error_text(error: EditorError) -> String {
     match error {
         EditorError::Validation(e) => {
             let reason = match e.code {
+                ErrorCode::Contrast => {
+                    "Colours need at least 3:1 contrast after RGB565 conversion. Repair the palette or discard the \
+                     edit."
+                }
                 ErrorCode::Overlap => "Widgets overlap. Choose free cells or a smaller size.",
                 ErrorCode::Text => "Use nonempty printable ASCII within the shown character limit.",
                 ErrorCode::Hysteresis => "Clear must be below a high trigger, or above a low trigger.",
@@ -204,14 +218,22 @@ pub fn error_text(error: EditorError) -> String {
                 ErrorCode::SourceMetadata => "Source metadata must match the selected catalogue definition.",
                 _ => "The configuration has an invalid or missing reference.",
             };
-            format!(
-                "{}: {reason}",
-                format!("{:?}", e.field)
-                    .replace("Warning", "Warning ")
-                    .replace("Fuel", "Fuel ")
-            )
+            let field = match e.field {
+                Field::Color(role) => role.label().to_owned(),
+                Field::WarningColors => "Combined warning colours".to_owned(),
+                Field::GaugeRange => "Gauge limits (finite, at least 0.001 apart)".to_owned(),
+                _ => {
+                    format!("{:?}", e.field)
+                        .replace("Warning", "Warning ")
+                        .replace("Fuel", "Fuel ")
+                }
+            };
+            format!("{field}: {reason}")
         }
         EditorError::InvalidDraft => "Correct the highlighted fields, or discard the invalid edits first.".into(),
+        EditorError::Parse(RawField::Widget(_, WidgetField::Color(_)) | RawField::WarningColor { .. }) => {
+            "Enter a colour as #RRGGBB, for example #FF3048.".into()
+        }
         EditorError::Parse(_) => "Enter a complete number in the indicated field.".into(),
         EditorError::LastView => "Keep at least one view.".into(),
         EditorError::ViewCapacity => "Up to eight views are supported.".into(),
@@ -223,5 +245,29 @@ pub fn error_text(error: EditorError) -> String {
         }
         EditorError::Codec(_) => "The file is invalid, incompatible, oversized or has a failed checksum.".into(),
         _ => format!("Cannot apply this action: {error:?}."),
+    }
+}
+
+/// Both picker and text entry use the same transactional raw-field path.
+#[component]
+pub fn ColorField(
+    ui: Ui,
+    field: RawField,
+    label: &'static str,
+) -> impl IntoView {
+    let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
+    Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
+    view! {
+        <div class="colour-control">
+            <TextField ui field label/>
+            <input type="color" aria-label=format!("Pick {label}")
+                prop:value=move || ui.editor.with(|e|Color::parse(&raw_value(e,field)).unwrap_or(Color(0)).hex().to_string())
+                on:input=move |event| {
+                    if let Some(token) = binding.try_get_untracked() {
+                        let value = event_target_value(&event);
+                        ui.run(move |e|e.set_raw(token,field,value));
+                    }
+                }/>
+        </div>
     }
 }

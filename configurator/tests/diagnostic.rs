@@ -323,3 +323,73 @@ fn rejected_label_and_placement_pixels_match_independent_geometry() {
     preview.render(editor.preview(), 1, PreviewOptions::default()).unwrap();
     assert_eq!(&preview.rgb565()[at..at + 2], &BLACK.into_storage().to_be_bytes());
 }
+
+#[test]
+fn invisible_widget_and_warning_colours_remain_inspectable_under_invalid_banner() {
+    let mut editor = selected();
+    let mut preview = Preview::new();
+    // White background with white text: accepted document stays black.
+    editor
+        .set_raw(
+            editor.field_token(),
+            RawField::Widget(1, WidgetField::Color(ColorRole::Background)),
+            "#FFFFFF".into(),
+        )
+        .unwrap();
+    preview
+        .render_diagnostic(
+            editor.preview(),
+            &editor.diagnostic().unwrap(),
+            1,
+            PreviewOptions::default(),
+        )
+        .unwrap();
+    let at = (130 * 320 + 3) * 2;
+    assert_eq!(&preview.rgb565()[at..at + 2], &[255, 255]);
+    assert!(editor.export_json().is_err());
+    editor.discard_raw().unwrap();
+    editor
+        .set_raw(
+            editor.field_token(),
+            RawField::WarningColor { foreground: true },
+            "#FF0000".into(),
+        )
+        .unwrap();
+    preview
+        .render_diagnostic(
+            editor.preview(),
+            &editor.diagnostic().unwrap(),
+            1,
+            PreviewOptions::default(),
+        )
+        .unwrap();
+    // The deliberately unreadable red/red warning sample remains visible.
+    let at = (60 * 320 + 60) * 2;
+    assert_eq!(&preview.rgb565()[at..at + 2], &[248, 0]);
+    let at = (5 * 320 + 5) * 2;
+    assert_eq!(&preview.rgb565()[at..at + 2], &[248, 0], "invalid watermark background");
+    editor.discard_raw().unwrap();
+    preview.render(editor.preview(), 1, PreviewOptions::default()).unwrap();
+    assert!(editor.export_json().is_ok());
+}
+
+#[test]
+fn invalid_widget_warning_pair_uses_its_own_diagnostic_colours() {
+    let mut editor = selected();
+    let mut preview = Preview::new();
+    editor
+        .set_raw(
+            editor.field_token(),
+            RawField::Widget(1, WidgetField::Color(ColorRole::WarningBackground)),
+            "#FFFFFF".into(),
+        )
+        .unwrap();
+    let draft = editor.diagnostic().unwrap();
+    assert_eq!(draft.affected(editor.preview(), 1), vec![1]);
+    preview
+        .render_diagnostic(editor.preview(), &draft, 1, PreviewOptions::default())
+        .unwrap();
+    let at = (60 * 320 + 60) * 2;
+    assert_eq!(&preview.rgb565()[at..at + 2], &[255, 255]);
+    assert!(editor.begin_save().is_err());
+}

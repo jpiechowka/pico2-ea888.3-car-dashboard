@@ -58,7 +58,7 @@ fn WidgetInspector(
             <Show when=move ||ui.widget(id).is_some_and(|w|!w.gauge.kind.is_numeric())>
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GaugeMinimum) label="Scale minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GaugeMaximum) label="Scale maximum"/></div>
                 <Toggle ui label="Expand with observed values" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.gauge.expand)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.gauge.expand=value))/>
-                <p class="hint">"Limits use canonical units (boost in bar). Expansion lasts until statistics reset. Fixed scales clamp the indicator; numbers still show the actual reading."</p>
+                <p class="hint">"Limits use canonical units (boost in bar), at least 0.001 apart. Expansion lasts until statistics reset. Fixed scales clamp the indicator; numbers still show the actual reading."</p>
                 <p class="hint">"Gauges replace history and trend. Average and extrema are available at 2 × 2. Numeric-view preferences are preserved."</p>
             </Show>
             <TextField ui field=RawField::Widget(id,WidgetField::Decimals) label="Decimal places" hint="0–3; units stay canonical in rules"/>
@@ -84,6 +84,11 @@ fn WidgetInspector(
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GraphMinimum) label="Graph minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GraphMaximum) label="Graph maximum"/></div>
             </Show>
             </Show>
+            <details class="palette-panel"><summary>"Widget colours"</summary>
+                <p class="hint">"Exact panel colours · #RRGGBB quantized to RGB565. Foregrounds need 3:1 contrast. Inactive roles stay stored for other styles; edit them here to keep future changes valid."</p>
+                {ColorRole::ALL.into_iter().map(move |role|view! { <ColorField ui field=RawField::Widget(id,WidgetField::Color(role)) label=role.label()/> }).collect_view()}
+                <p class="hint">"Gauge styles use indicator, track and ticks. Numeric uses history and trend. Compact gauges hide statistics. Warning colours apply to this tile and cycle-one popups; list warnings use the separate combined palette."</p>
+            </details>
             <h3 class="subheading">"Warning rule"</h3>
             <Toggle ui label="Enable warning" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.warning.enabled)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.warning.enabled=value))/>
             <Choice ui label="Applies to" value=Signal::derive(move ||ui.widget(id).map(|w|if w.warning.applicability==Applicability::DemoOnly{"demo"}else{"vehicle"}.to_string()).unwrap_or_default()) options=choices(&[("demo","Demo only"),("vehicle","Vehicle and demo")])
@@ -147,6 +152,10 @@ pub fn WarningSettingsPanel(ui: Ui) -> impl IntoView {
                 let mut settings=ui.editor.with_untracked(|e|e.preview().config().warnings);settings.mode=if value=="one"{WarningMode::CycleOne}else{WarningMode::ListThree};ui.typed(token,Edit::SetWarningPresentation(settings));
             })/>
             <TextField ui field=RawField::WarningPageMilliseconds label="Page interval (ms)" hint="500–10000; elapsed time, independent of FPS"/>
+            <h3>"Combined warning colours"</h3>
+            <p class="hint">"Used by List up to three, even with one active warning. Cycle one uses that widget's warning pair. Blink exchanges foreground and background; minimum contrast 3:1."</p>
+            <ColorField ui field=RawField::WarningColor{foreground:true} label="Combined text"/>
+            <ColorField ui field=RawField::WarningColor{foreground:false} label="Combined background"/>
         </div></div>
     }
 }
