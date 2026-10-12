@@ -353,9 +353,10 @@ binary size and device SRAM are measured separately from physical display FPS.
 ## Build topology and pinned tools
 
 A root Cargo workspace owns `crates/dashboard-core`, `crates/dashboard-config`
-and `configurator`, with a root nightly-2026-10-11 toolchain/lockfile. The existing
-firmware and host workspaces remain independent and use path dependencies on
-those crates, preserving separate feature resolution and target flags. Firmware
+and `crates/dashboard-config-tools`. The configurator, firmware and host are
+independent workspaces with their own lockfiles and shared path dependencies,
+preserving separate feature resolution and target flags. All use the repository's
+nightly-2026-10-11 toolchain. Firmware
 forwards `simple-outline` explicitly; the editor uses that default for matching
 preview output. CI checks root formatting/native pure tests, core/config no_std
 Thumb and Wasm builds, production Trunk output, and the existing firmware/host
