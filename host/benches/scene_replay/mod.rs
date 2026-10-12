@@ -74,6 +74,7 @@ impl Raster {
         retained: bool,
     ) -> &FrameBuffer {
         let scene = DashboardScene {
+            layout: None,
             measurements: black_box(snapshot),
             now_ms: snapshot.sensors[0].sampled_at_ms().unwrap(),
             status: VehicleStatus::Demo,

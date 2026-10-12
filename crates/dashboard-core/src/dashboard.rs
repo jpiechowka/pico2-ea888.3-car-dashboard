@@ -5,6 +5,7 @@ use embedded_graphics::prelude::*;
 use crate::acquisition::DashboardSnapshot;
 use crate::backlight::Brightness;
 use crate::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT};
+use crate::configured_scene::{self, Layout};
 use crate::pages::Page;
 use crate::render::{FpsMode, FpsText, format_fps};
 use crate::samples::{DataMode, Quality, SensorId, Source};
@@ -64,6 +65,9 @@ impl Overlay {
 }
 
 pub struct DashboardScene<'a> {
+    /// None retains the original fixed scene for historical replay contracts.
+    /// Device and browser use the same validated configurable path.
+    pub layout: Option<Layout<'a>>,
     pub measurements: &'a DashboardSnapshot,
     pub status: VehicleStatus,
     pub now_ms: u64,
@@ -82,6 +86,9 @@ impl DashboardScene<'_> {
         &self,
         cell: usize,
     ) -> Option<usize> {
+        if let Some(layout) = &self.layout {
+            return layout.widget(cell).map(|w| SensorId::from_channel(w.channel) as usize);
+        }
         CELL_SENSORS.get(cell).copied()
     }
 
@@ -89,6 +96,10 @@ impl DashboardScene<'_> {
         &self,
         display: &mut D,
     ) {
+        if let Some(layout) = &self.layout {
+            configured_scene::draw_header(display, self, layout);
+            return;
+        }
         draw_status_header(
             display,
             self.measurements.mode,
@@ -104,6 +115,10 @@ impl DashboardScene<'_> {
         display: &mut D,
         cell: usize,
     ) {
+        if let Some(layout) = &self.layout {
+            configured_scene::draw_widget(display, self, cell, layout);
+            return;
+        }
         let Some(sensor) = self.cell_sensor(cell) else {
             return;
         };
@@ -213,7 +228,9 @@ impl DashboardScene<'_> {
         for cell in 0..8 {
             self.draw_cell(display, cell);
         }
-        draw_dividers(display);
+        if self.layout.is_none() {
+            draw_dividers(display);
+        }
         self.draw_overlay(display);
     }
 }
@@ -298,8 +315,9 @@ impl GraphKey {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 struct CellKey {
+    widget: Option<dashboard_config::Widget>,
     quality: Quality,
     source: Source,
     text: CellText,
@@ -309,11 +327,14 @@ struct CellKey {
     graph: GraphKey,
 }
 impl DashboardScene<'_> {
-    fn quality(
+    pub(crate) fn quality(
         &self,
         cell: usize,
     ) -> Quality {
-        let id = SensorId::ALL[CELL_SENSORS[cell]];
+        let Some(sensor) = self.cell_sensor(cell) else {
+            return Quality::Unknown;
+        };
+        let id = SensorId::ALL[sensor];
         let quality = self.measurements.quality(id, self.now_ms);
         if quality == Quality::Valid && self.measurements.value_at(id, self.now_ms).is_none() {
             Quality::InvalidPayload
@@ -325,13 +346,15 @@ impl DashboardScene<'_> {
     fn cell_key(
         &self,
         cell: usize,
-    ) -> CellKey {
-        let state = &self.measurements.sensors[CELL_SENSORS[cell]];
+    ) -> Option<CellKey> {
+        let sensor = self.cell_sensor(cell)?;
+        let state = &self.measurements.sensors[sensor];
         let value = state.value().unwrap_or(0.0);
         let maximum = state.maximum().unwrap_or(0.0);
         let mut key = CellKey {
+            widget: self.layout.as_ref().and_then(|l| l.widget(cell)).cloned(),
             quality: self.quality(cell),
-            source: self.measurements.metadata[CELL_SENSORS[cell]].source,
+            source: self.measurements.metadata[sensor].source,
             text: core::array::from_fn(|_| heapless::String::new()),
             background: self.backgrounds[cell],
             flags: [false; 3],
@@ -340,7 +363,25 @@ impl DashboardScene<'_> {
         };
         if key.quality != Quality::Valid {
             key.background = BLACK;
-            return key;
+            return Some(key);
+        }
+        if let Some(layout) = &self.layout {
+            let widget = layout.widget(cell)?;
+            key.text = configured_scene::widget_text(
+                widget,
+                self.measurements,
+                self.now_ms,
+                self.boost_psi,
+                layout.configuration().stoich(),
+                &layout.configuration().config().fuel,
+            );
+            key.graph = GraphKey::new(widget.display.graph.then_some(state));
+            key.flags[0] = widget.display.extrema && state.is_new_peak_at(self.now_ms);
+            key.trend = widget.display.trend.then(|| state.get_trend_at(self.now_ms)).flatten();
+            if !self.blink_on || !self.measurements.alarm_active_at(SensorId::ALL[sensor], self.now_ms) {
+                key.background = BLACK;
+            }
+            return Some(key);
         }
         key.graph = GraphKey::new(if cell == 0 { None } else { Some(state) });
         let demo = self.measurements.mode == DataMode::Demo;
@@ -379,12 +420,24 @@ impl DashboardScene<'_> {
                 key.trend = state.get_trend_at(self.now_ms);
             }
         }
-        key
+        Some(key)
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct HeaderKey {
+    mode: DataMode,
+    status: VehicleStatus,
+    fps: FpsText,
+    name: Option<heapless::String<14>>,
+    fault: bool,
+}
+
+type Geometry = [Option<(u16, dashboard_config::Placement)>; 8];
+
 struct CachedFrame {
-    header: Option<(DataMode, VehicleStatus, FpsText)>,
+    header: Option<HeaderKey>,
+    geometry: Geometry,
     cells: [Option<CellKey>; 8],
     overlay: Option<Overlay>,
 }
@@ -392,6 +445,7 @@ impl CachedFrame {
     const fn new() -> Self {
         Self {
             header: None,
+            geometry: [None; 8],
             cells: [const { None }; 8],
             overlay: None,
         }
@@ -431,21 +485,40 @@ impl DashboardCache {
         let overlay = scene.effective_overlay();
         // Removing/replacing any opaque overlay restores its entire underlay,
         // including static dividers and pixels outside cell interiors.
-        let clear = frame.header.is_none() || (frame.overlay.is_some() && frame.overlay != overlay);
-        let header = (
-            scene.measurements.mode,
-            scene.status,
-            format_fps(scene.fps_mode, scene.fps_instant, scene.fps_average),
-        );
+        let geometry = core::array::from_fn(|slot| {
+            scene
+                .layout
+                .as_ref()
+                .and_then(|layout| layout.widget(slot))
+                .map(|w| (w.id, w.placement))
+        });
+        let clear = frame.header.is_none()
+            || frame
+                .header
+                .as_ref()
+                .is_some_and(|key| key.name.is_some() != scene.layout.is_some())
+            || frame.geometry != geometry
+            || (frame.overlay.is_some() && frame.overlay != overlay);
+        frame.geometry = geometry;
+        let header = HeaderKey {
+            mode: scene.measurements.mode,
+            status: scene.status,
+            fps: format_fps(scene.fps_mode, scene.fps_instant, scene.fps_average),
+            name: scene
+                .layout
+                .as_ref()
+                .map(|layout| layout.name().try_into().expect("validated name")),
+            fault: scene.layout.as_ref().is_some_and(|layout| layout.fault),
+        };
         let header_dirty = clear || frame.header.as_ref() != Some(&header);
         frame.header = Some(header);
         let mut cells = 0;
         for (cell, cached) in frame.cells.iter_mut().enumerate() {
             let key = scene.cell_key(cell);
-            if clear || cached.as_ref() != Some(&key) {
+            if (clear && key.is_some()) || *cached != key {
                 cells |= 1 << cell;
             }
-            *cached = Some(key);
+            *cached = key;
         }
         let overlay_dirty = overlay.is_some() && (clear || cells != 0 || frame.overlay != overlay);
         frame.overlay = overlay;
@@ -508,7 +581,7 @@ impl Redraw {
         display: &mut D,
         scene: &DashboardScene<'_>,
     ) {
-        if self.clear {
+        if self.clear && scene.layout.is_none() {
             draw_dividers(display);
         }
         if self.overlay {

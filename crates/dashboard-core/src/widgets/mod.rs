@@ -1,5 +1,6 @@
 pub mod cell_text;
 mod cells;
+pub(crate) use cells::label_color_for_bg;
 mod header;
 mod popups;
 pub mod primitives;

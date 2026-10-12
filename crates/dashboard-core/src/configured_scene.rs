@@ -1,0 +1,370 @@
+//! Bounded view geometry and one widget renderer for device and browser.
+use core::fmt::Write;
+
+use dashboard_config::{Channel, Fuel, GraphRange, ValidatedConfig, Widget};
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::text::Text;
+
+use crate::acquisition::DashboardSnapshot;
+use crate::dashboard::DashboardScene;
+use crate::samples::{DataMode, Quality, SensorId};
+use crate::thresholds::BAR_TO_PSI;
+use crate::ui::{
+    BLACK,
+    CENTERED,
+    GRAY,
+    LABEL_FONT,
+    LEFT_ALIGNED,
+    RED,
+    RIGHT_ALIGNED,
+    VALUE_FONT,
+    VALUE_FONT_MEDIUM,
+    WHITE,
+};
+use crate::widgets::cell_text::CellText;
+use crate::widgets::primitives::{draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
+
+/// Validated lookup table for one view. No configuration copy or repeated
+/// 64-widget search is needed while drawing its eight visible slots.
+#[derive(Clone, Copy)]
+pub struct Layout<'a> {
+    configuration: &'a ValidatedConfig,
+    view_index: usize,
+    widgets: [u8; 8],
+    count: usize,
+    pub fault: bool,
+}
+
+impl<'a> Layout<'a> {
+    pub fn new(
+        configuration: &'a ValidatedConfig,
+        view: u8,
+        fault: bool,
+    ) -> Option<Self> {
+        let view_index = configuration.config().views.iter().position(|v| v.id == view)?;
+        let mut layout = Self {
+            configuration,
+            view_index,
+            widgets: [0; 8],
+            count: 0,
+            fault,
+        };
+        for (index, widget) in configuration.config().widgets.iter().enumerate() {
+            if widget.view == view {
+                // Nonoverlapping validated placements occupy at least one of
+                // eight grid cells, proving at most eight widgets per view.
+                *layout.widgets.get_mut(layout.count)? = index as u8;
+                layout.count += 1;
+            }
+        }
+        Some(layout)
+    }
+
+    pub fn name(&self) -> &str { &self.configuration.config().views[self.view_index].name }
+
+    pub const fn configuration(&self) -> &'a ValidatedConfig { self.configuration }
+
+    pub const fn count(&self) -> usize { self.count }
+
+    pub fn widget(
+        &self,
+        slot: usize,
+    ) -> Option<&'a Widget> {
+        (slot < self.count).then(|| &self.configuration.config().widgets[self.widgets[slot] as usize])
+    }
+
+    pub fn rule_index(
+        &self,
+        slot: usize,
+    ) -> Option<usize> {
+        (slot < self.count).then(|| self.widgets[slot] as usize)
+    }
+}
+
+fn number(
+    out: &mut heapless::String<16>,
+    prefix: &str,
+    value: f32,
+    decimals: usize,
+    suffix: &str,
+) {
+    if !value.is_finite() || write!(out, "{prefix}{value:.decimals$}{suffix}").is_err() {
+        out.clear();
+        let _ = out.push_str("--");
+    }
+}
+
+/// Exact strings used both for pixels and retained equality. Units convert
+/// presentation only; histories, configured bounds and alarms stay canonical.
+pub fn widget_text(
+    widget: &Widget,
+    snapshot: &DashboardSnapshot,
+    now: u64,
+    psi: bool,
+    stoich: f32,
+    fuel: &Fuel,
+) -> CellText {
+    let mut text = core::array::from_fn(|_| heapless::String::new());
+    let id = SensorId::from_channel(widget.channel);
+    let Some(value) = snapshot.value_at(id, now) else {
+        text[0].push_str("--").ok();
+        text[5].push_str(snapshot.quality(id, now).label()).ok();
+        return text;
+    };
+    let state = snapshot.sensor(id);
+    let scale = if widget.channel == Channel::Boost && psi {
+        BAR_TO_PSI
+    } else {
+        1.0
+    };
+    let suffix = match widget.channel {
+        Channel::Boost | Channel::Lambda => "",
+        Channel::Battery => "V",
+        _ => "C",
+    };
+    let decimals = usize::from(widget.display.decimals.min(3));
+    number(&mut text[0], "", value * scale, decimals, suffix);
+    if widget.channel == Channel::Boost {
+        if psi {
+            number(&mut text[1], "", value, 2, " BAR");
+        } else {
+            number(&mut text[1], "", value * BAR_TO_PSI, 1, " PSI");
+        }
+    }
+    if widget.channel == Channel::Lambda && widget.display.afr {
+        let afr = value * stoich;
+        if (0.01..=999.99).contains(&afr) {
+            number(&mut text[1], "AFR ", afr, 2, "");
+        } else {
+            text[1].push_str("AFR --").ok();
+        }
+        match fuel {
+            Fuel::EquivalentGasoline => number(&mut text[5], "EQ ", stoich, 2, ""),
+            Fuel::Stoichiometric { .. } => number(&mut text[5], "S ", stoich, 2, ""),
+            Fuel::EthanolBlend(blend) => number(&mut text[5], "E", blend.percent, 2, " EST"),
+        }
+    }
+    if widget.display.average
+        && let Some(value) = state.get_average()
+    {
+        number(&mut text[2], "AVG ", value * scale, decimals, suffix);
+    }
+    if widget.display.extrema {
+        if let Some(value) = state.minimum() {
+            number(&mut text[3], "MIN ", value * scale, decimals, suffix);
+        }
+        if let Some(value) = state.maximum() {
+            number(&mut text[4], "MAX ", value * scale, decimals, suffix);
+        }
+    }
+    text
+}
+
+pub fn fitted_font(
+    text: &str,
+    width: u32,
+    height: u32,
+) -> &'static MonoFont<'static> {
+    for font in [
+        VALUE_FONT,
+        VALUE_FONT_MEDIUM,
+        &embedded_graphics::mono_font::ascii::FONT_10X20,
+        LABEL_FONT,
+        &embedded_graphics::mono_font::ascii::FONT_4X6,
+    ] {
+        let advance = font.character_size.width + font.character_spacing;
+        let pixels = (text.len() as u32)
+            .saturating_mul(advance)
+            .saturating_sub(font.character_spacing);
+        if pixels + 2 <= width && font.character_size.height + 2 <= height {
+            return font;
+        }
+    }
+    LABEL_FONT
+}
+
+pub(crate) fn draw_header<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    scene: &DashboardScene<'_>,
+    layout: &Layout<'_>,
+) {
+    Rectangle::new(Point::zero(), Size::new(320, 26))
+        .into_styled(PrimitiveStyle::with_fill(RED))
+        .draw(display)
+        .ok();
+    let status = if layout.fault {
+        "CONFIG!"
+    } else if scene.measurements.mode == DataMode::Demo {
+        "DEMO"
+    } else {
+        scene.status.label()
+    };
+    let small = MonoTextStyle::new(LABEL_FONT, WHITE);
+    let bounds = Rectangle::new(Point::new(4, 0), Size::new(58, 26));
+    Text::with_text_style(status, Point::new(4, 17), small, LEFT_ALIGNED)
+        .draw(&mut display.clipped(&bounds))
+        .ok();
+    let bounds = Rectangle::new(Point::new(64, 0), Size::new(168, 26));
+    Text::with_text_style(
+        layout.name(),
+        Point::new(148, 19),
+        crate::ui::TITLE_STYLE_WHITE,
+        CENTERED,
+    )
+    .draw(&mut display.clipped(&bounds))
+    .ok();
+    let bounds = Rectangle::new(Point::new(236, 0), Size::new(80, 26));
+    let fps = crate::render::format_fps(scene.fps_mode, scene.fps_instant, scene.fps_average);
+    Text::with_text_style(&fps, Point::new(315, 17), small, RIGHT_ALIGNED)
+        .draw(&mut display.clipped(&bounds))
+        .ok();
+}
+
+pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    scene: &DashboardScene<'_>,
+    slot: usize,
+    layout: &Layout<'_>,
+) {
+    let Some(widget) = layout.widget(slot) else {
+        return;
+    };
+    let Some(rect) = widget.placement.rect() else {
+        return;
+    };
+    let outer = Rectangle::new(
+        Point::new(i32::from(rect.x), i32::from(rect.y)),
+        Size::new(u32::from(rect.width), u32::from(rect.height)),
+    );
+    let mut clipped = display.clipped(&outer);
+    clipped.clear(BLACK).ok();
+    outer
+        .into_styled(PrimitiveStyle::with_stroke(GRAY, 1))
+        .draw(&mut clipped)
+        .ok();
+    let interior = Rectangle::new(outer.top_left + Point::new(2, 2), outer.size - Size::new(4, 4));
+    let mut display = clipped.clipped(&interior);
+    let id = SensorId::from_channel(widget.channel);
+    let quality = scene.quality(slot);
+    let valid = quality == Quality::Valid;
+    let background = if valid && scene.blink_on && scene.measurements.alarm_active_at(id, scene.now_ms) {
+        scene.backgrounds[slot]
+    } else {
+        BLACK
+    };
+    display.clear(background).ok();
+    let color = crate::widgets::label_color_for_bg(background);
+    let style = MonoTextStyle::new(LABEL_FONT, color);
+    let center = i32::from(rect.x + rect.width / 2);
+    let mut y = i32::from(rect.y) + 3;
+    Text::with_text_style(&widget.label, Point::new(center, y + 8), style, CENTERED)
+        .draw(&mut display)
+        .ok();
+    y += 12;
+    let state = scene.measurements.sensor(id);
+    if widget.display.trend {
+        if valid && let Some(rising) = state.get_trend_at(scene.now_ms) {
+            draw_trend_arrow(&mut display, center, y + 4, rising, color);
+        }
+        y += 10;
+    }
+    let mut text = widget_text(
+        widget,
+        scene.measurements,
+        scene.now_ms,
+        scene.boost_psi,
+        layout.configuration.stoich(),
+        &layout.configuration.config().fuel,
+    );
+    if !valid {
+        text[5].clear();
+        text[5].push_str(quality.label()).ok();
+    }
+    let rows = text[1..].iter().filter(|s| !s.is_empty()).count() as i32;
+    let bottom = i32::from(rect.y + rect.height) - 3;
+    let graph = valid && widget.display.graph;
+    let available = (bottom - y - rows * 10 - if graph { 10 } else { 0 }).max(12) as u32;
+    let font = fitted_font(&text[0], interior.size.width, available);
+    draw_value_with_outline(
+        &mut display,
+        &text[0],
+        Point::new(center, y + font.baseline as i32 + 1),
+        font,
+        color,
+        CENTERED,
+    );
+    y += font.character_size.height as i32 + 2;
+    if !text[1].is_empty() {
+        Text::with_text_style(
+            &text[1],
+            Point::new(center, y + 8),
+            footer_style(&text[1], interior.size.width, color),
+            CENTERED,
+        )
+        .draw(&mut display)
+        .ok();
+        y += 10;
+    }
+    let footer_rows = text[2..].iter().filter(|s| !s.is_empty()).count() as i32;
+    let footer_top = bottom - footer_rows * 10;
+    if graph {
+        let (values, start, count, min, max) = state.get_graph_data();
+        let (min, max) = match widget.display.graph_range {
+            GraphRange::Auto => (min, max),
+            GraphRange::Fixed { min, max } => (min, max),
+        };
+        draw_mini_graph(
+            &mut display,
+            i32::from(rect.x) + 5,
+            y,
+            u32::from(rect.width) - 10,
+            (footer_top - y).max(0) as u32,
+            values,
+            values.len(),
+            start,
+            count,
+            min,
+            max,
+            |_| color,
+        );
+    }
+    let mut y = footer_top;
+    for (index, row) in text.iter().enumerate().skip(2).filter(|(_, s)| !s.is_empty()) {
+        let row_color = if color == WHITE && valid {
+            if index == 2 {
+                crate::ui::ORANGE
+            } else if matches!(index, 3 | 4) && state.is_new_peak_at(scene.now_ms) {
+                crate::ui::YELLOW
+            } else {
+                color
+            }
+        } else {
+            color
+        };
+        Text::with_text_style(
+            row,
+            Point::new(center, y + 8),
+            footer_style(row, interior.size.width, row_color),
+            CENTERED,
+        )
+        .draw(&mut display)
+        .ok();
+        y += 10;
+    }
+}
+
+fn footer_style(
+    text: &str,
+    width: u32,
+    color: Rgb565,
+) -> MonoTextStyle<'static, Rgb565> {
+    let font = if text.len() as u32 * 6 <= width {
+        LABEL_FONT
+    } else {
+        &embedded_graphics::mono_font::ascii::FONT_4X6
+    };
+    MonoTextStyle::new(font, color)
+}

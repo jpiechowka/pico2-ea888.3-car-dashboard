@@ -5,7 +5,7 @@ use heapless::String;
 
 use crate::thresholds::BAR_TO_PSI;
 
-pub type CellText = [String<16>; 4];
+pub type CellText = [String<16>; 6];
 fn empty() -> CellText { core::array::from_fn(|_| String::new()) }
 
 pub fn boost(

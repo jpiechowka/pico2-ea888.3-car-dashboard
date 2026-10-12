@@ -1,0 +1,336 @@
+use dashboard_host_validation::acquisition::AcquisitionModel;
+use dashboard_host_validation::configured_scene::{Layout, widget_text};
+use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene, Overlay};
+use dashboard_host_validation::display::St7789Renderer;
+use dashboard_host_validation::render::FpsMode;
+use dashboard_host_validation::view_config::*;
+use dashboard_host_validation::{AlignedFrame, colors};
+
+#[test]
+fn default_small_widgets_prioritize_the_primary_measurement() {
+    let config = default_config();
+    let lambda = &config.widgets[1].display;
+    assert!(lambda.afr && lambda.graph);
+    assert!(!lambda.average && !lambda.extrema && !lambda.trend);
+    assert!(!config.widgets[0].display.graph && !config.widgets[0].display.average);
+}
+
+#[test]
+fn extreme_text_stays_measurable_and_invalid_lambda_has_no_numeric_afr() {
+    use embedded_graphics::mono_font::MonoTextStyle;
+    use embedded_graphics::prelude::*;
+    use embedded_graphics::text::Text;
+    for text in ["-1000000.000C", "14503800.000", "--", "0.800"] {
+        for width in [76, 156] {
+            for height in [12, 19, 32] {
+                let font = dashboard_host_validation::configured_scene::fitted_font(text, width, height);
+                let bounds = Text::new(text, Point::zero(), MonoTextStyle::new(font, colors::WHITE)).bounding_box();
+                assert!(
+                    bounds.size.width + 2 <= width && bounds.size.height + 2 <= height,
+                    "{text}: {width}x{height}"
+                );
+            }
+        }
+    }
+    let config = validate(default_config()).unwrap();
+    for lambda in [-1.0, 0.0, 0.0001, 1000.0] {
+        let mut model = AcquisitionModel::demo();
+        model.ingest_batch([1.0, 90.0, 90.0, 80.0, 30.0, 700.0, 13.8, lambda], 0);
+        let snapshot = model.snapshot();
+        let text = widget_text(
+            &config.config().widgets[1],
+            &snapshot,
+            0,
+            false,
+            config.stoich(),
+            &config.config().fuel,
+        );
+        assert_eq!(text[1], "AFR --");
+    }
+}
+
+#[test]
+fn configured_text_respects_precision_units_flags_and_fuel_scale() {
+    let mut config = default_config();
+    config.fuel = Fuel::Stoichiometric { ratio: 14.0 };
+    let config = validate(config).unwrap();
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.234, 90.0, 95.0, 80.0, -3.5, 750.0, 13.8, 0.8], 0);
+    let snapshot = model.snapshot();
+    let lambda = &config.config().widgets[1];
+    let text = widget_text(lambda, &snapshot, 0, false, config.stoich(), &config.config().fuel);
+    assert_eq!(text[0], "0.800");
+    assert_eq!(text[1], "AFR 11.20");
+    assert_eq!(text[5], "S 14.00");
+    let mut boost = config.config().widgets[0].clone();
+    boost.display.decimals = 3;
+    let bar = widget_text(&boost, &snapshot, 0, false, config.stoich(), &config.config().fuel);
+    let psi = widget_text(&boost, &snapshot, 0, true, config.stoich(), &config.config().fuel);
+    assert_eq!(bar[0], "1.234");
+    assert_eq!(psi[0], "17.898");
+    assert!(psi[1].ends_with("BAR"));
+    boost.display.average = false;
+    boost.display.extrema = false;
+    let text = widget_text(&boost, &snapshot, 0, false, config.stoich(), &config.config().fuel);
+    assert!(text[2..].iter().all(|s| s.is_empty()));
+}
+
+#[test]
+fn peak_highlight_expires_on_elapsed_time_without_a_new_sample() {
+    let config = validate(default_config()).unwrap();
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 0.8], 0);
+    model.ingest_batch([1.0, 100.0, 95.0, 80.0, 30.0, 750.0, 13.8, 0.8], 1);
+    let snapshot = model.snapshot();
+    let mut scene = DashboardScene {
+        layout: Layout::new(&config, 1, false),
+        measurements: &snapshot,
+        now_ms: 1,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+        blink_on: false,
+        boost_psi: false,
+        fps_mode: FpsMode::Off,
+        fps_instant: 0.0,
+        fps_average: 0.0,
+        backgrounds: [colors::BLACK; 8],
+        overlay: None,
+    };
+    let mut cache = DashboardCache::new();
+    cache.prepare(0, &scene);
+    scene.now_ms = 751;
+    assert_ne!(cache.prepare(0, &scene).cells & (1 << 4), 0);
+}
+
+#[test]
+fn blend_percentage_is_explicit_and_afr_only_changes_repaint_both_buffers() {
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 0.8002], 0);
+    for percent in [0.0, 5.5, 100.0] {
+        let mut config = default_config();
+        config.fuel = Fuel::EthanolBlend(Blend {
+            percent,
+            ..Blend::illustrative()
+        });
+        let config = validate(config).unwrap();
+        let text = widget_text(
+            &config.config().widgets[1],
+            &model.snapshot(),
+            0,
+            false,
+            config.stoich(),
+            &config.config().fuel,
+        );
+        assert_eq!(text[5].as_str(), format!("E{percent:.2} EST"));
+    }
+    let config = validate(default_config()).unwrap();
+    let first = model.snapshot();
+    model.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 0.8004], 1);
+    let second = model.snapshot();
+    let mut cache = DashboardCache::new();
+    let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut reference = AlignedFrame::boxed();
+    for (snapshot, now) in [(&first, 0), (&second, 1), (&second, 502)] {
+        let scene = DashboardScene {
+            layout: Layout::new(&config, 1, false),
+            measurements: snapshot,
+            now_ms: now,
+            status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+            blink_on: false,
+            boost_psi: false,
+            fps_mode: FpsMode::Off,
+            fps_instant: 0.0,
+            fps_average: 0.0,
+            backgrounds: [colors::BLACK; 8],
+            overlay: None,
+        };
+        scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+        for (buffer, frame) in frames.iter_mut().enumerate() {
+            let redraw = cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
+            assert_ne!(redraw.cells & (1 << 1), 0, "lambda failed to repaint at {now}");
+            assert!(frame.0 == reference.0);
+        }
+    }
+    for quality in [
+        dashboard_host_validation::samples::Quality::InvalidPayload,
+        dashboard_host_validation::samples::Quality::Unsupported,
+        dashboard_host_validation::samples::Quality::TransportError,
+    ] {
+        model.mark_fault(dashboard_host_validation::samples::SensorId::Lambda, quality, 600);
+        let snapshot = model.snapshot();
+        let scene = DashboardScene {
+            layout: Layout::new(&config, 1, false),
+            measurements: &snapshot,
+            now_ms: 600,
+            status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+            blink_on: false,
+            boost_psi: false,
+            fps_mode: FpsMode::Off,
+            fps_instant: 0.0,
+            fps_average: 0.0,
+            backgrounds: [colors::BLACK; 8],
+            overlay: None,
+        };
+        scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+        for (buffer, frame) in frames.iter_mut().enumerate() {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
+            assert!(frame.0 == reference.0);
+        }
+    }
+}
+
+#[test]
+fn both_buffers_match_full_redraw_for_spans_holes_views_overlays_and_options() {
+    let mut config = default_config();
+    config
+        .views
+        .push(View {
+            id: 2,
+            name: "12345678901234".try_into().unwrap(),
+        })
+        .unwrap();
+    for (id, channel, column, span) in [
+        (20, Channel::Lambda, 0, Span::TwoByTwo),
+        (21, Channel::Egt, 2, Span::TwoByOne),
+    ] {
+        let mut widget = default_widget(channel, id, 2, Placement { column, row: 0, span });
+        widget.label = "123456789012345678901234".try_into().unwrap();
+        widget.display.average = true;
+        widget.display.extrema = true;
+        config.widgets.push(widget).unwrap();
+    }
+    let config = validate(config).unwrap();
+    let mut model = AcquisitionModel::demo();
+    let mut cache = DashboardCache::new();
+    let mut buffers = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut reference = AlignedFrame::boxed();
+    for step in 0..16 {
+        let now = step * 2000;
+        model.ingest_batch(
+            [1.5, 90.0, 95.0, 80.0, -3.5, 1500.0, 13.8, 0.8 + step as f32 * 0.001],
+            now,
+        );
+        let snapshot = model.snapshot();
+        let scene = DashboardScene {
+            layout: Layout::new(&config, if step % 4 < 2 { 1 } else { 2 }, step == 11),
+            measurements: &snapshot,
+            now_ms: now,
+            status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+            blink_on: step % 2 == 0,
+            boost_psi: step % 3 == 0,
+            fps_mode: FpsMode::Combined,
+            fps_instant: 72.3,
+            fps_average: 69.9,
+            backgrounds: [colors::BLACK; 8],
+            overlay: (step % 5 == 0).then_some(Overlay::Reset),
+        };
+        scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+        let buffer = step as usize % 2;
+        cache.draw(&mut St7789Renderer::new(&mut buffers[buffer].0), buffer, &scene);
+        assert!(buffers[buffer].0 == reference.0, "retained differs on step {step}");
+        let clean = cache.prepare(buffer, &scene);
+        assert!(!clean.clear && !clean.header && clean.cells == 0 && !clean.overlay);
+    }
+    assert!(Layout::new(&config, 255, false).is_none());
+}
+
+#[test]
+fn every_span_and_display_option_stays_inside_its_declared_rectangle() {
+    use embedded_graphics::pixelcolor::Rgb565;
+    use embedded_graphics::prelude::*;
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([9.999, -99.9, 1999.0, 2000.0, -99.0, 1999.9, 65.535, 9.999], 0);
+    let snapshot = model.snapshot();
+    let mut frame = AlignedFrame::boxed();
+    for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
+        for channel in Channel::ALL {
+            for flags in 0..32 {
+                let mut config = default_config();
+                config.widgets.clear();
+                let column = 4 - span.columns();
+                let row = 2 - span.rows();
+                let mut widget = default_widget(channel, 99, 1, Placement { column, row, span });
+                widget.label = "X"
+                    .repeat(usize::from(span.columns()) * 12)
+                    .as_str()
+                    .try_into()
+                    .unwrap();
+                widget.display.decimals = 3;
+                widget.display.graph = flags & 1 != 0;
+                widget.display.average = flags & 2 != 0;
+                widget.display.extrema = flags & 4 != 0;
+                widget.display.trend = flags & 8 != 0;
+                widget.display.afr = channel == Channel::Lambda && flags & 16 != 0;
+                config.widgets.push(widget).unwrap();
+                let config = validate(config).unwrap();
+                let scene = DashboardScene {
+                    layout: Layout::new(&config, 1, false),
+                    measurements: &snapshot,
+                    now_ms: 0,
+                    status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+                    blink_on: true,
+                    boost_psi: flags & 1 != 0,
+                    fps_mode: FpsMode::Off,
+                    fps_instant: 0.0,
+                    fps_average: 0.0,
+                    backgrounds: [colors::BLACK; 8],
+                    overlay: None,
+                };
+                let mut display = St7789Renderer::new(&mut frame.0);
+                display.clear(Rgb565::BLUE).unwrap();
+                scene.draw_cell(&mut display, 0);
+                // Independent 4x2 mapping, not Placement::rect as the oracle.
+                let (left, top) = (usize::from(column) * 80, 26 + usize::from(row) * 107);
+                for y in 0..240 {
+                    for x in 0..320 {
+                        if x < left || y < top {
+                            assert_eq!(
+                                &frame.0[(y * 320 + x) * 2..][..2],
+                                &[0, 31],
+                                "neighbor touched: {channel:?} {span:?} flags {flags}, {x},{y}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cache_repairs_empty_views_and_reused_ids_with_changed_options() {
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.2, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 0.8002], 0);
+    let snapshot = model.snapshot();
+    let mut configs = vec![validate(default_config()).unwrap()];
+    let mut changed = default_config();
+    changed.widgets[1].display.afr = false;
+    changed.widgets[1].display.graph = false;
+    changed.widgets[1].label = "RENAMED".try_into().unwrap();
+    configs.push(validate(changed).unwrap());
+    let mut empty = default_config();
+    empty.widgets.clear();
+    configs.push(validate(empty).unwrap());
+    let mut cache = DashboardCache::new();
+    let mut buffers = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut reference = AlignedFrame::boxed();
+    for selection in [None, Some(2), Some(0), Some(1), None, Some(2), Some(0)] {
+        let scene = DashboardScene {
+            layout: selection.map(|i| Layout::new(&configs[i], 1, false).unwrap()),
+            measurements: &snapshot,
+            now_ms: 0,
+            status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+            blink_on: false,
+            boost_psi: false,
+            fps_mode: FpsMode::Off,
+            fps_instant: 0.0,
+            fps_average: 0.0,
+            backgrounds: [colors::BLACK; 8],
+            overlay: None,
+        };
+        scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+        for (buffer, frame) in buffers.iter_mut().enumerate() {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
+            assert!(frame.0 == reference.0, "repair failed for selection {selection:?}");
+        }
+    }
+}

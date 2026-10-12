@@ -206,6 +206,7 @@ fn dashboard_scene(c: &mut Criterion) {
     }
     let snapshot = model.snapshot();
     let scene = DashboardScene {
+        layout: None,
         measurements: &snapshot,
         now_ms: 2000,
         status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
@@ -264,6 +265,7 @@ fn dashboard_scene(c: &mut Criterion) {
             b.iter(|| {
                 toggle = !toggle;
                 let scene = DashboardScene {
+                    layout: None,
                     measurements: if toggle { &snapshot } else { &alternate },
                     ..scene
                 };
@@ -628,13 +630,14 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels, mixed_scene_replay, coverage::benchmarks, config_perf::benchmarks
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels, mixed_scene_replay, coverage::benchmarks, config_perf::benchmarks, view_perf::benchmarks
 }
 criterion_main!(dashboard_perf);
 
 mod config_perf;
 mod coverage;
 mod scene_replay;
+mod view_perf;
 
 fn mixed_scene_replay(c: &mut Criterion) {
     scene_replay::verify();

@@ -44,6 +44,7 @@ fn coalesced_graph_history_and_both_buffers_match_literal_points_after_a_long_di
             // Readers continue coalescing independently until the next paint.
             if now == 0 || now == 124_000 {
                 let scene = DashboardScene {
+                    layout: None,
                     measurements: &displayed,
                     status: VehicleStatus::Demo,
                     now_ms: now,

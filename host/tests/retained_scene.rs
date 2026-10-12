@@ -12,6 +12,7 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     model.ingest_batch([-12345.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let snapshot = model.snapshot();
     let scene = DashboardScene {
+        layout: None,
         measurements: &snapshot,
         now_ms: 0,
         status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
@@ -36,6 +37,7 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     model.reset_statistics(1);
     let shortened = model.snapshot();
     let scene = DashboardScene {
+        layout: None,
         measurements: &shortened,
         now_ms: 1,
         ..scene
@@ -56,6 +58,7 @@ fn retained_peak_and_trend_expire_without_a_new_snapshot() {
     }
     let snapshot = model.snapshot();
     let mut scene = DashboardScene {
+        layout: None,
         measurements: &snapshot,
         now_ms: 5800,
         status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
@@ -88,6 +91,7 @@ fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
     model.ingest_batch([1.0001, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let first = model.snapshot();
     let mut scene = DashboardScene {
+        layout: None,
         measurements: &first,
         now_ms: 0,
         status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
@@ -176,6 +180,7 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
             _ => None,
         };
         let scene = DashboardScene {
+            layout: None,
             measurements: &snapshot,
             now_ms: now,
             status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,

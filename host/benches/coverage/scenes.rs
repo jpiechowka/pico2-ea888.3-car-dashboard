@@ -22,6 +22,7 @@ struct Input {
 impl Input {
     fn scene(&self) -> DashboardScene<'_> {
         DashboardScene {
+            layout: None,
             measurements: &self.snapshot,
             status: VehicleStatus::derive(false, None, &self.snapshot, self.now),
             now_ms: self.now,

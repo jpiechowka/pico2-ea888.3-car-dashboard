@@ -21,10 +21,10 @@
       "label": "BOOST REL",
       "display": {
         "decimals": 2,
-        "graph": true,
-        "average": true,
+        "graph": false,
+        "average": false,
         "extrema": true,
-        "trend": true,
+        "trend": false,
         "afr": false,
         "graph_range": "Auto"
       },
@@ -53,9 +53,9 @@
       "display": {
         "decimals": 3,
         "graph": true,
-        "average": true,
-        "extrema": true,
-        "trend": true,
+        "average": false,
+        "extrema": false,
+        "trend": false,
         "afr": true,
         "graph_range": "Auto"
       },
@@ -84,7 +84,7 @@
       "display": {
         "decimals": 1,
         "graph": true,
-        "average": true,
+        "average": false,
         "extrema": true,
         "trend": true,
         "afr": false,

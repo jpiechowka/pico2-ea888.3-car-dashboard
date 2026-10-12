@@ -101,6 +101,7 @@ fn each_link_status_repairs_both_retained_headers_without_sensor_changes() {
         VehicleStatus::Starting,
     ] {
         let scene = DashboardScene {
+            layout: None,
             measurements: &samples,
             status,
             now_ms: 0,

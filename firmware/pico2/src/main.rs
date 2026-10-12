@@ -293,6 +293,12 @@ async fn main(spawner: Spawner) {
     let reset_cause = watchdog.reset_label();
     log_info!("Previous reset: {}", reset_cause);
     let dashboard_configuration = view_config::initialize();
+    let dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
+        &dashboard_configuration.config,
+        dashboard_configuration.config.config().boot_view,
+        dashboard_configuration.fault.is_some(),
+    )
+    .expect("validated boot view");
     log_info!("Dashboard config SHA256: {}", view_config::SHA256);
     if let Some(fault) = dashboard_configuration.fault {
         log_fault!("Configuration fallback: {:?}", fault);
@@ -643,9 +649,11 @@ async fn main(spawner: Spawner) {
         });
         let visible_overlay = Overlay::for_page(current_page, user_overlay, alerts, blink_on);
         input_tracker.exclude_obscured(matches!(visible_overlay, Some(Overlay::Critical(..))));
-        for (cell, sensor) in dashboard_pico2::dashboard::CELL_SENSORS.into_iter().enumerate() {
-            let id = dashboard_pico2::samples::SensorId::ALL[sensor];
-            color_transitions.set_target(cell, if alerts.active(id) { RED } else { BLACK }, now_ms);
+        for cell in 0..8 {
+            let active = dashboard_layout
+                .widget(cell)
+                .is_some_and(|widget| alerts.active(dashboard_pico2::samples::SensorId::from_channel(widget.channel)));
+            color_transitions.set_target(cell, if active { RED } else { BLACK }, now_ms);
         }
 
         color_transitions.update(now_ms);
@@ -662,6 +670,7 @@ async fn main(spawner: Spawner) {
         match current_page {
             Page::Dashboard => {
                 let scene = DashboardScene {
+                    layout: Some(dashboard_layout),
                     measurements: &measurements,
                     status: vehicle_status,
                     now_ms,
