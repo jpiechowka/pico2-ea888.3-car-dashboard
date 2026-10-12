@@ -74,13 +74,16 @@ pub fn draw_fitted_value<D: DrawTarget<Color = Rgb565>>(
         return 0;
     };
     let position = lane.top_left + Point::new(((lane.size.width - value.size.width) / 2 + 1) as i32, 1);
-    let mut display = display.clipped(&lane);
     let source = Size::new((value.size.width - 2) / value.scale, value.font.character_size.height);
     let style = TextStyleBuilder::new().baseline(Baseline::Top).build();
     if value.scale == 1 {
-        draw_value_with_outline(&mut display, text, position, value.font, color, style);
+        // Fitting proves the complete unscaled glyph + outline stays in its
+        // lane. Keep the existing widget/panel clipping, without adding another
+        // per-pixel adapter to the compact hot path.
+        draw_value_with_outline(display, text, position, value.font, color, style);
         return value.size.height;
     }
+    let mut display = display.clipped(&lane);
     for &(x, y) in VALUE_OUTLINE_OFFSETS {
         let mut target = Enlarged {
             display: &mut display,

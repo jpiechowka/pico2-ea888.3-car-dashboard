@@ -142,31 +142,33 @@ fn all_formatted_widths_fit_with_outline_and_invalid_inputs_draw_nothing() {
 }
 
 #[test]
-fn framebuffer_clips_enlarged_values_at_every_panel_edge() {
+fn framebuffer_clips_unscaled_and_enlarged_values_at_every_panel_edge() {
     for point in [
         Point::new(-100, -40),
         Point::new(310, 20),
         Point::new(10, 230),
         Point::new(-320, 0),
     ] {
-        let lane = Rectangle::new(point, Size::new(156, 100));
-        let mut pixels = Pixels::default();
-        draw_fitted_value(&mut pixels, "82C", lane, 3, colors::WHITE);
-        let mut frame = AlignedFrame::boxed();
-        let mut target = St7789Renderer::new(&mut frame.0);
-        target.clear(colors::BLUE).unwrap();
-        draw_fitted_value(&mut target, "82C", lane, 3, colors::WHITE);
-        for y in 0..240 {
-            for x in 0..320 {
-                let color = pixels
-                    .0
-                    .get(&(x, y))
-                    .copied()
-                    .unwrap_or(colors::BLUE)
-                    .into_storage()
-                    .to_be_bytes();
-                let at = ((y * 320 + x) * 2) as usize;
-                assert_eq!(&frame.0[at..at + 2], &color);
+        for cap in [1, 3] {
+            let lane = Rectangle::new(point, Size::new(156, 100));
+            let mut pixels = Pixels::default();
+            draw_fitted_value(&mut pixels, "82C", lane, cap, colors::WHITE);
+            let mut frame = AlignedFrame::boxed();
+            let mut target = St7789Renderer::new(&mut frame.0);
+            target.clear(colors::BLUE).unwrap();
+            draw_fitted_value(&mut target, "82C", lane, cap, colors::WHITE);
+            for y in 0..240 {
+                for x in 0..320 {
+                    let color = pixels
+                        .0
+                        .get(&(x, y))
+                        .copied()
+                        .unwrap_or(colors::BLUE)
+                        .into_storage()
+                        .to_be_bytes();
+                    let at = ((y * 320 + x) * 2) as usize;
+                    assert_eq!(&frame.0[at..at + 2], &color);
+                }
             }
         }
     }
