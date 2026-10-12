@@ -80,7 +80,10 @@ class CaptureTests(unittest.TestCase):
         keys = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
                 'firmware/scripts/Build-Dashboard.ps1',
                 'crates/dashboard-core/Cargo.toml', 'crates/dashboard-core/src/lib.rs',
-                'crates/dashboard-core/src/display/pipeline.rs']
+                'crates/dashboard-core/src/display/pipeline.rs',
+                'crates/dashboard-config/src/cache_identity.rs',
+                'crates/dashboard-core/src/cache_diagnostics.rs',
+                'firmware/pico2/src/cache_reporting.rs']
         for key in keys:
             self.assertTrue(key in before, f'missing shared input: {key}')
             self.assertEqual(before[key], (capture.REPO / key).read_bytes())

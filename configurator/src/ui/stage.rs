@@ -341,6 +341,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                             .map_err(|_| "Canvas draw failed".to_string())?;
                         Ok(())
                     })();
+                    ui.observe_cache(p.cache_exhaustion_status());
                 });
                 result
             });

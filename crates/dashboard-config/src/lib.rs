@@ -4,7 +4,9 @@
 extern crate alloc;
 
 mod appearance;
+mod cache_identity;
 mod catalog;
+pub use cache_identity::{CacheIdentityStatus, ConfigCacheIdentity};
 mod codec;
 pub mod controls;
 mod decode_in_place;

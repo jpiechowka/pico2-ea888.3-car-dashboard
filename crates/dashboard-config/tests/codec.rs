@@ -255,3 +255,15 @@ fn json_nested_unknown_duplicate_enum_and_collection_overflow_are_rejected() {
         assert!(from_json_bytes(text.as_bytes()).is_err());
     }
 }
+
+#[test]
+fn cache_publication_does_not_change_v3_bytes() {
+    let first = validate(default_config()).unwrap();
+    let second = validate(default_config()).unwrap();
+    assert_ne!(first.cache_identity(), second.cache_identity());
+    let mut a = [0; MAX_FILE_BYTES];
+    let mut b = [0; MAX_FILE_BYTES];
+    assert_eq!(encode(&first, &mut a).unwrap(), encode(&second, &mut b).unwrap());
+    #[cfg(feature = "json")]
+    assert_eq!(to_json(&first).unwrap(), to_json(&second).unwrap());
+}

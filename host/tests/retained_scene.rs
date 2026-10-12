@@ -218,3 +218,101 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
         assert!(panel.0 == reference.0, "panel step {step}");
     }
 }
+
+#[test]
+fn public_untracked_snapshots_force_each_physical_buffer_dirty() {
+    use dashboard_host_validation::acquisition::DashboardSnapshot;
+    use dashboard_host_validation::samples::{DataMode, Quality, SampleMeta, Source};
+    use dashboard_host_validation::sensor_state::{PeakMode, SensorState};
+    let mut sensor = SensorState::new();
+    sensor.ingest(90.0, 0, PeakMode::Maximum);
+    let mut snapshot = DashboardSnapshot::EMPTY;
+    snapshot.mode = DataMode::Demo;
+    snapshot.sensors = [sensor.snapshot(); 8];
+    snapshot.metadata = [SampleMeta {
+        received_at_ms: Some(0),
+        status_at_ms: 0,
+        sequence: 1,
+        source: Source::Demo,
+        quality: Quality::Valid,
+    }; 8];
+    let scene = DashboardScene {
+        layout: None,
+        measurements: &snapshot,
+        now_ms: 0,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+        blink_on: false,
+        boost_psi: false,
+        fps_mode: FpsMode::Off,
+        fps_instant: 0.0,
+        fps_average: 0.0,
+        backgrounds: [colors::BLACK; 8],
+        overlay: None,
+    };
+    let mut cache = DashboardCache::new();
+    let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut reference = AlignedFrame::boxed();
+    scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+    for _ in 0..2 {
+        for buffer in 0..2 {
+            let redraw = cache.draw(&mut St7789Renderer::new(&mut frames[buffer].0), buffer, &scene);
+            assert_eq!(redraw.cells, 255);
+            assert!(frames[buffer].0 == reference.0);
+        }
+    }
+}
+
+#[test]
+fn identities_cover_independent_histories_channel_reassignment_and_config_republication() {
+    use dashboard_host_validation::configured_scene::Layout;
+    use dashboard_host_validation::view_config::{self, GraphRange};
+    let mut original = view_config::default_config();
+    let first_config = view_config::validate(original.clone()).unwrap();
+    original.widgets[1].display.graph_range = GraphRange::Fixed { min: 0.7, max: 1.3 };
+    original.widgets[1].colors.value = view_config::Color(0xFFFF);
+    // Use a known valid alternate visual configuration with unchanged IDs.
+    let changed_config = view_config::validate(original).unwrap();
+    let mut a = AcquisitionModel::demo_configured(&first_config);
+    let mut b = AcquisitionModel::demo_configured(&first_config);
+    a.ingest_batch([1.0, 70.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
+    b.ingest_batch([1.0, 80.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
+    a.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 2000);
+    b.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 2000);
+    let first = a.snapshot();
+    let second = b.snapshot();
+    let mut reassigned = second;
+    reassigned.sensors.swap(1, 2);
+    a.reset_statistics(1);
+    a.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 4000);
+    let reset = a.snapshot();
+    let mut cache = DashboardCache::new();
+    let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut reference = AlignedFrame::boxed();
+    for (snapshot, config, now) in [
+        (&first, &first_config, 2000),
+        (&second, &first_config, 2000),
+        (&reassigned, &first_config, 2000),
+        (&second, &changed_config, 2000),
+        (&reset, &first_config, 4000),
+    ] {
+        let scene = DashboardScene {
+            layout: Layout::new(config, config.config().boot_view, false),
+            measurements: snapshot,
+            now_ms: now,
+            status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+            blink_on: false,
+            boost_psi: false,
+            fps_mode: FpsMode::Off,
+            fps_instant: 0.0,
+            fps_average: 0.0,
+            backgrounds: [colors::BLACK; 8],
+            overlay: None,
+        };
+        scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+        for buffer in 0..2 {
+            cache.draw(&mut St7789Renderer::new(&mut frames[buffer].0), buffer, &scene);
+            assert!(frames[buffer].0 == reference.0);
+            assert_eq!(cache.prepare(buffer, &scene).cells, 0);
+        }
+    }
+}

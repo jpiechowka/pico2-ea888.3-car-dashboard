@@ -1,6 +1,15 @@
 use super::extrema::{Extrema, valid_sample};
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 
+/// Exact graph proof, issued only by the acquisition owner. Channel participates
+/// because public snapshot arrays may move a copied sensor to another slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphCacheIdentity {
+    origin: core::num::NonZeroU32,
+    revision: u32,
+    channel: dashboard_config::Channel,
+}
+
 const AVG_BUFFER_SIZE: usize = 60;
 
 pub const AVG_SAMPLE_PERIOD_MS: u64 = 5_000;
@@ -23,7 +32,7 @@ pub enum PeakMode {
 
 /// Presentation data only. Sampling rings and accumulation stay with the
 /// acquisition owner; a coalesced snapshot already includes every accepted peak.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct SensorSnapshot {
     value: Option<f32>,
     minimum: Option<f32>,
@@ -37,6 +46,28 @@ pub struct SensorSnapshot {
     graph_count: usize,
     graph_min: f32,
     graph_max: f32,
+    graph_identity: Option<GraphCacheIdentity>,
+}
+
+// Runtime cache proof does not change semantic snapshot equality.
+impl PartialEq for SensorSnapshot {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.value == other.value
+            && self.minimum == other.minimum
+            && self.maximum == other.maximum
+            && self.average == other.average
+            && self.trend == other.trend
+            && self.sampled_at_ms == other.sampled_at_ms
+            && self.peak_until_ms == other.peak_until_ms
+            && self.graph == other.graph
+            && self.graph_start == other.graph_start
+            && self.graph_count == other.graph_count
+            && self.graph_min == other.graph_min
+            && self.graph_max == other.graph_max
+    }
 }
 
 impl SensorSnapshot {
@@ -53,7 +84,10 @@ impl SensorSnapshot {
         graph_count: 0,
         graph_min: f32::MAX,
         graph_max: f32::MIN,
+        graph_identity: None,
     };
+
+    pub const fn graph_cache_identity(&self) -> Option<GraphCacheIdentity> { self.graph_identity }
 
     pub fn value(&self) -> Option<f32> { self.value }
 
@@ -134,9 +168,22 @@ pub struct SensorState {
     graph_last_sample_ms: Option<u64>,
     graph_min: f32,
     graph_max: f32,
+    graph_revision: Option<u32>,
 }
 
 impl SensorState {
+    #[cfg(test)]
+    pub(crate) fn force_revision_for_test(
+        &mut self,
+        revision: u32,
+    ) {
+        self.graph_revision = Some(revision);
+    }
+
+    pub(crate) const fn graph_revision(&self) -> Option<u32> { self.graph_revision }
+
+    fn advance_graph(&mut self) { self.graph_revision = self.graph_revision.and_then(|r| r.checked_add(1)); }
+
     pub const fn new() -> Self {
         Self {
             value: None,
@@ -162,6 +209,7 @@ impl SensorState {
             graph_last_sample_ms: None,
             graph_min: f32::MAX,
             graph_max: f32::MIN,
+            graph_revision: Some(0),
         }
     }
 
@@ -169,7 +217,27 @@ impl SensorState {
 
     pub const fn sampled_at_ms(&self) -> Option<u64> { self.last_sample_ms }
 
-    pub fn snapshot(&self) -> SensorSnapshot {
+    pub fn snapshot(&self) -> SensorSnapshot { self.snapshot_with_identity(None) }
+
+    pub(crate) fn tracked_snapshot(
+        &self,
+        origin: Option<core::num::NonZeroU32>,
+        channel: dashboard_config::Channel,
+    ) -> SensorSnapshot {
+        let identity = origin.zip(self.graph_revision).map(|(origin, revision)| {
+            GraphCacheIdentity {
+                origin,
+                revision,
+                channel,
+            }
+        });
+        self.snapshot_with_identity(identity)
+    }
+
+    fn snapshot_with_identity(
+        &self,
+        graph_identity: Option<GraphCacheIdentity>,
+    ) -> SensorSnapshot {
         let (graph, graph_start, graph_count, graph_min, graph_max) = self.get_graph_data();
         SensorSnapshot {
             value: self.value,
@@ -184,6 +252,7 @@ impl SensorState {
             graph_count,
             graph_min,
             graph_max,
+            graph_identity,
         }
     }
 
@@ -303,6 +372,7 @@ impl SensorState {
         &mut self,
         value: f32,
     ) {
+        self.advance_graph();
         let needs_recalculation = if self.graph_count == GRAPH_HISTORY_SIZE {
             let old_value = self.graph_buffer[self.graph_index];
             old_value == self.graph_min || old_value == self.graph_max
@@ -368,6 +438,7 @@ impl SensorState {
     }
 
     pub fn reset_graph(&mut self) {
+        self.advance_graph();
         self.graph_buffer = [0.0; GRAPH_HISTORY_SIZE];
         self.graph_index = 0;
         self.graph_count = 0;

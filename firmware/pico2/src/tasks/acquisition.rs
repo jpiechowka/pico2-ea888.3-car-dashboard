@@ -49,6 +49,23 @@ fn configured_vehicle(resources: Resources) -> Vehicle<'static, crate::drivers::
     .expect("invalid vehicle profile")
 }
 
+// Publication owns the by-value Watch copies in a separate call frame. Keeping
+// them in the async poll also reserves them during Vehicle construction.
+#[inline(never)]
+fn publish_snapshot(
+    #[cfg(feature = "longan-rx12")] model: &Vehicle<'_, crate::drivers::longan::HardwarePort>,
+    #[cfg(not(feature = "longan-rx12"))] model: &AcquisitionModel<'_>,
+    sender: &embassy_sync::watch::DynSender<'_, DashboardSnapshot>,
+    previous: &mut Option<(u64, u64, dashboard_pico2::cache_diagnostics::CacheExhaustionStatus)>,
+) {
+    let snapshot = model.snapshot();
+    let identity = snapshot.publication_identity();
+    if *previous != Some(identity) {
+        sender.send(snapshot);
+        *previous = Some(identity);
+    }
+}
+
 #[embassy_executor::task]
 pub async fn acquisition_task(
     start_time: Instant,
@@ -129,7 +146,7 @@ pub async fn acquisition_task(
                         if ready && !published {
                             // Publish intentional transport invalidation before
                             // acknowledging park; retain original sample ages.
-                            sender.send(model.snapshot());
+                            publish_snapshot(&model, &sender, &mut None);
                             #[cfg(feature = "longan-rx12")]
                             link_sender.send(model.link());
                             published = true;
@@ -209,12 +226,7 @@ pub async fn acquisition_task(
         // At most 100 Hz publication; no repeated 3 KB critical-section copy
         // when the backend has neither new data, faults nor a reset ack.
         if previous_snapshot.is_none() || last_publication.elapsed() >= Duration::from_millis(10) {
-            let snapshot = model.snapshot();
-            let identity = (snapshot.sequence, snapshot.reset_generation);
-            if previous_snapshot != Some(identity) {
-                sender.send(snapshot);
-                previous_snapshot = Some(identity);
-            }
+            publish_snapshot(&model, &sender, &mut previous_snapshot);
             #[cfg(feature = "longan-rx12")]
             {
                 let link = model.link();

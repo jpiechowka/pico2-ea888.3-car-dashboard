@@ -569,3 +569,43 @@ fn clearing_view_removes_old_pixels_and_wide_layout_uses_exact_shared_scene() {
     preview.render(&wide, 1, PreviewOptions::default()).unwrap();
     assert_exact_shared_scene(&preview, &wide, 1, PreviewOptions::default());
 }
+
+#[test]
+fn session_reporting_survives_replacement_failed_preview_and_clear() {
+    use dashboard_configurator::cache_reporting::report;
+    use dashboard_configurator::simulator::ControlSimulator;
+    use dashboard_core::cache_diagnostics::{
+        CacheExhaustionCause as Cause,
+        CacheExhaustionSeen,
+        CacheExhaustionStatus as Status,
+    };
+    let mut seen = CacheExhaustionSeen::new();
+    let mut visible = Vec::new();
+    let mut console_calls = 0;
+    for _ in 0..3 {
+        let config = fixture();
+        let mut preview = Preview::new();
+        assert!(preview.render(&config, 255, PreviewOptions::default()).is_err());
+        let mut simulator = ControlSimulator::new(config.clone());
+        simulator.restart(config);
+        for status in [
+            preview.cache_exhaustion_status(),
+            simulator.cache_exhaustion_status(),
+            Status::from_cause(Cause::ConfigIssuer),
+            Status::from_cause(Cause::GraphRevision(Channel::Egt)),
+        ] {
+            report(&mut seen, status, |cause| visible.push(cause), |_| console_calls += 1);
+        }
+        // Clearing visible diagnostic history cannot reset the mounted Ui mask.
+        visible.clear();
+    }
+    assert_eq!(console_calls, 2);
+    let mut new_session = CacheExhaustionSeen::new();
+    report(
+        &mut new_session,
+        Status::from_cause(Cause::ConfigIssuer),
+        |_| {},
+        |_| console_calls += 1,
+    );
+    assert_eq!(console_calls, 3);
+}

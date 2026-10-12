@@ -200,3 +200,20 @@ fn publication_copy_and_single_owner_storage_have_fixed_bounds() {
     // One engine shares storage with the historical replay engine; no config copy.
     assert!(core::mem::size_of::<AcquisitionModel>() <= 12_288 + 4096);
 }
+
+#[test]
+fn untracked_public_snapshots_do_not_invent_diagnostic_events() {
+    use dashboard_host_validation::cache_diagnostics::CacheExhaustionSeen;
+    let mut seen = CacheExhaustionSeen::new();
+    let mut snapshot = DashboardSnapshot::EMPTY;
+    let mut state = dashboard_host_validation::sensor_state::SensorState::new();
+    state.update_at(10.0, false, 0);
+    state.reset_graph();
+    snapshot.sensors[0] = state.snapshot();
+    assert_eq!(snapshot.sensors[0].graph_cache_identity(), None);
+    assert_eq!(seen.observe(snapshot.cache_exhaustion_status()).causes().count(), 0);
+    assert_eq!(
+        snapshot.publication_identity(),
+        DashboardSnapshot::EMPTY.publication_identity()
+    );
+}

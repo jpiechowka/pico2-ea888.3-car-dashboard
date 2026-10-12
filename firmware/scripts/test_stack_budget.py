@@ -202,5 +202,29 @@ class StackBudget(unittest.TestCase):
                 budgets(boot, construct, runtime, dashboard, headroom)
 
 
+class PublicationFrames(unittest.TestCase):
+    def test_outlined_publication_counts_nested_snapshot_helpers_and_requires_metadata(self):
+        from check_stack_budget import publication_frames
+        functions = {
+            'pico2_tasks_acquisition_publish_snapshot': (0x101, 4, 0),
+            'dashboard_core_AcquisitionModel_8snapshot': (0x201, 4, 0),
+            'dashboard_core_SensorState_22snapshot_with_identity': (0x301, 4, 0),
+        }
+        # Literal cache5-vehicle280-traced nested frames.
+        sizes = {0x100: 3792, 0x200: 4400, 0x300: 168}
+        self.assertEqual(publication_frames(functions, sizes), 8360)
+        for address in sizes:
+            reduced = dict(sizes)
+            del reduced[address]
+            with self.assertRaisesRegex(AssertionError, 'missing publication frame metadata'):
+                publication_frames(functions, reduced)
+
+        for name in list(functions)[:2]:
+            without = dict(functions)
+            del without[name]
+            with self.assertRaisesRegex(AssertionError, 'missing or ambiguous publication boundary'):
+                publication_frames(without, sizes)
+
+
 if __name__ == '__main__':
     unittest.main()

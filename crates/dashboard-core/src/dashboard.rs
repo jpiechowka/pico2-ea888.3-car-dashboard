@@ -314,46 +314,16 @@ fn display_data(
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct GraphKey {
-    values: [u32; crate::sensor_state::GRAPH_HISTORY_SIZE],
-    count: usize,
-    min: u32,
-    max: u32,
-}
-impl GraphKey {
-    fn new(state: Option<&SensorSnapshot>) -> Self {
-        let mut key = Self {
-            values: [0; crate::sensor_state::GRAPH_HISTORY_SIZE],
-            count: 0,
-            min: 0,
-            max: 0,
-        };
-        if let Some(state) = state {
-            let (values, start, count, min, max) = state.get_graph_data();
-            key.count = count;
-            if count > 0 {
-                key.min = min.to_bits();
-                key.max = max.to_bits();
-                for (index, output) in key.values.iter_mut().take(count).enumerate() {
-                    *output = values[(start + index) % values.len()].to_bits();
-                }
-            }
-        }
-        key
-    }
-}
-
 #[derive(Clone, PartialEq)]
 struct CellKey {
-    widget: Option<dashboard_config::Widget>,
+    widget: Option<(dashboard_config::ConfigCacheIdentity, u8)>,
     quality: Quality,
     source: Source,
     text: CellText,
     background: Rgb565,
     flags: [bool; 3],
     trend: Option<bool>,
-    graph: GraphKey,
+    graph: Option<crate::GraphCacheIdentity>,
     gauge: Option<crate::widgets::gauge::Reading>,
 }
 impl DashboardScene<'_> {
@@ -382,14 +352,17 @@ impl DashboardScene<'_> {
         let value = state.value().unwrap_or(0.0);
         let maximum = state.maximum().unwrap_or(0.0);
         let mut key = CellKey {
-            widget: self.layout.as_ref().and_then(|l| l.widget(cell)).cloned(),
+            widget: self
+                .layout
+                .as_ref()
+                .and_then(|l| Some((l.configuration().cache_identity()?, l.rule_index(cell)? as u8))),
             quality: self.quality(cell),
             source: self.measurements.metadata[sensor].source,
             text: core::array::from_fn(|_| heapless::String::new()),
             background: self.backgrounds[cell],
             flags: [false; 3],
             trend: None,
-            graph: GraphKey::new(None),
+            graph: None,
             gauge: None,
         };
         // Unavailable gauges still show their range endpoints. Statistics
@@ -425,7 +398,7 @@ impl DashboardScene<'_> {
                 layout.configuration().stoich(),
                 &layout.configuration().config().fuel,
             );
-            key.graph = GraphKey::new(widget.shows_graph().then_some(state));
+            key.graph = widget.shows_graph().then(|| state.graph_cache_identity()).flatten();
             key.flags[0] = widget.shows_extrema() && state.is_new_peak_at(self.now_ms);
             key.trend = widget.shows_trend().then(|| state.get_trend_at(self.now_ms)).flatten();
             return Some(key);
@@ -434,7 +407,7 @@ impl DashboardScene<'_> {
             key.background = BLACK;
             return Some(key);
         }
-        key.graph = GraphKey::new(if cell == 0 { None } else { Some(state) });
+        key.graph = if cell == 0 { None } else { state.graph_cache_identity() };
         let demo = self.measurements.mode == DataMode::Demo;
         let critical = self
             .measurements
@@ -566,11 +539,17 @@ impl DashboardCache {
         let mut cells = 0;
         for (cell, cached) in frame.cells.iter_mut().enumerate() {
             let key = scene.cell_key(cell);
-            if (clear && key.is_some()) || *cached != key {
+            let untracked = scene
+                .cell_sensor(cell)
+                .is_some_and(|sensor| scene.measurements.sensors[sensor].graph_cache_identity().is_none())
+                || scene
+                    .layout
+                    .as_ref()
+                    .is_some_and(|layout| layout.configuration().cache_identity().is_none());
+            if (clear && key.is_some()) || (untracked && key.is_some()) || *cached != key {
                 cells |= 1 << cell;
                 // Retain the existing value when equal. In particular, a
-                // stationary frame need not rewrite eight complete widget,
-                // graph and formatted-text keys in each physical buffer.
+                // stationary frame need not rewrite eight formatted-text keys in each physical buffer.
                 *cached = key;
             }
         }

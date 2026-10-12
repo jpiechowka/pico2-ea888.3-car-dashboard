@@ -98,16 +98,49 @@ impl ValidationError {
 ///     config: dashboard_config::default_config(), stoich: f32::NAN,
 /// };
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ValidatedConfig {
     config: Config,
     stoich: f32,
+    cache_identity: Option<ConfigCacheIdentity>,
+    cache_status: CacheIdentityStatus,
 }
 
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 10_240);
 
+impl PartialEq for ValidatedConfig {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.config == other.config && self.stoich == other.stoich
+    }
+}
+
 impl ValidatedConfig {
+    pub const fn cache_identity(&self) -> Option<ConfigCacheIdentity> { self.cache_identity }
+
+    pub const fn cache_identity_status(&self) -> CacheIdentityStatus { self.cache_status }
+
+    fn publish_identity(&mut self) { self.publish_issued(crate::cache_identity::issue()); }
+
+    fn publish_issued(
+        &mut self,
+        issued: Result<ConfigCacheIdentity, crate::cache_identity::IssueError>,
+    ) {
+        match issued {
+            Ok(identity) => {
+                self.cache_identity = Some(identity);
+                self.cache_status = CacheIdentityStatus::Tracked;
+            }
+            Err(_) => {
+                self.cache_identity = None;
+                self.cache_status = CacheIdentityStatus::Exhausted;
+            }
+        }
+    }
+
     pub const fn config(&self) -> &Config { &self.config }
 
     pub const fn stoich(&self) -> f32 { self.stoich }
@@ -135,7 +168,14 @@ fn text_valid(
 /// quadratic ID checks use no secondary heap or target-sized scratch buffer.
 pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
     let stoich = validate_ref(&config)?;
-    Ok(ValidatedConfig { config, stoich })
+    let mut validated = ValidatedConfig {
+        config,
+        stoich,
+        cache_identity: None,
+        cache_status: CacheIdentityStatus::Untracked,
+    };
+    validated.publish_identity();
+    Ok(validated)
 }
 
 pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
@@ -306,4 +346,22 @@ pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
         }
     }
     crate::fuel::stoichiometry(config.fuel)
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    #[test]
+    fn actual_issuance_failure_preserves_validation_and_semantic_equality() {
+        let issuer = crate::cache_identity::Issuer::with_next_for_test(u32::MAX - 1);
+        let mut config = validate(default_config()).unwrap();
+        let original = config.clone();
+        config.publish_issued(issuer.issue());
+        assert_eq!(config.cache_identity_status(), CacheIdentityStatus::Tracked);
+        config.publish_issued(issuer.issue());
+        assert_eq!(config.cache_identity_status(), CacheIdentityStatus::Exhausted);
+        assert_eq!(config.cache_identity(), None);
+        assert_eq!(config.clone().cache_identity_status(), CacheIdentityStatus::Exhausted);
+        assert_eq!(config, original);
+    }
 }

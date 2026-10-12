@@ -157,6 +157,7 @@ pub fn DeviceControls(ui: Ui) -> impl IntoView {
     let sim = RwSignal::<ControlSimulator, LocalStorage>::new_local(
         ui.editor.with_untracked(|e| ControlSimulator::new(e.preview().clone())),
     );
+    Effect::new(move |_| ui.observe_cache(sim.with(ControlSimulator::cache_exhaustion_status)));
     let previous = StoredValue::new(ui.editor.with_untracked(|e| e.preview().config().clone()));
     let simulation_notice = RwSignal::new("Ready · accepted configuration".to_string());
     Effect::new(move |_| {

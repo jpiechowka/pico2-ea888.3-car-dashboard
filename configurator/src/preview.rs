@@ -2,6 +2,7 @@
 
 use dashboard_config::{Channel, Config, ValidatedConfig, validate};
 use dashboard_core::acquisition::{AcquisitionModel, DashboardSnapshot};
+use dashboard_core::cache_diagnostics::CacheExhaustionStatus;
 use dashboard_core::colors::{BLACK, RED};
 use dashboard_core::configured_scene::Layout;
 use dashboard_core::dashboard::{DashboardScene, Overlay};
@@ -82,6 +83,7 @@ pub struct Preview {
     configuration: Option<Box<Config>>,
     options: Option<PreviewOptions>,
     rendered_at: Option<u64>,
+    prepared_status: CacheExhaustionStatus,
 }
 
 impl Default for Preview {
@@ -99,6 +101,7 @@ impl Preview {
             configuration: None,
             options: None,
             rendered_at: None,
+            prepared_status: CacheExhaustionStatus::EMPTY,
         }
     }
 
@@ -111,6 +114,7 @@ impl Preview {
         view: u8,
         options: PreviewOptions,
     ) -> Result<&[u8], PreviewError> {
+        self.prepared_status = CacheExhaustionStatus::from_config(config.cache_identity_status());
         let layout = Layout::new(config, view, false).ok_or(PreviewError::UnknownView(view))?;
         let now = options
             .sample_ms
@@ -153,6 +157,7 @@ impl Preview {
         let accepted = model.ingest_batch(values_at(now), now);
         debug_assert!(accepted, "one final sample advances the visual demo dwell");
         let mut snapshot = model.snapshot();
+        self.prepared_status = self.prepared_status.union(snapshot.cache_exhaustion_status());
         let same_run = self.options.is_some_and(|previous| {
             previous.warnings == options.warnings
                 && previous.values == options.values
@@ -211,6 +216,8 @@ impl Preview {
     pub fn rgb565(&self) -> &[u8] { &self.framebuffer[..] }
 
     pub fn rgba(&self) -> &[u8] { &self.rgba }
+
+    pub const fn cache_exhaustion_status(&self) -> CacheExhaustionStatus { self.prepared_status }
 
     pub fn snapshot(&self) -> Option<&DashboardSnapshot> { self.snapshot.as_ref() }
 

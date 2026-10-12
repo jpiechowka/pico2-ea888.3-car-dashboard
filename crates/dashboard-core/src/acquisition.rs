@@ -1,4 +1,7 @@
 //! Single-owner measurement statistics, published as bounded coherent snapshots.
+use core::num::NonZeroU32;
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use dashboard_config::{SourceResolution, ValidatedConfig, resolve_source};
 
 use crate::alarms::{
@@ -13,9 +16,25 @@ use crate::alarms::{
     demo_contexts_for,
     demo_rules,
 };
+use crate::cache_diagnostics::{CacheExhaustionCause, CacheExhaustionStatus};
 pub use crate::samples::SensorId;
 use crate::samples::{DataMode, Quality, Sample, SampleError, SampleMeta, Source};
 use crate::sensor_state::{PeakMode, SensorSnapshot, SensorState};
+
+#[cfg(not(target_has_atomic = "32"))]
+compile_error!("graph cache identities require 32-bit atomics");
+struct OriginIssuer(AtomicU32);
+impl OriginIssuer {
+    const fn new(next: u32) -> Self { Self(AtomicU32::new(next)) }
+
+    fn issue(&self) -> Result<NonZeroU32, ()> {
+        self.0
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
+            .map(|next| NonZeroU32::new(next).expect("issuer starts at one"))
+            .map_err(|_| ())
+    }
+}
+static ORIGIN_ISSUER: OriginIssuer = OriginIssuer::new(1);
 
 pub const SENSOR_COUNT: usize = 8;
 const DEFAULT_FRESHNESS: [u16; SENSOR_COUNT] = {
@@ -63,6 +82,7 @@ pub struct DashboardSnapshot {
     pub(crate) alerts: Alerts,
     pub(crate) rule_alerts: RuleAlerts,
     pub(crate) freshness: [u16; SENSOR_COUNT],
+    cache_exhaustion: CacheExhaustionStatus,
 }
 
 impl DashboardSnapshot {
@@ -75,7 +95,16 @@ impl DashboardSnapshot {
         alerts: Alerts::DISABLED,
         rule_alerts: RuleAlerts::DISABLED,
         freshness: DEFAULT_FRESHNESS,
+        cache_exhaustion: CacheExhaustionStatus::EMPTY,
     };
+
+    /// Transport equality includes diagnostic-only transitions without advancing
+    /// the raw sample sequence (or warning dwell).
+    pub const fn publication_identity(&self) -> (u64, u64, CacheExhaustionStatus) {
+        (self.sequence, self.reset_generation, self.cache_exhaustion)
+    }
+
+    pub const fn cache_exhaustion_status(&self) -> CacheExhaustionStatus { self.cache_exhaustion }
 
     pub fn alerts_at(
         &self,
@@ -195,6 +224,7 @@ pub struct AcquisitionModel<'a> {
     configuration: Option<&'a ValidatedConfig>,
     expected_sources: [Option<Source>; SENSOR_COUNT],
     freshness: [u16; SENSOR_COUNT],
+    origin: Option<NonZeroU32>,
 }
 
 impl Default for AcquisitionModel<'_> {
@@ -211,6 +241,7 @@ impl<'a> AcquisitionModel<'a> {
         freshness: [u16; SENSOR_COUNT],
         alarms: Alarms<'a>,
     ) -> Self {
+        let origin = ORIGIN_ISSUER.issue().ok();
         Self {
             // A flash template avoids separate runtime scratch arrays for each
             // sampling ring when this large owner is constructed on core 1.
@@ -235,6 +266,7 @@ impl<'a> AcquisitionModel<'a> {
             configuration,
             expected_sources,
             freshness,
+            origin,
         }
     }
 
@@ -421,9 +453,33 @@ impl<'a> AcquisitionModel<'a> {
         true
     }
 
+    pub fn cache_exhaustion_status(&self) -> CacheExhaustionStatus {
+        let mut status = self.configuration.map_or(CacheExhaustionStatus::EMPTY, |config| {
+            CacheExhaustionStatus::from_config(config.cache_identity_status())
+        });
+        if self.origin.is_none() {
+            status = status.union(CacheExhaustionStatus::from_cause(
+                CacheExhaustionCause::AcquisitionIssuer,
+            ));
+        }
+        for (index, sensor) in self.sensors.iter().enumerate() {
+            if sensor.graph_revision().is_none() {
+                status = status.union(CacheExhaustionStatus::from_cause(CacheExhaustionCause::GraphRevision(
+                    SensorId::ALL[index].channel(),
+                )));
+            }
+        }
+        status
+    }
+
+    // Keep publication scratch out of the async acquisition poll frame, which
+    // is also resident while the much larger Vehicle constructor runs.
+    #[inline(never)]
     pub fn snapshot(&self) -> DashboardSnapshot {
         DashboardSnapshot {
-            sensors: core::array::from_fn(|i| self.sensors[i].snapshot()),
+            sensors: core::array::from_fn(|i| {
+                self.sensors[i].tracked_snapshot(self.origin, SensorId::ALL[i].channel())
+            }),
             metadata: self.metadata,
             mode: self.mode,
             sequence: self.sequence,
@@ -437,6 +493,7 @@ impl<'a> AcquisitionModel<'a> {
                 _ => RuleAlerts::DISABLED,
             },
             freshness: self.freshness,
+            cache_exhaustion: self.cache_exhaustion_status(),
         }
     }
 
@@ -479,3 +536,99 @@ const PEAK_MODES: [PeakMode; SENSOR_COUNT] = [
     PeakMode::Range,
     PeakMode::None,
 ];
+
+#[cfg(test)]
+mod cache_tests {
+    extern crate std;
+    use std::boxed::Box;
+
+    use super::*;
+    use crate::cache_diagnostics::CacheExhaustionSeen;
+    use crate::colors::BLACK;
+    use crate::dashboard::{DashboardCache, DashboardScene};
+    use crate::display::{FrameBuffer, St7789Renderer};
+    use crate::render::FpsMode;
+    use crate::vehicle_status::VehicleStatus;
+
+    #[test]
+    fn actual_origin_failure_is_sticky_and_last_success_has_no_diagnostic() {
+        let issuer = OriginIssuer::new(u32::MAX - 1);
+        let mut model = AcquisitionModel::demo();
+        model.origin = issuer.issue().ok();
+        assert!(model.origin.is_some());
+        assert_eq!(model.snapshot().cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);
+        model.origin = issuer.issue().ok();
+        assert_eq!(issuer.issue(), Err(()));
+        let exhausted = CacheExhaustionStatus::from_cause(CacheExhaustionCause::AcquisitionIssuer);
+        assert_eq!(model.snapshot().cache_exhaustion_status(), exhausted);
+        model.reset_statistics(1);
+        model.ingest_batch([f32::NAN; 8], 0);
+        assert_eq!(model.snapshot().cache_exhaustion_status(), exhausted);
+        assert_eq!(
+            DashboardSnapshot::EMPTY.cache_exhaustion_status(),
+            CacheExhaustionStatus::EMPTY
+        );
+    }
+
+    #[test]
+    fn exhausted_revision_publishes_without_sample_and_never_freezes_either_buffer() {
+        let mut model = AcquisitionModel::demo();
+        model.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
+        model.sensors[1].force_revision_for_test(u32::MAX - 1);
+        model.sensors[1].reset_graph();
+        let before = model.snapshot();
+        assert!(before.sensors[1].graph_cache_identity().is_some());
+        assert_eq!(before.cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);
+        model.sensors[1].reset_graph();
+        let failed = model.snapshot();
+        assert_eq!(failed.sequence, before.sequence);
+        assert_eq!(failed.reset_generation, before.reset_generation);
+        assert_ne!(failed.publication_identity(), before.publication_identity());
+        let mut accepted = before;
+        let mut seen = CacheExhaustionSeen::new();
+        assert_eq!(seen.observe(failed.cache_exhaustion_status()).causes().count(), 1);
+        assert!(!accepted.accept(failed));
+        let mut cache = DashboardCache::new();
+        let mut frames = [Box::new(FrameBuffer::new()), Box::new(FrameBuffer::new())];
+        let mut full = Box::new(FrameBuffer::new());
+        for step in 1..5 {
+            model.ingest_batch(
+                [1.0, 90.0 + step as f32 * 2.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0],
+                step * 2000,
+            );
+            let snapshot = model.snapshot();
+            assert_eq!(snapshot.sensors[1].graph_cache_identity(), None);
+            // Sink has already dropped the one report. Drawing is independent.
+            assert_eq!(seen.observe(snapshot.cache_exhaustion_status()).causes().count(), 0);
+            let scene = DashboardScene {
+                layout: None,
+                measurements: &snapshot,
+                now_ms: step * 2000,
+                status: VehicleStatus::Demo,
+                blink_on: false,
+                boost_psi: false,
+                fps_mode: FpsMode::Off,
+                fps_instant: 0.0,
+                fps_average: 0.0,
+                backgrounds: [BLACK; 8],
+                overlay: None,
+            };
+            scene.draw_full(&mut St7789Renderer::new(&mut full));
+            for (buffer, frame) in frames.iter_mut().enumerate() {
+                cache.draw(&mut St7789Renderer::new(frame), buffer, &scene);
+                assert!(frame.as_ref() == full.as_ref());
+            }
+        }
+        model.reset_statistics(1);
+        assert_eq!(
+            model.snapshot().cache_exhaustion_status(),
+            failed.cache_exhaustion_status()
+        );
+        model.sensors[5].force_revision_for_test(u32::MAX);
+        model.sensors[5].reset_graph();
+        assert_eq!(
+            seen.observe(model.snapshot().cache_exhaustion_status()).causes().next(),
+            Some(CacheExhaustionCause::GraphRevision(dashboard_config::Channel::Egt))
+        );
+    }
+}

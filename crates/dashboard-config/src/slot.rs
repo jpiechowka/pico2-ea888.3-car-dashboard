@@ -37,6 +37,8 @@ impl ConfigSlot {
                 config: ValidatedConfig {
                     config: empty_config(),
                     stoich: 0.0,
+                    cache_identity: None,
+                    cache_status: crate::CacheIdentityStatus::Untracked,
                 },
                 fault: None,
             },
@@ -60,6 +62,7 @@ impl ConfigSlot {
                 self.storage.fault = Some(fault);
             }
         }
+        self.storage.config.publish_identity();
         &self.storage
     }
 }

@@ -8,7 +8,9 @@
 pub mod acquisition;
 pub mod alarms;
 pub mod backlight;
+pub mod cache_diagnostics;
 pub mod config;
+pub use sensor_state::GraphCacheIdentity;
 pub mod configured_scene;
 pub mod control_session;
 pub mod controls;

@@ -154,6 +154,22 @@ def configuration_frames(functions, sizes):
     return weight(result)
 
 
+def publication_frames(functions, sizes):
+    # Nested runtime path: firmware publication -> model snapshot -> sensor
+    # snapshot. Count any emitted Session/Vehicle forwarding wrappers as well.
+    # The publication frame is not live while constructing the Vehicle owner.
+    for tokens in [('pico2', 'publish_snapshot'), ('AcquisitionModel', '8snapshot')]:
+        boundary = {address & ~1 for name, (address, _, _) in functions.items()
+                    if all(token in name for token in tokens)}
+        require(len(boundary) == 1, 'missing or ambiguous publication boundary: ' + str(tokens))
+    matches = {address & ~1 for name, (address, _, _) in functions.items()
+               if ('pico2' in name and 'publish_snapshot' in name)
+               or (any(token in name for token in ('AcquisitionModel', 'Session', 'Vehicle', 'SensorState'))
+                   and any(token in name for token in ('8snapshot', 'tracked_snapshot', 'snapshot_with_identity')))}
+    require(all(address in sizes for address in matches), 'missing publication frame metadata')
+    return sum(sizes[address] for address in matches)
+
+
 def check(elf, headroom):
     require('.stack_sizes' in elf.named, 'build with -Z emit-stack-sizes')
     section = elf.named['.stack_sizes']
@@ -188,9 +204,7 @@ def check(elf, headroom):
         any(t in n for t in ('AcquisitionModel', 'Session', 'Vehicle', 'RuleEngine'))
         and any(t in n for t in ('new_inner', 'with_policy', 'configured', '3new'))
     ))
-    snapshots = selected(lambda n: (
-        any(t in n for t in ('AcquisitionModel', 'Session', 'SensorState')) and '8snapshot' in n
-    ))
+    snapshots = publication_frames(elf.functions, sizes)
     # 1024 includes resident executor/entry frames, ordinary constructors'
     # memcpy/memclr, boot validation/contrast and snapshot memory helpers.
     # Vehicle step/reset/telemetry paths have an independently reviewed 8KiB

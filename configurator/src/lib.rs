@@ -19,6 +19,7 @@
 //! writes, and acknowledge only their actual result. Restoring browser storage
 //! uses `from_saved_state` before mounting the interactive editor.
 
+pub mod cache_reporting;
 pub mod diagnostic;
 pub mod editor;
 pub mod geometry;

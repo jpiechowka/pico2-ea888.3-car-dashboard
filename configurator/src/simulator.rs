@@ -24,6 +24,10 @@ pub struct ControlSimulator {
 }
 
 impl ControlSimulator {
+    pub fn cache_exhaustion_status(&self) -> dashboard_core::cache_diagnostics::CacheExhaustionStatus {
+        dashboard_core::cache_diagnostics::CacheExhaustionStatus::from_config(self.config.cache_identity_status())
+    }
+
     pub fn new(config: ValidatedConfig) -> Self {
         let session = ControlSession::new(&config, FpsMode::Off, false);
         let map = config.config().controls;

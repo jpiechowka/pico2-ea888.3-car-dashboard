@@ -18,6 +18,7 @@ use wasm_bindgen::JsCast;
 #[derive(Clone, Copy)]
 pub struct Ui {
     mount_started: f64,
+    cache_seen: RwSignal<dashboard_core::cache_diagnostics::CacheExhaustionSeen>,
     editor: RwSignal<Editor>,
     notice: RwSignal<String>,
     conflict: RwSignal<bool>,
@@ -41,6 +42,20 @@ pub struct Ui {
 fn now() -> f64 { web_sys::window().and_then(|w| w.performance()).map_or(0.0, |p| p.now()) }
 
 impl Ui {
+    fn observe_cache(
+        self,
+        status: dashboard_core::cache_diagnostics::CacheExhaustionStatus,
+    ) {
+        self.cache_seen.update(|seen| {
+            dashboard_configurator::cache_reporting::report(
+                seen,
+                status,
+                |cause| self.notice.set(cause.to_string()),
+                |cause| web_sys::console::warn_1(&cause.to_string().into()),
+            )
+        });
+    }
+
     fn invalid(self) -> bool { self.editor.with(Editor::has_invalid_draft) }
 
     fn layout_locked(self) -> bool { self.editor.with(|e| !e.can_edit_layout()) }
@@ -185,6 +200,7 @@ pub fn Studio() -> impl IntoView {
     let mount_started = now();
     let (editor, initial_notice, saved_bytes) = io::restore();
     let ui = Ui {
+        cache_seen: RwSignal::new(dashboard_core::cache_diagnostics::CacheExhaustionSeen::new()),
         mount_started,
         editor: RwSignal::new(editor),
         notice: RwSignal::new(initial_notice),

@@ -255,3 +255,22 @@ fn slot_always_rejects_legacy_envelopes_and_current_envelope_legacy_payloads() {
         assert_same(&mut slot, &current);
     }
 }
+#[test]
+fn publications_have_distinct_runtime_identity_but_equal_wire_content() {
+    let mut slot = dashboard_config::ConfigSlot::new();
+    let first = slot.load_at_boot(b"").config.clone();
+    let second = &slot.load_at_boot(b"").config;
+    assert_eq!(first, *second);
+    assert_eq!(
+        first.cache_identity_status(),
+        dashboard_config::CacheIdentityStatus::Tracked
+    );
+    assert_ne!(first.cache_identity(), second.cache_identity());
+    assert_eq!(first.cache_identity(), first.clone().cache_identity());
+    let mut a = [0; 16384];
+    let mut b = [0; 16384];
+    assert_eq!(
+        dashboard_config::encode(&first, &mut a).unwrap(),
+        dashboard_config::encode(second, &mut b).unwrap()
+    );
+}

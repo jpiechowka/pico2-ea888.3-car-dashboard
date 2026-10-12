@@ -93,3 +93,19 @@ fn irregular_acquisition_selects_real_samples_without_backfill_or_fps_ticks() {
     assert_eq!(count, 4);
     assert_eq!(&values[..4], &[1.0, 3.0, 5.0, 9.0]);
 }
+
+#[test]
+fn graph_identity_tracks_only_history_changes_and_reset_not_display_ticks() {
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.0; 8], 0);
+    let first = model.snapshot().sensors[0].graph_cache_identity();
+    model.ingest_batch([2.0; 8], 1000);
+    assert_eq!(model.snapshot().sensors[0].graph_cache_identity(), first);
+    model.ingest_batch([3.0; 8], 2000);
+    let sampled = model.snapshot().sensors[0].graph_cache_identity();
+    assert_ne!(sampled, first);
+    assert!(!model.ingest_batch([4.0; 8], 2000));
+    assert_eq!(model.snapshot().sensors[0].graph_cache_identity(), sampled);
+    model.reset_statistics(1);
+    assert_ne!(model.snapshot().sensors[0].graph_cache_identity(), sampled);
+}

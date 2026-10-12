@@ -5,6 +5,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
+mod cache_reporting;
 mod drivers;
 mod peripherals;
 mod profiling;
@@ -430,6 +431,14 @@ async fn dashboard_task(
     let mut input_tracker = dashboard_pico2::input_trace::InputTracker::new();
     let mut reset_input: Option<(dashboard_pico2::input_trace::Observation, u64)> = None;
 
+    let mut cache_seen = dashboard_pico2::cache_diagnostics::CacheExhaustionSeen::new();
+    cache_reporting::report(
+        &mut cache_seen,
+        dashboard_pico2::cache_diagnostics::CacheExhaustionStatus::from_config(
+            dashboard_configuration.config.cache_identity_status(),
+        ),
+        |cause| log_info!("{}", cause),
+    );
     let mut dashboard_cache = DashboardCache::new();
     let mut current_fps = 0.0f32;
     let mut average_fps = 0.0f32;
@@ -542,19 +551,22 @@ async fn dashboard_task(
             crate::tasks::acquisition::RESET_STATISTICS.signal(reset_requests.request());
             log_info!("Stats reset requested");
         }
-        if let Some(snapshot) = measurement_receiver.try_changed()
-            && measurements.accept(snapshot)
-            && reset_requests.acknowledge(measurements.reset_generation)
-        {
-            log_info!("Stats reset acknowledged");
-            if let Some((observation, consumed_us)) = reset_input.take() {
-                if session.page() == Page::Dashboard {
-                    input_tracker.apply(observation, consumed_us, Instant::now().as_micros());
-                } else {
-                    input_tracker.ignore(observation.events);
+        if let Some(snapshot) = measurement_receiver.try_changed() {
+            // Observe before raw-sample acceptance: metadata may advance alone.
+            cache_reporting::report(&mut cache_seen, snapshot.cache_exhaustion_status(), |cause| {
+                log_info!("{}", cause)
+            });
+            if measurements.accept(snapshot) && reset_requests.acknowledge(measurements.reset_generation) {
+                log_info!("Stats reset acknowledged");
+                if let Some((observation, consumed_us)) = reset_input.take() {
+                    if session.page() == Page::Dashboard {
+                        input_tracker.apply(observation, consumed_us, Instant::now().as_micros());
+                    } else {
+                        input_tracker.ignore(observation.events);
+                    }
                 }
+                session.statistics_acknowledged(Instant::now().as_millis());
             }
-            session.statistics_acknowledged(Instant::now().as_millis());
         }
         let now_ms = Instant::now().as_millis();
         apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
