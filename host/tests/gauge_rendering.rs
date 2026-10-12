@@ -7,6 +7,113 @@ use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
 #[test]
+fn widget_clears_each_background_once_and_preserves_warning_inset() {
+    use embedded_graphics::pixelcolor::Rgb565;
+    use embedded_graphics::prelude::*;
+    use embedded_graphics::primitives::Rectangle;
+
+    struct Tracked<'a> {
+        renderer: St7789Renderer<'a>,
+        fills: Vec<(Rectangle, Rgb565)>,
+    }
+    impl OriginDimensions for Tracked<'_> {
+        fn size(&self) -> Size { self.renderer.size() }
+    }
+    impl DrawTarget for Tracked<'_> {
+        type Color = Rgb565;
+        type Error = core::convert::Infallible;
+
+        fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
+            &mut self,
+            pixels: I,
+        ) -> Result<(), Self::Error> {
+            self.renderer.draw_iter(pixels)
+        }
+
+        fn fill_solid(
+            &mut self,
+            area: &Rectangle,
+            color: Rgb565,
+        ) -> Result<(), Self::Error> {
+            self.fills.push((*area, color));
+            self.renderer.fill_solid(area, color)
+        }
+    }
+
+    for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
+        let mut raw = default_config();
+        raw.widgets.clear();
+        let mut widget = default_widget(
+            Channel::Oil,
+            1,
+            1,
+            Placement {
+                column: 0,
+                row: 0,
+                span,
+            },
+        );
+        widget.colors.background = Color::rgb(0, 16, 32);
+        widget.warning.on_ms = 1;
+        raw.widgets.push(widget).unwrap();
+        let config = validate(raw).unwrap();
+        let widget = &config.config().widgets[0];
+        let rect = widget.placement.rect().unwrap();
+        let outer = Rectangle::new(Point::new(0, 26), Size::new(rect.width.into(), rect.height.into()));
+        let interior = Rectangle::new(Point::new(2, 28), outer.size - Size::new(4, 4));
+        let mut model = AcquisitionModel::demo_configured(&config);
+        for now in [0, 1] {
+            model.ingest_batch([150.; 8], now);
+        }
+        let snapshot = model.snapshot();
+        for (now, blink, warning) in [
+            (1, false, false),
+            (2, true, true),
+            (3, false, false),
+            (4000, true, false),
+        ] {
+            let mut scene = scene(&config, &snapshot, now);
+            scene.blink_on = blink;
+            assert_eq!(
+                scene.layout.as_ref().unwrap().alarm_active(0, &snapshot, now) && blink,
+                warning
+            );
+            let mut frame = AlignedFrame::boxed();
+            frame.0.fill(0x5A);
+            let mut target = Tracked {
+                renderer: St7789Renderer::new(&mut frame.0),
+                fills: Vec::new(),
+            };
+            scene.draw_cell(&mut target, 0);
+            let large: Vec<_> = target
+                .fills
+                .iter()
+                .filter(|(area, _)| area.size.width > 60 && area.size.height > 60)
+                .copied()
+                .collect();
+            let color = |color: Color| Rgb565::from(embedded_graphics::pixelcolor::raw::RawU16::new(color.0));
+            let mut expected = vec![(outer, color(widget.colors.background))];
+            if warning {
+                expected.push((interior, color(widget.colors.warning.background)));
+            }
+            assert_eq!(large, expected, "{span:?}, now={now}");
+            // Independent blank-pixel oracle: warning changes only the inset,
+            // the normal background gutter and adjacent widget stay intact.
+            assert_eq!(frame.pixel(1, 130), widget.colors.background.0);
+            assert_eq!(
+                frame.pixel(3, 130),
+                if warning {
+                    widget.colors.warning.background.0
+                } else {
+                    widget.colors.background.0
+                }
+            );
+            assert_eq!(frame.pixel(usize::from(rect.width), 130), 0x5A5A);
+        }
+    }
+}
+
+#[test]
 fn widget_background_palette_is_rendered_and_invalidated_on_both_buffers() {
     let config = validate(default_config()).unwrap();
     let model = AcquisitionModel::demo();

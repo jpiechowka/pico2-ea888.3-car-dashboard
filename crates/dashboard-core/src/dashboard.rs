@@ -568,8 +568,11 @@ impl DashboardCache {
             let key = scene.cell_key(cell);
             if (clear && key.is_some()) || *cached != key {
                 cells |= 1 << cell;
+                // Retain the existing value when equal. In particular, a
+                // stationary frame need not rewrite eight complete widget,
+                // graph and formatted-text keys in each physical buffer.
+                *cached = key;
             }
-            *cached = key;
         }
         let overlay_dirty = overlay.is_some() && (clear || cells != 0 || frame.overlay != overlay);
         frame.overlay = overlay;

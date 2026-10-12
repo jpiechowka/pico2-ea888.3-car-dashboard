@@ -287,7 +287,11 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
         palette.background
     });
     let foreground = |color| panel_color(if warning { palette.warning.foreground } else { color });
-    display.clear(background).ok();
+    // The outer clear already covers the inset. Only a different warning
+    // background requires another fill; the one-pixel border cannot reach it.
+    if background != panel_color(palette.background) {
+        display.clear(background).ok();
+    }
     let style = MonoTextStyle::new(LABEL_FONT, foreground(palette.label));
     let center = i32::from(rect.x + rect.width / 2);
     let mut y = i32::from(rect.y) + 3;
