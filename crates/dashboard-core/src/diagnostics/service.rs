@@ -165,7 +165,7 @@ impl<'a, P: Port> Vehicle<'a, P> {
         Self::new_inner(port, profile, now, Some(config))
     }
 
-    pub fn configuration(&self) -> Option<&'a dashboard_config::ValidatedConfig> { self.session.configuration() }
+    pub fn configuration(&self) -> Option<&dashboard_config::ValidatedConfig> { self.session.configuration() }
 
     fn new_inner(
         port: P,

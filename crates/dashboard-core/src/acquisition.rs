@@ -10,7 +10,7 @@ use crate::alarms::{
     Context,
     Inputs,
     RuleAlerts,
-    RuleEngine,
+    RuleEngineState,
     RuleIndex,
     Status,
     demo_contexts_for,
@@ -186,11 +186,11 @@ impl DashboardSnapshot {
 // Alternatives share storage; boxing is unavailable on the MCU. Legacy is
 // retained solely for existing protocol/pixel replay fixtures.
 #[allow(clippy::large_enum_variant)]
-enum Alarms<'a> {
+enum Alarms {
     Legacy(AlarmEngine),
-    Configured(RuleEngine<'a>),
+    Configured(RuleEngineState),
 }
-impl Alarms<'_> {
+impl Alarms {
     fn enabled(&self) -> bool {
         match self {
             Self::Legacy(e) => e.enabled(),
@@ -200,6 +200,7 @@ impl Alarms<'_> {
 
     fn update_inputs(
         &mut self,
+        config: Option<&ValidatedConfig>,
         inputs: &Inputs<'_>,
         contexts: &[Option<Context>; 8],
         now: u64,
@@ -208,38 +209,39 @@ impl Alarms<'_> {
             Self::Legacy(e) => {
                 e.update_inputs(inputs, contexts, now);
             }
-            Self::Configured(e) => e.update_inputs(inputs, contexts, now),
+            Self::Configured(e) => {
+                e.update_inputs(
+                    config.expect("configured policy has immutable handle"),
+                    inputs,
+                    contexts,
+                    now,
+                )
+            }
         }
     }
 }
 
-pub struct AcquisitionModel<'a> {
+struct AcquisitionState {
     sensors: [SensorState; SENSOR_COUNT],
     metadata: [SampleMeta; SENSOR_COUNT],
     mode: DataMode,
     sequence: u64,
     reset_generation: u64,
-    alarms: Alarms<'a>,
+    alarms: Alarms,
     contexts: [Option<Context>; SENSOR_COUNT],
-    configuration: Option<&'a ValidatedConfig>,
     expected_sources: [Option<Source>; SENSOR_COUNT],
     freshness: [u16; SENSOR_COUNT],
     origin: Option<NonZeroU32>,
 }
 
-impl Default for AcquisitionModel<'_> {
-    fn default() -> Self { Self::new() }
-}
-
-impl<'a> AcquisitionModel<'a> {
+impl AcquisitionState {
     // Build the final policy directly. Creating a legacy owner and replacing
     // its alarms kept several complete sampling-ring copies live on ARM.
     fn with_policy(
         mode: DataMode,
-        configuration: Option<&'a ValidatedConfig>,
         expected_sources: [Option<Source>; SENSOR_COUNT],
         freshness: [u16; SENSOR_COUNT],
-        alarms: Alarms<'a>,
+        alarms: Alarms,
     ) -> Self {
         let origin = ORIGIN_ISSUER.issue().ok();
         Self {
@@ -263,79 +265,26 @@ impl<'a> AcquisitionModel<'a> {
             reset_generation: 0,
             alarms,
             contexts: [None; SENSOR_COUNT],
-            configuration,
             expected_sources,
             freshness,
             origin,
         }
     }
 
-    pub fn new() -> Self {
-        Self::with_policy(
-            DataMode::Vehicle,
-            None,
-            [None; SENSOR_COUNT],
-            DEFAULT_FRESHNESS,
-            Alarms::Legacy(AlarmEngine::new([None; 8]).expect("empty alarm rules")),
-        )
-    }
-
-    pub fn demo() -> Self {
-        Self::with_policy(
-            DataMode::Demo,
-            None,
-            [None; SENSOR_COUNT],
-            DEFAULT_FRESHNESS,
-            Alarms::Legacy(AlarmEngine::new(demo_rules()).expect("demo alarm rules")),
-        )
-    }
-
-    pub fn configured(
-        config: &'a ValidatedConfig,
-        ecu: u16,
-    ) -> Self {
-        let sources = SensorId::ALL.map(|id| {
-            ecu.checked_sub(8).and_then(|request| {
-                match resolve_source(config, id.channel(), request, ecu) {
-                    SourceResolution::Obd { pid, .. } => Some(Source::Obd { ecu, pid }),
-                    _ => None,
-                }
-            })
-        });
-        Self::with_policy(
-            DataMode::Vehicle,
-            Some(config),
-            sources,
-            config.config().sources.map(|source| source.freshness_ms),
-            Alarms::Configured(RuleEngine::new(config, DataMode::Vehicle, sources)),
-        )
-    }
-
-    pub fn demo_configured(config: &'a ValidatedConfig) -> Self {
-        let sources = [Some(Source::Demo); SENSOR_COUNT];
-        Self::with_policy(
-            DataMode::Demo,
-            Some(config),
-            sources,
-            config.config().sources.map(|source| source.freshness_ms),
-            Alarms::Configured(RuleEngine::new(config, DataMode::Demo, sources)),
-        )
-    }
-
-    pub const fn configuration(&self) -> Option<&'a ValidatedConfig> { self.configuration }
-
-    pub fn ingest_sample(
+    fn ingest_sample(
         &mut self,
+        config: Option<&ValidatedConfig>,
         sample: Sample,
         now_ms: u64,
     ) -> Result<(), SampleError> {
-        self.ingest_contextual(sample, None, now_ms)
+        self.ingest_contextual(config, sample, None, now_ms)
     }
 
     /// Context must come from verified operating signals. Absent context keeps
     /// contextual rules unavailable; no inference from voltage or lambda alone.
-    pub fn ingest_contextual(
+    fn ingest_contextual(
         &mut self,
+        config: Option<&ValidatedConfig>,
         sample: Sample,
         context: Option<Context>,
         now_ms: u64,
@@ -347,7 +296,7 @@ impl<'a> AcquisitionModel<'a> {
             return Err(SampleError::Future);
         }
         if !sample.source.matches(sensor, self.mode)
-            || (self.configuration.is_some() && self.expected_sources[index] != Some(sample.source))
+            || (config.is_some() && self.expected_sources[index] != Some(sample.source))
             || (previous.source != Source::Unknown && previous.source != sample.source)
         {
             return Err(SampleError::Source);
@@ -376,12 +325,13 @@ impl<'a> AcquisitionModel<'a> {
         };
         self.sequence = next;
         self.contexts[index] = context;
-        self.update_alarms(now_ms);
+        self.update_alarms(config, now_ms);
         if valid { Ok(()) } else { Err(SampleError::InvalidValue) }
     }
 
-    pub fn mark_fault(
+    fn mark_fault(
         &mut self,
+        config: Option<&ValidatedConfig>,
         sensor: SensorId,
         quality: Quality,
         at_ms: u64,
@@ -398,12 +348,13 @@ impl<'a> AcquisitionModel<'a> {
         meta.status_at_ms = at_ms;
         self.sequence = next;
         self.contexts[sensor as usize] = None;
-        self.update_alarms(at_ms);
+        self.update_alarms(config, at_ms);
         true
     }
 
-    pub fn ingest_batch(
+    fn ingest_batch(
         &mut self,
+        config: Option<&ValidatedConfig>,
         values: [f32; SENSOR_COUNT],
         captured_ms: u64,
     ) -> bool {
@@ -433,13 +384,13 @@ impl<'a> AcquisitionModel<'a> {
         if accepted {
             self.sequence = next_sequence;
             self.contexts = demo_contexts_for(self.mode, &self.metadata);
-            self.update_alarms(captured_ms);
+            self.update_alarms(config, captured_ms);
         }
         accepted
     }
 
     /// Acknowledged in the next published snapshot. Replays cannot reset twice.
-    pub fn reset_statistics(
+    fn reset_statistics(
         &mut self,
         generation: u64,
     ) -> bool {
@@ -453,8 +404,11 @@ impl<'a> AcquisitionModel<'a> {
         true
     }
 
-    pub fn cache_exhaustion_status(&self) -> CacheExhaustionStatus {
-        let mut status = self.configuration.map_or(CacheExhaustionStatus::EMPTY, |config| {
+    fn cache_exhaustion_status(
+        &self,
+        config: Option<&ValidatedConfig>,
+    ) -> CacheExhaustionStatus {
+        let mut status = config.map_or(CacheExhaustionStatus::EMPTY, |config| {
             CacheExhaustionStatus::from_config(config.cache_identity_status())
         });
         if self.origin.is_none() {
@@ -475,7 +429,10 @@ impl<'a> AcquisitionModel<'a> {
     // Keep publication scratch out of the async acquisition poll frame, which
     // is also resident while the much larger Vehicle constructor runs.
     #[inline(never)]
-    pub fn snapshot(&self) -> DashboardSnapshot {
+    fn snapshot(
+        &self,
+        config: Option<&ValidatedConfig>,
+    ) -> DashboardSnapshot {
         DashboardSnapshot {
             sensors: core::array::from_fn(|i| {
                 self.sensors[i].tracked_snapshot(self.origin, SensorId::ALL[i].channel())
@@ -493,12 +450,13 @@ impl<'a> AcquisitionModel<'a> {
                 _ => RuleAlerts::DISABLED,
             },
             freshness: self.freshness,
-            cache_exhaustion: self.cache_exhaustion_status(),
+            cache_exhaustion: self.cache_exhaustion_status(config),
         }
     }
 
     fn update_alarms(
         &mut self,
+        config: Option<&ValidatedConfig>,
         now_ms: u64,
     ) {
         if !self.alarms.enabled() {
@@ -515,6 +473,7 @@ impl<'a> AcquisitionModel<'a> {
             )
         });
         self.alarms.update_inputs(
+            config,
             &Inputs {
                 metadata: &self.metadata,
                 values,
@@ -524,6 +483,225 @@ impl<'a> AcquisitionModel<'a> {
             now_ms,
         );
     }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for &dashboard_config::ValidatedConfig {}
+    #[cfg(feature = "alloc")]
+    impl Sealed for alloc::boxed::Box<dashboard_config::ValidatedConfig> {}
+}
+
+/// An immutable configuration binding; only borrowed and boxed validated documents qualify.
+pub trait ConfigurationHandle: sealed::Sealed {
+    fn configuration(&self) -> &ValidatedConfig;
+}
+impl ConfigurationHandle for &ValidatedConfig {
+    fn configuration(&self) -> &ValidatedConfig { self }
+}
+#[cfg(feature = "alloc")]
+impl ConfigurationHandle for alloc::boxed::Box<ValidatedConfig> {
+    fn configuration(&self) -> &ValidatedConfig { self }
+}
+
+/// Measurement state and its immutable configuration have one indivisible lifetime.
+///
+/// Storage cannot be named or constructed by applications.
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionState;
+/// ```
+/// ```compile_fail
+/// use dashboard_core::alarms::RuleEngineState;
+/// ```
+/// The config getter provides only an immutable borrow.
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionModel;
+/// let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+/// let mut owner = AcquisitionModel::demo_configured(&config);
+/// let _: &mut dashboard_config::ValidatedConfig = owner.configuration().unwrap();
+/// ```
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionModel;
+/// let mut owner = AcquisitionModel::demo();
+/// let _ = &mut owner.state;
+/// ```
+/// Neither the configuration handle nor state can be replaced independently.
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionModel;
+/// let mut owner = AcquisitionModel::demo();
+/// owner.configuration = None;
+/// ```
+/// External handles cannot switch configurations behind the owner.
+/// ```compile_fail
+/// use dashboard_core::acquisition::ConfigurationHandle;
+/// struct Switching(dashboard_config::ValidatedConfig);
+/// impl ConfigurationHandle for Switching {
+///     fn configuration(&self) -> &dashboard_config::ValidatedConfig { &self.0 }
+/// }
+/// ```
+/// No operation accepts a replacement configuration.
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionModel;
+/// let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+/// let mut owner = AcquisitionModel::demo();
+/// owner.ingest_batch(&config, [0.; 8], 0);
+/// ```
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionModel;
+/// let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+/// let mut owner = AcquisitionModel::demo();
+/// owner.tick(&config, 0);
+/// ```
+pub struct AcquisitionOwner<C: ConfigurationHandle> {
+    configuration: Option<C>,
+    state: AcquisitionState,
+}
+pub type AcquisitionModel<'cfg> = AcquisitionOwner<&'cfg ValidatedConfig>;
+#[cfg(feature = "alloc")]
+pub type OwnedAcquisitionModel = AcquisitionOwner<alloc::boxed::Box<ValidatedConfig>>;
+
+impl Default for AcquisitionModel<'_> {
+    fn default() -> Self { Self::new() }
+}
+impl<'cfg> AcquisitionModel<'cfg> {
+    pub fn new() -> Self { Self::legacy(DataMode::Vehicle, [None; 8]) }
+
+    pub fn demo() -> Self { Self::legacy(DataMode::Demo, demo_rules()) }
+
+    fn legacy(
+        mode: DataMode,
+        rules: [Option<crate::alarms::Rule>; 8],
+    ) -> Self {
+        Self {
+            configuration: None,
+            state: AcquisitionState::with_policy(
+                mode,
+                [None; SENSOR_COUNT],
+                DEFAULT_FRESHNESS,
+                Alarms::Legacy(AlarmEngine::new(rules).expect("valid legacy rules")),
+            ),
+        }
+    }
+
+    pub fn configured(
+        config: &'cfg ValidatedConfig,
+        ecu: u16,
+    ) -> Self {
+        let sources = SensorId::ALL.map(|id| {
+            ecu.checked_sub(8).and_then(|request| {
+                match resolve_source(config, id.channel(), request, ecu) {
+                    SourceResolution::Obd { pid, .. } => Some(Source::Obd { ecu, pid }),
+                    _ => None,
+                }
+            })
+        });
+        Self::with_configuration(config, DataMode::Vehicle, sources)
+    }
+}
+impl<C: ConfigurationHandle> AcquisitionOwner<C> {
+    fn with_configuration(
+        configuration: C,
+        mode: DataMode,
+        sources: [Option<Source>; SENSOR_COUNT],
+    ) -> Self {
+        let config = configuration.configuration();
+        let state = AcquisitionState::with_policy(
+            mode,
+            sources,
+            config.config().sources.map(|source| source.freshness_ms),
+            Alarms::Configured(RuleEngineState::new(config, mode, sources)),
+        );
+        Self {
+            configuration: Some(configuration),
+            state,
+        }
+    }
+
+    pub fn demo_configured(config: C) -> Self {
+        Self::with_configuration(config, DataMode::Demo, [Some(Source::Demo); SENSOR_COUNT])
+    }
+
+    pub fn configuration(&self) -> Option<&ValidatedConfig> {
+        self.configuration.as_ref().map(ConfigurationHandle::configuration)
+    }
+
+    pub fn ingest_sample(
+        &mut self,
+        sample: Sample,
+        now_ms: u64,
+    ) -> Result<(), SampleError> {
+        self.state.ingest_sample(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            sample,
+            now_ms,
+        )
+    }
+
+    /// Context must come from verified operating signals, with matching source and time.
+    pub fn ingest_contextual(
+        &mut self,
+        sample: Sample,
+        context: Option<Context>,
+        now_ms: u64,
+    ) -> Result<(), SampleError> {
+        self.state.ingest_contextual(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            sample,
+            context,
+            now_ms,
+        )
+    }
+
+    pub fn ingest_batch(
+        &mut self,
+        values: [f32; SENSOR_COUNT],
+        captured_ms: u64,
+    ) -> bool {
+        self.state.ingest_batch(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            values,
+            captured_ms,
+        )
+    }
+
+    pub fn mark_fault(
+        &mut self,
+        sensor: SensorId,
+        quality: Quality,
+        at_ms: u64,
+    ) -> bool {
+        self.state.mark_fault(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            sensor,
+            quality,
+            at_ms,
+        )
+    }
+
+    /// Advance freshness and invalidate expired dwell without inventing measurements.
+    pub fn tick(
+        &mut self,
+        now_ms: u64,
+    ) {
+        self.state.update_alarms(
+            self.configuration.as_ref().map(ConfigurationHandle::configuration),
+            now_ms,
+        );
+    }
+
+    pub fn reset_statistics(
+        &mut self,
+        generation: u64,
+    ) -> bool {
+        self.state.reset_statistics(generation)
+    }
+
+    pub fn cache_exhaustion_status(&self) -> CacheExhaustionStatus {
+        self.state.cache_exhaustion_status(self.configuration())
+    }
+
+    #[inline(never)]
+    pub fn snapshot(&self) -> DashboardSnapshot { self.state.snapshot(self.configuration()) }
 }
 
 const PEAK_MODES: [PeakMode; SENSOR_COUNT] = [
@@ -550,14 +728,57 @@ mod cache_tests {
     use crate::render::FpsMode;
     use crate::vehicle_status::VehicleStatus;
 
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn exhausted_origins_preserve_owned_and_borrowed_policy_binding() {
+        use dashboard_config::{default_config, validate};
+        let mut raw = default_config();
+        raw.widgets[0].warning.enabled = true;
+        raw.widgets[0].warning.trigger = 1.5;
+        raw.widgets[0].warning.clear = 1.0;
+        raw.widgets[0].warning.on_ms = 500;
+        let original = validate(raw.clone()).unwrap();
+        let mut borrowed = AcquisitionModel::demo_configured(&original);
+        let mut owned = OwnedAcquisitionModel::demo_configured(Box::new(original.clone()));
+        raw.widgets[0].warning.trigger = 3.0;
+        raw.widgets[0].warning.clear = 2.5;
+        let mut replacement = OwnedAcquisitionModel::demo_configured(Box::new(validate(raw).unwrap()));
+        let exhausted = OriginIssuer::new(u32::MAX);
+        borrowed.state.origin = exhausted.issue().ok();
+        owned.state.origin = exhausted.issue().ok();
+        replacement.state.origin = exhausted.issue().ok();
+        let rule = RuleIndex::new(0).unwrap();
+        for (at, expected) in [(0, Status::Pending), (250, Status::Pending), (500, Status::Active)] {
+            let values = [2.0, 90.0, 95.0, 80.0, 30.0, 700.0, 13.8, 1.0];
+            borrowed.ingest_batch(values, at);
+            owned.ingest_batch(values, at);
+            replacement.ingest_batch(values, at);
+            assert_eq!(owned.snapshot(), borrowed.snapshot());
+            assert_eq!(owned.snapshot().rule_status_at(rule, at), expected);
+            assert_eq!(replacement.snapshot().rule_status_at(rule, at), Status::Normal);
+            assert!(
+                owned
+                    .snapshot()
+                    .sensors
+                    .iter()
+                    .all(|s| s.graph_cache_identity().is_none())
+            );
+        }
+        assert_eq!(
+            owned.cache_exhaustion_status(),
+            CacheExhaustionStatus::from_cause(CacheExhaustionCause::AcquisitionIssuer)
+        );
+        assert_eq!(exhausted.issue(), Err(()));
+    }
+
     #[test]
     fn actual_origin_failure_is_sticky_and_last_success_has_no_diagnostic() {
         let issuer = OriginIssuer::new(u32::MAX - 1);
         let mut model = AcquisitionModel::demo();
-        model.origin = issuer.issue().ok();
-        assert!(model.origin.is_some());
+        model.state.origin = issuer.issue().ok();
+        assert!(model.state.origin.is_some());
         assert_eq!(model.snapshot().cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);
-        model.origin = issuer.issue().ok();
+        model.state.origin = issuer.issue().ok();
         assert_eq!(issuer.issue(), Err(()));
         let exhausted = CacheExhaustionStatus::from_cause(CacheExhaustionCause::AcquisitionIssuer);
         assert_eq!(model.snapshot().cache_exhaustion_status(), exhausted);
@@ -574,12 +795,12 @@ mod cache_tests {
     fn exhausted_revision_publishes_without_sample_and_never_freezes_either_buffer() {
         let mut model = AcquisitionModel::demo();
         model.ingest_batch([1.0, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
-        model.sensors[1].force_revision_for_test(u32::MAX - 1);
-        model.sensors[1].reset_graph();
+        model.state.sensors[1].force_revision_for_test(u32::MAX - 1);
+        model.state.sensors[1].reset_graph();
         let before = model.snapshot();
         assert!(before.sensors[1].graph_cache_identity().is_some());
         assert_eq!(before.cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);
-        model.sensors[1].reset_graph();
+        model.state.sensors[1].reset_graph();
         let failed = model.snapshot();
         assert_eq!(failed.sequence, before.sequence);
         assert_eq!(failed.reset_generation, before.reset_generation);
@@ -624,8 +845,8 @@ mod cache_tests {
             model.snapshot().cache_exhaustion_status(),
             failed.cache_exhaustion_status()
         );
-        model.sensors[5].force_revision_for_test(u32::MAX);
-        model.sensors[5].reset_graph();
+        model.state.sensors[5].force_revision_for_test(u32::MAX);
+        model.state.sensors[5].reset_graph();
         assert_eq!(
             seen.observe(model.snapshot().cache_exhaustion_status()).causes().next(),
             Some(CacheExhaustionCause::GraphRevision(dashboard_config::Channel::Egt))

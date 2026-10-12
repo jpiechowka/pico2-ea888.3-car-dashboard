@@ -7,6 +7,8 @@ description = "Portable dashboard rendering, acquisition and ownership contracts
 [features]
 default = ["simple-outline"]
 simple-outline = []
+# Browser-owned immutable configuration. Firmware leaves this disabled.
+alloc = []
 
 [dependencies]
 dashboard-config = { path = "../dashboard-config" }

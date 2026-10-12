@@ -54,22 +54,20 @@ impl RuleAlerts {
     }
 }
 
-pub struct RuleEngine<'a> {
-    config: &'a ValidatedConfig,
+pub(crate) struct RuleEngineState {
     states: [State; MAX_WIDGETS],
     alerts: RuleAlerts,
     sources: [Option<Source>; 8],
     enabled: u64,
     last_ms: u64,
 }
-impl<'a> RuleEngine<'a> {
-    pub fn new(
-        config: &'a ValidatedConfig,
+impl RuleEngineState {
+    pub(crate) fn new(
+        config: &ValidatedConfig,
         mode: DataMode,
         sources: [Option<Source>; 8],
     ) -> Self {
         let mut result = Self {
-            config,
             states: [State::default(); MAX_WIDGETS],
             alerts: RuleAlerts::DISABLED,
             sources,
@@ -88,15 +86,16 @@ impl<'a> RuleEngine<'a> {
         result
     }
 
-    pub const fn snapshot(&self) -> RuleAlerts { self.alerts }
+    pub(crate) const fn snapshot(&self) -> RuleAlerts { self.alerts }
 
     pub(crate) const fn enabled(&self) -> bool { self.enabled != 0 }
 
     fn rule(
         &self,
+        config: &ValidatedConfig,
         i: usize,
     ) -> Option<Rule> {
-        let widget = &self.config.config().widgets[i];
+        let widget = &config.config().widgets[i];
         let source = self.sources[widget.channel.index()]?;
         let warning = &widget.warning;
         let limit = match warning.mode {
@@ -134,6 +133,7 @@ impl<'a> RuleEngine<'a> {
 
     pub(crate) fn update_inputs(
         &mut self,
+        config: &ValidatedConfig,
         samples: &Inputs<'_>,
         contexts: &[Option<Context>; 8],
         now: u64,
@@ -147,7 +147,7 @@ impl<'a> RuleEngine<'a> {
         while enabled != 0 {
             let i = enabled.trailing_zeros() as usize;
             enabled &= enabled - 1;
-            let Some(rule) = self.rule(i) else {
+            let Some(rule) = self.rule(config, i) else {
                 continue;
             };
             let state = &mut self.states[i];
@@ -166,6 +166,28 @@ impl<'a> RuleEngine<'a> {
             };
         }
     }
+}
+
+/// Borrowed policy facade. Its configuration cannot be replaced independently of state.
+pub struct RuleEngine<'a> {
+    config: &'a ValidatedConfig,
+    state: RuleEngineState,
+}
+impl<'a> RuleEngine<'a> {
+    pub fn new(
+        config: &'a ValidatedConfig,
+        mode: DataMode,
+        sources: [Option<Source>; 8],
+    ) -> Self {
+        Self {
+            config,
+            state: RuleEngineState::new(config, mode, sources),
+        }
+    }
+
+    pub const fn snapshot(&self) -> RuleAlerts { self.state.snapshot() }
+
+    pub const fn configuration(&self) -> &ValidatedConfig { self.config }
 }
 
 const _: () = assert!(core::mem::size_of::<RuleEngine<'_>>() <= 4096);

@@ -4,6 +4,7 @@ use crate::acquisition::DashboardSnapshot;
 use crate::samples::{DataMode, SampleMeta, SensorId, Source};
 
 mod configured;
+pub(crate) use configured::RuleEngineState;
 pub use configured::{RuleAlerts, RuleEngine, RuleIndex};
 
 /// Compact, already source/quality/time-checked view; no history copy for policy evaluation.

@@ -5,6 +5,9 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod acquisition;
 pub mod alarms;
 pub mod backlight;

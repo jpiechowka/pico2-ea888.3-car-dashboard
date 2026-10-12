@@ -122,7 +122,7 @@ impl<'a> Session<'a> {
         Self::new_inner(ecu, epoch, Some(config))
     }
 
-    pub fn configuration(&self) -> Option<&'a ValidatedConfig> { self.model.configuration() }
+    pub fn configuration(&self) -> Option<&ValidatedConfig> { self.model.configuration() }
 
     fn new_inner(
         ecu: u16,

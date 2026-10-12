@@ -52,6 +52,19 @@ class StackBudget(unittest.TestCase):
         return ({n: (int(a, 16) | 1, 4, 0) for a, _, n in rows},
                 {int(a, 16): int(size) for a, size, _ in rows})
 
+    def test_runtime_generic_snapshot_is_not_a_boot_config_child(self):
+        functions, sizes = self.slot_fixture()
+        # Exact new runtime symbol, whose generic config pointee appears in its name.
+        owner = '_RNvMs6_NtCsd7SjC8HJ0mV_14dashboard_core11acquisitionINtB5_16AcquisitionOwnerRNtNtCsfF7AG8So2wt_16dashboard_config8validate15ValidatedConfigE8snapshotB7_'
+        functions[owner] = (1, 4, 0)
+        sizes[0] = 8
+        self.assertEqual(configuration_frames(functions, sizes), 1292)
+        # The exemption is one runtime method, not the owner type or config module.
+        functions[owner.replace('E8snapshot', 'E6new_op')] = (9, 4, 0)
+        sizes[8] = 8
+        with self.assertRaisesRegex(AssertionError, 'unreviewed config stack helpers'):
+            configuration_frames(functions, sizes)
+
     def test_slot_capture_counts_nested_children_and_sibling_maximum(self):
         functions, sizes = self.slot_fixture()
         # 768 loader + 296 Widget + 144 warning + 48 text + 36 UTF-8.
@@ -224,6 +237,61 @@ class PublicationFrames(unittest.TestCase):
             del without[name]
             with self.assertRaisesRegex(AssertionError, 'missing or ambiguous publication boundary'):
                 publication_frames(without, sizes)
+
+
+class OwnerPublicationFrames(unittest.TestCase):
+    def fixture(self):
+        functions = {
+            'pico2_tasks_acquisition_publish_snapshot': (0x101, 4, 0),
+            'dashboard_core_AcquisitionOwner_8snapshot': (0x201, 4, 0),
+            'dashboard_core_AcquisitionState_8snapshot': (0x301, 4, 0),
+            'dashboard_core_SensorState_22snapshot_with_identity': (0x401, 4, 0),
+            'dashboard_core_Session_8snapshot': (0x501, 4, 0),
+        }
+        return functions, {0x100: 100, 0x200: 8, 0x300: 4000, 0x400: 168, 0x500: 16}
+
+    def test_owner_and_storage_nested_frames_include_forwarders_once(self):
+        from check_stack_budget import publication_frames
+        functions, sizes = self.fixture()
+        functions['dashboard_core_Vehicle_8snapshot'] = functions['dashboard_core_Session_8snapshot']
+        self.assertEqual(publication_frames(functions, sizes), 4292)
+
+    def test_owner_storage_boundaries_and_every_frame_fail_closed(self):
+        from check_stack_budget import publication_frames
+        functions, sizes = self.fixture()
+        for name in list(functions)[:3]:
+            without = dict(functions)
+            del without[name]
+            with self.subTest(missing=name), self.assertRaisesRegex(AssertionError, 'publication boundary'):
+                publication_frames(without, sizes)
+            duplicate = dict(functions)
+            duplicate[name + '_other_instance'] = (0x601, 4, 0)
+            with self.subTest(ambiguous=name), self.assertRaisesRegex(AssertionError, 'publication boundary'):
+                publication_frames(duplicate, sizes)
+        for address in sizes:
+            without = dict(sizes)
+            del without[address]
+            with self.subTest(metadata=address), self.assertRaisesRegex(AssertionError, 'publication frame metadata'):
+                publication_frames(functions, without)
+
+    def test_emitted_owner_storage_policy_constructors_all_require_metadata(self):
+        from check_stack_budget import constructor_frames
+        functions = {
+            'pico2_configured_vehicle': (0x101, 4, 0),
+            'dashboard_core_AcquisitionOwner_with_configuration': (0x201, 4, 0),
+            'dashboard_core_AcquisitionState_with_policy': (0x301, 4, 0),
+            'dashboard_core_RuleEngineState_3new': (0x401, 4, 0),
+            'dashboard_core_Session_new_inner': (0x501, 4, 0),
+        }
+        sizes = {0x100: 100, 0x200: 80, 0x300: 200, 0x400: 40, 0x500: 10}
+        self.assertEqual(constructor_frames(functions, sizes), 430)
+        functions['dashboard_core_Vehicle_configured'] = functions['dashboard_core_Session_new_inner']
+        self.assertEqual(constructor_frames(functions, sizes), 430)
+        for address in sizes:
+            without = dict(sizes)
+            del without[address]
+            with self.subTest(metadata=address), self.assertRaisesRegex(AssertionError, 'constructor frame metadata'):
+                constructor_frames(functions, without)
 
 
 if __name__ == '__main__':

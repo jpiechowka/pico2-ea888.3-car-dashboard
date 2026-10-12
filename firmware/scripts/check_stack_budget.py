@@ -148,6 +148,12 @@ def configuration_frames(functions, sizes):
     covered.update(n for n in functions if 'dashboard_config' in n
                    and '3cmp9PartialEq2eq' in n
                    and any(t in n for t in ('14DisplayOptionsNt', '15WarningSettingsNt', '12WidgetColorsNt')))
+    # This one runtime snapshot contains dashboard_config in its generic pointee.
+    # It is a required/countable publication boundary below, not a boot child.
+    # Do not exempt other owner methods or unknown config helpers.
+    covered.update(n for n in functions if all(token in n for token in (
+        '14dashboard_core11acquisitionI', '16AcquisitionOwnerR',
+        '16dashboard_config8validate15ValidatedConfigE8snapshot')))
     relevant = [n for n in functions if 'dashboard_config' in n]
     require(all(n in covered for n in relevant),
             'unreviewed config stack helpers: ' + str([n for n in relevant if n not in covered]))
@@ -155,18 +161,36 @@ def configuration_frames(functions, sizes):
 
 
 def publication_frames(functions, sizes):
-    # Nested runtime path: firmware publication -> model snapshot -> sensor
-    # snapshot. Count any emitted Session/Vehicle forwarding wrappers as well.
-    # The publication frame is not live while constructing the Vehicle owner.
-    for tokens in [('pico2', 'publish_snapshot'), ('AcquisitionModel', '8snapshot')]:
+    # Nested path: firmware publication -> immutable owner -> private storage
+    # -> sensor snapshot. Retain legacy capture support for baseline comparison.
+    split = any('AcquisitionOwner' in n or 'AcquisitionState' in n for n in functions)
+    boundaries = [('pico2', 'publish_snapshot')]
+    boundaries += ([('AcquisitionOwner', '8snapshot'), ('AcquisitionState', '8snapshot')]
+                   if split else [('AcquisitionModel', '8snapshot')])
+    for tokens in boundaries:
         boundary = {address & ~1 for name, (address, _, _) in functions.items()
                     if all(token in name for token in tokens)}
         require(len(boundary) == 1, 'missing or ambiguous publication boundary: ' + str(tokens))
     matches = {address & ~1 for name, (address, _, _) in functions.items()
                if ('pico2' in name and 'publish_snapshot' in name)
-               or (any(token in name for token in ('AcquisitionModel', 'Session', 'Vehicle', 'SensorState'))
+               or (any(token in name for token in ('AcquisitionModel', 'AcquisitionOwner',
+                                                   'AcquisitionState', 'Session', 'Vehicle', 'SensorState'))
                    and any(token in name for token in ('8snapshot', 'tracked_snapshot', 'snapshot_with_identity')))}
     require(all(address in sizes for address in matches), 'missing publication frame metadata')
+    return sum(sizes[address] for address in matches)
+
+
+def constructor_frames(functions, sizes):
+    # Constructors may inline. Every emitted owner/storage/policy frame must be
+    # counted, including the extra owner boundary; aliases count once by address.
+    matches = {address & ~1 for name, (address, _, _) in functions.items()
+               if 'configured_vehicle' in name
+               or (any(token in name for token in ('AcquisitionModel', 'AcquisitionOwner',
+                                                   'AcquisitionState', 'Session', 'Vehicle',
+                                                   'RuleEngine', 'RuleEngineState'))
+                   and any(token in name for token in ('new_inner', 'with_policy',
+                                                       'with_configuration', 'configured', 'legacy', '3new')))}
+    require(all(address in sizes for address in matches), 'missing constructor frame metadata')
     return sum(sizes[address] for address in matches)
 
 
@@ -198,12 +222,7 @@ def check(elf, headroom):
     acquisition = task('acquisition_task_task')
     initializer = selected(lambda n: 'view_config' in n and 'initialize' in n, True)
     configuration = configuration_frames(elf.functions, sizes)
-    constructor = selected(lambda n: 'configured_vehicle' in n)
-    # Usually inlined. Count separately if compiler changes introduce frames.
-    constructor += selected(lambda n: (
-        any(t in n for t in ('AcquisitionModel', 'Session', 'Vehicle', 'RuleEngine'))
-        and any(t in n for t in ('new_inner', 'with_policy', 'configured', '3new'))
-    ))
+    constructor = constructor_frames(elf.functions, sizes)
     snapshots = publication_frames(elf.functions, sizes)
     # 1024 includes resident executor/entry frames, ordinary constructors'
     # memcpy/memclr, boot validation/contrast and snapshot memory helpers.

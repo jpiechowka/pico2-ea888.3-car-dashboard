@@ -167,3 +167,33 @@ fn every_rule_uses_its_channel_for_context_metadata_expiry_and_faults() {
         );
     }
 }
+
+#[test]
+fn time_only_ticks_invalidate_expired_dwell_without_sampling_or_rebinding() {
+    let config = maximum();
+    let mut model = AcquisitionModel::demo_configured(&config);
+    sample(&mut model, 2., 0);
+    sample(&mut model, 2., 250);
+    let pending = model.snapshot();
+    model.tick(500);
+    assert_eq!(model.snapshot().rule_status_at(index(63), 500), Status::Pending);
+    assert_eq!(model.snapshot().sequence, pending.sequence);
+    assert_eq!(model.snapshot().sensors, pending.sensors);
+    model.tick(1_000_000);
+    assert_eq!(
+        model.snapshot().rule_status_at(index(63), 1_000_000),
+        Status::Unavailable
+    );
+    // The rule clock remembers the time-only gap even if a later caller offers
+    // a reading captured after the last sample but before the last tick.
+    sample(&mut model, 2., 500);
+    assert_eq!(model.snapshot().rule_status_at(index(63), 500), Status::Unavailable);
+    for (at, status) in [
+        (1_000_001, Status::Pending),
+        (1_000_251, Status::Pending),
+        (1_000_501, Status::Active),
+    ] {
+        sample(&mut model, 2., at);
+        assert_eq!(model.snapshot().rule_status_at(index(63), at), status);
+    }
+}
