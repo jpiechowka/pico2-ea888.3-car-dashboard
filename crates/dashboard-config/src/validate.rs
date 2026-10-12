@@ -18,6 +18,7 @@ pub enum ErrorCode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
+    Controls(ControlError),
     Version,
     CatalogueVersion,
     Views,
@@ -136,6 +137,14 @@ pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
     if config.catalogue_version != CATALOGUE_VERSION {
         return Err(error(ErrorCode::Version, Field::CatalogueVersion));
     }
+    validate_controls(&config.controls).map_err(|cause| {
+        let code = match cause {
+            ControlError::HoldDuration => ErrorCode::Bounds,
+            ControlError::UnreachableScreen { .. } | ControlError::MissingViewNavigation => ErrorCode::Reference,
+            _ => ErrorCode::Incompatible,
+        };
+        error(code, Field::Controls(cause))
+    })?;
     if config.views.is_empty() {
         return Err(error(ErrorCode::Empty, Field::Views));
     }

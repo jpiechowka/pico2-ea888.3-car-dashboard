@@ -1,7 +1,7 @@
 use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 pub const CATALOGUE_VERSION: u16 = 1;
 pub const MAX_VIEWS: usize = 8;
 pub const MAX_WIDGETS: usize = 64;
@@ -20,6 +20,7 @@ pub struct Config {
     pub warnings: WarningPresentation,
     pub fuel: Fuel,
     pub warning_colors: crate::WarningColors,
+    pub controls: crate::ControlMap,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

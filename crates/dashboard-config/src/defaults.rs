@@ -113,5 +113,6 @@ pub fn default_config() -> Config {
         },
         fuel: Fuel::EquivalentGasoline,
         warning_colors: WarningColors::default(),
+        controls: ControlMap::default(),
     }
 }

@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "catalogue_version": 1,
   "boot_view": 1,
   "views": [
@@ -586,5 +586,76 @@
   "warning_colors": {
     "foreground": "#FFFFFF",
     "background": "#FF0000"
+  },
+  "controls": {
+    "hold_ms": 800,
+    "screens": [
+      {
+        "buttons": [
+          {
+            "tap": "ToggleBoostUnits",
+            "hold": "PreviousView"
+          },
+          {
+            "tap": "ResetStatistics",
+            "hold": "NextView"
+          },
+          {
+            "tap": "CycleFps",
+            "hold": "CycleBrightness"
+          },
+          {
+            "tap": "NextScreen",
+            "hold": "None"
+          }
+        ],
+        "encoder_rotation": "Views",
+        "encoder_click": "CycleBrightness"
+      },
+      {
+        "buttons": [
+          {
+            "tap": "None",
+            "hold": "BrightnessDown"
+          },
+          {
+            "tap": "None",
+            "hold": "BrightnessUp"
+          },
+          {
+            "tap": "None",
+            "hold": "ToggleBacklight"
+          },
+          {
+            "tap": "NextScreen",
+            "hold": "None"
+          }
+        ],
+        "encoder_rotation": "Brightness",
+        "encoder_click": "ToggleBacklight"
+      },
+      {
+        "buttons": [
+          {
+            "tap": "None",
+            "hold": "ScrollOlder"
+          },
+          {
+            "tap": "None",
+            "hold": "ScrollNewer"
+          },
+          {
+            "tap": "None",
+            "hold": "LogsLive"
+          },
+          {
+            "tap": "NextScreen",
+            "hold": "None"
+          }
+        ],
+        "encoder_rotation": "Logs",
+        "encoder_click": "None"
+      }
+    ]
   }
 }

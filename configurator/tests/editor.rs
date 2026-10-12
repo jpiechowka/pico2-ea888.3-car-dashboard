@@ -704,8 +704,8 @@ fn malformed_oversize_duplicate_unknown_and_trailing_imports_are_atomic() {
     let mut editor = empty();
     let good = Editor::default().export_json().unwrap();
     let bad_inputs = [
-        good.replacen("\"version\": 2", "\"version\": 2, \"version\": 2", 1),
-        good.replacen("\"version\": 2", "\"version\": 2, \"unknown\": 1", 1),
+        good.replacen("\"version\": 3", "\"version\": 3, \"version\": 3", 1),
+        good.replacen("\"version\": 3", "\"version\": 3, \"unknown\": 1", 1),
         format!("{good} null"),
         good.replacen("14.7", "null", 1)
             .replacen("\"trigger\": 2.5", "\"trigger\": null", 1),
@@ -1566,4 +1566,22 @@ fn light_background_can_be_repaired_across_all_roles_without_discarding_edits() 
         widget.gauge.kind = kind;
         editor.apply(Edit::UpdateWidget(widget)).unwrap();
     }
+}
+
+#[test]
+fn saved_v2_migrates_controls_and_preserves_gauge_colours_and_selection() {
+    let mut config: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../crates/dashboard-config/tests/fixtures/v2-default.json"
+    ))
+    .unwrap();
+    config["widgets"][0]["gauge"]["max"] = 4.0.into();
+    let saved = serde_json::json!({"editor_version":1,"selected_view":1,"selected_widget":1,"config":config});
+    let editor = Editor::from_saved_state(&serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert_eq!(editor.preview().config().version, VERSION);
+    assert_eq!(editor.preview().config().controls, ControlMap::default());
+    assert_eq!(editor.selection().widget, Some(1));
+    assert_eq!(editor.preview().config().widgets[0].gauge.max, 4.0);
+    assert_eq!(editor.preview().config().widgets[0].colors, WidgetColors::default());
+    let exported = editor.export_binary().unwrap();
+    assert_eq!(decode(&exported).unwrap().config(), editor.preview().config());
 }

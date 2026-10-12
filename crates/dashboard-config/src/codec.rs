@@ -38,7 +38,7 @@ pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
         return Err(ConfigError::Header);
     }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != VERSION && !(cfg!(feature = "json") && version == 1) {
+    if version != VERSION && !(cfg!(feature = "json") && matches!(version, 1 | 2)) {
         return Err(ConfigError::Version);
     }
     let len = usize::from(u16::from_le_bytes([bytes[6], bytes[7]]));
@@ -50,7 +50,22 @@ pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
         return Err(ConfigError::Checksum);
     }
     #[cfg(feature = "json")]
-    if version == 1 {
+    if matches!(version, 1 | 2) {
+        if version == 2 {
+            let (config, rest) = postcard::take_from_bytes::<crate::legacy::LegacyConfigV2>(&bytes[HEADER_BYTES..])
+                .map_err(|_| ConfigError::Payload)?;
+            if !rest.is_empty() {
+                return Err(ConfigError::Payload);
+            }
+            postcard::serialize_with_flavor(
+                &config,
+                Compare {
+                    remaining: &bytes[HEADER_BYTES..],
+                },
+            )
+            .map_err(|_| ConfigError::Payload)?;
+            return config.upgrade();
+        }
         let (config, rest) = postcard::take_from_bytes::<crate::legacy::LegacyConfig>(&bytes[HEADER_BYTES..])
             .map_err(|_| ConfigError::Payload)?;
         if !rest.is_empty() {
@@ -160,6 +175,14 @@ pub fn from_json_bytes(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
         return serde_json::from_slice::<crate::legacy::LegacyConfig>(bytes)
             .map_err(json_error)?
             .upgrade();
+    }
+    if version.version == 2 {
+        return serde_json::from_slice::<crate::legacy::LegacyConfigV2>(bytes)
+            .map_err(json_error)?
+            .upgrade();
+    }
+    if version.version != VERSION {
+        return Err(ConfigError::Version);
     }
     let config: Config = serde_json::from_slice(bytes).map_err(json_error)?;
     validate(config).map_err(ConfigError::Validation)

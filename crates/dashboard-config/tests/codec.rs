@@ -34,12 +34,12 @@ fn minimal() -> Config {
 }
 
 #[test]
-fn crc_known_answers_and_independently_built_golden_v2() {
+fn crc_known_answers_and_independently_built_golden_v3() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
     assert_eq!(crc32(b""), 0);
     // Constructed from schema field order with a standalone Python uvarint
     // encoder, struct.pack('<HH') and zlib.crc32, not the production serializer.
-    let hex = "4541563102005300ced7c9730201010101014100000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003";
+    let hex = "454156310300730013ff845f0301010101014100000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f0010001101000300";
     let golden: Vec<u8> = hex
         .as_bytes()
         .as_chunks::<2>()
@@ -47,7 +47,7 @@ fn crc_known_answers_and_independently_built_golden_v2() {
         .iter()
         .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect();
-    assert_eq!(golden.len(), 95);
+    assert_eq!(golden.len(), 127);
     let expected = validate(minimal()).unwrap();
     assert_eq!(decode(&golden).unwrap(), expected);
     let mut out = [0; MAX_FILE_BYTES];
