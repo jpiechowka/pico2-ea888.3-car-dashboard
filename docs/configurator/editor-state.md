@@ -5,12 +5,19 @@ browser interaction. Every structural edit first builds and validates a
 candidate. Failed collision, capacity, text, route, numeric or selection checks
 leave the accepted document and its history unchanged.
 
-The document, selected view/widget, raw invalid inputs, last valid preview,
+The document, selected view/widget, raw invalid inputs, rejected typed candidate,
+validated rendering state,
 32-entry undo/redo history and saved revision are distinct. Invalid partial
 numeric text remains editable; it blocks export, saving and selection changes
 until corrected or explicitly discarded. Related raw fields commit together
 when the complete candidate becomes valid. JSON, device binary and saved-draft
 round trips use the same bounded configuration codec as firmware.
+
+Rejected typed changes now retire callbacks and block exports/saves too, while
+leaving the accepted document/history intact. The browser automatically renders
+an explicitly marked diagnostic draft. Raw fields can be corrected together;
+typed rejections require explicit discard. See [preview hardening](preview-hardening.md)
+for the inspection-only rendering and safe fallback contract.
 
 Pointer, field, import and save operations carry private owner/revision/request
 tokens. Old callbacks cannot change a newer selection, undo result, imported

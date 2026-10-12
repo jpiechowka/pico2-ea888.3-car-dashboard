@@ -35,12 +35,15 @@ Web Locks and permitted local storage; file export remains usable without them.
    characters. Reorder view tabs using the arrows; that is the Pico encoder order.
    Choose the view displayed after reboot with **Set as boot**.
 2. Drag a sensor from the library onto a free cell, or use its **+** button.
-   Drag existing widgets to move them. Esc cancels, and invalid drops preserve
-   the layout. Keyboard users can select a widget and use arrows to move it or
+   Drag existing widgets to move them. Esc cancels. Invalid drops preserve the
+   accepted layout and show the rejected placement as an invalid diagnostic
+   draft; discard it before moving again. Keyboard users can select a widget and use arrows to move it or
    Delete to remove it. Size, column and row fields provide another alternative.
 3. Select a widget to rename it, choose 1×1, 2×1 or 2×2, change precision, graph
    limits, statistics, trend and optional lambda AFR. The inspector shows text
-   limits. A wide label must be shortened before shrinking the widget.
+   limits. Wider and taller tiles automatically enlarge the primary value,
+   shrinking the whole string (sign, digits and unit) when space is needed.
+   A wide label must be shortened before shrinking the widget.
 4. Configure each instance's warning independently: enablement, high/low limits
    or lambda deviation, clear threshold, lambda load guard, activation/clear dwell,
    message and applicability. Changing high/low swaps the two endpoints to
@@ -60,8 +63,19 @@ Web Locks and permitted local storage; file export remains usable without them.
 The grid has four columns and two rows. Up to eight named views and 64 total
 widgets are supported. Overlaps, unsupported glyphs, inconsistent limits,
 nonfinite numbers and incompatible source fields are rejected. Invalid text
-remains visible for correction and blocks saving/export; the canvas explicitly
-identifies the last valid preview. Undo/redo restores accepted edits.
+remains visible for correction and blocks saving/export. The canvas automatically
+shows **INVALID PREVIEW**, a red border and affected-widget badges. Rejected
+labels and overlapping in-bounds placements are drawn for inspection; the exact
+attempted inputs and errors appear below it. Correct raw text or use **Discard
+invalid edits**. Rejected size/source/choice changes require discard first.
+Undo/redo restores accepted edits after the invalid draft is resolved.
+
+Diagnostics are deliberately approximate: numeric/style errors use bounded
+fallbacks, source/fuel calculations use the accepted document, and warnings are
+suspended. Unsupported glyphs become `?`; bounded label prefixes are clipped.
+Off-screen placements are described instead of rendered. The invalid watermark
+is embedded in the canvas pixels, and badges are browser overlays. No invalid
+draft is saved, exported or passed to the firmware configuration parser.
 
 ## Preview and save
 
@@ -72,6 +86,12 @@ same canonical boost conversion as the Pico. **Warnings** demonstrates their
 appearance with illustrative values and compressed activation dwell. Threshold,
 scope, context and enablement still apply; not every rule must activate. This
 mode is not an ECU, dwell-timing or physical FPS test.
+
+**Test values** offers channel minima/maxima, extreme digit widths and zero
+(including unavailable AFR). These are synthetic inspection tools, not suggested
+operating limits. Select **Animated demo** to restore the same elapsed-time
+generator used by the firmware. A failed render displays **PREVIEW ERROR** over
+the previous frame instead of silently presenting it as current.
 
 Accepted changes and selection are saved locally. Two studio tabs coordinate
 with an exclusive Web Lock and compare the last loaded/written saved bytes

@@ -195,7 +195,8 @@ Use the shared schema and renderer directly. Host-test the pure editing reducer.
 - [ ] RED: add/move/resize/delete/duplicate widgets and views, collision failure
   rollback, imported replacements, dangling drag cancellation, undo/redo bounds.
 - [ ] Implement transactional edits and import; invalid fields disable export;
-  last valid preview cannot be mistaken for an accepted invalid draft.
+  diagnostic invalid preview cannot be mistaken for an accepted draft (see
+  [the subsequent preview hardening contract](preview-hardening.md)).
   Follow the design's document revision, late import/save, delete/duplicate,
   selection and raw-field policies; test each before wiring browser callbacks.
 - [ ] Use typed strict JSON with unknown/duplicate-field rejection. Validate

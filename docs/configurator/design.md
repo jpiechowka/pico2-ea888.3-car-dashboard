@@ -311,7 +311,9 @@ feedback, resizing and moving existing widgets. Keyboard and click-to-place
 alternatives are required. Touch input uses the same placement reducer.
 No asynchronous late event may apply a drag from another view or imported draft.
 
-The editor owns a draft, validation errors and a last valid preview. Partial
+The editor owns a draft, validation errors and a last validated document. A later
+[preview hardening stage](preview-hardening.md) adds automatic, prominently marked
+diagnostic rendering of rejected edits, separate from validated rendering. Partial
 numeric edits are allowed but invalid drafts cannot export or claim to be saved.
 Import is transactional. Undo/redo is bounded. Browser local storage stores a
 versioned draft only after successful validation and reports quota/access

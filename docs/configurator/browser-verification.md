@@ -1,5 +1,8 @@
 # Browser verification, 12 October 2026
 
+This is the original capacity baseline. Subsequent larger-font and rejected-edit
+checks are recorded in [Value sizing and diagnostic previews](preview-hardening.md).
+
 Release build: nightly-2026-10-11, Leptos 0.8.22, Trunk 0.21.14,
 wasm-bindgen 0.2.129. Tested in the Codex in-app Chromium browser on Windows 11,
 Intel Family 6 Model 183, runner `ea888-workstation-01`, served from localhost.

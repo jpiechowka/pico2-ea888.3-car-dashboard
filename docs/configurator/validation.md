@@ -1,5 +1,9 @@
 # Configurable dashboard validation
 
+For the later larger-font and invalid-preview implementation, see
+[Value sizing and diagnostic previews](preview-hardening.md), including its
+updated correctness, browser, performance and linked-image evidence.
+
 Software baseline: `6a5d10e640b28aa77043cd0f29d214754f96cf16`, 12 October 2026.
 Toolchain: nightly-2026-10-11, rustc `6f5da406b`, LLVM 23.1.3.
 This record separates host/browser/linked-image evidence from device validation.
