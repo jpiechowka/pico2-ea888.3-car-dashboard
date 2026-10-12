@@ -42,7 +42,7 @@ Web Locks and permitted local storage; file export remains usable without them.
    limits, statistics, trend and optional lambda AFR. The inspector shows text
    limits. A wide label must be shortened before shrinking the widget.
 4. Configure each instance's warning independently: enablement, high/low limits
-   or lambda deviation, clear threshold, load guard, activation/clear dwell,
+   or lambda deviation, clear threshold, lambda load guard, activation/clear dwell,
    message and applicability. Changing high/low swaps the two endpoints to
    preserve strict hysteresis. Warning order buttons move it within its view.
 5. **Warning display** chooses all-view/current-view scope and one-message or

@@ -7,6 +7,82 @@ use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
 #[test]
+fn configuration_fault_keeps_mode_visible_and_repairs_both_headers() {
+    use dashboard_host_validation::samples::DataMode;
+    use dashboard_host_validation::vehicle_status::VehicleStatus;
+    use embedded_graphics::mono_font::MonoTextStyle;
+    use embedded_graphics::mono_font::ascii::FONT_6X10;
+    use embedded_graphics::prelude::*;
+    use embedded_graphics::text::Text;
+
+    let mut raw = default_config();
+    raw.views[0].name = "12345678901234".try_into().unwrap();
+    let config = validate(raw).unwrap();
+    for (mode, status, label) in [
+        (DataMode::Demo, VehicleStatus::Demo, "DEMO"),
+        (DataMode::Vehicle, VehicleStatus::Raw, "RAW ONLY"),
+        (DataMode::Vehicle, VehicleStatus::ResetRequired, "RESET REQ"),
+    ] {
+        let mut snapshot = AcquisitionModel::demo().snapshot();
+        snapshot.mode = mode;
+        let mut cache = DashboardCache::new();
+        let mut buffers = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+        let mut full = AlignedFrame::boxed();
+        let mut normal = AlignedFrame::boxed();
+        let mut expected = AlignedFrame::boxed();
+        for fault in [false, true, false] {
+            let scene = DashboardScene {
+                layout: Layout::new(&config, 1, fault),
+                measurements: &snapshot,
+                now_ms: 0,
+                status,
+                blink_on: false,
+                boost_psi: false,
+                fps_mode: FpsMode::Combined,
+                fps_instant: 9999.0,
+                fps_average: 9999.0,
+                backgrounds: [colors::BLACK; 8],
+                overlay: None,
+            };
+            scene.draw_full(&mut St7789Renderer::new(&mut full.0));
+            let mut oracle = St7789Renderer::new(&mut expected.0);
+            oracle.clear(colors::RED).unwrap();
+            let style = MonoTextStyle::new(&FONT_6X10, colors::WHITE);
+            // Independent glyph/position oracle, not a second call to the header.
+            Text::new(label, Point::new(4, if fault { 10 } else { 17 }), style)
+                .draw(&mut oracle)
+                .unwrap();
+            if fault {
+                Text::new("CONFIG!", Point::new(4, 22), style)
+                    .draw(&mut oracle)
+                    .unwrap();
+            } else {
+                normal.0.copy_from_slice(&full.0[..]);
+            }
+            for y in 0..26 {
+                let start = y * 320 * 2;
+                assert_eq!(
+                    &full.0[start..start + 64 * 2],
+                    &expected.0[start..start + 64 * 2],
+                    "status lane {mode:?}, fault={fault}, row={y}"
+                );
+                assert_eq!(
+                    &full.0[start + 64 * 2..start + 320 * 2],
+                    &normal.0[start + 64 * 2..start + 320 * 2],
+                    "title/FPS changed"
+                );
+            }
+            for (buffer, frame) in buffers.iter_mut().enumerate() {
+                let redraw = cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
+                assert!(redraw.header, "fault transition did not dirty buffer {buffer}");
+                assert!(frame.0 == full.0, "fault header differs on buffer {buffer}");
+                assert!(!cache.prepare(buffer, &scene).header);
+            }
+        }
+    }
+}
+
+#[test]
 fn default_small_widgets_prioritize_the_primary_measurement() {
     let config = default_config();
     let lambda = &config.widgets[1].display;

@@ -745,6 +745,76 @@ fn late_save_acknowledgments_never_mark_newer_edits_or_requests_saved() {
 }
 
 #[test]
+fn pointer_selection_save_survives_noop_cancel_rejection_and_successful_move() {
+    for outcome in 0..4 {
+        for save_before_release in [false, true] {
+            let mut editor = empty();
+            let first = add(&mut editor, 0, 0, Span::OneByOne);
+            add(&mut editor, 1, 0, Span::OneByOne);
+            editor
+                .apply(Edit::RenameView {
+                    id: 1,
+                    name: "Pending edit".into(),
+                })
+                .unwrap();
+            let previous = editor.begin_save().unwrap();
+            let pointer = editor.begin_pointer(7, PointerTarget::Widget(first)).unwrap();
+            assert!(!editor.save_is_current(previous.token()));
+            // The browser adapter must schedule this replacement even if the
+            // subsequent placement does not change the document.
+            let selected = editor.begin_save().unwrap();
+            assert_eq!(editor.active_pointer(), Some(pointer));
+            if save_before_release {
+                editor.acknowledge_save(selected.token(), Ok(())).unwrap();
+            }
+            match outcome {
+                0 => {
+                    editor
+                        .commit_pointer(pointer, 7, placement(0, 0, Span::OneByOne))
+                        .unwrap();
+                }
+                1 => editor.cancel_pointer(pointer).unwrap(),
+                2 => {
+                    assert!(
+                        editor
+                            .commit_pointer(pointer, 7, placement(1, 0, Span::OneByOne))
+                            .is_err()
+                    );
+                }
+                _ => {
+                    editor
+                        .commit_pointer(pointer, 7, placement(2, 1, Span::OneByOne))
+                        .unwrap();
+                }
+            }
+            assert_eq!(editor.active_pointer(), None);
+            assert!(!editor.save_is_current(previous.token()));
+            let final_save = if outcome == 3 {
+                assert!(!editor.save_is_current(selected.token()));
+                editor.begin_save().unwrap()
+            } else {
+                selected
+            };
+            if !save_before_release || outcome == 3 {
+                assert!(editor.save_is_current(final_save.token()));
+                editor.acknowledge_save(final_save.token(), Ok(())).unwrap();
+            }
+            assert_eq!(editor.save_status(), SaveStatus::Saved);
+            let restored = Editor::from_saved_state(final_save.json().as_bytes()).unwrap();
+            assert_eq!(restored.preview(), editor.preview());
+            assert_eq!(
+                restored.selection(),
+                Selection {
+                    view: 1,
+                    widget: Some(first)
+                }
+            );
+            assert_eq!(restored.preview().config().views[0].name, "Pending edit");
+        }
+    }
+}
+
+#[test]
 fn saved_envelope_restores_selection_separately_from_boot_view_and_rejects_corruption() {
     let mut editor = empty();
     editor

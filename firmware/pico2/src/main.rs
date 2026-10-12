@@ -751,6 +751,7 @@ async fn main(spawner: Spawner) {
                         current_fps,
                         reset_cause,
                         vehicle_status: vehicle_status.label(),
+                        config_fault: dashboard_configuration.fault.is_some(),
                         average_fps,
                         frame_count,
                         trace: last_trace,

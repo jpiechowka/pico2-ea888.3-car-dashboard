@@ -208,18 +208,28 @@ pub(crate) fn draw_header<D: DrawTarget<Color = Rgb565>>(
         .into_styled(PrimitiveStyle::with_fill(RED))
         .draw(display)
         .ok();
-    let status = if layout.fault {
-        "CONFIG!"
-    } else if scene.measurements.mode == DataMode::Demo {
+    let status = if scene.measurements.mode == DataMode::Demo {
         "DEMO"
     } else {
         scene.status.label()
     };
     let small = MonoTextStyle::new(LABEL_FONT, WHITE);
     let bounds = Rectangle::new(Point::new(4, 0), Size::new(58, 26));
-    Text::with_text_style(status, Point::new(4, 17), small, LEFT_ALIGNED)
-        .draw(&mut display.clipped(&bounds))
-        .ok();
+    // The fallback fault must not hide the synthetic-data or transport status.
+    // Two short lines fit the status lane without displacing the view or FPS.
+    Text::with_text_style(
+        status,
+        Point::new(4, if layout.fault { 10 } else { 17 }),
+        small,
+        LEFT_ALIGNED,
+    )
+    .draw(&mut display.clipped(&bounds))
+    .ok();
+    if layout.fault {
+        Text::with_text_style("CONFIG!", Point::new(4, 22), small, LEFT_ALIGNED)
+            .draw(&mut display.clipped(&bounds))
+            .ok();
+    }
     let bounds = Rectangle::new(Point::new(64, 0), Size::new(168, 26));
     Text::with_text_style(
         layout.name(),

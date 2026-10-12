@@ -70,11 +70,15 @@ fn start(
             .set("Pointer capture is unavailable. Use the + button or position fields.".into());
         return;
     }
-    let mut result = Err(EditorError::InvalidDraft);
-    ui.editor
-        .update(|e| result = e.begin_pointer(event.pointer_id(), target));
-    match result {
-        Ok(token) => {
+    let mut accepted = None;
+    // Selecting a widget is persistent even when its drag is cancelled or
+    // commits the same placement. Replace any pending save at selection time.
+    ui.run(|editor| {
+        accepted = Some(editor.begin_pointer(event.pointer_id(), target)?);
+        Ok(editor.revision())
+    });
+    match accepted {
+        Some(token) => {
             if let Some(button) = element.dyn_ref::<web_sys::HtmlElement>() {
                 let _ = button.focus();
             }
@@ -88,9 +92,8 @@ fn start(
             }));
             drag_move(ui, event);
         }
-        Err(error) => {
+        None => {
             let _ = element.release_pointer_capture(event.pointer_id());
-            ui.notice.set(error_text(error));
         }
     }
 }
