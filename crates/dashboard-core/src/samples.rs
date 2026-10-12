@@ -31,6 +31,34 @@ impl SensorId {
         Self::Lambda,
     ];
 
+    pub const fn channel(self) -> dashboard_config::Channel {
+        use dashboard_config::Channel;
+        match self {
+            Self::Boost => Channel::Boost,
+            Self::Oil => Channel::Oil,
+            Self::Water => Channel::Water,
+            Self::Dsg => Channel::Dsg,
+            Self::Iat => Channel::Iat,
+            Self::Egt => Channel::Egt,
+            Self::Battery => Channel::Battery,
+            Self::Lambda => Channel::Lambda,
+        }
+    }
+
+    pub const fn from_channel(channel: dashboard_config::Channel) -> Self {
+        use dashboard_config::Channel;
+        match channel {
+            Channel::Boost => Self::Boost,
+            Channel::Oil => Self::Oil,
+            Channel::Water => Self::Water,
+            Channel::Dsg => Self::Dsg,
+            Channel::Iat => Self::Iat,
+            Channel::Egt => Self::Egt,
+            Channel::Battery => Self::Battery,
+            Channel::Lambda => Self::Lambda,
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Boost => "BOOST REL",
@@ -45,13 +73,7 @@ impl SensorId {
     }
 
     /// Provisional presentation limits, not proven vehicle polling rates.
-    pub const fn stale_after_ms(self) -> u64 {
-        match self {
-            Self::Boost | Self::Lambda => 500,
-            Self::Battery => 2_000,
-            _ => 3_000,
-        }
-    }
+    pub const fn stale_after_ms(self) -> u64 { self.channel().freshness_cap() as u64 }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,7 +220,19 @@ impl SampleMeta {
         sampled_at_ms: Option<u64>,
         now_ms: u64,
     ) -> Option<f32> {
-        if self.quality_at(sensor, now_ms) != Quality::Valid
+        self.value_with_freshness(sensor, mode, value, sampled_at_ms, now_ms, sensor.stale_after_ms())
+    }
+
+    pub fn value_with_freshness(
+        self,
+        sensor: SensorId,
+        mode: DataMode,
+        value: Option<f32>,
+        sampled_at_ms: Option<u64>,
+        now_ms: u64,
+        freshness_ms: u64,
+    ) -> Option<f32> {
+        if self.quality_with_freshness(sensor, now_ms, freshness_ms) != Quality::Valid
             || !self.source.matches(sensor, mode)
             || sampled_at_ms != self.received_at_ms
         {
@@ -212,11 +246,20 @@ impl SampleMeta {
         sensor: SensorId,
         now_ms: u64,
     ) -> Quality {
+        self.quality_with_freshness(sensor, now_ms, sensor.stale_after_ms())
+    }
+
+    pub fn quality_with_freshness(
+        self,
+        sensor: SensorId,
+        now_ms: u64,
+        freshness_ms: u64,
+    ) -> Quality {
         if self.quality != Quality::Valid {
             return self.quality;
         }
         match self.received_at_ms.and_then(|at| now_ms.checked_sub(at)) {
-            Some(age) if age <= sensor.stale_after_ms() => Quality::Valid,
+            Some(age) if age <= sensor.stale_after_ms().min(freshness_ms) => Quality::Valid,
             Some(_) => Quality::Stale,
             None => Quality::InvalidPayload,
         }

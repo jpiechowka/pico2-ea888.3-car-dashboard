@@ -28,7 +28,7 @@ fn values(index: u64) -> [f32; 8] {
     ]
 }
 
-pub fn model() -> AcquisitionModel {
+pub fn model() -> AcquisitionModel<'static> {
     let mut model = AcquisitionModel::demo();
     for index in 0..SEED {
         assert!(model.ingest_batch(values(index), index * PERIOD_MS));

@@ -1,10 +1,21 @@
 //! Single-owner measurement statistics, published as bounded coherent snapshots.
+use dashboard_config::{SourceResolution, ValidatedConfig, resolve_source};
+
 use crate::alarms::{AlarmEngine, Alerts, Context, Inputs, demo_contexts_for, demo_rules};
 pub use crate::samples::SensorId;
 use crate::samples::{DataMode, Quality, Sample, SampleError, SampleMeta, Source};
 use crate::sensor_state::{PeakMode, SensorSnapshot, SensorState};
 
 pub const SENSOR_COUNT: usize = 8;
+const DEFAULT_FRESHNESS: [u16; SENSOR_COUNT] = {
+    let mut caps = [0; SENSOR_COUNT];
+    let mut i = 0;
+    while i < SENSOR_COUNT {
+        caps[i] = SensorId::ALL[i].channel().freshness_cap();
+        i += 1;
+    }
+    caps
+};
 
 #[derive(Default)]
 pub struct ResetRequests {
@@ -39,6 +50,7 @@ pub struct DashboardSnapshot {
     pub sequence: u64,
     pub reset_generation: u64,
     pub(crate) alerts: Alerts,
+    pub(crate) freshness: [u16; SENSOR_COUNT],
 }
 
 impl DashboardSnapshot {
@@ -49,6 +61,7 @@ impl DashboardSnapshot {
         sequence: 0,
         reset_generation: 0,
         alerts: Alerts::DISABLED,
+        freshness: DEFAULT_FRESHNESS,
     };
 
     pub fn alerts_at(
@@ -71,7 +84,7 @@ impl DashboardSnapshot {
         id: SensorId,
         now_ms: u64,
     ) -> Quality {
-        self.metadata[id as usize].quality_at(id, now_ms)
+        self.metadata[id as usize].quality_with_freshness(id, now_ms, u64::from(self.freshness[id as usize]))
     }
 
     pub fn value_at(
@@ -80,7 +93,14 @@ impl DashboardSnapshot {
         now_ms: u64,
     ) -> Option<f32> {
         let sensor = self.sensor(id);
-        self.metadata[id as usize].value_at(id, self.mode, sensor.value(), sensor.sampled_at_ms(), now_ms)
+        self.metadata[id as usize].value_with_freshness(
+            id,
+            self.mode,
+            sensor.value(),
+            sensor.sampled_at_ms(),
+            now_ms,
+            u64::from(self.freshness[id as usize]),
+        )
     }
 
     pub fn sensor(
@@ -105,7 +125,7 @@ impl DashboardSnapshot {
     }
 }
 
-pub struct AcquisitionModel {
+pub struct AcquisitionModel<'a> {
     sensors: [SensorState; SENSOR_COUNT],
     metadata: [SampleMeta; SENSOR_COUNT],
     mode: DataMode,
@@ -113,13 +133,16 @@ pub struct AcquisitionModel {
     reset_generation: u64,
     alarms: AlarmEngine,
     contexts: [Option<Context>; SENSOR_COUNT],
+    configuration: Option<&'a ValidatedConfig>,
+    expected_sources: [Option<Source>; SENSOR_COUNT],
+    freshness: [u16; SENSOR_COUNT],
 }
 
-impl Default for AcquisitionModel {
+impl Default for AcquisitionModel<'_> {
     fn default() -> Self { Self::new() }
 }
 
-impl AcquisitionModel {
+impl<'a> AcquisitionModel<'a> {
     pub fn new() -> Self {
         Self {
             sensors: [
@@ -138,6 +161,9 @@ impl AcquisitionModel {
             reset_generation: 0,
             alarms: AlarmEngine::new([None; 8]).expect("empty alarm rules"),
             contexts: [None; SENSOR_COUNT],
+            configuration: None,
+            expected_sources: [None; SENSOR_COUNT],
+            freshness: DEFAULT_FRESHNESS,
         }
     }
 
@@ -148,6 +174,35 @@ impl AcquisitionModel {
             ..Self::new()
         }
     }
+
+    pub fn configured(
+        config: &'a ValidatedConfig,
+        ecu: u16,
+    ) -> Self {
+        let mut model = Self::new();
+        model.configuration = Some(config);
+        for id in SensorId::ALL {
+            let index = id as usize;
+            model.freshness[index] = config.config().sources[index].freshness_ms;
+            model.expected_sources[index] = ecu.checked_sub(8).and_then(|request| {
+                match resolve_source(config, id.channel(), request, ecu) {
+                    SourceResolution::Obd { pid, .. } => Some(Source::Obd { ecu, pid }),
+                    _ => None,
+                }
+            });
+        }
+        model
+    }
+
+    pub fn demo_configured(config: &'a ValidatedConfig) -> Self {
+        let mut model = Self::demo();
+        model.configuration = Some(config);
+        model.freshness = config.config().sources.map(|source| source.freshness_ms);
+        model.expected_sources = [Some(Source::Demo); SENSOR_COUNT];
+        model
+    }
+
+    pub const fn configuration(&self) -> Option<&'a ValidatedConfig> { self.configuration }
 
     pub fn ingest_sample(
         &mut self,
@@ -172,6 +227,7 @@ impl AcquisitionModel {
             return Err(SampleError::Future);
         }
         if !sample.source.matches(sensor, self.mode)
+            || (self.configuration.is_some() && self.expected_sources[index] != Some(sample.source))
             || (previous.source != Source::Unknown && previous.source != sample.source)
         {
             return Err(SampleError::Source);
@@ -285,6 +341,7 @@ impl AcquisitionModel {
             sequence: self.sequence,
             reset_generation: self.reset_generation,
             alerts: self.alarms.snapshot(),
+            freshness: self.freshness,
         }
     }
 
@@ -296,18 +353,20 @@ impl AcquisitionModel {
             return;
         }
         let values = core::array::from_fn(|i| {
-            self.metadata[i].value_at(
+            self.metadata[i].value_with_freshness(
                 SensorId::ALL[i],
                 self.mode,
                 self.sensors[i].value(),
                 self.sensors[i].sampled_at_ms(),
                 now_ms,
+                u64::from(self.freshness[i]),
             )
         });
         self.alarms.update_inputs(
             &Inputs {
                 metadata: &self.metadata,
                 values,
+                freshness: &self.freshness,
             },
             &self.contexts,
             now_ms,

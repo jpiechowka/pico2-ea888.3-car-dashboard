@@ -9,6 +9,12 @@ from elf_image import ElfImage
 from validation import require
 from check_flash_lockout import check as check_flash_lockout
 
+MIN_CORE0_HEADROOM = 65536
+
+
+def check_headroom(headroom):
+    require(headroom >= MIN_CORE0_HEADROOM, "less than 64 KiB core 0 stack headroom")
+
 
 def check(path):
     elf = ElfImage(path)
@@ -27,7 +33,7 @@ def check(path):
         expected = static_end if name == "__euninit" else aligned_end
         require(symbols[name] == expected, f"{name}=0x{symbols[name]:08x}, expected=0x{expected:08x}")
     require(symbols.get("_stack_start") == ram_end, "unexpected core 0 stack top")
-    require(ram_end - aligned_end >= 32768, "less than 32 KiB core 0 stack headroom")
+    check_headroom(ram_end - aligned_end)
     flash_start, journal_start = 0x10000000, 0x101FE000
     require(flash_start <= named[".end_block"][3] < journal_start, "boot info outside program flash")
     # Physical LOAD addresses include the flash copy of RAM .data/ram_func.

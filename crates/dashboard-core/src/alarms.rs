@@ -7,6 +7,7 @@ use crate::samples::{DataMode, SampleMeta, SensorId, Source};
 pub(crate) struct Inputs<'a> {
     pub metadata: &'a [SampleMeta; 8],
     pub values: [Option<f32>; 8],
+    pub freshness: &'a [u16; 8],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -291,7 +292,7 @@ impl AlarmEngine {
         let context = context?;
         if context.source != meta.source
             || context.sequence != meta.sequence
-            || now.checked_sub(context.received_at_ms)? > 500
+            || now.checked_sub(context.received_at_ms)? > u64::from(samples.freshness[id as usize]).min(500)
             || context.received_at_ms.abs_diff(meta.received_at_ms?) > 250
         {
             return None;
@@ -331,6 +332,7 @@ impl AlarmEngine {
         let input = Inputs {
             metadata: &samples.metadata,
             values: core::array::from_fn(|i| samples.value_at(SensorId::ALL[i], now)),
+            freshness: &samples.freshness,
         };
         self.update_inputs(&input, contexts, now)
     }
@@ -382,11 +384,12 @@ impl AlarmEngine {
                     self.alerts.states[i] = state.status();
                     continue;
                 }
-                let max_gap = if rule.contextual() {
+                let max_gap = (if rule.contextual() {
                     500
                 } else {
                     rule.sensor.stale_after_ms()
-                };
+                })
+                .min(u64::from(samples.freshness[i]));
                 if at - previous_at > max_gap {
                     state.invalidate();
                 }
@@ -403,15 +406,17 @@ impl AlarmEngine {
                     self.alerts.states[i] = Status::Unavailable;
                     continue;
                 }
-                if current - previous > 500 {
+                if current - previous > u64::from(samples.freshness[i]).min(500) {
                     state.invalidate();
                 }
             }
             state.context_at = context_at;
             state.valid = true;
             self.alerts.expires[i] = at
-                .saturating_add(rule.sensor.stale_after_ms())
-                .min(context_at.map_or(u64::MAX, |at| at.saturating_add(500)));
+                .saturating_add(rule.sensor.stale_after_ms().min(u64::from(samples.freshness[i])))
+                .min(context_at.map_or(u64::MAX, |at| {
+                    at.saturating_add(u64::from(samples.freshness[i]).min(500))
+                }));
             // Both the measurement and its operating context must support the
             // entire dwell. Skew may never backdate the condition's start.
             let condition_at = at.max(context_at.unwrap_or(at));

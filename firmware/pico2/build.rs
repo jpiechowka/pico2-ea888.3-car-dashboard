@@ -3,6 +3,17 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=DASHBOARD_CONFIG");
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let config = dashboard_config_tools::prepare(std::env::var_os("DASHBOARD_CONFIG").as_deref(), &manifest)
+        .unwrap_or_else(|error| panic!("Cannot embed dashboard configuration: {error}"));
+    for path in [config.source(), config.canonical_source()].into_iter().flatten() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    config
+        .write_to(&PathBuf::from(std::env::var_os("OUT_DIR").unwrap()))
+        .expect("write validated configuration snapshot");
+    println!("cargo:rustc-env=DASHBOARD_CONFIG_SHA256={}", config.sha256_hex());
     if std::env::var_os("CARGO_FEATURE_TARGET_BENCH").is_some() {
         let rustc = std::process::Command::new(std::env::var_os("RUSTC").unwrap())
             .arg("--version")

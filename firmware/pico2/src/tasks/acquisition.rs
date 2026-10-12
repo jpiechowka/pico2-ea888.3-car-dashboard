@@ -29,6 +29,7 @@ pub static VEHICLE_DIAGNOSTICS: Watch<
 > = Watch::new();
 
 pub struct Resources {
+    pub configuration: &'static dashboard_pico2::view_config::ValidatedConfig,
     #[cfg(feature = "longan-rx12")]
     pub uart: crate::drivers::longan::Resources,
 }
@@ -54,19 +55,19 @@ pub async fn acquisition_task(
 
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
-    #[cfg(not(feature = "longan-rx12"))]
-    let Resources {} = resources;
+    let configuration = resources.configuration;
     #[cfg(not(feature = "longan-rx12"))]
     let mut model = if cfg!(feature = "demo") {
-        AcquisitionModel::demo()
+        AcquisitionModel::demo_configured(configuration)
     } else {
-        AcquisitionModel::new()
+        AcquisitionModel::configured(configuration, dashboard_pico2::config::vehicle::PROFILE.responder)
     };
     #[cfg(feature = "longan-rx12")]
-    let mut model = Vehicle::new(
+    let mut model = Vehicle::configured(
         crate::drivers::longan::HardwarePort::new(resources.uart),
         dashboard_pico2::config::vehicle::PROFILE,
         Instant::now().as_millis(),
+        configuration,
     )
     .expect("invalid vehicle profile");
     #[cfg(feature = "longan-rx12")]

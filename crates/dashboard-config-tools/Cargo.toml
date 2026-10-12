@@ -1,0 +1,13 @@
+[package]
+name = "dashboard-config-tools"
+version = "0.1.0"
+edition = "2024"
+description = "Validated configuration compiler and build snapshot helper"
+
+[dependencies]
+dashboard-config = { path = "../dashboard-config", features = ["json"] }
+sha2-const-stable = "=0.1.0"
+
+[[bin]]
+name = "dashboard-config"
+path = "src/main.rs"

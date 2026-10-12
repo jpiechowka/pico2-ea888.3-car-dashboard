@@ -28,6 +28,7 @@
 
 # Firmware and embedded binaries
 *.elf binary
+*.eav binary
 *.bin binary
 *.uf2 binary
 *.hex binary

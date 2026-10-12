@@ -157,7 +157,7 @@ fn steps() -> [Step; 17] {
 }
 
 struct Replay {
-    session: Session,
+    session: Session<'static>,
     parser: Rx12,
     frames: [Box<FrameBuffer>; 2],
     cache: DashboardCache,

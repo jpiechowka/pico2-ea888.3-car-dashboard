@@ -128,13 +128,13 @@ enum OwnerState {
     Parked,
 }
 
-pub struct Vehicle<P> {
+pub struct Vehicle<'a, P> {
     port: P,
     profile: Profile,
     bootstrap: Bootstrap,
     rx: Rx12,
     tx: Pump<Token>,
-    session: Session,
+    session: Session<'a>,
     owner: OwnerState,
     raw: Deque<RawObservation, RAW_TRACE_RECORDS>,
     raw_records: u32,
@@ -147,11 +147,31 @@ pub struct Vehicle<P> {
     rx_partial_since: Option<u64>,
     last_ms: u64,
 }
-impl<P: Port> Vehicle<P> {
+impl<'a, P: Port> Vehicle<'a, P> {
     pub fn new(
         port: P,
         profile: Profile,
         now: u64,
+    ) -> Result<Self, SessionError> {
+        Self::new_inner(port, profile, now, None)
+    }
+
+    pub fn configured(
+        port: P,
+        profile: Profile,
+        now: u64,
+        config: &'a dashboard_config::ValidatedConfig,
+    ) -> Result<Self, SessionError> {
+        Self::new_inner(port, profile, now, Some(config))
+    }
+
+    pub fn configuration(&self) -> Option<&'a dashboard_config::ValidatedConfig> { self.session.configuration() }
+
+    fn new_inner(
+        port: P,
+        profile: Profile,
+        now: u64,
+        config: Option<&'a dashboard_config::ValidatedConfig>,
     ) -> Result<Self, SessionError> {
         // Reserve epoch1 for the initial unqualified state. The first complete
         // handshake advances past it; capabilities and tokens are never reused.
@@ -163,7 +183,11 @@ impl<P: Port> Vehicle<P> {
             bootstrap: Bootstrap::new(now),
             rx,
             tx: Pump::new(),
-            session: Session::new(profile.responder, 1)?,
+            session: if let Some(config) = config {
+                Session::configured(profile.responder, 1, config)?
+            } else {
+                Session::new(profile.responder, 1)?
+            },
             owner: OwnerState::Recover { since: now, wait: 0 },
             raw: Deque::new(),
             raw_records: 0,

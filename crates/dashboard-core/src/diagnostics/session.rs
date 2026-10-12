@@ -1,5 +1,7 @@
 //! One owner for capability discovery, fair bounded polling and sample history.
 //! The caller supplies known-DLC frames from a qualified transport epoch.
+use dashboard_config::{SourceResolution, ValidatedConfig, resolve_source};
+
 use super::CanFrame;
 use super::client::{Client, ClientError, Event, Failure, TxAction, TxToken};
 use super::obd::{self, Capabilities, Decoded, Support};
@@ -91,10 +93,10 @@ struct Slot {
     discovered: bool,
 }
 
-pub struct Session {
+pub struct Session<'a> {
     client: Client,
     capabilities: Capabilities,
-    model: AcquisitionModel,
+    model: AcquisitionModel<'a>,
     slots: [Slot; 7],
     cursor: usize,
     next_query: u64,
@@ -104,17 +106,37 @@ pub struct Session {
     timing: Option<ActiveTiming>,
     reply_ms: [Histogram<160>; 7],
 }
-impl Session {
+impl<'a> Session<'a> {
     pub fn new(
         ecu: u16,
         epoch: u64,
+    ) -> Result<Self, SessionError> {
+        Self::new_inner(ecu, epoch, None)
+    }
+
+    pub fn configured(
+        ecu: u16,
+        epoch: u64,
+        config: &'a ValidatedConfig,
+    ) -> Result<Self, SessionError> {
+        Self::new_inner(ecu, epoch, Some(config))
+    }
+
+    pub fn configuration(&self) -> Option<&'a ValidatedConfig> { self.model.configuration() }
+
+    fn new_inner(
+        ecu: u16,
+        epoch: u64,
+        config: Option<&'a ValidatedConfig>,
     ) -> Result<Self, SessionError> {
         let capabilities = Capabilities::new(ecu, epoch).map_err(|_| SessionError::Client(ClientError::Address))?;
         let client = Client::new(ecu - 8, ecu, epoch).map_err(SessionError::Client)?;
         Ok(Self {
             client,
             capabilities,
-            model: AcquisitionModel::new(),
+            model: config.map_or_else(AcquisitionModel::new, |config| {
+                AcquisitionModel::configured(config, ecu)
+            }),
             slots: [Slot::default(); 7],
             cursor: 0,
             next_query: 0,
@@ -260,9 +282,33 @@ impl Session {
     ) -> bool {
         let pid = PIDS[index];
         if index < 3 {
-            !self.slots[index].discovered && (index == 0 || self.capabilities.supported(pid) == Support::Supported)
+            (3..PIDS.len()).any(|i| self.period(i).is_some())
+                && !self.slots[index].discovered
+                && (index == 0 || self.capabilities.supported(pid) == Support::Supported)
         } else {
-            self.capabilities.supported(pid) == Support::Supported
+            self.period(index).is_some() && self.capabilities.supported(pid) == Support::Supported
+        }
+    }
+
+    fn period(
+        &self,
+        index: usize,
+    ) -> Option<u64> {
+        if index < 3 {
+            return Some(0);
+        }
+        let Some(config) = self.configuration() else {
+            return Some(PERIODS_MS[index]);
+        };
+        let (_, channel) = CHANNELS[index - 3];
+        match resolve_source(
+            config,
+            channel.channel(),
+            self.client.response_id() - 8,
+            self.client.response_id(),
+        ) {
+            SourceResolution::Obd { pid, period_ms, .. } if pid == PIDS[index] => Some(u64::from(period_ms)),
+            _ => None,
         }
     }
 
@@ -367,11 +413,13 @@ impl Session {
         if let Some(ms) = reply_ms {
             self.reply_ms[index].record(ms);
         }
+        let period = self.period(index).unwrap_or(PERIODS_MS[index]);
+        let configured = self.configuration().is_some();
         let slot = &mut self.slots[index];
         if let Some(quality) = failure {
             slot.failures = slot.failures.saturating_add(1);
             let backoff = 250u64 << u32::from(slot.failures.saturating_sub(1).min(5));
-            slot.due = now.saturating_add(backoff);
+            slot.due = now.saturating_add(if configured { backoff.max(period) } else { backoff });
             self.next_query = now.saturating_add(FAILURE_QUIET_MS);
             if let Some((_, id)) = CHANNELS.iter().find(|(known, _)| *known == pid) {
                 self.model.mark_fault(*id, quality, now);
@@ -379,7 +427,7 @@ impl Session {
         } else {
             slot.failures = 0;
             slot.discovered = index < 3;
-            slot.due = now.saturating_add(PERIODS_MS[index]);
+            slot.due = now.saturating_add(period);
             self.next_query = now.saturating_add(QUERY_GAP_MS);
         }
         if self.client.requires_new_epoch() {

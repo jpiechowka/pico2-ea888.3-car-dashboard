@@ -10,7 +10,7 @@ use dashboard_host_validation::samples::SensorId;
 use dashboard_host_validation::vehicle_status::VehicleStatus;
 use dashboard_host_validation::{AlignedFrame, colors};
 
-fn alarm_model() -> AcquisitionModel {
+fn alarm_model() -> AcquisitionModel<'static> {
     let mut model = AcquisitionModel::demo();
     for at in [0, 500, 1000] {
         model.ingest_batch([1.0, 140.0, 120.0, 130.0, 70.0, 1100.0, 11.0, 1.3], at);

@@ -55,6 +55,12 @@ jobs:
           cargo clippy --locked -p dashboard-config --all-targets --features json -- -D warnings
           cargo check --locked -p dashboard-config --target thumbv8m.main-none-eabihf
           cargo check --locked -p dashboard-config --features json --target wasm32-unknown-unknown
+      - name: Configuration build and file contracts
+        run: |
+          cargo test --locked -p dashboard-config-tools
+          cargo clippy --locked -p dashboard-config-tools --all-targets -- -D warnings
+          cargo run --locked -p dashboard-config-tools -- compile configs/default.json /tmp/default.eav
+          cmp configs/default.eav /tmp/default.eav
 
   host:
     name: Host contracts and benchmark smoke

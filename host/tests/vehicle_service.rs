@@ -112,7 +112,7 @@ impl Port for Hardware {
         Ok(())
     }
 }
-fn new(contract: ReceiveContract) -> (Vehicle<Hardware>, Hardware) {
+fn new(contract: ReceiveContract) -> (Vehicle<'static, Hardware>, Hardware) {
     let hardware = Hardware::default();
     let vehicle = Vehicle::new(
         hardware.clone(),
@@ -197,6 +197,77 @@ fn unqualified_profile_records_raw_data_but_never_polls_can_or_publishes_values(
     assert_eq!(vehicle.link().raw_records, 2);
     assert_eq!(vehicle.snapshot().quality(SensorId::Water, 30_000), Quality::Unknown);
     assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 30_000), None);
+}
+
+#[test]
+fn configured_owner_preserves_selection_and_freshness_through_recovery_and_maintenance() {
+    use dashboard_host_validation::view_config::{Channel, default_config, validate};
+    let mut config = default_config();
+    config.sources[Channel::Water.index()].freshness_ms = 100;
+    let config = validate(config).unwrap();
+    let hw = Hardware::default();
+    let mut vehicle = Vehicle::configured(
+        hw.clone(),
+        Profile {
+            responder: 0x7E8,
+            receive: ReceiveContract::PaddedStandardDataDlc8,
+        },
+        0,
+        &config,
+    )
+    .unwrap();
+    for (cycle, base) in [0, 1330, 2330].into_iter().enumerate() {
+        handshake(&mut vehicle, &hw, base);
+        tick(&mut vehicle, base + 57);
+        assert_eq!(hw.take_tx()[8], 0);
+        hw.feed(&record(0x7E8, [6, 0x41, 0, 8, 0, 0, 0, 0]));
+        tick(&mut vehicle, base + 58);
+        tick(&mut vehicle, base + 78);
+        tick(&mut vehicle, base + 79);
+        assert_eq!(hw.take_tx()[8], 5);
+        hw.feed(&record(0x7E8, [3, 0x41, 5, 135, 0, 0, 0, 0]));
+        tick(&mut vehicle, base + 80);
+        assert_eq!(vehicle.snapshot().value_at(SensorId::Water, base + 180), Some(95.0));
+        assert_eq!(vehicle.snapshot().quality(SensorId::Water, base + 181), Quality::Stale);
+        assert!(core::ptr::eq(vehicle.configuration().unwrap(), &config));
+        vehicle.reset_statistics(cycle as u64 + 1);
+        assert!(core::ptr::eq(vehicle.configuration().unwrap(), &config));
+        if cycle == 0 {
+            hw.0.borrow_mut().rx_error = Some(IoError::Overrun);
+            tick(&mut vehicle, 1080);
+            assert_eq!(vehicle.link().state, LinkState::Recovering);
+        } else if cycle == 1 {
+            vehicle.request_pause(1500).unwrap();
+            tick(&mut vehicle, 1500);
+            assert!(vehicle.paused());
+            vehicle.resume(2330).unwrap();
+        }
+        if cycle < 2 {
+            assert_eq!(vehicle.snapshot().value_at(SensorId::Water, base + 181), None);
+        }
+    }
+}
+
+#[test]
+fn runtime_fallback_or_enabled_sources_never_qualify_a_transport() {
+    use dashboard_host_validation::view_config::{default_config, load_at_boot, validate};
+    for config in [validate(default_config()).unwrap(), load_at_boot(b"bad config").config] {
+        let hw = Hardware::default();
+        let mut vehicle = Vehicle::configured(hw.clone(), Profile::UNQUALIFIED, 0, &config).unwrap();
+        handshake(&mut vehicle, &hw, 0);
+        hw.feed(&record(0x7E8, [3, 0x41, 5, 135, 0, 0, 0, 0]));
+        tick(&mut vehicle, 100);
+        tick(&mut vehicle, 10_000);
+        assert!(hw.take_tx().is_empty());
+        assert_eq!(vehicle.snapshot().value_at(SensorId::Water, 100), None);
+        vehicle.request_pause(10_000).unwrap();
+        tick(&mut vehicle, 10_000);
+        vehicle.resume(11_000).unwrap();
+        handshake(&mut vehicle, &hw, 11_000);
+        assert_eq!(vehicle.link().state, LinkState::Unqualified);
+        assert!(core::ptr::eq(vehicle.configuration().unwrap(), &config));
+        assert!(hw.take_tx().is_empty());
+    }
 }
 
 #[test]

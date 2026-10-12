@@ -12,6 +12,7 @@ mod screens;
 mod state;
 mod tasks;
 mod ui;
+mod view_config;
 
 mod config {
     pub use dashboard_pico2::config::*;
@@ -291,6 +292,11 @@ async fn main(spawner: Spawner) {
     let watchdog = crate::drivers::watchdog::RecoveryWatchdog::start(p.WATCHDOG);
     let reset_cause = watchdog.reset_label();
     log_info!("Previous reset: {}", reset_cause);
+    let dashboard_configuration = view_config::initialize();
+    log_info!("Dashboard config SHA256: {}", view_config::SHA256);
+    if let Some(fault) = dashboard_configuration.fault {
+        log_fault!("Configuration fallback: {:?}", fault);
+    }
     let cpu_freq_hz = embassy_rp::clocks::clk_sys_freq();
 
     let mut settings_flash = drivers::settings_flash::SettingsFlash::new(p.FLASH);
@@ -318,6 +324,7 @@ async fn main(spawner: Spawner) {
         .checked_add(stack.mem.len() as u32)
         .expect("invalid core1 stack bounds");
     let acquisition_resources = tasks::acquisition::Resources {
+        configuration: &dashboard_configuration.config,
         #[cfg(feature = "longan-rx12")]
         uart: drivers::longan::Resources {
             uart: p.UART0,
