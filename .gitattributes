@@ -52,3 +52,4 @@ firmware/vendor/embassy-rp/funcsel.txt -whitespace
 
 # Preserve exact bytes of the new measured captures and their digest sidecars.
 host/baselines/audit2_*/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+host/baselines/configurator_*/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
