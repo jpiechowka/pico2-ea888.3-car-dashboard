@@ -6,6 +6,7 @@ extern crate alloc;
 mod appearance;
 mod catalog;
 mod codec;
+pub mod controls;
 mod defaults;
 mod fuel;
 #[cfg(feature = "json")]
@@ -16,6 +17,7 @@ mod validate;
 pub use appearance::*;
 pub use catalog::*;
 pub use codec::*;
+pub use controls::*;
 pub use defaults::{default_config, default_widget};
 pub use model::*;
 pub use validate::*;
