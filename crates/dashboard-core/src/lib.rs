@@ -11,6 +11,7 @@ pub mod backlight;
 pub mod config;
 pub mod configured_scene;
 pub mod controls;
+pub mod control_session;
 pub mod dashboard;
 pub mod demo;
 pub mod diagnostics;
