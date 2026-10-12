@@ -233,7 +233,20 @@ impl Preview {
         accepted: &ValidatedConfig,
         draft: &crate::diagnostic::Draft,
         view: u8,
+        options: PreviewOptions,
+    ) -> Result<&[u8], PreviewError> {
+        self.render_diagnostic_with_status(accepted, draft, view, options, ValidatedConfig::cache_identity_status)
+    }
+
+    // Keep status projection at the producer boundary; tests can exercise an
+    // exhausted publication without constructing or modifying identity proofs.
+    fn render_diagnostic_with_status(
+        &mut self,
+        accepted: &ValidatedConfig,
+        draft: &crate::diagnostic::Draft,
+        view: u8,
         mut options: PreviewOptions,
+        mut status: impl FnMut(&ValidatedConfig) -> dashboard_config::CacheIdentityStatus,
     ) -> Result<&[u8], PreviewError> {
         use dashboard_core::colors::WHITE;
         use embedded_graphics::mono_font::MonoTextStyle;
@@ -255,6 +268,9 @@ impl Preview {
             let Some(config) = crate::diagnostic::isolated_widget(accepted, widget) else {
                 continue;
             };
+            self.prepared_status = self
+                .prepared_status
+                .union(CacheExhaustionStatus::from_config(status(&config)));
             let scene = DashboardScene {
                 layout: Layout::new(&config, view, false),
                 measurements: snapshot,
@@ -364,4 +380,61 @@ pub fn rgb565_to_rgba(
         pixel.copy_from_slice(&[red << 3 | red >> 2, green << 2 | green >> 4, blue << 3 | blue >> 2, 255]);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use dashboard_config::CacheIdentityStatus;
+    use dashboard_core::cache_diagnostics::CacheExhaustionCause;
+
+    use super::*;
+
+    #[test]
+    fn diagnostic_preparation_observes_each_isolated_publication() {
+        let accepted = validate(dashboard_config::default_config()).unwrap();
+        let view = accepted.config().boot_view;
+        let mut draft = crate::diagnostic::Draft {
+            config: accepted.config().clone(),
+            raw: Vec::new(),
+            error: crate::editor::EditorError::InvalidDraft,
+        };
+        let expected = draft.config.widgets.iter().filter(|widget| widget.view == view).count();
+        assert!(expected > 1);
+        let mut preview = Preview::new();
+        let mut calls = 0;
+        preview
+            .render_diagnostic_with_status(&accepted, &draft, view, PreviewOptions::default(), |_| {
+                calls += 1;
+                if calls == 1 {
+                    CacheIdentityStatus::Exhausted
+                } else {
+                    CacheIdentityStatus::Tracked
+                }
+            })
+            .unwrap();
+        assert_eq!(calls, expected);
+        assert_eq!(
+            preview.cache_exhaustion_status(),
+            CacheExhaustionStatus::from_cause(CacheExhaustionCause::ConfigIssuer)
+        );
+
+        preview
+            .render_diagnostic_with_status(&accepted, &draft, view, PreviewOptions::default(), |_| {
+                CacheIdentityStatus::Untracked
+            })
+            .unwrap();
+        assert_eq!(preview.cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);
+
+        // Invalid geometry cannot publish even an isolated configuration, so it
+        // cannot manufacture issuer exhaustion from rejected draft data.
+        for widget in &mut draft.config.widgets {
+            widget.placement.column = u8::MAX;
+        }
+        preview
+            .render_diagnostic_with_status(&accepted, &draft, view, PreviewOptions::default(), |_| {
+                panic!("invalid widget must not reach publication status projection")
+            })
+            .unwrap();
+        assert_eq!(preview.cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);
+    }
 }

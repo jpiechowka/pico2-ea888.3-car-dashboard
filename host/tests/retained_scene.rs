@@ -254,10 +254,10 @@ fn public_untracked_snapshots_force_each_physical_buffer_dirty() {
     let mut reference = AlignedFrame::boxed();
     scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
     for _ in 0..2 {
-        for buffer in 0..2 {
-            let redraw = cache.draw(&mut St7789Renderer::new(&mut frames[buffer].0), buffer, &scene);
+        for (buffer, frame) in frames.iter_mut().enumerate() {
+            let redraw = cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
             assert_eq!(redraw.cells, 255);
-            assert!(frames[buffer].0 == reference.0);
+            assert!(frame.0 == reference.0);
         }
     }
 }
@@ -309,9 +309,9 @@ fn identities_cover_independent_histories_channel_reassignment_and_config_republ
             overlay: None,
         };
         scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
-        for buffer in 0..2 {
-            cache.draw(&mut St7789Renderer::new(&mut frames[buffer].0), buffer, &scene);
-            assert!(frames[buffer].0 == reference.0);
+        for (buffer, frame) in frames.iter_mut().enumerate() {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
+            assert!(frame.0 == reference.0);
             assert_eq!(cache.prepare(buffer, &scene).cells, 0);
         }
     }

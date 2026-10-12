@@ -39,14 +39,12 @@ impl CacheExhaustionStatus {
     }
 
     pub fn causes(self) -> impl Iterator<Item = CacheExhaustionCause> {
-        (0..10).filter_map(move |bit| {
-            (self.0 & (1 << bit) != 0).then(|| {
-                match bit {
-                    0 => CacheExhaustionCause::ConfigIssuer,
-                    1 => CacheExhaustionCause::AcquisitionIssuer,
-                    _ => CacheExhaustionCause::GraphRevision(Channel::ALL[bit - 2]),
-                }
-            })
+        (0..10).filter(move |bit| self.0 & (1 << bit) != 0).map(|bit| {
+            match bit {
+                0 => CacheExhaustionCause::ConfigIssuer,
+                1 => CacheExhaustionCause::AcquisitionIssuer,
+                _ => CacheExhaustionCause::GraphRevision(Channel::ALL[bit - 2]),
+            }
         })
     }
 }

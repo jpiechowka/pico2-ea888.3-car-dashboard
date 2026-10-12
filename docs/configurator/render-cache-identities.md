@@ -65,7 +65,7 @@ The graph token is 12 bytes including channel, not an eight-byte estimate.
 | Demo | 439,824 | 84,464 | 2,356 | 7,824 | 16,184 | 27,288 |
 | Vehicle | 449,808 | 74,480 | 2,356 | 26,464 | 12,616 | 28,320 |
 
-Captures are `cache6-demo280-traced` and `cache6-vehicle280-traced` under the
+Captures are `cache7-demo280-traced` and `cache7-vehicle280-traced` under the
 ignored `firmware/target/bench-captures` directory. Both use the same normalized
 8,462-byte maximum v3 EAV with SHA-256
 `e8a02f13e60930e37d32b0c7762c2b2675d1ea132962c109c084d25f6bb89c38`.
