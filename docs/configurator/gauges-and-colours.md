@@ -144,12 +144,15 @@ then returns. This separates parser and runtime stack lifetimes. Awaiting the
 runtime body instead would retain the parent frame and defeat that boundary.
 
 The locked Embassy executor 0.10.0 Spawner/raw executor source was inspected:
-spawn queues a task without eagerly polling it. Cortex-M runtime 0.7.5 enables
+spawn queues a task without eagerly polling it. Cortex-M runtime 0.7.7 enables
 the FPU before the entry point, supporting bounded floating-point config
 validation before HAL initialization. Parsing now precedes watchdog startup;
 it reads only bounded immutable embedded bytes, without peripheral or time
 access. Peripheral setup, UART construction on core 1, immutable configuration
 publication, framebuffer ownership and DMA lifetimes are preserved.
+The exact locked 0.7.7 source and linked Reset instructions both set CPACR and
+execute DSB/ISB before calling main. An earlier review named 0.7.5 incorrectly;
+the checked version is 0.7.7 and the initialization conclusion is unchanged.
 
 Target Rust [stack metadata](https://doc.rust-lang.org/beta/unstable-book/compiler-flags/emit-stack-sizes.html)
 and the [LLVM format](https://llvm.org/docs/CodeGenerator.html#stack-size-section)
@@ -177,7 +180,7 @@ Vehicle transport. Each archive contains 219 unchanged build-source inputs.
 | Admitted boot path, including child allowance | 50,160 | 50,344 |
 | Admitted core-1 construction path | 7,616 | 25,456 |
 | Admitted core-1 runtime path | 14,784 | 13,592 |
-| Admitted dashboard path | 33,424 | 34,384 |
+| Admitted dashboard path | 33,424 | 34,376 |
 
 Independent instruction review measured the normal Vehicle construction chain
 at 24,648 bytes, leaving 8,120 bytes on core 1 before exception/indirect-path
@@ -188,8 +191,15 @@ panic paths and indirect waker/format calls still need device qualification.
 
 | Frozen capture | ELF SHA-256 |
 | --- | --- |
-| gauges-final-demo-v1 | `9ec35e37b245a8e6a8f2bbb969a9b64ea0f1ff3d99ceb4b979d18fbcbfe18cb4` |
-| gauges-final-vehicle-maximum | `6187d764708e5a1cbcba6352de2a2c028301e8d41b14fcd51ca536ee37306f6c` |
+| gauges-optimized-demo-v1-verified | `5404feeb2c154617f9b86d5446f613321058aa92c4c7bc156c3e0b1106593d56` |
+| gauges-optimized-vehicle-maximum-verified | `7f3a6509d5198c66465461503ab1092d7a7f7eb9d0b7323635436c3a3879e2b2` |
+
+These supersede the historical `gauges-final-*` captures after the two minimal
+cache/background-fill optimizations. Static objects, core-1 paths and boot
+reserves are unchanged; the Vehicle dashboard frame is eight bytes smaller.
+All 21 critical metadata frames were compared against final linked instructions.
+Timing captures and the limits of performance qualification are recorded in
+[the performance report](../performance/gauges-and-colours-2026-10-12.md).
 
 ## End-to-end verification
 
@@ -202,7 +212,7 @@ or linked-resource blocker remained after the corrections above.
   finite limits and maximum documents. Colour tests check every RGB565 value
   against three reference partners (196,608 pairs) with an independent floating
   luminance oracle, plus each palette-role contract.
-- Eleven gauge pixel tests cover all eight channels, three spans, five added
+- Twelve gauge pixel tests cover all eight channels, three spans, five added
   styles, in/out-of-range values, stale/nonfinite/unavailable states, PSI/AFR,
   retained A/B buffers, palette changes and real Vehicle ingestion/error/reset.
   Public draw geometry is bounded before iteration, then clipped to ownership.
@@ -210,7 +220,7 @@ or linked-resource blocker remained after the corrections above.
   with one or multiple warnings, blink and overlay removal on both buffers.
 - The 80 editor tests cover raw colour/range edits, invalid projections, repair, stale
   callbacks, undo/redo, saved state and serialization. Native and Wasm strict
-  lints, production assets, both host outline suites (336 runtime tests plus two
+  lints, production assets, both host outline suites (337 runtime tests plus two
   compile-fail contracts per outline) and ARM strict lints pass. The shared
   workspace's JSON-enabled run passes 48 tests/contracts; the separate device
   configuration run without JSON passes 25.
