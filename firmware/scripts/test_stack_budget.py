@@ -96,6 +96,54 @@ class StackBudget(unittest.TestCase):
         sizes[validator & ~1] = 2000
         self.assertEqual(configuration_frames(functions, sizes), 2964)
 
+    def test_emitted_validation_children_require_metadata_and_count_with_parent(self):
+        for symbol in (
+            '_RNvNtCsfF7AG8So2wt_16dashboard_config8controls17validate_controls',
+            '_RNvNtCsfF7AG8So2wt_16dashboard_config8validate10text_valid',
+        ):
+            for frame in (None, 9000):
+                with self.subTest(symbol=symbol, frame=frame):
+                    functions, sizes = self.slot_fixture()
+                    functions[symbol] = (0x20000001, 4, 0)
+                    if frame is None:
+                        with self.assertRaisesRegex(AssertionError, 'missing config frame metadata'):
+                            configuration_frames(functions, sizes)
+                    else:
+                        sizes[0x20000000] = frame
+                        # Loader 768 + validator 200 + its emitted child 9000.
+                        self.assertEqual(configuration_frames(functions, sizes), 9968)
+
+    def test_unreviewed_validation_descendants_cannot_hide_by_module_or_name(self):
+        for suffix in ('8validate8in_range', '8controls13ControlAction10allowed_on',
+                       '10appearance5Color9luminance', '7catalog14minimum_period',
+                       '5model7Channel13freshness_cap', '4fuel10new_helper'):
+            for frame in (None, 9000):
+                with self.subTest(suffix=suffix, frame=frame):
+                    functions, sizes = self.slot_fixture()
+                    functions['_RNvNtCsfF7AG8So2wt_16dashboard_config' + suffix] = (1, 4, 0)
+                    if frame is not None:
+                        sizes[0] = frame
+                    with self.assertRaisesRegex(AssertionError, 'unreviewed config stack helpers'):
+                        configuration_frames(functions, sizes)
+
+    def test_explicit_runtime_comparisons_and_bounded_panic_formatting(self):
+        functions, sizes = self.slot_fixture()
+        runtime = ('_RNvXsS_NtCsfF7AG8So2wt_16dashboard_config5modelNtB5_14DisplayOptions'
+                   'NtNtCs6m2Zc6X1WBq_4core3cmp9PartialEq2eq')
+        functions[runtime] = (1, 4, 0)
+        # This comparator belongs to the dashboard runtime, not boot loading.
+        self.assertEqual(configuration_frames(functions, sizes), 1292)
+        debug = ('_RNvXsh_NtCsfF7AG8So2wt_16dashboard_config8validateNtB5_15ValidationError'
+                 'NtNtCs6m2Zc6X1WBq_4core3fmt5Debug3fmt')
+        functions[debug] = (101, 4, 0)
+        with self.assertRaisesRegex(AssertionError, 'missing config frame metadata'):
+            configuration_frames(functions, sizes)
+        sizes[100] = 80
+        self.assertEqual(configuration_frames(functions, sizes), 1292)
+        sizes[100] = 9000
+        with self.assertRaisesRegex(AssertionError, 'config panic formatting frame'):
+            configuration_frames(functions, sizes)
+
     def test_aliases_deduplicate_but_unknown_or_ambiguous_paths_fail(self):
         functions, sizes = self.slot_fixture()
         name = next(n for n in functions if '12load_at_boot' in n)

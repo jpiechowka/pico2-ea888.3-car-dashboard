@@ -62,7 +62,7 @@ def configuration_frames(functions, sizes):
     Required emitted boundaries come from the traced LLVM 23 ARM captures.
     Header/ConfigSeed/VecSeed/default filling are inlined in the slot loader;
     if emitted, their frames are added at their source call-tree positions.
-    Unknown config decoding/serialization helpers require a new review.
+    Unknown config helpers, including validation descendants, require review.
     This is intentionally a named-path gate, not an instruction decoder.
     """
     covered = set()
@@ -126,7 +126,9 @@ def configuration_frames(functions, sizes):
     serial_controls = branch(ser('10ControlMap'), ser('13ControlAction'))
     canonical = branch(canonical, serial_widget, serial_fuel, serial_controls,
                        ser('13ChannelSource'), ser('19WarningPresentation'), ser('13WarningColors'))
-    validation = branch(validate, *[select('dashboard_config', token) for token in (
+    validation = branch(validate, outlined('8controls17validate_controls'),
+                        outlined('8validate10text_valid'),
+                        *[select('dashboard_config', token) for token in (
         '9Placement8occupied', '12WidgetColors12invalid_role', '5Gauge5valid',
         '5Color9contrasts', '7catalog10definition', '4fuel13stoichiometry',
         '6AccessNt')])
@@ -135,10 +137,18 @@ def configuration_frames(functions, sizes):
                       select('dashboard_config', '7catalog10definition'))
     # Validation follows decode/canonical or refill after their children return.
     result = branch(loader, decoding, validation, fallback)
-    relevant = [n for n in functions if 'dashboard_config' in n and any(t in n for t in (
-        'decode_in_place', 'Seed', 'deserialize', 'next_element', 'serialize_field',
-        'load_at_boot', 'default_config', 'default_widget', '5codec6decode',
-        'decode_current_into', 'inspect_envelope', 'crc_parts', 'compare_canonical'))]
+    # Error Debug formatting is already covered by check()'s reviewed 1024 B
+    # panic/entry allowance. Still require metadata and retain its observed
+    # maximum single frame (80 B); changes require re-review of that allowance.
+    debug = outlined('5Debug3fmt')
+    require(all(sizes[a] <= 80 for a in debug), 'config panic formatting frame changed; review allowance')
+    # These three equality implementations serve dashboard cache comparisons,
+    # not the boot tree. Access equality above IS a validation child. Do not
+    # broadly exempt PartialEq, whole modules or names containing "validate".
+    covered.update(n for n in functions if 'dashboard_config' in n
+                   and '3cmp9PartialEq2eq' in n
+                   and any(t in n for t in ('14DisplayOptionsNt', '15WarningSettingsNt', '12WidgetColorsNt')))
+    relevant = [n for n in functions if 'dashboard_config' in n]
     require(all(n in covered for n in relevant),
             'unreviewed config stack helpers: ' + str([n for n in relevant if n not in covered]))
     return weight(result)
