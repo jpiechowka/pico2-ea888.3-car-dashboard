@@ -3,7 +3,7 @@
 This is a conservative admission gate for named, source-reviewed call paths,
 not a whole-program stack proof or a device high-water measurement. Changes to
 those paths/dependencies require disassembly review of the child allowances.
-See docs/configurator/gauges-and-colours.md. Never increase budgets to pass.
+See docs/configurator/configuration-storage.md. Never increase budgets to pass.
 """
 import struct
 from validation import require
@@ -56,6 +56,94 @@ def task_frames(functions, sizes, name):
     return sum(sizes[address] for address in matches)
 
 
+def configuration_frames(functions, sizes):
+    """Reviewed slot call tree, with sibling branches taking their maximum.
+
+    Required emitted boundaries come from the traced LLVM 23 ARM captures.
+    Header/ConfigSeed/VecSeed/default filling are inlined in the slot loader;
+    if emitted, their frames are added at their source call-tree positions.
+    Unknown config decoding/serialization helpers require a new review.
+    This is intentionally a named-path gate, not an instruction decoder.
+    """
+    covered = set()
+
+    def select(*tokens, optional=False):
+        names = [n for n in functions if all(t in n for t in tokens)]
+        addresses = {functions[n][0] & ~1 for n in names}
+        require(optional or len(addresses) == 1,
+                'missing or ambiguous config stack path: ' + str(tokens))
+        require(optional or bool(names), 'missing config stack path')
+        require(all(a in sizes for a in addresses), 'missing config frame metadata: ' + str(tokens))
+        covered.update(names)
+        return addresses
+
+    def weight(path):
+        return sum(sizes[a] for a in path)
+
+    def branch(parent, *children):
+        # Deduplicate aliases across the complete simultaneously resident path.
+        return max((parent | c for c in children), key=weight) if children else parent
+
+    def dec(token):
+        return select('dashboard_config', '12next_element', token)
+
+    def ser(token):
+        return select('dashboard_config', '15serialize_field', token)
+
+    def outlined(*tokens):
+        return select('dashboard_config', *tokens, optional=True)
+
+    loader = select('dashboard_config', 'ConfigSlot', '12load_at_boot')
+    validate = select('dashboard_config', '12validate_ref')
+    canonical = select('dashboard_config', '17compare_canonical')
+    utf8 = select('4core', '9from_utf8')
+    # The only boot children without .stack_sizes are compiler-builtins memory
+    # routines: memcpy 72 B, memcpy4 <=16 B then tail-calls memcpy, memcmp 32 B.
+    # They and panic formatting/entry/executor children fit the separate 1024 B
+    # allowance in check(). UTF-8 has metadata and is counted explicitly here.
+    view = branch(dec('4View'), utf8)
+    text = branch(dec('11StringInner'), utf8)
+    color = dec('5ColorE')
+    warning_colors = dec('13WarningColors')
+    warning = branch(dec('15WarningSettings'), text, color)
+    widget_colors = branch(dec('12WidgetColors'), color, warning_colors)
+    widget = branch(dec('6WidgetE'), utf8, warning, widget_colors, dec('10GraphRange'), dec('5Gauge'))
+    source = branch(select('dashboard_config', '12next_elementNt', '13ChannelSource'), color)
+    sources = branch(select('dashboard_config', '12next_elementA', '13ChannelSource'), source)
+    controls = branch(select('dashboard_config', '15decode_in_place4next', '10ControlMap'),
+                      branch(dec('14ScreenBindings'), dec('13ControlAction')))
+    fields = [sources, controls]
+    for token in ('19WarningPresentation', '4Fuel', '13WarningColors'):
+        fields.append(select('dashboard_config', '15decode_in_place4next', token))
+    # ConfigSeed and VecSeed may each emit deserialize and visit_seq frames.
+    # The two vector instantiations are siblings, never simultaneous.
+    fields.extend([branch(outlined('VecSeed', '4View'), view),
+                   branch(outlined('VecSeed', '6Widget'), widget)])
+    seed = branch(outlined('ConfigSeed'), *fields)
+    header = outlined('16inspect_envelope') | outlined('9crc_parts')
+    serial_widget = branch(ser('6Widget'), ser('5ColorE'), ser('13WarningColors'))
+    serial_fuel = branch(ser('4Fuel'), ser('serialize_fieldf'))
+    serial_controls = branch(ser('10ControlMap'), ser('13ControlAction'))
+    canonical = branch(canonical, serial_widget, serial_fuel, serial_controls,
+                       ser('13ChannelSource'), ser('19WarningPresentation'), ser('13WarningColors'))
+    validation = branch(validate, *[select('dashboard_config', token) for token in (
+        '9Placement8occupied', '12WidgetColors12invalid_role', '5Gauge5valid',
+        '5Color9contrasts', '7catalog10definition', '4fuel13stoichiometry',
+        '6AccessNt')])
+    decoding = branch(outlined('19decode_current_into'), header, seed, canonical, validation)
+    fallback = branch(outlined('19fill_default_config'), outlined('14default_widget'),
+                      select('dashboard_config', '7catalog10definition'))
+    # Validation follows decode/canonical or refill after their children return.
+    result = branch(loader, decoding, validation, fallback)
+    relevant = [n for n in functions if 'dashboard_config' in n and any(t in n for t in (
+        'decode_in_place', 'Seed', 'deserialize', 'next_element', 'serialize_field',
+        'load_at_boot', 'default_config', 'default_widget', '5codec6decode',
+        'decode_current_into', 'inspect_envelope', 'crc_parts', 'compare_canonical'))]
+    require(all(n in covered for n in relevant),
+            'unreviewed config stack helpers: ' + str([n for n in relevant if n not in covered]))
+    return weight(result)
+
+
 def check(elf, headroom):
     require('.stack_sizes' in elf.named, 'build with -Z emit-stack-sizes')
     section = elf.named['.stack_sizes']
@@ -67,13 +155,12 @@ def check(elf, headroom):
     sizes = frames(elf.section_bytes('.stack_sizes'))
 
     def selected(predicate, required=False):
-        matches = [name for name in elf.functions if predicate(name)]
+        matches = {elf.functions[name][0] & ~1 for name in elf.functions if predicate(name)}
         if required:
             require(len(matches) == 1, 'missing or ambiguous stack path: ' + str(matches))
         values = []
-        for name in matches:
-            address = elf.functions[name][0] & ~1
-            require(address in sizes, 'missing frame metadata for ' + name)
+        for address in matches:
+            require(address in sizes, 'missing frame metadata for ' + hex(address))
             values.append(sizes[address])
         return sum(values)
 
@@ -84,9 +171,7 @@ def check(elf, headroom):
     dashboard = task('dashboard_task_task')
     acquisition = task('acquisition_task_task')
     initializer = selected(lambda n: 'view_config' in n and 'initialize' in n, True)
-    loader = selected(lambda n: 'dashboard_config' in n and 'load_at_boot' in n, True)
-    decoder = selected(lambda n: 'dashboard_config' in n and
-                       any(t in n for t in ('5codec6decode', 'default_config')))
+    configuration = configuration_frames(elf.functions, sizes)
     constructor = selected(lambda n: 'configured_vehicle' in n)
     # Usually inlined. Count separately if compiler changes introduce frames.
     constructor += selected(lambda n: (
@@ -100,7 +185,7 @@ def check(elf, headroom):
     # memcpy/memclr, boot validation/contrast and snapshot memory helpers.
     # Vehicle step/reset/telemetry paths have an independently reviewed 8KiB
     # child allowance. Runtime and construction are different poll branches.
-    boot_bound = boot_poll + initializer + loader + decoder + 1024
+    boot_bound = boot_poll + initializer + configuration + 1024
     constructor_bound = acquisition + constructor + 1024
     runtime_bound = acquisition + max(snapshots + 1024, 8192)
     dashboard_bound = dashboard + 16384  # drawing/formatting, flush, startup children
