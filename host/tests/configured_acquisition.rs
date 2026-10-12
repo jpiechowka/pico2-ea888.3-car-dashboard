@@ -1,5 +1,6 @@
 use dashboard_config::*;
 use dashboard_host_validation::acquisition::AcquisitionModel;
+use dashboard_host_validation::alarms::RuleIndex;
 use dashboard_host_validation::diagnostics::CanFrame;
 use dashboard_host_validation::diagnostics::client::TxAction;
 use dashboard_host_validation::diagnostics::session::Session;
@@ -30,10 +31,19 @@ fn immutable_configuration_survives_statistics_resets_and_limits_snapshot_freshn
         model.ingest_batch([1.0, 90.0, 120.0, 80.0, 30.0, 750.0, 13.8, 1.0], at);
     }
     let snapshot = model.snapshot();
+    let water_rule = RuleIndex::new(
+        config
+            .config()
+            .widgets
+            .iter()
+            .position(|w| w.channel == Channel::Water)
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(snapshot.value_at(SensorId::Water, 1600), Some(120.0));
     assert_eq!(snapshot.quality(SensorId::Water, 1601), Quality::Stale);
-    assert!(snapshot.alarm_active_at(SensorId::Water, 1600));
-    assert!(!snapshot.alarm_active_at(SensorId::Water, 1601));
+    assert!(snapshot.rule_active_at(water_rule, 1600));
+    assert!(!snapshot.rule_active_at(water_rule, 1601));
     model.reset_statistics(7);
     assert!(core::ptr::eq(model.configuration().unwrap(), &config));
     assert_eq!(model.snapshot().quality(SensorId::Water, 1601), Quality::Stale);
@@ -48,7 +58,19 @@ fn tightened_freshness_breaks_alarm_dwell_across_measurement_gaps() {
     for at in [0, 1000, 2000] {
         model.ingest_batch([1.0, 90.0, 120.0, 80.0, 30.0, 750.0, 13.8, 1.0], at);
     }
-    assert!(!model.snapshot().alarm_active_at(SensorId::Water, 2000));
+    let water_rule = RuleIndex::new(
+        config
+            .config()
+            .widgets
+            .iter()
+            .position(|w| w.channel == Channel::Water)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        model.snapshot().rule_status_at(water_rule, 2000),
+        dashboard_host_validation::alarms::Status::Pending
+    );
 }
 
 #[test]

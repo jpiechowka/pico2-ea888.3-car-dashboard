@@ -170,3 +170,58 @@ pub fn draw_brightness_popup<D>(
         .draw(display)
         .ok();
 }
+
+pub fn draw_view_popup<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    name: &str,
+) {
+    Rectangle::new(Point::new(CENTER_X - 108, CENTER_Y - 28), Size::new(216, 56))
+        .into_styled(WHITE_FILL)
+        .draw(display)
+        .ok();
+    Rectangle::new(Point::new(CENTER_X - 105, CENTER_Y - 25), Size::new(210, 50))
+        .into_styled(RED_FILL)
+        .draw(display)
+        .ok();
+    Text::with_text_style(name, FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
+        .draw(display)
+        .ok();
+}
+
+pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    page: crate::view_state::WarningPage,
+) {
+    use core::fmt::Write;
+    let (background, text, border) = if page.blink {
+        (RED_FILL, TITLE_STYLE_WHITE, WHITE_FILL)
+    } else {
+        (WHITE_FILL, TITLE_STYLE_RED, RED_FILL)
+    };
+    let outer = Rectangle::new(Point::new(CENTER_X - 108, CENTER_Y - 68), Size::new(216, 136));
+    let mut display = display.clipped(&outer);
+    outer.into_styled(border).draw(&mut display).ok();
+    Rectangle::new(Point::new(CENTER_X - 105, CENTER_Y - 65), Size::new(210, 130))
+        .into_styled(background)
+        .draw(&mut display)
+        .ok();
+    Text::with_text_style("WARNING", Point::new(CENTER_X, CENTER_Y - 40), text, CENTERED)
+        .draw(&mut display)
+        .ok();
+    for (row, line) in page.lines().iter().enumerate() {
+        Text::with_text_style(
+            line.as_str(),
+            Point::new(CENTER_X, CENTER_Y - 12 + row as i32 * 22),
+            text,
+            CENTERED,
+        )
+        .draw(&mut display)
+        .ok();
+    }
+    let mut page_text: heapless::String<8> = heapless::String::new();
+    write!(page_text, "{}/{}", page.number, page.total).ok();
+    let small = MonoTextStyle::new(crate::ui::LABEL_FONT, text.text_color.unwrap());
+    Text::with_text_style(&page_text, Point::new(CENTER_X, CENTER_Y + 55), small, CENTERED)
+        .draw(&mut display)
+        .ok();
+}

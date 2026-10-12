@@ -159,7 +159,7 @@ impl Backlight {
                     result.popup = Some(popup);
                     result.press_applied = true;
                 }
-                // Rotation is reserved for dashboard views; one currently exists.
+                // The separate view owner handles Dashboard rotation first.
             }
             Page::Debug => {
                 let current = u32::from(self.current.legacy_percent());

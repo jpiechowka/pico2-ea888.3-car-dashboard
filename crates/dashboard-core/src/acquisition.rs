@@ -1,7 +1,18 @@
 //! Single-owner measurement statistics, published as bounded coherent snapshots.
 use dashboard_config::{SourceResolution, ValidatedConfig, resolve_source};
 
-use crate::alarms::{AlarmEngine, Alerts, Context, Inputs, demo_contexts_for, demo_rules};
+use crate::alarms::{
+    AlarmEngine,
+    Alerts,
+    Context,
+    Inputs,
+    RuleAlerts,
+    RuleEngine,
+    RuleIndex,
+    Status,
+    demo_contexts_for,
+    demo_rules,
+};
 pub use crate::samples::SensorId;
 use crate::samples::{DataMode, Quality, Sample, SampleError, SampleMeta, Source};
 use crate::sensor_state::{PeakMode, SensorSnapshot, SensorState};
@@ -50,6 +61,7 @@ pub struct DashboardSnapshot {
     pub sequence: u64,
     pub reset_generation: u64,
     pub(crate) alerts: Alerts,
+    pub(crate) rule_alerts: RuleAlerts,
     pub(crate) freshness: [u16; SENSOR_COUNT],
 }
 
@@ -61,6 +73,7 @@ impl DashboardSnapshot {
         sequence: 0,
         reset_generation: 0,
         alerts: Alerts::DISABLED,
+        rule_alerts: RuleAlerts::DISABLED,
         freshness: DEFAULT_FRESHNESS,
     };
 
@@ -69,6 +82,22 @@ impl DashboardSnapshot {
         now_ms: u64,
     ) -> Alerts {
         self.alerts.at(self, now_ms)
+    }
+
+    pub fn rule_status_at(
+        &self,
+        index: RuleIndex,
+        now_ms: u64,
+    ) -> Status {
+        self.rule_alerts.status_at(index, self, now_ms)
+    }
+
+    pub fn rule_active_at(
+        &self,
+        index: RuleIndex,
+        now_ms: u64,
+    ) -> bool {
+        self.rule_status_at(index, now_ms) == Status::Active
     }
 
     pub fn alarm_active_at(
@@ -125,13 +154,43 @@ impl DashboardSnapshot {
     }
 }
 
+// Alternatives share storage; boxing is unavailable on the MCU. Legacy is
+// retained solely for existing protocol/pixel replay fixtures.
+#[allow(clippy::large_enum_variant)]
+enum Alarms<'a> {
+    Legacy(AlarmEngine),
+    Configured(RuleEngine<'a>),
+}
+impl Alarms<'_> {
+    fn enabled(&self) -> bool {
+        match self {
+            Self::Legacy(e) => e.enabled(),
+            Self::Configured(e) => e.enabled(),
+        }
+    }
+
+    fn update_inputs(
+        &mut self,
+        inputs: &Inputs<'_>,
+        contexts: &[Option<Context>; 8],
+        now: u64,
+    ) {
+        match self {
+            Self::Legacy(e) => {
+                e.update_inputs(inputs, contexts, now);
+            }
+            Self::Configured(e) => e.update_inputs(inputs, contexts, now),
+        }
+    }
+}
+
 pub struct AcquisitionModel<'a> {
     sensors: [SensorState; SENSOR_COUNT],
     metadata: [SampleMeta; SENSOR_COUNT],
     mode: DataMode,
     sequence: u64,
     reset_generation: u64,
-    alarms: AlarmEngine,
+    alarms: Alarms<'a>,
     contexts: [Option<Context>; SENSOR_COUNT],
     configuration: Option<&'a ValidatedConfig>,
     expected_sources: [Option<Source>; SENSOR_COUNT],
@@ -159,7 +218,7 @@ impl<'a> AcquisitionModel<'a> {
             mode: DataMode::Vehicle,
             sequence: 0,
             reset_generation: 0,
-            alarms: AlarmEngine::new([None; 8]).expect("empty alarm rules"),
+            alarms: Alarms::Legacy(AlarmEngine::new([None; 8]).expect("empty alarm rules")),
             contexts: [None; SENSOR_COUNT],
             configuration: None,
             expected_sources: [None; SENSOR_COUNT],
@@ -170,7 +229,7 @@ impl<'a> AcquisitionModel<'a> {
     pub fn demo() -> Self {
         Self {
             mode: DataMode::Demo,
-            alarms: AlarmEngine::new(demo_rules()).expect("demo alarm rules"),
+            alarms: Alarms::Legacy(AlarmEngine::new(demo_rules()).expect("demo alarm rules")),
             ..Self::new()
         }
     }
@@ -191,6 +250,7 @@ impl<'a> AcquisitionModel<'a> {
                 }
             });
         }
+        model.alarms = Alarms::Configured(RuleEngine::new(config, model.mode, model.expected_sources));
         model
     }
 
@@ -199,6 +259,7 @@ impl<'a> AcquisitionModel<'a> {
         model.configuration = Some(config);
         model.freshness = config.config().sources.map(|source| source.freshness_ms);
         model.expected_sources = [Some(Source::Demo); SENSOR_COUNT];
+        model.alarms = Alarms::Configured(RuleEngine::new(config, model.mode, model.expected_sources));
         model
     }
 
@@ -340,7 +401,14 @@ impl<'a> AcquisitionModel<'a> {
             mode: self.mode,
             sequence: self.sequence,
             reset_generation: self.reset_generation,
-            alerts: self.alarms.snapshot(),
+            alerts: match &self.alarms {
+                Alarms::Legacy(e) => e.snapshot(),
+                _ => Alerts::DISABLED,
+            },
+            rule_alerts: match &self.alarms {
+                Alarms::Configured(e) => e.snapshot(),
+                _ => RuleAlerts::DISABLED,
+            },
             freshness: self.freshness,
         }
     }

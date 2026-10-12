@@ -293,7 +293,9 @@ async fn main(spawner: Spawner) {
     let reset_cause = watchdog.reset_label();
     log_info!("Previous reset: {}", reset_cause);
     let dashboard_configuration = view_config::initialize();
-    let dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
+    let mut view_selection = dashboard_pico2::view_state::ViewSelection::new(&dashboard_configuration.config);
+    let mut warning_pager = dashboard_pico2::view_state::WarningPager::new();
+    let mut dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
         &dashboard_configuration.config,
         dashboard_configuration.config.config().boot_view,
         dashboard_configuration.fault.is_some(),
@@ -552,7 +554,32 @@ async fn main(spawner: Spawner) {
                 }
                 // Button does nothing on Logs page
             }
-            Page::Dashboard | Page::Debug => {
+            Page::Dashboard => {
+                let at = Instant::now().as_millis();
+                let effect = view_selection.encoder(
+                    &dashboard_configuration.config,
+                    &mut backlight,
+                    enc_delta,
+                    enc_presses,
+                    at,
+                );
+                if dashboard_layout.id() != view_selection.id() {
+                    dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
+                        &dashboard_configuration.config,
+                        view_selection.id(),
+                        dashboard_configuration.fault.is_some(),
+                    )
+                    .expect("selected validated view");
+                    color_transitions = ColorTransition::new();
+                    warning_pager.pause(at);
+                }
+                motion_applied = effect.motion_applied;
+                press_applied = effect.press_applied;
+                if let Some(popup) = effect.popup {
+                    active_popup = Some(popup);
+                }
+            }
+            Page::Debug => {
                 let effect = backlight.encoder(current_page, enc_delta, enc_presses, Instant::now().as_millis());
                 motion_applied = effect.motion_applied;
                 press_applied = effect.press_applied;
@@ -638,21 +665,36 @@ async fn main(spawner: Spawner) {
             average_fps = rate.average;
         }
 
-        let alerts = measurements.alerts_at(now_ms);
         let user_overlay = active_popup.as_ref().map(|popup| {
             match popup {
                 Popup::Reset(_) => Overlay::Reset,
                 Popup::Fps(_) => Overlay::Fps(fps_mode),
                 Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
                 Popup::Brightness(_, brightness) => Overlay::Brightness(*brightness),
+                Popup::View(_) => {
+                    Overlay::View(
+                        dashboard_pico2::view_state::PopupText::new(dashboard_layout.name())
+                            .expect("validated view name"),
+                    )
+                }
             }
         });
-        let visible_overlay = Overlay::for_page(current_page, user_overlay, alerts, blink_on);
-        input_tracker.exclude_obscured(matches!(visible_overlay, Some(Overlay::Critical(..))));
+        let warning_page = if current_page == Page::Dashboard && user_overlay.is_none() {
+            warning_pager.select(
+                &dashboard_configuration.config,
+                &measurements,
+                view_selection.id(),
+                now_ms,
+                blink_on,
+            )
+        } else {
+            warning_pager.pause(now_ms);
+            None
+        };
+        let visible_overlay = Overlay::configured_for_page(current_page, user_overlay, warning_page);
+        input_tracker.exclude_obscured(visible_overlay.and_then(Overlay::warning_phase).is_some());
         for cell in 0..8 {
-            let active = dashboard_layout
-                .widget(cell)
-                .is_some_and(|widget| alerts.active(dashboard_pico2::samples::SensorId::from_channel(widget.channel)));
+            let active = dashboard_layout.alarm_active(cell, &measurements, now_ms);
             color_transitions.set_target(cell, if active { RED } else { BLACK }, now_ms);
         }
 
@@ -680,7 +722,7 @@ async fn main(spawner: Spawner) {
                     fps_instant: current_fps,
                     fps_average: average_fps,
                     backgrounds: core::array::from_fn(|cell| color_transitions.get_current(cell)),
-                    overlay: user_overlay,
+                    overlay: visible_overlay,
                 };
                 let redraw = dashboard_cache.prepare(render_idx, &scene);
                 redraw.begin(&mut display, &scene);

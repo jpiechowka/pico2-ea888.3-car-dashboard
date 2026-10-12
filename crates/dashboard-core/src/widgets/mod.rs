@@ -20,4 +20,6 @@ pub use popups::{
     draw_critical_popup,
     draw_fps_toggle_popup,
     draw_reset_popup,
+    draw_view_popup,
+    draw_warning_page,
 };

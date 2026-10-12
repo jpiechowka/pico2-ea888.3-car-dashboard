@@ -76,7 +76,7 @@ impl StatusLed {
         visible: Option<Overlay>,
         backlight_on: bool,
     ) -> Self {
-        if backlight_on && let Some(Overlay::Critical(_, phase)) = visible {
+        if backlight_on && let Some(phase) = visible.and_then(Overlay::warning_phase) {
             if phase { Self::Red } else { Self::Off }
         } else {
             Self::Green

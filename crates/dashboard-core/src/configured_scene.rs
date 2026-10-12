@@ -65,6 +65,19 @@ impl<'a> Layout<'a> {
 
     pub fn name(&self) -> &str { &self.configuration.config().views[self.view_index].name }
 
+    pub fn id(&self) -> u8 { self.configuration.config().views[self.view_index].id }
+
+    pub fn alarm_active(
+        &self,
+        slot: usize,
+        samples: &DashboardSnapshot,
+        now: u64,
+    ) -> bool {
+        self.rule_index(slot)
+            .and_then(crate::alarms::RuleIndex::new)
+            .is_some_and(|i| samples.rule_active_at(i, now))
+    }
+
     pub const fn configuration(&self) -> &'a ValidatedConfig { self.configuration }
 
     pub const fn count(&self) -> usize { self.count }
@@ -250,7 +263,7 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     let id = SensorId::from_channel(widget.channel);
     let quality = scene.quality(slot);
     let valid = quality == Quality::Valid;
-    let background = if valid && scene.blink_on && scene.measurements.alarm_active_at(id, scene.now_ms) {
+    let background = if valid && scene.blink_on && layout.alarm_active(slot, scene.measurements, scene.now_ms) {
         scene.backgrounds[slot]
     } else {
         BLACK

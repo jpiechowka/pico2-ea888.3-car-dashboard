@@ -7,6 +7,7 @@ pub enum Popup {
     Reset(u64),
     Fps(u64),
     BoostUnit(u64),
+    View(u64),
     /// Monotonic milliseconds and page-specific brightness feedback.
     Brightness(u64, crate::backlight::Brightness),
 }
@@ -15,7 +16,7 @@ impl Popup {
     #[inline]
     pub const fn start_time(&self) -> u64 {
         match self {
-            Self::Reset(t) | Self::Fps(t) | Self::BoostUnit(t) | Self::Brightness(t, _) => *t,
+            Self::Reset(t) | Self::Fps(t) | Self::BoostUnit(t) | Self::View(t) | Self::Brightness(t, _) => *t,
         }
     }
 
@@ -26,7 +27,7 @@ impl Popup {
     ) -> bool {
         let duration = match self {
             Self::Brightness(_, crate::backlight::Brightness::Off) => 2000,
-            Self::Brightness(..) => POPUP_DURATION_SHORT_MS,
+            Self::Brightness(..) | Self::View(_) => POPUP_DURATION_SHORT_MS,
             _ => POPUP_DURATION_MS,
         };
         // Invalid time cannot keep feedback covering a warning indefinitely.

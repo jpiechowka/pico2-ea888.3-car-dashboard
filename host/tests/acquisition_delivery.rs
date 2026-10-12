@@ -192,10 +192,11 @@ fn concurrent_watch_publication_is_coherent_and_eventually_latest() {
 #[test]
 fn publication_copy_and_single_owner_storage_have_fixed_bounds() {
     assert!(
-        // Includes the acquisition-owned alarm states and expiration deadlines.
-        core::mem::size_of::<DashboardSnapshot>() <= 3200,
+        // Historical bounded snapshot plus at most 640 B for 64 widget rules.
+        core::mem::size_of::<DashboardSnapshot>() <= 3200 + 640,
         "snapshot {} B",
         core::mem::size_of::<DashboardSnapshot>()
     );
-    assert!(core::mem::size_of::<AcquisitionModel>() <= 12_288);
+    // One engine shares storage with the historical replay engine; no config copy.
+    assert!(core::mem::size_of::<AcquisitionModel>() <= 12_288 + 4096);
 }

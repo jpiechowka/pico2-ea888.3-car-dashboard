@@ -28,6 +28,7 @@ pub mod settings;
 pub mod status_led;
 pub mod telemetry_protocol;
 pub mod vehicle_status;
+pub mod view_state;
 pub mod widgets;
 
 pub use config::sensors as thresholds;

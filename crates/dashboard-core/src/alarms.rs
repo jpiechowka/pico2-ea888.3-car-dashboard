@@ -3,6 +3,9 @@
 use crate::acquisition::DashboardSnapshot;
 use crate::samples::{DataMode, SampleMeta, SensorId, Source};
 
+mod configured;
+pub use configured::{RuleAlerts, RuleEngine, RuleIndex};
+
 /// Compact, already source/quality/time-checked view; no history copy for policy evaluation.
 pub(crate) struct Inputs<'a> {
     pub metadata: &'a [SampleMeta; 8],
@@ -192,15 +195,34 @@ impl Alerts {
     }
 }
 
+// A compact state per rule: four timestamps/counters plus flag bits. No
+// sentinel timestamp is reserved, so u64::MAX remains representable.
 #[derive(Clone, Copy, Default)]
 struct State {
-    seen: Option<(u64, u64)>,
-    context_at: Option<u64>,
-    active: bool,
-    since: Option<u64>,
-    valid: bool,
+    sequence: u64,
+    at: u64,
+    context_at: u64,
+    since: u64,
+    flags: u8,
 }
+const SEEN: u8 = 1;
+const CONTEXT: u8 = 2;
+const ACTIVE: u8 = 4;
+const PENDING: u8 = 8;
+const VALID: u8 = 16;
 impl State {
+    fn seen(&self) -> Option<(u64, u64)> { (self.flags & SEEN != 0).then_some((self.sequence, self.at)) }
+
+    fn record(
+        &mut self,
+        sequence: u64,
+        at: u64,
+    ) {
+        self.flags |= SEEN;
+        self.sequence = sequence;
+        self.at = at;
+    }
+
     fn consume(
         &mut self,
         rule: Rule,
@@ -211,28 +233,108 @@ impl State {
         if meta.source == rule.source
             && samples.values[rule.sensor as usize].is_some()
             && let Some(at) = meta.received_at_ms
-            && self.seen.is_none_or(|(seq, time)| meta.sequence > seq && at >= time)
+            && self.seen().is_none_or(|(seq, time)| meta.sequence > seq && at >= time)
         {
-            self.seen = Some((meta.sequence, at));
+            self.record(meta.sequence, at);
         }
     }
 
-    fn invalidate(&mut self) {
-        self.active = false;
-        self.since = None;
-        self.valid = false;
-    }
+    fn invalidate(&mut self) { self.flags &= !(ACTIVE | PENDING | VALID); }
 
-    fn status(self) -> Status {
-        if !self.valid {
+    fn status(&self) -> Status {
+        if self.flags & VALID == 0 {
             Status::Unavailable
-        } else if self.active {
+        } else if self.flags & ACTIVE != 0 {
             Status::Active
-        } else if self.since.is_some() {
+        } else if self.flags & PENDING != 0 {
             Status::Pending
         } else {
             Status::Normal
         }
+    }
+
+    fn advance(
+        &mut self,
+        rule: Rule,
+        samples: &Inputs<'_>,
+        context: Option<Context>,
+        now: u64,
+        expires: &mut u64,
+    ) -> Status {
+        let Some(value) = AlarmEngine::value(rule, samples, context, now) else {
+            // Consume invalid context too: repairing it cannot backdate dwell.
+            self.consume(rule, samples, now);
+            self.invalidate();
+            return Status::Unavailable;
+        };
+        let channel = rule.sensor as usize;
+        let meta = samples.metadata[channel];
+        let at = meta.received_at_ms.unwrap(); // checked by value_at
+        if let Some((sequence, previous_at)) = self.seen() {
+            if meta.sequence < sequence || at < previous_at || (meta.sequence == sequence && at != previous_at) {
+                self.invalidate();
+                return Status::Unavailable;
+            }
+            if meta.sequence == sequence {
+                return self.status();
+            }
+            let max_gap = (if rule.contextual() {
+                500
+            } else {
+                rule.sensor.stale_after_ms()
+            })
+            .min(u64::from(samples.freshness[channel]));
+            if at - previous_at > max_gap {
+                self.invalidate();
+            }
+        }
+        self.record(meta.sequence, at);
+        let context_at = if rule.contextual() {
+            context.map(|c| c.received_at_ms)
+        } else {
+            None
+        };
+        if let Some(current) = context_at {
+            if self.flags & CONTEXT != 0 {
+                if current < self.context_at {
+                    self.invalidate();
+                    return Status::Unavailable;
+                }
+                if current - self.context_at > u64::from(samples.freshness[channel]).min(500) {
+                    self.invalidate();
+                }
+            }
+            self.context_at = current;
+            self.flags |= CONTEXT;
+        } else {
+            self.flags &= !CONTEXT;
+        }
+        self.flags |= VALID;
+        *expires = at
+            .saturating_add(rule.sensor.stale_after_ms().min(u64::from(samples.freshness[channel])))
+            .min(context_at.map_or(u64::MAX, |at| {
+                at.saturating_add(u64::from(samples.freshness[channel]).min(500))
+            }));
+        let condition_at = at.max(context_at.unwrap_or(at));
+        let (trigger, clear) = match rule.limit {
+            Limit::High { on, off } | Limit::LambdaDeviation { on, off, .. } => (value >= on, value <= off),
+            Limit::Low { on, off } => (value <= on, value >= off),
+        };
+        let active = self.flags & ACTIVE != 0;
+        if if active { clear } else { trigger } {
+            if self.flags & PENDING == 0 {
+                self.since = condition_at;
+                self.flags |= PENDING;
+            }
+            let supported_until = at.min(context_at.unwrap_or(at));
+            if supported_until.saturating_sub(self.since) >= if active { rule.off_ms } else { rule.on_ms } {
+                self.flags ^= ACTIVE;
+                self.flags &= !PENDING;
+            }
+        } else {
+            self.flags &= !PENDING;
+        }
+        self.status()
     }
 }
 
@@ -359,82 +461,16 @@ impl AlarmEngine {
         }
         self.last_ms = now;
         self.alerts.evaluated_at = now;
-        for (i, context) in contexts.iter().enumerate() {
-            let Some(rule) = self.rules[i] else {
-                continue;
-            };
-            let state = &mut self.states[i];
-            let Some(value) = Self::value(rule, samples, *context, now) else {
-                // A valid measurement observed with invalid context is consumed.
-                // Repairing its context later cannot resurrect or backdate dwell.
-                state.consume(rule, samples, now);
-                state.invalidate();
-                self.alerts.states[i] = Status::Unavailable;
-                continue;
-            };
-            let meta = samples.metadata[i];
-            let at = meta.received_at_ms.unwrap(); // checked by value_at
-            if let Some((sequence, previous_at)) = state.seen {
-                if meta.sequence < sequence || at < previous_at || (meta.sequence == sequence && at != previous_at) {
-                    state.invalidate();
-                    self.alerts.states[i] = Status::Unavailable;
-                    continue;
-                }
-                if meta.sequence == sequence {
-                    self.alerts.states[i] = state.status();
-                    continue;
-                }
-                let max_gap = (if rule.contextual() {
-                    500
-                } else {
-                    rule.sensor.stale_after_ms()
-                })
-                .min(u64::from(samples.freshness[i]));
-                if at - previous_at > max_gap {
-                    state.invalidate();
-                }
+        for (i, rule) in self.rules.iter().enumerate() {
+            if let Some(rule) = rule {
+                self.alerts.states[i] = self.states[i].advance(
+                    *rule,
+                    samples,
+                    contexts[rule.sensor as usize],
+                    now,
+                    &mut self.alerts.expires[i],
+                );
             }
-            state.seen = Some((meta.sequence, at));
-            let context_at = if rule.contextual() {
-                context.map(|c| c.received_at_ms)
-            } else {
-                None
-            };
-            if let (Some(previous), Some(current)) = (state.context_at, context_at) {
-                if current < previous {
-                    state.invalidate();
-                    self.alerts.states[i] = Status::Unavailable;
-                    continue;
-                }
-                if current - previous > u64::from(samples.freshness[i]).min(500) {
-                    state.invalidate();
-                }
-            }
-            state.context_at = context_at;
-            state.valid = true;
-            self.alerts.expires[i] = at
-                .saturating_add(rule.sensor.stale_after_ms().min(u64::from(samples.freshness[i])))
-                .min(context_at.map_or(u64::MAX, |at| {
-                    at.saturating_add(u64::from(samples.freshness[i]).min(500))
-                }));
-            // Both the measurement and its operating context must support the
-            // entire dwell. Skew may never backdate the condition's start.
-            let condition_at = at.max(context_at.unwrap_or(at));
-            let (trigger, clear) = match rule.limit {
-                Limit::High { on, off } | Limit::LambdaDeviation { on, off, .. } => (value >= on, value <= off),
-                Limit::Low { on, off } => (value <= on, value >= off),
-            };
-            if if state.active { clear } else { trigger } {
-                let since = *state.since.get_or_insert(condition_at);
-                let supported_until = at.min(context_at.unwrap_or(at));
-                if supported_until.saturating_sub(since) >= if state.active { rule.off_ms } else { rule.on_ms } {
-                    state.active = !state.active;
-                    state.since = None;
-                }
-            } else {
-                state.since = None;
-            }
-            self.alerts.states[i] = state.status();
         }
         self.alerts
     }

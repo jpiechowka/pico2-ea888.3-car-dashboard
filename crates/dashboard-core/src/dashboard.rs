@@ -25,9 +25,31 @@ pub enum Overlay {
     BoostUnit(bool),
     Brightness(Brightness),
     Critical(SensorId, bool),
+    Warnings(crate::view_state::WarningPage),
+    View(crate::view_state::PopupText),
 }
 
 impl Overlay {
+    pub fn configured_for_page(
+        page: Page,
+        user: Option<Self>,
+        warning: Option<crate::view_state::WarningPage>,
+    ) -> Option<Self> {
+        match page {
+            Page::Dashboard => user.or_else(|| warning.map(Self::Warnings)),
+            Page::Debug => user.filter(|overlay| matches!(overlay, Self::Brightness(Brightness::Percent(_)))),
+            Page::Logs => None,
+        }
+    }
+
+    pub const fn warning_phase(self) -> Option<bool> {
+        match self {
+            Self::Critical(_, phase) => Some(phase),
+            Self::Warnings(page) => Some(page.blink),
+            _ => None,
+        }
+    }
+
     pub fn prioritize(
         user: Option<Self>,
         alerts: crate::alarms::Alerts,
@@ -60,6 +82,8 @@ impl Overlay {
             Self::BoostUnit(psi) => draw_boost_unit_popup(display, psi),
             Self::Brightness(value) => draw_brightness_popup(display, value),
             Self::Critical(sensor, blink) => draw_critical_popup(display, sensor, blink),
+            Self::Warnings(page) => draw_warning_page(display, page),
+            Self::View(name) => draw_view_popup(display, name.as_str()),
         }
     }
 }
@@ -211,6 +235,11 @@ impl DashboardScene<'_> {
     }
 
     fn effective_overlay(&self) -> Option<Overlay> {
+        // Configured scenes receive the single policy result used for both
+        // pixels and completion-gated LEDs. Never choose a second warning here.
+        if self.layout.is_some() {
+            return self.overlay;
+        }
         Overlay::for_page(
             Page::Dashboard,
             self.overlay,
@@ -378,7 +407,7 @@ impl DashboardScene<'_> {
             key.graph = GraphKey::new(widget.display.graph.then_some(state));
             key.flags[0] = widget.display.extrema && state.is_new_peak_at(self.now_ms);
             key.trend = widget.display.trend.then(|| state.get_trend_at(self.now_ms)).flatten();
-            if !self.blink_on || !self.measurements.alarm_active_at(SensorId::ALL[sensor], self.now_ms) {
+            if !self.blink_on || !layout.alarm_active(cell, self.measurements, self.now_ms) {
                 key.background = BLACK;
             }
             return Some(key);
