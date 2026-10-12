@@ -87,7 +87,7 @@ assert_eq!(held.actions[0].action, ControlAction::PreviousView);
 assert_eq!(held.actions[0].observation.observed_us, 100_000);
 ```
 - [ ] Run `cargo test --manifest-path host/Cargo.toml --locked --test control_gestures --test backlight_controls` and save RED output. Implement fixed per-button state with release arming, press candidate time, stable debounce and a single fired flag. On page changes, disarm held keys and suppress old-screen release. Ignore regressed times without advancing state. Recovery/page changes have explicit deterministic precedence. Recovery disarms all held keys even on Dashboard. Ordinary None-hold retains tap on release; holds require the current sampled level still pressed (release observed after a stall must not invent recovery). Clamp invalid ordinary hold duration to the safe documented bounds in this defensive pure helper, ignore incompatible raw actions and count them, and make overflow converting milliseconds to observation microseconds fail without action or panic. Firmware will still supply a validated map.
-- [ ] Test every compatible action gesture, simultaneous recovery vs reset/units and page change vs actions, fixed Y behavior despite a raw invalid map passed to the pure helper, maintenance reset, multi-second gaps, ordinary hold bound saturation and stale Off token completion after wake. Encoder-batch suppression is an integration test in Task4 (this module does not own the encoder mailbox). Test old button releases after a page switch, same-page recovery while another key is still held, no-hold long tap, release before threshold but debounce after threshold, and raw release observed only after a long pause.
+- [ ] Test every compatible action gesture, simultaneous recovery vs reset/units and page change vs actions, fixed Y behavior despite a raw invalid map passed to the pure helper, maintenance reset, multi-second gaps, ordinary hold bound saturation and stale Off token completion after wake. Encoder-batch suppression is an integration test in Task5 (this module does not own the encoder mailbox). Test old button releases after a page switch, same-page recovery while another key is still held, no-hold long tap, release before threshold but debounce after threshold, and raw release observed only after a long pause.
 - [ ] Run host control/backlight/input/navigation tests, core/config suites, formatting and strict affected Clippy. Commit `feat(controls): add shared hold gestures and protected recovery` after reviewable self-check.
 
 ### Task 3: Shared action session for firmware and simulation
@@ -168,7 +168,28 @@ let effects = session.apply(&dashboard_configuration.config, controls, buttons,
 
 **Interfaces:** A Device controls panel edits Config.controls transactionally; a simulator adapter consumes ControlGestures and shared action dispatch. Existing draft/accepted/config version/storage contracts remain authoritative.
 
+Add `Edit::SetControls(ControlMap)` and `RawField::ControlHoldMilliseconds`. Read maps from `editing_config`, never replace a rejected candidate with a copy of the last accepted map. Permit mapping repairs while a parsed candidate is rejected; preserve unrelated invalid edits and keep all serialization blocked. Hold text remains editable when a rejected map exists, and repairing it must not erase the rejected map. If an unrelated raw parse error blocks a typed operation, explain which text requires correction. Never let stale field tokens overwrite a newer draft. Extend the existing choice component with a clearly named repair mode rather than copying its token/focus logic.
+
+Expose a pure `ControlSimulator` in `configurator/src/simulator.rs`, with a fixed sample clock, the real ControlGestures/ControlSession and bounded LogStore. It may use the existing locked embassy-sync dependency explicitly; do not introduce another mutex implementation. The browser stores this single-thread simulator with Leptos local storage if its mutex is not Sync, rather than adding unsafe Send/Sync. Deterministic Tap/Hold/Recover/encoder actions feed real press/debounce/release traces. A visible state summary reports page, view, brightness, popup, FPS/units, log anchor and ignored events. A changed accepted configuration explicitly restarts the simulation; ordinary page changes preserve session choices. Invalid candidate mappings can be inspected only with a prominent INVALID SIMULATION label and the accepted layout; protected recovery remains active. Full simulated screen rendering remains Stage 9 of the roadmap.
+
+```rust
+#[test]
+fn broken_routes_remain_editable_until_repaired() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let accepted = editor.export_binary().unwrap();
+    let mut map = editor.editing_config().controls;
+    map.screens[ControlPage::Dashboard.index()].buttons[ButtonId::Y.index()].tap = ControlAction::None;
+    assert!(editor.apply(Edit::SetControls(map)).is_err());
+    assert!(editor.has_invalid_draft());
+    assert!(editor.export_binary().is_err());
+    assert_eq!(editor.editing_config().controls, map);
+    map.screens[ControlPage::Dashboard.index()].buttons[ButtonId::Y.index()].tap = ControlAction::NextScreen;
+    editor.apply(Edit::SetControls(map)).unwrap();
+    assert_eq!(editor.export_binary().unwrap(), accepted);
+}
+```
+
 - [ ] Add reducer tests for compatible mapping edits, incompatible invalid draft/repair, missing onboard routes, immutable Y hold, undo/redo and imported v1/v2 defaults. Assert accepted serialization remains blocked for invalid mappings while controls stay editable.
-- [ ] Add accessible per-screen binding controls, filtered compatible action menus, locked recovery description, hold duration and encoder options. Display current onboard fallback routes and link each validation error to its control. Use the shared catalogue, not duplicated compatibility tables.
+- [ ] Add accessible per-screen binding controls, filtered compatible action menus, locked recovery description, hold duration and encoder options. Display current onboard fallback routes and link each validation error to its control. Use the shared catalogue, not duplicated compatibility tables. Add `ALL`/human labels to the finite shared action catalogue if needed, preserving serialized enum order. Give fields stable DOM IDs derived from page/button/gesture, link the current Controls error to its field or route summary, and keep the recovery explanation visible for each screen.
 - [ ] Add deterministic simulator press/release/hold and encoder controls driven by the shared dispatcher, with Dashboard/Debug/Logs state visible. This is the control foundation; full shared screen rendering and diagnostics are delivered by the separate approved diagnostics stage. Test all actions, reset feedback, page changes and recovery from Off.
 - [ ] Run native editor tests, strict native/Wasm Clippy, production Trunk build and real browser remap/invalid repair/undo/reload/recovery checks. Audit controls end to end, commit `feat(studio): add control mapping editor and simulation`, then push master and check exact CI.
