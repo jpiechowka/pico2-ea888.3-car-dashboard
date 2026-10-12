@@ -1,23 +1,23 @@
 //! Deterministic single-owner adapter for the same gestures and dispatcher as firmware.
 //! Presentation completion is synthetic; this module does not render screen pixels.
 use dashboard_config::{ButtonId, ControlMap, ValidatedConfig};
+use dashboard_core::acquisition::DashboardSnapshot;
 use dashboard_core::control_session::ControlSession;
 use dashboard_core::controls::ControlGestures;
 use dashboard_core::input_model::EncoderBatch;
 use dashboard_core::input_trace::Observation;
 use dashboard_core::logging::{Level, LogStore};
-use dashboard_core::render::FpsMode;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+use crate::simulation::Simulation;
 
 pub const SAMPLE_START_MS: u64 = 118_000;
 
 pub struct ControlSimulator {
-    config: ValidatedConfig,
+    simulation: Simulation,
     map: ControlMap,
-    session: ControlSession,
     gestures: ControlGestures,
     logs: LogStore<NoopRawMutex>,
-    now_ms: u64,
     ignored: u32,
     reset_pending: bool,
     invalid: bool,
@@ -25,19 +25,16 @@ pub struct ControlSimulator {
 
 impl ControlSimulator {
     pub fn cache_exhaustion_status(&self) -> dashboard_core::cache_diagnostics::CacheExhaustionStatus {
-        dashboard_core::cache_diagnostics::CacheExhaustionStatus::from_config(self.config.cache_identity_status())
+        self.simulation.model.cache_exhaustion_status()
     }
 
     pub fn new(config: ValidatedConfig) -> Self {
-        let session = ControlSession::new(&config, FpsMode::Off, false);
         let map = config.config().controls;
         let mut simulator = Self {
-            config,
+            simulation: Simulation::new(config, SAMPLE_START_MS),
             map,
-            session,
             gestures: ControlGestures::new(),
             logs: LogStore::new(),
-            now_ms: SAMPLE_START_MS,
             ignored: 0,
             reset_pending: false,
             invalid: false,
@@ -71,9 +68,9 @@ impl ControlSimulator {
         self.sample([false; 4], EncoderBatch::default());
     }
 
-    pub const fn session(&self) -> &ControlSession { &self.session }
+    pub const fn session(&self) -> &ControlSession { &self.simulation.session }
 
-    pub const fn now_ms(&self) -> u64 { self.now_ms }
+    pub const fn now_ms(&self) -> u64 { self.simulation.now_ms }
 
     pub const fn ignored(&self) -> u32 { self.ignored }
 
@@ -81,32 +78,64 @@ impl ControlSimulator {
 
     pub const fn reset_pending(&self) -> bool { self.reset_pending }
 
-    pub const fn config(&self) -> &ValidatedConfig { &self.config }
+    pub fn config(&self) -> &ValidatedConfig { self.simulation.configuration() }
 
     fn sample(
         &mut self,
         pressed: [bool; 4],
         encoder: EncoderBatch,
     ) {
-        self.session.expire_feedback(self.now_ms);
-        let buttons = self
-            .gestures
-            .update(&self.map, self.session.page(), pressed, self.now_ms);
-        let effects = self
-            .session
-            .apply(&self.config, &self.map, buttons, encoder, &self.logs, self.now_ms);
+        self.simulation.model.tick(self.simulation.now_ms);
+        self.simulation.session.expire_feedback(self.simulation.now_ms);
+        let buttons = self.gestures.update(
+            &self.map,
+            self.simulation.session.page(),
+            pressed,
+            self.simulation.now_ms,
+        );
+        let effects = self.simulation.session.apply(
+            self.simulation.model.configuration().expect("simulation config"),
+            &self.map,
+            buttons,
+            encoder,
+            &self.logs,
+            self.simulation.now_ms,
+        );
         self.ignored = self.ignored.saturating_add(effects.ignored);
         self.reset_pending |= effects.reset_requested;
         // Treat the summary presentation as completed. Off feedback starts here;
         // a later expired popup still requires a separate clear presentation.
-        self.session.backlight_mut().frame_unchanged(self.now_ms);
+        self.simulation
+            .session
+            .backlight_mut()
+            .frame_unchanged(self.simulation.now_ms);
+        self.simulation.prepare();
     }
+
+    /// Stateful sampling uses real warning dwell. None advances time without readings.
+    pub fn advance_to(
+        &mut self,
+        now_ms: u64,
+        values: Option<[f32; 8]>,
+    ) {
+        self.simulation.advance_to(now_ms, values);
+        self.simulation.session.expire_feedback(self.simulation.now_ms);
+        // Same synthetic summary completion used by the existing controls UI.
+        self.simulation
+            .session
+            .backlight_mut()
+            .frame_unchanged(self.simulation.now_ms);
+    }
+
+    pub(crate) fn warning_page(&self) -> Option<dashboard_core::view_state::WarningPage> { self.simulation.warning }
+
+    pub fn snapshot(&self) -> DashboardSnapshot { self.simulation.snapshot() }
 
     pub fn advance(
         &mut self,
         milliseconds: u64,
     ) {
-        self.now_ms = self.now_ms.saturating_add(milliseconds);
+        self.simulation.now_ms = self.simulation.now_ms.saturating_add(milliseconds);
         self.sample([false; 4], EncoderBatch::default());
     }
 
@@ -118,13 +147,13 @@ impl ControlSimulator {
         self.advance(50);
         let mut pressed = [false; 4];
         pressed[button.index()] = true;
-        self.now_ms = self.now_ms.saturating_add(1);
+        self.simulation.now_ms = self.simulation.now_ms.saturating_add(1);
         self.sample(pressed, EncoderBatch::default());
-        self.now_ms = self.now_ms.saturating_add(50);
+        self.simulation.now_ms = self.simulation.now_ms.saturating_add(50);
         self.sample(pressed, EncoderBatch::default());
-        self.now_ms = self.now_ms.saturating_add(duration_ms.saturating_sub(50));
+        self.simulation.now_ms = self.simulation.now_ms.saturating_add(duration_ms.saturating_sub(50));
         self.sample(pressed, EncoderBatch::default());
-        self.now_ms = self.now_ms.saturating_add(1);
+        self.simulation.now_ms = self.simulation.now_ms.saturating_add(1);
         self.sample([false; 4], EncoderBatch::default());
         self.advance(50);
         // Let a newly selected page capture a stable released baseline.
@@ -160,7 +189,11 @@ impl ControlSimulator {
         presses: u8,
     ) {
         self.advance(1);
-        let observation = self.now_ms.checked_mul(1000).and_then(|now| Observation::new(now, now));
+        let observation = self
+            .simulation
+            .now_ms
+            .checked_mul(1000)
+            .and_then(|now| Observation::new(now, now));
         self.sample(
             [false; 4],
             EncoderBatch {
@@ -183,14 +216,22 @@ impl ControlSimulator {
 
     pub fn acknowledge_reset(&mut self) {
         if self.reset_pending {
-            self.now_ms = self.now_ms.saturating_add(1);
-            self.session.statistics_acknowledged(self.now_ms);
+            let generation = self
+                .simulation
+                .model
+                .snapshot()
+                .reset_generation
+                .checked_add(1)
+                .expect("reset generation exhausted");
+            self.simulation.model.reset_statistics(generation);
+            self.simulation.now_ms = self.simulation.now_ms.saturating_add(1);
+            self.simulation.session.statistics_acknowledged(self.simulation.now_ms);
             self.reset_pending = false;
         }
     }
 
     pub fn summary(&self) -> String {
-        let s = &self.session;
+        let s = &self.simulation.session;
         format!(
             "{} · view {} · {} · PWM {} · {} · {} · popup {:?} · logs {:?} · ignored {} · {} ms{}",
             s.page().label(),
@@ -202,7 +243,7 @@ impl ControlSimulator {
             s.popup(),
             s.log_anchor(),
             self.ignored,
-            self.now_ms,
+            self.simulation.now_ms,
             if self.reset_pending {
                 " · statistics reset awaiting acknowledgment"
             } else {

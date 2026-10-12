@@ -74,7 +74,16 @@ pub enum PreviewError {
     BufferLength,
 }
 
+/// Appearance reconstructs synthetic history; Simulation borrows the live owner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PreviewMode {
+    #[default]
+    Appearance,
+    Simulation,
+}
+
 pub struct Preview {
+    mode: PreviewMode,
     framebuffer: Box<FrameBuffer>,
     rgba: Vec<u8>,
     snapshot: Option<DashboardSnapshot>,
@@ -93,6 +102,7 @@ impl Default for Preview {
 impl Preview {
     pub fn new() -> Self {
         Self {
+            mode: PreviewMode::Appearance,
             framebuffer: Box::new(FrameBuffer::new()),
             rgba: vec![0; WIDTH * HEIGHT * 4],
             snapshot: None,
@@ -105,10 +115,61 @@ impl Preview {
         }
     }
 
+    pub const fn mode(&self) -> PreviewMode { self.mode }
+
+    /// Compatibility entry point for synthetic appearance inspection.
+    pub fn render(
+        &mut self,
+        config: &ValidatedConfig,
+        view: u8,
+        options: PreviewOptions,
+    ) -> Result<&[u8], PreviewError> {
+        self.render_appearance(config, view, options)
+    }
+
+    /// Render prepared dashboard state without advancing or rebuilding acquisition.
+    /// Other control screens and frame completion are integrated separately.
+    pub fn render_simulation(
+        &mut self,
+        simulation: &crate::simulator::ControlSimulator,
+    ) -> Result<&[u8], PreviewError> {
+        let config = simulation.config();
+        let session = simulation.session();
+        let view = session.view_id();
+        let layout = Layout::new(config, view, false).ok_or(PreviewError::UnknownView(view))?;
+        let snapshot = simulation.snapshot();
+        let now = simulation.now_ms();
+        let warning = simulation.warning_page();
+        let scene = DashboardScene {
+            layout: Some(layout),
+            measurements: &snapshot,
+            status: VehicleStatus::Demo,
+            now_ms: now,
+            blink_on: (now / 500).is_multiple_of(2),
+            boost_psi: session.boost_psi(),
+            fps_mode: session.fps(),
+            fps_instant: 0.0,
+            fps_average: 0.0,
+            backgrounds: [BLACK; 8],
+            overlay: warning.map(Overlay::Warnings),
+        };
+        scene.draw_full(&mut St7789Renderer::new(&mut self.framebuffer));
+        rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
+        self.mode = PreviewMode::Simulation;
+        self.prepared_status = simulation.cache_exhaustion_status();
+        self.snapshot = Some(snapshot);
+        self.warning = warning;
+        self.rendered_at = Some(now);
+        self.options = None;
+        self.configuration = None;
+        self.pager = WarningPager::new();
+        Ok(&self.rgba)
+    }
+
     /// Render through the same acquisition statistics, layout and DashboardScene
     /// as firmware. Both complete pixel buffers are allocated once and reused.
     /// All recoverable errors leave the previous complete render and pager intact.
-    pub fn render(
+    pub fn render_appearance(
         &mut self,
         config: &ValidatedConfig,
         view: u8,
@@ -203,6 +264,7 @@ impl Preview {
         };
         scene.draw_full(&mut St7789Renderer::new(&mut self.framebuffer));
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed framebuffer and RGBA dimensions");
+        self.mode = PreviewMode::Appearance;
         self.snapshot = Some(snapshot);
         self.warning = warning;
         self.options = Some(options);

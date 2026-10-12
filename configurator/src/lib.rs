@@ -24,6 +24,7 @@ pub mod diagnostic;
 pub mod editor;
 pub mod geometry;
 pub mod preview;
+mod simulation;
 pub mod simulator;
 pub mod timing;
 pub mod widget_actions;

@@ -155,3 +155,105 @@ fn off_feedback_clear_and_recovery_follow_presentation_rules() {
     assert!(sim.session().backlight().compare() > 0);
     assert_eq!(sim.session().popup(), None);
 }
+
+#[test]
+fn persistent_samples_keep_history_and_restart_resets_origin() {
+    use dashboard_core::samples::SensorId;
+    let cfg = validate(default_config()).unwrap();
+    let mut sim = ControlSimulator::new(cfg.clone());
+    let start = sim.now_ms();
+    for (offset, water) in [(0, 95.0), (2000, 110.0), (4000, 90.0)] {
+        sim.advance_to(start + offset, Some([1., 95., water, 80., 30., 700., 13.8, 1.]));
+    }
+    let snap = sim.snapshot();
+    assert_eq!(snap.sequence, 3);
+    assert_eq!(snap.sensor(SensorId::Water).minimum(), Some(90.));
+    assert_eq!(snap.sensor(SensorId::Water).maximum(), Some(110.));
+    assert_eq!(snap.sensor(SensorId::Water).get_graph_data().2, 3);
+    let identity = snap.sensor(SensorId::Water).graph_cache_identity();
+    sim.advance_to(start + 1_000_000_000, None);
+    assert_eq!(sim.snapshot().sequence, 3);
+    assert_eq!(sim.snapshot().sensor(SensorId::Water).graph_cache_identity(), identity);
+    assert_eq!(sim.snapshot().value_at(SensorId::Water, sim.now_ms()), None);
+    let mut second = ControlSimulator::new(cfg.clone());
+    for (offset, water) in [(0, 95.0), (2000, 110.0), (4000, 90.0)] {
+        second.advance_to(start + offset, Some([1., 95., water, 80., 30., 700., 13.8, 1.]));
+    }
+    assert_ne!(
+        second.snapshot().sensor(SensorId::Water).graph_cache_identity(),
+        identity
+    );
+    sim.restart(cfg);
+    assert_eq!(sim.snapshot().sequence, 0);
+    assert_eq!(sim.snapshot().sensor(SensorId::Water).maximum(), None);
+    assert_ne!(sim.snapshot().sensor(SensorId::Water).graph_cache_identity(), identity);
+}
+
+#[test]
+fn owned_and_borrowed_ingestion_match_including_rejected_values() {
+    use dashboard_core::acquisition::AcquisitionModel;
+    let cfg = validate(default_config()).unwrap();
+    let mut borrowed = AcquisitionModel::demo_configured(&cfg);
+    let mut sim = ControlSimulator::new(cfg.clone());
+    let start = sim.now_ms();
+    for (offset, water) in [(0, 95.0), (250, f32::NAN), (200, 99.0), (500, 110.0)] {
+        let values = [1., 95., water, 80., 30., 700., 13.8, 1.];
+        borrowed.ingest_batch(values, start + offset);
+        sim.advance_to(start + offset, Some(values));
+        assert_eq!(sim.snapshot(), borrowed.snapshot());
+    }
+}
+
+#[test]
+fn boxed_owner_binds_threshold_and_dwell_to_its_immutable_config() {
+    use dashboard_core::acquisition::{AcquisitionModel, OwnedAcquisitionModel};
+    use dashboard_core::alarms::{RuleIndex, Status};
+    let mut raw = default_config();
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.trigger = 1.5;
+    raw.widgets[0].warning.clear = 1.;
+    raw.widgets[0].warning.on_ms = 500;
+    let original = validate(raw.clone()).unwrap();
+    let mut borrowed = AcquisitionModel::demo_configured(&original);
+    let mut owned = OwnedAcquisitionModel::demo_configured(Box::new(original.clone()));
+    let rule = RuleIndex::new(0).unwrap();
+    let high = [2., 90., 95., 80., 30., 700., 13.8, 1.];
+    for at in [0, 250] {
+        borrowed.ingest_batch(high, at);
+        owned.ingest_batch(high, at);
+        assert_eq!(owned.snapshot(), borrowed.snapshot());
+    }
+    raw.widgets[0].warning.trigger = 3.;
+    raw.widgets[0].warning.clear = 2.5;
+    let mut replacement = OwnedAcquisitionModel::demo_configured(Box::new(validate(raw).unwrap()));
+    assert_eq!(replacement.snapshot().sequence, 0);
+    assert_eq!(owned.snapshot().rule_status_at(rule, 250), Status::Pending);
+    for at in [500, 750, 1000] {
+        borrowed.ingest_batch(high, at);
+        owned.ingest_batch(high, at);
+        replacement.ingest_batch(high, at);
+        assert_eq!(owned.snapshot(), borrowed.snapshot());
+        assert_eq!(owned.snapshot().rule_status_at(rule, at), Status::Active);
+        assert_eq!(replacement.snapshot().rule_status_at(rule, at), Status::Normal);
+    }
+}
+
+#[test]
+fn reset_acknowledgment_resets_owned_statistics_once_and_time_expires_feedback() {
+    use dashboard_core::samples::SensorId;
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let start = sim.now_ms();
+    sim.advance_to(start, Some([3., 90., 95., 80., 30., 700., 13.8, 1.]));
+    sim.advance_to(start + 250, Some([1., 90., 95., 80., 30., 700., 13.8, 1.]));
+    sim.tap(ButtonId::B);
+    assert!(sim.reset_pending());
+    assert_eq!(sim.snapshot().sensor(SensorId::Boost).maximum(), Some(3.));
+    sim.acknowledge_reset();
+    assert_eq!(sim.snapshot().reset_generation, 1);
+    assert_eq!(sim.snapshot().sensor(SensorId::Boost).maximum(), Some(1.));
+    sim.acknowledge_reset();
+    assert_eq!(sim.snapshot().reset_generation, 1);
+    sim.advance_to(sim.now_ms() + 10, None);
+    sim.advance_to(sim.now_ms() + 3000, None);
+    assert_eq!(sim.session().popup(), None);
+}

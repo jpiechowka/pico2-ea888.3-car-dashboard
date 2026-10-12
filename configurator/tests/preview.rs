@@ -609,3 +609,39 @@ fn session_reporting_survives_replacement_failed_preview_and_clear() {
     );
     assert_eq!(console_calls, 3);
 }
+
+#[test]
+fn simulation_preview_borrows_persistent_samples_and_uses_real_dwell() {
+    use dashboard_configurator::simulator::ControlSimulator;
+    let mut raw = default_config();
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.trigger = 1.5;
+    raw.widgets[0].warning.clear = 1.;
+    raw.widgets[0].warning.on_ms = 500;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let start = sim.now_ms();
+    let mut preview = Preview::new();
+    for (elapsed, expected) in [(0, Status::Pending), (250, Status::Pending), (500, Status::Active)] {
+        sim.advance_to(start + elapsed, Some([2., 90., 95., 80., 30., 700., 13.8, 1.]));
+        preview.render_simulation(&sim).unwrap();
+        assert_eq!(preview.mode(), PreviewMode::Simulation);
+        assert_eq!(preview.snapshot(), Some(&sim.snapshot()));
+        assert_eq!(
+            preview
+                .snapshot()
+                .unwrap()
+                .rule_status_at(RuleIndex::new(0).unwrap(), sim.now_ms()),
+            expected
+        );
+    }
+    assert!(preview.warning_page().is_some());
+    assert_eq!(preview.snapshot().unwrap().sensors[0].get_graph_data().2, 1);
+    sim.advance_to(start + 1_000_000, None);
+    preview.render_simulation(&sim).unwrap();
+    assert_eq!(preview.snapshot().unwrap().sequence, 3);
+    assert_eq!(preview.warning_page(), None);
+    preview
+        .render_appearance(sim.config(), 1, PreviewOptions::default())
+        .unwrap();
+    assert_eq!(preview.mode(), PreviewMode::Appearance);
+}
