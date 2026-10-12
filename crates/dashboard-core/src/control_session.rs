@@ -250,11 +250,13 @@ impl ControlSession {
             result.ignored = result.ignored.saturating_add(total);
             return result;
         }
-        let Some(now_us) = now_ms.checked_mul(1000) else {
+        let Some(_) = now_ms.checked_mul(1000) else {
             result.ignored = result.ignored.saturating_add(total);
             return result;
         };
-        let valid_before = |o: Observation| valid(o) && o.accepted_us <= now_us;
+        // The caller supplies a millisecond bucket, while producers retain
+        // microsecond precision. All instants within this bucket are eligible.
+        let valid_before = |o: Observation| valid(o) && o.accepted_us / 1000 <= now_ms;
         self.last_ms = now_ms;
         if let Some(o) = buttons.recovery
             && valid_before(o)

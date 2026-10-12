@@ -640,21 +640,21 @@ fn future_observations_and_consumption_overflow_fail_closed() {
     let c = multi_config();
     let mut s = ControlSession::new(&c, FpsMode::Off, false);
     let mut b = ControlBatch {
-        recovery: Some(observation(1001, 1)),
+        recovery: Some(observation(2000, 1)),
         ..Default::default()
     };
     b.actions
         .push(ControlEvent {
             button: ButtonId::Y,
             action: ControlAction::Debug,
-            observation: observation(1001, 1),
+            observation: observation(2000, 1),
         })
         .unwrap();
     let e = EncoderBatch {
         delta: 1,
         presses: 1,
-        motion: Some(observation(1001, 1)),
-        button: Some(observation(1001, 1)),
+        motion: Some(observation(2000, 1)),
+        button: Some(observation(2000, 1)),
     };
     let result = s.apply(&c, &ControlMap::default(), b, e, &LogStore::<NoopRawMutex>::new(), 1);
     assert_eq!(result.ignored, 4);
@@ -694,4 +694,46 @@ fn priority_discard_counts_do_not_subtract_from_a_saturated_total() {
     let effect = s.apply(&c, &ControlMap::default(), b, e, &LogStore::<NoopRawMutex>::new(), 1);
     assert_eq!(effect.ignored, 1);
     assert_eq!(effect.observations.unwrap().events, u32::MAX);
+}
+
+#[test]
+fn observations_in_current_millisecond_bucket_are_accepted_including_recovery() {
+    let c = multi_config();
+    let mut s = ControlSession::new(&c, FpsMode::Off, false);
+    let mut b = ControlBatch::default();
+    b.actions
+        .push(ControlEvent {
+            button: ButtonId::A,
+            action: ControlAction::ToggleBoostUnits,
+            observation: observation(1_200_999, 1),
+        })
+        .unwrap();
+    let e = EncoderBatch {
+        delta: 1,
+        presses: 1,
+        motion: Some(observation(1_200_999, 1)),
+        button: Some(observation(1_200_999, 1)),
+    };
+    let effect = s.apply(&c, &ControlMap::default(), b, e, &LogStore::<NoopRawMutex>::new(), 1200);
+    assert_eq!(effect.ignored, 0);
+    assert_eq!(effect.observations.unwrap().events, 3);
+    assert!(s.boost_psi());
+    assert_eq!(s.view_id(), 9);
+    assert_eq!(s.backlight().compare(), 5000);
+    let b = ControlBatch {
+        recovery: Some(observation(1_200_999, 1)),
+        ..Default::default()
+    };
+    let effect = s.apply(
+        &c,
+        &ControlMap::default(),
+        b,
+        EncoderBatch::default(),
+        &LogStore::<NoopRawMutex>::new(),
+        1200,
+    );
+    assert!(effect.recovered);
+    assert_eq!(effect.ignored, 0);
+    assert_eq!(s.backlight().compare(), 10000);
+    assert_eq!(s.view_id(), 9);
 }
