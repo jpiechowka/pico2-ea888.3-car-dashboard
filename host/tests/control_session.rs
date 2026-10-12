@@ -92,6 +92,203 @@ fn multi_config() -> ValidatedConfig {
         .unwrap();
     dashboard_config::validate(c).unwrap()
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExpectedState {
+    page: Page,
+    view: u8,
+    brightness: dashboard_core::backlight::Brightness,
+    compare: u16,
+    fps: FpsMode,
+    boost_psi: bool,
+    popup: Option<dashboard_core::popup::Popup>,
+    anchor: Option<u64>,
+}
+fn matrix_config() -> ValidatedConfig {
+    let mut c = multi_config().config().clone();
+    c.views
+        .push(dashboard_config::View {
+            id: 12,
+            name: "Third".try_into().unwrap(),
+        })
+        .unwrap();
+    dashboard_config::validate(c).unwrap()
+}
+impl ExpectedState {
+    fn capture(s: &ControlSession) -> Self {
+        Self {
+            page: s.page(),
+            view: s.view_id(),
+            brightness: s.backlight().brightness(),
+            compare: s.backlight().compare(),
+            fps: s.fps(),
+            boost_psi: s.boost_psi(),
+            popup: s.popup(),
+            anchor: s.log_anchor(),
+        }
+    }
+}
+
+fn matrix_setup(
+    s: &mut ControlSession,
+    c: &ValidatedConfig,
+    page: Page,
+) -> LogStore<NoopRawMutex> {
+    let logs = LogStore::<NoopRawMutex>::new();
+    for i in 0..30 {
+        logs.push(dashboard_core::logging::Level::Info, i, format_args!("entry"));
+    }
+    if page != Page::Dashboard {
+        apply_action(
+            s,
+            c,
+            if page == Page::Debug {
+                ControlAction::Debug
+            } else {
+                ControlAction::Logs
+            },
+            0,
+        );
+    }
+    if page == Page::Debug {
+        s.backlight_mut().encoder(Page::Debug, -1, 0, 0);
+        assert_eq!(s.backlight().compare(), 9725);
+    }
+    if page == Page::Logs {
+        let e = EncoderBatch {
+            delta: -2,
+            motion: Some(observation(0, 1)),
+            ..Default::default()
+        };
+        s.apply(c, &ControlMap::default(), ControlBatch::default(), e, &logs, 0);
+        assert_eq!(s.log_anchor(), Some(28));
+    }
+    assert!(s.popup().is_none());
+    logs
+}
+
+/// Independent expected outcomes, including deliberate no-ops. Both matrices
+/// compare the entire state and every effect field against this action table.
+fn assert_action_result(
+    s: &ControlSession,
+    effect: &dashboard_core::control_session::ControlEffects,
+    before: ExpectedState,
+    action: ControlAction,
+) {
+    use ControlAction::*;
+    use dashboard_core::backlight::Brightness;
+    use dashboard_core::popup::Popup;
+    let page = before.page;
+    let compatible = match action {
+        None | NextScreen | PreviousScreen | Dashboard | Debug | Logs => true,
+        NextView | PreviousView | ToggleBoostUnits | CycleFps | ResetStatistics | CycleBrightness => {
+            page == Page::Dashboard
+        }
+        ToggleBacklight | BrightnessUp | BrightnessDown => page == Page::Debug,
+        ScrollOlder | ScrollNewer | LogsLive => page == Page::Logs,
+    };
+    let mut expected = before.clone();
+    let mut flags = (false, false, false, false, false, false);
+    let mut accepted = compatible;
+    if compatible {
+        match action {
+            None => accepted = false,
+            NextScreen | PreviousScreen | Dashboard | Debug | Logs => {
+                expected.page = match action {
+                    NextScreen => {
+                        match page {
+                            Page::Dashboard => Page::Debug,
+                            Page::Debug => Page::Logs,
+                            Page::Logs => Page::Dashboard,
+                        }
+                    }
+                    PreviousScreen => {
+                        match page {
+                            Page::Dashboard => Page::Logs,
+                            Page::Debug => Page::Dashboard,
+                            Page::Logs => Page::Debug,
+                        }
+                    }
+                    Dashboard => Page::Dashboard,
+                    Debug => Page::Debug,
+                    Logs => Page::Logs,
+                    _ => unreachable!(),
+                };
+                accepted = expected.page != page;
+                if accepted {
+                    flags.0 = true;
+                    expected.popup = Option::None;
+                    expected.anchor = Option::None;
+                }
+            }
+            NextView | PreviousView => {
+                expected.view = if action == NextView { 9 } else { 12 };
+                expected.popup = Some(Popup::View(2000));
+                flags.1 = true;
+            }
+            ToggleBoostUnits => {
+                expected.boost_psi = true;
+                expected.popup = Some(Popup::BoostUnit(2000));
+                flags.2 = true;
+            }
+            CycleFps => {
+                expected.fps = FpsMode::Instant;
+                expected.popup = Some(Popup::Fps(2000));
+                flags.3 = true;
+            }
+            ResetStatistics => {
+                flags.5 = true;
+            }
+            CycleBrightness => {
+                expected.brightness = Brightness::Dim;
+                expected.compare = 5000;
+                expected.popup = Some(Popup::Brightness(2000, Brightness::Dim));
+            }
+            ToggleBacklight => {
+                expected.brightness = Brightness::Percent(0);
+                expected.popup = Some(Popup::Brightness(2000, Brightness::Percent(0)));
+            }
+            BrightnessUp => {
+                expected.brightness = Brightness::Percent(100);
+                expected.compare = 10000;
+                expected.popup = Some(Popup::Brightness(2000, Brightness::Percent(100)));
+            }
+            BrightnessDown => {
+                expected.brightness = Brightness::Percent(90);
+                expected.compare = 9450;
+                expected.popup = Some(Popup::Brightness(2000, Brightness::Percent(90)));
+            }
+            ScrollOlder => expected.anchor = Some(27),
+            ScrollNewer => expected.anchor = Some(29),
+            LogsLive => expected.anchor = Option::None,
+        }
+    }
+    assert_eq!(ExpectedState::capture(s), expected, "{page:?}/{action:?}");
+    assert_eq!(
+        (
+            effect.page_changed,
+            effect.view_changed,
+            effect.units_changed,
+            effect.fps_changed,
+            effect.recovered,
+            effect.reset_requested
+        ),
+        flags,
+        "flags {page:?}/{action:?}"
+    );
+    assert_eq!(effect.ignored, u32::from(!accepted), "ignored {page:?}/{action:?}");
+    let reset = accepted && action == ResetStatistics;
+    assert_eq!(
+        effect.observations,
+        (accepted && !reset).then_some(observation(2_000_000, 1)),
+        "observations {page:?}/{action:?}"
+    );
+    assert_eq!(
+        effect.reset_observation,
+        reset.then_some(observation(2_000_000, 1)),
+        "reset {page:?}/{action:?}"
+    );
+}
 #[test]
 fn all_compatible_actions_and_invalid_page_pairs() {
     use ControlAction::*;
@@ -117,21 +314,20 @@ fn all_compatible_actions_and_invalid_page_pairs() {
     ];
     for page in Page::ALL {
         for action in actions {
-            let c = multi_config();
+            let c = matrix_config();
             let mut s = ControlSession::new(&c, FpsMode::Off, false);
-            if page != Page::Dashboard {
-                apply_action(&mut s, &c, if page == Page::Debug { Debug } else { Logs }, 0);
-            }
-            let old_page = s.page();
-            let old_view = s.view_id();
-            let old_pwm = s.backlight().compare();
-            let effect = apply_action(&mut s, &c, action, 1);
-            if !action.allowed_on(page) {
-                assert_eq!(effect.ignored, 1);
-                assert_eq!(s.page(), old_page);
-                assert_eq!(s.view_id(), old_view);
-                assert_eq!(s.backlight().compare(), old_pwm);
-            }
+            let logs = matrix_setup(&mut s, &c, page);
+            let before = ExpectedState::capture(&s);
+            let mut b = ControlBatch::default();
+            b.actions
+                .push(ControlEvent {
+                    button: ButtonId::A,
+                    action,
+                    observation: observation(2_000_000, 1),
+                })
+                .unwrap();
+            let effect = s.apply(&c, &ControlMap::default(), b, EncoderBatch::default(), &logs, 2000);
+            assert_action_result(&s, &effect, before, action);
         }
     }
 }
@@ -546,15 +742,10 @@ fn encoder_custom_actions_respect_every_page_pair_and_count_saturated_clicks() {
     ];
     for page in Page::ALL {
         for action in actions {
-            let c = multi_config();
+            let c = matrix_config();
             let mut s = ControlSession::new(&c, FpsMode::Off, false);
-            let logs = LogStore::<NoopRawMutex>::new();
-            for i in 0..30 {
-                logs.push(dashboard_core::logging::Level::Info, i, format_args!("entry"));
-            }
-            if page != Page::Dashboard {
-                apply_action(&mut s, &c, if page == Page::Debug { Debug } else { Logs }, 0);
-            }
+            let logs = matrix_setup(&mut s, &c, page);
+            let before = ExpectedState::capture(&s);
             let mut map = ControlMap::default();
             map.screens[page.index()].encoder_click = action;
             let effect = s.apply(
@@ -563,22 +754,13 @@ fn encoder_custom_actions_respect_every_page_pair_and_count_saturated_clicks() {
                 ControlBatch::default(),
                 EncoderBatch {
                     presses: 1,
-                    button: Some(observation(1, 1)),
+                    button: Some(observation(2_000_000, 1)),
                     ..Default::default()
                 },
                 &logs,
-                1,
+                2000,
             );
-            if !action.allowed_on(page) {
-                assert_eq!(effect.ignored, 1);
-                assert_eq!(s.page(), page);
-            }
-            if action == ResetStatistics && page == Page::Dashboard {
-                assert!(effect.reset_requested);
-                assert!(s.popup().is_none());
-                s.statistics_acknowledged(2);
-                assert!(matches!(s.popup(), Some(dashboard_core::popup::Popup::Reset(2))));
-            }
+            assert_action_result(&s, &effect, before, action);
         }
     }
     let c = config();
