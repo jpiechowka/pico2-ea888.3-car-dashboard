@@ -4,7 +4,7 @@ This is the implementation contract for the requested flashing workspace. It is 
 
 ## Workflow
 
-The Device workspace gains Build and Flash controls. The build uses the accepted configuration only; invalid edits block a new build or flash and remain visible in the diagnostic preview. The user chooses Demo or Vehicle, a named clock profile or Custom, and supported build options. A read-only details panel shows the actual rustup toolchain, `rustc -Vv`, Cargo version, target, features, optimization/outline/trace options, configuration hash, and exact executable arguments and relevant environment overrides.
+The Build & Flash workspace sits alongside Views, Device, Data & warnings and Diagnostics, with a link from Device settings. The build uses the accepted configuration only; invalid or unapplied JSON edits block a new build or flash and remain visible in the diagnostic preview. The user chooses Demo or Vehicle, a named clock profile or Custom, and supported build options. A read-only details panel shows the actual rustup toolchain, `rustc -Vv`, Cargo version, target, features, optimization/outline/trace options, configuration hash, and exact executable arguments and relevant environment overrides.
 
 Nightly is preferred. Resolve the project's dated nightly and report the installed compiler used by the build. A toolchain update is a separate visible operation: an in-flight build keeps its resolved compiler. Missing components, unavailable nightly, build failures and unsupported options are reported without silently selecting another compiler or profile.
 
