@@ -1,5 +1,39 @@
 # Gauges and colours
 
+## Using the controls
+
+Start `./configurator/Studio.ps1 -Serve`, open `http://127.0.0.1:8080`, select a
+widget and choose **Gauge style**. Set **Scale minimum/maximum** in canonical
+units and optionally enable **Expand with observed values**. Expansion never
+shrinks the configured range; turning it off clamps the indicator again. The
+numeric reading and warning thresholds remain independent of that scale.
+
+| Presentation | Sizes | History / trend | Average / extrema |
+| --- | --- | --- | --- |
+| Numeric & history | 1×1, 2×1, 2×2 | Optional | Optional |
+| Circular arc, needle dial, horizontal, vertical, segmented bar | 1×1, 2×1, 2×2 | Replaced by gauge | Optional at 2×2 |
+
+Every style retains fitted values, labels and unavailable-state feedback.
+Lambda can retain its AFR and conversion label; boost retains bar/PSI switching.
+Hidden numeric-view preferences remain stored when changing gauge styles.
+Round gauges use a bounded line lookup; bars use fixed geometry. None adds a
+frame-count-driven animation or a second data generator.
+
+Open **Widget colours** for the separate text, graph, scale and warning roles.
+Colour pickers and hex fields use the same validator. Hex values show the
+actual RGB565 representation after quantization. In **Warning display**, set
+the separate combined-warning pair for list mode; cycle mode uses the active
+warning widget's pair. A background change can invalidate several existing
+colours, so all stored roles remain editable even if the current style hides them.
+
+Rejected edits appear automatically in the clearly marked **INVALID PREVIEW**.
+Invalid colours remain visible for diagnosis with safe geometry; invalid rules
+or geometry never become the accepted device configuration. Save/export remain
+blocked until repaired or discarded. Use the stress-value selector to inspect
+channel endpoints, extreme digit widths and unavailable AFR. Export JSON for
+editing and `.eav` for a firmware build. [Version 1 migration](schema-v2.md) is
+explicit in the editor/build compiler; exported files now use version 2.
+
 ## Implementation plan, 2026-10-12
 
 Goal: six bounded gauge styles and independent widget colours, using the same
@@ -90,3 +124,99 @@ remain explicitly marked, inspectable, and blocked from save/export.
 Physical readability, panel scanout FPS, device stack high-water, overclock
 stability and live DNUC ECU qualification require hardware validation. The
 user's working profile remains 280/70; this work does not request a flash.
+
+## Resource audit and stack correction
+
+The linked ARM review found a real acquisition-stack defect that a static RAM
+total could not detect: the initial Vehicle acquisition poll alone reserved
+38,576 bytes against a 32,768-byte core-1 stack. An older pre-configurator
+Longan image also exceeded that stack on its snapshot call chain, so this is
+not attributed solely to the new gauges. Merely outlining constructors made
+some local frames smaller while making their cumulative call chains worse.
+Those experiments were rejected.
+
+The correction constructs the configured acquisition owner directly, instead
+of constructing a complete legacy owner and replacing its large alarm state.
+A plain-owner firmware helper avoids a large temporary Result in the resident
+acquisition poll. Const sensor/histogram templates preserve their initial state.
+A thin boot task parses the configuration, queues the runtime dashboard task,
+then returns. This separates parser and runtime stack lifetimes. Awaiting the
+runtime body instead would retain the parent frame and defeat that boundary.
+
+The locked Embassy executor 0.10.0 Spawner/raw executor source was inspected:
+spawn queues a task without eagerly polling it. Cortex-M runtime 0.7.5 enables
+the FPU before the entry point, supporting bounded floating-point config
+validation before HAL initialization. Parsing now precedes watchdog startup;
+it reads only bounded immutable embedded bytes, without peripheral or time
+access. Peripheral setup, UART construction on core 1, immutable configuration
+publication, framebuffer ownership and DMA lifetimes are preserved.
+
+Target Rust [stack metadata](https://doc.rust-lang.org/beta/unstable-book/compiler-flags/emit-stack-sizes.html)
+and the [LLVM format](https://llvm.org/docs/CodeGenerator.html#stack-size-section)
+were checked against linked instructions. `.stack_sizes` is retained as INFO,
+outside every LOAD segment; it adds no runtime RAM or loaded code/data. The
+mandatory memory-layout gate rejects missing/malformed metadata, includes
+outlined task bodies behind small poll shims, and checks cumulative named
+paths with 8 KiB core-0 / 4 KiB core-1 reserves. Ordinary child allowances are
+1 KiB for construction/boot helpers, 8 KiB for acquisition runtime and 16 KiB
+for dashboard runtime. Source or dependency changes require reviewing these
+allowances against disassembly; do not increase budgets just to pass.
+
+### Final frozen builds, nightly 2026-10-11
+
+Both use the 280/70 profile and frame/TE traces. The Demo capture imports the
+466-byte v1 default and embeds its canonical 912-byte v2 upgrade. The Vehicle
+capture embeds an 8-view, 64-widget, 8,430-byte maximum fixture with long text,
+high IDs, all styles and three-byte colour varints. It remains an unqualified
+Vehicle transport. Each archive contains 219 unchanged build-source inputs.
+
+| Metric (bytes) | Demo, migrated default | Vehicle, maximum |
+| --- | ---: | ---: |
+| Static main RAM | 445,656 | 455,640 |
+| Core-0 stack headroom | 78,632 | 68,648 |
+| Admitted boot path, including child allowance | 50,160 | 50,344 |
+| Admitted core-1 construction path | 7,616 | 25,456 |
+| Admitted core-1 runtime path | 14,784 | 13,592 |
+| Admitted dashboard path | 33,424 | 34,384 |
+
+Independent instruction review measured the normal Vehicle construction chain
+at 24,648 bytes, leaving 8,120 bytes on core 1 before exception/indirect-path
+qualification. Normal boot success/fallback measured 49,516/49,700 bytes for
+Demo/Vehicle respectively. These are reviewed linked call paths, not physical
+stack high-water measurements or whole-program proofs. IRQ/exception overlap,
+panic paths and indirect waker/format calls still need device qualification.
+
+| Frozen capture | ELF SHA-256 |
+| --- | --- |
+| gauges-final-demo-v1 | `9ec35e37b245a8e6a8f2bbb969a9b64ea0f1ff3d99ceb4b979d18fbcbfe18cb4` |
+| gauges-final-vehicle-maximum | `6187d764708e5a1cbcba6352de2a2c028301e8d41b14fcd51ca536ee37306f6c` |
+
+## End-to-end verification
+
+Independent source reviews covered schema migration, gauge bounds, producer
+statistics, retained buffer keys, warning ownership/palettes, browser draft
+transactions, resource construction and exact final ELF call frames. No source
+or linked-resource blocker remained after the corrections above.
+
+- Configuration tests cover old JSON/EAV migration, malformed/truncated files,
+  finite limits and maximum documents. Colour tests check every RGB565 value
+  against three reference partners (196,608 pairs) with an independent floating
+  luminance oracle, plus each palette-role contract.
+- Eleven gauge pixel tests cover all eight channels, three spans, five added
+  styles, in/out-of-range values, stale/nonfinite/unavailable states, PSI/AFR,
+  retained A/B buffers, palette changes and real Vehicle ingestion/error/reset.
+  Public draw geometry is bounded before iteration, then clipped to ownership.
+- Warning tests cover actual rule identity, off-view cycle colours, list colours
+  with one or multiple warnings, blink and overlay removal on both buffers.
+- Editor tests cover raw colour/range edits, invalid projections, repair, stale
+  callbacks, undo/redo, saved state and serialization. Native and Wasm strict
+  lints, production assets, both host outline suites and ARM strict lints pass.
+- Real browser checks exercised compact/wide/large gauges, extreme digits,
+  colour pickers and quantization, invalid contrast/range repair, warning modes,
+  save/reload, JSON/EAV imports, and a 390×700 viewport without horizontal
+  overflow. Browser export and the independent host compiler produced identical
+  1,222-byte files for an 11-widget test document. No browser errors were logged.
+- Six stack-gate regressions include malformed metadata, original overflow,
+  misleading reduced local frames, hidden outlined bodies and reserve edges;
+  they pass normally and under Python `-O`. Final ELF flash-lockout corruption
+  tests also pass in both modes. Hardware was not flashed during this work.

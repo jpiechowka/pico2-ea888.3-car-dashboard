@@ -34,6 +34,21 @@ pub struct Resources {
     pub uart: crate::drivers::longan::Resources,
 }
 
+// Return the unwrapped owner directly into the future's storage. Unwrapping a
+// Result<Vehicle> inside the async body keeps an entire Vehicle-sized temporary
+// in every poll frame. Review the linked caller-plus-constructor stack budget.
+#[cfg(feature = "longan-rx12")]
+#[inline(never)]
+fn configured_vehicle(resources: Resources) -> Vehicle<'static, crate::drivers::longan::HardwarePort> {
+    Vehicle::configured(
+        crate::drivers::longan::HardwarePort::new(resources.uart),
+        dashboard_pico2::config::vehicle::PROFILE,
+        Instant::now().as_millis(),
+        resources.configuration,
+    )
+    .expect("invalid vehicle profile")
+}
+
 #[embassy_executor::task]
 pub async fn acquisition_task(
     start_time: Instant,
@@ -55,6 +70,7 @@ pub async fn acquisition_task(
 
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
+    #[cfg(not(feature = "longan-rx12"))]
     let configuration = resources.configuration;
     #[cfg(not(feature = "longan-rx12"))]
     let mut model = if cfg!(feature = "demo") {
@@ -63,13 +79,7 @@ pub async fn acquisition_task(
         AcquisitionModel::configured(configuration, dashboard_pico2::config::vehicle::PROFILE.responder)
     };
     #[cfg(feature = "longan-rx12")]
-    let mut model = Vehicle::configured(
-        crate::drivers::longan::HardwarePort::new(resources.uart),
-        dashboard_pico2::config::vehicle::PROFILE,
-        Instant::now().as_millis(),
-        configuration,
-    )
-    .expect("invalid vehicle profile");
+    let mut model = configured_vehicle(resources);
     #[cfg(feature = "longan-rx12")]
     let link_sender = VEHICLE_LINK.dyn_sender();
     #[cfg(feature = "longan-rx12")]

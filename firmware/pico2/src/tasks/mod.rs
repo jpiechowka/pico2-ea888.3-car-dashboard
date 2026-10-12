@@ -27,3 +27,5 @@ pub static CORE1_STACK: StaticCell<embassy_rp::multicore::Stack<{ CORE1_STACK_BY
 pub static CORE1_UTIL_PERCENT: AtomicU32 = AtomicU32::new(0);
 pub static CORE1_STACK_USED_KB: AtomicU32 = AtomicU32::new(0);
 pub const CORE1_STACK_BYTES: u32 = dashboard_pico2::memory::CORE1_STACK_BYTES;
+// Keep the linked frame-admission policy synchronized with the actual stack.
+const _: () = assert!(CORE1_STACK_BYTES == 32768);

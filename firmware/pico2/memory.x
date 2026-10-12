@@ -91,4 +91,10 @@ ASSERT(_stack_start >= __sheap + 32K,
 PROVIDE(start_to_end = __end_block_addr - __start_block_addr);
 PROVIDE(end_to_start = __start_block_addr - __end_block_addr);
 
+/* LLVM frame metadata is for host admission only and must never consume RAM
+ * or flash LOAD bytes. The gate also verifies this section is non-allocatable. */
+SECTIONS {
+    .stack_sizes (INFO) : { KEEP(*(.stack_sizes)); }
+} INSERT AFTER .end_block;
+
 

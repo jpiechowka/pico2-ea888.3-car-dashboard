@@ -111,6 +111,8 @@ jobs:
       - name: Target artifact capture contracts
         run: |
           python3 scripts/test_target_capture.py
+          python3 scripts/test_stack_budget.py
+          python3 -O scripts/test_stack_budget.py
           python3 -O scripts/test_validation_policy.py
         working-directory: firmware
       - name: Full outline contracts

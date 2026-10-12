@@ -206,7 +206,7 @@ impl SensorState {
         self.update_at(value, peak, sampled_at_ms)
     }
 
-    pub fn with_trend_threshold(threshold: f32) -> Self {
+    pub const fn with_trend_threshold(threshold: f32) -> Self {
         let mut state = Self::new();
         if threshold.is_finite() && threshold >= 0.0 {
             state.trend_threshold = threshold;

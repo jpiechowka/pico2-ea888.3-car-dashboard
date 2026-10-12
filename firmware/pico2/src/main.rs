@@ -24,7 +24,6 @@ use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
 use dashboard_pico2::backlight::Backlight;
-use dashboard_pico2::colors::RED;
 use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
@@ -66,7 +65,7 @@ use crate::tasks::{
     wait_completed,
     wait_started,
 };
-use crate::ui::{BLACK, ColorTransition};
+use crate::ui::BLACK;
 
 #[unsafe(link_section = ".bi_entries")]
 #[used]
@@ -236,6 +235,18 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    // Configuration parsing must finish before the large dashboard poll frame
+    // becomes resident. spawn only enqueues; Embassy polls this task after the
+    // boot task returns. Do not replace this boundary with an async await.
+    let configuration = view_config::initialize();
+    spawner.spawn(dashboard_task(spawner, configuration).unwrap());
+}
+
+#[embassy_executor::task]
+async fn dashboard_task(
+    spawner: Spawner,
+    dashboard_configuration: &'static dashboard_pico2::view_config::BootConfig,
+) {
     log_info!("OBD-II Dashboard starting");
 
     let p = {
@@ -292,7 +303,6 @@ async fn main(spawner: Spawner) {
     let watchdog = crate::drivers::watchdog::RecoveryWatchdog::start(p.WATCHDOG);
     let reset_cause = watchdog.reset_label();
     log_info!("Previous reset: {}", reset_cause);
-    let dashboard_configuration = view_config::initialize();
     let mut view_selection = dashboard_pico2::view_state::ViewSelection::new(&dashboard_configuration.config);
     let mut warning_pager = dashboard_pico2::view_state::WarningPager::new();
     let mut dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
@@ -449,8 +459,6 @@ async fn main(spawner: Spawner) {
 
     log_info!("Main loop starting");
 
-    let mut color_transitions = ColorTransition::new();
-
     let animation_start = Instant::now();
 
     let mut measurement_receiver = DASHBOARD_VALUES.dyn_receiver().unwrap();
@@ -570,7 +578,6 @@ async fn main(spawner: Spawner) {
                         dashboard_configuration.fault.is_some(),
                     )
                     .expect("selected validated view");
-                    color_transitions = ColorTransition::new();
                     warning_pager.pause(at);
                 }
                 motion_applied = effect.motion_applied;
@@ -693,13 +700,6 @@ async fn main(spawner: Spawner) {
         };
         let visible_overlay = Overlay::configured_for_page(current_page, user_overlay, warning_page);
         input_tracker.exclude_obscured(visible_overlay.and_then(Overlay::warning_phase).is_some());
-        for cell in 0..8 {
-            let active = dashboard_layout.alarm_active(cell, &measurements, now_ms);
-            color_transitions.set_target(cell, if active { RED } else { BLACK }, now_ms);
-        }
-
-        color_transitions.update(now_ms);
-
         let render_start = Instant::now();
         let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
         let mut render_work = cpu_profiling::RenderWork::new(cpu_freq_hz);
@@ -721,7 +721,7 @@ async fn main(spawner: Spawner) {
                     fps_mode,
                     fps_instant: current_fps,
                     fps_average: average_fps,
-                    backgrounds: core::array::from_fn(|cell| color_transitions.get_current(cell)),
+                    backgrounds: [BLACK; 8], // Shared configured renderer owns warning colours.
                     overlay: visible_overlay,
                 };
                 let redraw = dashboard_cache.prepare(render_idx, &scene);

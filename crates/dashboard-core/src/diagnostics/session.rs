@@ -144,7 +144,7 @@ impl<'a> Session<'a> {
             counters: Counters::default(),
             channels: [Counters::default(); 7],
             timing: None,
-            reply_ms: core::array::from_fn(|_| Histogram::new()),
+            reply_ms: [const { Histogram::new() }; 7],
         })
     }
 

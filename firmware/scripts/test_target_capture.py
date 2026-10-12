@@ -56,6 +56,25 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 capture.selected_config(environment)
 
+    def test_migration_compares_canonical_bytes_and_keeps_original_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            original, upgraded = b'original v1', b'canonical v2'
+            (root / 'selected.eav').write_bytes(original)
+            record = dict(selection='explicit', sha256=capture.hashlib.sha256(original).hexdigest())
+            def compile_stub(*args, **kwargs):
+                (root / 'normalized.eav').write_bytes(upgraded)
+            with patch.object(capture.subprocess, 'run', side_effect=compile_stub):
+                capture.verify_selected_config(root, {}, upgraded, record)
+                self.assertEqual(record['sha256'],capture.hashlib.sha256(original).hexdigest())
+                self.assertEqual(record['normalized_sha256'],capture.hashlib.sha256(upgraded).hexdigest())
+                with self.assertRaises(ValueError):
+                    capture.verify_selected_config(root, {}, original, record)
+                (root / 'selected.eav').write_bytes(b'changed')
+                with self.assertRaises(ValueError):
+                    capture.verify_selected_config(root, {}, upgraded, record)
+            capture.verify_selected_config(root, {}, upgraded, dict(selection='default'))
+
     def test_archive_contains_portable_crates_and_workspace_inputs(self):
         before = capture.inputs()
         keys = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',

@@ -127,6 +127,27 @@ def embedded_config(output, build_dir):
     return matches[0]
 
 
+def verify_selected_config(destination, environment, embedded, record):
+    """Compare to the canonical upgrade, retaining the original input identity."""
+    if record['selection'] != 'explicit':
+        return
+    original = bounded_bytes(destination / 'selected.eav')
+    if hashlib.sha256(original).hexdigest() != record['sha256']:
+        raise ValueError('frozen selected configuration changed')
+    normalized = destination / 'normalized.eav'
+    command = ['cargo', 'run', '--locked', '--release', '-p', 'dashboard-config-tools',
+               '--target-dir', str(destination / 'config-compiler'), '--', 'compile',
+               str(destination / 'selected.eav'), str(normalized)]
+    subprocess.run(command, cwd=REPO, env=environment, check=True)
+    expected = bounded_bytes(normalized)
+    if bounded_bytes(destination / 'selected.eav') != original:
+        raise ValueError('frozen selected configuration changed during normalization')
+    if expected != embedded:
+        raise ValueError('embedded configuration differs from canonical selected file')
+    record['normalization_command'] = command
+    record['normalized_sha256'] = hashlib.sha256(expected).hexdigest()
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name')
@@ -161,8 +182,7 @@ def main():
     build=subprocess.run(command,cwd=FIRMWARE,env=environment,check=True,stdout=subprocess.PIPE,text=True,encoding='utf-8')
     elf=emitted_elf(build.stdout)
     config_bytes = embedded_config(build.stdout, destination/'build')
-    if selection[1] is not None and selection[1] != config_bytes:
-        raise ValueError('embedded configuration differs from selected file')
+    verify_selected_config(destination, environment, config_bytes, config_record)
     (destination/'dashboard.eav').write_bytes(config_bytes)
     config_record['embedded_sha256'] = hashlib.sha256(config_bytes).hexdigest()
     if not elf.is_relative_to((destination/'build').resolve()):
@@ -182,6 +202,8 @@ def main():
     with zipfile.ZipFile(destination/'source.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,content in before.items(): archive.writestr(name,content)
         archive.writestr('build-config/dashboard.eav', config_bytes)
+        if selection[1] is not None:
+            archive.writestr('build-config/selected.eav', selection[1])
     hashes={name:hashlib.sha256(data).hexdigest() for name,data in before.items()}
     record=dict(schema=1,scope='Build artifact only; hardware not executed',rustc=version,rustc_path=rustc,
                 command=command,emitted_executable=str(elf),cargo_config=config,

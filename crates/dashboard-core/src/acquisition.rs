@@ -202,65 +202,92 @@ impl Default for AcquisitionModel<'_> {
 }
 
 impl<'a> AcquisitionModel<'a> {
-    pub fn new() -> Self {
+    // Build the final policy directly. Creating a legacy owner and replacing
+    // its alarms kept several complete sampling-ring copies live on ARM.
+    fn with_policy(
+        mode: DataMode,
+        configuration: Option<&'a ValidatedConfig>,
+        expected_sources: [Option<Source>; SENSOR_COUNT],
+        freshness: [u16; SENSOR_COUNT],
+        alarms: Alarms<'a>,
+    ) -> Self {
         Self {
-            sensors: [
-                SensorState::new(),
-                SensorState::new(),
-                SensorState::new(),
-                SensorState::new(),
-                SensorState::new(),
-                SensorState::with_trend_threshold(5.0),
-                SensorState::with_trend_threshold(0.05),
-                SensorState::with_trend_threshold(0.1),
-            ],
+            // A flash template avoids separate runtime scratch arrays for each
+            // sampling ring when this large owner is constructed on core 1.
+            sensors: const {
+                [
+                    SensorState::new(),
+                    SensorState::new(),
+                    SensorState::new(),
+                    SensorState::new(),
+                    SensorState::new(),
+                    SensorState::with_trend_threshold(5.0),
+                    SensorState::with_trend_threshold(0.05),
+                    SensorState::with_trend_threshold(0.1),
+                ]
+            },
             metadata: [SampleMeta::UNKNOWN; SENSOR_COUNT],
-            mode: DataMode::Vehicle,
+            mode,
             sequence: 0,
             reset_generation: 0,
-            alarms: Alarms::Legacy(AlarmEngine::new([None; 8]).expect("empty alarm rules")),
+            alarms,
             contexts: [None; SENSOR_COUNT],
-            configuration: None,
-            expected_sources: [None; SENSOR_COUNT],
-            freshness: DEFAULT_FRESHNESS,
+            configuration,
+            expected_sources,
+            freshness,
         }
     }
 
+    pub fn new() -> Self {
+        Self::with_policy(
+            DataMode::Vehicle,
+            None,
+            [None; SENSOR_COUNT],
+            DEFAULT_FRESHNESS,
+            Alarms::Legacy(AlarmEngine::new([None; 8]).expect("empty alarm rules")),
+        )
+    }
+
     pub fn demo() -> Self {
-        Self {
-            mode: DataMode::Demo,
-            alarms: Alarms::Legacy(AlarmEngine::new(demo_rules()).expect("demo alarm rules")),
-            ..Self::new()
-        }
+        Self::with_policy(
+            DataMode::Demo,
+            None,
+            [None; SENSOR_COUNT],
+            DEFAULT_FRESHNESS,
+            Alarms::Legacy(AlarmEngine::new(demo_rules()).expect("demo alarm rules")),
+        )
     }
 
     pub fn configured(
         config: &'a ValidatedConfig,
         ecu: u16,
     ) -> Self {
-        let mut model = Self::new();
-        model.configuration = Some(config);
-        for id in SensorId::ALL {
-            let index = id as usize;
-            model.freshness[index] = config.config().sources[index].freshness_ms;
-            model.expected_sources[index] = ecu.checked_sub(8).and_then(|request| {
+        let sources = SensorId::ALL.map(|id| {
+            ecu.checked_sub(8).and_then(|request| {
                 match resolve_source(config, id.channel(), request, ecu) {
                     SourceResolution::Obd { pid, .. } => Some(Source::Obd { ecu, pid }),
                     _ => None,
                 }
-            });
-        }
-        model.alarms = Alarms::Configured(RuleEngine::new(config, model.mode, model.expected_sources));
-        model
+            })
+        });
+        Self::with_policy(
+            DataMode::Vehicle,
+            Some(config),
+            sources,
+            config.config().sources.map(|source| source.freshness_ms),
+            Alarms::Configured(RuleEngine::new(config, DataMode::Vehicle, sources)),
+        )
     }
 
     pub fn demo_configured(config: &'a ValidatedConfig) -> Self {
-        let mut model = Self::demo();
-        model.configuration = Some(config);
-        model.freshness = config.config().sources.map(|source| source.freshness_ms);
-        model.expected_sources = [Some(Source::Demo); SENSOR_COUNT];
-        model.alarms = Alarms::Configured(RuleEngine::new(config, model.mode, model.expected_sources));
-        model
+        let sources = [Some(Source::Demo); SENSOR_COUNT];
+        Self::with_policy(
+            DataMode::Demo,
+            Some(config),
+            sources,
+            config.config().sources.map(|source| source.freshness_ms),
+            Alarms::Configured(RuleEngine::new(config, DataMode::Demo, sources)),
+        )
     }
 
     pub const fn configuration(&self) -> Option<&'a ValidatedConfig> { self.configuration }
