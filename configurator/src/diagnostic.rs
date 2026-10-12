@@ -57,6 +57,7 @@ impl Draft {
                             RawField::Source(channel, _) => channel == w.channel,
                             RawField::ViewName(id) => id == w.view,
                             RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => true,
+                            RawField::ControlHoldMilliseconds => false,
                         }
                     })
             })

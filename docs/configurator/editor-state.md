@@ -18,11 +18,14 @@ leaving the accepted document/history intact. The browser automatically renders
 an explicitly marked diagnostic draft. Raw fields can be corrected together.
 Rejected typed candidates retain their own selection and expose unvalidated
 `editing_config()` to the browser hit targets, pointer anchors, menu and inspector.
-Only move, resize and delete commands are allowed while repairing that candidate;
+Move, resize, delete and control mapping commands are allowed while repairing that candidate;
 each command runs the full shared validator. Partial repairs preserve accepted
 bytes/history, and the first valid result becomes one undo transaction. Discard
-restores the accepted selection. Rejected non-layout choices still require
-discard before those settings can change. See [preview hardening](preview-hardening.md)
+restores the accepted selection. Control mappings are read from the rejected
+candidate, and hold-duration text remains editable while mappings are rejected.
+Mapping repairs replay retained raw inputs and identify any parse blocker;
+they never clear an unrelated invalid setting. Other rejected non-layout choices
+still require discard before those settings can change. See [preview hardening](preview-hardening.md)
 for the inspection-only rendering and safe fallback contract.
 
 Pointer, field, import and save operations carry private owner/revision/request

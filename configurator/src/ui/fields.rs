@@ -9,6 +9,7 @@ pub fn raw_value(
     }
     let c = editor.editing_config();
     match field {
+        RawField::ControlHoldMilliseconds => c.controls.hold_ms.to_string(),
         RawField::ViewName(id) => {
             c.views
                 .iter()
@@ -114,6 +115,8 @@ pub fn TextField(
     field: RawField,
     label: &'static str,
     #[prop(default = "")] hint: &'static str,
+    #[prop(default = String::new())] id: String,
+    #[prop(optional)] accessible_label: Option<String>,
 ) -> impl IntoView {
     let text = RwSignal::new(ui.editor.with_untracked(|e| raw_value(e, field)));
     let focused = RwSignal::new(false);
@@ -133,7 +136,7 @@ pub fn TextField(
     view! {
         <label class="field">
             <span>{label}</span>
-            <input type="text" maxlength="1024" autocomplete="off" spellcheck="false"
+            <input id=id aria-label=accessible_label type="text" maxlength="1024" autocomplete="off" spellcheck="false"
                 prop:value=move || text.get()
                 aria-invalid=move || ui.editor.with(|e| e.raw_fields().iter().any(|r| r.field == field)).to_string()
                 on:focus=move |_| focused.set(true)
@@ -159,12 +162,15 @@ pub fn Choice(
     options: Vec<(String, String)>,
     on_change: Callback<(FieldToken, String)>,
     #[prop(default = false)] layout: bool,
+    #[prop(default = false)] repair_invalid_draft: bool,
+    #[prop(default = String::new())] id: String,
+    #[prop(optional)] accessible_label: Option<String>,
 ) -> impl IntoView {
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {
         <label class="field"><span>{label}</span>
-            <select prop:value=move || value.get() disabled=move || if layout { ui.layout_locked() } else { ui.invalid() }
+            <select id=id aria-label=accessible_label prop:value=move || value.get() disabled=move || if repair_invalid_draft { false } else if layout { ui.layout_locked() } else { ui.invalid() }
                 on:change=move |event| {
                     if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_value(&event))); }
                     event_target::<web_sys::HtmlSelectElement>(&event).set_value(&value.get_untracked());
@@ -234,7 +240,7 @@ pub fn error_text(error: EditorError) -> String {
         EditorError::Parse(RawField::Widget(_, WidgetField::Color(_)) | RawField::WarningColor { .. }) => {
             "Enter a colour as #RRGGBB, for example #FF3048.".into()
         }
-        EditorError::Parse(_) => "Enter a complete number in the indicated field.".into(),
+        EditorError::Parse(field) => format!("Correct {field:?}: enter a complete number before changing mappings."),
         EditorError::LastView => "Keep at least one view.".into(),
         EditorError::ViewCapacity => "Up to eight views are supported.".into(),
         EditorError::WidgetCapacity => "Up to 64 widgets are supported.".into(),

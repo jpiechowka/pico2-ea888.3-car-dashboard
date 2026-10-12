@@ -1,3 +1,4 @@
+mod controls;
 mod fields;
 mod inspector;
 mod io;
@@ -264,11 +265,13 @@ pub fn Studio() -> impl IntoView {
                             <button class:active=move || global_tab.get()=="fuel" on:click=move |_| global_tab.set("fuel")>"Fuel & AFR"</button>
                             <button class:active=move || global_tab.get()=="sources" on:click=move |_| global_tab.set("sources")>"ECU sources"</button>
                             <button class:active=move || global_tab.get()=="files" on:click=move |_| global_tab.set("files")>"Files & build"</button>
+                            <button class:active=move || global_tab.get()=="controls" on:click=move |_| global_tab.set("controls")>"Device controls"</button>
                         </nav>
                         <div hidden=move || global_tab.get()!="warnings"><WarningSettingsPanel ui/></div>
                         <div hidden=move || global_tab.get()!="fuel"><FuelSettings ui/></div>
                         <div hidden=move || global_tab.get()!="sources"><SourceSettings ui/></div>
                         <div hidden=move || global_tab.get()!="files"><io::Files ui/></div>
+                        <div hidden=move || global_tab.get()!="controls"><controls::DeviceControls ui/></div>
                     </section>
                 </main>
                 <Inspector ui/>

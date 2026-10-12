@@ -31,6 +31,26 @@ Web Locks and permitted local storage; file export remains usable without them.
 
 ## Build views
 
+**Device controls** edits A/B/X/Y tap and hold bindings independently on
+Dashboard, Debug and Logs, plus encoder rotation and click. Menus use the shared
+action catalogue and offer only compatible assignments. Ordinary holds accept
+400–1500 ms. Y hold remains a fixed two-second recovery to Dashboard, the last
+selected view and Full brightness on every screen. The panel lists onboard
+navigation routes; an encoder cannot satisfy the screen/view fallback checks.
+Invalid mappings remain editable, with linked errors, while save/export stay
+blocked. Correct hold text before applying a mapping if that text cannot parse.
+
+The control simulator runs deterministic press/debounce/release traces through
+the firmware's shared gestures and action dispatcher. Its readout shows page,
+view, brightness/PWM, FPS, units, popup, log anchor and discarded events. Tap,
+Hold, Recover and encoder controls advance a fixed sample clock. Statistics
+reset feedback appears only after **Acknowledge statistics reset**. Off feedback
+uses synthetic completed presentations, including its clear phase. Changing
+the accepted configuration restarts the simulator explicitly; navigating device
+pages retains view/units/FPS choices. Rejected bindings are inspection only under
+**INVALID SIMULATION**, with the accepted layout and protected recovery. This
+stage provides a state readout; full simulated screen pixels are a later stage.
+
 1. Start with Overview or add an empty view. Name it using 1–14 printable ASCII
    characters. Reorder view tabs using the arrows; that is the Pico encoder order.
    Choose the view displayed after reboot with **Set as boot**.

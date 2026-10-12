@@ -289,6 +289,7 @@ dependencies = [
  "critical-section",
  "dashboard-config",
  "dashboard-core",
+ "embassy-sync",
  "embedded-graphics",
  "heapless",
  "js-sys",

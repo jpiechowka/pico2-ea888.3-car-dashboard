@@ -136,6 +136,7 @@ pub enum SourceField {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RawField {
+    ControlHoldMilliseconds,
     ViewName(u8),
     Widget(u16, WidgetField),
     Fuel(FuelField),
@@ -152,6 +153,7 @@ pub struct RawInput {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
+    SetControls(ControlMap),
     AddView {
         name: String,
     },
@@ -606,7 +608,7 @@ impl Editor {
         if token != self.field_token() {
             return Err(EditorError::StaleToken);
         }
-        if self.rejected.is_some() {
+        if self.rejected.is_some() && field != RawField::ControlHoldMilliseconds {
             return Err(EditorError::InvalidDraft);
         }
         if text.len() > MAX_RAW_TEXT_BYTES {
@@ -623,21 +625,25 @@ impl Editor {
             }
             fields.push(RawInput { field, text });
         }
-        let mut config = self.preview().config().clone();
+        let mut config = self.editing_config().clone();
         let result = fields
             .iter()
             .try_for_each(|input| apply_raw(&mut config, input))
-            .and_then(|()| validate(config).map_err(EditorError::Validation));
+            .and_then(|()| validate(config.clone()).map_err(EditorError::Validation));
         match result {
             Ok(preview) => {
                 self.accept_validated(preview, self.selection())?;
                 self.raw.clear();
+                self.rejected = None;
                 self.draft_error = None;
                 // Correcting an invalid draft back to its original value is
                 // still a new interaction and must retire earlier callbacks.
                 self.changed(revision);
             }
             Err(error) => {
+                if let Some(rejected) = &mut self.rejected {
+                    rejected.config = config;
+                }
                 self.raw = fields;
                 self.draft_error = Some(error);
                 self.changed(revision);
@@ -674,7 +680,9 @@ impl Editor {
         &mut self,
         edit: Edit,
     ) -> Result<Revision, EditorError> {
-        if self.has_invalid_draft()
+        let controls_repair = matches!(edit, Edit::SetControls(_));
+        if !controls_repair
+            && self.has_invalid_draft()
             && (!self.can_edit_layout()
                 || !matches!(
                     edit,
@@ -688,8 +696,20 @@ impl Editor {
         }
         let recovering = self.rejected.is_some();
         let mut config = self.editing_config().clone();
+        if controls_repair {
+            for input in &self.raw {
+                apply_raw(&mut config, input)?;
+            }
+        }
         let mut selection = self.selection();
         match edit {
+            Edit::SetControls(mut controls) => {
+                // The current hold text wins over a map captured by a picker.
+                if self.raw.iter().any(|r| r.field == RawField::ControlHoldMilliseconds) {
+                    controls.hold_ms = config.controls.hold_ms;
+                }
+                config.controls = controls;
+            }
             Edit::AddView { name } => {
                 let id = fresh_view(&config)?;
                 config
@@ -855,6 +875,7 @@ impl Editor {
                 let revision = if recovering { Some(self.next_revision()?) } else { None };
                 self.accept_validated(preview, selection)?;
                 self.rejected = None;
+                self.raw.clear();
                 self.draft_error = None;
                 // Even a repair back to the original accepted bytes retires
                 // callbacks created for the rejected layout.
@@ -1060,7 +1081,7 @@ fn check_raw_target(
                 _ => {}
             }
         }
-        RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => {}
+        RawField::ControlHoldMilliseconds | RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => {}
     }
     Ok(())
 }
@@ -1074,6 +1095,7 @@ fn apply_raw(
     let number = || text.trim().parse::<f32>().map_err(|_| parse_error());
     let integer = || text.trim().parse::<u16>().map_err(|_| parse_error());
     match *field {
+        RawField::ControlHoldMilliseconds => config.controls.hold_ms = integer()?,
         RawField::ViewName(id) => {
             let index = view_index(config, id)?;
             config.views[index].name = bounded(text)?;

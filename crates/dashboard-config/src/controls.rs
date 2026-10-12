@@ -11,6 +11,14 @@ pub enum ControlPage {
 impl ControlPage {
     pub const ALL: [Self; 3] = [Self::Dashboard, Self::Debug, Self::Logs];
 
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Dashboard => "Dashboard",
+            Self::Debug => "Debug",
+            Self::Logs => "Logs",
+        }
+    }
+
     pub const fn index(self) -> usize { self as usize }
 
     pub const fn next(self) -> Self {
@@ -42,6 +50,15 @@ pub enum ButtonId {
 impl ButtonId {
     pub const ALL: [Self; 4] = [Self::A, Self::B, Self::X, Self::Y];
 
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::X => "X",
+            Self::Y => "Y",
+        }
+    }
+
     pub const fn index(self) -> usize { self as usize }
 }
 
@@ -67,6 +84,51 @@ pub enum ControlAction {
     LogsLive,
 }
 impl ControlAction {
+    /// Stable explicit catalogue; never derive serialization from a menu index.
+    pub const ALL: [Self; 18] = [
+        Self::None,
+        Self::NextScreen,
+        Self::PreviousScreen,
+        Self::Dashboard,
+        Self::Debug,
+        Self::Logs,
+        Self::NextView,
+        Self::PreviousView,
+        Self::ToggleBoostUnits,
+        Self::CycleFps,
+        Self::ResetStatistics,
+        Self::CycleBrightness,
+        Self::ToggleBacklight,
+        Self::BrightnessUp,
+        Self::BrightnessDown,
+        Self::ScrollOlder,
+        Self::ScrollNewer,
+        Self::LogsLive,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "No action",
+            Self::NextScreen => "Next screen",
+            Self::PreviousScreen => "Previous screen",
+            Self::Dashboard => "Go to Dashboard",
+            Self::Debug => "Go to Debug",
+            Self::Logs => "Go to Logs",
+            Self::NextView => "Next view",
+            Self::PreviousView => "Previous view",
+            Self::ToggleBoostUnits => "Toggle bar / PSI",
+            Self::CycleFps => "Cycle FPS display",
+            Self::ResetStatistics => "Reset statistics",
+            Self::CycleBrightness => "Cycle brightness",
+            Self::ToggleBacklight => "Toggle backlight",
+            Self::BrightnessUp => "Brightness up",
+            Self::BrightnessDown => "Brightness down",
+            Self::ScrollOlder => "Older logs",
+            Self::ScrollNewer => "Newer logs",
+            Self::LogsLive => "Return to live logs",
+        }
+    }
+
     pub const fn allowed_on(
         self,
         page: ControlPage,
@@ -107,6 +169,17 @@ pub enum RotationAction {
     Logs,
 }
 impl RotationAction {
+    pub const ALL: [Self; 4] = [Self::None, Self::Views, Self::Brightness, Self::Logs];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "No action",
+            Self::Views => "Select views",
+            Self::Brightness => "Adjust brightness",
+            Self::Logs => "Scroll logs",
+        }
+    }
+
     pub const fn allowed_on(
         self,
         page: ControlPage,
