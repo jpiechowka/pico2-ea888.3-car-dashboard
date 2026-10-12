@@ -69,15 +69,30 @@ impl ControlGestures {
         }
         self.last_ms = Some(now_ms);
         if self.page != Some(page) {
+            let bootstrap = self.page.is_none();
             self.page = Some(page);
             for (state, level) in self.buttons.iter_mut().zip(pressed) {
-                *state = ButtonState {
-                    stable: level,
-                    candidate: level,
-                    candidate_at: now_ms,
-                    armed: !level,
-                    ..ButtonState::default()
-                };
+                if bootstrap {
+                    *state = ButtonState {
+                        stable: level,
+                        candidate: level,
+                        candidate_at: now_ms,
+                        armed: !level,
+                        ..ButtonState::default()
+                    };
+                } else {
+                    // Keep release qualification from the old page. A raw
+                    // released sample may be bounce rather than a stable edge.
+                    if state.stable || state.candidate || level {
+                        state.armed = false;
+                    }
+                    if state.candidate != level {
+                        state.candidate = level;
+                        state.candidate_at = now_ms;
+                    }
+                    state.press_at = now_ms;
+                    state.fired = true;
+                }
             }
             return batch;
         }
@@ -99,6 +114,11 @@ impl ControlGestures {
                     tap = state.armed && !state.fired;
                     state.armed = true;
                 }
+            }
+            // A page switch may cancel a press candidate before it becomes
+            // stable. Its release still qualifies after the same debounce.
+            if !state.stable && !state.candidate && now_ms - state.candidate_at >= 50 {
+                state.armed = true;
             }
             let binding = map.screens[page.index()].buttons[index];
             let recovery = button == ButtonId::Y;

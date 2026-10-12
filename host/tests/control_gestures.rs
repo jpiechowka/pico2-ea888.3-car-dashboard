@@ -5,6 +5,73 @@ const RELEASED: [bool; 4] = [false; 4];
 const A: [bool; 4] = [true, false, false, false];
 const Y: [bool; 4] = [false, false, false, true];
 
+#[test]
+fn page_change_release_bounce_cannot_rearm_boot_held_y() { page_change_bounce_trace(Y, true); }
+
+#[test]
+fn page_change_release_bounce_cannot_rearm_old_screen_ordinary_key() { page_change_bounce_trace(A, false); }
+
+#[test]
+fn page_change_preserves_pending_release_qualification_before_a_debounced_press() {
+    let map = ControlMap::default();
+    let mut g = ControlGestures::new();
+    trace(&mut g, &map, Page::Dashboard, &[(0, RELEASED), (100, A)]);
+    trace(
+        &mut g,
+        &map,
+        Page::Debug,
+        &[(110, RELEASED), (160, RELEASED), (200, A), (250, A)],
+    );
+    assert_eq!(
+        g.update(&map, Page::Debug, A, 1000).actions[0].action,
+        Action::BrightnessDown
+    );
+}
+
+fn page_change_bounce_trace(
+    levels: [bool; 4],
+    boot_held: bool,
+) {
+    let map = ControlMap::default();
+    let mut g = ControlGestures::new();
+    if boot_held {
+        g.update(&map, Page::Dashboard, levels, 0);
+    } else {
+        trace(
+            &mut g,
+            &map,
+            Page::Dashboard,
+            &[(0, RELEASED), (10, levels), (60, levels)],
+        );
+    }
+    let samples = [
+        (100, RELEASED),
+        (110, levels),
+        (160, levels),
+        (2110, levels),
+        (2200, RELEASED),
+        (2250, RELEASED),
+    ];
+    for batch in trace(&mut g, &map, Page::Debug, &samples) {
+        assert!(
+            batch.actions.is_empty(),
+            "a 10 ms released bounce must not arm a new-screen action"
+        );
+        assert!(
+            batch.recovery.is_none(),
+            "a 10 ms released bounce must not arm recovery"
+        );
+    }
+    trace(&mut g, &map, Page::Debug, &[(2300, levels), (2350, levels)]);
+    let threshold = if boot_held { 4300 } else { 3100 };
+    let batch = g.update(&map, Page::Debug, levels, threshold);
+    if boot_held {
+        assert!(batch.recovery.is_some());
+    } else {
+        assert_eq!(batch.actions[0].action, Action::BrightnessDown);
+    }
+}
+
 fn trace(
     g: &mut ControlGestures,
     map: &ControlMap,
