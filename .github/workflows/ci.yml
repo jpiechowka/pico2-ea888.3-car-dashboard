@@ -48,6 +48,13 @@ jobs:
         run: |
           cargo check --locked -p dashboard-core --target thumbv8m.main-none-eabihf
           cargo check --locked -p dashboard-core --target wasm32-unknown-unknown
+      - name: Bounded configuration contracts
+        run: |
+          cargo test --locked -p dashboard-config
+          cargo test --locked -p dashboard-config --features json
+          cargo clippy --locked -p dashboard-config --all-targets --features json -- -D warnings
+          cargo check --locked -p dashboard-config --target thumbv8m.main-none-eabihf
+          cargo check --locked -p dashboard-config --features json --target wasm32-unknown-unknown
 
   host:
     name: Host contracts and benchmark smoke

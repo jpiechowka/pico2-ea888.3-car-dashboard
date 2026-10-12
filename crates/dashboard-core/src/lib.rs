@@ -30,6 +30,7 @@ pub mod vehicle_status;
 pub mod widgets;
 
 pub use config::sensors as thresholds;
+pub use dashboard_config as view_config;
 pub use widgets::primitives;
 
 mod profiling {

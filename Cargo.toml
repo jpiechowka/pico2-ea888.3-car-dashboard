@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/dashboard-core"]
+members = ["crates/dashboard-core", "crates/dashboard-config"]
 exclude = ["firmware", "host"]
 
 [profile.release]

@@ -9,6 +9,7 @@ default = ["simple-outline"]
 simple-outline = []
 
 [dependencies]
+dashboard-config = { path = "../dashboard-config" }
 embedded-graphics = "=0.8.2"
 heapless = "=0.9.3"
 micromath = "=2.1.0"

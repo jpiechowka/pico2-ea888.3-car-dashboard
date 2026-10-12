@@ -80,6 +80,9 @@ Unknown route. All four have polling Off. These defaults carry no exact DNUC
 support claim. A selected slower polling period also bounds retry admission:
 retry due is no earlier than max(configured_period, existing failure_backoff),
 with the existing global failure quiet period unchanged.
+EveryMs is bounded by the channel floor (500ms for Boost/Lambda/Battery,
+1500ms Oil,1000ms other temperatures) through10000ms inclusive. Candidate
+periods only preserve a requested setting; their resolver remains unavailable.
 
 ## Fuel model
 
@@ -121,6 +124,19 @@ skipping bytes8..12. Check vector ASCII123456789 gives0xCBF43926. Total length
 must equal12+payload_length and be at most16384. Unknown versions, invalid CRC,
 nonempty Postcard remainder and semantic failures reject the entire document.
 Editable JSON is capped at131072 bytes before parsing.
+
+The payload must also equal its canonical Postcard serialization. This is
+checked by an allocation-free comparison flavor, with no payload-sized scratch
+buffer. In Postcard1.1.3, host usize length parsing accepts longer varints than
+32-bit Pico/Wasm; rejecting noncanonical encodings ensures the host cannot
+approve a file that the device rejects only because of pointer width.
+
+The Simos manifold boost candidate is a fixed two-input derivation: DID39C0
+absolute MAP and DID13CA absolute ambient pressure. Neither absolute pressure
+alone is a relative-boost source. Candidate polling intervals can be stored
+within the same bounded channel floors, but do not enable an executable decoder.
+An explicit physical route rejects 0x7DF functional OBD requests and identical
+request/response IDs in addition to the 11-bit limit.
 
 The default document preserves today's eight1x1 channels and EQ14.7 AFR in a
 named Overview view. Default warning examples are enabled for DemoOnly; vehicle

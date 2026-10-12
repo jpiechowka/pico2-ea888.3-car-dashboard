@@ -11,6 +11,7 @@ default = ["simple-outline"]
 simple-outline = ["dashboard-core/simple-outline"]
 
 [dependencies]
+dashboard-config = { path = "../crates/dashboard-config" }
 dashboard-core = { path = "../crates/dashboard-core", default-features = false }
 embedded-graphics = "=0.8.2"
 heapless = "=0.9.3"

@@ -628,10 +628,11 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels, mixed_scene_replay, coverage::benchmarks
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels, mixed_scene_replay, coverage::benchmarks, config_perf::benchmarks
 }
 criterion_main!(dashboard_perf);
 
+mod config_perf;
 mod coverage;
 mod scene_replay;
 
