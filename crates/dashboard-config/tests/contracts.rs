@@ -146,3 +146,60 @@ fn strict_json_is_shared_and_never_discards_fields() {
     assert!(from_json_bytes(&[0xFF]).is_err());
     assert!(from_json_bytes(&vec![b' '; MAX_JSON_BYTES + 1]).is_err());
 }
+
+#[cfg(feature = "json")]
+#[test]
+fn json_decimal_fields_round_directly_to_the_stored_f32() {
+    let mut config = default_config();
+    config.fuel = Fuel::EthanolBlend(Blend {
+        percent: 0.0,
+        ..Blend::illustrative()
+    });
+    let template = to_json(&validate(config).unwrap()).unwrap();
+    assert!(template.contains("\"percent\": 0.0"));
+    // The first three decimals straddle the exact midpoint between 1.0 and
+    // its next f32. The fourth lies below the next midpoint, which ties up.
+    for (text, expected_bits) in [
+        ("1.0000000596046448", 0x3F80_0001),
+        ("1.0000000596046447", 0x3F80_0000),
+        ("1.000000059604644775390625", 0x3F80_0000),
+        ("1.0000001788139343", 0x3F80_0001),
+        ("0.0", 0x0000_0000),
+        ("-0.0", 0x8000_0000),
+        ("12.75", 0x414C_0000),
+    ] {
+        let json = template.replacen("\"percent\": 0.0", &format!("\"percent\": {text}"), 1);
+        let accepted = from_json_bytes(json.as_bytes()).unwrap();
+        let Fuel::EthanolBlend(blend) = accepted.config().fuel else {
+            unreachable!()
+        };
+        assert_eq!(blend.percent.to_bits(), expected_bits, "JSON decimal {text}");
+        let mut output = [0; MAX_FILE_BYTES];
+        let decoded = decode(encode(&accepted, &mut output).unwrap()).unwrap();
+        let Fuel::EthanolBlend(blend) = decoded.config().fuel else {
+            unreachable!()
+        };
+        assert_eq!(blend.percent.to_bits(), expected_bits, "device payload for {text}");
+    }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_decimal_rounding_cannot_turn_an_equal_graph_range_into_a_valid_one() {
+    let mut config = default_config();
+    config.widgets[0].display.graph_range = GraphRange::Fixed {
+        min: 0.0,
+        max: f32::from_bits(0x3F80_0001),
+    };
+    let template = to_json(&validate(config).unwrap()).unwrap();
+    assert!(template.contains("\"min\": 0.0"));
+    let json = template.replacen("\"min\": 0.0", "\"min\": 1.0000000596046448", 1);
+    assert!(matches!(
+        from_json_bytes(json.as_bytes()),
+        Err(ConfigError::Validation(ValidationError {
+            code: ErrorCode::Bounds,
+            field: Field::GraphRange,
+            ..
+        }))
+    ));
+}

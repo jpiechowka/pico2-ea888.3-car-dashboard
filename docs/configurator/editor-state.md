@@ -26,11 +26,16 @@ the first survivor. The final view cannot be deleted. Duplicates receive fresh
 IDs; capacity failures are atomic. Signed-zero payloads are preserved during
 otherwise-equal imports rather than lost through floating-point equality.
 
-Twenty-eight native contracts cover these transitions, all spans/display/fuel
+Thirty native contracts cover these transitions, all spans/display/fuel
 options, every catalogue definition and route, strict malformed/oversized
 imports, storage failures and binary equality after round trips. Strict Clippy,
 formatting and the Wasm target also pass. Browser event binding and actual
 storage behavior are verified separately in the browser stage.
+
+JSON parsing enables Serde's direct f32 rounding. Raw decimal input, imported
+JSON and restored drafts therefore produce the same device bytes even around
+floating-point midpoints. Four precision regressions also check that rounding
+cannot incorrectly turn an equal graph range into an accepted interval.
 
 The configurator is an independent Cargo workspace with a committed lockfile,
 like `host` and `firmware`. It consumes the same shared path crates and inherits

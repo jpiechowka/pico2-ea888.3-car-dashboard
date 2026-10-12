@@ -1164,3 +1164,95 @@ fn importing_signed_zero_preserves_its_canonical_payload_instead_of_treating_it_
     assert_eq!(blend.percent.to_bits(), (-0.0_f32).to_bits());
     assert_eq!(editor.export_binary().unwrap(), bytes);
 }
+
+#[test]
+fn decimal_raw_json_and_saved_inputs_preserve_the_same_device_value() {
+    let mut config = default_config();
+    config.fuel = Fuel::EthanolBlend(Blend {
+        percent: 0.0,
+        ..Blend::illustrative()
+    });
+    let mut initial = Editor::new(config.clone()).unwrap();
+    let json_template = initial.export_json().unwrap();
+    let saved_template = initial.begin_save().unwrap().json().to_owned();
+    assert!(json_template.contains("\"percent\": 0.0"));
+    assert!(saved_template.contains("\"percent\":0.0"));
+    for (text, expected_bits) in [
+        ("1.0000000596046448", 0x3F80_0001),
+        ("1.0000000596046447", 0x3F80_0000),
+        ("1.000000059604644775390625", 0x3F80_0000),
+        ("1.0000001788139343", 0x3F80_0001),
+        ("0.0", 0x0000_0000),
+        ("-0.0", 0x8000_0000),
+        ("12.75", 0x414C_0000),
+    ] {
+        let mut typed = Editor::new(config.clone()).unwrap();
+        typed
+            .set_raw(typed.field_token(), RawField::Fuel(FuelField::Percent), text.into())
+            .unwrap();
+        assert!(!typed.has_invalid_draft());
+        let Fuel::EthanolBlend(blend) = typed.preview().config().fuel else {
+            unreachable!()
+        };
+        assert_eq!(blend.percent.to_bits(), expected_bits, "raw decimal {text}");
+        let binary = typed.export_binary().unwrap();
+
+        let json = json_template.replacen("\"percent\": 0.0", &format!("\"percent\": {text}"), 1);
+        let mut imported = Editor::new(config.clone()).unwrap();
+        let request = imported.begin_import().unwrap();
+        imported
+            .complete_import(request, ImportFormat::Json, json.as_bytes())
+            .unwrap();
+        assert_eq!(imported.export_binary().unwrap(), binary, "JSON decimal {text}");
+
+        let saved = saved_template.replacen("\"percent\":0.0", &format!("\"percent\":{text}"), 1);
+        let restored = Editor::from_saved_state(saved.as_bytes()).unwrap();
+        assert_eq!(restored.export_binary().unwrap(), binary, "saved decimal {text}");
+        round_trip(&mut typed);
+    }
+}
+
+#[test]
+fn decimal_raw_and_json_graph_bounds_reject_the_same_equal_endpoints() {
+    let mut config = default_config();
+    let id = config.widgets[0].id;
+    config.widgets[0].display.graph_range = GraphRange::Fixed {
+        min: 0.0,
+        max: f32::from_bits(0x3F80_0001),
+    };
+    let mut typed = Editor::new(config.clone()).unwrap();
+    typed
+        .select(Selection {
+            view: config.widgets[0].view,
+            widget: Some(id),
+        })
+        .unwrap();
+    typed
+        .set_raw(
+            typed.field_token(),
+            RawField::Widget(id, WidgetField::GraphMinimum),
+            "1.0000000596046448".into(),
+        )
+        .unwrap();
+    let Some(EditorError::Validation(expected)) = typed.draft_error() else {
+        panic!("equal graph endpoints must remain an invalid raw draft")
+    };
+    assert_eq!(expected.field, Field::GraphRange);
+    assert_eq!(expected.code, ErrorCode::Bounds);
+    assert_eq!(typed.preview().config(), &config);
+
+    let mut imported = Editor::new(config).unwrap();
+    let before = imported.export_binary().unwrap();
+    let revision = imported.revision();
+    let template = imported.export_json().unwrap();
+    assert!(template.contains("\"min\": 0.0"));
+    let json = template.replacen("\"min\": 0.0", "\"min\": 1.0000000596046448", 1);
+    let request = imported.begin_import().unwrap();
+    assert_eq!(
+        imported.complete_import(request, ImportFormat::Json, json.as_bytes()),
+        Err(EditorError::Codec(ConfigError::Validation(expected)))
+    );
+    assert_eq!(imported.export_binary().unwrap(), before);
+    assert_eq!(imported.revision(), revision);
+    assert_eq!(imported.history_len(), (0, 0));
+}
