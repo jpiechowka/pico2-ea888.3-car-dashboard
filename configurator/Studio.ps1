@@ -20,7 +20,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne 'trunk 0.21.14') {
         throw 'Expected Trunk 0.21.14 in target/configurator-tools/bin'
     }
-    & rustup target add wasm32-unknown-unknown --toolchain nightly-2026-10-11
+    & rustup target add wasm32-unknown-unknown --toolchain nightly-2026-10-12
     if ($LASTEXITCODE -ne 0) { throw 'Wasm target installation failed' }
     if ($Serve) {
         & $trunk serve --release --locked --address 127.0.0.1 --port $Port

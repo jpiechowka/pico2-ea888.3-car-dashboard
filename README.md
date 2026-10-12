@@ -48,7 +48,7 @@ cargo clippy --locked -p dashboard-pico2 -- -D warnings
 ```
 
 `demo` and `longan-rx12` are mutually exclusive. All Rust workspaces pin
-`nightly-2026-10-11`, installed after `rustup update`; firmware also requests
+`nightly-2026-10-12`, installed after `rustup update`; firmware also requests
 `thumbv8m.main-none-eabihf`. The root `rustfmt.toml` applies to the workspaces.
 The [dependency review](docs/dependencies/upgrade-2026-10-11.md) records current
 releases, compatibility constraints and reviewed local HAL corrections.
