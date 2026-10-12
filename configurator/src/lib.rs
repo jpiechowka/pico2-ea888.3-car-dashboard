@@ -18,5 +18,8 @@
 //! uses `from_saved_state` before mounting the interactive editor.
 
 pub mod editor;
+pub mod geometry;
+pub mod preview;
+pub mod timing;
 
 pub use dashboard_config as config;

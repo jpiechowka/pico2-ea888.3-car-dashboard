@@ -1,6 +1,61 @@
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
+#[test]
+fn warning_direction_changes_preserve_hysteresis_and_undo_atomically() {
+    let mut editor = Editor::default();
+    for id in [1, 3, 5, 8] {
+        let original = editor
+            .preview()
+            .config()
+            .widgets
+            .iter()
+            .find(|w| w.id == id)
+            .unwrap()
+            .warning
+            .clone();
+        let mode = match original.mode {
+            LimitMode::High => LimitMode::Low,
+            LimitMode::Low => LimitMode::High,
+            _ => continue,
+        };
+        editor.apply(Edit::SetWarningMode { id, mode }).unwrap();
+        let changed = editor
+            .preview()
+            .config()
+            .widgets
+            .iter()
+            .find(|w| w.id == id)
+            .unwrap()
+            .warning
+            .clone();
+        assert_eq!(changed.mode, mode);
+        assert_eq!((changed.trigger, changed.clear), (original.clear, original.trigger));
+        editor.undo().unwrap();
+        assert_eq!(
+            editor
+                .preview()
+                .config()
+                .widgets
+                .iter()
+                .find(|w| w.id == id)
+                .unwrap()
+                .warning,
+            original
+        );
+    }
+    let before = editor.preview().clone();
+    assert!(
+        editor
+            .apply(Edit::SetWarningMode {
+                id: 1,
+                mode: LimitMode::LambdaDeviation
+            })
+            .is_err()
+    );
+    assert_eq!(editor.preview(), &before);
+}
+
 fn empty() -> Editor {
     let mut config = default_config();
     config.widgets.clear();

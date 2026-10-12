@@ -82,6 +82,13 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo check --locked --target wasm32-unknown-unknown
+      - run: cargo clippy --locked --target wasm32-unknown-unknown -- -D warnings
+      - name: Build production browser assets
+        env:
+          NO_COLOR: 'true'
+        run: |
+          cargo install trunk --version 0.21.14 --locked
+          trunk build --release --locked
 
   host:
     name: Host contracts and benchmark smoke

@@ -7,7 +7,30 @@ unverified.** The default build shows unavailable vehicle channels. Demo data
 requires `demo`; the optional Longan transport currently performs unqualified
 adapter bring-up and sends no diagnostic CAN requests.
 
-## Build and validation
+## Configure dashboard views
+
+Launch the Rust/Wasm editor from the repository root:
+
+```powershell
+./configurator/Studio.ps1 -Serve
+```
+
+Open `http://127.0.0.1:8080`. Drag widgets onto a 4×2 grid, configure up to eight
+named views, and export editable JSON plus a compact `.eav` file. The preview
+uses the firmware renderer. See the [View Studio guide](docs/configurator/studio.md)
+for warnings, fuel/AFR, ECU source evidence, local saving and import/export.
+
+Embed the exported file in a checked build using the working profile:
+
+```powershell
+./firmware/scripts/Build-Dashboard.ps1 -Name my-views -Profile 280-70 -Mode Demo -Config ./dashboard.eav
+```
+
+This builds and validates an artifact without flashing. See the
+[configuration build guide](docs/configurator/building.md) for runtime parsing,
+fallback and hardware validation. Vehicle source qualification remains required.
+
+## Firmware build and validation
 
 Run firmware commands from `firmware/`:
 
@@ -94,8 +117,8 @@ remain disabled until source-specific policies are qualified.
 ## Controls and startup
 
 Startup has no cosmetic delay. The header shows actual transport/sample state.
-Valid saved preferences restore brightness, its on-value, boost units and FPS
-mode; defaults apply when no valid journal exists. Persistence failures are
+Valid saved preferences restore boost units and FPS mode; every boot starts at
+Full brightness. Defaults apply when no valid journal exists. Persistence failures are
 visible. See [startup status](docs/vehicle/startup-status.md) and
 [settings](docs/performance/settings-journal.md).
 
@@ -108,8 +131,8 @@ visible. See [startup status](docs/vehicle/startup-status.md) and
 
 | Encoder input | Dashboard | Debug | Logs |
 |---|---|---|---|
-| Clockwise | Reserved for future views | Increase legacy brightness by 5% | Newer entries |
-| Counter-clockwise | Reserved for future views | Decrease legacy brightness by 5%, down to off | Older entries |
+| Clockwise | Next configured view | Increase legacy brightness by 5% | Newer entries |
+| Counter-clockwise | Previous configured view | Decrease legacy brightness by 5%, down to off | Older entries |
 | Press | Full -> Dim -> Off -> Full | Toggle backlight | No action |
 
 The normalized direction follows the documented preassembled 5880 encoder;
@@ -118,8 +141,9 @@ physical direction remains an installation check. Every boot starts at Full
 `BL: DIM` and `BL: OFF`. Off remains visible for two seconds after its first
 completed transfer, then a frame removing it completes before the backlight
 switches off. Another click returns to Full; changing pages or replacing the
-pending Off feedback cancels shutdown. There is currently one dashboard view,
-so Dashboard rotation has no effect until additional views are configured.
+pending Off feedback cancels shutdown. The default configuration has one view;
+rotation switches configured views and displays their names. Returning from
+Debug/Logs preserves the selected view; reboot selects the configured boot view.
 
 Debug keeps its legacy 5% control scale and 1.5-second toggle popup. Button
 feedback takes priority over dashboard warnings; warnings resume blinking after
@@ -130,9 +154,10 @@ verified vehicle health. GP20 PWM stays at 1 kHz. Brightness is
 runtime-only; unit and FPS choices remain persistent. See
 [backlight and indicator controls](docs/hardware/backlight-controls.md).
 
-The lambda cell also shows derived AFR and an `EQ 14.7` scale label. This is
+The default lambda cell also shows derived AFR and an `EQ 14.7` scale label. This is
 gasoline-equivalent AFR (`lambda * 14.7`), not a measured fuel composition.
-Lambda remains the primary value and graph; invalid or stale lambda hides both
+The configurator can hide AFR or select an explicit fuel conversion with declared
+assumptions. Lambda remains the primary value and graph; invalid or stale lambda hides both
 readings. An E5 label does not establish an exact fuel-specific conversion. See
 [measurement source and quality](docs/vehicle/sample-quality.md#lambda-and-derived-afr).
 

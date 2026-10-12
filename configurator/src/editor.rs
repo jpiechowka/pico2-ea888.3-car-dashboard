@@ -191,6 +191,10 @@ pub enum Edit {
         index: usize,
     },
     UpdateWidget(Widget),
+    SetWarningMode {
+        id: u16,
+        mode: LimitMode,
+    },
     SetSource {
         channel: Channel,
         source: ChannelSource,
@@ -308,6 +312,13 @@ impl Editor {
     pub fn has_invalid_draft(&self) -> bool { !self.raw.is_empty() }
 
     pub fn active_pointer(&self) -> Option<PointerToken> { self.pointer }
+
+    pub fn import_is_current(
+        &self,
+        token: ImportToken,
+    ) -> bool {
+        self.import == Some(token) && token.revision == self.revision && !self.has_invalid_draft()
+    }
 
     pub fn last_saved_revision(&self) -> Option<Revision> { self.saved_revision }
 
@@ -749,6 +760,17 @@ impl Editor {
                     selection.view = widget.view;
                 }
                 config.widgets[index] = widget;
+            }
+            Edit::SetWarningMode { id, mode } => {
+                let index = widget_index(&config, id)?;
+                let warning = &mut config.widgets[index].warning;
+                if matches!(
+                    (warning.mode, mode),
+                    (LimitMode::High, LimitMode::Low) | (LimitMode::Low, LimitMode::High)
+                ) {
+                    core::mem::swap(&mut warning.trigger, &mut warning.clear);
+                }
+                warning.mode = mode;
             }
             Edit::SetSource { channel, source } => config.sources[channel.index()] = source,
             Edit::SetFuel(fuel) => config.fuel = fuel,
