@@ -23,4 +23,5 @@ pub use popups::{
     draw_view_popup,
     draw_warning_page,
 };
+pub mod gauge;
 pub mod value_text;

@@ -24,6 +24,8 @@ pub fn raw_value(
                     match field {
                         WidgetField::Label => w.label.to_string(),
                         WidgetField::Decimals => w.display.decimals.to_string(),
+                        WidgetField::GaugeMinimum => w.gauge.min.to_string(),
+                        WidgetField::GaugeMaximum => w.gauge.max.to_string(),
                         WidgetField::GraphMinimum => {
                             match w.display.graph_range {
                                 GraphRange::Fixed { min, .. } => min.to_string(),

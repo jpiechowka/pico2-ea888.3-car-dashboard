@@ -30,6 +30,7 @@ pub enum Field {
     Decimals,
     Afr,
     GraphRange,
+    GaugeRange,
     WarningMode,
     WarningTrigger,
     WarningClear,
@@ -96,7 +97,7 @@ pub struct ValidatedConfig {
 }
 
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 8192);
+const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 10_240);
 
 impl ValidatedConfig {
     pub const fn config(&self) -> &Config { &self.config }
@@ -185,6 +186,9 @@ pub fn validate(config: Config) -> Result<ValidatedConfig, ValidationError> {
             return Err(at(ErrorCode::Text, Field::Label));
         }
         let display = widget.display;
+        if !widget.gauge.valid(widget.channel) {
+            return Err(at(ErrorCode::Bounds, Field::GaugeRange));
+        }
         if display.decimals > 3 {
             return Err(at(ErrorCode::Bounds, Field::Decimals));
         }

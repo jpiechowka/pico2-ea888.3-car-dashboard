@@ -52,20 +52,37 @@ fn WidgetInspector(
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(row)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.row=row);}})/>
             </div>
             <h3 class="subheading">"Display"</h3>
+            <Choice ui label="Gauge style" value=Signal::derive(move ||ui.widget(id).map(|w|format!("{:?}",w.gauge.kind)).unwrap_or_default())
+                options=GaugeKind::ALL.into_iter().map(|kind|(format!("{kind:?}"),kind.label().to_string())).collect()
+                on_change=Callback::new(move |(token,value):(FieldToken,String)|{if let Some(kind)=GaugeKind::ALL.into_iter().find(|kind|format!("{kind:?}")==value) {ui.update_widget(token,id,|w|w.gauge.kind=kind);}})/>
+            <Show when=move ||ui.widget(id).is_some_and(|w|!w.gauge.kind.is_numeric())>
+                <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GaugeMinimum) label="Scale minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GaugeMaximum) label="Scale maximum"/></div>
+                <Toggle ui label="Expand with observed values" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.gauge.expand)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.gauge.expand=value))/>
+                <p class="hint">"Limits use canonical units (boost in bar). Expansion lasts until statistics reset. Fixed scales clamp the indicator; numbers still show the actual reading."</p>
+                <p class="hint">"Gauges replace history and trend. Average and extrema are available at 2 × 2. Numeric-view preferences are preserved."</p>
+            </Show>
             <TextField ui field=RawField::Widget(id,WidgetField::Decimals) label="Decimal places" hint="0–3; units stay canonical in rules"/>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
             {flag(ui,id,"History graph",|d|d.graph,|d,v|d.graph=v)}
+            </Show>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.supports_statistics())>
             {flag(ui,id,"Average",|d|d.average,|d,v|d.average=v)}
             {flag(ui,id,"Minimum & maximum",|d|d.extrema,|d,v|d.extrema=v)}
+            </Show>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
             {flag(ui,id,"Trend arrow",|d|d.trend,|d,v|d.trend=v)}
+            </Show>
             <Show when=move || channel==Channel::Lambda>
                 {flag(ui,id,"AFR alongside lambda",|d|d.afr,|d,v|d.afr=v)}
                 <p class="hint">"AFR uses the Fuel & AFR assumptions below the preview. Graphs and rules still use lambda."</p>
             </Show>
             <Show when=move || channel==Channel::Boost><p class="hint">"The dashboard button switches bar / PSI, including statistics. Warning and graph limits are in bar."</p></Show>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
             <Choice ui label="Graph range" value=Signal::derive(move ||ui.widget(id).map(|w|if matches!(w.display.graph_range,GraphRange::Auto){"auto"}else{"fixed"}.to_string()).unwrap_or_default()) options=choices(&[("auto","Automatic"),("fixed","Fixed canonical range")])
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.update_widget(token,id,|w|w.display.graph_range=if value=="fixed" {let(min,max)=w.channel.domain();GraphRange::Fixed{min,max}}else{GraphRange::Auto}))/>
             <Show when=move || ui.widget(id).is_some_and(|w|matches!(w.display.graph_range,GraphRange::Fixed{..}))>
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GraphMinimum) label="Graph minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GraphMaximum) label="Graph maximum"/></div>
+            </Show>
             </Show>
             <h3 class="subheading">"Warning rule"</h3>
             <Toggle ui label="Enable warning" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.warning.enabled)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.warning.enabled=value))/>

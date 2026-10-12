@@ -140,8 +140,10 @@ pub fn prepare(
             return Err(Error::Path);
         }
         let bytes = read_bounded(&canonical, MAX_FILE_BYTES)?;
-        decode(&bytes).map_err(Error::Config)?;
-        (Some(requested), Some(canonical), bytes)
+        let config = decode(&bytes).map_err(Error::Config)?;
+        // Re-encode the validated snapshot so a migrated v1 input is embedded
+        // as v2. Never reopen the source between validation and compilation.
+        (Some(requested), Some(canonical), compile(&config)?)
     } else {
         let default = validate(default_config()).expect("reviewed default configuration");
         (None, None, compile(&default)?)

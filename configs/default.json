@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "catalogue_version": 1,
   "boot_view": 1,
   "views": [
@@ -38,6 +38,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "BOOST REL"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": -1.0,
+        "max": 3.0,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     },
     {
@@ -69,6 +95,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "LAMBDA"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": 0.7,
+        "max": 1.3,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     },
     {
@@ -100,6 +152,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "ECU V"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": 8.0,
+        "max": 16.0,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     },
     {
@@ -131,6 +209,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "COOL"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": 40.0,
+        "max": 130.0,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     },
     {
@@ -162,6 +266,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "OIL"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": 0.0,
+        "max": 150.0,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     },
     {
@@ -193,6 +323,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "DSG OIL"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": 0.0,
+        "max": 140.0,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     },
     {
@@ -224,6 +380,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "IAT"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": -20.0,
+        "max": 80.0,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     },
     {
@@ -255,6 +437,32 @@
         "on_ms": 1000,
         "off_ms": 500,
         "message": "EGT"
+      },
+      "gauge": {
+        "kind": "Numeric",
+        "min": 0.0,
+        "max": 1200.0,
+        "expand": false
+      },
+      "colors": {
+        "background": "#000000",
+        "border": "#393C39",
+        "label": "#FFFFFF",
+        "value": "#FFFFFF",
+        "secondary": "#FFFFFF",
+        "graph": "#FFFFFF",
+        "gauge": "#FF304A",
+        "track": "#293039",
+        "ticks": "#9CAABD",
+        "average": "#FFA600",
+        "minimum": "#FFFFFF",
+        "maximum": "#FFFFFF",
+        "trend": "#FFFFFF",
+        "peak": "#FFFF00",
+        "warning": {
+          "foreground": "#FFFFFF",
+          "background": "#FF0000"
+        }
       }
     }
   ],
@@ -374,5 +582,9 @@
     "mode": "CycleOne",
     "page_ms": 2000
   },
-  "fuel": "EquivalentGasoline"
+  "fuel": "EquivalentGasoline",
+  "warning_colors": {
+    "foreground": "#FFFFFF",
+    "background": "#FF0000"
+  }
 }

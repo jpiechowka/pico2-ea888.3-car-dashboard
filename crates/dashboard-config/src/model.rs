@@ -1,7 +1,7 @@
 use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 pub const CATALOGUE_VERSION: u16 = 1;
 pub const MAX_VIEWS: usize = 8;
 pub const MAX_WIDGETS: usize = 64;
@@ -19,6 +19,7 @@ pub struct Config {
     pub sources: [ChannelSource; 8],
     pub warnings: WarningPresentation,
     pub fuel: Fuel,
+    pub warning_colors: crate::WarningColors,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +39,8 @@ pub struct Widget {
     pub label: String<24>,
     pub display: DisplayOptions,
     pub warning: WarningSettings,
+    pub gauge: crate::Gauge,
+    pub colors: crate::WidgetColors,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -351,4 +354,4 @@ pub enum Fuel {
 
 // Host pointer widths are not a substitute for the target's actual layout.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<Config>() <= 8192);
+const _: () = assert!(core::mem::size_of::<Config>() <= 10_240);

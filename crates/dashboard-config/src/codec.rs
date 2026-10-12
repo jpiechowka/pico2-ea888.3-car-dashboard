@@ -37,7 +37,8 @@ pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
     if &bytes[..4] != b"EAV1" {
         return Err(ConfigError::Header);
     }
-    if u16::from_le_bytes([bytes[4], bytes[5]]) != VERSION {
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if version != VERSION && !(cfg!(feature = "json") && version == 1) {
         return Err(ConfigError::Version);
     }
     let len = usize::from(u16::from_le_bytes([bytes[6], bytes[7]]));
@@ -47,6 +48,22 @@ pub fn decode(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
     let checksum = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
     if checksum != crc_parts(&[&bytes[..8], &bytes[HEADER_BYTES..]]) {
         return Err(ConfigError::Checksum);
+    }
+    #[cfg(feature = "json")]
+    if version == 1 {
+        let (config, rest) = postcard::take_from_bytes::<crate::legacy::LegacyConfig>(&bytes[HEADER_BYTES..])
+            .map_err(|_| ConfigError::Payload)?;
+        if !rest.is_empty() {
+            return Err(ConfigError::Payload);
+        }
+        postcard::serialize_with_flavor(
+            &config,
+            Compare {
+                remaining: &bytes[HEADER_BYTES..],
+            },
+        )
+        .map_err(|_| ConfigError::Payload)?;
+        return config.upgrade();
     }
     let (config, remainder) =
         postcard::take_from_bytes::<Config>(&bytes[HEADER_BYTES..]).map_err(|_| ConfigError::Payload)?;
@@ -128,12 +145,23 @@ pub fn from_json_bytes(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
     if bytes.len() > MAX_JSON_BYTES {
         return Err(ConfigError::Length);
     }
-    let config: Config = serde_json::from_slice(bytes).map_err(|e| {
+    let json_error = |e: serde_json::Error| {
         ConfigError::Json {
             line: e.line(),
             column: e.column(),
         }
-    })?;
+    };
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u16,
+    }
+    let version: Version = serde_json::from_slice(bytes).map_err(json_error)?;
+    if version.version == 1 {
+        return serde_json::from_slice::<crate::legacy::LegacyConfig>(bytes)
+            .map_err(json_error)?
+            .upgrade();
+    }
+    let config: Config = serde_json::from_slice(bytes).map_err(json_error)?;
     validate(config).map_err(ConfigError::Validation)
 }
 

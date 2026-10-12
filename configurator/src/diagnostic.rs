@@ -165,6 +165,11 @@ pub(crate) fn isolated_widget(
     safe.label = "INVALID".try_into().ok()?;
     safe.display.decimals = safe.display.decimals.min(3);
     safe.display.afr &= safe.channel == Channel::Lambda;
+    if !safe.gauge.valid(safe.channel) {
+        let kind = safe.gauge.kind;
+        safe.gauge = Gauge::for_channel(safe.channel);
+        safe.gauge.kind = kind;
+    }
     let (low, high) = safe.channel.domain();
     if let GraphRange::Fixed { min, max } = safe.display.graph_range
         && (!min.is_finite() || !max.is_finite() || min < low || max > high || min >= max)

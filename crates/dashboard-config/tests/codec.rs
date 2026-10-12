@@ -4,7 +4,7 @@ use dashboard_config::*;
 // bytes and the normal polynomial instead of the production reflected routine.
 fn envelope(payload: &[u8]) -> Vec<u8> {
     let mut result = b"EAV1".to_vec();
-    result.extend_from_slice(&1_u16.to_le_bytes());
+    result.extend_from_slice(&VERSION.to_le_bytes());
     result.extend_from_slice(&u16::try_from(payload.len()).unwrap().to_le_bytes());
     let mut crc = u32::MAX;
     for &byte in result.iter().chain(payload) {
@@ -34,12 +34,12 @@ fn minimal() -> Config {
 }
 
 #[test]
-fn crc_known_answers_and_independently_built_golden_v1() {
+fn crc_known_answers_and_independently_built_golden_v2() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
     assert_eq!(crc32(b""), 0);
     // Constructed from schema field order with a standalone Python uvarint
     // encoder, struct.pack('<HH') and zlib.crc32, not the production serializer.
-    let hex = "4541563101004d00d0fd0b110101010101014100000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00";
+    let hex = "4541563102005300ced7c9730201010101014100000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003";
     let golden: Vec<u8> = hex
         .as_bytes()
         .as_chunks::<2>()
@@ -47,7 +47,7 @@ fn crc_known_answers_and_independently_built_golden_v1() {
         .iter()
         .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect();
-    assert_eq!(golden.len(), 89);
+    assert_eq!(golden.len(), 95);
     let expected = validate(minimal()).unwrap();
     assert_eq!(decode(&golden).unwrap(), expected);
     let mut out = [0; MAX_FILE_BYTES];
@@ -58,7 +58,7 @@ fn crc_known_answers_and_independently_built_golden_v1() {
 #[test]
 fn valid_checksum_does_not_bypass_payload_or_semantic_checks() {
     let mutations: &[fn(&mut Config)] = &[
-        |c| c.version = 2,
+        |c| c.version = VERSION + 1,
         |c| c.catalogue_version = 2,
         |c| c.widgets[0].warning.enabled = false, // followed by invalid NaN below
         |c| {
@@ -142,7 +142,7 @@ fn envelope_fields_have_distinct_failure_paths_and_size_bound() {
     bad[0] = b'X';
     assert_eq!(decode(&bad), Err(ConfigError::Header));
     let mut bad = valid.clone();
-    bad[4] = 2;
+    bad[4] = (VERSION + 1) as u8;
     assert_eq!(decode(&bad), Err(ConfigError::Version));
     let mut bad = valid.clone();
     bad[6] += 1;

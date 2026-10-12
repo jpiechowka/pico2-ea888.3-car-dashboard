@@ -2,6 +2,50 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+fn saved_v1_migrates_layout_labels_and_selection_without_changing_boot_view() {
+    let mut config: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../crates/dashboard-config/tests/fixtures/v1-default.json"
+    ))
+    .unwrap();
+    config["widgets"][0]["label"] = "MY BOOST".into();
+    let saved = serde_json::json!({"editor_version":1,"selected_view":1,"selected_widget":1,"config":config});
+    let editor = Editor::from_saved_state(&serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert_eq!(editor.preview().config().version, VERSION);
+    assert_eq!(editor.selection().widget, Some(1));
+    assert_eq!(editor.preview().config().widgets[0].label, "MY BOOST");
+    assert_eq!(
+        editor.preview().config().widgets[0].gauge,
+        Gauge::for_channel(Channel::Boost)
+    );
+}
+
+#[test]
+fn invalid_gauge_limits_are_visible_repairable_and_never_exported() {
+    let mut editor = Editor::default();
+    editor
+        .select(Selection {
+            view: 1,
+            widget: Some(1),
+        })
+        .unwrap();
+    let mut widget = editor.preview().config().widgets[0].clone();
+    widget.gauge.kind = GaugeKind::Circular;
+    editor.apply(Edit::UpdateWidget(widget)).unwrap();
+    let token = editor.field_token();
+    editor
+        .set_raw(token, RawField::Widget(1, WidgetField::GaugeMinimum), "NaN".into())
+        .unwrap();
+    assert!(editor.export_binary().is_err());
+    assert!(editor.diagnostic().is_some());
+    let token = editor.field_token();
+    editor
+        .set_raw(token, RawField::Widget(1, WidgetField::GaugeMinimum), "-0.5".into())
+        .unwrap();
+    assert!(!editor.has_invalid_draft());
+    assert_eq!(editor.preview().config().widgets[0].gauge.min, -0.5);
+}
+
+#[test]
 fn warning_direction_changes_preserve_hysteresis_and_undo_atomically() {
     let mut editor = Editor::default();
     for id in [1, 3, 5, 8] {
@@ -660,8 +704,8 @@ fn malformed_oversize_duplicate_unknown_and_trailing_imports_are_atomic() {
     let mut editor = empty();
     let good = Editor::default().export_json().unwrap();
     let bad_inputs = [
-        good.replacen("\"version\": 1", "\"version\": 1, \"version\": 1", 1),
-        good.replacen("\"version\": 1", "\"version\": 1, \"unknown\": 1", 1),
+        good.replacen("\"version\": 2", "\"version\": 2, \"version\": 2", 1),
+        good.replacen("\"version\": 2", "\"version\": 2, \"unknown\": 1", 1),
         format!("{good} null"),
         good.replacen("14.7", "null", 1)
             .replacen("\"trigger\": 2.5", "\"trigger\": null", 1),

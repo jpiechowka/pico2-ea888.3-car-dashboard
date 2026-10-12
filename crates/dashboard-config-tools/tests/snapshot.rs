@@ -6,6 +6,20 @@ use dashboard_config::*;
 use dashboard_config_tools::*;
 
 struct Temp(PathBuf);
+
+#[test]
+fn old_binary_input_is_compiled_to_current_firmware_schema() {
+    let temp = Temp::new();
+    let file = temp.0.join("old.eav");
+    std::fs::write(
+        &file,
+        include_bytes!("../../dashboard-config/tests/fixtures/v1-default.eav"),
+    )
+    .unwrap();
+    let prepared = prepare(Some(file.as_os_str()), &temp.0).unwrap();
+    assert_eq!(prepared.bytes()[4], VERSION as u8);
+    assert_eq!(decode(prepared.bytes()).unwrap().config(), &default_config());
+}
 impl Temp {
     fn new() -> Self {
         static SEQUENCE: AtomicUsize = AtomicUsize::new(0);

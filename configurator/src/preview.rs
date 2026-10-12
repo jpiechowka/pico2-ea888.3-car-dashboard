@@ -152,7 +152,19 @@ impl Preview {
         }
         let accepted = model.ingest_batch(values_at(now), now);
         debug_assert!(accepted, "one final sample advances the visual demo dwell");
-        let snapshot = model.snapshot();
+        let mut snapshot = model.snapshot();
+        let same_run = self.options.is_some_and(|previous| {
+            previous.warnings == options.warnings
+                && previous.values == options.values
+                && options.sample_ms >= previous.sample_ms
+        });
+        if same_run && let (Some(previous), Some(configuration)) = (&self.snapshot, &self.configuration) {
+            for channel in Channel::ALL {
+                if configuration.sources[channel.index()] == config.config().sources[channel.index()] {
+                    snapshot.sensors[channel.index()].retain_extrema_from(&previous.sensors[channel.index()]);
+                }
+            }
+        }
 
         let changed_config = self.configuration.as_deref() != Some(config.config());
         if changed_config

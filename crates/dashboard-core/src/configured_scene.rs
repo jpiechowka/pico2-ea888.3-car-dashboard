@@ -150,12 +150,12 @@ pub fn widget_text(
             Fuel::EthanolBlend(blend) => number(&mut text[5], "E", blend.percent, 2, " EST"),
         }
     }
-    if widget.display.average
+    if widget.shows_average()
         && let Some(value) = state.get_average()
     {
         number(&mut text[2], "AVG ", value * scale, decimals, suffix);
     }
-    if widget.display.extrema {
+    if widget.shows_extrema() {
         if let Some(value) = state.minimum() {
             number(&mut text[3], "MIN ", value * scale, decimals, suffix);
         }
@@ -264,7 +264,7 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
         .ok();
     y += 12;
     let state = scene.measurements.sensor(id);
-    if widget.display.trend {
+    if widget.shows_trend() {
         if valid && let Some(rising) = state.get_trend_at(scene.now_ms) {
             draw_trend_arrow(&mut display, center, y + 4, rising, color);
         }
@@ -284,23 +284,39 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     }
     let rows = text[1..].iter().filter(|s| !s.is_empty()).count() as i32;
     let bottom = i32::from(rect.y + rect.height) - 3;
-    let graph = valid && widget.display.graph;
+    let graph = valid && widget.shows_graph();
     let available = (bottom - y - rows * 10 - if graph { 10 } else { 0 }).max(0) as u32;
     let scale = match widget.placement.span {
         dashboard_config::Span::OneByOne => 1,
         dashboard_config::Span::TwoByOne => 2,
         dashboard_config::Span::TwoByTwo => 3,
     };
-    let height = draw_fitted_value(
-        &mut display,
-        &text[0],
-        Rectangle::new(
-            Point::new(interior.top_left.x, y),
-            Size::new(interior.size.width, available),
-        ),
-        scale,
-        color,
-    );
+    let height = if widget.gauge.kind.is_numeric() {
+        draw_fitted_value(
+            &mut display,
+            &text[0],
+            Rectangle::new(
+                Point::new(interior.top_left.x, y),
+                Size::new(interior.size.width, available),
+            ),
+            scale,
+            color,
+        )
+    } else {
+        crate::widgets::gauge::draw(
+            &mut display,
+            widget.gauge.kind,
+            Rectangle::new(
+                Point::new(interior.top_left.x, y),
+                Size::new(interior.size.width, available),
+            ),
+            crate::widgets::gauge::Reading::new(widget, scene.measurements, scene.now_ms),
+            &text[0],
+            scene.boost_psi && widget.channel == Channel::Boost,
+            (color, crate::ui::RED, GRAY, color),
+        );
+        available
+    };
     y += height as i32;
     if !text[1].is_empty() {
         Text::with_text_style(

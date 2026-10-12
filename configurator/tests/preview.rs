@@ -12,6 +12,46 @@ use dashboard_core::vehicle_status::VehicleStatus;
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]
+fn preview_observed_extrema_only_expand_until_rewind_or_sample_source_changes() {
+    let config = fixture();
+    let mut preview = Preview::new();
+    let mut bounds = [(f32::INFINITY, f32::NEG_INFINITY); 8];
+    for sample_ms in (0..240_000).step_by(3_001) {
+        preview
+            .render(
+                &config,
+                1,
+                PreviewOptions {
+                    sample_ms,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        for (i, id) in SensorId::ALL.into_iter().enumerate() {
+            let sensor = preview.snapshot().unwrap().sensor(id);
+            let current = (sensor.minimum().unwrap(), sensor.maximum().unwrap());
+            assert!(
+                current.0 <= bounds[i].0 && current.1 >= bounds[i].1,
+                "preview shrank {id:?} at {sample_ms}"
+            );
+            bounds[i] = current;
+        }
+    }
+    preview
+        .render(
+            &config,
+            1,
+            PreviewOptions {
+                sample_ms: 0,
+                values: Some([1.0; 8]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(preview.snapshot().unwrap().sensor(SensorId::Boost).maximum(), Some(1.0));
+}
+
+#[test]
 fn browser_samples_match_the_firmware_demo_generator_at_the_actual_rendered_time() {
     let config = fixture();
     let mut preview = Preview::new();

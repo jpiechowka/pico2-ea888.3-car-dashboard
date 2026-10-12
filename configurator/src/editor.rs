@@ -104,6 +104,8 @@ pub enum WidgetField {
     Decimals,
     GraphMinimum,
     GraphMaximum,
+    GaugeMinimum,
+    GaugeMaximum,
     WarningMessage,
     WarningTrigger,
     WarningClear,
@@ -451,7 +453,8 @@ impl Editor {
         if bytes.len() > MAX_SAVED_BYTES {
             return Err(EditorError::Codec(ConfigError::Length));
         }
-        let envelope: SavedEnvelope<Config> = serde_json::from_slice(bytes).map_err(json_error)?;
+        let envelope: SavedEnvelope<Box<serde_json::value::RawValue>> =
+            serde_json::from_slice(bytes).map_err(json_error)?;
         if envelope.editor_version != SAVED_STATE_VERSION {
             return Err(EditorError::SavedVersion);
         }
@@ -459,7 +462,9 @@ impl Editor {
             view: envelope.selected_view,
             widget: envelope.selected_widget,
         };
-        let mut editor = Self::new(envelope.config)?;
+        let restored =
+            dashboard_config::from_json_bytes(envelope.config.get().as_bytes()).map_err(EditorError::Codec)?;
+        let mut editor = Self::new(restored.config().clone())?;
         check_selection(editor.preview().config(), selection)?;
         editor.accepted.selection = selection;
         editor.saved_revision = Some(editor.revision);
@@ -1077,6 +1082,8 @@ fn apply_raw(
             match field {
                 WidgetField::Label => widget.label = bounded(text)?,
                 WidgetField::Decimals => widget.display.decimals = text.trim().parse().map_err(|_| parse_error())?,
+                WidgetField::GaugeMinimum => widget.gauge.min = number()?,
+                WidgetField::GaugeMaximum => widget.gauge.max = number()?,
                 WidgetField::GraphMinimum | WidgetField::GraphMaximum => {
                     let GraphRange::Fixed { min, max } = &mut widget.display.graph_range else {
                         return Err(EditorError::FieldUnavailable);

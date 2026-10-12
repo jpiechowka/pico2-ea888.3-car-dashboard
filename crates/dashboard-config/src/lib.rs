@@ -3,13 +3,17 @@
 #[cfg(feature = "json")]
 extern crate alloc;
 
+mod appearance;
 mod catalog;
 mod codec;
 mod defaults;
 mod fuel;
+#[cfg(feature = "json")]
+mod legacy;
 mod model;
 mod validate;
 
+pub use appearance::*;
 pub use catalog::*;
 pub use codec::*;
 pub use defaults::{default_config, default_widget};
@@ -24,7 +28,7 @@ pub struct BootConfig {
 }
 
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<BootConfig>() <= 8192);
+const _: () = assert!(core::mem::size_of::<BootConfig>() <= 10_240);
 
 #[inline(never)]
 pub fn load_at_boot(bytes: &[u8]) -> BootConfig {

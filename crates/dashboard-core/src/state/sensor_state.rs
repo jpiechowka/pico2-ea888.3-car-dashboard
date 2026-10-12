@@ -61,6 +61,22 @@ impl SensorSnapshot {
 
     pub fn maximum(&self) -> Option<f32> { self.maximum }
 
+    /// Join accepted extrema from an earlier snapshot of the same source/run.
+    /// Used by bounded browser replay when older history points leave its window.
+    /// The caller owns source/time/reset boundaries. No reading or freshness is
+    /// synthesized, and firmware acquisition remains the statistics owner.
+    pub fn retain_extrema_from(
+        &mut self,
+        earlier: &Self,
+    ) {
+        if let Some(min) = earlier.minimum.filter(|v| valid_sample(*v)) {
+            self.minimum = Some(self.minimum.map_or(min, |value| value.min(min)));
+        }
+        if let Some(max) = earlier.maximum.filter(|v| valid_sample(*v)) {
+            self.maximum = Some(self.maximum.map_or(max, |value| value.max(max)));
+        }
+    }
+
     pub fn get_average(&self) -> Option<f32> { self.average }
 
     pub fn sampled_at_ms(&self) -> Option<u64> { self.sampled_at_ms }

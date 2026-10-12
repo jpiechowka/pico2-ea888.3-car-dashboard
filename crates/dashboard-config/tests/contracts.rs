@@ -28,7 +28,7 @@ fn default_roundtrip_and_all_truncations_are_checked() {
 #[test]
 fn geometry_identity_text_and_numeric_errors_reject_the_whole_document() {
     let mutations: &[fn(&mut Config)] = &[
-        |c| c.version = 2,
+        |c| c.version = VERSION + 1,
         |c| c.catalogue_version = 2,
         |c| c.boot_view = 0,
         |c| c.views.clear(),

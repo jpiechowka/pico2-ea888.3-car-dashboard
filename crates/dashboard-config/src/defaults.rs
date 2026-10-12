@@ -23,6 +23,8 @@ pub fn default_widget(
         channel,
         placement,
         label: channel.label().try_into().expect("bounded built-in label"),
+        gauge: Gauge::for_channel(channel),
+        colors: WidgetColors::default(),
         display: DisplayOptions {
             decimals: match channel {
                 Channel::Boost => 2,
@@ -110,5 +112,6 @@ pub fn default_config() -> Config {
             page_ms: 2000,
         },
         fuel: Fuel::EquivalentGasoline,
+        warning_colors: WarningColors::default(),
     }
 }

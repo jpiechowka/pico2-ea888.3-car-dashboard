@@ -354,6 +354,7 @@ struct CellKey {
     flags: [bool; 3],
     trend: Option<bool>,
     graph: GraphKey,
+    gauge: Option<crate::widgets::gauge::Reading>,
 }
 impl DashboardScene<'_> {
     pub(crate) fn quality(
@@ -389,7 +390,20 @@ impl DashboardScene<'_> {
             flags: [false; 3],
             trend: None,
             graph: GraphKey::new(None),
+            gauge: None,
         };
+        // Unavailable gauges still show their range endpoints. Statistics
+        // reset and bar/PSI toggles must invalidate these retained pixels too.
+        if let Some(widget) = self.layout.as_ref().and_then(|layout| layout.widget(cell))
+            && !widget.gauge.kind.is_numeric()
+        {
+            key.gauge = Some(crate::widgets::gauge::Reading::new(
+                widget,
+                self.measurements,
+                self.now_ms,
+            ));
+            key.flags[2] = self.boost_psi && widget.channel == dashboard_config::Channel::Boost;
+        }
         if key.quality != Quality::Valid {
             key.background = BLACK;
             return Some(key);
@@ -404,9 +418,9 @@ impl DashboardScene<'_> {
                 layout.configuration().stoich(),
                 &layout.configuration().config().fuel,
             );
-            key.graph = GraphKey::new(widget.display.graph.then_some(state));
-            key.flags[0] = widget.display.extrema && state.is_new_peak_at(self.now_ms);
-            key.trend = widget.display.trend.then(|| state.get_trend_at(self.now_ms)).flatten();
+            key.graph = GraphKey::new(widget.shows_graph().then_some(state));
+            key.flags[0] = widget.shows_extrema() && state.is_new_peak_at(self.now_ms);
+            key.trend = widget.shows_trend().then(|| state.get_trend_at(self.now_ms)).flatten();
             if !self.blink_on || !layout.alarm_active(cell, self.measurements, self.now_ms) {
                 key.background = BLACK;
             }
