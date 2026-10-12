@@ -1,6 +1,15 @@
 //! Checked mapping from an actual canvas content rectangle to the Pico grid.
 
-use dashboard_config::{MAX_WIDGETS, Placement, Span, ValidatedConfig, ValidationError, default_widget, validate};
+use dashboard_config::{
+    Config,
+    MAX_WIDGETS,
+    Placement,
+    Span,
+    ValidatedConfig,
+    ValidationError,
+    default_widget,
+    validate,
+};
 use dashboard_core::config::{COL_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use crate::editor::PointerTarget;
@@ -176,10 +185,21 @@ pub fn validate_drop(
     target: PointerTarget,
     placement: Placement,
 ) -> Result<(), GeometryError> {
-    if !config.config().views.iter().any(|candidate| candidate.id == view) {
+    validate_draft_drop(config.config(), view, target, placement)
+}
+
+/// Diagnose the layout actually visible in a rejected preview, including edits
+/// already made during recovery. Only the shared validator can approve it.
+pub fn validate_draft_drop(
+    config: &Config,
+    view: u8,
+    target: PointerTarget,
+    placement: Placement,
+) -> Result<(), GeometryError> {
+    if !config.views.iter().any(|candidate| candidate.id == view) {
         return Err(GeometryError::MissingView);
     }
-    let mut candidate = config.config().clone();
+    let mut candidate = config.clone();
     match target {
         PointerTarget::Widget(id) => {
             let widget = candidate

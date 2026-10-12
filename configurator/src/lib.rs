@@ -4,7 +4,8 @@
 //! `has_invalid_draft` is true, inspectors display the retained `raw_fields` and
 //! `draft_error`. The canvas shows `diagnostic()` with an INVALID PREVIEW banner;
 //! it cannot serialize or enter firmware. Correct or discard invalid raw fields;
-//! discard rejected structural edits before further editing.
+//! move, resize or remove rejected widgets to repair a layout, or discard it.
+//! `editing_config` is draft data and must never be used as a validation proof.
 //!
 //! Bind inspector callbacks to `field_token` and use `set_raw` or
 //! `apply_if_current`. Refresh the binding after an accepted dispatch; a callback
@@ -23,5 +24,6 @@ pub mod editor;
 pub mod geometry;
 pub mod preview;
 pub mod timing;
+pub mod widget_actions;
 
 pub use dashboard_config as config;

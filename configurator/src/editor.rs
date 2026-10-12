@@ -186,6 +186,10 @@ pub enum Edit {
         id: u16,
         span: Span,
     },
+    PlaceWidget {
+        id: u16,
+        placement: Placement,
+    },
     ReorderWidget {
         id: u16,
         index: usize,
@@ -234,6 +238,11 @@ struct Accepted {
     selection: Selection,
 }
 
+struct Rejected {
+    config: Config,
+    selection: Selection,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SavedEnvelope<C> {
@@ -250,7 +259,7 @@ pub struct Editor {
     undo: VecDeque<Box<Accepted>>,
     redo: VecDeque<Box<Accepted>>,
     raw: Vec<RawInput>,
-    rejected: Option<Box<Config>>,
+    rejected: Option<Box<Rejected>>,
     draft_error: Option<EditorError>,
     request: u64,
     pointer: Option<PointerToken>,
@@ -294,7 +303,21 @@ impl Editor {
 
     pub fn preview(&self) -> &ValidatedConfig { &self.accepted.preview }
 
-    pub fn selection(&self) -> Selection { self.accepted.selection }
+    pub fn selection(&self) -> Selection {
+        self.rejected
+            .as_ref()
+            .map_or(self.accepted.selection, |draft| draft.selection)
+    }
+
+    /// Editable geometry, including rejected structural changes. This is not a
+    /// validation proof and must never be used for saving or firmware export.
+    pub fn editing_config(&self) -> &Config {
+        self.rejected
+            .as_ref()
+            .map_or(self.preview().config(), |draft| &draft.config)
+    }
+
+    pub fn can_edit_layout(&self) -> bool { self.raw.is_empty() }
 
     pub fn revision(&self) -> Revision { self.revision }
 
@@ -319,7 +342,7 @@ impl Editor {
         if !self.has_invalid_draft() {
             return None;
         }
-        let mut config = self.rejected.as_deref().unwrap_or(self.preview().config()).clone();
+        let mut config = self.editing_config().clone();
         for input in &self.raw {
             // Keep applying independent fields after a parse/capacity failure;
             // their original strings are retained and shown in diagnostics.
@@ -448,10 +471,14 @@ impl Editor {
         pointer_id: i32,
         target: PointerTarget,
     ) -> Result<PointerToken, EditorError> {
-        self.ensure_clean()?;
+        if matches!(target, PointerTarget::Library(_)) {
+            self.ensure_clean()?;
+        } else if !self.can_edit_layout() {
+            return Err(EditorError::InvalidDraft);
+        }
         let request = self.next_request()?;
         if let PointerTarget::Widget(id) = target {
-            let config = self.preview().config();
+            let config = self.editing_config();
             if config.widgets[widget_index(config, id)?].view != self.selection().view {
                 return Err(EditorError::SelectionMismatch);
             }
@@ -484,12 +511,7 @@ impl Editor {
         }
         self.pointer = None;
         let edit = match token.target {
-            PointerTarget::Widget(id) => {
-                let config = self.preview().config();
-                let mut widget = config.widgets[widget_index(config, id)?].clone();
-                widget.placement = placement;
-                Edit::UpdateWidget(widget)
-            }
+            PointerTarget::Widget(id) => Edit::PlaceWidget { id, placement },
             PointerTarget::Library(channel) => {
                 Edit::AddWidget {
                     view: token.view,
@@ -645,8 +667,20 @@ impl Editor {
         &mut self,
         edit: Edit,
     ) -> Result<Revision, EditorError> {
-        self.ensure_clean()?;
-        let mut config = self.preview().config().clone();
+        if self.has_invalid_draft()
+            && (!self.can_edit_layout()
+                || !matches!(
+                    edit,
+                    Edit::MoveWidget { .. }
+                        | Edit::ResizeWidget { .. }
+                        | Edit::PlaceWidget { .. }
+                        | Edit::DeleteWidget(_)
+                ))
+        {
+            return Err(EditorError::InvalidDraft);
+        }
+        let recovering = self.rejected.is_some();
+        let mut config = self.editing_config().clone();
         let mut selection = self.selection();
         match edit {
             Edit::AddView { name } => {
@@ -768,6 +802,10 @@ impl Editor {
                 let index = widget_index(&config, id)?;
                 config.widgets[index].placement.span = span;
             }
+            Edit::PlaceWidget { id, placement } => {
+                let index = widget_index(&config, id)?;
+                config.widgets[index].placement = placement;
+            }
             Edit::ReorderWidget { id, index } => {
                 let old = widget_index(&config, id)?;
                 if index >= config.widgets.len() {
@@ -802,10 +840,30 @@ impl Editor {
             Edit::SetWarningPresentation(warnings) => config.warnings = warnings,
         }
         match validate(config.clone()) {
-            Ok(preview) => self.accept_validated(preview, selection),
+            Ok(preview) => {
+                let revision = if recovering { Some(self.next_revision()?) } else { None };
+                self.accept_validated(preview, selection)?;
+                self.rejected = None;
+                self.draft_error = None;
+                // Even a repair back to the original accepted bytes retires
+                // callbacks created for the rejected layout.
+                if let Some(revision) = revision {
+                    self.changed(revision);
+                }
+                Ok(self.revision)
+            }
             Err(error) => {
                 let revision = self.next_revision()?;
-                self.rejected = Some(Box::new(config));
+                if check_selection(&config, selection).is_err() {
+                    selection = self.accepted.selection;
+                    if check_selection(&config, selection).is_err() {
+                        selection = Selection {
+                            view: config.views[0].id,
+                            widget: None,
+                        };
+                    }
+                }
+                self.rejected = Some(Box::new(Rejected { config, selection }));
                 self.draft_error = Some(EditorError::Validation(error));
                 self.changed(revision);
                 Err(EditorError::Validation(error))
@@ -830,11 +888,16 @@ impl Editor {
         &mut self,
         selection: Selection,
     ) -> Result<Revision, EditorError> {
-        self.ensure_clean()?;
-        check_selection(self.preview().config(), selection)?;
+        if !self.can_edit_layout() {
+            return Err(EditorError::InvalidDraft);
+        }
+        check_selection(self.editing_config(), selection)?;
         if selection != self.selection() {
             self.changed(self.next_revision()?);
-            self.accepted.selection = selection;
+            match &mut self.rejected {
+                Some(draft) => draft.selection = selection,
+                None => self.accepted.selection = selection,
+            }
         }
         Ok(self.revision)
     }
@@ -883,7 +946,7 @@ impl Editor {
         selection: Selection,
     ) -> Result<Revision, EditorError> {
         check_selection(preview.config(), selection)?;
-        if preview == *self.preview() && selection == self.selection() {
+        if preview == *self.preview() && selection == self.accepted.selection {
             // f32 equality treats negative zero as positive zero. Those have
             // different canonical payloads and can produce different labels;
             // avoid silently discarding them during an otherwise equal import.

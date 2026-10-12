@@ -116,7 +116,13 @@ fn rejected_move_and_resize_preserve_document_but_retire_callbacks_and_block_exp
         let token = editor.field_token();
         assert!(matches!(editor.apply(edit), Err(EditorError::Validation(_))));
         assert_eq!(editor.preview(), &before);
-        assert_eq!(editor.selection(), selection);
+        assert!(
+            editor
+                .editing_config()
+                .widgets
+                .iter()
+                .any(|w| Some(w.id) == editor.selection().widget)
+        );
         assert_ne!(editor.revision(), revision);
         assert_eq!(editor.history_len(), history);
         assert!(editor.has_invalid_draft());
@@ -128,6 +134,7 @@ fn rejected_move_and_resize_preserve_document_but_retire_callbacks_and_block_exp
             Err(EditorError::StaleToken)
         );
         editor.discard_raw().unwrap();
+        assert_eq!(editor.selection(), selection, "discard restores the accepted selection");
     }
     editor
         .apply(Edit::MoveWidget {
