@@ -92,6 +92,138 @@ fn default_small_widgets_prioritize_the_primary_measurement() {
 }
 
 #[test]
+fn wider_and_taller_widgets_use_visibly_larger_primary_digits() {
+    // Count the vertical extent of actual white pixels in the primary lane,
+    // independently of the renderer's font selection or reported metrics.
+    let mut heights = Vec::new();
+    for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
+        let mut raw = default_config();
+        raw.widgets.truncate(1);
+        let widget = &mut raw.widgets[0];
+        widget.placement.span = span;
+        widget.display.decimals = 1;
+        widget.display.graph = false;
+        widget.display.average = false;
+        widget.display.extrema = false;
+        widget.display.trend = false;
+        let config = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo();
+        model.ingest_batch([1.7, 90.0, 90.0, 80.0, 30.0, 700.0, 13.8, 1.0], 0);
+        let snapshot = model.snapshot();
+        let scene = DashboardScene {
+            layout: Layout::new(&config, 1, false),
+            measurements: &snapshot,
+            now_ms: 0,
+            status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+            blink_on: false,
+            boost_psi: false,
+            fps_mode: FpsMode::Off,
+            fps_instant: 0.0,
+            fps_average: 0.0,
+            backgrounds: [colors::BLACK; 8],
+            overlay: None,
+        };
+        let mut frame = AlignedFrame::boxed();
+        scene.draw_full(&mut St7789Renderer::new(&mut frame.0));
+        // The first connected run of nonempty rows after the label is the number.
+        let mut started = false;
+        let mut height = 0;
+        for y in 41..230 {
+            let white = (3..(usize::from(span.columns()) * 80 - 3)).any(|x| {
+                let p = (y * 320 + x) * 2;
+                frame.0[p..p + 2] == [255, 255]
+            });
+            if white {
+                started = true;
+                height += 1;
+            } else if started {
+                break;
+            }
+        }
+        heights.push(height);
+    }
+    assert!(heights[0] >= 15, "compact digits missing: {heights:?}");
+    assert!(
+        heights[1] >= heights[0] * 2,
+        "wide digits were not enlarged: {heights:?}"
+    );
+    assert!(
+        heights[2] >= heights[0] * 3,
+        "tall digits were not enlarged: {heights:?}"
+    );
+}
+
+#[test]
+fn growing_and_shrinking_digits_repair_both_buffers_across_fit_thresholds() {
+    use dashboard_host_validation::widgets::value_text::fit_value;
+    use embedded_graphics::geometry::Size;
+    for (span, values) in [
+        (Span::TwoByOne, [99.9, 100.0, 99.9, -100.0, 0.0]),
+        (Span::TwoByTwo, [9.9, 10.0, 9.9, -10.0, 0.0]),
+    ] {
+        let mut raw = default_config();
+        raw.widgets.truncate(1);
+        let w = &mut raw.widgets[0];
+        w.placement.span = span;
+        w.display.decimals = 1;
+        w.display.graph = false;
+        w.display.extrema = false;
+        w.display.average = false;
+        w.display.trend = false;
+        let config = validate(raw).unwrap();
+        let mut buffers = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+        let mut reference = AlignedFrame::boxed();
+        let mut cache = DashboardCache::new();
+        let mut sizes = Vec::new();
+        for (step, value) in values.into_iter().enumerate() {
+            let mut model = AcquisitionModel::demo();
+            model.ingest_batch([value, 90.0, 90.0, 80.0, 30.0, 700.0, 13.8, 1.0], step as u64);
+            let snapshot = model.snapshot();
+            let text = widget_text(
+                &config.config().widgets[0],
+                &snapshot,
+                step as u64,
+                false,
+                config.stoich(),
+                &config.config().fuel,
+            );
+            sizes.push(
+                fit_value(
+                    &text[0],
+                    Size::new(156, if span == Span::TwoByOne { 79 } else { 186 }),
+                    if span == Span::TwoByOne { 2 } else { 3 },
+                )
+                .unwrap()
+                .size
+                .height,
+            );
+            for psi in [false, true, false] {
+                let scene = DashboardScene {
+                    layout: Layout::new(&config, 1, false),
+                    measurements: &snapshot,
+                    now_ms: step as u64,
+                    status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+                    blink_on: false,
+                    boost_psi: psi,
+                    fps_mode: FpsMode::Off,
+                    fps_instant: 0.0,
+                    fps_average: 0.0,
+                    backgrounds: [colors::BLACK; 8],
+                    overlay: None,
+                };
+                scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+                for (slot, frame) in buffers.iter_mut().enumerate() {
+                    cache.draw(&mut St7789Renderer::new(&mut frame.0), slot, &scene);
+                    assert!(frame.0 == reference.0, "{span:?}, {value}, PSI={psi}, buffer={slot}");
+                }
+            }
+        }
+        assert!(sizes[0] > sizes[1], "fit threshold not exercised: {sizes:?}");
+        assert_eq!(sizes[0], sizes[2]);
+    }
+}
+
+#[test]
 fn extreme_text_stays_measurable_and_invalid_lambda_has_no_numeric_afr() {
     use embedded_graphics::mono_font::MonoTextStyle;
     use embedded_graphics::prelude::*;

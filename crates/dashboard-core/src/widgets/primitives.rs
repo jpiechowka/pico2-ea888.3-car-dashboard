@@ -156,7 +156,7 @@ pub fn draw_mini_graph<D, F>(
 }
 
 #[inline]
-fn outline_color_for_text(text_color: Rgb565) -> Rgb565 {
+pub(crate) fn outline_color_for_text(text_color: Rgb565) -> Rgb565 {
     let raw = text_color.into_storage();
     let r5 = u32::from((raw >> 11) & 0x1F);
     let g6 = u32::from((raw >> 5) & 0x3F);
@@ -168,6 +168,12 @@ fn outline_color_for_text(text_color: Rgb565) -> Rgb565 {
 
     if luma >= 128 { BLACK } else { WHITE }
 }
+
+#[cfg(feature = "simple-outline")]
+pub(crate) const VALUE_OUTLINE_OFFSETS: &[(i32, i32)] = &[(1, 1), (1, 0)];
+#[cfg(not(feature = "simple-outline"))]
+pub(crate) const VALUE_OUTLINE_OFFSETS: &[(i32, i32)] =
+    &[(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
 pub fn draw_value_with_outline<D>(
     display: &mut D,
@@ -183,13 +189,7 @@ pub fn draw_value_with_outline<D>(
     let outline_char_style = MonoTextStyle::new(font, outline_color);
     let main_char_style = MonoTextStyle::new(font, text_color);
 
-    #[cfg(feature = "simple-outline")]
-    const OFFSETS: [(i32, i32); 2] = [(1, 1), (1, 0)];
-
-    #[cfg(not(feature = "simple-outline"))]
-    const OFFSETS: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
-
-    for (dx, dy) in OFFSETS {
+    for &(dx, dy) in VALUE_OUTLINE_OFFSETS {
         let offset_pos = Point::new(position.x + dx, position.y + dy);
         Text::with_text_style(text, offset_pos, outline_char_style, text_style)
             .draw(display)

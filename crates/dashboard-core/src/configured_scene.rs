@@ -12,20 +12,10 @@ use crate::acquisition::DashboardSnapshot;
 use crate::dashboard::DashboardScene;
 use crate::samples::{DataMode, Quality, SensorId};
 use crate::thresholds::BAR_TO_PSI;
-use crate::ui::{
-    BLACK,
-    CENTERED,
-    GRAY,
-    LABEL_FONT,
-    LEFT_ALIGNED,
-    RED,
-    RIGHT_ALIGNED,
-    VALUE_FONT,
-    VALUE_FONT_MEDIUM,
-    WHITE,
-};
+use crate::ui::{BLACK, CENTERED, GRAY, LABEL_FONT, LEFT_ALIGNED, RED, RIGHT_ALIGNED, WHITE};
 use crate::widgets::cell_text::CellText;
-use crate::widgets::primitives::{draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
+use crate::widgets::primitives::{draw_mini_graph, draw_trend_arrow};
+use crate::widgets::value_text::draw_fitted_value;
 
 /// Validated lookup table for one view. No configuration copy or repeated
 /// 64-widget search is needed while drawing its eight visible slots.
@@ -181,22 +171,8 @@ pub fn fitted_font(
     width: u32,
     height: u32,
 ) -> &'static MonoFont<'static> {
-    for font in [
-        VALUE_FONT,
-        VALUE_FONT_MEDIUM,
-        &embedded_graphics::mono_font::ascii::FONT_10X20,
-        LABEL_FONT,
-        &embedded_graphics::mono_font::ascii::FONT_4X6,
-    ] {
-        let advance = font.character_size.width + font.character_spacing;
-        let pixels = (text.len() as u32)
-            .saturating_mul(advance)
-            .saturating_sub(font.character_spacing);
-        if pixels + 2 <= width && font.character_size.height + 2 <= height {
-            return font;
-        }
-    }
-    LABEL_FONT
+    crate::widgets::value_text::fit_value(text, Size::new(width, height), 1)
+        .map_or(&embedded_graphics::mono_font::ascii::FONT_4X6, |value| value.font)
 }
 
 pub(crate) fn draw_header<D: DrawTarget<Color = Rgb565>>(
@@ -309,17 +285,23 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     let rows = text[1..].iter().filter(|s| !s.is_empty()).count() as i32;
     let bottom = i32::from(rect.y + rect.height) - 3;
     let graph = valid && widget.display.graph;
-    let available = (bottom - y - rows * 10 - if graph { 10 } else { 0 }).max(12) as u32;
-    let font = fitted_font(&text[0], interior.size.width, available);
-    draw_value_with_outline(
+    let available = (bottom - y - rows * 10 - if graph { 10 } else { 0 }).max(0) as u32;
+    let scale = match widget.placement.span {
+        dashboard_config::Span::OneByOne => 1,
+        dashboard_config::Span::TwoByOne => 2,
+        dashboard_config::Span::TwoByTwo => 3,
+    };
+    let height = draw_fitted_value(
         &mut display,
         &text[0],
-        Point::new(center, y + font.baseline as i32 + 1),
-        font,
+        Rectangle::new(
+            Point::new(interior.top_left.x, y),
+            Size::new(interior.size.width, available),
+        ),
+        scale,
         color,
-        CENTERED,
     );
-    y += font.character_size.height as i32 + 2;
+    y += height as i32;
     if !text[1].is_empty() {
         Text::with_text_style(
             &text[1],

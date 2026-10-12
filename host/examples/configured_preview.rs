@@ -23,20 +23,8 @@ fn main() {
     let layout = Layout::new(&config, view, false).expect("unknown configured view ID");
     let mut model = AcquisitionModel::demo();
     for n in 0..60 {
-        let x = n as f32 * 0.2;
-        model.ingest_batch(
-            [
-                1.1 + x.sin() * 0.2,
-                92.0 + x.sin() * 8.0,
-                89.0 + x.sin() * 3.0,
-                80.0,
-                32.0,
-                750.0 + x.sin() * 50.0,
-                13.8,
-                0.8,
-            ],
-            n * 2000,
-        );
+        let now = n * 2000;
+        model.ingest_batch(dashboard_host_validation::demo::values(now), now);
     }
     let snapshot = model.snapshot();
     let scene = DashboardScene {
