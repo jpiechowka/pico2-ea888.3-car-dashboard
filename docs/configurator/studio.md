@@ -37,10 +37,12 @@ Web Locks and permitted local storage; file export remains usable without them.
 2. Drag a sensor from the library onto a free cell, or use its **+** button.
    Drag existing widgets to move them. Esc cancels. Invalid drops preserve the
    accepted layout and show the rejected placement as an invalid diagnostic
-   draft; discard it before moving again. Keyboard users can select a widget and use arrows to move it or
+   draft. Drag again, use the context menu or edit placement fields to repair it.
+   Keyboard users can select a widget and use arrows to move it or
    Delete to remove it. Size, column and row fields provide another alternative.
-3. Select a widget to rename it, choose 1×1, 2×1 or 2×2, change precision, graph
-   limits, statistics, trend and optional lambda AFR. The inspector shows text
+3. Select a widget to rename it, choose 1×1, 2×1 or 2×2, change gauge style,
+   scale limits, precision, colours, statistics and optional lambda AFR. Numeric
+   widgets also support history graphs and trend. The inspector shows text
    limits. Wider and taller tiles automatically enlarge the primary value,
    shrinking the whole string (sign, digits and unit) when space is needed.
    A wide label must be shortened before shrinking the widget.
@@ -50,7 +52,8 @@ Web Locks and permitted local storage; file export remains usable without them.
    preserve strict hysteresis. Warning order buttons move it within its view.
 5. **Warning display** chooses all-view/current-view scope and one-message or
    three-message pages. Feedback popups take precedence on the Pico. Warnings
-   resume afterward. The configured interval uses elapsed time.
+   resume afterward. The configured interval uses elapsed time. Combined list
+   warnings have their own palette; one-message pages use the warning widget's.
 6. **Fuel & AFR** selects equivalent 14.7, an explicit stoichiometric ratio, or
    an ethanol estimate with declared mass/volume basis, composition origin,
    component ratios/densities and common reference temperature when required.
@@ -59,6 +62,11 @@ Web Locks and permitted local storage; file export remains usable without them.
    A channel has one source shared by all its widgets. Route, polling and
    freshness remain bounded. Changing a source selects its catalogue defaults.
    Unimplemented/candidate sources remain unavailable in vehicle mode.
+
+The [gauge and colour guide](gauges-and-colours.md) describes fixed/expanding
+scales, per-style capabilities, RGB565 validation and the shared preview/device
+renderer. Version 1 documents import through explicit migration; new exports
+use version 2 and require matching firmware.
 
 The grid has four columns and two rows. Up to eight named views and 64 total
 widgets are supported. Overlaps, unsupported glyphs, inconsistent limits,

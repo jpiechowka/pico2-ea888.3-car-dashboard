@@ -19,6 +19,9 @@ Open `http://127.0.0.1:8080`. Drag widgets onto a 4×2 grid, configure up to eig
 named views, and export editable JSON plus a compact `.eav` file. The preview
 uses the firmware renderer. See the [View Studio guide](docs/configurator/studio.md)
 for warnings, fuel/AFR, ECU source evidence, local saving and import/export.
+Choose numeric/history, circular, needle, horizontal, vertical or segmented
+gauges. [Gauge and colour controls](docs/configurator/gauges-and-colours.md) include
+fixed or expanding scales, per-widget palettes and separate combined warnings.
 
 Embed the exported file in a checked build using the working profile:
 

@@ -21,7 +21,9 @@ gate's repeatability limitation and focused follow-up are documented separately.
 
 ## Global constraints
 
-The companion design and schema-v1 contract are normative:4x2, spans1x1/2x1/2x2, max8views/64widgets,
+This initial plan used the companion design and schema-v1 contract. The later
+[v2 gauge and colour contract](schema-v2.md) supersedes its wire fields while
+preserving 4x2, spans1x1/2x1/2x2, max8views/64widgets,
 max8visible, names14/labels12-or24/messages20ASCII, decoded config8192B,
 binary16KiB, import128KiB, core0headroom64KiB, no runtime heap. Preserve all
 source/context/staleness, affine framebuffer, flash-owner and input contracts.

@@ -17,6 +17,13 @@ Compiler errors leave an existing output unchanged. Keep the JSON for editing;
 the firmware build accepts a binary `.eav` file. The reviewed default is also
 available in `configs/default.json` and `configs/default.eav`.
 
+The editor supports numeric/history, circular, needle, horizontal, vertical and
+segmented gauges, with independent RGB565 palettes. See [gauges and colours](gauges-and-colours.md)
+for layout capabilities, automatic scale expansion and colour validation.
+Version 1 files are explicitly upgraded by the editor or build compiler;
+exported and embedded files use [version 2](schema-v2.md). The capture keeps both
+the original selected file and the canonical upgraded bytes.
+
 ## Reproducible PowerShell workflow
 
 ```powershell
@@ -29,7 +36,7 @@ Each name must be new. Outputs go into
 source files, selected configuration and ELF with SHA-256 hashes. The capture
 builds against a frozen copy, verifies the build script's embedded bytes, and
 rejects source or selected-file changes during the build. It also runs the
-linked RAM, flash helper and corrupted-artifact checks.
+linked RAM, cumulative stack-frame, flash helper and corrupted-artifact checks.
 
 Available profiles are `stock` (default) and `280-70`. `-Mode Vehicle` selects the
 existing **unqualified** adapter path. Optional `-SerialDisplay` and `-FullOutline`

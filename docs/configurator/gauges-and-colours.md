@@ -208,9 +208,12 @@ or linked-resource blocker remained after the corrections above.
   Public draw geometry is bounded before iteration, then clipped to ownership.
 - Warning tests cover actual rule identity, off-view cycle colours, list colours
   with one or multiple warnings, blink and overlay removal on both buffers.
-- Editor tests cover raw colour/range edits, invalid projections, repair, stale
+- The 80 editor tests cover raw colour/range edits, invalid projections, repair, stale
   callbacks, undo/redo, saved state and serialization. Native and Wasm strict
-  lints, production assets, both host outline suites and ARM strict lints pass.
+  lints, production assets, both host outline suites (336 runtime tests plus two
+  compile-fail contracts per outline) and ARM strict lints pass. The shared
+  workspace's JSON-enabled run passes 48 tests/contracts; the separate device
+  configuration run without JSON passes 25.
 - Real browser checks exercised compact/wide/large gauges, extreme digits,
   colour pickers and quantization, invalid contrast/range repair, warning modes,
   save/reload, JSON/EAV imports, and a 390×700 viewport without horizontal

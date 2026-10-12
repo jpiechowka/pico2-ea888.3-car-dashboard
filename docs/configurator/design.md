@@ -348,8 +348,9 @@ two warmed traces. Record startup/import/export times and release asset sizes;
 set bundle/startup budgets from that measured baseline, without claiming Pico FPS.
 
 Motion is limited to short editor hover/drag feedback with reduced-motion
-support. Firmware view changes redraw immediately; existing alert fades and
-warning timing use absolute time. Renderer speed, browser interaction latency,
+support. Firmware view changes redraw immediately. In v2, warning tiles switch
+between contrast-checked colour endpoints; warning timing uses absolute time.
+Renderer speed, browser interaction latency,
 binary size and device SRAM are measured separately from physical display FPS.
 
 ## Build topology and pinned tools

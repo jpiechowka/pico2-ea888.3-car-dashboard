@@ -3,7 +3,7 @@
 `dashboard-config` is a `no_std`, allocation-free device library. Its optional
 `json` feature provides the editable host/browser format; JSON is never linked
 into the device parser. The model, catalogue, validator and binary codec are
-shared by all consumers. See [schema v1](schema-v1.md) for the wire contract and
+shared by all consumers. See [schema v2](schema-v2.md) for the current wire contract and
 [design](design.md) for the deployment and hardware limits.
 
 ## Bounds and validation
@@ -37,18 +37,28 @@ not authentication or evidence of valid ECU metadata.
 
 ## Measured storage and verification
 
-With nightly2026-10-11, the actual Thumb target LLVM type layout is:
+With nightly2026-10-11, the actual v2 Thumb target LLVM type layout is:
 
 | Type | Bytes |
 | --- | ---: |
-| Config | 6,820 |
-| ValidatedConfig | 6,824 |
-| Widget | 100 |
+| Config | 9,640 |
+| ValidatedConfig | 9,644 |
+| Widget | 144 |
+| BootConfig | 9,656 |
+| StaticCell<BootConfig> | 9,660 |
 
-Compile-time32-bit guards bound Config and ValidatedConfig at8KiB. The64-bit
-host layouts are8,176 and8,184 bytes and must not be substituted for device
-layout. Static type size does not establish parser stack peak; firmware boot
-integration must check its linked static/task/stack budgets separately.
+Compile-time 32-bit guards bound Config and ValidatedConfig at 10 KiB. The
+default v2 binary is 912 bytes; the exercised maximum document is 8,430 bytes.
+Host layouts must not be substituted for device layout. Static type size does
+not establish parser stack peak; the mandatory linked-image gate checks
+static/task/stack budgets separately. See [gauges and colours](gauges-and-colours.md)
+for current resource measurements and the corrected construction/boot paths.
+
+### Historical v1 baseline
+
+The following test and timing record describes the initial v1 implementation,
+before gauges and palettes. Current verification is recorded in the gauge guide.
+Its Config/ValidatedConfig/Widget target sizes were 6,820/6,824/100 bytes.
 
 The initial verification has18 runtime tests plus2 compile-fail contracts with
 JSON enabled (16 plus2 without). Those tests include196,608 placement/span

@@ -1,5 +1,8 @@
 # Configuration v1 contract
 
+Historical wire contract, retained for explicit migration. New exports and
+firmware use [version 2](schema-v2.md).
+
 This closes the typed model used by the [design](design.md). Field/enum order
 is part of the Postcard version1 protocol. A future incompatible edit requires
 a new schema version and deliberate migration; Serde defaults are not a wire

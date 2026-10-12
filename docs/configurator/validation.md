@@ -1,5 +1,9 @@
 # Configurable dashboard validation
 
+For the current v2 gauges, colours and stack-budget corrections, see
+[Gauges and colours](gauges-and-colours.md). Its resource figures supersede the
+historical images below; none of these records establish hardware qualification.
+
 For the later larger-font and invalid-preview implementation, see
 [Value sizing and diagnostic previews](preview-hardening.md), including its
 updated correctness, browser, performance and linked-image evidence.
