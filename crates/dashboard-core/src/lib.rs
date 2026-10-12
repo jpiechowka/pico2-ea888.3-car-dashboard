@@ -10,6 +10,7 @@ pub mod alarms;
 pub mod backlight;
 pub mod config;
 pub mod configured_scene;
+pub mod controls;
 pub mod dashboard;
 pub mod demo;
 pub mod diagnostics;

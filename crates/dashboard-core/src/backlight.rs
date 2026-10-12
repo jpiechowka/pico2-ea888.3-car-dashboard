@@ -107,6 +107,9 @@ impl Backlight {
 
     pub const fn brightness(&self) -> Brightness { self.current }
 
+    /// Protected recovery cancels shutdown tokens and restores full brightness.
+    pub fn wake_full(&mut self) { self.apply(Brightness::Full); }
+
     fn apply(
         &mut self,
         value: Brightness,

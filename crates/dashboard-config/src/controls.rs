@@ -84,7 +84,7 @@ impl ControlAction {
         }
     }
 
-    const fn destination(
+    pub const fn destination(
         self,
         page: ControlPage,
     ) -> Option<ControlPage> {

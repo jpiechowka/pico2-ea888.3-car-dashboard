@@ -13,6 +13,41 @@ fn frame(sequence: u64) -> FrameToken {
 }
 
 #[test]
+fn recovery_wakes_every_off_phase_and_invalidates_old_completion() {
+    for phase in 0..5 {
+        let mut bl = Backlight::new();
+        let off = bl.encoder(Page::Dashboard, 0, 2, 100).popup.unwrap();
+        if phase >= 1 {
+            bl.frame_submitted(frame(1));
+        }
+        if phase >= 2 {
+            bl.frame_completed(frame(1), 100);
+            bl.expire_popup(off, 2100);
+        }
+        if phase >= 3 {
+            bl.frame_submitted(frame(2));
+        }
+        if phase >= 4 {
+            bl.frame_completed(frame(2), 2150);
+        }
+        bl.wake_full();
+        bl.frame_completed(frame(1), 2200);
+        bl.frame_completed(frame(2), 2200);
+        bl.frame_unchanged(2200);
+        assert_eq!(bl.brightness(), Brightness::Full);
+        assert_eq!(bl.compare(), 10000);
+        let off = bl.encoder(Page::Debug, 0, 1, 2300).popup.unwrap();
+        bl.expire_popup(off, 4000);
+        bl.encoder(Page::Debug, 0, 1, 4100);
+        assert_eq!(
+            bl.brightness(),
+            Brightness::Full,
+            "recovery also resets restore brightness"
+        );
+    }
+}
+
+#[test]
 fn off_countdown_starts_on_first_popup_completion_despite_render_delay() {
     let mut bl = Backlight::new();
     let popup = bl.encoder(Page::Dashboard, 0, 2, 100).popup.unwrap();
