@@ -9,6 +9,9 @@ import zipfile
 
 BENCH = "host/benches/dashboard_perf.rs"
 RUNNERS = ("host/scripts/capture_benchmark.py", "host/scripts/benchmark_environment.py")
+# Older captures predate the shared inventory helper. Its presence/bytes still
+# participate in identity, without making historical captures unreadable.
+OPTIONAL_RUNNERS = ("host/scripts/source_inventory.py",)
 BUILD_INPUTS = ("host/Cargo.toml", "host/Cargo.lock", "host/rust-toolchain.toml")
 
 
@@ -72,7 +75,7 @@ def compatible(before, after):
             raise ValueError("comparison identity mismatch: " + key)
     def workload(metadata):
         return {name: digest for name, digest in metadata["sha256"].items()
-                if name.startswith("host/benches/") or name in (*RUNNERS, *BUILD_INPUTS)}
+                if name.startswith("host/benches/") or name in (*RUNNERS, *OPTIONAL_RUNNERS, *BUILD_INPUTS)}
     if workload(before) != workload(after):
         raise ValueError("fixture or capture source changed; review workload semantics separately")
     # Ignore Criterion's filter/run name, but require identical Cargo features.

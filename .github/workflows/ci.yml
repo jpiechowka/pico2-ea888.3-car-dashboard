@@ -25,6 +25,29 @@ jobs:
       - name: Check host formatting
         run: cargo fmt --all --check
         working-directory: host
+      - name: Check shared formatting
+        run: cargo fmt --all --check
+
+  portable:
+    name: Shared core native and no_std targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-11
+          components: clippy
+          targets: thumbv8m.main-none-eabihf,wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: Shared unit contracts and both outlines
+        run: |
+          cargo test --locked -p dashboard-core
+          cargo test --locked -p dashboard-core --no-default-features
+          cargo clippy --locked -p dashboard-core --all-targets -- -D warnings
+      - name: Portable no_std builds
+        run: |
+          cargo check --locked -p dashboard-core --target thumbv8m.main-none-eabihf
+          cargo check --locked -p dashboard-core --target wasm32-unknown-unknown
 
   host:
     name: Host contracts and benchmark smoke

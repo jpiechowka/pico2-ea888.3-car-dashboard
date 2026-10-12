@@ -1,0 +1,19 @@
+[package]
+name = "dashboard-core"
+version = "0.1.0"
+edition = "2024"
+description = "Portable dashboard rendering, acquisition and ownership contracts"
+
+[features]
+default = ["simple-outline"]
+simple-outline = []
+
+[dependencies]
+embedded-graphics = "=0.8.2"
+heapless = "=0.9.3"
+micromath = "=2.1.0"
+profont = "=0.7.0"
+embassy-sync = "=0.8.0"
+
+[dev-dependencies]
+critical-section = { version = "=1.2.0", features = ["std"] }

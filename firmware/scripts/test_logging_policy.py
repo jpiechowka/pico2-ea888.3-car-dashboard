@@ -1,8 +1,20 @@
 import unittest
-from check_logging_policy import check_source
+from pathlib import Path
+from unittest.mock import patch
+from check_logging_policy import check_source, check_app_sources
 
 
 class LoggingPolicy(unittest.TestCase):
+    def test_portable_sources_cannot_escape_policy(self):
+        original = Path.read_text
+        def malicious(path, *args, **kwargs):
+            source = original(path, *args, **kwargs)
+            if path.as_posix().endswith('dashboard-core/src/logging.rs'):
+                source += '\nuse defmt::flush as concealed;'
+            return source
+        with patch.object(Path, 'read_text', malicious), self.assertRaises(AssertionError):
+            check_app_sources()
+
     def test_legal_rust_imports_cannot_hide_flush(self):
         for source in [
             "use {defmt as logger}; fn bad() { logger::flush(); }",

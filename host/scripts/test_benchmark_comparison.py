@@ -30,6 +30,7 @@ class Comparison(unittest.TestCase):
 
     def test_all_workload_and_capture_helpers_are_part_of_identity(self):
         for name in ["host/benches/vehicle_port/mod.rs", "host/benches/data/fixture.bin",
+                     "host/scripts/source_inventory.py",
                      "host/scripts/capture_benchmark.py", "host/scripts/benchmark_environment.py", *BUILD_INPUTS]:
             before = (metadata(), {"fixture": (100, 95, 105)})
             before[0]["sha256"][name] = "before"

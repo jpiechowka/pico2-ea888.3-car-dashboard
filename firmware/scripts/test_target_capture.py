@@ -7,6 +7,18 @@ import capture_target_bench as capture
 
 
 class CaptureTests(unittest.TestCase):
+    def test_archive_contains_portable_crates_and_workspace_inputs(self):
+        before = capture.inputs()
+        keys = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
+                'crates/dashboard-core/Cargo.toml', 'crates/dashboard-core/src/lib.rs',
+                'crates/dashboard-core/src/display/pipeline.rs']
+        for key in keys:
+            self.assertTrue(key in before, f'missing shared input: {key}')
+            self.assertEqual(before[key], (capture.REPO / key).read_bytes())
+        original = Path.read_bytes
+        with patch.object(Path, 'read_bytes', lambda p: original(p) + (b'changed' if p.name == 'pipeline.rs' else b'')):
+            self.assertNotEqual(before, capture.inputs(), 'portable source escaped archive')
+
     def test_archive_contains_crate_root_compile_inputs(self):
         data = capture.inputs()
         for name in ('README.md', 'link-rp.x.in', 'build.rs', 'Cargo.toml'):

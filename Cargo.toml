@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/dashboard-core"]
+exclude = ["firmware", "host"]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+panic = "abort"
+# Preserve WebAssembly binding metadata until wasm-bindgen has processed it.
+strip = false

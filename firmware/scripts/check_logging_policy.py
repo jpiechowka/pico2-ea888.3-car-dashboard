@@ -21,6 +21,15 @@ def check_source(source, label):
     require(not re.search(r"\bextern\s+crate\s+defmt\b", source), f"defmt alias in {label}")
 
 
+def check_app_sources():
+    roots = [ROOT / "pico2" / "src"]
+    roots.extend(p / "src" for p in (ROOT.parent / "crates").iterdir()
+                 if p.is_dir() and (p / "Cargo.toml").is_file())
+    for root in roots:
+        for path in root.rglob("*.rs"):
+            check_source(path.read_text(encoding="utf-8"), path)
+
+
 def check():
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--offline", "--format-version", "1",
@@ -36,8 +45,7 @@ def check():
     require("drop-on-contention" not in features, "IPSR-only ownership is unsafe across cores")
     # Require explicit macro paths. Reject aliases/grouped imports/globs, which
     # could otherwise hide a flush call from this small source guard.
-    for path in (ROOT / "pico2" / "src").rglob("*.rs"):
-        check_source(path.read_text(encoding="utf-8"), path)
+    check_app_sources()
     print("RTT1.3.0 all-feature graph: nonblocking writes, multicore encoder; no app flush calls/imports")
 
 

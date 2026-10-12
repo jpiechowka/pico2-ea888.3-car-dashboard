@@ -161,7 +161,8 @@ on `clk_peri`, divisors and the actual panel. See
 ## Layout
 
 ```text
-firmware/pico2/src/  Application, shared models, display, diagnostics and drivers
+crates/dashboard-core/  Shared no_std rendering, models and diagnostic contracts
+firmware/pico2/src/  Hardware application, tasks, profiling and drivers
 firmware/vendor/    Reviewed Embassy RP source and provenance manifest
 firmware/scripts/   Build, ownership, logging, vendor and ELF gates
 host/               Same pure Rust modules, replay/pixel tests and Criterion

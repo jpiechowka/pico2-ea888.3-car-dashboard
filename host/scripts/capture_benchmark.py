@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import zipfile
 from benchmark_environment import compiler, configuration, validate_filter
+from source_inventory import shared_inputs
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("baseline")
@@ -40,7 +41,7 @@ run_env = os.environ.copy()
 run_env["RUSTC"] = rustc_path
 
 def inputs():
-    paths = set()
+    paths = shared_inputs(repo)
     for tree in [host / "src", host / "benches", repo / "firmware" / "pico2" / "src",
                  repo / "firmware" / "vendor" / "embassy-rp" / "src"]:
         paths.update(tree.rglob("*.rs"))

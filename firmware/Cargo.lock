@@ -270,11 +270,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashboard-core"
+version = "0.1.0"
+dependencies = [
+ "embassy-sync",
+ "embedded-graphics",
+ "heapless",
+ "micromath",
+ "profont",
+]
+
+[[package]]
 name = "dashboard-pico2"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
+ "dashboard-core",
  "defmt",
  "defmt-rtt",
  "embassy-executor",

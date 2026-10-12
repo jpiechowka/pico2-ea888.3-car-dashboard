@@ -16,6 +16,7 @@ FIRMWARE = Path(__file__).resolve().parents[1]
 REPO = FIRMWARE.parent
 sys.path.insert(0, str(REPO / 'host' / 'scripts'))
 from benchmark_environment import CONFIG_KEYS, compiler
+from source_inventory import shared_inputs
 
 
 def configuration():
@@ -34,7 +35,7 @@ def configuration():
 
 
 def inputs():
-    paths = set()
+    paths = shared_inputs(REPO)
     for crate in [FIRMWARE/'pico2', FIRMWARE/'vendor/embassy-rp']:
         paths.update(p for p in (crate/'src').rglob('*') if p.is_file())
         # Root files are also compile inputs (include_str!, linker templates,

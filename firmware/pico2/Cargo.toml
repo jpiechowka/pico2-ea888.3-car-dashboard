@@ -24,7 +24,7 @@ cpu250-spi62-1v10 = []  # 250 MHz @ 1.10V - experimental 62.5 MHz SPI; panel tim
 cpu280-spi70-1v30 = []  # 280 MHz @ 1.30V - 70 MHz SPI (280/4, beyond datasheet)
 cpu290-spi72-1v30 = []  # 290 MHz @ 1.30V - 72.5 MHz SPI (290/4)
 cpu300-spi75-1v30 = []  # 300 MHz @ 1.30V - 75 MHz SPI (300/4, unverified panel timing)
-simple-outline = []
+simple-outline = ["dashboard-core/simple-outline"]
 # Keep ownership checks while disabling render/transfer overlap for diagnostics.
 serial-display = []
 # Bypass damage selection while retaining ownership and per-transfer telemetry.
@@ -37,6 +37,7 @@ te-trace = []
 target-bench = []
 
 [dependencies]
+dashboard-core = { path = "../../crates/dashboard-core", default-features = false }
 embedded-graphics = "0.8.2"
 embedded-hal-async = "1.0.0"
 embedded-io-async = { version = "0.7.0", optional = true }
