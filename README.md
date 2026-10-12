@@ -29,6 +29,9 @@ Embed the exported file in a checked build using the working profile:
 This builds and validates an artifact without flashing. See the
 [configuration build guide](docs/configurator/building.md) for runtime parsing,
 fallback and hardware validation. Vehicle source qualification remains required.
+The [configurator validation record](docs/configurator/validation.md) maps the
+completed implementation, final review corrections, measurements and remaining
+device checks.
 
 ## Firmware build and validation
 
@@ -41,9 +44,9 @@ cargo build --locked -p dashboard-pico2 --release --features longan-rx12,frame-t
 cargo clippy --locked -p dashboard-pico2 -- -D warnings
 ```
 
-`demo` and `longan-rx12` are mutually exclusive. Both workspaces pin
+`demo` and `longan-rx12` are mutually exclusive. All Rust workspaces pin
 `nightly-2026-10-11`, installed after `rustup update`; firmware also requests
-`thumbv8m.main-none-eabihf`. The root `rustfmt.toml` applies to both workspaces.
+`thumbv8m.main-none-eabihf`. The root `rustfmt.toml` applies to the workspaces.
 The [dependency review](docs/dependencies/upgrade-2026-10-11.md) records current
 releases, compatibility constraints and reviewed local HAL corrections.
 
@@ -187,6 +190,10 @@ on `clk_peri`, divisors and the actual panel. See
 
 ```text
 crates/dashboard-core/  Shared no_std rendering, models and diagnostic contracts
+crates/dashboard-config/  Bounded schema, catalogue, fuel model and binary codec
+crates/dashboard-config-tools/  Host validation and build snapshot tools
+configurator/       Rust/Wasm view editor, shared pixel preview and local saving
+configs/            Reviewed default JSON and compact runtime configuration
 firmware/pico2/src/  Hardware application, tasks, profiling and drivers
 firmware/vendor/    Reviewed Embassy RP source and provenance manifest
 firmware/scripts/   Build, ownership, logging, vendor and ELF gates

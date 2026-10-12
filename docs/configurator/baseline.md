@@ -42,3 +42,7 @@ unchanged legacy fixtures.
 
 These are host timings only. No new firmware was flashed and no optical FPS,
 hardware cycles, ECU support or sustained overclock stability was measured.
+
+The [final performance record](../performance/configurator-results-2026-10-12.md)
+retains both 91-case captures, their failed repeatability gate, the reviewed
+historical workload mapping and the completed seven-case focused investigation.

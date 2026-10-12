@@ -12,6 +12,13 @@ one immutable startup config shared by acquisition/rendering owners.
 **Tech stack:** Pinned latest nightly, current stable Leptos/web-sys/Serde/Postcard,
 existing embedded-graphics/heapless, Trunk, existing Criterion/host/ELF gates.
 
+**Execution status, 12 October 2026:** Software stages 0–8 are implemented and
+reviewed. The original planning checklist below is retained as the design
+record; [validation.md](validation.md) records actual results, final review
+corrections and explicit coverage limits. Browser exception injection and
+physical device qualification are not claimed complete. The full host timing
+gate's repeatability limitation and focused follow-up are documented separately.
+
 ## Global constraints
 
 The companion design and schema-v1 contract are normative:4x2, spans1x1/2x1/2x2, max8views/64widgets,

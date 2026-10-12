@@ -43,6 +43,45 @@ device; the user observed display corruption. See the existing
 [hardware validation runbook](../validation/pico2-dnuc-runbook.md) for flashing
 and physical checks. No new configuration firmware has been physically validated.
 
+## Configuration-specific device checks
+
+These checks require the physical Pico and display. They have not been executed
+for this configurable build. Follow the power/wiring and flashing procedure in
+the linked runbook, then use a **Demo** image for layout and controls:
+
+1. Export a test document with a compact view, a pair of large widgets and a
+   wide-widget view. Include the longest accepted labels and a lambda/AFR cell.
+   Build with the wrapper above and retain the capture's `.eav`, ELF and manifest.
+2. After flashing, verify Full brightness and the configured boot-view name.
+   Rotate through every view in both directions, including wraparound. Check
+   borders, empty cells, text, graphs and popup removal for stale pixels.
+3. Click Full → Dim (50% PWM) → Off. Confirm the Off popup remains visible for
+   two seconds before disappearing and the backlight switching off. The next
+   click returns to Full. Repeat with a click or page change during the delay.
+4. Visit Debug and Logs and confirm their encoder controls are preserved.
+   Return to Dashboard and confirm the last view is restored. Reboot and confirm
+   the configured boot view is restored instead. Statistics reset must preserve
+   the view configuration; bar/PSI must update every boost presentation.
+5. In a Demo-only test configuration, enable multiple warnings with deliberately
+   reachable illustrative thresholds. Check CycleOne and ListThree, all-view and
+   current-view scope, message clipping, and elapsed-time page rotation. Exercise
+   FPS/unit/reset feedback during a warning: feedback wins, then warnings resume.
+   Debug/Logs must stay clear of warning popups. Verify red warning blinking and
+   continuous green without a visible warning.
+6. Compare configured AFR against lambda times the declared stoichiometry.
+   E5 alone is not an exact ethanol measurement. Confirm disabling AFR removes
+   its secondary row, and stale/unavailable lambda hides derived values.
+7. Record the exact ELF hash, profile, configuration, controls and observations.
+   Software transfer FPS, panel scanout, input latency and electrical/thermal
+   stability are different measurements. Perform the runbook's physical timing
+   and extended soak checks before treating the configuration as qualified.
+
+Vehicle validation is a separate step. Candidate source selection does not
+enable an unimplemented decoder or qualify the Longan adapter/ECU. Obtain ECU
+identity and timestamped captures before establishing DNUC support; use the
+runbook's parked-vehicle procedure. Do not substitute demo warnings or catalogue
+documentation for vehicle evidence.
+
 ## Direct Cargo selection
 
 `DASHBOARD_CONFIG` selects a binary file. Relative paths are resolved against
