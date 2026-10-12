@@ -2,8 +2,9 @@
 //!
 //! `Editor::preview` always exposes a shared-validator-approved document. When
 //! `has_invalid_draft` is true, inspectors display the retained `raw_fields` and
-//! `draft_error`, and the canvas must identify its content as the last valid
-//! preview. Correct or explicitly discard those fields before other edits.
+//! `draft_error`. The canvas shows `diagnostic()` with an INVALID PREVIEW banner;
+//! it cannot serialize or enter firmware. Correct or discard invalid raw fields;
+//! discard rejected structural edits before further editing.
 //!
 //! Bind inspector callbacks to `field_token` and use `set_raw` or
 //! `apply_if_current`. Refresh the binding after an accepted dispatch; a callback
@@ -17,6 +18,7 @@
 //! writes, and acknowledge only their actual result. Restoring browser storage
 //! uses `from_saved_state` before mounting the interactive editor.
 
+pub mod diagnostic;
 pub mod editor;
 pub mod geometry;
 pub mod preview;

@@ -12,6 +12,64 @@ use dashboard_core::vehicle_status::VehicleStatus;
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]
+fn browser_samples_match_the_firmware_demo_generator_at_the_actual_rendered_time() {
+    let config = fixture();
+    let mut preview = Preview::new();
+    for sample_ms in [
+        0,
+        1,
+        118_000,
+        6_283_184,
+        6_283_185,
+        30 * 24 * 60 * 60 * 1000,
+        u64::MAX - 118_001,
+    ] {
+        preview
+            .render(
+                &config,
+                1,
+                PreviewOptions {
+                    sample_ms,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let now = preview.rendered_at_ms().unwrap();
+        let expected = dashboard_core::demo::values(now);
+        for (sensor, value) in SensorId::ALL.into_iter().zip(expected) {
+            assert_eq!(
+                preview.snapshot().unwrap().sensor(sensor).value(),
+                Some(value),
+                "{sample_ms}, {sensor:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn stress_sets_have_bounded_values_and_recover_to_the_shared_demo() {
+    let config = fixture();
+    let mut preview = Preview::new();
+    for set in [
+        SampleSet::Minimum,
+        SampleSet::Maximum,
+        SampleSet::WidthStress,
+        SampleSet::Zero,
+        SampleSet::Demo,
+    ] {
+        for psi in [false, true] {
+            let options = PreviewOptions {
+                values: set.values(),
+                boost_psi: psi,
+                ..Default::default()
+            };
+            preview.render(&config, 1, options).unwrap();
+            assert_exact_shared_scene(&preview, &config, 1, options);
+        }
+    }
+}
+
+#[test]
 fn rgb565_is_big_endian_and_expands_every_channel_to_full_rgba_range() {
     let words = [0xF800_u16, 0x07E0, 0x001F, 0, 0xFFFF, 0x4208, 0x028A];
     let source: Vec<u8> = words.into_iter().flat_map(u16::to_be_bytes).collect();

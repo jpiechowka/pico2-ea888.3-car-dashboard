@@ -30,3 +30,25 @@ fn invalid_clock_rollback_and_overflow_never_rewind_or_wrap() {
     end.start(1.0);
     assert_eq!(end.sample(999.0), u64::MAX);
 }
+
+#[test]
+fn jitter_repeated_start_and_invalid_pause_keep_deterministic_elapsed_time() {
+    for step in [1, 3, 16, 17, 33, 50, 250, 1000] {
+        let mut clock = Playback::new(42);
+        clock.start(100.25);
+        for time in (101..10_000).step_by(step) {
+            clock.start(time as f64); // repeated Play cannot re-anchor an active run
+            clock.sample(time as f64);
+            clock.sample(f64::NEG_INFINITY);
+            clock.sample(f64::NAN);
+            clock.sample(time as f64 - 50.0); // clock rewind never rewinds the sample
+        }
+        assert_eq!(clock.pause(10_100.25), 10_042);
+        assert_eq!(clock.pause(f64::NAN), 10_042);
+        clock.start(f64::INFINITY);
+        clock.start(-0.1);
+        assert_eq!(clock.sample(20_000.0), 10_042);
+        clock.start(20_000.5);
+        assert_eq!(clock.pause(20_010.5), 10_052);
+    }
+}

@@ -87,13 +87,12 @@ fn add(
 }
 
 #[test]
-fn rejected_move_and_resize_leave_document_selection_revision_and_history_unchanged() {
+fn rejected_move_and_resize_preserve_document_but_retire_callbacks_and_block_export() {
     let mut editor = empty();
     let first = add(&mut editor, 0, 0, Span::OneByOne);
     add(&mut editor, 1, 0, Span::OneByOne);
     let before = editor.preview().clone();
     let selection = editor.selection();
-    let revision = editor.revision();
     let history = editor.history_len();
     for edit in [
         Edit::MoveWidget {
@@ -113,11 +112,22 @@ fn rejected_move_and_resize_leave_document_selection_revision_and_history_unchan
             row: 0,
         },
     ] {
+        let revision = editor.revision();
+        let token = editor.field_token();
         assert!(matches!(editor.apply(edit), Err(EditorError::Validation(_))));
         assert_eq!(editor.preview(), &before);
         assert_eq!(editor.selection(), selection);
-        assert_eq!(editor.revision(), revision);
+        assert_ne!(editor.revision(), revision);
         assert_eq!(editor.history_len(), history);
+        assert!(editor.has_invalid_draft());
+        assert_eq!(editor.export_json(), Err(EditorError::InvalidDraft));
+        assert_eq!(editor.export_binary(), Err(EditorError::InvalidDraft));
+        assert!(matches!(editor.begin_save(), Err(EditorError::InvalidDraft)));
+        assert_eq!(
+            editor.apply_if_current(token, Edit::DeleteWidget(first)),
+            Err(EditorError::StaleToken)
+        );
+        editor.discard_raw().unwrap();
     }
     editor
         .apply(Edit::MoveWidget {
@@ -167,6 +177,7 @@ fn duplicate_and_delete_preserve_fields_assign_new_ids_and_repair_boot_and_selec
             .is_err()
     );
     assert_eq!(editor.preview().config().widgets[1].label, changed.label);
+    editor.discard_raw().unwrap();
     editor
         .apply(Edit::DuplicateView {
             id: 1,
@@ -302,6 +313,9 @@ fn selection_and_typed_edits_reject_dangling_ids_and_invalid_values() {
             .is_err()
     );
     assert!(editor.apply(Edit::SetBootView(200)).is_err());
+    editor.discard_raw().unwrap();
+    assert!(editor.apply(Edit::SetBootView(200)).is_err());
+    editor.discard_raw().unwrap();
     assert!(
         editor
             .apply(Edit::RenameView {
@@ -311,6 +325,7 @@ fn selection_and_typed_edits_reject_dangling_ids_and_invalid_values() {
             .is_err()
     );
     assert_eq!(editor.preview(), &before);
+    editor.discard_raw().unwrap();
     editor
         .apply(Edit::SetFuel(Fuel::Stoichiometric { ratio: 14.0 }))
         .unwrap();
@@ -500,6 +515,8 @@ fn pointer_cancel_and_rejected_drop_do_not_modify_the_document() {
     );
     assert_eq!(editor.active_pointer(), None);
     assert_eq!(editor.preview(), &before);
+    assert!(editor.has_invalid_draft());
+    editor.discard_raw().unwrap();
     let pointer = editor
         .begin_pointer(2, PointerTarget::Library(Channel::Lambda))
         .unwrap();
@@ -789,13 +806,19 @@ fn pointer_selection_save_survives_noop_cancel_rejection_and_successful_move() {
             }
             assert_eq!(editor.active_pointer(), None);
             assert!(!editor.save_is_current(previous.token()));
-            let final_save = if outcome == 3 {
+            if outcome == 2 {
+                assert_eq!(editor.save_status(), SaveStatus::InvalidDraft);
+                assert!(!editor.save_is_current(selected.token()));
+                assert!(matches!(editor.begin_save(), Err(EditorError::InvalidDraft)));
+                editor.discard_raw().unwrap();
+            }
+            let final_save = if outcome >= 2 {
                 assert!(!editor.save_is_current(selected.token()));
                 editor.begin_save().unwrap()
             } else {
                 selected
             };
-            if !save_before_release || outcome == 3 {
+            if !save_before_release || outcome >= 2 {
                 assert!(editor.save_is_current(final_save.token()));
                 editor.acknowledge_save(final_save.token(), Ok(())).unwrap();
             }

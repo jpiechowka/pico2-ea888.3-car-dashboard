@@ -297,6 +297,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         ui.psi.get();
         ui.warnings.get();
         ui.sample_ms.get();
+        ui.sample_set.get();
         // Mount/readiness is reactive too. Multiple input events share one draw.
         if ui.canvas.get().is_none() || queued.get_untracked() {
             return;
@@ -315,14 +316,17 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                     sample_ms: ui.sample_ms.get_untracked(),
                     boost_psi: ui.psi.get_untracked(),
                     warnings: ui.warnings.get_untracked(),
-                    values: None,
+                    values: ui.sample_set.get_untracked().values(),
                 };
                 let mut result = Ok(());
                 preview.update(|p| {
                     result = (|| {
-                        let pixels = p
-                            .render(e.preview(), e.selection().view, options)
-                            .map_err(|e| format!("Preview failed: {e:?}"))?;
+                        let draft = e.diagnostic();
+                        let pixels = match draft.as_ref() {
+                            Some(draft) => p.render_diagnostic(e.preview(), draft, e.selection().view, options),
+                            None => p.render(e.preview(), e.selection().view, options),
+                        }
+                        .map_err(|e| format!("Preview failed: {e:?}"))?;
                         let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(Clamped(pixels), 320, 240)
                             .map_err(|_| "Canvas image allocation failed".to_string())?;
                         let context = canvas
@@ -340,9 +344,10 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 result
             });
             if let Err(error) = result {
-                ui.notice.set(error);
+                ui.preview_error.set(Some(error));
                 return;
             }
+            ui.preview_error.set(None);
             metrics::first_frame(ui);
             let submitted = now();
             let render = submitted - started;
@@ -363,12 +368,14 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         });
     });
     view! {
-        <div class="display-stage"><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
+        <div class="invalid-preview-heading" hidden=move || !ui.invalid() role="status"><strong>"INVALID PREVIEW"</strong><span>"Rejected draft · save and export blocked"</span></div>
+        <div class="display-stage" class:invalid-preview=move ||ui.invalid()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
-                <canvas node_ref=ui.canvas width="320" height="240" aria-label="Exact Pico dashboard preview with synthetic values"></canvas>
+                <canvas node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid(){"INVALID PREVIEW. Rejected draft with safe rendering fallbacks. Save and export blocked."}else{"Exact Pico dashboard preview with synthetic values"}></canvas>
+                <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Last frame only. Change the test values or reload to retry."</p></div>
                 <div class="canvas-hits" aria-label="Widget placement grid">
                     <For each=move ||ui.editor.with(|e|e.preview().config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{
-                        <button class="widget-hit" class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
+                        <button class="widget-hit" disabled=move ||ui.invalid() class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
                             style=move ||ui.widget(id).map_or("display:none".into(),|w|style(w.placement))
                             aria-label=move ||ui.widget(id).map_or(String::new(),|w|format!("Select {} widget",w.label))
                             title="Drag to move. Arrow keys move one cell. Delete removes."
@@ -383,6 +390,12 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                     }/>
                     <div class="drop-guide" class:invalid=move ||ui.drag.get().is_some_and(|d|!d.valid)
                         style=move ||ui.drag.get().and_then(|d|d.position).map_or("display:none".into(),style) aria-hidden="true"></div>
+                    {move ||ui.editor.with(|e|e.diagnostic().map(|draft|{
+                        let ids=draft.affected(e.preview(),e.selection().view);
+                        draft.config.widgets.iter().filter(|w|w.view==e.selection().view && ids.contains(&w.id)).map(|w|view!{
+                            <div class="invalid-widget" style=style(w.placement)><span>{format!("! INVALID #{}",w.id)}</span></div>
+                        }).collect_view()
+                    }))}
                 </div>
             </div></div><div class="display-rails" aria-hidden="true"><span>"X"</span><span>"Y"</span></div>
         </div>

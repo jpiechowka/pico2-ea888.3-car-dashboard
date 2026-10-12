@@ -17,6 +17,41 @@ use dashboard_core::view_state::{WarningPage, WarningPager};
 pub const WARNING_VALUES: [f32; 8] = [3.0, 150.0, 120.0, 130.0, 80.0, 1100.0, 10.0, 1.3];
 const HISTORY_WINDOW_MS: u64 = (GRAPH_HISTORY_SIZE as u64 - 1) * GRAPH_SAMPLE_PERIOD_MS;
 
+/// Explicit synthetic inspection modes. Firmware demo always uses the shared
+/// elapsed-time generator; these deliberate stress inputs are preview-only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SampleSet {
+    #[default]
+    Demo,
+    Minimum,
+    Maximum,
+    WidthStress,
+    Zero,
+}
+
+impl SampleSet {
+    pub fn values(self) -> Option<[f32; 8]> {
+        match self {
+            Self::Demo => None,
+            Self::Minimum => Some(Channel::ALL.map(|c| c.domain().0)),
+            Self::Maximum => Some(Channel::ALL.map(|c| c.domain().1)),
+            Self::WidthStress => {
+                Some([
+                    1_000_000.0,
+                    -1_000_000.0,
+                    1_000_000.0,
+                    -1_000_000.0,
+                    -1_000_000.0,
+                    1_000_000.0,
+                    1_000_000.0,
+                    1_000_000.0,
+                ])
+            }
+            Self::Zero => Some([0.0; 8]),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PreviewOptions {
     /// Advances the synthetic history and warning-page clock. The generated
@@ -176,6 +211,101 @@ impl Preview {
     pub fn warning_page(&self) -> Option<WarningPage> { self.warning }
 
     pub fn rendered_at_ms(&self) -> Option<u64> { self.rendered_at }
+
+    /// Inspection-only rendering. Each attempted widget is independently
+    /// validated after safe fallbacks; the rejected document itself is never
+    /// passed to firmware rendering/acquisition. Warning simulation is suspended.
+    pub fn render_diagnostic(
+        &mut self,
+        accepted: &ValidatedConfig,
+        draft: &crate::diagnostic::Draft,
+        view: u8,
+        mut options: PreviewOptions,
+    ) -> Result<&[u8], PreviewError> {
+        use dashboard_core::colors::WHITE;
+        use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_6X10;
+        use embedded_graphics::prelude::*;
+        use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+        use embedded_graphics::text::Text;
+
+        options.warnings = false;
+        self.render(accepted, view, options)?;
+        let snapshot = self.snapshot.as_ref().expect("successful render has a snapshot");
+        let now = self.rendered_at.expect("successful render has a timestamp");
+        let mut display = St7789Renderer::new(&mut self.framebuffer);
+        Rectangle::new(Point::new(0, 26), Size::new(320, 214))
+            .into_styled(PrimitiveStyle::with_fill(BLACK))
+            .draw(&mut display)
+            .ok();
+        for widget in draft.config.widgets.iter().filter(|w| w.view == view) {
+            let Some(config) = crate::diagnostic::isolated_widget(accepted, widget) else {
+                continue;
+            };
+            let scene = DashboardScene {
+                layout: Layout::new(&config, view, false),
+                measurements: snapshot,
+                status: VehicleStatus::Demo,
+                now_ms: now,
+                blink_on: false,
+                boost_psi: options.boost_psi,
+                fps_mode: FpsMode::Off,
+                fps_instant: 0.0,
+                fps_average: 0.0,
+                backgrounds: [BLACK; 8],
+                overlay: None,
+            };
+            scene.draw_cell(&mut display, 0);
+            let rect = widget.placement.rect().expect("isolated widget has valid geometry");
+            let label = Rectangle::new(
+                Point::new(i32::from(rect.x) + 2, i32::from(rect.y) + 2),
+                Size::new(u32::from(rect.width) - 4, 12),
+            );
+            let mut clipped = display.clipped(&label);
+            clipped.clear(BLACK).ok();
+            // Bound work to one screen-width line. Controls/unsupported glyphs
+            // are shown as '?'; the exact original text is listed outside canvas.
+            let text: String = draft
+                .label(widget)
+                .chars()
+                .take(54)
+                .map(|c| if c.is_ascii() && !c.is_ascii_control() { c } else { '?' })
+                .collect();
+            Text::with_text_style(
+                &text,
+                Point::new(i32::from(rect.x + rect.width / 2), i32::from(rect.y) + 11),
+                MonoTextStyle::new(&FONT_6X10, WHITE),
+                dashboard_core::ui::CENTERED,
+            )
+            .draw(&mut clipped)
+            .ok();
+        }
+        // This watermark is part of the pixels as well as the browser chrome,
+        // so even a copied canvas cannot be mistaken for an accepted preview.
+        Rectangle::new(Point::zero(), Size::new(320, 26))
+            .into_styled(PrimitiveStyle::with_fill(RED))
+            .draw(&mut display)
+            .ok();
+        Text::new(
+            "INVALID PREVIEW",
+            Point::new(7, 17),
+            MonoTextStyle::new(&FONT_6X10, WHITE),
+        )
+        .draw(&mut display)
+        .ok();
+        let header = Rectangle::new(Point::new(107, 0), Size::new(206, 26));
+        let name: String = draft
+            .name(view)
+            .chars()
+            .take(34)
+            .map(|c| if c.is_ascii() && !c.is_ascii_control() { c } else { '?' })
+            .collect();
+        Text::new(&name, Point::new(108, 17), MonoTextStyle::new(&FONT_6X10, WHITE))
+            .draw(&mut display.clipped(&header))
+            .ok();
+        rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba)?;
+        Ok(&self.rgba)
+    }
 }
 
 /// Convert panel-order big-endian words, with bit replication to full 8-bit

@@ -23,6 +23,8 @@ pub struct Ui {
     psi: RwSignal<bool>,
     warnings: RwSignal<bool>,
     sample_ms: RwSignal<u64>,
+    sample_set: RwSignal<dashboard_configurator::preview::SampleSet>,
+    preview_error: RwSignal<Option<String>>,
     pending_at: RwSignal<Option<f64>>,
     render_ms: RwSignal<f64>,
     canvas: NodeRef<leptos::html::Canvas>,
@@ -172,6 +174,8 @@ pub fn Studio() -> impl IntoView {
         psi: RwSignal::new(false),
         warnings: RwSignal::new(false),
         sample_ms: RwSignal::new(118_000),
+        sample_set: RwSignal::new(dashboard_configurator::preview::SampleSet::Demo),
+        preview_error: RwSignal::new(None),
         pending_at: RwSignal::new(None),
         render_ms: RwSignal::new(0.0),
         canvas: NodeRef::new(),
@@ -215,11 +219,22 @@ pub fn Studio() -> impl IntoView {
                         <button class:active=move ||ui.playing.get() on:click=move |_|ui.playing.update(|v|*v = !*v)>{move ||if ui.playing.get(){"Pause"}else{"Play"}}</button>
                         <button title="Advance synthetic demo values by one second" disabled=move ||ui.playing.get() on:click=move |_| {ui.input_started();ui.sample_ms.update(|t| *t=t.saturating_add(1000));}>"Next sample →"</button>
                     </div></div>
+                    <label class="preview-samples">"Test values"
+                        <select aria-label="Preview test values" on:change=move |event|{
+                            use dashboard_configurator::preview::SampleSet;
+                            ui.input_started();
+                            ui.sample_set.set(match event_target_value(&event).as_str(){"minimum"=>SampleSet::Minimum,"maximum"=>SampleSet::Maximum,"width"=>SampleSet::WidthStress,"zero"=>SampleSet::Zero,_=>SampleSet::Demo});
+                        }>
+                            <option value="demo">"Animated demo"</option><option value="minimum">"Channel minima"</option><option value="maximum">"Channel maxima"</option><option value="width">"Extreme digit widths"</option><option value="zero">"Zero / unavailable AFR"</option>
+                        </select><span>"Synthetic only · not operating limits"</span>
+                    </label>
                     <Canvas ui/>
                     <div class="canvas-caption"><span>"Drag to place · arrows to move · Esc to cancel"</span><span>{move || format!("Preview render {:.1} ms",ui.render_ms.get())}</span></div>
                     <div class="draft-alert" hidden=move || !ui.invalid() role="alert">
-                        <strong>"Showing the last valid preview"</strong>
+                        <strong>"INVALID PREVIEW · inspection only"</strong>
                         <p>{move || ui.editor.with(|e| e.draft_error().map(error_text).unwrap_or_default())}</p>
+                        <p>"Rejected labels and in-bounds placements are shown, including overlaps. Invalid numeric or style settings use safe fallbacks; source and fuel settings use the last valid values. Warning simulation is suspended. Unsupported glyphs appear as ? and long text is clipped. Exact rejected inputs are listed below."</p>
+                        <ul class="draft-details">{move ||ui.editor.with(|e|e.diagnostic().map(|draft|draft.descriptions(e.preview()).into_iter().map(|line|view!{<li>{line}</li>}).collect_view()))}</ul>
                         <button on:click=move |_| { ui.run(Editor::discard_raw); }>"Discard invalid edits"</button>
                     </div>
                     <section class="global-settings">

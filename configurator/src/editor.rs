@@ -250,6 +250,7 @@ pub struct Editor {
     undo: VecDeque<Box<Accepted>>,
     redo: VecDeque<Box<Accepted>>,
     raw: Vec<RawInput>,
+    rejected: Option<Box<Config>>,
     draft_error: Option<EditorError>,
     request: u64,
     pointer: Option<PointerToken>,
@@ -280,6 +281,7 @@ impl Editor {
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             raw: Vec::new(),
+            rejected: None,
             draft_error: None,
             request: 0,
             pointer: None,
@@ -309,7 +311,26 @@ impl Editor {
 
     pub fn draft_error(&self) -> Option<EditorError> { self.draft_error }
 
-    pub fn has_invalid_draft(&self) -> bool { !self.raw.is_empty() }
+    pub fn has_invalid_draft(&self) -> bool { !self.raw.is_empty() || self.rejected.is_some() }
+
+    /// Inspection-only candidate. It never replaces the accepted document or
+    /// enters serialization, acquisition, history, or firmware configuration.
+    pub fn diagnostic(&self) -> Option<crate::diagnostic::Draft> {
+        if !self.has_invalid_draft() {
+            return None;
+        }
+        let mut config = self.rejected.as_deref().unwrap_or(self.preview().config()).clone();
+        for input in &self.raw {
+            // Keep applying independent fields after a parse/capacity failure;
+            // their original strings are retained and shown in diagnostics.
+            let _ = apply_raw(&mut config, input);
+        }
+        Some(crate::diagnostic::Draft {
+            config,
+            raw: self.raw.clone(),
+            error: self.draft_error.expect("invalid draft has a validation or parse error"),
+        })
+    }
 
     pub fn active_pointer(&self) -> Option<PointerToken> { self.pointer }
 
@@ -544,7 +565,7 @@ impl Editor {
     }
 
     /// A successful call accepts the raw keystroke, which can still leave an
-    /// invalid draft. Inspect `draft_error` and label `preview` as last valid.
+    /// invalid draft. Render `diagnostic` with a prominent invalid label.
     /// Inputs beyond the explicit editor bound are rejected without accepting
     /// the keystroke; controls should display state read back from this reducer.
     pub fn set_raw(
@@ -555,6 +576,9 @@ impl Editor {
     ) -> Result<Revision, EditorError> {
         if token != self.field_token() {
             return Err(EditorError::StaleToken);
+        }
+        if self.rejected.is_some() {
+            return Err(EditorError::InvalidDraft);
         }
         if text.len() > MAX_RAW_TEXT_BYTES {
             return Err(EditorError::RawTooLong);
@@ -597,6 +621,7 @@ impl Editor {
         if self.has_invalid_draft() {
             let revision = self.next_revision()?;
             self.raw.clear();
+            self.rejected = None;
             self.draft_error = None;
             self.changed(revision);
         }
@@ -776,7 +801,16 @@ impl Editor {
             Edit::SetFuel(fuel) => config.fuel = fuel,
             Edit::SetWarningPresentation(warnings) => config.warnings = warnings,
         }
-        self.accept(config, selection)
+        match validate(config.clone()) {
+            Ok(preview) => self.accept_validated(preview, selection),
+            Err(error) => {
+                let revision = self.next_revision()?;
+                self.rejected = Some(Box::new(config));
+                self.draft_error = Some(EditorError::Validation(error));
+                self.changed(revision);
+                Err(EditorError::Validation(error))
+            }
+        }
     }
 
     /// Inspector callbacks capture a field token. Synchronous commands that
@@ -841,15 +875,6 @@ impl Editor {
 
     fn next_request(&self) -> Result<u64, EditorError> {
         self.request.checked_add(1).ok_or(EditorError::CounterExhausted)
-    }
-
-    fn accept(
-        &mut self,
-        config: Config,
-        selection: Selection,
-    ) -> Result<Revision, EditorError> {
-        let preview = validate(config).map_err(EditorError::Validation)?;
-        self.accept_validated(preview, selection)
     }
 
     fn accept_validated(

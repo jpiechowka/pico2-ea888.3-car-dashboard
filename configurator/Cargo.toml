@@ -10,6 +10,7 @@ resolver = "2"
 [dependencies]
 dashboard-config = { path = "../crates/dashboard-config", features = ["json"] }
 dashboard-core = { path = "../crates/dashboard-core" }
+embedded-graphics = "=0.8.2"
 heapless = { version = "=0.9.3", default-features = false }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
