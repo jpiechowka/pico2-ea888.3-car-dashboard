@@ -805,6 +805,10 @@ impl Editor {
             Edit::PlaceWidget { id, placement } => {
                 let index = widget_index(&config, id)?;
                 config.widgets[index].placement = placement;
+                selection = Selection {
+                    view: config.widgets[index].view,
+                    widget: Some(id),
+                };
             }
             Edit::ReorderWidget { id, index } => {
                 let old = widget_index(&config, id)?;

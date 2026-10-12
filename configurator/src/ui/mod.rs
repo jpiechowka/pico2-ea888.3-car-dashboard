@@ -3,6 +3,7 @@ mod inspector;
 mod io;
 mod metrics;
 mod stage;
+mod widget_menu;
 
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
@@ -30,6 +31,7 @@ pub struct Ui {
     canvas: NodeRef<leptos::html::Canvas>,
     drag: RwSignal<Option<stage::Drag>>,
     capture: RwSignal<Option<(i32, web_sys::Element)>>,
+    menu: RwSignal<Option<widget_menu::Menu>>,
     playing: RwSignal<bool>,
     trace: RwSignal<metrics::Trace>,
     observer: RwSignal<Option<web_sys::PerformanceObserver>>,
@@ -39,6 +41,8 @@ fn now() -> f64 { web_sys::window().and_then(|w| w.performance()).map_or(0.0, |p
 
 impl Ui {
     fn invalid(self) -> bool { self.editor.with(Editor::has_invalid_draft) }
+
+    fn layout_locked(self) -> bool { self.editor.with(|e| !e.can_edit_layout()) }
 
     fn run(
         self,
@@ -96,7 +100,21 @@ impl Ui {
         id: u16,
     ) -> Option<Widget> {
         self.editor
-            .with(|e| e.preview().config().widgets.iter().find(|w| w.id == id).cloned())
+            .with(|e| e.editing_config().widgets.iter().find(|w| w.id == id).cloned())
+    }
+
+    fn place_widget(
+        self,
+        token: FieldToken,
+        id: u16,
+        f: impl FnOnce(&mut Placement),
+    ) {
+        let Some(widget) = self.widget(id) else {
+            return;
+        };
+        let mut placement = widget.placement;
+        f(&mut placement);
+        self.typed(token, Edit::PlaceWidget { id, placement });
     }
 
     fn update_widget(
@@ -181,11 +199,13 @@ pub fn Studio() -> impl IntoView {
         canvas: NodeRef::new(),
         drag: RwSignal::new(None),
         capture: RwSignal::new(None),
+        menu: RwSignal::new(None),
         playing: RwSignal::new(false),
         trace: RwSignal::new(metrics::Trace::default()),
         observer: RwSignal::new(None),
     };
     stage::install_playback(ui);
+    widget_menu::install(ui);
     metrics::install(ui);
     let storage_listener = window_event_listener(leptos::ev::storage, move |event| {
         if event.key().as_deref().is_none_or(|key| key == io::STORAGE_KEY) {
@@ -198,7 +218,7 @@ pub fn Studio() -> impl IntoView {
         <div class="studio" on:pointermove=move |e| stage::drag_move(ui, e)
             on:pointerup=move |e| stage::drag_end(ui,e) on:pointercancel=move |e| stage::cancel_event(ui,e)
             on:lostpointercapture=move |e| stage::cancel_event(ui,e)
-            on:keydown=move |e| { if e.key() == "Escape" { stage::cancel(ui); } }>
+            on:keydown=move |e| { if e.key() == "Escape" { stage::cancel(ui); widget_menu::close(ui, true); } }>
             <header class="masthead">
                 <a class="brand" href="./" aria-label="EA888 View Studio"><b>"EA"<span>"888"</span></b><div>"VIEW STUDIO"<small>"PICO 2 / DNUC"</small></div></a>
                 <div class="device-spec"><span class="dot"></span>"320 × 240"<span>"4 × 2 GRID"</span></div>
@@ -229,11 +249,12 @@ pub fn Studio() -> impl IntoView {
                         </select><span>"Synthetic only · not operating limits"</span>
                     </label>
                     <Canvas ui/>
-                    <div class="canvas-caption"><span>"Drag to place · arrows to move · Esc to cancel"</span><span>{move || format!("Preview render {:.1} ms",ui.render_ms.get())}</span></div>
+                    <div class="canvas-caption"><span>"Drag to place · right-click for actions · arrows to move · Esc to cancel"</span><span>{move || format!("Preview render {:.1} ms",ui.render_ms.get())}</span></div>
                     <div class="draft-alert" hidden=move || !ui.invalid() role="alert">
                         <strong>"INVALID PREVIEW · inspection only"</strong>
                         <p>{move || ui.editor.with(|e| e.draft_error().map(error_text).unwrap_or_default())}</p>
                         <p>"Rejected labels and in-bounds placements are shown, including overlaps. Invalid numeric or style settings use safe fallbacks; source and fuel settings use the last valid values. Warning simulation is suspended. Unsupported glyphs appear as ? and long text is clipped. Exact rejected inputs are listed below."</p>
+                        <p>{move ||if ui.layout_locked(){"Correct the highlighted text fields or discard the invalid edits to unlock layout controls."}else{"Drag, resize or remove widgets to repair the layout. Right-click an overlap to select a covered widget. Save and export unlock once every error is resolved."}}</p>
                         <ul class="draft-details">{move ||ui.editor.with(|e|e.diagnostic().map(|draft|draft.descriptions(e.preview()).into_iter().map(|line|view!{<li>{line}</li>}).collect_view()))}</ul>
                         <button on:click=move |_| { ui.run(Editor::discard_raw); }>"Discard invalid edits"</button>
                     </div>
@@ -257,6 +278,7 @@ pub fn Studio() -> impl IntoView {
                 <span>{move || ui.editor.with(|e| {let size=e.export_binary().map(|v|format!("runtime config {} B",v.len())).unwrap_or_else(|_|"export blocked by invalid edits".into());format!("{} widgets · {size}",e.preview().config().widgets.len())})}</span>
             </footer>
             <div class="notice" role="status" hidden=move || ui.notice.get().is_empty()><span>{move || ui.notice.get()}</span><button aria-label="Dismiss notice" on:click=move |_| ui.notice.set(String::new())>"×"</button></div>
+            <widget_menu::Popup ui/>
         </div>
     }
 }

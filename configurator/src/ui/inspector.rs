@@ -4,11 +4,11 @@ use super::*;
 pub fn Inspector(ui: Ui) -> impl IntoView {
     view! {
         <aside class="inspector panel">
-            <div class="panel-heading"><p class="eyebrow">"WIDGET INSPECTOR"</p><h2>{move || ui.editor.with(|e|e.selection().widget.and_then(|id|e.preview().config().widgets.iter().find(|w|w.id==id)).map(|w|w.channel.label()).unwrap_or("Make it yours"))}</h2></div>
+            <div class="panel-heading"><p class="eyebrow">"WIDGET INSPECTOR"</p><h2>{move || ui.editor.with(|e|e.selection().widget.and_then(|id|e.editing_config().widgets.iter().find(|w|w.id==id)).map(|w|w.channel.label()).unwrap_or("Make it yours"))}</h2></div>
             <Show when=move || ui.editor.with(|e|e.selection().widget.is_none())>
                 <div class="empty-inspector"><div class="grid-icon" aria-hidden="true">"▦"</div><h3>"Select a widget"</h3><p>"Click a tile on the display to edit its label, size, graph and warnings."</p><p>"Drag a sensor from the library into a free cell. Create an empty view for a fresh layout."</p><div class="size-samples"><span>"1 × 1"</span><span>"2 × 1"</span><span>"2 × 2"</span></div></div>
             </Show>
-            <For each=move || ui.editor.with(|e|e.selection().widget.and_then(|id|e.preview().config().widgets.iter().find(|w|w.id==id).map(|w|(id,w.channel))).into_iter().collect::<Vec<_>>()) key=|key|(key.0,key.1.index()) children=move |(id,_)| view! { <WidgetInspector ui id/> }/>
+            <For each=move || ui.editor.with(|e|e.selection().widget.and_then(|id|e.editing_config().widgets.iter().find(|w|w.id==id).map(|w|(id,w.channel))).into_iter().collect::<Vec<_>>()) key=|key|(key.0,key.1.index()) children=move |(id,_)| view! { <WidgetInspector ui id/> }/>
         </aside>
     }
 }
@@ -32,8 +32,7 @@ fn WidgetInspector(
     let channel = ui
         .editor
         .with_untracked(|e| {
-            e.preview()
-                .config()
+            e.editing_config()
                 .widgets
                 .iter()
                 .find(|w| w.id == id)
@@ -43,14 +42,14 @@ fn WidgetInspector(
     view! {
         <div class="inspector-body">
             <TextField ui field=RawField::Widget(id,WidgetField::Label) label="Label" hint="ASCII · 12 characters at 1×1, 24 at wider sizes"/>
-            <Choice ui label="Size" value=Signal::derive(move || ui.widget(id).map(|w|match w.placement.span { Span::OneByOne=>"1",Span::TwoByOne=>"2",Span::TwoByTwo=>"4" }.to_string()).unwrap_or_default())
+            <Choice ui layout=true label="Size" value=Signal::derive(move || ui.widget(id).map(|w|match w.placement.span { Span::OneByOne=>"1",Span::TwoByOne=>"2",Span::TwoByTwo=>"4" }.to_string()).unwrap_or_default())
                 options=choices(&[("1","1 × 1 · compact"),("2","2 × 1 · wide"),("4","2 × 2 · large")])
                 on_change=Callback::new(move |(token,value): (FieldToken,String)| { let span=match value.as_str(){"1"=>Span::OneByOne,"2"=>Span::TwoByOne,"4"=>Span::TwoByTwo,_=>return};ui.typed(token,Edit::ResizeWidget { id,span }); })/>
             <div class="field-pair">
-                <Choice ui label="Column" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.column.to_string())) options=choices(&[("0","1"),("1","2"),("2","3"),("3","4")])
-                    on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(column)=value.parse::<u8>() {ui.update_widget(token,id,|w|w.placement.column=column);}})/>
-                <Choice ui label="Row" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.row.to_string())) options=choices(&[("0","Top"),("1","Bottom")])
-                    on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(row)=value.parse::<u8>() {ui.update_widget(token,id,|w|w.placement.row=row);}})/>
+                <Choice ui layout=true label="Column" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.column.to_string())) options=choices(&[("0","1"),("1","2"),("2","3"),("3","4")])
+                    on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(column)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.column=column);}})/>
+                <Choice ui layout=true label="Row" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.row.to_string())) options=choices(&[("0","Top"),("1","Bottom")])
+                    on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(row)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.row=row);}})/>
             </div>
             <h3 class="subheading">"Display"</h3>
             <TextField ui field=RawField::Widget(id,WidgetField::Decimals) label="Decimal places" hint="0–3; units stay canonical in rules"/>
@@ -94,7 +93,7 @@ fn WidgetInspector(
                 <button disabled=move ||ui.invalid() on:click=move |_| {
                     if let Some(widget)=ui.widget(id) {if let Some(placement)=ui.free(widget.placement.span,None){ui.apply(Edit::DuplicateWidget{id,view:widget.view,placement});}else{ui.notice.set("No free space for this size in the current view.".into());}}
                 }>"Duplicate widget"</button>
-                <button class="danger-text" disabled=move ||ui.invalid() on:click=move |_|ui.apply(Edit::DeleteWidget(id))>"Remove widget"</button>
+                <button class="danger-text" disabled=move ||ui.layout_locked() on:click=move |_|ui.apply(Edit::DeleteWidget(id))>"Remove widget"</button>
             </div>
         </div>
     }

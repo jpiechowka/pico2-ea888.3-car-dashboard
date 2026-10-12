@@ -37,6 +37,53 @@ fn overlap(editor: &mut Editor) {
 }
 
 #[test]
+fn placing_a_focused_widget_selects_it_and_undo_restores_previous_selection() {
+    let mut editor = pair();
+    editor
+        .select(Selection {
+            view: 1,
+            widget: Some(1),
+        })
+        .unwrap();
+    editor
+        .apply(Edit::PlaceWidget {
+            id: 2,
+            placement: placement(2, 0, Span::OneByOne),
+        })
+        .unwrap();
+    assert_eq!(
+        editor.selection(),
+        Selection {
+            view: 1,
+            widget: Some(2)
+        }
+    );
+    editor.undo().unwrap();
+    assert_eq!(
+        editor.selection(),
+        Selection {
+            view: 1,
+            widget: Some(1)
+        }
+    );
+    assert!(
+        editor
+            .apply(Edit::PlaceWidget {
+                id: 2,
+                placement: placement(0, 0, Span::OneByOne)
+            })
+            .is_err()
+    );
+    assert_eq!(
+        editor.selection().widget,
+        Some(2),
+        "the moved overlapping widget must be selectable above its peers"
+    );
+    editor.discard_raw().unwrap();
+    assert_eq!(editor.selection().widget, Some(1));
+}
+
+#[test]
 fn drag_repairs_visible_overlap_without_losing_rejected_resize() {
     let mut editor = pair();
     let before = editor.export_binary().unwrap();

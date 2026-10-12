@@ -15,8 +15,14 @@ round trips use the same bounded configuration codec as firmware.
 
 Rejected typed changes now retire callbacks and block exports/saves too, while
 leaving the accepted document/history intact. The browser automatically renders
-an explicitly marked diagnostic draft. Raw fields can be corrected together;
-typed rejections require explicit discard. See [preview hardening](preview-hardening.md)
+an explicitly marked diagnostic draft. Raw fields can be corrected together.
+Rejected typed candidates retain their own selection and expose unvalidated
+`editing_config()` to the browser hit targets, pointer anchors, menu and inspector.
+Only move, resize and delete commands are allowed while repairing that candidate;
+each command runs the full shared validator. Partial repairs preserve accepted
+bytes/history, and the first valid result becomes one undo transaction. Discard
+restores the accepted selection. Rejected non-layout choices still require
+discard before those settings can change. See [preview hardening](preview-hardening.md)
 for the inspection-only rendering and safe fallback contract.
 
 Pointer, field, import and save operations carry private owner/revision/request
@@ -33,7 +39,7 @@ the first survivor. The final view cannot be deleted. Duplicates receive fresh
 IDs; capacity failures are atomic. Signed-zero payloads are preserved during
 otherwise-equal imports rather than lost through floating-point equality.
 
-Thirty native contracts cover these transitions, all spans/display/fuel
+Native contracts cover these transitions, all spans/display/fuel
 options, every catalogue definition and route, strict malformed/oversized
 imports, storage failures and binary equality after round trips. Strict Clippy,
 formatting and the Wasm target also pass. Browser event binding and actual

@@ -66,8 +66,14 @@ nonfinite numbers and incompatible source fields are rejected. Invalid text
 remains visible for correction and blocks saving/export. The canvas automatically
 shows **INVALID PREVIEW**, a red border and affected-widget badges. Rejected
 labels and overlapping in-bounds placements are drawn for inspection; the exact
-attempted inputs and errors appear below it. Correct raw text or use **Discard
-invalid edits**. Rejected size/source/choice changes require discard first.
+attempted inputs and errors appear below it. Overlapping widgets remain draggable;
+Size, Column, Row and Remove widget can repair rejected layouts in steps. Right
+click (or Shift+F10) opens Move left/right/up/down and Delete. The menu also lists
+widgets under that point, including a fully covered widget; select one to raise
+its drag target. Movement keys stop at the grid boundary. Save/export remain
+blocked until the entire draft validates. Correct raw text before moving widgets,
+or use **Discard invalid edits**. Rejected source and other non-layout choices
+still require discard before changing those settings.
 Undo/redo restores accepted edits after the invalid draft is resolved.
 
 Diagnostics are deliberately approximate: numeric/style errors use bounded

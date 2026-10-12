@@ -7,7 +7,7 @@ pub fn raw_value(
     if let Some(raw) = editor.raw_fields().iter().find(|raw| raw.field == field) {
         return raw.text.clone();
     }
-    let c = editor.preview().config();
+    let c = editor.editing_config();
     match field {
         RawField::ViewName(id) => {
             c.views
@@ -146,12 +146,13 @@ pub fn Choice(
     value: Signal<String>,
     options: Vec<(String, String)>,
     on_change: Callback<(FieldToken, String)>,
+    #[prop(default = false)] layout: bool,
 ) -> impl IntoView {
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {
         <label class="field"><span>{label}</span>
-            <select prop:value=move || value.get() disabled=move || ui.invalid()
+            <select prop:value=move || value.get() disabled=move || if layout { ui.layout_locked() } else { ui.invalid() }
                 on:change=move |event| {
                     if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_value(&event))); }
                     event_target::<web_sys::HtmlSelectElement>(&event).set_value(&value.get_untracked());

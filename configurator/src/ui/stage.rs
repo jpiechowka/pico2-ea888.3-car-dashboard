@@ -39,6 +39,7 @@ fn start(
     }
     event.prevent_default();
     event.stop_propagation();
+    widget_menu::close(ui, false);
     let (span, offset) = match target {
         PointerTarget::Library(_) => (Span::OneByOne, GrabOffset::center(Span::OneByOne)),
         PointerTarget::Widget(id) => {
@@ -170,7 +171,7 @@ pub fn drag_move(
     });
     drag.valid = drag.position.is_some_and(|p| {
         ui.editor.with_untracked(|e| {
-            geometry::validate_drop(e.preview(), e.selection().view, drag.token.target(), p).is_ok()
+            geometry::validate_draft_drop(e.editing_config(), e.selection().view, drag.token.target(), p).is_ok()
         })
     });
     ui.drag.set(Some(drag));
@@ -373,19 +374,23 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
             <div class="display-frame"><div class="screen">
                 <canvas node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid(){"INVALID PREVIEW. Rejected draft with safe rendering fallbacks. Save and export blocked."}else{"Exact Pico dashboard preview with synthetic values"}></canvas>
                 <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Last frame only. Change the test values or reload to retry."</p></div>
-                <div class="canvas-hits" aria-label="Widget placement grid">
-                    <For each=move ||ui.editor.with(|e|e.preview().config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{
-                        <button class="widget-hit" disabled=move ||ui.invalid() class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
+                <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid">
+                    <For each=move ||ui.editor.with(|e|e.editing_config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{
+                        <button id=format!("widget-{id}") class="widget-hit" disabled=move ||ui.layout_locked() class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
                             style=move ||ui.widget(id).map_or("display:none".into(),|w|style(w.placement))
                             aria-label=move ||ui.widget(id).map_or(String::new(),|w|format!("Select {} widget",w.label))
-                            title="Drag to move. Arrow keys move one cell. Delete removes."
+                            title="Drag to move. Right-click or Shift+F10 for actions. Arrow keys move one cell. Delete removes."
+                            aria-haspopup="menu" aria-expanded=move ||ui.menu.with(|menu|menu.as_ref().is_some_and(|m|m.actions.target()==id)).to_string()
+                            on:contextmenu=move |e|widget_menu::open_pointer(ui,id,e)
                             on:pointerdown=move |e|start(ui,e,PointerTarget::Widget(id))
                             on:click=move |event|{if event.detail()==0 {ui.run(move |e|e.select(Selection{view:e.selection().view,widget:Some(id)}));}}
                             on:keydown=move |e|{
+                                if e.key()=="ContextMenu" || (e.key()=="F10" && e.shift_key()) { e.prevent_default(); e.stop_propagation(); widget_menu::open_keyboard(ui,id); return; }
                                 if e.key()=="Delete"{e.prevent_default();ui.apply(Edit::DeleteWidget(id));return;}
-                                let Some(w)=ui.widget(id)else{return;};let (dx,dy)=match e.key().as_str(){"ArrowLeft"=>(-1,0),"ArrowRight"=>(1,0),"ArrowUp"=>(0,-1),"ArrowDown"=>(0,1),_=>return};e.prevent_default();
-                                let col=i16::from(w.placement.column)+dx;let row=i16::from(w.placement.row)+dy;
-                                if let(Ok(column),Ok(row))=(u8::try_from(col),u8::try_from(row)){ui.apply(Edit::MoveWidget{id,view:w.view,column,row});}
+                                use dashboard_configurator::widget_actions::Direction;
+                                let direction=match e.key().as_str(){"ArrowLeft"=>Direction::Left,"ArrowRight"=>Direction::Right,"ArrowUp"=>Direction::Up,"ArrowDown"=>Direction::Down,_=>return};
+                                e.prevent_default();
+                                if let Some(placement)=ui.widget(id).and_then(|w|direction.placement(w.placement)){ui.apply(Edit::PlaceWidget{id,placement});}
                             }><span class="selection-corner"></span></button>
                     }/>
                     <div class="drop-guide" class:invalid=move ||ui.drag.get().is_some_and(|d|!d.valid)
