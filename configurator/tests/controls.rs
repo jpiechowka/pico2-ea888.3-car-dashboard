@@ -1,6 +1,12 @@
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
+fn assert_exports_blocked(editor: &mut Editor) {
+    assert!(editor.export_json().is_err());
+    assert!(editor.export_binary().is_err());
+    assert!(editor.begin_save().is_err());
+}
+
 #[test]
 fn broken_routes_remain_editable_until_repaired() {
     let mut editor = Editor::new(default_config()).unwrap();
@@ -89,6 +95,7 @@ fn mapping_repairs_preserve_unrelated_invalid_edits_and_explain_parse_blockers()
     editor
         .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "bad".into())
         .unwrap();
+    assert_exports_blocked(&mut editor);
     let mut map = editor.editing_config().controls;
     map.screens[0].buttons[0].tap = ControlAction::CycleFps;
     assert_eq!(
@@ -96,12 +103,16 @@ fn mapping_repairs_preserve_unrelated_invalid_edits_and_explain_parse_blockers()
         Err(EditorError::Parse(RawField::WarningPageMilliseconds))
     );
     assert_eq!(editor.raw_fields()[0].text, "bad");
+    assert_eq!(editor.editing_config().controls, ControlMap::default());
+    assert_exports_blocked(&mut editor);
     editor
         .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "0".into())
         .unwrap();
+    assert_exports_blocked(&mut editor);
     assert!(editor.apply(Edit::SetControls(map)).is_err());
     assert_eq!(editor.editing_config().controls, map);
     assert_eq!(editor.raw_fields()[0].text, "0");
+    assert_exports_blocked(&mut editor);
     // Hold repairs preserve this parsed, rejected unrelated warning edit.
     editor
         .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "1000".into())
@@ -112,6 +123,116 @@ fn mapping_repairs_preserve_unrelated_invalid_edits_and_explain_parse_blockers()
         ControlAction::CycleFps
     );
     assert!(editor.export_json().is_err());
+    assert!(editor.export_binary().is_err());
+    assert!(editor.begin_save().is_err());
+    let stale = editor.field_token();
+    editor
+        .set_raw(stale, RawField::WarningPageMilliseconds, "2500".into())
+        .unwrap();
+    assert!(!editor.has_invalid_draft());
+    assert_eq!(editor.preview().config().warnings.page_ms, 2500);
+    assert_eq!(
+        editor.preview().config().controls.screens[0].buttons[0].tap,
+        ControlAction::CycleFps
+    );
+    assert_eq!(editor.preview().config().controls.hold_ms, 1000);
+    assert!(editor.export_json().is_ok());
+    assert!(editor.export_binary().is_ok());
+    assert!(editor.begin_save().is_ok());
+    assert_eq!(
+        editor.set_raw(stale, RawField::WarningPageMilliseconds, "3000".into()),
+        Err(EditorError::StaleToken)
+    );
+    editor.undo().unwrap();
+    assert_eq!(editor.preview().config(), &default_config());
+    editor.redo().unwrap();
+    assert_eq!(editor.preview().config().warnings.page_ms, 2500);
+    assert_eq!(
+        editor.preview().config().controls.screens[0].buttons[0].tap,
+        ControlAction::CycleFps
+    );
+}
+
+#[test]
+fn rejected_map_only_unlocks_retained_raw_fields_and_existing_hold_target() {
+    let mut editor = Editor::default();
+    editor
+        .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "0".into())
+        .unwrap();
+    let mut map = editor.editing_config().controls;
+    map.screens[0].buttons[0].tap = ControlAction::CycleFps;
+    assert!(editor.apply(Edit::SetControls(map)).is_err());
+    let before = editor.editing_config().clone();
+    for field in [
+        RawField::WarningColor { foreground: true },
+        RawField::ViewName(255),
+        RawField::Widget(u16::MAX, WidgetField::Label),
+    ] {
+        assert!(editor.set_raw(editor.field_token(), field, "2500".into()).is_err());
+        assert_eq!(editor.editing_config(), &before);
+    }
+    editor
+        .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "bad".into())
+        .unwrap();
+    assert_eq!(editor.raw_fields()[0].text, "bad");
+    assert_eq!(editor.editing_config().controls, map);
+    assert!(editor.export_binary().is_err());
+    assert!(editor.begin_save().is_err());
+    editor
+        .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "2500".into())
+        .unwrap();
+    assert_eq!(editor.preview().config().controls, map);
+    assert!(editor.export_binary().is_ok());
+}
+
+#[test]
+fn retained_raw_repair_does_not_drop_another_rejected_setting() {
+    let mut editor = Editor::default();
+    editor
+        .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "0".into())
+        .unwrap();
+    let mut map = editor.editing_config().controls;
+    map.screens[0].buttons[0].tap = ControlAction::ScrollOlder;
+    assert!(editor.apply(Edit::SetControls(map)).is_err());
+    editor
+        .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "2500".into())
+        .unwrap();
+    assert_eq!(editor.editing_config().controls, map);
+    assert_eq!(editor.editing_config().warnings.page_ms, 2500);
+    assert!(editor.export_json().is_err());
+    assert!(editor.export_binary().is_err());
+    assert!(editor.begin_save().is_err());
+    map.screens[0].buttons[0].tap = ControlAction::CycleFps;
+    editor.apply(Edit::SetControls(map)).unwrap();
+    assert_eq!(editor.preview().config().warnings.page_ms, 2500);
+    assert_eq!(editor.preview().config().controls, map);
+    editor.undo().unwrap();
+    assert_eq!(editor.preview().config(), &default_config());
+
+    // A distinct typed rejection also survives control and hold-text repairs.
+    let mut editor = Editor::default();
+    assert!(
+        editor
+            .apply(Edit::SetFuel(Fuel::Stoichiometric { ratio: 0.0 }))
+            .is_err()
+    );
+    assert!(editor.apply(Edit::SetControls(map)).is_err());
+    editor
+        .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "bad".into())
+        .unwrap();
+    editor
+        .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "1000".into())
+        .unwrap();
+    assert_eq!(editor.editing_config().fuel, Fuel::Stoichiometric { ratio: 0.0 });
+    assert_eq!(
+        editor.editing_config().controls.screens[0].buttons[0].tap,
+        ControlAction::CycleFps
+    );
+    assert_eq!(
+        editor.set_raw(editor.field_token(), RawField::Fuel(FuelField::Ratio), "14.7".into()),
+        Err(EditorError::InvalidDraft)
+    );
+    assert_exports_blocked(&mut editor);
 }
 
 #[test]

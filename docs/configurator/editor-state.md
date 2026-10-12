@@ -23,6 +23,8 @@ each command runs the full shared validator. Partial repairs preserve accepted
 bytes/history, and the first valid result becomes one undo transaction. Discard
 restores the accepted selection. Control mappings are read from the rejected
 candidate, and hold-duration text remains editable while mappings are rejected.
+Retained unrelated raw inputs remain editable against the current candidate too;
+they must still identify an existing, applicable field in that candidate.
 Mapping repairs replay retained raw inputs and identify any parse blocker;
 they never clear an unrelated invalid setting. Other rejected non-layout choices
 still require discard before those settings can change. See [preview hardening](preview-hardening.md)

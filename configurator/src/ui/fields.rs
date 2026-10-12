@@ -240,7 +240,7 @@ pub fn error_text(error: EditorError) -> String {
         EditorError::Parse(RawField::Widget(_, WidgetField::Color(_)) | RawField::WarningColor { .. }) => {
             "Enter a colour as #RRGGBB, for example #FF3048.".into()
         }
-        EditorError::Parse(field) => format!("Correct {field:?}: enter a complete number before changing mappings."),
+        EditorError::Parse(field) => format!("Correct {field:?}: enter a complete number before applying this change."),
         EditorError::LastView => "Keep at least one view.".into(),
         EditorError::ViewCapacity => "Up to eight views are supported.".into(),
         EditorError::WidgetCapacity => "Up to 64 widgets are supported.".into(),

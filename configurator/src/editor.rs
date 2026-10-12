@@ -608,13 +608,19 @@ impl Editor {
         if token != self.field_token() {
             return Err(EditorError::StaleToken);
         }
-        if self.rejected.is_some() && field != RawField::ControlHoldMilliseconds {
+        if self.rejected.is_some()
+            && field != RawField::ControlHoldMilliseconds
+            && !self.raw.iter().any(|input| input.field == field)
+        {
             return Err(EditorError::InvalidDraft);
         }
         if text.len() > MAX_RAW_TEXT_BYTES {
             return Err(EditorError::RawTooLong);
         }
-        check_raw_target(self.preview().config(), self.selection(), field)?;
+        // A retained raw field remains repairable after a mapping operation
+        // creates a rejected candidate. It must still exist and apply to the
+        // current candidate; the accepted document cannot prove that target.
+        check_raw_target(self.editing_config(), self.selection(), field)?;
         let revision = self.next_revision()?;
         let mut fields = self.raw.clone();
         if let Some(input) = fields.iter_mut().find(|input| input.field == field) {
