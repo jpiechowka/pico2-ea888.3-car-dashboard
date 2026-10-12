@@ -1,6 +1,6 @@
 # Power-user configuration roadmap
 
-The ten feature decisions below were approved on 12 October 2026. Work is staged so configuration, firmware, the browser preview and the simulator share the same contracts. A stage is complete only after its tests and review; this document does not claim that planned features already work.
+The feature decisions below were approved on 12 October 2026, including the later Build and Flash addition. Work is staged so configuration, firmware, the browser preview and the simulator share the same contracts. A stage is complete only after its tests and review; this document does not claim that planned features already work.
 
 ## Approved scope and order
 
@@ -16,6 +16,7 @@ The ten feature decisions below were approved on 12 October 2026. Work is staged
 | 8 | Organized editor and power tools | Views, Device, Data & warnings, Diagnostics; grouped searchable settings, linked errors, appearance copy/presets, keyboard command palette; repairable invalid preview and undo/redo retained |
 | 9 | Diagnostics and all-screen simulator | Bounded filtered console/event history/export; the same gesture/control logic on Dashboard/Debug/Logs; buttons/encoder/LED, missing/stale data and failures; no default per-frame console spam |
 | 10 | JSON editor, diff and resource inspector | Explicit Apply, bounded parser, linked validation errors; rejected changes automatically marked INVALID PREVIEW; accepted serialization remains blocked until repaired; source/decoder and measured resource information |
+| 11 | Build and Flash workspace | Local Rust helper, prerequisite setup/checks, actual toolchain and argument display, shared profile/custom-clock validation, BOOTSEL device selection and verified flashing; existing 280/70/1.30 V retained in Expert mode, new candidates also exposed through Cargo |
 
 Stages may share a schema release where required by integration, but each commit must build and have meaningful focused tests. Historical JSON/binary import uses explicit frozen wire models, not structs that silently grow with new fields. Firmware rejects unsupported versions and records its fallback fault. No new ECU signal is admitted without the existing evidence/qualification gates.
 
@@ -35,4 +36,4 @@ Hardware references: [PIM715 schematic](https://cdn.shopify.com/s/files/1/0174/1
 
 Each stage tests positive paths, boundary rejection and recovery, timestamp discontinuities, stale/missing inputs and default migration. Integration covers accepted/rejected draft -> preview -> export -> embedded startup -> runtime -> completed display/LED state. Benchmark bounded hot paths and record regressions without presenting host time as Pico FPS. Existing host performance qualification remains open in `docs/performance/gauges-and-colours-2026-10-12.md`.
 
-The user's working profile is 280 MHz CPU / 70 MHz SPI at 1.30 V. Physical scanout/FPS, electrical/optical timings, all-path stack high-water, long-duration operation and DNUC ECU support require hardware validation. This task does not request flashing.
+The user reports that 280 MHz CPU / 70 MHz SPI at 1.30 V works on this device; 1.30 V exceeds the RP2350 datasheet's 1.21 V absolute maximum and is not a safety qualification. The user explicitly requested that it remain available in Expert mode. See the [flashing design](flashing-design.md) for divisor rounding, new candidate profiles, host prerequisites and artifact/device boundaries. Physical scanout/FPS, electrical/optical timings, all-path stack high-water, long-duration operation and DNUC ECU support require hardware validation. The new feature authorizes implementing flashing controls; it does not request flashing the connected device during development.

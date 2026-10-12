@@ -113,20 +113,56 @@ assert!(session.popup().is_none());
 Define the named test helpers in the test file by constructing the public batch types and a real LogStore with a host-safe mutex. Run `cargo test --manifest-path host/Cargo.toml --locked --test control_session` for RED.
 - [ ] Implement priority across the complete input transaction: recovery first; first actual button transition next; actual encoder-click transition next; remaining button actions in A/B/X/Y order followed by encoder motion and clicks. A transition discards all remaining input. Navigation from an encoder batch invokes one transition against the captured old screen and counts extra click events as discarded; it never chains mappings from newly selected screens. The session ignores time regressions and never reinterprets previous-screen actions on a new screen.
 - [ ] Reuse ViewSelection, Backlight and ControlAction::destination. Navigation interrupts feedback, clears popup and resets log anchor. Recovery calls wake_full, clears feedback and log anchor, selects Dashboard and preserves view/FPS/unit choices. View actions work only on Dashboard; brightness actions dispatch to existing exact preset/legacy algorithms; ordinary popup feedback interrupts a pending Dashboard shutdown. Statistics reset returns its observation separately and waits for the adapter's acknowledgment before showing Reset. Acknowledgments while off Dashboard show no popup.
-- [ ] Apply Logs older as delta -1 and newer as +1 through LogStore::scroll; LogsLive restores None. Empty or busy history must not invent movement. Encoder delta remains bounded +/-128 and presses at most8, with no unbounded loop on malformed input. Reject invalid action/page combinations even for a raw map. Validate observation ordering within each event. Aggregate accepted batch observations using earliest observed/latest accepted/count sum without dropping legitimate motion/click events merely because their timestamps arrive in opposite order; preserve checked overflow and count discarded observations. A logical action that changes no visible state is ignored consistently (single-view rotation, saturated brightness, unchanged log anchor). Do not report a reset applied before acknowledgment.
+- [ ] Apply Logs older as delta -1 and newer as +1 through LogStore::scroll; LogsLive restores None. Empty or busy history must not invent movement. Encoder delta remains bounded +/-128 and presses at most8, with no unbounded loop on malformed input. Reject invalid action/page combinations even for a raw map. Validate observation ordering within each event. `now_ms` is the consumption millisecond bucket: an observation is not future-dated when `accepted_us / 1000 <= now_ms`; require `observed_us <= accepted_us`. Cover +999 us within the current bucket as accepted and the next millisecond as rejected, including recovery. Preserve checked time-conversion overflow handling. Aggregate accepted batch observations using earliest observed/latest accepted/count sum without dropping legitimate motion/click events merely because their timestamps arrive in opposite order; preserve checked overflow and count discarded observations. A logical action that changes no visible state is ignored consistently (single-view rotation, saturated brightness, unchanged log anchor). Do not report a reset applied before acknowledgment.
 - [ ] Test every compatible action, None actions, custom encoder navigation, mixed movement/clicks, malformed/out-of-order observations, maximum batch, saturation, two-frame Off completion, popup expiration, reset acknowledgment, and three-screen round trips preserving selected view. Run focused controls/backlight/input/log/navigation suites, core/config tests and strict affected Clippy; then commit `refactor(controls): share action state across device and simulator`.
 
-### Task 4: Versioned config and firmware adapter integration
+### Task 4: Versioned control configuration and frozen migrations
 
-**Files:** Modify config model/defaults/validate/codec/legacy and tests; `configs/default.json/.eav`; firmware main/input/button adapters; editor error match adapters needed to compile. Freeze v2 import models under the host-only legacy module.
+**Files:** Modify `crates/dashboard-config/src/{model,defaults,validate,codec,legacy}.rs` and config tests; add `crates/dashboard-config/tests/fixtures/v2-default.{json,eav}` from the existing v2 defaults; regenerate `configs/default.{json,eav}`. Adapt editor exhaustive error matches and existing version tests only as needed to keep all consumers building. No firmware action dispatch or new UI controls in this task.
 
-**Interfaces:** Add `controls: ControlMap` to Config, bump VERSION to3, invoke `validate_controls` from shared validation with a structured controls field/error. `default_config` uses ControlMap::default. Host imports frozen v1/v2 and fills default controls. Firmware accepts only v3 and retains logged fallback on old/malformed images. Firmware consumes ControlGestures and ControlSession; remove duplicated hardcoded action semantics. Main still owns hardware I/O, layout, frame-completion, settings policy, reset-generation requests and observation accounting. The session owns page/view/backlight/FPS/unit/popup/log-anchor state.
+**Interfaces:** Add `controls: ControlMap` to Config, bump VERSION to3, and call `validate_controls` from shared validation. Represent the exact cause as `Field::Controls(ControlError)` so screen/button/gesture identity survives to the editor; keep ValidationError Copy/Eq. Map hold duration to Bounds, incompatible/reserved bindings to Incompatible, missing routes to Reference. `default_config` uses ControlMap::default. Host JSON-enabled imports accept frozen v1/v2 JSON and EAV and fill default controls. The no-JSON firmware decoder accepts only v3 and preserves logged boot fallback for older/malformed images.
 
-- [ ] Capture v2 fixtures before changing the codec; write failing migration and semantic validation tests. Freeze display/warning/presentation types used by old wire models so future fields cannot alter v1/v2 imports. Assert CRC/trailing/noncanonical-varint rejection remains intact.
-- [ ] Route A/B/X/Y levels through shared gestures, apply recovery first, page change second, and remaining actions deterministically. Discard encoder input from a transaction that changes screen. Keep reset observations tied to Core1 acknowledgment and maintenance resets. Preserve current last-view and log-anchor behavior. Replace the old hardcoded action function only after tests exercise its replacement.
-- [ ] Regenerate default JSON/EAV through dashboard-config-tools. Test both host outlines and config JSON/no-JSON, build Demo280/70 and Vehicle targets and measure ARM config sizes/static RAM/boot stack. Do not increase limits blindly. Update control docs with actual tap-on-release and holds. Commit `feat(firmware): apply configurable controls and recovery`.
+- [ ] Preserve the v2 fixture bytes before changing types. Add tests requiring both old versions to upgrade to current, preserve views/widget values/gauges/colours and initialize exact default controls. Test current custom controls round trips, missing/unknown fields, incompatible bindings, broken onboard routes and reserved recovery. A current v3 document missing controls is invalid rather than a silently defaulted partial document.
 
-### Task 5: Repairable control editor and simulator control foundation
+```rust
+#[test]
+fn current_configuration_requires_recovery_safe_controls() {
+    let mut config = dashboard_config::default_config();
+    config.controls.screens[0].buttons[0].hold = dashboard_config::ControlAction::None;
+    config.controls.screens[0].buttons[1].hold = dashboard_config::ControlAction::None;
+    let error = dashboard_config::validate(config).unwrap_err();
+    assert_eq!(error.field, dashboard_config::Field::Controls(
+        dashboard_config::ControlError::MissingViewNavigation));
+}
+```
+
+- [ ] Run `cargo test -p dashboard-config --locked --features json` for RED, then implement the field, errors and migrations. Freeze old display/warning/presentation/gauge wire shapes that later approved features will extend; do not deserialize an old payload into a growing current struct. Keep strict version/header matching, CRC, bounded length, no trailing bytes and canonical Postcard checks. Test malformed legacy documents with recalculated CRC so version/payload validation is actually reached. Confirm no-JSON builds reject both old EAV fixtures.
+- [ ] Regenerate defaults with `cargo run -p dashboard-config-tools --bin dashboard-config -- default configs/default.json` and the same command for `configs/default.eav`. Verify the tools import/compile path, editor load/migration tests and both config feature modes. Run workspace tests/strict affected Clippy and `cargo check -p dashboard-core --locked --target thumbv8m.main-none-eabihf` plus Wasm; preserve the10,240-byte target guard. Report actual file sizes and target type size evidence when available. Commit `feat(config): persist controls with strict legacy migration`.
+
+### Task 5: Firmware adapter and completed-frame integration
+
+**Files:** Modify firmware `pico2/src/main.rs` and its input/button adapters, related host integration tests and control hardware/product docs. Remove only the duplicated hardcoded button action adapter once its replacement is covered. Keep the encoder driver's debouncer if still used.
+
+**Interfaces:** Firmware consumes Config.controls, ControlGestures and ControlSession. Main owns GPIO/PWM, immutable boot config, layout, frame-completion/leases, settings policy, reset-generation requests and InputTracker; ControlSession exclusively owns page/view/backlight/FPS/unit/popup/log-anchor state. Its accessors from Task3 are `page`, `view_selection`, `view_id`, `backlight`, `backlight_mut`, `fps`, `boost_psi`, `popup`, `log_anchor`, `apply`, `expire_feedback`, and `statistics_acknowledged`.
+
+- [ ] Add regression traces for a page-changing button with same-batch encoder motion/clicks, old-page held releases, recovery while already Dashboard/Off, reset generation acknowledgment after page navigation, and maintenance suppression. For a transition transaction, assert destination selected once, brightness/view unchanged by stale encoder events, ignored counts account for the discarded events, and no reset popup before acknowledgment. Reuse the actual pure session rather than a duplicate mock dispatcher.
+- [ ] Sample A/B/X/Y into `[bool;4]` in that order, take the encoder batch, then capture monotonic input time and call the shared session once. Sampling the time after the batch avoids rejecting concurrently accepted encoder observations as future-dated. Do not dispatch encoder events using the newly changed screen. Route effects to reset requests and observation accounting, rebuild layout only on a view change, reset the FPS measurement window on a page change, and preserve warning-pager pause semantics. Log page/view/unit/FPS/recovery transitions only when they occur.
+
+```rust
+let controls = &dashboard_configuration.config.config().controls;
+let pressed = [btn_a.is_low(), btn_b.is_low(), btn_x.is_low(), btn_y.is_low()];
+let encoder = ENCODER_EVENTS.take_observed();
+let now_ms = Instant::now().as_millis();
+let buttons = gestures.update(controls, session.page(),
+    pressed, now_ms);
+let effects = session.apply(&dashboard_configuration.config, controls, buttons,
+    encoder, &crate::profiling::LOGS, now_ms);
+```
+
+- [ ] Feed actual completion tokens to `session.backlight_mut()` at the existing lease-completion sites; keep LED presentation and PWM tied to completed frames. Save the session's FPS/unit preferences through existing journal policy. Call `statistics_acknowledged` only when Core1's requested generation is observed; discard/reset pending observations under existing maintenance rules. On maintenance completion reset gestures and the encoder event boundary so held/reconnected inputs cannot fire old actions.
+- [ ] Run the affected host input/session/reset/backlight/navigation tests and both outlines once. Capture Demo280/70 and Vehicle maximum configuration ELF builds through the existing artifact capture workflow, verify memory/flash helpers and stack gates, and inspect changed adapter state transitions. Run strict firmware Clippy/format. Keep config/static RAM limits unchanged unless actual evidence requires a separately reviewed design. Update docs to describe tap-on-release, holds and protected recovery. Commit `feat(firmware): apply configurable controls and recovery`.
+
+### Task 6: Repairable control editor and simulator control foundation
 
 **Files:** Modify editor action/reducer and UI fields; create focused `configurator/src/ui/controls.rs` and simulator control module/tests; use existing file layout conventions for exports.
 
