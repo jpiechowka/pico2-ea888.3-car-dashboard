@@ -1,10 +1,18 @@
 # Dashboard backlight and warning indicator
 
-Dashboard encoder clicks cycle Full, Dim, Off, Full. The duty settings are
+Default Dashboard encoder clicks cycle Full, Dim, Off, Full. The duty settings are
 100%, 50% and 0%; they do not represent perceived luminance. Every firmware boot
 starts Full, including when a legacy journal contains an Off value. Unit/FPS
-settings retain persistence; brightness is runtime-only. Rotation is reserved
-for future views and has no effect with the current single dashboard view.
+settings retain persistence; brightness is runtime-only. Rotation selects
+configured views and has no effect with a single view.
+The immutable boot configuration supplies per-screen button and encoder bindings;
+see [the defaults and action rules](../configurator/control-mapping-design.md).
+Onboard taps commit on stable release, ordinary assigned holds fire once after
+800 ms by default, and every hold suppresses its release tap. Hold Y continuously
+for two seconds to recover Dashboard and Full brightness from any screen,
+including Dashboard Off. Recovery retains the selected view and cancels pending
+shutdown/feedback; it is fixed and independent of the optional encoder.
+Held keys at boot or after maintenance must release before acting.
 
 Full and Dim feedback lasts 1.5 seconds. Off feedback stays lit for two seconds
 measured from the first successful transfer of that popup. If its pixels already

@@ -17,13 +17,12 @@ mod view_config;
 mod config {
     pub use dashboard_pico2::config::*;
 }
-mod render {
-    pub use dashboard_pico2::render::*;
-}
 use core::sync::atomic::Ordering;
 
 use dashboard_pico2::acquisition::{DashboardSnapshot, ResetRequests};
 use dashboard_pico2::backlight::Backlight;
+use dashboard_pico2::control_session::ControlSession;
+use dashboard_pico2::controls::ControlGestures;
 use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
@@ -50,7 +49,7 @@ use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actu
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page};
-use crate::state::{ButtonState, Page, Popup, process_buttons};
+use crate::state::{Page, Popup};
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
@@ -303,7 +302,6 @@ async fn dashboard_task(
     let watchdog = crate::drivers::watchdog::RecoveryWatchdog::start(p.WATCHDOG);
     let reset_cause = watchdog.reset_label();
     log_info!("Previous reset: {}", reset_cause);
-    let mut view_selection = dashboard_pico2::view_state::ViewSelection::new(&dashboard_configuration.config);
     let mut warning_pager = dashboard_pico2::view_state::WarningPager::new();
     let mut dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
         &dashboard_configuration.config,
@@ -370,12 +368,16 @@ async fn dashboard_task(
     let dc = Output::new(p.PIN_16, Level::Low);
 
     // Backlight via PWM for brightness control (GP20 = PWM slice 2, channel A)
-    let mut backlight = Backlight::new();
+    let mut session = ControlSession::new(
+        &dashboard_configuration.config,
+        initial_settings.fps(),
+        initial_settings.boost_psi(),
+    );
     let backlight_divider = pwm_divider(cpu_freq_hz).expect("Unsupported backlight PWM clock");
     let mut pwm_config = PwmConfig::default();
     pwm_config.top = PWM_TOP;
     pwm_config.divider = backlight_divider.into();
-    pwm_config.compare_a = backlight.compare();
+    pwm_config.compare_a = session.backlight().compare();
     let mut backlight_pwm = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, pwm_config.clone());
     log_info!(
         "Configured CPU {} Hz, backlight PWM {} Hz",
@@ -422,18 +424,9 @@ async fn dashboard_task(
     let btn_x = Input::new(p.PIN_14, Pull::Up);
     let btn_y = Input::new(p.PIN_15, Pull::Up);
 
-    let mut btn_a_state = ButtonState::new();
-    let mut btn_b_state = ButtonState::new();
-    let mut btn_x_state = ButtonState::new();
-    let mut btn_y_state = ButtonState::new();
-
+    let mut gestures = ControlGestures::new();
     log_info!("Buttons initialized");
 
-    let mut current_page = Page::Dashboard;
-    let mut fps_mode = initial_settings.fps();
-    let mut show_boost_psi = initial_settings.boost_psi();
-    let mut active_popup: Option<Popup> = None;
-    let mut reset_requested = false;
     let mut input_tracker = dashboard_pico2::input_trace::InputTracker::new();
     let mut reset_input: Option<(dashboard_pico2::input_trace::Observation, u64)> = None;
 
@@ -450,8 +443,6 @@ async fn dashboard_task(
     let mut cpu1_util_percent = 0u32;
 
     let mut flush_in_progress = None;
-
-    let mut log_anchor: Option<u64> = None;
 
     let mut measurements = DashboardSnapshot::EMPTY;
     measurements.mode = data_mode();
@@ -483,17 +474,19 @@ async fn dashboard_task(
         let elapsed_ms = animation_start.elapsed().as_millis();
         let blink_on = dashboard_pico2::animations::blink_on(elapsed_ms);
 
-        let input = process_buttons(
-            &mut btn_x_state,
-            &mut btn_y_state,
-            &mut btn_a_state,
-            &mut btn_b_state,
-            btn_x.is_low(),
-            btn_y.is_low(),
-            btn_a.is_low(),
-            btn_b.is_low(),
-            current_page,
-            fps_mode,
+        let controls = &dashboard_configuration.config.config().controls;
+        let pressed = [btn_a.is_low(), btn_b.is_low(), btn_x.is_low(), btn_y.is_low()];
+        let encoder = ENCODER_EVENTS.take_observed();
+        // Sample after taking the batch: concurrently accepted observations are eligible.
+        let input_ms = Instant::now().as_millis();
+        let buttons = gestures.update(controls, session.page(), pressed, input_ms);
+        let input = session.apply(
+            &dashboard_configuration.config,
+            controls,
+            buttons,
+            encoder,
+            &crate::profiling::LOGS,
+            input_ms,
         );
         let consumed_us = Instant::now().as_micros();
         input_tracker.ignore(input.ignored);
@@ -512,113 +505,42 @@ async fn dashboard_task(
             }
         }
 
-        if let Some(new_mode) = input.new_fps_mode {
-            fps_mode = new_mode;
-            log_info!("FPS: {}", fps_mode.label());
+        if input.fps_changed {
+            log_info!("FPS: {}", session.fps().label());
         }
-        if let Some(new_page) = input.new_page {
-            current_page = new_page;
-            backlight.interrupt_feedback();
-            active_popup = None;
+        if input.units_changed {
+            log_info!("Boost: {}", if session.boost_psi() { "PSI" } else { "BAR" });
+        }
+        if input.page_changed {
             fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
             current_fps = 0.0;
             average_fps = 0.0;
             log_info!(
                 "Page: {}",
-                match current_page {
+                match session.page() {
                     Page::Dashboard => "Dashboard",
                     Page::Debug => "Debug",
                     Page::Logs => "Logs",
                 }
             );
         }
-        if input.boost_unit_toggled {
-            show_boost_psi = !show_boost_psi;
-            log_info!("Boost: {}", if show_boost_psi { "PSI" } else { "BAR" });
+        if input.view_changed {
+            dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
+                &dashboard_configuration.config,
+                session.view_id(),
+                dashboard_configuration.fault.is_some(),
+            )
+            .expect("selected validated view");
+            warning_pager.pause(input_ms);
+            log_info!("View: {}", dashboard_layout.name());
         }
+        if input.recovered {
+            log_info!("Controls recovered: Dashboard Full");
+        }
+        session.expire_feedback(input_ms);
         if input.reset_requested {
-            reset_requested = true;
-            log_info!("Stats reset requested");
-        }
-        if let Some(popup) = input.show_popup {
-            backlight.interrupt_feedback();
-            active_popup = Some(popup);
-        }
-
-        // --- Encoder events (rotation + button press) ---
-        let encoder = ENCODER_EVENTS.take_observed();
-        let (enc_delta, enc_presses) = (encoder.delta, encoder.presses);
-        let mut motion_applied = false;
-        let mut press_applied = false;
-
-        match current_page {
-            Page::Logs => {
-                // Pin the visible end sequence; ring count stops growing at
-                // capacity and cannot anchor a view during overwrites.
-                if enc_delta != 0 {
-                    let old_anchor = log_anchor;
-                    crate::profiling::LOGS.scroll(&mut log_anchor, enc_delta);
-                    motion_applied = old_anchor != log_anchor;
-                }
-                // Button does nothing on Logs page
-            }
-            Page::Dashboard => {
-                let at = Instant::now().as_millis();
-                let effect = view_selection.encoder(
-                    &dashboard_configuration.config,
-                    &mut backlight,
-                    enc_delta,
-                    enc_presses,
-                    at,
-                );
-                if dashboard_layout.id() != view_selection.id() {
-                    dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
-                        &dashboard_configuration.config,
-                        view_selection.id(),
-                        dashboard_configuration.fault.is_some(),
-                    )
-                    .expect("selected validated view");
-                    warning_pager.pause(at);
-                }
-                motion_applied = effect.motion_applied;
-                press_applied = effect.press_applied;
-                if let Some(popup) = effect.popup {
-                    active_popup = Some(popup);
-                }
-            }
-            Page::Debug => {
-                let effect = backlight.encoder(current_page, enc_delta, enc_presses, Instant::now().as_millis());
-                motion_applied = effect.motion_applied;
-                press_applied = effect.press_applied;
-                if let Some(popup) = effect.popup {
-                    active_popup = Some(popup);
-                }
-            }
-        }
-        for (observation, applied) in [(encoder.motion, motion_applied), (encoder.button, press_applied)] {
-            if let Some(observation) = observation {
-                if applied {
-                    input_tracker.consume(observation, Instant::now().as_micros());
-                } else {
-                    input_tracker.ignore(observation.events);
-                }
-            }
-        }
-
-        // Reset log scroll when leaving Logs page
-        if input.new_page.is_some() {
-            log_anchor = None;
-        }
-
-        if let Some(ref popup) = active_popup
-            && backlight.expire_popup(*popup, Instant::now().as_millis())
-        {
-            active_popup = None;
-        }
-
-        if reset_requested {
             crate::tasks::acquisition::RESET_STATISTICS.signal(reset_requests.request());
-            reset_requested = false;
+            log_info!("Stats reset requested");
         }
         if let Some(snapshot) = measurement_receiver.try_changed()
             && measurements.accept(snapshot)
@@ -626,23 +548,20 @@ async fn dashboard_task(
         {
             log_info!("Stats reset acknowledged");
             if let Some((observation, consumed_us)) = reset_input.take() {
-                if current_page == Page::Dashboard {
+                if session.page() == Page::Dashboard {
                     input_tracker.apply(observation, consumed_us, Instant::now().as_micros());
                 } else {
                     input_tracker.ignore(observation.events);
                 }
             }
-            if current_page == Page::Dashboard {
-                backlight.interrupt_feedback();
-                active_popup = Some(Popup::Reset(Instant::now().as_millis()));
-            }
+            session.statistics_acknowledged(Instant::now().as_millis());
         }
         let now_ms = Instant::now().as_millis();
-        apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-        apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
+        apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
+        apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
         // Brightness is runtime-only. Keep legacy journal fields canonical,
         // preserving saved boost/FPS without writing flash for every click.
-        let desired = Settings::new(100, 100, show_boost_psi, fps_mode).expect("invalid live preferences");
+        let desired = Settings::new(100, 100, session.boost_psi(), session.fps()).expect("invalid live preferences");
         settings_policy.set(desired, now_ms).expect("settings clock regressed");
         if pending_save.is_none() {
             pending_save = settings_policy.begin(now_ms).expect("invalid save policy");
@@ -672,11 +591,11 @@ async fn dashboard_task(
             average_fps = rate.average;
         }
 
-        let user_overlay = active_popup.as_ref().map(|popup| {
+        let user_overlay = session.popup().as_ref().map(|popup| {
             match popup {
                 Popup::Reset(_) => Overlay::Reset,
-                Popup::Fps(_) => Overlay::Fps(fps_mode),
-                Popup::BoostUnit(_) => Overlay::BoostUnit(show_boost_psi),
+                Popup::Fps(_) => Overlay::Fps(session.fps()),
+                Popup::BoostUnit(_) => Overlay::BoostUnit(session.boost_psi()),
                 Popup::Brightness(_, brightness) => Overlay::Brightness(*brightness),
                 Popup::View(_) => {
                     Overlay::View(
@@ -686,11 +605,11 @@ async fn dashboard_task(
                 }
             }
         });
-        let warning_page = if current_page == Page::Dashboard && user_overlay.is_none() {
+        let warning_page = if session.page() == Page::Dashboard && user_overlay.is_none() {
             warning_pager.select(
                 &dashboard_configuration.config,
                 &measurements,
-                view_selection.id(),
+                session.view_id(),
                 now_ms,
                 blink_on,
             )
@@ -698,7 +617,7 @@ async fn dashboard_task(
             warning_pager.pause(now_ms);
             None
         };
-        let visible_overlay = Overlay::configured_for_page(current_page, user_overlay, warning_page);
+        let visible_overlay = Overlay::configured_for_page(session.page(), user_overlay, warning_page);
         input_tracker.exclude_obscured(visible_overlay.and_then(Overlay::warning_phase).is_some());
         let render_start = Instant::now();
         let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
@@ -709,7 +628,7 @@ async fn dashboard_task(
         panel_history.begin_render(token).expect("invalid render generation");
         let mut display = St7789Renderer::new(render_frame.buffer());
 
-        match current_page {
+        match session.page() {
             Page::Dashboard => {
                 let scene = DashboardScene {
                     layout: Some(dashboard_layout),
@@ -717,8 +636,8 @@ async fn dashboard_task(
                     status: vehicle_status,
                     now_ms,
                     blink_on,
-                    boost_psi: show_boost_psi,
-                    fps_mode,
+                    boost_psi: session.boost_psi(),
+                    fps_mode: session.fps(),
                     fps_instant: current_fps,
                     fps_average: average_fps,
                     backgrounds: [BLACK; 8], // Shared configured renderer owns warning colours.
@@ -755,7 +674,7 @@ async fn dashboard_task(
                         average_fps,
                         frame_count,
                         trace: last_trace,
-                        brightness: backlight.brightness(),
+                        brightness: session.backlight().brightness(),
                         settings_status: settings_status.label(has_saved_settings),
                         buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                         buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
@@ -790,11 +709,11 @@ async fn dashboard_task(
                 dashboard_cache.invalidate(render_idx);
                 display.clear(BLACK).ok();
                 render_work.checkpoint().await;
-                draw_logs_page(&mut display, log_anchor, &mut render_work).await;
+                draw_logs_page(&mut display, session.log_anchor(), &mut render_work).await;
             }
         }
 
-        if current_page != Page::Dashboard
+        if session.page() != Page::Dashboard
             && let Some(overlay) = visible_overlay
         {
             overlay.draw(&mut display);
@@ -809,9 +728,11 @@ async fn dashboard_task(
         let next_frame = if let Some(expected) = flush_in_progress.take() {
             let completed = wait_completed(&mut lifecycle, expected).await;
             assert!(led_presentation.complete(expected), "wrong indicator completion");
-            backlight.frame_completed(expected, Instant::now().as_millis());
-            apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-            apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
+            session
+                .backlight_mut()
+                .frame_completed(expected, Instant::now().as_millis());
+            apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
+            apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
             panel_history
                 .complete(expected)
                 .expect("invalid completed panel generation");
@@ -841,10 +762,11 @@ async fn dashboard_task(
                 Err(tasks::maintenance::SaveError::Preparation(error)) => log_fault!("Save preparation: {:?}", error),
                 Err(tasks::maintenance::SaveError::Operation(error)) => log_settings_error(&error),
             }
-            btn_a_state = ButtonState::new();
-            btn_b_state = ButtonState::new();
-            btn_x_state = ButtonState::new();
-            btn_y_state = ButtonState::new();
+            gestures.reset();
+            ENCODER_EVENTS.clear();
+            if let Some((observation, _)) = reset_input.take() {
+                input_tracker.ignore(observation.events);
+            }
             // Render again with current wall-clock ages and post-park link
             // quality. Never present this pre-maintenance sensor snapshot.
             lifecycle.discard(token).expect("maintenance retained a live frame");
@@ -882,9 +804,9 @@ async fn dashboard_task(
         if idle {
             lifecycle.discard(token).expect("cannot discard active frame");
             assert!(led_presentation.unchanged(visible_overlay), "pending indicator at idle");
-            backlight.frame_unchanged(Instant::now().as_millis());
-            apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-            apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
+            session.backlight_mut().frame_unchanged(Instant::now().as_millis());
+            apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
+            apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
             spare_frame = Some(next_frame);
             crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
             // Keep the completed reference unchanged and reuse this render buffer.
@@ -901,7 +823,7 @@ async fn dashboard_task(
                 led_presentation.submit(token, visible_overlay),
                 "pending indicator submission"
             );
-            backlight.frame_submitted(token);
+            session.backlight_mut().frame_submitted(token);
             input_tracker.submitted();
             assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
             BUFFER_SWAPS.fetch_add(1, Ordering::Relaxed);
@@ -909,9 +831,11 @@ async fn dashboard_task(
             if cfg!(feature = "serial-display") {
                 let completed = wait_completed(&mut lifecycle, token).await;
                 assert!(led_presentation.complete(token), "wrong serial indicator completion");
-                backlight.frame_completed(token, Instant::now().as_millis());
-                apply_backlight(&mut backlight_pwm, &mut pwm_config, &backlight);
-                apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
+                session
+                    .backlight_mut()
+                    .frame_completed(token, Instant::now().as_millis());
+                apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
+                apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
                 panel_history.complete(token).expect("invalid serial panel generation");
                 crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
                 last_trace = Some(completed.trace);
@@ -960,6 +884,6 @@ async fn dashboard_task(
 
         crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
-        apply_indicator(&mut led_r, &mut led_g, &led_presentation, &backlight);
+        apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
     }
 }

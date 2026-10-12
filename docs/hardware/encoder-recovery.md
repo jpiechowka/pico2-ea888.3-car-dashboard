@@ -12,7 +12,7 @@ remain unavailable until their pin mapping is established.
    documents the address, GPIO24, firmware product check, and the reversed
    direction of the supplied PID5880 encoder. Raw deltas are now negated so
    clockwise increases the legacy Debug brightness setting. Dashboard rotation
-   is reserved for future views. Direction remains to be checked physically.
+   selects configured views. Direction remains to be checked physically.
 2. [Arduino driver source](https://github.com/adafruit/Adafruit_Seesaw/blob/985b41efae3d9a8cba12a7b4d9ff0d226f9e0759/Adafruit_seesaw.cpp)
    and [encoder example](https://github.com/adafruit/Adafruit_Seesaw/blob/985b41efae3d9a8cba12a7b4d9ff0d226f9e0759/examples/encoder/encoder_basic/encoder_basic.ino)
    establish status/version, GPIO input/pull-up commands, four-byte big-endian
@@ -63,3 +63,24 @@ shared state. Only fixed scalar metadata moves under the lock. Rejected clock
 regressions and reconnect discards are counted, and values cannot be consumed
 with timestamps from a different batch. See [input correlation and its measured
 host cost](../performance/frame-traces.md#input-correlation).
+
+## Onboard transaction boundary
+
+Main samples A/B/X/Y on GP12/13/14/15 with pull-ups and passes their
+active-low levels to the shared gesture recognizer. The optional encoder batch
+is taken before capturing input time. One ControlSession applies the captured
+page's actions, with protected Y recovery first and screen transitions next.
+A page-changing button discards same-batch motion/clicks rather than applying
+them to the destination; held old-page releases cannot trigger new bindings.
+Maintenance resets onboard gestures and clears pending encoder events. The
+encoder owner also reinitializes its debouncer and consumes accumulated motion
+at its existing resume boundary. Statistics feedback waits for the matching
+acquisition reset generation, even when navigation occurs before acknowledgment.
+
+The [official board definition](https://github.com/pimoroni/pimoroni-pico/blob/main/libraries/pico_display_2/pico_display_2.hpp)
+lists A/B/X/Y as GP12/13/14/15. The [PIM715 schematic](https://cdn.shopify.com/s/files/1/0174/1800/files/pico_display_2_8_schematic.pdf?v=1728314048)
+connects A/B/X/Y switches from GP12/13/14/15 to ground. Vendored Embassy RP
+0.10.0 `gpio.rs` Input::new configures input then pull; Input::is_low delegates
+to the SIO input bit being zero. The adapter retains these electrical settings.
+The encoder's bounded driver mailbox and GPIO/PWM ownership are unchanged.
+Tap/hold timing and recovery still require physical validation under load.
