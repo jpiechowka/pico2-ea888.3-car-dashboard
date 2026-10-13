@@ -12,6 +12,7 @@ use dashboard_core::input_trace::Observation;
 use dashboard_core::logging::{Level, LogStore};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use crate::json_draft::JsonPreviewProof;
 use crate::simulation::Simulation;
 static NEXT_SOURCE_OWNER: AtomicUsize = AtomicUsize::new(1);
 fn issue_source_owner() -> Option<NonZeroUsize> {
@@ -31,6 +32,7 @@ mod scenarios;
 pub use scenarios::*;
 
 struct Inspection {
+    candidate: Option<JsonPreviewProof>,
     session: ControlSession,
     gestures: ControlGestures,
     map: ControlMap,
@@ -138,13 +140,49 @@ impl ControlSimulator {
         &mut self,
         map: ControlMap,
     ) {
-        if self.inspection.as_ref().is_some_and(|i| i.map == map) {
+        if self
+            .inspection
+            .as_ref()
+            .is_some_and(|i| i.candidate.is_none() && i.map == map)
+        {
             return;
         }
+        self.begin_inspection(map, None);
+    }
+
+    /// A valid candidate session uses exactly the same sealed proof as its pixels.
+    pub fn inspect_candidate(
+        &mut self,
+        proof: JsonPreviewProof,
+    ) {
+        if self.inspection.as_ref().is_some_and(|i| {
+            i.candidate
+                .as_ref()
+                .is_some_and(|p| p.projection() == proof.projection())
+        }) {
+            return;
+        }
+        self.begin_inspection(proof.config().config().controls, Some(proof));
+    }
+
+    pub fn inspection_candidate(&self) -> Option<&JsonPreviewProof> {
+        self.inspection.as_ref().and_then(|i| i.candidate.as_ref())
+    }
+
+    fn begin_inspection(
+        &mut self,
+        map: ControlMap,
+        candidate: Option<JsonPreviewProof>,
+    ) {
         self.cancel_inputs();
         self.invalid = true;
         let mut inspection = Inspection {
-            session: ControlSession::new(self.config(), self.session().fps(), self.session().boost_psi()),
+            session: ControlSession::new(
+                candidate.as_ref().map_or(self.config(), |p| p.config()),
+                self.session().fps(),
+                self.session().boost_psi(),
+            ),
+            candidate,
             gestures: ControlGestures::new(),
             map,
             now_ms: self.now_ms(),
@@ -267,7 +305,9 @@ impl ControlSimulator {
             i.session.expire_feedback(i.now_ms);
             let buttons = i.gestures.update(&i.map, i.session.page(), pressed, i.now_ms);
             let effects = i.session.apply(
-                self.simulation.configuration(),
+                i.candidate
+                    .as_ref()
+                    .map_or(self.simulation.configuration(), |p| p.config()),
                 &i.map,
                 buttons,
                 encoder,

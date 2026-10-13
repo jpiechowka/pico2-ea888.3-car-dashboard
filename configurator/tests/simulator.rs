@@ -2,6 +2,81 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::simulator::ControlSimulator;
 
 #[test]
+fn unapplied_json_controls_use_candidate_view_membership_and_order() {
+    let accepted = validate(default_config()).unwrap();
+    let mut sim = ControlSimulator::new(accepted.clone());
+    let source = sim.source_key();
+    let snapshot = sim.snapshot();
+    let accepted_view = sim.session().view_id();
+    let mut raw = accepted.config().clone();
+    raw.views.clear();
+    for id in [9, 4, 7] {
+        raw.views
+            .push(View {
+                id,
+                name: format!("VIEW {id}").as_str().try_into().unwrap(),
+            })
+            .unwrap();
+    }
+    raw.boot_view = 4;
+    for w in &mut raw.widgets {
+        w.view = 4;
+    }
+    let mut editor = dashboard_configurator::editor::Editor::default();
+    let handle = editor.open_json().unwrap();
+    let token = editor
+        .set_json_text(handle, serde_json::to_string(&raw).unwrap())
+        .unwrap();
+    editor.finish_json_parse(token).unwrap();
+    let candidate = editor.json_draft().unwrap().preview_proof().unwrap();
+    sim.inspect_candidate(candidate.clone());
+    assert_eq!(
+        sim.display_session().view_id(),
+        4,
+        "candidate boot view replaces removed accepted view"
+    );
+    for wanted in [7, 9, 4] {
+        sim.rotate(1);
+        assert_eq!(sim.display_session().view_id(), wanted, "candidate declared view order");
+    }
+    assert_eq!(sim.source_key(), source);
+    assert_eq!(sim.snapshot(), snapshot);
+    assert_eq!(sim.session().view_id(), accepted_view);
+    sim.inspect_candidate(candidate.clone());
+    assert_eq!(
+        sim.display_session().view_id(),
+        4,
+        "same current proof preserves inspection"
+    );
+    sim.rotate(1);
+    sim.inspect_candidate(candidate);
+    assert_eq!(sim.display_session().view_id(), 7);
+    raw.views.swap(0, 2);
+    raw.boot_view = 9;
+    let token = editor
+        .set_json_text(handle, serde_json::to_string(&raw).unwrap())
+        .unwrap();
+    editor.finish_json_parse(token).unwrap();
+    let revised = editor.json_draft().unwrap().preview_proof().unwrap();
+    sim.inspect_candidate(revised);
+    assert_eq!(
+        sim.display_session().view_id(),
+        9,
+        "changed owned candidate with unchanged controls installs current proof"
+    );
+    sim.rotate(1);
+    assert_eq!(sim.display_session().view_id(), 7);
+    sim.inspect_invalid(raw.controls);
+    assert!(sim.inspection_candidate().is_none());
+    assert_eq!(
+        sim.display_session().view_id(),
+        accepted_view,
+        "invalid/unparsed fallback retires former candidate even with identical bindings"
+    );
+    assert_eq!(sim.snapshot(), snapshot);
+}
+
+#[test]
 fn scenarios_use_real_gate_without_refreshing_unselected_channels() {
     use dashboard_configurator::simulator::{InputOutcome, Scenario, SimulationInput};
     use dashboard_core::samples::{SampleError, SensorId};

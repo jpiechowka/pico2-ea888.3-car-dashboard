@@ -93,6 +93,10 @@ fn schedule_inspection(
         });
         let destination = id.as_deref().and_then(element);
         let destination = destination.filter(|node| !node.has_attribute("disabled"));
+        if ui.editor.try_with_untracked(Editor::has_pending_json) == Some(true) {
+            json_editor::open(ui);
+            return;
+        }
         if let Some(node) = destination {
             let mut parent = node.parent_element();
             while let Some(ancestor) = parent {
@@ -116,6 +120,41 @@ fn schedule_inspection(
         Err(_) => {
             cancel_focus(ui);
             ui.notice.set("The browser could not schedule field focus".into());
+        }
+    }
+}
+
+pub(super) fn focus_json(
+    ui: Ui,
+    handle: dashboard_configurator::json_draft::JsonDraftHandle,
+) {
+    cancel_focus(ui);
+    let mut issued = None;
+    ui.focus.update(|state| issued = state.requests.issue());
+    let Some(token) = issued else {
+        ui.notice.set("Focus identity exhausted; reopen Studio".into());
+        return;
+    };
+    match request_animation_frame_with_handle(move || {
+        if ui.focus.try_with_untracked(|state| state.requests.is_current(token)) != Some(true)
+            || ui.workspace.try_with_untracked(WorkspaceState::active) != Some(Workspace::Diagnostics)
+            || ui
+                .editor
+                .try_with_untracked(|editor| editor.json_draft().map(|d| d.handle()))
+                != Some(Some(handle))
+        {
+            return;
+        }
+        let _ = ui.focus.try_update(|state| state.frame = None);
+        if let Some(node) = element("studio-json-text").filter(usable) {
+            focus(&node);
+            node.scroll_into_view();
+        }
+    }) {
+        Ok(frame) => ui.focus.update(|state| state.frame = Some(frame)),
+        Err(_) => {
+            ui.notice
+                .set("The browser could not focus JSON; use its visible editor".into())
         }
     }
 }
@@ -145,6 +184,10 @@ pub fn inspect_location(
         ui.inspection.set(None);
         ui.error_inspection.set(Some(target));
         workspaces::open(ui, Workspace::Diagnostics, GroupId::Files);
+        if let Some(handle) = ui.editor.with_untracked(|e| e.json_draft().map(|d| d.handle())) {
+            focus_json(ui, handle);
+            return;
+        }
         schedule_inspection(ui, target, None, Workspace::Diagnostics);
     } else {
         ui.notice.set("Field changed; refresh commands and results".into());
@@ -318,6 +361,7 @@ pub(super) fn execute(
                 CommandEffect::Inspect(target) => inspect(ui, target),
                 CommandEffect::Changed => {}
                 CommandEffect::Export(format) => io::export(ui, format == ExportFormat::Json),
+                CommandEffect::OpenJson(handle) => json_editor::focus(ui, handle),
                 CommandEffect::RecoverSimulator => controls::recover(ui),
             }
             true

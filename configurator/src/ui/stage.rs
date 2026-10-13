@@ -297,12 +297,12 @@ pub fn Library(ui: Ui) -> impl IntoView {
         <aside class="library panel"><div class="panel-heading"><p class="eyebrow">"SENSOR LIBRARY"</p><h2>"Start with a signal."</h2><p>"Drag onto the grid, or use + to add."</p></div>
             <label class="search"><span aria-hidden="true">"⌕"</span><input type="search" aria-label="Find a sensor" placeholder="Find a sensor" on:input=move |e|search.set(event_target_value(&e))/></label>
             <div class="library-list"><For each=move || {Channel::ALL.into_iter().filter(|c|format!("{} {:?}",c.label(),c).to_lowercase().contains(&search.get().to_lowercase())).collect::<Vec<_>>()} key=|c|c.index() children=move |channel|view!{
-                <div class="library-item"><button class="sensor-drag" aria-label=format!("Drag {}",channel.label()) disabled=move ||ui.invalid()
+                <div class="library-item"><button class="sensor-drag" aria-label=format!("Drag {}",channel.label()) disabled=move ||ui.inspection_active()
                     on:pointerdown=move |e|start(ui,e,PointerTarget::Library(channel)) on:click=move |e|{if e.detail()==0{add(ui,channel);}}>
                     <span class="sensor-mark" aria-hidden="true">{match channel{Channel::Boost=>"↗",Channel::Lambda=>"λ",Channel::Battery=>"ϟ",_=>"°"}}</span>
                     <span><b>{channel.label()}</b><small>{match channel{Channel::Boost=>"Relative pressure",Channel::Lambda=>"Mixture + optional AFR",Channel::Battery=>"ECU module voltage",Channel::Water=>"Coolant temperature",Channel::Oil=>"Engine oil temperature",Channel::Dsg=>"DSG oil temperature",Channel::Iat=>"Intake air temperature",Channel::Egt=>"Exhaust temperature"}}</small></span>
                     <span class="grip" aria-hidden="true">"⠿"</span>
-                </button><button class="library-add" aria-label=format!("Add {}",channel.label()) disabled=move ||ui.invalid() on:click=move |_|add(ui,channel)>"+"</button></div>
+                </button><button class="library-add" aria-label=format!("Add {}",channel.label()) disabled=move ||ui.inspection_active() on:click=move |_|add(ui,channel)>"+"</button></div>
             }/></div>
             <div class="library-note"><span class="chip">"HARDWARE BOUNDS"</span><p>"Eight cells. Three sizes. Every view checked before export."</p><div class="mini-grid" aria-hidden="true">{(0..8).map(|_|view!{<i></i>}).collect_view()}</div><p class="hint">"Encoder: rotate for views, click for Full / Dim / Off. Debug and Logs keep their controls."</p></div>
         </aside>
@@ -326,6 +326,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
     let preview = RwSignal::new(Preview::default());
     let queued = ui.dock.appearance_queued;
     let revision = Memo::new(move |_| ui.editor.with(Editor::revision));
+    let json = Memo::new(move |_| json_editor::projection(ui));
     let source = Memo::new(move |_| {
         ui.dock
             .sim
@@ -333,6 +334,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
     });
     Effect::new(move |_| {
         revision.get();
+        json.get();
         source.get();
         ui.dock.inspection_stamp.get();
         ui.psi.get();
@@ -340,15 +342,21 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         ui.sample_ms.get();
         ui.sample_set.get();
         ui.dock.mode.get();
-        if ui.dock.mode.get_untracked() == PreviewMode::Simulation && ui.invalid() {
+        if ui.dock.mode.get_untracked() == PreviewMode::Simulation && ui.inspection_active() {
             ui.dock.sim.with(|s| {
                 s.display_session().page();
                 s.display_now_ms();
             });
         }
-        if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.invalid() {
+        if ui.dock.mode.get_untracked() == PreviewMode::Simulation
+            && !ui.inspection_active()
+            && ui.json.pixels.get_untracked().is_none()
+        {
             return;
         }
+        // JSON changes have their own identity; enter the bounded controls
+        // projection before capturing a source callback, without new accepted state.
+        ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
         // Mount/readiness is reactive too. Multiple input events share one draw.
         if ui.canvas.get().is_none() || queued.get_untracked() {
             return;
@@ -369,7 +377,10 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
             let Some(canvas) = ui.canvas.get_untracked() else {
                 return;
             };
-            if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.invalid() {
+            if ui.dock.mode.get_untracked() == PreviewMode::Simulation
+                && !ui.inspection_active()
+                && ui.json.pixels.get_untracked().is_none()
+            {
                 return;
             }
             // Appearance/invalid inspection pixels never consume the retained timing candidate.
@@ -385,11 +396,62 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 let mut result = Ok(());
                 preview.update(|p| {
                     result = (|| {
+                        let simulation = ui.dock.mode.get_untracked() == PreviewMode::Simulation;
                         let draft = e.diagnostic();
-                        if ui.dock.mode.get_untracked() == PreviewMode::Simulation && ui.invalid() {
+                        if e.has_pending_json() {
+                            use dashboard_configurator::json_draft::{JsonState, inspection_view};
+                            match e.json_draft().map(|draft| draft.state()) {
+                                Some(JsonState::Candidate { config, .. }) => {
+                                    let preferred = if simulation {
+                                        ui.dock.sim.with_untracked(|sim| sim.display_session().view_id())
+                                    } else {
+                                        e.selection().view
+                                    };
+                                    let view = inspection_view(config, preferred).unwrap_or(e.selection().view);
+                                    match ui.json.with_candidate(e, |candidate| {
+                                        if simulation {
+                                            ui.dock.sim.with_untracked(|sim| {
+                                                p.render_candidate_simulation(sim, candidate).map(|_| ())
+                                            })
+                                        } else {
+                                            p.render(candidate.config(), view, options).map(|_| ())
+                                        }
+                                    }) {
+                                        Ok(rendered) => rendered,
+                                        Err(EditorError::Validation(error)) => {
+                                            let candidate = dashboard_configurator::diagnostic::Draft {
+                                                config: config.as_ref().clone(),
+                                                raw: Vec::new(),
+                                                error: EditorError::Validation(error),
+                                            };
+                                            if simulation {
+                                                ui.dock.sim.with_untracked(|sim| {
+                                                    p.render_inspection(sim, Some(&candidate)).map(|_| ())
+                                                })
+                                            } else {
+                                                let safe_view = inspection_view(e.preview().config(), view)
+                                                    .unwrap_or(e.preview().config().boot_view);
+                                                p.render_diagnostic(e.preview(), &candidate, safe_view, options)
+                                                    .map(|_| ())
+                                            }
+                                        }
+                                        Err(_) => Err(dashboard_configurator::preview::PreviewError::InspectionOnly),
+                                    }
+                                }
+                                // No former candidate can stand in for current unparsed/invalid text.
+                                _ if simulation => {
+                                    ui.dock.sim.with_untracked(|sim| p.render_simulation(sim).map(|_| ()))
+                                }
+                                _ => p.render(e.preview(), e.selection().view, options).map(|_| ()),
+                            }
+                        } else if simulation && ui.invalid() {
                             ui.dock
                                 .sim
                                 .with_untracked(|sim| p.render_inspection(sim, draft.as_ref()).map(|_| ()))
+                        } else if simulation && ui.json.pixels.get_untracked().is_some() {
+                            // Discard / identical Apply restores read-only accepted pixels;
+                            // timing pending bytes and completion metadata remain untouched.
+                            ui.dock.sim.with_untracked(|sim| p.render_simulation(sim).map(|_| ()))
                         } else {
                             match draft.as_ref() {
                                 Some(draft) => p.render_diagnostic(e.preview(), draft, e.selection().view, options),
@@ -426,8 +488,25 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
             ui.dock
                 .pixels_key
                 .set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));
-            ui.dock.displayed.set(PreviewMode::Appearance);
-            ui.dock.invalid_pixels.set(ui.invalid());
+            ui.json
+                .pixels
+                .set(json_editor::projection(ui).filter(|_| ui.json_pending()));
+            ui.dock.displayed.set(
+                if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.inspection_active() {
+                    PreviewMode::Simulation
+                } else {
+                    PreviewMode::Appearance
+                },
+            );
+            ui.dock.invalid_pixels.set(
+                ui.invalid()
+                    || json_editor::projection(ui).is_some_and(|p| {
+                        matches!(
+                            p.phase(),
+                            dashboard_configurator::json_draft::JsonPhase::SemanticInvalid
+                        )
+                    }),
+            );
             metrics::first_frame(ui);
             let submitted = now();
             let render = submitted - started;
@@ -452,11 +531,12 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         }
     });
     view! {
+        <div class="json-preview-status" hidden=move ||json.get().is_none() role="status"><strong>{move ||json_editor::label(ui)}</strong><span hidden=move ||!ui.json_pending()>"Apply or Discard to resume accepted edits, export and timing completion."</span><button hidden=move ||!ui.json_pending() on:click=move |_|json_editor::open(ui)>"Resolve JSON edits"</button></div>
         <div class="invalid-preview-heading" hidden=move || !ui.invalid() && !ui.dock.invalid_pixels.get() role="status"><strong>"INVALID PREVIEW"</strong><span>{move ||if ui.invalid(){"Rejected draft · save and export blocked"}else{"Last inspection pixels · restore timing pixels in Diagnostics"}}</span></div>
         <p class="hint">{move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW · candidate only; accepted acquisition and pending pixels retained"}else if ui.dock.pixels_key.get()!=Some(ui.editor.with(Editor::accepted_config_key)){"Last frame · configuration changed · submit a current frame in Diagnostics"}else if ui.dock.displayed.get()==PreviewMode::Simulation {"Synthetic Dashboard / Debug / Logs · browser completion is not physical scanout"}else if ui.dock.mode.get()==PreviewMode::Simulation {"Last appearance frame · submit or restore timing pixels in Diagnostics"}else{"Appearance preview · generated history"}}</p>
         <div class="display-stage" class:invalid-preview=move ||ui.invalid() ||ui.dock.invalid_pixels.get()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
-                <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent all-screen synthetic timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>
+                <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.json_pending(){json_editor::label(ui)}else if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent all-screen synthetic timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>
                 <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Last frame only. Change the test values or reload to retry."</p></div>
                 <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views) ||ui.dock.mode.get()!=PreviewMode::Appearance>
                     <For each=move ||ui.editor.with(|e|e.editing_config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{

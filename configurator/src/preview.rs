@@ -191,7 +191,7 @@ impl Preview {
         if self.pending.is_some() {
             return Err(PreviewError::PendingFrame);
         }
-        self.render_projection(simulation, false)
+        self.render_projection(simulation, false, None)
     }
 
     fn synchronize_source(
@@ -210,6 +210,22 @@ impl Preview {
 
     pub fn pending_frame(&self) -> Option<dashboard_core::display::pipeline::FrameToken> {
         self.pending.map(|(t, _)| t)
+    }
+
+    /// Valid but unapplied candidate inspection; never submit or complete pixels.
+    pub fn render_candidate_simulation(
+        &mut self,
+        simulation: &crate::simulator::ControlSimulator,
+        candidate: &crate::json_draft::JsonPreviewProof,
+    ) -> Result<&[u8], PreviewError> {
+        if self.pending.is_some() {
+            return Err(PreviewError::PendingFrame);
+        }
+        let installed = simulation.inspection_candidate().ok_or(PreviewError::InspectionOnly)?;
+        if installed.projection() != candidate.projection() {
+            return Err(PreviewError::InspectionOnly);
+        }
+        self.render_projection(simulation, true, Some(installed.config()))
     }
 
     /// Retained pixels are a capability of this token and source, never current scratch.
@@ -236,14 +252,20 @@ impl Preview {
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
         inspection: bool,
+        candidate: Option<&ValidatedConfig>,
     ) -> Result<&[u8], PreviewError> {
-        let config = simulation.config();
+        let config = candidate.unwrap_or_else(|| simulation.config());
         let session = if inspection {
             simulation.display_session()
         } else {
             simulation.session()
         };
-        let view = session.view_id();
+        let view = if candidate.is_some() {
+            crate::json_draft::inspection_view(config.config(), session.view_id())
+                .ok_or(PreviewError::UnknownView(session.view_id()))?
+        } else {
+            session.view_id()
+        };
         let layout = Layout::new(config, view, false).ok_or(PreviewError::UnknownView(view))?;
         let snapshot = simulation.snapshot();
         let now = if inspection {
@@ -264,20 +286,30 @@ impl Preview {
         let readings = self
             .presentation
             .prepare(config, &snapshot, view, now, session.boost_psi());
+        let readings = if candidate.is_some() {
+            readings.without_rule_state()
+        } else {
+            readings
+        };
+        let user_overlay = session.overlay(config);
         let scene = DashboardScene {
             readings: Some(&readings),
             layout: Some(layout),
             measurements: &snapshot,
             status: VehicleStatus::Demo,
             now_ms: now,
-            blink_on: simulation.blink_on(),
+            blink_on: if inspection {
+                dashboard_core::animations::blink_on(now)
+            } else {
+                simulation.blink_on()
+            },
             boost_psi: session.boost_psi(),
             fps_mode: session.fps(),
             fps_instant: 0.0,
             fps_average: 0.0,
             backgrounds: [BLACK; 8],
             overlay: if inspection {
-                Overlay::configured_for_page(session.page(), session.overlay(config), None)
+                Overlay::configured_for_page(session.page(), user_overlay, None)
             } else {
                 simulation.presented_scene().overlay
             },
@@ -288,9 +320,11 @@ impl Preview {
             dashboard_config::ControlPage::Debug => {
                 let data = dashboard_core::debug_view::DebugData {
                     source_status: Some("SYNTHETIC DEMO"),
-                    config_fault: Some(inspection),
+                    config_fault: Some(inspection && candidate.is_none()),
                     brightness: Some(session.backlight().brightness()),
-                    settings_status: Some(if inspection {
+                    settings_status: Some(if candidate.is_some() {
+                        "UNAPPLIED JSON"
+                    } else if inspection {
                         "INSPECTION ONLY"
                     } else {
                         "ACCEPTED CONFIG"
@@ -311,7 +345,9 @@ impl Preview {
         }
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
         self.mode = PreviewMode::Simulation;
-        self.prepared_status = simulation.cache_exhaustion_status();
+        self.prepared_status = simulation
+            .cache_exhaustion_status()
+            .union(CacheExhaustionStatus::from_config(config.cache_identity_status()));
         self.snapshot = Some(snapshot);
         self.warning = warning;
         self.rendered_at = Some(now);
@@ -481,7 +517,7 @@ impl Preview {
             return Err(PreviewError::PendingFrame);
         }
         if simulation.display_session().page() != dashboard_config::ControlPage::Dashboard || draft.is_none() {
-            return self.render_projection(simulation, true);
+            return self.render_projection(simulation, true, None);
         }
         let view = simulation.display_session().view_id();
         let options = PreviewOptions {
@@ -530,7 +566,7 @@ impl Preview {
 
         options.warnings = false;
         if let Some(simulation) = live {
-            self.render_projection(simulation, true)?;
+            self.render_projection(simulation, true, None)?;
         } else {
             self.render(accepted, view, options)?;
         }
@@ -549,7 +585,9 @@ impl Preview {
                 .prepared_status
                 .union(CacheExhaustionStatus::from_config(status(&config)));
             let mut presentation = dashboard_core::presentation::PresentationState::new();
-            let readings = presentation.prepare(&config, snapshot, view, now, options.boost_psi);
+            let readings = presentation
+                .prepare(&config, snapshot, view, now, options.boost_psi)
+                .without_rule_state();
             let scene = DashboardScene {
                 readings: Some(&readings),
                 layout: Layout::new(&config, view, false),

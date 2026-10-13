@@ -2,6 +2,64 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::json_draft::JsonState;
 
+#[test]
+fn draft_projection_tracks_equal_text_and_parse_phase_without_accepted_mutation() {
+    use dashboard_configurator::json_draft::JsonPhase;
+    let mut editor = Editor::default();
+    let stamp = editor.stamp();
+    let key = editor.accepted_config_key();
+    let handle = editor.open_json().unwrap();
+    let clean = editor.json_draft().unwrap().projection();
+    assert_eq!(clean.phase(), JsonPhase::Clean);
+    let text = editor.json_draft().unwrap().text().to_owned();
+    let token = editor.set_json_text(handle, text.clone()).unwrap();
+    let pending = editor.json_draft().unwrap().projection();
+    assert_ne!(pending, clean);
+    assert_eq!(pending.phase(), JsonPhase::Pending);
+    editor.finish_json_parse(token).unwrap();
+    let parsed = editor.json_draft().unwrap().projection();
+    assert_ne!(parsed, pending);
+    assert_eq!(parsed.phase(), JsonPhase::ValidUnapplied);
+    editor.set_json_text(handle, text).unwrap();
+    let second = editor.json_draft().unwrap().projection();
+    assert_ne!(second, pending);
+    assert_eq!(
+        (editor.stamp(), editor.accepted_config_key(), editor.history_len()),
+        (stamp, key, (0, 0))
+    );
+    assert_eq!(
+        editor.set_json_text(handle, "ą".repeat(MAX_JSON_BYTES)),
+        Err(EditorError::JsonTooLong)
+    );
+    assert_eq!(editor.json_draft().unwrap().projection(), second);
+    let token = editor.set_json_text(handle, "{".into()).unwrap();
+    editor.finish_json_parse(token).unwrap();
+    assert_eq!(
+        editor.json_draft().unwrap().projection().phase(),
+        JsonPhase::SyntaxError
+    );
+}
+
+#[test]
+fn json_view_fallback_is_guarded_and_does_not_select_another_firmware_view() {
+    use dashboard_configurator::json_draft::inspection_view;
+    let mut candidate = default_config();
+    assert_eq!(inspection_view(&candidate, 255), Some(candidate.boot_view));
+    candidate.views.clear();
+    assert_eq!(inspection_view(&candidate, 1), None);
+    let mut candidate = default_config();
+    candidate.views.clear();
+    candidate
+        .views
+        .push(View {
+            id: 4,
+            name: "ONE".try_into().unwrap(),
+        })
+        .unwrap();
+    candidate.views.push(candidate.views[0].clone()).unwrap();
+    assert_eq!(inspection_view(&candidate, 4), None);
+}
+
 fn parse_text(
     editor: &mut Editor,
     text: String,

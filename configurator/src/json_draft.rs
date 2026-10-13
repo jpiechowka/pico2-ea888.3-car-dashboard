@@ -1,5 +1,7 @@
 //! Bounded Editor-owned JSON transactions. These candidates are not proof.
-use dashboard_config::{Config, ConfigError, MAX_JSON_BYTES};
+use std::sync::Arc;
+
+use dashboard_config::{Config, ConfigError, MAX_JSON_BYTES, ValidatedConfig, validate};
 
 use crate::diagnostic::{ValidationReport, collect_candidate};
 use crate::editor::{EditorError, EditorStamp, Revision};
@@ -22,6 +24,51 @@ pub struct JsonDraftHandle {
 pub struct JsonParseToken {
     pub(crate) handle: JsonDraftHandle,
     pub(crate) text_epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonPhase {
+    Clean,
+    Pending,
+    SyntaxError,
+    SemanticInvalid,
+    ValidUnapplied,
+    ReadOnly,
+}
+
+impl JsonPhase {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Clean => "JSON · no pending edits",
+            Self::Pending => "JSON PENDING · parsing · accepted display",
+            Self::SyntaxError => "INVALID JSON · accepted display",
+            Self::SemanticInvalid | Self::ReadOnly => "INVALID PREVIEW · inspection only",
+            Self::ValidUnapplied => "UNAPPLIED JSON PREVIEW",
+        }
+    }
+}
+
+/// Read-only equality projection. Not a new owner or callback authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JsonProjection {
+    handle: JsonDraftHandle,
+    text_epoch: u64,
+    phase: JsonPhase,
+}
+impl JsonProjection {
+    pub fn phase(self) -> JsonPhase { self.phase }
+}
+
+/// Preview navigation does not select or mutate the firmware view.
+pub fn inspection_view(
+    config: &Config,
+    preferred: u8,
+) -> Option<u8> {
+    let unique = |id| config.views.iter().filter(|view| view.id == id).count() == 1;
+    [preferred, config.boot_view]
+        .into_iter()
+        .chain(config.views.iter().map(|view| view.id))
+        .find(|id| unique(*id))
 }
 
 #[derive(Debug)]
@@ -48,7 +95,30 @@ pub struct JsonDraft {
     pub(crate) state: JsonState,
 }
 
+/// Immutable validation proof sealed to one actual Editor-owned JSON projection.
+/// Clones share the proof; they do not own editable text or acquisition state.
+#[derive(Clone)]
+pub struct JsonPreviewProof {
+    projection: JsonProjection,
+    config: Arc<ValidatedConfig>,
+}
+impl JsonPreviewProof {
+    pub const fn projection(&self) -> JsonProjection { self.projection }
+
+    pub fn config(&self) -> &ValidatedConfig { &self.config }
+}
+
 impl JsonDraft {
+    pub fn preview_proof(&self) -> Result<JsonPreviewProof, EditorError> {
+        let JsonState::Candidate { config, .. } = &self.state else {
+            return Err(EditorError::StaleToken);
+        };
+        Ok(JsonPreviewProof {
+            projection: self.projection(),
+            config: Arc::new(validate(config.as_ref().clone()).map_err(EditorError::Validation)?),
+        })
+    }
+
     pub fn handle(&self) -> JsonDraftHandle { self.handle }
 
     pub fn text(&self) -> &str { &self.text }
@@ -56,6 +126,30 @@ impl JsonDraft {
     pub fn state(&self) -> &JsonState { &self.state }
 
     pub fn is_read_only(&self) -> bool { self.read_only }
+
+    pub fn projection(&self) -> JsonProjection {
+        let phase = if self.read_only {
+            JsonPhase::ReadOnly
+        } else {
+            match &self.state {
+                JsonState::Unparsed if self.pending => JsonPhase::Pending,
+                JsonState::Unparsed => JsonPhase::Clean,
+                JsonState::SyntaxError { .. } => JsonPhase::SyntaxError,
+                JsonState::Candidate { report, .. }
+                    if !report.issues.is_empty() || !report.raw_errors.is_empty() || report.omitted != 0 =>
+                {
+                    JsonPhase::SemanticInvalid
+                }
+                JsonState::Candidate { .. } if self.pending => JsonPhase::ValidUnapplied,
+                JsonState::Candidate { .. } => JsonPhase::Clean,
+            }
+        };
+        JsonProjection {
+            handle: self.handle,
+            text_epoch: self.text_epoch,
+            phase,
+        }
+    }
 
     pub(crate) fn replace_text(
         &mut self,

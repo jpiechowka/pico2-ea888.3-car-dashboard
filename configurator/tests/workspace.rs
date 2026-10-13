@@ -141,11 +141,36 @@ fn find_opens_hidden_group_without_accepting_raw_or_changing_selection() {
     for command in [
         Command::CopyAppearance,
         Command::ApplyAppearance(AppearanceScope::AllWidgets),
-        Command::OpenJson,
     ] {
         assert!(command.availability(&editor, stamp).is_some());
         assert!(dispatch(&mut editor, &mut workspace, command, stamp).is_err());
     }
+}
+
+#[test]
+fn open_json_command_reuses_the_owned_clean_or_pending_draft() {
+    let mut editor = Editor::default();
+    let mut workspace = WorkspaceState::default();
+    let stamp = editor.stamp();
+    let key = editor.accepted_config_key();
+    let effect = dispatch(&mut editor, &mut workspace, Command::OpenJson, stamp).unwrap();
+    let CommandEffect::OpenJson(handle) = effect else {
+        panic!("expected owned JSON route")
+    };
+    assert!(!editor.has_pending_json());
+    assert_eq!(workspace.active(), Workspace::Diagnostics);
+    let text = editor.json_draft().unwrap().text().to_owned();
+    editor.set_json_text(handle, text).unwrap();
+    assert_eq!(Command::OpenJson.availability(&editor, stamp), None);
+    assert_eq!(
+        dispatch(&mut editor, &mut workspace, Command::OpenJson, stamp),
+        Ok(CommandEffect::OpenJson(handle))
+    );
+    assert!(editor.has_pending_json());
+    assert_eq!(
+        (editor.stamp(), editor.accepted_config_key(), editor.history_len()),
+        (stamp, key, (0, 0))
+    );
 }
 
 #[test]

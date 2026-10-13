@@ -5,6 +5,7 @@ mod event_log;
 mod fields;
 mod inspector;
 mod io;
+mod json_editor;
 mod led;
 mod metrics;
 mod simulation;
@@ -42,6 +43,7 @@ pub struct Ui {
     mount_started: f64,
     cache_seen: RwSignal<dashboard_core::cache_diagnostics::CacheExhaustionSeen>,
     editor: RwSignal<Editor>,
+    json: json_editor::State,
     notice: RwSignal<String>,
     events: RwSignal<EventStore>,
     event_adapters: StoredValue<AdapterState>,
@@ -182,6 +184,19 @@ impl Ui {
         }
     }
 
+    /// Sampling/producer actions recheck actual pending state at dispatch;
+    /// physical controls keep their separate bounded inspection route.
+    fn simulate_accepted(
+        self,
+        action: impl FnOnce(&mut dashboard_configurator::simulator::ControlSimulator),
+    ) {
+        self.editor.with_untracked(|e| self.dock.synchronize(self, e));
+        if self.inspection_active() {
+            return;
+        }
+        self.simulate(action);
+    }
+
     fn snapshot_blocked(self) -> bool { self.editor.with(|e| e.action_readiness().block.is_some()) }
 
     fn control_reason(
@@ -313,6 +328,10 @@ impl Ui {
     }
 
     fn invalid(self) -> bool { self.editor.with(Editor::has_invalid_draft) }
+
+    fn json_pending(self) -> bool { self.editor.with(Editor::has_pending_json) }
+
+    fn inspection_active(self) -> bool { self.invalid() || self.json_pending() }
 
     fn layout_locked(self) -> bool { self.editor.with(|e| !e.can_edit_layout()) }
 
@@ -461,6 +480,7 @@ impl Ui {
             match e.save_status() {
                 SaveStatus::Saved => "Saved in this browser".into(),
                 SaveStatus::Dirty => "Unsaved changes".into(),
+                SaveStatus::InvalidDraft if e.has_pending_json() => "Pending JSON · not saved".into(),
                 SaveStatus::InvalidDraft => "Invalid edits · not saved".into(),
                 SaveStatus::Saving => "Saving…".into(),
                 SaveStatus::Failed(StorageFailure::Quota) => "Storage full · export to keep changes".into(),
@@ -506,6 +526,7 @@ pub fn Studio() -> impl IntoView {
         cache_seen: RwSignal::new(dashboard_core::cache_diagnostics::CacheExhaustionSeen::new()),
         mount_started,
         editor: RwSignal::new(editor),
+        json: json_editor::State::new(),
         events: RwSignal::new(EventStore::default()),
         event_adapters: StoredValue::new(AdapterState::default()),
         console_enabled: RwSignal::new(true),
@@ -644,9 +665,9 @@ pub fn Studio() -> impl IntoView {
                 </section>
                 <Inspector ui/>
             </div>
-            <footer class="statusbar"><div><span class="dot" class:error=move || ui.invalid()></span><span>{move || ui.save_label()}</span>
+            <footer class="statusbar"><div><span class="dot" class:error=move || ui.inspection_active()></span><span>{move || ui.save_label()}</span><span>{move ||json_editor::label(ui)}</span>
                 <button disabled=move || ui.snapshot_blocked() on:click=move |_| io::save(ui,true)>"Save here"</button></div>
-                <span>{move || ui.editor.with(|e| {let size=e.export_binary().map(|v|format!("runtime config {} B",v.len())).unwrap_or_else(|_|"export blocked by invalid edits".into());format!("{} widgets · {size}",e.preview().config().widgets.len())})}</span>
+                <span>{move || ui.editor.with(|e| {let size=e.export_binary().map(|v|format!("runtime config {} B",v.len())).unwrap_or_else(|_|"export blocked until edits are resolved".into());format!("{} widgets · {size}",e.preview().config().widgets.len())})}</span>
             </footer>
             <div class="notice" role="status" hidden=move || ui.notice.get().is_empty()><span>{move || ui.notice.get()}</span><button aria-label="Dismiss notice" on:click=move |_| ui.notice.set(String::new())>"×"</button></div>
             <widget_menu::Popup ui/>
@@ -659,30 +680,30 @@ fn Views(ui: Ui) -> impl IntoView {
     view! {
         <div class="view-tabs" role="navigation" aria-label="Dashboard views">
             <For each=move || ui.editor.with(|e| e.preview().config().views.iter().map(|v| v.id).collect::<Vec<_>>()) key=|id| *id children=move |id| {
-                view! { <button class:active=move || ui.editor.with(|e| e.selection().view==id) disabled=move || ui.invalid()
+                view! { <button class:active=move || ui.editor.with(|e| e.selection().view==id) disabled=move || ui.inspection_active()
                     on:click=move |_| { ui.run(move |e| e.select(Selection { view:id,widget:None })); }>
                     {move || ui.editor.with(|e| e.preview().config().views.iter().find(|v|v.id==id).map(|v|v.name.to_string()).unwrap_or_default())}
                     <small>{move || ui.editor.with(|e| if e.preview().config().boot_view==id { "BOOT" } else { "" })}</small>
                 </button> }
             }/>
-            <button class="add-view" title="Add empty view" disabled=move || ui.invalid() || ui.editor.with(|e|e.preview().config().views.len()>=8)
+            <button class="add-view" title="Add empty view" disabled=move || ui.inspection_active() || ui.editor.with(|e|e.preview().config().views.len()>=8)
                 on:click=move |_| ui.apply(Edit::AddView { name:"New view".into() })>"+ View"</button>
         </div>
         <For each=move || vec![ui.inspected_view()] key=|id| *id children=move |id| view! {
             <div class="view-controls">
                 <TextField ui field=RawField::ViewName(id) label="View name" hint="1–14 ASCII characters"/>
                 <div class="view-tools">
-                    <button id=Registry::dom_id(FieldKey::BootView,TargetOwner::Root) disabled=move || ui.invalid() on:click=move |_| ui.apply(Edit::SetBootView(id))>"Set as boot"</button>
-                    <button disabled=move || ui.invalid() on:click=move |_| ui.apply(Edit::DuplicateView { id,name:"Copy".into() })>"Duplicate"</button>
-                    <button title="Move view earlier in encoder order" disabled=move || ui.invalid() on:click=move |_| {
+                    <button id=Registry::dom_id(FieldKey::BootView,TargetOwner::Root) disabled=move || ui.inspection_active() on:click=move |_| ui.apply(Edit::SetBootView(id))>"Set as boot"</button>
+                    <button disabled=move || ui.inspection_active() on:click=move |_| ui.apply(Edit::DuplicateView { id,name:"Copy".into() })>"Duplicate"</button>
+                    <button title="Move view earlier in encoder order" disabled=move || ui.inspection_active() on:click=move |_| {
                         let index=ui.editor.with_untracked(|e|e.preview().config().views.iter().position(|v|v.id==id).unwrap_or(0));
                         ui.apply(Edit::ReorderView { id,index:index.saturating_sub(1) });
                     }>"←"</button>
-                    <button title="Move view later in encoder order" disabled=move || ui.invalid() on:click=move |_| {
+                    <button title="Move view later in encoder order" disabled=move || ui.inspection_active() on:click=move |_| {
                         let index=ui.editor.with_untracked(|e| {let c=e.preview().config();(c.views.iter().position(|v|v.id==id).unwrap_or(0)+1).min(c.views.len()-1)});
                         ui.apply(Edit::ReorderView { id,index });
                     }>"→"</button>
-                    <button class="danger-text" disabled=move || ui.invalid() || ui.editor.with(|e|e.preview().config().views.len()==1) on:click=move |_| ui.apply(Edit::DeleteView(id))>"Delete"</button>
+                    <button class="danger-text" disabled=move || ui.inspection_active() || ui.editor.with(|e|e.preview().config().views.len()==1) on:click=move |_| ui.apply(Edit::DeleteView(id))>"Delete"</button>
                 </div>
             </div>
         }/>

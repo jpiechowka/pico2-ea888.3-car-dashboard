@@ -72,6 +72,13 @@ fn freeze_clock(ui: Ui) {
         }
     });
     if let Some((at, source)) = frozen {
+        // Dropping elapsed playback while entering a pending draft must not
+        // sample the accepted session before the inspection effect runs.
+        if ui.editor.try_with_untracked(Editor::has_pending_json) == Some(true)
+            && ui.dock.sim.try_with_untracked(ControlSimulator::invalid) != Some(true)
+        {
+            return;
+        }
         let _ = ui.dock.sim.try_update(|sim| {
             if sim.source_key() == Some(source) {
                 // Cancel trackers before observing the final active clock boundary.
@@ -147,7 +154,7 @@ pub(super) fn install(ui: Ui) {
                 if ui.dock.release_until.get_untracked().is_some_and(|until| at >= until) {
                     ui.dock.release_until.set(None);
                 }
-                if running && ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.invalid() {
+                if running && ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.inspection_active() {
                     submit(ui, false);
                 }
             },
@@ -209,7 +216,7 @@ pub(super) fn submit(
         ui.dock.mode.set(PreviewMode::Simulation);
     }
     ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
-    if ui.invalid() {
+    if ui.inspection_active() {
         return;
     }
     let mut result = Ok(());
@@ -282,7 +289,7 @@ fn schedule_completion(ui: Ui) {
         ui.dock.completion_raf.set(None);
         if pending == ui.dock.pending.get_untracked()
             && ui.dock.mode.get_untracked() == PreviewMode::Simulation
-            && !ui.invalid()
+            && !ui.inspection_active()
         {
             complete(ui);
         }
@@ -298,7 +305,7 @@ fn schedule_completion(ui: Ui) {
 
 pub(super) fn complete(ui: Ui) {
     ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
-    if ui.invalid() {
+    if ui.inspection_active() {
         return;
     }
     let Some(token) = ui.dock.pending.get_untracked() else {
@@ -340,6 +347,10 @@ fn source(
     ui: Ui,
     scenario: Scenario,
 ) {
+    ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
+    if ui.inspection_active() {
+        return;
+    }
     cancel(ui);
     let mut result = Ok(());
     ui.simulate(|sim| result = sim.set_scenario(scenario));
@@ -386,15 +397,15 @@ pub(super) fn Panel(ui: Ui) -> impl IntoView {
     view! {
         <section class="control-simulator" aria-label="All-screen simulator">
             <h3>"Synthetic device simulation"</h3>
-            <strong class="control-error" hidden=move ||!sim.with(ControlSimulator::invalid)>"INVALID SIMULATION · candidate controls/presentation; accepted acquisition retained"</strong>
+            <strong class="control-error" hidden=move ||!sim.with(ControlSimulator::invalid)>{move||if ui.json_pending(){json_editor::label(ui)}else{"INVALID SIMULATION · candidate controls/presentation; accepted acquisition retained"}}</strong>
             <p class="hint">"Every screen is synthetic. Values and source catalogue entries are not ECU evidence. Automatic playback follows active elapsed time; manual steps use virtual time."</p>
-            <label class="field"><span>"Scenario (starts a new source session)"</span><select aria-label="Simulation scenario" disabled=move||ui.invalid() prop:value=move||sim.with(|s|Scenario::ALL.iter().position(|v|*v==s.projection().scenario).unwrap_or(0).to_string()) on:change=move|e|{
+            <label class="field"><span>"Scenario (starts a new source session)"</span><select aria-label="Simulation scenario" disabled=move||ui.inspection_active() prop:value=move||sim.with(|s|Scenario::ALL.iter().position(|v|*v==s.projection().scenario).unwrap_or(0).to_string()) on:change=move|e|{
                 if let Ok(index)=event_target_value(&e).parse::<usize>() && let Some(s)=Scenario::ALL.get(index){source(ui,*s);}
             }>{Scenario::ALL.into_iter().enumerate().map(|(i,s)|view!{<option value=i.to_string()>{s.label()}</option>}).collect_view()}</select></label>
             <div class="simulator-actions">
-                <button disabled=move||ui.invalid() on:click=move |_|{if ui.dock.running.get_untracked(){cancel(ui);}else{ui.dock.running.set(true);ui.dock.mode.set(PreviewMode::Simulation);}}>{move||if ui.dock.running.get(){"Pause playback"}else{"Play active elapsed time"}}</button>
-                <button disabled=move||ui.invalid() on:click=move |_|{cancel(ui);ui.simulate(|s|{if let Some(at)=s.now_ms().checked_add(50){let _=s.scenario_step(at);}});}>"Next sample (manual +50 ms)"</button>
-                <button disabled=move||ui.invalid() on:click=move |_|source(ui,sim.with_untracked(|s|s.projection().scenario))>"Restart source"</button>
+                <button disabled=move||ui.inspection_active() on:click=move |_|{if ui.dock.running.get_untracked(){cancel(ui);}else{ui.dock.running.set(true);ui.dock.mode.set(PreviewMode::Simulation);}}>{move||if ui.dock.running.get(){"Pause playback"}else{"Play active elapsed time"}}</button>
+                <button disabled=move||ui.inspection_active() on:click=move |_|{cancel(ui);ui.simulate_accepted(|s|{if let Some(at)=s.now_ms().checked_add(50){let _=s.scenario_step(at);}});}>"Next sample (manual +50 ms)"</button>
+                <button disabled=move||ui.inspection_active() on:click=move |_|source(ui,sim.with_untracked(|s|s.projection().scenario))>"Restart source"</button>
             </div>
             <output id="control-simulator-state" aria-live="polite">{move||sim.with(ControlSimulator::summary)}</output>
             <p role="status">{move||ui.dock.notice.get()}</p>
@@ -402,8 +413,8 @@ pub(super) fn Panel(ui: Ui) -> impl IntoView {
             <output aria-label="Rejected control outcome">{move||sim.with(|s|s.control_outcome().unwrap_or(""))}</output>
             <output aria-label="Simulation frame state">{move||format!("Source {:?} · current {:?} · pending {:?} · canvas accepted {}",sim.with(|s|s.source_epoch()),sim.with(|s|s.completed_frame()),ui.dock.pending.get(),ui.dock.consumed.get())}</output>
             <div class="simulator-actions">
-                <button disabled=move||ui.invalid() ||(ui.dock.pending.get().is_some()&&ui.dock.consumed.get()) on:click=move |_|submit(ui,true)>{move||if ui.dock.pending.get().is_some(){"Retry exact pending pixels"}else{"Render / submit current screen"}}</button>
-                <button disabled=move||ui.invalid() ||ui.dock.pending.get().is_none() on:click=move |_|complete(ui)>"Complete submitted frame"</button>
+                <button disabled=move||ui.inspection_active() ||(ui.dock.pending.get().is_some()&&ui.dock.consumed.get()) on:click=move |_|submit(ui,true)>{move||if ui.dock.pending.get().is_some(){"Retry exact pending pixels"}else{"Render / submit current screen"}}</button>
+                <button disabled=move||ui.inspection_active() ||ui.dock.pending.get().is_none() on:click=move |_|complete(ui)>"Complete submitted frame"</button>
             </div>
             <output aria-label="RGB indicator duty">{move||sim.with(|s|{let d=s.led_duty();format!("Completed scene LED duty: R {} G {} B {} / 10000",d.red,d.green,d.blue)})}</output>
             <div class="simulator-buttons">{ButtonId::ALL.into_iter().map(|button|view!{
@@ -418,7 +429,7 @@ pub(super) fn Panel(ui: Ui) -> impl IntoView {
                 <button on:click=move |_|{cancel(ui);ui.simulate(|s|s.rotate(-1));}>"Encoder −"</button>
                 <button on:click=move |_|{cancel(ui);ui.simulate(|s|s.rotate(1));}>"Encoder +"</button>
                 <button on:click=move |_|{cancel(ui);ui.simulate(ControlSimulator::click);}>"Encoder click"</button>
-                <button on:click=move |_|ui.simulate(ControlSimulator::acknowledge_warnings)>"Acknowledge completed warning page"</button>
+                <button disabled=move||ui.json_pending() on:click=move |_|ui.simulate_accepted(ControlSimulator::acknowledge_warnings)>"Acknowledge completed warning page"</button>
                 <button on:click=move |_|super::controls::recover(ui)>"Protected Y recovery (manual 2 s)"</button>
                 <button on:click=move |_|cancel(ui)>"Cancel physical inputs"</button>
             </div>
@@ -426,7 +437,7 @@ pub(super) fn Panel(ui: Ui) -> impl IntoView {
             <output aria-label="Statistics reset tokens">{move||sim.with(|s|format!("Reset requested {:?} · producer generation {}",s.pending_reset_token(),s.snapshot().reset_generation))}</output>
             <label class="field"><span>"Exact reset acknowledgment token"</span><input aria-label="Reset acknowledgment token" type="text" inputmode="numeric" maxlength="20" prop:value=move||ui.dock.ack_text.with(|v|v.text().to_owned()) on:input=move|e|{let value=event_target_value(&e);ui.dock.ack_text.update(|v|{v.observe(&value);});}/></label>
             <output role="status">{move||if ui.dock.ack_text.with(|v|v.is_blocked()){"Reset input exceeds 20 UTF-8 bytes; delivery blocked until corrected"}else{""}}</output>
-            <div class="simulator-actions"><button disabled=move||ui.invalid()||ui.dock.ack_text.with(|v|v.is_blocked()) on:click=move |_|{let text=ui.dock.ack_text.with_untracked(|v|v.admitted().map(str::to_owned));if let Some(text)=text&&let Ok(token)=text.parse::<u64>(){ui.simulate(|s|{let ok=s.acknowledge_reset_token(token);ui.dock.notice.set(if ok{"Exact reset token acknowledged"}else{"Stale, duplicate or unmatched reset acknowledgment; no change"}.into());});}}>"Deliver exact reset acknowledgment"</button><button disabled=move||ui.invalid() on:click=move |_|ui.simulate(ControlSimulator::acknowledge_reset)>"Acknowledge current reset"</button><button disabled=move||ui.invalid() on:click=move |_|ui.simulate(|s|s.producer_step(None))>"Process warning acknowledgment result"</button></div>
+            <div class="simulator-actions"><button disabled=move||ui.inspection_active()||ui.dock.ack_text.with(|v|v.is_blocked()) on:click=move |_|{let text=ui.dock.ack_text.with_untracked(|v|v.admitted().map(str::to_owned));if let Some(text)=text&&let Ok(token)=text.parse::<u64>(){ui.simulate_accepted(|s|{let ok=s.acknowledge_reset_token(token);ui.dock.notice.set(if ok{"Exact reset token acknowledged"}else{"Stale, duplicate or unmatched reset acknowledgment; no change"}.into());});}}>"Deliver exact reset acknowledgment"</button><button disabled=move||ui.inspection_active() on:click=move |_|ui.simulate_accepted(ControlSimulator::acknowledge_reset)>"Acknowledge current reset"</button><button disabled=move||ui.inspection_active() on:click=move |_|ui.simulate_accepted(|s|s.producer_step(None))>"Process warning acknowledgment result"</button></div>
             <p class="hint">"Delayed reset: trigger Reset statistics using the configured button, then deliver its token. Dropped completion: playback retains one frame until explicit Complete. Warning acknowledgment uses the last completed accepted Dashboard only."</p>
             <h4>"Per-channel synthetic inputs"</h4>
             <div class="simulation-inputs">{Channel::ALL.into_iter().map(|channel|view!{
@@ -434,10 +445,10 @@ pub(super) fn Panel(ui: Ui) -> impl IntoView {
                     <label class="field"><span>{channel.label()}</span><input aria-label=format!("Synthetic {} input",channel.label()) type="text" maxlength="64" prop:value=move||ui.dock.inputs.with(|v|v[channel.index()].text().to_owned()) on:input=move|e|{let text=event_target_value(&e);ui.dock.inputs.update(|v|{v[channel.index()].observe(&text);});}/></label>
                     <output role="status">{move||if ui.dock.inputs.with(|v|v[channel.index()].is_blocked()){"Input exceeds 64 UTF-8 bytes; submission blocked until corrected"}else{""}}</output>
                     <small>{format!("Synthetic testing range {}..{}; canonical units",channel.domain().0,channel.domain().1)}</small>
-                    <button disabled=move||ui.invalid()||ui.dock.inputs.with(|v|v[channel.index()].is_blocked()) on:click=move |_|{let text=ui.dock.inputs.with_untracked(|v|v[channel.index()].admitted().map(str::to_owned));if let Some(text)=text{cancel(ui);ui.simulate(|s|{s.custom_input(channel,&text);});}}>"Submit channel"</button>
-                    <button disabled=move||ui.invalid()||ui.dock.inputs.with(|v|v[channel.index()].is_blocked()) on:click=move |_|{let text=ui.dock.inputs.with_untracked(|v|v[channel.index()].admitted().map(str::to_owned));if let Some(text)=text{cancel(ui);ui.simulate(|s|{s.diagnostic_input(channel,&text);});}}>"Inject diagnostic value (bypass UI range)"</button>
+                    <button disabled=move||ui.inspection_active()||ui.dock.inputs.with(|v|v[channel.index()].is_blocked()) on:click=move |_|{let text=ui.dock.inputs.with_untracked(|v|v[channel.index()].admitted().map(str::to_owned));if let Some(text)=text{cancel(ui);ui.simulate_accepted(|s|{s.custom_input(channel,&text);});}}>"Submit channel"</button>
+                    <button disabled=move||ui.inspection_active()||ui.dock.inputs.with(|v|v[channel.index()].is_blocked()) on:click=move |_|{let text=ui.dock.inputs.with_untracked(|v|v[channel.index()].admitted().map(str::to_owned));if let Some(text)=text{cancel(ui);ui.simulate_accepted(|s|{s.diagnostic_input(channel,&text);});}}>"Inject diagnostic value (bypass UI range)"</button>
                     <output>{move||sim.with(|s|{let p=s.projection();let m=p.snapshot.metadata[channel.index()];format!("{} · last good {:?} · {:?} · sample time {:?}",p.outcomes[channel.index()].map_or("No custom outcome",|o|o.label()),p.snapshot.sensor(dashboard_core::samples::SensorId::from_channel(channel)).value(),p.snapshot.quality(dashboard_core::samples::SensorId::from_channel(channel),p.now_ms),m.received_at_ms)})}</output>
-                    <div class="simulator-actions">{[("Reject NaN",f32::NAN),("Reject Infinity",f32::INFINITY),("Reject magnitude",1_000_001.)].into_iter().map(|(label,value)|view!{<button disabled=move||ui.invalid() on:click=move |_|ui.simulate(|s|{if let Some(at_ms)=s.now_ms().checked_add(1){s.inject(SimulationInput::Channel{channel,value,at_ms});}})>{label}</button>}).collect_view()}<button disabled=move||ui.invalid() on:click=move |_|ui.simulate(|s|{let at_ms=s.now_ms().saturating_sub(1);s.inject(SimulationInput::Channel{channel,value:1.,at_ms});})>"Inject backdated"</button><button disabled=move||ui.invalid() on:click=move |_|ui.simulate(|s|{if let Some(at_ms)=s.now_ms().checked_add(1){s.inject(SimulationInput::Fault{sensor:dashboard_core::samples::SensorId::from_channel(channel),quality:dashboard_core::samples::Quality::TransportError,at_ms});}})>"Source fault"</button></div>
+                    <div class="simulator-actions">{[("Reject NaN",f32::NAN),("Reject Infinity",f32::INFINITY),("Reject magnitude",1_000_001.)].into_iter().map(|(label,value)|view!{<button disabled=move||ui.inspection_active() on:click=move |_|ui.simulate_accepted(|s|{if let Some(at_ms)=s.now_ms().checked_add(1){s.inject(SimulationInput::Channel{channel,value,at_ms});}})>{label}</button>}).collect_view()}<button disabled=move||ui.inspection_active() on:click=move |_|ui.simulate_accepted(|s|{let at_ms=s.now_ms().saturating_sub(1);s.inject(SimulationInput::Channel{channel,value:1.,at_ms});})>"Inject backdated"</button><button disabled=move||ui.inspection_active() on:click=move |_|ui.simulate_accepted(|s|{if let Some(at_ms)=s.now_ms().checked_add(1){s.inject(SimulationInput::Fault{sensor:dashboard_core::samples::SensorId::from_channel(channel),quality:dashboard_core::samples::Quality::TransportError,at_ms});}})>"Source fault"</button></div>
                     <small>{move||ui.editor.with(|e|{let d=dashboard_configurator::config::definition(e.preview().config().sources[channel.index()].definition);format!("Configured catalogue: {} · {} · {:?}; synthetic values are not decoded ECU replies",d.name,d.interpretation,d.unavailable)})}</small>
                 </div>
             }).collect_view()}</div>

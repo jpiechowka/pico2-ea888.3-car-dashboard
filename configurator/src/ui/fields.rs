@@ -117,7 +117,8 @@ pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
                 else if let Some(target)=target {command_palette::inspect_location(ui,target);}
             }>{link.path}</button><span>{link.label}</span></li>}
         }).collect_view())}</ul>
-        <p>{move ||syntax().map(|(line,column)|format!("Invalid JSON at line {line}, column {column}. Inline JSON editing is not integrated yet; the owned text is retained."))}</p>
+        <p>{move ||syntax().map(|(line,column)|format!("Invalid JSON at line {line}, column {column}. Repair the retained JSON text or Discard."))}</p>
+        <button hidden=move ||syntax().is_none() on:click=move |_|json_editor::open(ui)>"Repair JSON"</button>
         <p>{move ||ui.editor.with(|e| {
             let omitted=match e.json_draft().map(|d|d.state()) {
                 Some(dashboard_configurator::json_draft::JsonState::Candidate{report,..})=>report.omitted,

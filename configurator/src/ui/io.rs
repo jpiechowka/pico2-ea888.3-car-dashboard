@@ -741,26 +741,8 @@ fn complete_import(
     success
 }
 
-fn import_pasted(
-    ui: Ui,
-    text: &str,
-) {
-    let mut token = Err(EditorError::InvalidDraft);
-    ui.editor.update(|editor| token = editor.begin_import());
-    match token {
-        Ok(token) => {
-            complete_import(ui, token, ImportFormat::Json, text.as_bytes());
-        }
-        Err(error) => {
-            ui.event(import_outcome(Err(ImportFailure::Rejected(error))));
-            ui.notice.set(error_text(error));
-        }
-    }
-}
-
 #[component]
 pub fn Files(ui: Ui) -> impl IntoView {
-    let pasted = RwSignal::new(String::new());
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"Configuration files"</h3><p>"Keep the JSON to edit later. The compact .eav contains the same validated settings and is parsed once when the firmware starts."</p>
 
@@ -771,9 +753,7 @@ pub fn Files(ui: Ui) -> impl IntoView {
                 let input=event_target::<web_sys::HtmlInputElement>(&event);
                 if let Some(file)=input.files().and_then(|files|files.get(0)){import_file(ui,file);}input.set_value("");
             }/><small>"Maximum 128 KiB JSON or 16 KiB device binary"</small></label>
-            <details><summary>"Paste editable JSON"</summary><label class="field"><span>"Configuration JSON"</span><textarea rows="7" maxlength="131072" prop:value=move ||pasted.get() on:input=move |e|pasted.set(event_target_value(&e))></textarea></label>
-                <button disabled=move ||ui.snapshot_blocked() on:click=move |_|{let text=pasted.get_untracked();import_pasted(ui,&text);}>"Import pasted JSON"</button>
-            </details>
+            <super::json_editor::JsonEditor ui/>
             <p class="hint">"Local saving is per browser and origin. Export a file for a portable backup. Unknown fields, bad checksums and invalid limits are rejected."</p>
             <super::metrics::Measurements ui/>
         </div></div>

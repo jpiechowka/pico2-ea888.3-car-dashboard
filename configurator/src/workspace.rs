@@ -31,6 +31,7 @@ pub enum Command {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandEffect {
+    OpenJson(crate::json_draft::JsonDraftHandle),
     CopiedAppearance(AppearanceSnapshot),
     PreviewAppearance(AppearanceRequest),
     Navigate(Workspace),
@@ -135,7 +136,7 @@ impl Command {
                     .err()
                     .map(|_| "Field changed; refresh commands and results");
             }
-            Self::OpenJson => return Some("Inline JSON editing is not integrated yet; use configuration Import"),
+            Self::OpenJson => return None,
             _ => {}
         }
         if let Some(block) = editor.action_readiness().block {
@@ -320,6 +321,11 @@ pub fn dispatch_with_appearance(
             }))
         }
         Command::Undo => changed(editor.undo()),
+        Command::OpenJson => {
+            let handle = editor.open_json().map_err(CommandError::Editor)?;
+            workspace.open(Workspace::Diagnostics, GroupId::Files);
+            Ok(CommandEffect::OpenJson(handle))
+        }
         Command::Redo => changed(editor.redo()),
         Command::Export(format) => Ok(CommandEffect::Export(format)),
         Command::RecoverSimulator => Ok(CommandEffect::RecoverSimulator),

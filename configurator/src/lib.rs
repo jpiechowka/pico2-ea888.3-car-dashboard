@@ -37,6 +37,7 @@ pub mod event_adapters;
 pub mod events;
 pub mod field_registry;
 pub mod geometry;
+pub mod json_diff;
 pub mod json_draft;
 pub mod preview;
 mod simulation;

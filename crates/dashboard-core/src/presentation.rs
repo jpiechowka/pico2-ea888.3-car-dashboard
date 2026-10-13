@@ -318,6 +318,8 @@ impl PresentationState {
             state: self,
             layout: self.view.and_then(|view| Layout::new(config, view, false)),
             snapshot,
+            #[cfg(feature = "alloc")]
+            rule_state: true,
         }
     }
 }
@@ -328,6 +330,8 @@ pub struct DisplayReadings<'a> {
     state: &'a PresentationState,
     layout: Option<Layout<'a>>,
     snapshot: &'a DashboardSnapshot,
+    #[cfg(feature = "alloc")]
+    rule_state: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PresentedWidget {
@@ -338,6 +342,17 @@ pub struct PresentedWidget {
     pub secondary: Option<Unit>,
 }
 impl DisplayReadings<'_> {
+    /// Read-only candidate drawing may use qualified channel observations,
+    /// but its widget indices cannot address an accepted owner's rules/peaks.
+    /// This changes only the ephemeral readings view, never the snapshot or
+    /// presentation owner. Available for alloc-enabled candidate inspection;
+    /// normal target readings retain their original layout and rule path.
+    #[cfg(feature = "alloc")]
+    pub fn without_rule_state(mut self) -> Self {
+        self.rule_state = false;
+        self
+    }
+
     pub fn widget(
         &self,
         cell: usize,
@@ -345,12 +360,38 @@ impl DisplayReadings<'_> {
         let layout = self.layout.as_ref()?;
         let widget = layout.widget(cell)?;
         let filter = self.state.cells.get(cell)?;
+        #[cfg(not(feature = "alloc"))]
         let index = RuleIndex::new(layout.rule_index(cell)?)?;
+        #[cfg(feature = "alloc")]
+        let (peak, warning) = if self.rule_state {
+            let index = RuleIndex::new(layout.rule_index(cell)?)?;
+            (
+                self.snapshot.peak_at(index, self.state.now_ms),
+                self.snapshot.warning_eligibility(index, self.state.now_ms),
+            )
+        } else {
+            (
+                None,
+                WarningEligibility {
+                    status: crate::alarms::Status::Disabled,
+                    latched: false,
+                    cleared: false,
+                    acknowledged: false,
+                    snoozed: false,
+                },
+            )
+        };
         let unit = Unit::resolve(widget.advanced.readout, self.state.boost_psi);
         Some(PresentedWidget {
             value: filter.valid.then_some(filter.filtered),
+            #[cfg(not(feature = "alloc"))]
             peak: self.snapshot.peak_at(index, self.state.now_ms),
+            #[cfg(feature = "alloc")]
+            peak,
+            #[cfg(not(feature = "alloc"))]
             warning: self.snapshot.warning_eligibility(index, self.state.now_ms),
+            #[cfg(feature = "alloc")]
+            warning,
             unit,
             secondary: if widget.capabilities().secondary {
                 Unit::secondary(widget.advanced.secondary, unit)
@@ -358,5 +399,29 @@ impl DisplayReadings<'_> {
                 None
             },
         })
+    }
+}
+
+#[cfg(all(test, not(feature = "alloc")))]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn normal_readings_keep_the_original_borrowed_layout() {
+        // The normal target path has exactly the original three borrowed fields.
+        #[allow(dead_code)]
+        struct OriginalReadings<'a> {
+            state: &'a PresentationState,
+            layout: Option<Layout<'a>>,
+            snapshot: &'a DashboardSnapshot,
+        }
+        assert_eq!(
+            core::mem::size_of::<DisplayReadings<'_>>(),
+            core::mem::size_of::<OriginalReadings<'_>>()
+        );
+        assert_eq!(
+            core::mem::align_of::<DisplayReadings<'_>>(),
+            core::mem::align_of::<OriginalReadings<'_>>()
+        );
     }
 }

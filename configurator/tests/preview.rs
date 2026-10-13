@@ -10,6 +10,61 @@ use dashboard_core::samples::{DataMode, Quality, SensorId, Source};
 use dashboard_core::vehicle_status::VehicleStatus;
 
 #[test]
+fn candidate_observation_readings_never_address_accepted_rule_peaks_or_warnings() {
+    use dashboard_core::acquisition::AcquisitionModel;
+    use dashboard_core::presentation::PresentationState;
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.on_ms = 1;
+    raw.widgets[0].warning.advanced.latch = true;
+    raw.widgets[0].advanced.peak_mode = PeakSelection::Maximum;
+    raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    let accepted = validate(raw.clone()).unwrap();
+    let mut model = AcquisitionModel::demo_configured(&accepted);
+    model.ingest_batch([3., 90., 95., 80., 30., 700., 13.8, 1.], 1000);
+    model.ingest_batch([4., 90., 95., 80., 30., 700., 13.8, 1.], 1001);
+    let snapshot = model.snapshot();
+    let before = snapshot;
+    let mut ordinary = PresentationState::new();
+    let readings = ordinary.prepare(&accepted, &snapshot, 1, 1001, false);
+    assert!(readings.widget(0).unwrap().warning.visible());
+    assert!(readings.widget(0).unwrap().peak.is_some());
+    let ordinary_warning = readings.widget(0).unwrap().warning;
+    // Candidate index zero is now an Oil widget, not the accepted Boost rule.
+    raw.widgets[0] = default_widget(Channel::Oil, 77, 1, raw.widgets[0].placement);
+    let candidate = validate(raw).unwrap();
+    let mut scratch = PresentationState::new();
+    let candidate_readings = scratch
+        .prepare(&candidate, &snapshot, 1, 1001, false)
+        .without_rule_state();
+    let widget = candidate_readings.widget(0).unwrap();
+    assert_eq!(widget.value, Some(90.));
+    assert_eq!(widget.peak, None);
+    assert_eq!(widget.warning.status, Status::Disabled);
+    assert!(!widget.warning.latched);
+    assert!(!widget.warning.cleared);
+    assert!(!widget.warning.acknowledged);
+    assert!(!widget.warning.snoozed);
+    assert!(!widget.warning.visible());
+    assert!(!widget.warning.attention());
+    assert_eq!(snapshot, before);
+    assert_eq!(
+        snapshot.quality(SensorId::Oil, 1001),
+        before.quality(SensorId::Oil, 1001)
+    );
+    assert_eq!(snapshot.publication_identity(), before.publication_identity());
+    assert_eq!(
+        ordinary
+            .prepare(&accepted, &snapshot, 1, 1001, false)
+            .widget(0)
+            .unwrap()
+            .warning,
+        ordinary_warning
+    );
+}
+
+#[test]
 fn canvas_failures_retry_exact_pending_bytes_and_never_complete_new_scratch() {
     use dashboard_configurator::event_adapters::{RenderIssue, complete_simulation_pixels, consume_simulation_pixels};
     use dashboard_configurator::simulator::ControlSimulator;
@@ -251,6 +306,129 @@ fn invalid_dashboard_off_masks_diagnostics_and_recovery_preserves_accepted_pendi
 }
 
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
+
+#[test]
+fn unapplied_candidate_simulation_matches_control_units_popup_fps_view_and_time() {
+    use dashboard_configurator::simulator::ControlSimulator;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    use dashboard_core::popup::Popup;
+    use dashboard_core::presentation::PresentationState;
+
+    let mut raw = default_config();
+    raw.views
+        .push(View {
+            id: 2,
+            name: "SECOND".try_into().unwrap(),
+        })
+        .unwrap();
+    for widget in &mut raw.widgets {
+        widget.warning.enabled = false;
+    }
+    let mut extra = raw.widgets[0].clone();
+    extra.id = 99;
+    extra.view = 2;
+    raw.widgets.push(extra).unwrap();
+    let accepted = validate(raw.clone()).unwrap();
+    let mut sim = ControlSimulator::new(accepted);
+    sim.advance_to(sim.now_ms() + 1, Some([2., 90., 95., 80., 30., 700., 13.8, 1.]));
+    let accepted_snapshot = sim.snapshot();
+    let accepted_source = sim.source_key();
+    let accepted_now = sim.now_ms();
+    let accepted_session = (sim.session().page(), sim.session().boost_psi(), sim.session().popup());
+    let accepted_warning = sim.completed_warning();
+    let mut timing = Preview::new();
+    let token = FrameToken {
+        buffer: BufferId::A,
+        sequence: 41,
+    };
+    let pending = timing.render_simulation_submitted(&mut sim, token).unwrap().to_vec();
+    raw.views[0].name = "TRACK".try_into().unwrap();
+    raw.views[1].name = "CANDIDATE".try_into().unwrap();
+    // Replace membership/order too: pixels and controls must share this actual
+    // admitted JSON candidate, rather than only testing renamed accepted IDs.
+    raw.views[0].id = 9;
+    raw.views[1].id = 4;
+    raw.views.swap(0, 1);
+    raw.boot_view = 9;
+    for w in &mut raw.widgets {
+        w.view = if w.view == 2 { 4 } else { 9 };
+    }
+    let mut editor = dashboard_configurator::editor::Editor::default();
+    let handle = editor.open_json().unwrap();
+    let parse = editor
+        .set_json_text(handle, serde_json::to_string(&raw).unwrap())
+        .unwrap();
+    editor.finish_json_parse(parse).unwrap();
+    let proof = editor.json_draft().unwrap().preview_proof().unwrap();
+    let candidate = proof.config();
+    sim.inspect_candidate(proof.clone());
+    assert_eq!(sim.display_session().view_id(), 9);
+    sim.tap(ButtonId::Y);
+    sim.tap(ButtonId::Y);
+    sim.tap(ButtonId::Y);
+    sim.tap(ButtonId::A);
+    assert!(sim.display_session().boost_psi());
+    assert!(matches!(sim.display_session().popup(), Some(Popup::BoostUnit(_))));
+    let mut scratch = Preview::new();
+    for transition in 0..5 {
+        match transition {
+            1 => sim.advance(2100),    // Unit popup expires; PSI still applies.
+            2 => sim.tap(ButtonId::X), // Candidate FPS feedback/header.
+            3 => sim.rotate(1),        // Candidate selected view/name feedback.
+            4 => sim.advance(3100),    // View popup expires; time remains candidate time.
+            _ => {}
+        }
+        scratch.render_candidate_simulation(&sim, &proof).unwrap();
+        let session = sim.display_session();
+        let snapshot = sim.snapshot();
+        let now = sim.display_now_ms();
+        let mut presentation = PresentationState::new();
+        let readings = presentation.prepare(candidate, &snapshot, session.view_id(), now, session.boost_psi());
+        let scene = DashboardScene {
+            readings: Some(&readings),
+            layout: Layout::new(candidate, session.view_id(), false),
+            measurements: &snapshot,
+            status: VehicleStatus::Demo,
+            now_ms: now,
+            blink_on: dashboard_core::animations::blink_on(now),
+            boost_psi: session.boost_psi(),
+            fps_mode: session.fps(),
+            fps_instant: 0.,
+            fps_average: 0.,
+            backgrounds: [BLACK; 8],
+            overlay: Overlay::configured_for_page(session.page(), session.overlay(candidate), None),
+        };
+        let mut wanted = Box::new(FrameBuffer::new());
+        scene.draw_full(&mut St7789Renderer::new(&mut wanted));
+        assert!(
+            scratch.rgb565() == &wanted[..],
+            "shared candidate scene at transition {transition}"
+        );
+        assert_eq!(scratch.rendered_at_ms(), Some(now));
+        assert_eq!(scratch.snapshot(), Some(&accepted_snapshot));
+        assert!(scratch.warning_page().is_none());
+        assert_eq!(sim.snapshot(), accepted_snapshot);
+        assert_eq!(sim.source_key(), accepted_source);
+        assert_eq!(sim.now_ms(), accepted_now);
+        assert_eq!(
+            (sim.session().page(), sim.session().boost_psi(), sim.session().popup()),
+            accepted_session
+        );
+        assert_eq!(sim.completed_warning(), accepted_warning);
+        assert_eq!(sim.completed_frame(), None);
+        assert_eq!(timing.pending_pixels(&sim, token), Some(pending.as_slice()));
+    }
+    assert!(!sim.complete_frame(token));
+    let parse = editor
+        .set_json_text(handle, serde_json::to_string(&raw).unwrap())
+        .unwrap();
+    editor.finish_json_parse(parse).unwrap();
+    let replacement = editor.json_draft().unwrap().preview_proof().unwrap();
+    assert_eq!(
+        scratch.render_candidate_simulation(&sim, &replacement),
+        Err(PreviewError::InspectionOnly)
+    );
+}
 
 #[test]
 fn borrowed_debug_data_and_actual_map_draw_into_existing_preview_without_simulator_submission() {

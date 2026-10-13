@@ -39,7 +39,7 @@ pub struct PreviewDockState {
     pub completion_raf: RwSignal<Option<leptos::leptos_dom::helpers::AnimationFrameRequestHandle>>,
     pub appearance_raf: RwSignal<Option<leptos::leptos_dom::helpers::AnimationFrameRequestHandle>>,
     pub appearance_queued: RwSignal<bool>,
-    pub inspection_stamp: RwSignal<Option<EditorStamp>>,
+    pub inspection_stamp: RwSignal<Option<(EditorStamp, Option<dashboard_configurator::json_draft::JsonProjection>)>>,
     accepted_key: StoredValue<AcceptedConfigKey>,
     reported_key: StoredValue<AcceptedConfigKey>,
 }
@@ -100,14 +100,37 @@ impl PreviewDockState {
                 .notice
                 .try_set("Simulation restarted · accepted configuration changed; render a current frame".into());
         }
-        if editor.has_invalid_draft() {
-            if self.inspection_stamp.get_untracked() != Some(editor.stamp()) {
+        if editor.has_invalid_draft() || editor.has_pending_json() {
+            let projection = editor.json_draft().map(|draft| draft.projection());
+            let stamp = Some((editor.stamp(), projection));
+            if self.inspection_stamp.get_untracked() != stamp {
+                let map = if editor.has_pending_json() {
+                    match editor.json_draft().map(|draft| draft.state()) {
+                        Some(dashboard_configurator::json_draft::JsonState::Candidate { config, .. }) => {
+                            config.controls
+                        }
+                        _ => editor.preview().config().controls,
+                    }
+                } else {
+                    editor
+                        .diagnostic()
+                        .map_or(editor.editing_config().controls, |d| d.config.controls)
+                };
+                // Install inspection before freezing the clock, so cancellation
+                // cannot sample accepted state after JSON becomes pending.
+                let proof = if editor.has_pending_json() {
+                    _ui.json.with_candidate(editor, Clone::clone).ok()
+                } else {
+                    None
+                };
+                let _ = self.sim.try_update(|s| {
+                    match proof {
+                        Some(proof) => s.inspect_candidate(proof),
+                        None => s.inspect_invalid(map),
+                    }
+                });
                 super::simulation::cancel(_ui);
-                let map = editor
-                    .diagnostic()
-                    .map_or(editor.editing_config().controls, |d| d.config.controls);
-                let _ = self.sim.try_update(|s| s.inspect_invalid(map));
-                let _ = self.inspection_stamp.try_set(Some(editor.stamp()));
+                let _ = self.inspection_stamp.try_set(stamp);
             }
         } else if self.inspection_stamp.get_untracked().is_some() || self.sim.with_untracked(ControlSimulator::invalid)
         {
