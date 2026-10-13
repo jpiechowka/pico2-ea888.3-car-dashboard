@@ -468,7 +468,19 @@ impl Editor {
     pub fn has_pending_json(&self) -> bool { self.json.as_ref().is_some_and(|draft| draft.pending) }
 
     pub fn action_readiness(&self) -> ActionReadiness {
-        let block = if self.has_pending_json() {
+        let block = self.snapshot_state_block().or_else(|| {
+            (self.revision.0 == u64::MAX || self.request == u64::MAX).then_some(ActionBlock::IdentityExhausted)
+        });
+        ActionReadiness {
+            stamp: self.stamp(),
+            block,
+        }
+    }
+
+    /// Data/lifecycle admission shared by new snapshots and already-issued
+    /// writes. Exhausted issuance cannot invalidate an existing save token.
+    fn snapshot_state_block(&self) -> Option<ActionBlock> {
+        if self.has_pending_json() {
             Some(ActionBlock::JsonPending)
         } else if self.has_invalid_draft() {
             Some(ActionBlock::InvalidDraft)
@@ -476,14 +488,8 @@ impl Editor {
             Some(ActionBlock::PointerActive)
         } else if self.import.is_some() {
             Some(ActionBlock::ImportPending)
-        } else if self.revision.0 == u64::MAX || self.request == u64::MAX {
-            Some(ActionBlock::IdentityExhausted)
         } else {
             None
-        };
-        ActionReadiness {
-            stamp: self.stamp(),
-            block,
         }
     }
 
@@ -824,7 +830,7 @@ impl Editor {
         &self,
         token: SaveToken,
     ) -> bool {
-        self.save == Some(token) && token.revision == self.revision && self.action_readiness().block.is_none()
+        self.save == Some(token) && token.revision == self.revision && self.snapshot_state_block().is_none()
     }
 
     pub fn save_status(&self) -> SaveStatus {
@@ -1975,6 +1981,40 @@ fn fresh_widget(config: &Config) -> Result<u16, EditorError> {
 #[cfg(test)]
 mod transaction_tests {
     use super::*;
+
+    #[test]
+    fn final_save_request_remains_current_and_completes_while_next_issuance_is_exhausted() {
+        let mut editor = Editor {
+            request: u64::MAX - 1,
+            ..Editor::default()
+        };
+        let request = editor.begin_save().unwrap();
+        let token = request.token();
+        assert_eq!(token.request, u64::MAX);
+        assert_eq!(editor.action_readiness().block, Some(ActionBlock::IdentityExhausted));
+        assert_eq!(editor.save_status(), SaveStatus::Saving);
+        assert!(
+            editor.save_is_current(token),
+            "the last successfully issued save must remain writable"
+        );
+        let before = (editor.stamp(), editor.accepted_config_key(), editor.history_len());
+        assert!(matches!(editor.begin_save(), Err(EditorError::CounterExhausted)));
+        assert!(
+            editor.save_is_current(token),
+            "failed next issuance must preserve the already issued request"
+        );
+        assert_eq!(
+            (editor.stamp(), editor.accepted_config_key(), editor.history_len()),
+            before
+        );
+        editor.acknowledge_save(token, Ok(())).unwrap();
+        assert_eq!(editor.save_status(), SaveStatus::Saved);
+        assert_eq!(editor.last_saved_revision(), Some(editor.revision()));
+        assert!(!editor.save_is_current(token));
+        assert!(matches!(editor.begin_save(), Err(EditorError::CounterExhausted)));
+        assert_eq!(editor.request, u64::MAX);
+        assert_eq!(editor.save_status(), SaveStatus::Saved);
+    }
 
     #[test]
     fn inspected_raw_authority_rechecks_index_ambiguity_missing_owner_applicability_and_exhaustion() {
