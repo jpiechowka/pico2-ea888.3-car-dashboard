@@ -55,3 +55,13 @@
 .error-navigation li span { display: block; font-size: 12px; }
 #studio-command-launcher { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 400px) { .command-dialog { padding: 12px; } .command-heading { flex-wrap: wrap; } .error-navigation { margin: 8px; } }
+/* Keep every header action reachable when the palette launcher adds a row. */
+.masthead { height: auto; min-height: 90px; min-width: 0; padding-top: 14px; padding-bottom: 14px; }
+.header-actions { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+.header-actions > button { min-width: 0; max-width: 100%; white-space: normal; }
+@media (max-width: 680px) {
+    .masthead { min-height: 76px; }
+    .header-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; width: 100%; }
+    .header-actions > button { justify-content: center; }
+    .header-actions > .primary { margin-left: 0; gap: 8px; }
+}
