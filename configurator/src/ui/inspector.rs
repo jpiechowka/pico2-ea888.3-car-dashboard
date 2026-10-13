@@ -73,6 +73,12 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
                 view!{<section id="studio-appearance-preview" class="appearance-preview" tabindex="-1" aria-label="Appearance preview">
                     <h3>{format!("Appearance preview: {}",request.scope().label())}</h3>
                     <p>{format!("{} · {} decimal places · history {} · average {} · extrema {} · trend {}",snapshot.gauge_style.label(),snapshot.decimals,snapshot.graph,snapshot.average,snapshot.extrema,snapshot.trend)}</p>
+                    <h4>"Frozen colors represented by RGB565"</h4>
+                    <dl class="appearance-color-summary">{ColorRole::ALL.into_iter().map(move |role|{
+                        let hex=role.get(&snapshot.colors).hex().to_string();
+                        let swatch=format!("background-color:{hex}");
+                        view!{<div><dt>{role.label()}</dt><dd><span class="appearance-swatch" aria-hidden="true" style=swatch></span><code>{hex}</code></dd></div>}
+                    }).collect_view()}</dl>
                     <p role="status">{description}</p>
                     <p class="hint">"Gauges omit history and trend; compact gauges also omit average and extrema. Unsupported visibility stays unchanged. Every stored band must contrast with the new track; a conflict rejects the whole operation."</p>
                     <div class="appearance-actions"><button class="primary" disabled=!can_apply on:click=move |_| {
@@ -117,7 +123,8 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
                 <button on:click=move |_|io::save_presets(ui,true)>"Replace stored record explicitly"</button><button on:click=move |_|io::reload_presets(ui)>"Reload stored presets"</button>
                 <button on:click=move |_|io::export_presets(ui)>"Export presets"</button></div>
             <p class="hint">"Replacing captures and compares the current record under its lock. Reload discards only the in-memory preset list. Export first to keep it."</p>
-            <label class="field"><span>"Import preset record into memory"</span><input type="file" accept=".json,application/json" on:change=move |event|{let input=event_target::<web_sys::HtmlInputElement>(&event);if let Some(file)=input.files().and_then(|f|f.get(0)){io::import_presets(ui,file);}input.set_value("");}/><small>"16 records maximum; complete file at most 32 KiB. Import does not write browser storage."</small></label>
+            <label class="field"><span>"Import preset record into memory"</span><input type="file" accept=".json,application/json" disabled=move ||ui.preset_import_busy.get() on:change=move |event|{let input=event_target::<web_sys::HtmlInputElement>(&event);if let Some(file)=input.files().and_then(|f|f.get(0)){io::import_presets(ui,file);}input.set_value("");}/><small>"16 records maximum; complete file at most 32 KiB. Import does not write browser storage."</small></label>
+            <p role="status" hidden=move ||!ui.preset_import_busy.get()>"Reading one bounded preset file…"</p>
         </details>
     }
 }

@@ -117,6 +117,28 @@ extern "C" {
         name: &str,
         callback: &js_sys::Function,
     ) -> Result<js_sys::Promise, JsValue>;
+    #[wasm_bindgen::prelude::wasm_bindgen(method,catch,js_name=request)]
+    fn request_preset_lock(
+        this: &DraftLocks,
+        name: &str,
+        options: &js_sys::Object,
+        callback: &js_sys::Function,
+    ) -> Result<js_sys::Promise, JsValue>;
+}
+fn preset_abort() -> Result<js_sys::Object, JsValue> {
+    let constructor =
+        js_sys::Reflect::get(&js_sys::global(), &"AbortController".into())?.dyn_into::<js_sys::Function>()?;
+    js_sys::Reflect::construct(&constructor, &js_sys::Array::new())?.dyn_into()
+}
+pub(super) fn cancel_presets(ui: Ui) {
+    let _ = ui.presets.try_update(PresetStore::cancel);
+    if let Some(Some(controller)) = ui.preset_abort.try_get_value()
+        && let Ok(method) =
+            js_sys::Reflect::get(&controller, &"abort".into()).and_then(|v| v.dyn_into::<js_sys::Function>())
+    {
+        let _ = method.call0(&controller);
+    }
+    let _ = ui.preset_abort.try_update_value(|slot| *slot = None);
 }
 fn request_lock(
     key: &str,
@@ -160,6 +182,18 @@ pub(super) fn save_presets(
             return;
         }
     };
+    let controller = match preset_abort() {
+        Ok(controller) => controller,
+        Err(_) => {
+            let _ = ui.presets.try_update(|store| {
+                let _ = store.finish_save(&request, Err(StorageFailure::Unavailable));
+            });
+            ui.notice
+                .set("Cancelable preset storage is unavailable; export a backup".into());
+            return;
+        }
+    };
+    ui.preset_abort.set_value(Some(controller.clone()));
     ui.preset_lock_busy.set(true);
     let captured = request.clone();
     let callback = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new(move |_| {
@@ -185,7 +219,21 @@ pub(super) fn save_presets(
             let _ = store.finish_save(&captured, result);
         });
     });
-    let promise = request_lock(PRESET_STORAGE_KEY, callback.as_ref().unchecked_ref());
+    let promise = (|| {
+        let options = js_sys::Object::new();
+        let signal = js_sys::Reflect::get(&controller, &"signal".into())?;
+        js_sys::Reflect::set(&options, &"signal".into(), &signal)?;
+        let navigator = web_sys::window().ok_or(JsValue::NULL)?.navigator();
+        let locks = js_sys::Reflect::get(navigator.as_ref(), &"locks".into())?;
+        if locks.is_null() || locks.is_undefined() {
+            return Err(JsValue::NULL);
+        }
+        locks.unchecked_into::<DraftLocks>().request_preset_lock(
+            PRESET_STORAGE_KEY,
+            &options,
+            callback.as_ref().unchecked_ref(),
+        )
+    })();
     spawn_local(async move {
         let result = match promise {
             Ok(promise) => JsFuture::from(promise).await,
@@ -201,6 +249,7 @@ pub(super) fn save_presets(
             );
         }
         let _ = ui.preset_lock_busy.try_set(false);
+        let _ = ui.preset_abort.try_update_value(|slot| *slot = None);
         drop(callback);
     });
 }
@@ -218,13 +267,19 @@ pub(super) fn import_presets(
     ui: Ui,
     file: web_sys::File,
 ) {
+    if ui.preset_import_busy.get_untracked() {
+        ui.notice.set("A preset file is already being read".into());
+        return;
+    }
     if !file.size().is_finite() || file.size() > MAX_PRESET_BYTES as f64 {
         ui.notice.set(PresetError::TooLarge.message().into());
         return;
     }
     let version = ui.presets.with_untracked(PresetStore::version);
+    ui.preset_import_busy.set(true);
     spawn_local(async move {
         let result = JsFuture::from(file.text()).await;
+        let _ = ui.preset_import_busy.try_set(false);
         if ui.presets.try_with_untracked(PresetStore::version) != Some(version) {
             return;
         }

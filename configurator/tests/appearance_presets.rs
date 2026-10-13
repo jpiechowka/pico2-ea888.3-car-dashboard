@@ -383,6 +383,11 @@ fn storage_conflict_failed_save_and_stale_completion_preserve_memory() {
     assert_eq!(store.status(), PresetStatus::Conflict);
     let replacement = PresetStore::restore(Ok(None));
     assert!(!replacement.save_is_current(&request));
+    let request = store.begin_replace(None).unwrap();
+    store.cancel();
+    assert!(!store.save_is_current(&request));
+    assert_eq!(store.check_write(&request, None), Err(PresetError::Stale));
+    assert_eq!(store.finish_save(&request, Ok(())), Err(PresetError::Stale));
 }
 
 #[test]

@@ -73,3 +73,8 @@
 .appearance-preview { min-width: 0; padding: 10px; border: 1px solid var(--red); border-radius: 6px; overflow-wrap: anywhere; }
 .appearance-presets { padding: 0; list-style: none; min-width: 0; }
 .appearance-presets li { margin: 10px 0; overflow-wrap: anywhere; }
+.appearance-color-summary { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; min-width: 0; }
+.appearance-color-summary > div { min-width: 0; }
+.appearance-color-summary dt { font-size: 11px; overflow-wrap: anywhere; }
+.appearance-color-summary dd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; margin: 3px 0 0; }
+.appearance-swatch { display: inline-block; flex: 0 0 14px; width: 14px; height: 14px; border: 1px solid var(--muted); border-radius: 2px; }

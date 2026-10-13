@@ -34,6 +34,8 @@ pub struct Ui {
     appearance: RwSignal<AppearanceSession>,
     presets: RwSignal<PresetStore>,
     preset_lock_busy: RwSignal<bool>,
+    preset_import_busy: RwSignal<bool>,
+    preset_abort: StoredValue<Option<js_sys::Object>, LocalStorage>,
     psi: RwSignal<bool>,
     warnings: RwSignal<bool>,
     sample_ms: RwSignal<u64>,
@@ -374,6 +376,8 @@ pub fn Studio() -> impl IntoView {
         appearance: RwSignal::new(AppearanceSession::default()),
         presets: RwSignal::new(io::restore_presets()),
         preset_lock_busy: RwSignal::new(false),
+        preset_import_busy: RwSignal::new(false),
+        preset_abort: StoredValue::new_local(None),
         psi: RwSignal::new(false),
         warnings: RwSignal::new(false),
         sample_ms: RwSignal::new(118_000),
@@ -409,7 +413,7 @@ pub fn Studio() -> impl IntoView {
     });
     on_cleanup(move || {
         storage_listener.remove();
-        let _ = ui.presets.try_update(PresetStore::cancel);
+        io::cancel_presets(ui);
     });
     view! {
         <div class="studio" on:pointermove=move |e| stage::drag_move(ui, e)
