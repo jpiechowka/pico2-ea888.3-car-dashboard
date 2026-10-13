@@ -6,6 +6,25 @@ fn preset_result(
     ui: Ui,
     result: Result<(), PresetError>,
 ) {
+    ui.event(Notice {
+        category: Category::Editor,
+        severity: if result.is_ok() {
+            dashboard_configurator::events::Severity::Info
+        } else {
+            dashboard_configurator::events::Severity::Warn
+        },
+        code: if result.is_ok() {
+            "presets.changed"
+        } else {
+            "presets.rejected"
+        },
+        subject: Some("Appearance presets"),
+        message: match result {
+            Ok(()) => "Presets changed in memory; explicit save required",
+            Err(error) => error.message(),
+        }
+        .into(),
+    });
     ui.notice.set(match result {
         Ok(()) => "Presets changed in memory. Save presets or export a backup.".into(),
         Err(error) => error.message().into(),

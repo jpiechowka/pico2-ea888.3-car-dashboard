@@ -1,6 +1,7 @@
 mod advanced;
 mod command_palette;
 mod controls;
+mod event_log;
 mod fields;
 mod inspector;
 mod io;
@@ -13,6 +14,18 @@ mod workspaces;
 use dashboard_configurator::appearance_presets::*;
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
+use dashboard_configurator::event_adapters::{
+    AdapterState,
+    Notice,
+    RenderIssue,
+    RenderLane,
+    SimulationObservation,
+    StorageArea,
+    StorageIssue,
+    simulation_changes,
+    validation_transition,
+};
+use dashboard_configurator::events::{Category, EventStore};
 use dashboard_configurator::field_registry::{FieldId, FieldKey, FieldTarget, Registry, TargetOwner};
 use dashboard_configurator::workspace::{GroupId, Workspace, WorkspaceState};
 use fields::{Choice, ColorField, TextField, Toggle, choices, error_text};
@@ -29,6 +42,10 @@ pub struct Ui {
     cache_seen: RwSignal<dashboard_core::cache_diagnostics::CacheExhaustionSeen>,
     editor: RwSignal<Editor>,
     notice: RwSignal<String>,
+    events: RwSignal<EventStore>,
+    event_adapters: StoredValue<AdapterState>,
+    console_enabled: RwSignal<bool>,
+    downloads: StoredValue<io::Downloads, LocalStorage>,
     conflict: RwSignal<bool>,
     saved_bytes: RwSignal<Option<String>>,
     appearance: RwSignal<AppearanceSession>,
@@ -61,12 +78,107 @@ pub struct Ui {
 fn now() -> f64 { web_sys::window().and_then(|w| w.performance()).map_or(0.0, |p| p.now()) }
 
 impl Ui {
+    fn event(
+        self,
+        notice: Notice,
+    ) {
+        event_log::record(self, &notice);
+    }
+
+    fn storage_outcome(
+        self,
+        area: StorageArea,
+        result: Result<(), StorageIssue>,
+    ) {
+        let mut event = None;
+        let _ = self
+            .event_adapters
+            .try_update_value(|state| event = state.storage(area, result));
+        if let Some(event) = event {
+            self.event(event);
+        }
+    }
+
+    fn storage_read_outcome(
+        self,
+        area: StorageArea,
+        result: Result<(), StorageIssue>,
+    ) {
+        let mut event = None;
+        let _ = self
+            .event_adapters
+            .try_update_value(|state| event = state.storage_read(area, result));
+        if let Some(event) = event {
+            self.event(event);
+        }
+    }
+
+    fn render_outcome(
+        self,
+        lane: RenderLane,
+        success: bool,
+    ) {
+        let mut event = None;
+        let _ = self
+            .event_adapters
+            .try_update_value(|state| event = state.render(lane, success));
+        if let Some(event) = event {
+            self.event(event);
+        }
+    }
+
+    fn render_issue(
+        self,
+        lane: RenderLane,
+        result: Result<(), RenderIssue>,
+    ) {
+        let mut event = None;
+        let _ = self
+            .event_adapters
+            .try_update_value(|state| event = state.render_result(lane, result));
+        if let Some(event) = event {
+            self.event(event);
+        }
+    }
+
+    fn accepted_field(
+        self,
+        before: AcceptedConfigKey,
+        subject: &'static str,
+    ) {
+        if let Some(revision) = self
+            .editor
+            .try_with_untracked(|e| {
+                (e.accepted_config_key() != before && !e.has_invalid_draft()).then(|| e.accepted_revision().get())
+            })
+            .flatten()
+        {
+            self.event(Notice::info(
+                Category::Editor,
+                "editor.accepted",
+                Some(subject),
+                format!("Accepted configuration revision {revision}"),
+            ));
+            self.editor.with_untracked(|e| self.dock.synchronize(self, e));
+            self.dock.report_restart(self);
+        }
+    }
+
     fn simulate(
         self,
         action: impl FnOnce(&mut dashboard_configurator::simulator::ControlSimulator),
     ) {
-        self.editor.with_untracked(|e| self.dock.synchronize(e));
-        self.dock.sim.update(action);
+        self.editor.with_untracked(|e| self.dock.synchronize(self, e));
+        self.dock.report_restart(self);
+        let mut events = Vec::new();
+        self.dock.sim.update(|sim| {
+            let before = SimulationObservation::capture(sim);
+            action(sim);
+            events = simulation_changes(&before, &SimulationObservation::capture(sim));
+        });
+        for event in events {
+            self.event(event);
+        }
     }
 
     fn snapshot_blocked(self) -> bool { self.editor.with(|e| e.action_readiness().block.is_some()) }
@@ -186,7 +298,15 @@ impl Ui {
                 seen,
                 status,
                 |cause| self.notice.set(cause.to_string()),
-                |cause| web_sys::console::warn_1(&cause.to_string().into()),
+                |cause| {
+                    self.event(Notice {
+                        category: Category::Rendering,
+                        severity: dashboard_configurator::events::Severity::Warn,
+                        code: "cache.exhausted",
+                        subject: None,
+                        message: cause.to_string(),
+                    })
+                },
             )
         });
     }
@@ -199,17 +319,35 @@ impl Ui {
         self,
         action: impl FnOnce(&mut Editor) -> Result<Revision, EditorError>,
     ) -> bool {
+        let before = self.editor.with_untracked(Editor::accepted_config_key);
+        let success = self.run_quiet(action);
+        if success {
+            self.accepted_field(before, "Configuration");
+        }
+        success
+    }
+
+    fn run_quiet(
+        self,
+        action: impl FnOnce(&mut Editor) -> Result<Revision, EditorError>,
+    ) -> bool {
         let started = now();
         let mut result = Ok(());
         let mut changed = false;
         let mut selection_changed = false;
+        let mut validation = None;
         self.editor.update(|editor| {
             let before = editor.revision();
             let selection = editor.selection();
+            let invalid = editor.has_invalid_draft();
             result = action(editor).map(|_| ());
             changed = before != editor.revision();
             selection_changed = selection != editor.selection();
+            validation = validation_transition(invalid, editor.has_invalid_draft());
         });
+        if let Some(event) = validation {
+            self.event(event);
+        }
         if selection_changed {
             self.inspection.set(None);
             self.error_inspection.set(None);
@@ -252,7 +390,7 @@ impl Ui {
         edit: Edit,
     ) {
         let inspection = self.inspection.get_untracked();
-        let success = self.run(move |editor| {
+        let success = self.run_quiet(move |editor| {
             if let Some(target) = inspection {
                 let resolved = Registry::resolve(editor, target).map_err(|_| EditorError::StaleToken)?;
                 if !resolved.inspection.id_lookup_unambiguous {
@@ -359,13 +497,18 @@ impl Ui {
 #[component]
 pub fn Studio() -> impl IntoView {
     let mount_started = now();
-    let (editor, initial_notice, saved_bytes) = io::restore();
-    let (workspace, preference_notice) = workspaces::restore();
+    let (editor, initial_notice, saved_bytes, draft_storage) = io::restore();
+    let (workspace, preference_notice, preference_storage) = workspaces::restore();
+    let (presets, preset_storage) = io::restore_presets();
     let dock = PreviewDockState::new(&editor);
     let ui = Ui {
         cache_seen: RwSignal::new(dashboard_core::cache_diagnostics::CacheExhaustionSeen::new()),
         mount_started,
         editor: RwSignal::new(editor),
+        events: RwSignal::new(EventStore::default()),
+        event_adapters: StoredValue::new(AdapterState::default()),
+        console_enabled: RwSignal::new(true),
+        downloads: StoredValue::new_local(io::Downloads::default()),
         notice: RwSignal::new(if preference_notice.is_empty() {
             initial_notice
         } else {
@@ -374,7 +517,7 @@ pub fn Studio() -> impl IntoView {
         conflict: RwSignal::new(false),
         saved_bytes: RwSignal::new(saved_bytes),
         appearance: RwSignal::new(AppearanceSession::default()),
-        presets: RwSignal::new(io::restore_presets()),
+        presets: RwSignal::new(presets),
         preset_lock_busy: RwSignal::new(false),
         preset_import_busy: RwSignal::new(false),
         preset_abort: StoredValue::new_local(None),
@@ -399,6 +542,15 @@ pub fn Studio() -> impl IntoView {
         trace: RwSignal::new(metrics::Trace::default()),
         observer: RwSignal::new(None),
     };
+    ui.event(Notice::info(
+        Category::Editor,
+        "studio.initialized",
+        None,
+        "Studio initialized; diagnostics retained locally",
+    ));
+    ui.storage_read_outcome(StorageArea::Draft, draft_storage);
+    ui.storage_read_outcome(StorageArea::Preferences, preference_storage);
+    ui.storage_read_outcome(StorageArea::Presets, preset_storage);
     dock.install(ui);
     stage::install_playback(ui);
     widget_menu::install(ui);
@@ -461,6 +613,7 @@ pub fn Studio() -> impl IntoView {
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-diagnostics" role="tabpanel" aria-labelledby="studio-tab-diagnostics" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Diagnostics)>
                     <h1>"Diagnostics"</h1>
+                    <event_log::EventLog ui/>
                     <Group ui group=GroupId::Simulation><controls::SimulationControls ui/></Group>
                     <Group ui group=GroupId::Files><io::Files ui/></Group>
                 </section>

@@ -369,18 +369,18 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                             Some(draft) => p.render_diagnostic(e.preview(), draft, e.selection().view, options),
                             None => p.render(e.preview(), e.selection().view, options),
                         }
-                        .map_err(|e| format!("Preview failed: {e:?}"))?;
+                        .map_err(RenderIssue::Preview)?;
                         let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(Clamped(pixels), 320, 240)
-                            .map_err(|_| "Canvas image allocation failed".to_string())?;
+                            .map_err(|_| RenderIssue::CanvasAllocation)?;
                         let context = canvas
                             .get_context("2d")
-                            .map_err(|_| "Canvas is unavailable".to_string())?
-                            .ok_or_else(|| "Canvas is unavailable".to_string())?
+                            .map_err(|_| RenderIssue::CanvasContext)?
+                            .ok_or(RenderIssue::CanvasContext)?
                             .dyn_into::<web_sys::CanvasRenderingContext2d>()
-                            .map_err(|_| "Canvas context is unavailable".to_string())?;
+                            .map_err(|_| RenderIssue::CanvasContext)?;
                         context
                             .put_image_data(&image, 0.0, 0.0)
-                            .map_err(|_| "Canvas draw failed".to_string())?;
+                            .map_err(|_| RenderIssue::CanvasDraw)?;
                         Ok(())
                     })();
                     ui.observe_cache(p.cache_exhaustion_status());
@@ -388,9 +388,11 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 result
             });
             if let Err(error) = result {
-                ui.preview_error.set(Some(error));
+                ui.render_issue(RenderLane::Appearance, Err(error));
+                ui.preview_error.set(Some(error.to_string()));
                 return;
             }
+            ui.render_outcome(RenderLane::Appearance, true);
             ui.preview_error.set(None);
             ui.dock
                 .pixels_key

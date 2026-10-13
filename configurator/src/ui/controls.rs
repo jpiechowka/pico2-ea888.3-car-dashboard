@@ -5,19 +5,19 @@ use super::*;
 fn write_timing_canvas(
     canvas: NodeRef<leptos::html::Canvas>,
     pixels: &[u8],
-) -> Result<(), String> {
+) -> Result<(), RenderIssue> {
     let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(pixels), 320, 240)
-        .map_err(|_| "Timing image allocation failed")?;
-    let canvas = canvas.get_untracked().ok_or("Timing canvas unavailable")?;
+        .map_err(|_| RenderIssue::CanvasAllocation)?;
+    let canvas = canvas.get_untracked().ok_or(RenderIssue::CanvasContext)?;
     let context = canvas
         .get_context("2d")
-        .map_err(|_| "Timing canvas unavailable")?
-        .ok_or("Timing canvas unavailable")?
+        .map_err(|_| RenderIssue::CanvasContext)?
+        .ok_or(RenderIssue::CanvasContext)?
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
-        .map_err(|_| "Timing context unavailable")?;
+        .map_err(|_| RenderIssue::CanvasContext)?;
     context
         .put_image_data(&image, 0., 0.)
-        .map_err(|_| "Timing canvas draw failed".into())
+        .map_err(|_| RenderIssue::CanvasDraw)
 }
 
 fn binding_id(
@@ -97,7 +97,7 @@ fn change_map(
     token: FieldToken,
     change: impl FnOnce(&mut ControlMap),
 ) {
-    ui.run(move |editor| {
+    ui.run_quiet(move |editor| {
         let mut map = editor.editing_config().controls;
         change(&mut map);
         editor.apply_if_current(token, Edit::SetControls(map))
@@ -284,11 +284,11 @@ pub fn SimulationControls(ui: Ui) -> impl IntoView {
         <div class="simulator-actions">
             <button disabled=move ||ui.invalid() || (pending_frame.get().is_some() && canvas_accepted.get()) || (pending_frame.get().is_none() && sim.with(|s|s.session().page()!=ControlPage::Dashboard)) on:click=move |_|{
                 ui.dock.mode.set(PreviewMode::Simulation);
-                ui.editor.with_untracked(|e|ui.dock.synchronize(e));
+                ui.editor.with_untracked(|e|ui.dock.synchronize(ui,e));
                 if pending_frame.get_untracked().is_some(){
                     match timing_preview.with_untracked(|p|write_timing_canvas(timing_canvas,p.rgba())){
-                        Ok(())=>{canvas_accepted.set(true);ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);simulation_notice.set("Retained Dashboard pixels accepted. Complete the submitted frame.".into());},
-                        Err(error)=>simulation_notice.set(format!("{error}. Candidate retained; retry the same pixels.")),
+                        Ok(())=>{ui.render_outcome(RenderLane::Simulation,true);canvas_accepted.set(true);ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);simulation_notice.set("Retained Dashboard pixels accepted. Complete the submitted frame.".into());},
+                        Err(error)=>{ui.render_issue(RenderLane::Simulation,Err(error));simulation_notice.set(format!("{error}. Candidate retained; retry the same pixels."));},
                     }
                     return;
                 }
@@ -297,15 +297,15 @@ pub fn SimulationControls(ui: Ui) -> impl IntoView {
                 let mut result=Ok(());
                 ui.simulate(|s| timing_preview.update(|p|{
                     result=(||{
-                        let pixels=p.render_simulation_submitted(s,token).map_err(|e|format!("Timing preview: {e:?}"))?;
+                        let pixels=p.render_simulation_submitted(s,token).map_err(RenderIssue::Preview)?;
                         sequence.set(next);pending_frame.set(Some(token));
                         write_timing_canvas(timing_canvas,pixels)
                     })();
                 }));
-                match result { Ok(())=>{canvas_accepted.set(true);ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);simulation_notice.set("Dashboard pixels submitted. Complete the frame to commit LED and acknowledgment identity.".into());},Err(error)=>simulation_notice.set(format!("{error}. Candidate retained when submitted; retry its same pixels.")), }
+                ui.render_issue(RenderLane::Simulation,result);match result { Ok(())=>{ui.render_outcome(RenderLane::Simulation,true);canvas_accepted.set(true);ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);simulation_notice.set("Dashboard pixels submitted. Complete the frame to commit LED and acknowledgment identity.".into());},Err(error)=>simulation_notice.set(format!("{error}. Candidate retained when submitted; retry its same pixels.")), }
             }>{move ||if pending_frame.get().is_some() && !canvas_accepted.get(){"Retry same submitted pixels"}else{"Render / submit dashboard frame"}}</button>
             <button disabled=move ||ui.invalid() || pending_frame.get().is_none() || !canvas_accepted.get() on:click=move |_|{
-                ui.dock.mode.set(PreviewMode::Simulation);ui.editor.with_untracked(|e|ui.dock.synchronize(e));if let Some(token)=pending_frame.get_untracked(){if let Err(error)=timing_preview.with_untracked(|p|write_timing_canvas(timing_canvas,p.rgba())) {canvas_accepted.set(false);simulation_notice.set(error);return;} ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);ui.simulate(|s|{if s.complete_frame(token){simulation_notice.set("Dashboard frame completed · LED and warning identity committed".into());pending_frame.set(None);canvas_accepted.set(false);}});}
+                ui.dock.mode.set(PreviewMode::Simulation);ui.editor.with_untracked(|e|ui.dock.synchronize(ui,e));if let Some(token)=pending_frame.get_untracked(){if let Err(error)=timing_preview.with_untracked(|p|write_timing_canvas(timing_canvas,p.rgba())) {ui.render_issue(RenderLane::Simulation,Err(error));canvas_accepted.set(false);simulation_notice.set(error.to_string());return;} ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);ui.simulate(|s|{match dashboard_configurator::event_adapters::complete_simulation_frame(s,token){Ok(())=>{simulation_notice.set("Dashboard frame completed · LED and warning identity committed".into());pending_frame.set(None);canvas_accepted.set(false);},Err(event)=>{simulation_notice.set(event.message.clone());ui.event(event);}}});}
             }>"Complete submitted frame"</button>
         </div>
         <div class="simulator-buttons">{ButtonId::ALL.into_iter().map(|button| view! {
@@ -326,4 +326,12 @@ pub fn SimulationControls(ui: Ui) -> impl IntoView {
 }
 
 /// The palette and visible protected Y hold share the persistent control path.
-pub(super) fn recover(ui: Ui) { ui.simulate(ControlSimulator::recover); }
+pub(super) fn recover(ui: Ui) {
+    ui.simulate(ControlSimulator::recover);
+    ui.event(Notice::info(
+        Category::Simulation,
+        "simulation.recovered",
+        None,
+        "Protected recovery: Dashboard Full",
+    ));
+}

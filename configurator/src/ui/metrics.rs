@@ -153,8 +153,10 @@ pub fn schedule_record(
         let _ = ui.trace.try_update(|trace| {
             let _ = trace.capture.finish(&mut permit, sample);
         });
+        ui.render_outcome(RenderLane::Timing, true);
     });
     if result.is_err() {
+        ui.render_outcome(RenderLane::Timing, false);
         pending.borrow_mut().abandon();
         let _ = ui
             .notice
@@ -251,7 +253,7 @@ pub fn Measurements(ui: Ui) -> impl IntoView {
             <button disabled=move ||ui.trace.with(|t|t.capture.status()==TraceStatus::Recording || t.capture.in_flight()!=0) || ui.pending_at.get().is_some() on:click=move |_|{
                 drain(ui);
                 let json=ui.trace.with_untracked(serde_json::to_vec_pretty);
-                match json {Ok(bytes)=>{if io::download("studio-performance.json","application/json",&bytes).is_err(){ui.notice.set("Could not download performance trace".into());}},Err(_)=>ui.notice.set("Could not serialize performance trace".into())}
+                match json {Ok(bytes)=>{if io::download(ui,"studio-performance.json","application/json",&bytes).is_err(){ui.event(dashboard_configurator::event_adapters::transfer_failure(dashboard_configurator::event_adapters::TransferFailure::Download));ui.notice.set("Could not download performance trace".into());}},Err(_)=>{ui.event(dashboard_configurator::event_adapters::transfer_failure(dashboard_configurator::event_adapters::TransferFailure::Serialization));ui.notice.set("Could not serialize performance trace".into())}}
             }>"Export performance trace"</button>
         </details>
     }

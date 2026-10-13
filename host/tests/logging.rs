@@ -6,6 +6,42 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 fn entry(n: u64) -> Entry { Entry::new(Level::Info, n, format_args!("record {n}")) }
 
 #[test]
+fn qualified_quality_logs_only_changes_and_preserves_latest_fault() {
+    use dashboard_core::acquisition::AcquisitionModel;
+    use dashboard_core::logging::QualityTransitions;
+    use dashboard_core::samples::{Quality, SensorId};
+    let logs = LogStore::<CriticalSectionRawMutex>::new();
+    let mut model = AcquisitionModel::demo();
+    let mut transitions = QualityTransitions::new();
+    transitions.log(&logs, &model.snapshot(), 0);
+    assert!(logs.window(None).unwrap().entries.is_empty());
+    assert!(model.ingest_batch([1., 90., 95., 80., 30., 700., 13.8, 1.], 1));
+    transitions.log(&logs, &model.snapshot(), 1);
+    let first = logs.window(None).unwrap().newest;
+    transitions.log(&logs, &model.snapshot(), 2);
+    assert_eq!(logs.window(None).unwrap().newest, first);
+    logs.push(Level::Fault, 3, format_args!("transport fault"));
+    model.mark_fault(SensorId::Oil, Quality::TransportError, 4);
+    transitions.log(&logs, &model.snapshot(), 4);
+    let window = logs.window(None).unwrap();
+    assert!(window.entries.last().unwrap().entry.message.as_str().contains("OIL"));
+    assert_eq!(logs.fault().unwrap().message.as_str(), "transport fault");
+    transitions.log(&logs, &model.snapshot(), 10000);
+    assert!(
+        logs.window(None)
+            .unwrap()
+            .entries
+            .iter()
+            .any(|event| event.entry.message.as_str().contains("STALE"))
+    );
+    assert!(model.ingest_batch([1., 90., 95., 80., 30., 700., 13.8, 1.], 10001));
+    transitions.log(&logs, &model.snapshot(), 10001);
+    let newest = logs.window(None).unwrap().newest;
+    transitions.log(&logs, &model.snapshot(), 10002);
+    assert_eq!(logs.window(None).unwrap().newest, newest);
+}
+
+#[test]
 fn message_truncation_preserves_a_utf8_prefix_and_reports_format_failure() {
     for input in [
         "a".repeat(40),

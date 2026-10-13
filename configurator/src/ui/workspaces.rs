@@ -25,6 +25,7 @@ pub struct PreviewDockState {
     pub notice: RwSignal<String>,
     pub channel: RwSignal<Channel>,
     accepted_key: StoredValue<AcceptedConfigKey>,
+    reported_key: StoredValue<AcceptedConfigKey>,
 }
 impl PreviewDockState {
     pub fn new(editor: &Editor) -> Self {
@@ -41,12 +42,14 @@ impl PreviewDockState {
             notice: RwSignal::new("Ready · accepted configuration".into()),
             channel: RwSignal::new(Channel::Boost),
             accepted_key: StoredValue::new(editor.accepted_config_key()),
+            reported_key: StoredValue::new(editor.accepted_config_key()),
         }
     }
 
     /// Recheck accepted lineage at action time as well as on reactive updates.
     pub fn synchronize(
         self,
+        _ui: Ui,
         editor: &Editor,
     ) {
         let key = editor.accepted_config_key();
@@ -60,6 +63,24 @@ impl PreviewDockState {
         }
     }
 
+    /// Report at an explicit committed action, not each raw-input restart.
+    pub fn report_restart(
+        self,
+        ui: Ui,
+    ) {
+        let current = self.accepted_key.get_value();
+        if self.reported_key.get_value() != current {
+            self.reported_key.set_value(current);
+            let revision = ui.editor.with_untracked(|e| e.accepted_revision().get());
+            ui.event(Notice::info(
+                Category::Simulation,
+                "simulation.restarted",
+                None,
+                format!("Simulation restarted at accepted revision {revision}"),
+            ));
+        }
+    }
+
     pub fn install(
         self,
         ui: Ui,
@@ -67,7 +88,7 @@ impl PreviewDockState {
         Effect::new(move |_| ui.observe_cache(self.sim.with(ControlSimulator::cache_exhaustion_status)));
         Effect::new(move |_| {
             ui.editor.with(|e| {
-                self.synchronize(e);
+                self.synchronize(ui, e);
                 if e.has_invalid_draft() {
                     let map = e
                         .diagnostic()
@@ -83,20 +104,26 @@ impl PreviewDockState {
     }
 }
 
-pub fn restore() -> (WorkspaceState, String) {
-    let read = web_sys::window()
-        .ok_or(())
-        .and_then(|w| w.local_storage().map_err(|_| ())?.ok_or(()))
-        .and_then(|s| s.get_item(PREFERENCES_KEY).map_err(|_| ()));
+pub fn restore() -> (WorkspaceState, String, Result<(), StorageIssue>) {
+    let read = io::storage().and_then(|s| s.get_item(PREFERENCES_KEY).map_err(io::storage_error));
     match read {
         Ok(text) => {
             let (state, error) = WorkspaceState::from_preferences(text.as_deref());
-            (state, error.unwrap_or_default().into())
+            (
+                state,
+                error.unwrap_or_default().into(),
+                if error.is_some() {
+                    Err(StorageIssue::Corrupt)
+                } else {
+                    Ok(())
+                },
+            )
         }
-        Err(()) => {
+        Err(failure) => {
             (
                 WorkspaceState::default(),
                 "Workspace preferences are unavailable; navigation works in this session".into(),
+                Err(StorageIssue::Failure(failure)),
             )
         }
     }
@@ -105,19 +132,21 @@ pub fn persist(ui: Ui) {
     let result = ui
         .workspace
         .with_untracked(WorkspaceState::preferences)
-        .map_err(str::to_string)
+        .map_err(|_| StorageIssue::Corrupt)
         .and_then(|text| {
-            web_sys::window()
-                .and_then(|w| w.local_storage().ok().flatten())
-                .ok_or_else(|| "Workspace preferences are unavailable".to_string())
-                .and_then(|storage| {
-                    storage
-                        .set_item(PREFERENCES_KEY, &text)
-                        .map_err(|_| "Workspace preferences could not be saved; navigation remains available".into())
-                })
+            io::storage().map_err(StorageIssue::Failure).and_then(|storage| {
+                storage
+                    .set_item(PREFERENCES_KEY, &text)
+                    .map_err(|error| StorageIssue::Failure(io::storage_error(error)))
+            })
         });
-    if let Err(message) = result {
-        ui.notice.set(message);
+    if let Err(issue) = result {
+        ui.storage_outcome(StorageArea::Preferences, Err(issue));
+        ui.notice
+            .set("Workspace preferences could not be saved; navigation remains available".into());
+    } else {
+        ui.storage_outcome(StorageArea::Preferences, Ok(()));
+        ui.storage_read_outcome(StorageArea::Preferences, Ok(()));
     }
 }
 pub fn activate(

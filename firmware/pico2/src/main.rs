@@ -458,6 +458,7 @@ async fn dashboard_task(
     let mut flush_in_progress = None;
 
     let mut measurements = DashboardSnapshot::EMPTY;
+    let mut quality_transitions = dashboard_pico2::logging::QualityTransitions::new();
     measurements.mode = data_mode();
     let mut reset_requests = ResetRequests::default();
 
@@ -578,6 +579,11 @@ async fn dashboard_task(
             }
         }
         if let Some(feedback) = warning_requests.observe(&measurements) {
+            dashboard_pico2::logging::log_warning_rejection(
+                &crate::profiling::LOGS,
+                feedback,
+                Instant::now().as_millis(),
+            );
             session.warning_feedback(feedback, Instant::now().as_millis());
         }
         if let Some(command) = warning_requests.pending() {
@@ -585,6 +591,7 @@ async fn dashboard_task(
             let _ = crate::tasks::acquisition::WARNING_COMMANDS.try_send(command);
         }
         let now_ms = Instant::now().as_millis();
+        quality_transitions.log(&crate::profiling::LOGS, &measurements, now_ms);
         apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
         apply_indicator(
             &mut rgb_led,

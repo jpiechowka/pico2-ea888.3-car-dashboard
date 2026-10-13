@@ -3,7 +3,30 @@ use dashboard_core::control_session::ControlSession;
 use dashboard_core::controls::ControlGestures;
 use dashboard_core::input_model::EncoderBatch;
 use dashboard_core::input_trace::Observation;
-use dashboard_core::logging::LogStore;
+use dashboard_core::logging::{LogStore, log_warning_rejection};
+
+#[test]
+fn warning_rejection_is_logged_once_at_the_consumed_result_edge() {
+    use dashboard_core::acquisition::AcquisitionModel;
+    use dashboard_core::status_led::PresentedWarning;
+    use dashboard_core::warning_state::WarningRequests;
+    let logs = LogStore::<NoopRawMutex>::new();
+    let mut requests = WarningRequests::new();
+    let original = AcquisitionModel::new();
+    requests
+        .request_presented(PresentedWarning {
+            run_id: original.snapshot().warning_run_id().unwrap(),
+            event_serial: 1,
+            rules: 1,
+        })
+        .unwrap();
+    let replacement = AcquisitionModel::new();
+    let feedback = requests.observe(&replacement.snapshot()).unwrap();
+    assert!(log_warning_rejection(&logs, feedback, 1));
+    assert!(requests.observe(&replacement.snapshot()).is_none());
+    assert_eq!(logs.window(None).unwrap().entries.len(), 1);
+    assert!(logs.fault().is_none());
+}
 use dashboard_core::pages::Page;
 use dashboard_core::render::FpsMode;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;

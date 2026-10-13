@@ -12,6 +12,60 @@ pub const LOG_ENTRIES: usize = 128;
 pub const LOG_MSG_LEN: usize = 40;
 pub const VISIBLE_LINES: usize = 12;
 
+/// A tiny observer of the already-owned snapshot, never another acquisition owner.
+/// Baseline capture is quiet. Effective freshness includes elapsed-time staleness.
+pub struct QualityTransitions {
+    previous: [crate::samples::Quality; 8],
+    initialized: bool,
+}
+impl Default for QualityTransitions {
+    fn default() -> Self { Self::new() }
+}
+impl QualityTransitions {
+    pub const fn new() -> Self {
+        Self {
+            previous: [crate::samples::Quality::Unknown; 8],
+            initialized: false,
+        }
+    }
+
+    pub fn log<M: RawMutex>(
+        &mut self,
+        store: &LogStore<M>,
+        snapshot: &crate::acquisition::DashboardSnapshot,
+        now_ms: u64,
+    ) {
+        for id in crate::samples::SensorId::ALL {
+            let quality = snapshot.quality(id, now_ms);
+            let previous = self.previous[id as usize];
+            self.previous[id as usize] = quality;
+            if self.initialized && previous != quality {
+                // Only Info: a derivative quality transition cannot replace
+                // the latest explicit transport/watchdog/transfer fault.
+                store.push(
+                    Level::Info,
+                    now_ms,
+                    format_args!("{}: {} -> {}", id.label(), previous.label(), quality.label()),
+                );
+            }
+        }
+        self.initialized = true;
+    }
+}
+
+/// Caller invokes once when its existing request owner consumes a result.
+pub fn log_warning_rejection<M: RawMutex>(
+    store: &LogStore<M>,
+    feedback: crate::warning_state::WarningFeedback,
+    now_ms: u64,
+) -> bool {
+    if feedback != crate::warning_state::WarningFeedback::Rejected {
+        return false;
+    }
+    store.push(Level::Info, now_ms, format_args!("Warning ack rejected"));
+    true
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Message {
     text: String<LOG_MSG_LEN>,

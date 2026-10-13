@@ -1,3 +1,4 @@
+use dashboard_configurator::event_adapters::{ImportFailure, TransferFailure, import_outcome, transfer_failure};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
@@ -5,7 +6,7 @@ use super::*;
 
 pub const STORAGE_KEY: &str = "ea888-view-studio-v1";
 
-fn storage_error(error: JsValue) -> StorageFailure {
+pub(super) fn storage_error(error: JsValue) -> StorageFailure {
     match error.dyn_ref::<web_sys::DomException>().map(|e| e.name()).as_deref() {
         Some("QuotaExceededError") => StorageFailure::Quota,
         Some("SecurityError" | "NotAllowedError") => StorageFailure::Denied,
@@ -13,7 +14,7 @@ fn storage_error(error: JsValue) -> StorageFailure {
     }
 }
 
-fn storage() -> Result<web_sys::Storage, StorageFailure> {
+pub(super) fn storage() -> Result<web_sys::Storage, StorageFailure> {
     web_sys::window()
         .ok_or(StorageFailure::Unavailable)?
         .local_storage()
@@ -63,25 +64,68 @@ fn preset_observation() -> Result<Option<String>, StorageFailure> {
     }
     Ok(Some(text))
 }
-pub(super) fn restore_presets() -> PresetStore { PresetStore::restore(preset_observation()) }
+pub(super) fn restore_presets() -> (PresetStore, Result<(), StorageIssue>) {
+    let observation = preset_observation();
+    let failure = observation.as_ref().err().copied();
+    let store = PresetStore::restore(observation);
+    let result = match (failure, store.status()) {
+        (Some(failure), _) => Err(StorageIssue::Failure(failure)),
+        (_, PresetStatus::Unavailable(PresetError::Exhausted)) => Err(StorageIssue::Exhausted),
+        (_, PresetStatus::Unavailable(_)) => Err(StorageIssue::Corrupt),
+        _ => Ok(()),
+    };
+    (store, result)
+}
+pub(super) fn report_preset_status(
+    ui: Ui,
+    reading: bool,
+) {
+    let Some(status) = ui.presets.try_with_untracked(PresetStore::status) else {
+        return;
+    };
+    let outcome = match status {
+        PresetStatus::Conflict => Err(StorageIssue::Conflict),
+        PresetStatus::Failed(_) if reading => return,
+        PresetStatus::Failed(failure) | PresetStatus::Unavailable(PresetError::Storage(failure)) => {
+            Err(StorageIssue::Failure(failure))
+        }
+        PresetStatus::Unavailable(PresetError::Exhausted) => Err(StorageIssue::Exhausted),
+        PresetStatus::Unavailable(_) => Err(StorageIssue::Corrupt),
+        PresetStatus::Saved | PresetStatus::Empty => Ok(()),
+        PresetStatus::Dirty | PresetStatus::Saving => return,
+    };
+    if reading {
+        ui.storage_read_outcome(StorageArea::Presets, outcome);
+    } else {
+        ui.storage_outcome(StorageArea::Presets, outcome);
+        if outcome.is_ok() {
+            ui.storage_read_outcome(StorageArea::Presets, Ok(()));
+        }
+    }
+}
 pub(super) fn presets_changed(ui: Ui) {
     let current = preset_observation();
+    if let Err(failure) = current.as_ref() {
+        ui.storage_read_outcome(StorageArea::Presets, Err(StorageIssue::Failure(*failure)));
+    }
     let _ = ui.presets.try_update(|store| store.observe(current));
+    report_preset_status(ui, true);
 }
 pub(super) fn reload_presets(ui: Ui) {
     let observation = preset_observation();
     let mut result = Ok(());
     ui.presets.update(|store| result = store.reload(observation));
+    report_preset_status(ui, true);
     if let Err(error) = result {
         ui.notice.set(error.message().into());
     }
 }
 
-pub fn restore() -> (Editor, String, Option<String>) {
+pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
     match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
         Ok(Some(json)) => {
             match Editor::from_saved_state(json.as_bytes()) {
-                Ok(editor) => (editor, String::new(), Some(json)),
+                Ok(editor) => (editor, String::new(), Some(json), Ok(())),
                 Err(_) => {
                     (
                         Editor::default(),
@@ -89,16 +133,18 @@ pub fn restore() -> (Editor, String, Option<String>) {
                          been overwritten."
                             .into(),
                         Some(json),
+                        Err(StorageIssue::Corrupt),
                     )
                 }
             }
         }
-        Ok(None) => (Editor::default(), String::new(), None),
-        Err(_) => {
+        Ok(None) => (Editor::default(), String::new(), None, Ok(())),
+        Err(failure) => {
             (
                 Editor::default(),
                 "Browser storage is unavailable. You can still export your configuration to a file.".into(),
                 None,
+                Err(StorageIssue::Failure(failure)),
             )
         }
     }
@@ -171,6 +217,8 @@ pub(super) fn save_presets(
     let request = match prepared {
         Ok(request) => std::rc::Rc::new(request),
         Err(error) => {
+            report_preset_status(ui, false);
+            preset_import_notice(ui, Err(error));
             ui.notice.set(error.message().into());
             return;
         }
@@ -181,6 +229,7 @@ pub(super) fn save_presets(
             let _ = ui.presets.try_update(|store| {
                 let _ = store.finish_save(&request, Err(StorageFailure::Unavailable));
             });
+            report_preset_status(ui, false);
             ui.notice
                 .set("Cancelable preset storage is unavailable; export a backup".into());
             return;
@@ -211,6 +260,7 @@ pub(super) fn save_presets(
         let _ = ui.presets.try_update(|store| {
             let _ = store.finish_save(&captured, result);
         });
+        report_preset_status(ui, false);
     });
     let promise = (|| {
         let options = js_sys::Object::new();
@@ -241,6 +291,7 @@ pub(super) fn save_presets(
                     .into(),
             );
         }
+        report_preset_status(ui, false);
         let _ = ui.preset_lock_busy.try_set(false);
         let _ = ui.preset_abort.try_update_value(|slot| *slot = None);
         drop(callback);
@@ -249,11 +300,15 @@ pub(super) fn save_presets(
 pub(super) fn export_presets(ui: Ui) {
     match ui.presets.with_untracked(PresetStore::export) {
         Ok(text) => {
-            if download("appearance-presets.json", "application/json", text.as_bytes()).is_err() {
+            if download(ui, "appearance-presets.json", "application/json", text.as_bytes()).is_err() {
+                ui.event(transfer_failure(TransferFailure::Download));
                 ui.notice.set("The browser could not download presets".into());
             }
         }
-        Err(error) => ui.notice.set(error.message().into()),
+        Err(error) => {
+            ui.event(transfer_failure(TransferFailure::Serialization));
+            ui.notice.set(error.message().into());
+        }
     }
 }
 pub(super) fn import_presets(
@@ -261,10 +316,12 @@ pub(super) fn import_presets(
     file: web_sys::File,
 ) {
     if ui.preset_import_busy.get_untracked() {
+        preset_import_notice(ui, Err(PresetError::Stale));
         ui.notice.set("A preset file is already being read".into());
         return;
     }
     if !file.size().is_finite() || file.size() > MAX_PRESET_BYTES as f64 {
+        preset_import_notice(ui, Err(PresetError::TooLarge));
         ui.notice.set(PresetError::TooLarge.message().into());
         return;
     }
@@ -280,6 +337,7 @@ pub(super) fn import_presets(
             Ok(value) => {
                 let text: js_sys::JsString = value.unchecked_into();
                 if text.length() as usize > MAX_PRESET_BYTES {
+                    preset_import_notice(ui, Err(PresetError::TooLarge));
                     let _ = ui.notice.try_set(PresetError::TooLarge.message().into());
                     return;
                 }
@@ -288,12 +346,20 @@ pub(super) fn import_presets(
                 };
                 let mut result = Ok(());
                 let _ = ui.presets.try_update(|store| result = store.import(&text));
+                preset_import_notice(ui, result);
                 let _ = ui.notice.try_set(match result {
                     Ok(()) => "Presets imported into memory. Save or export explicitly.".into(),
                     Err(error) => error.message().into(),
                 });
             }
             Err(_) => {
+                ui.event(Notice {
+                    category: Category::ImportExport,
+                    severity: dashboard_configurator::events::Severity::Warn,
+                    code: "presets.read_failed",
+                    subject: Some("Presets"),
+                    message: "Preset file could not be read; previous list retained".into(),
+                });
                 let _ = ui
                     .notice
                     .try_set("Preset file could not be read; previous list retained".into());
@@ -302,7 +368,40 @@ pub(super) fn import_presets(
     });
 }
 
-fn conflict(ui: Ui) {
+fn preset_import_notice(
+    ui: Ui,
+    result: Result<(), PresetError>,
+) {
+    ui.event(Notice {
+        category: Category::ImportExport,
+        severity: if result.is_ok() {
+            dashboard_configurator::events::Severity::Info
+        } else {
+            dashboard_configurator::events::Severity::Warn
+        },
+        code: if result.is_ok() {
+            "presets.imported"
+        } else {
+            "presets.rejected"
+        },
+        subject: Some("Presets"),
+        message: match result {
+            Ok(()) => "Presets imported into memory; explicit save required",
+            Err(error) => error.message(),
+        }
+        .into(),
+    });
+}
+
+fn conflict(
+    ui: Ui,
+    reading: bool,
+) {
+    if reading {
+        ui.storage_read_outcome(StorageArea::Draft, Err(StorageIssue::Conflict));
+    } else {
+        ui.storage_outcome(StorageArea::Draft, Err(StorageIssue::Conflict));
+    }
     ui.conflict.set(true);
     ui.notice.set(
         "The saved draft changed in another tab. Export to keep your edits, or use Save here to replace the browser \
@@ -313,10 +412,10 @@ fn conflict(ui: Ui) {
 
 pub fn storage_changed(ui: Ui) {
     // Events can arrive after a later write. Compare the actual current value.
-    if let Ok(current) = storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error))
-        && current != ui.saved_bytes.get_untracked()
-    {
-        conflict(ui);
+    match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
+        Ok(current) if current != ui.saved_bytes.get_untracked() => conflict(ui, true),
+        Ok(_) => ui.storage_read_outcome(StorageArea::Draft, Ok(())),
+        Err(failure) => ui.storage_read_outcome(StorageArea::Draft, Err(StorageIssue::Failure(failure))),
     }
 }
 
@@ -341,7 +440,7 @@ pub fn save(
         let result = storage().and_then(|s| {
             let current = s.get_item(STORAGE_KEY).map_err(storage_error)?;
             if !replace && current != ui.saved_bytes.get_untracked() {
-                conflict(ui);
+                conflict(ui, false);
                 return Err(StorageFailure::Denied);
             }
             s.set_item(STORAGE_KEY, request.json()).map_err(storage_error)?;
@@ -352,6 +451,12 @@ pub fn save(
         ui.editor.update(|e| {
             let _ = e.acknowledge_save(token, result);
         });
+        if !ui.conflict.get_untracked() {
+            ui.storage_outcome(StorageArea::Draft, result.map_err(StorageIssue::Failure));
+            if result.is_ok() {
+                ui.storage_read_outcome(StorageArea::Draft, Ok(()));
+            }
+        }
     });
     let promise = request_lock(STORAGE_KEY, callback.as_ref().unchecked_ref());
     spawn_local(async move {
@@ -368,6 +473,10 @@ pub fn save(
             let _ = ui.editor.try_update(|e| {
                 let _ = e.acknowledge_save(token, Err(StorageFailure::Unavailable));
             });
+            ui.storage_outcome(
+                StorageArea::Draft,
+                Err(StorageIssue::Failure(StorageFailure::Unavailable)),
+            );
             let _ = ui.notice.try_set(
                 "Browser saving needs Web Locks and storage permission. Export a file to keep your work.".into(),
             );
@@ -378,22 +487,37 @@ pub fn save(
 }
 
 pub(super) fn download(
+    ui: Ui,
     name: &str,
     mime: &str,
     bytes: &[u8],
 ) -> Result<(), JsValue> {
+    if ui.downloads.try_with_value(|pool| pool.0.len() < 16) != Some(true) {
+        return Err(JsValue::from_str("Download capacity unavailable"));
+    }
     let array = js_sys::Array::new();
     array.push(&js_sys::Uint8Array::from(bytes));
     let options = web_sys::BlobPropertyBag::new();
     options.set_type(mime);
     let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&array, &options)?;
     let url = web_sys::Url::create_object_url_with_blob(&blob)?;
+    let owned = std::rc::Rc::new(DownloadUrl {
+        url,
+        revoked: std::cell::Cell::new(false),
+    });
+    if ui
+        .downloads
+        .try_update_value(|pool| pool.0.push(owned.clone()))
+        .is_none()
+    {
+        return Err(JsValue::from_str("Download owner disposed"));
+    }
     let result = (|| {
         let doc = web_sys::window()
             .and_then(|w| w.document())
             .ok_or_else(|| JsValue::from_str("Document unavailable"))?;
         let anchor = doc.create_element("a")?.dyn_into::<web_sys::HtmlAnchorElement>()?;
-        anchor.set_href(&url);
+        anchor.set_href(&owned.url);
         anchor.set_download(name);
         let body = doc.body().ok_or_else(|| JsValue::from_str("Body unavailable"))?;
         body.append_child(&anchor)?;
@@ -401,14 +525,57 @@ pub(super) fn download(
         anchor.remove();
         Ok(())
     })();
-    // Let the download consume the object URL before releasing its bytes.
-    leptos::leptos_dom::helpers::set_timeout(
+    if result.is_err() {
+        release_download(ui, &owned);
+        return result;
+    }
+    // The bounded pool revokes on owner disposal too. A failed timer must not
+    // leak the URL until browser GC; release its resource immediately.
+    let delayed = owned.clone();
+    let timer = leptos::leptos_dom::helpers::set_timeout_with_handle(
         move || {
-            let _ = web_sys::Url::revoke_object_url(&url);
+            release_download(ui, &delayed);
         },
         std::time::Duration::from_secs(2),
     );
+    if timer.is_err() {
+        release_download(ui, &owned);
+        return Err(JsValue::from_str("Download cleanup scheduling failed"));
+    }
     result
+}
+
+struct DownloadUrl {
+    url: String,
+    revoked: std::cell::Cell<bool>,
+}
+impl DownloadUrl {
+    fn revoke(&self) {
+        if !self.revoked.replace(true) {
+            let _ = web_sys::Url::revoke_object_url(&self.url);
+        }
+    }
+}
+impl Drop for DownloadUrl {
+    fn drop(&mut self) { self.revoke(); }
+}
+#[derive(Default)]
+pub(super) struct Downloads(Vec<std::rc::Rc<DownloadUrl>>);
+impl Drop for Downloads {
+    fn drop(&mut self) {
+        for url in &self.0 {
+            url.revoke();
+        }
+    }
+}
+fn release_download(
+    ui: Ui,
+    owned: &std::rc::Rc<DownloadUrl>,
+) {
+    owned.revoke();
+    let _ = ui
+        .downloads
+        .try_update_value(|pool| pool.0.retain(|url| !std::rc::Rc::ptr_eq(url, owned)));
 }
 
 pub fn export(
@@ -426,6 +593,7 @@ pub fn export(
     match result {
         Ok(bytes) => {
             match download(
+                ui,
                 if json { "dashboard.json" } else { "dashboard.eav" },
                 if json {
                     "application/json"
@@ -436,6 +604,12 @@ pub fn export(
             ) {
                 Ok(()) => {
                     metrics::file_operation(ui, false, json, bytes.len(), started);
+                    ui.event(Notice::info(
+                        Category::ImportExport,
+                        "export.started",
+                        Some(if json { "JSON" } else { "EAV" }),
+                        format!("Browser download started: {} bytes", bytes.len()),
+                    ));
                     ui.notice.set(
                         if json {
                             "Editable JSON exported. Keep it as the source for future changes."
@@ -446,12 +620,22 @@ pub fn export(
                     )
                 }
                 Err(_) => {
+                    ui.event(transfer_failure(TransferFailure::Download));
                     ui.notice
                         .set("The browser could not start the download. Check its download permissions.".into())
                 }
             }
         }
-        Err(error) => ui.notice.set(error_text(error)),
+        Err(error) => {
+            ui.event(Notice {
+                category: Category::ImportExport,
+                severity: dashboard_configurator::events::Severity::Warn,
+                code: "export.rejected",
+                subject: None,
+                message: "Configuration export blocked by current readiness or codec limits".into(),
+            });
+            ui.notice.set(error_text(error));
+        }
     }
 }
 
@@ -461,6 +645,7 @@ fn import_file(
 ) {
     let started = now();
     if !file.size().is_finite() || file.size() > MAX_JSON_BYTES as f64 {
+        ui.event(import_outcome(Err(ImportFailure::TooLarge)));
         ui.notice.set("Import is limited to 128 KiB. No file was read.".into());
         return;
     }
@@ -469,6 +654,7 @@ fn import_file(
     let token = match request {
         Ok(t) => t,
         Err(e) => {
+            ui.event(import_outcome(Err(ImportFailure::Rejected(e))));
             ui.notice.set(error_text(e));
             return;
         }
@@ -489,6 +675,7 @@ fn import_file(
                     ui.editor.update(|e| {
                         let _ = e.cancel_import(token);
                     });
+                    ui.event(import_outcome(Err(ImportFailure::TooLarge)));
                     ui.notice.set("Import exceeds 128 KiB.".into());
                     return;
                 }
@@ -499,7 +686,7 @@ fn import_file(
                     ImportFormat::Json
                 };
                 let count = bytes.len();
-                if ui.run(move |e| e.complete_import(token, format, &bytes)) {
+                if complete_import(ui, token, format, &bytes) {
                     metrics::file_operation(ui, true, matches!(format, ImportFormat::Json), count, started);
                 }
             }
@@ -507,11 +694,48 @@ fn import_file(
                 ui.editor.update(|e| {
                     let _ = e.cancel_import(token);
                 });
+                ui.event(import_outcome(Err(ImportFailure::Read)));
                 ui.notice
                     .set("The file could not be read. Your current document is unchanged.".into());
             }
         }
     });
+}
+
+fn complete_import(
+    ui: Ui,
+    token: ImportToken,
+    format: ImportFormat,
+    bytes: &[u8],
+) -> bool {
+    let before = ui.editor.with_untracked(Editor::accepted_config_key);
+    let mut outcome = Err(EditorError::InvalidDraft);
+    let success = ui.run_quiet(|editor| {
+        outcome = editor.complete_import(token, format, bytes);
+        outcome
+    });
+    ui.event(import_outcome(outcome.map(|_| ()).map_err(ImportFailure::Rejected)));
+    if success {
+        ui.accepted_field(before, "Imported configuration");
+    }
+    success
+}
+
+fn import_pasted(
+    ui: Ui,
+    text: &str,
+) {
+    let mut token = Err(EditorError::InvalidDraft);
+    ui.editor.update(|editor| token = editor.begin_import());
+    match token {
+        Ok(token) => {
+            complete_import(ui, token, ImportFormat::Json, text.as_bytes());
+        }
+        Err(error) => {
+            ui.event(import_outcome(Err(ImportFailure::Rejected(error))));
+            ui.notice.set(error_text(error));
+        }
+    }
 }
 
 #[component]
@@ -528,7 +752,7 @@ pub fn Files(ui: Ui) -> impl IntoView {
                 if let Some(file)=input.files().and_then(|files|files.get(0)){import_file(ui,file);}input.set_value("");
             }/><small>"Maximum 128 KiB JSON or 16 KiB device binary"</small></label>
             <details><summary>"Paste editable JSON"</summary><label class="field"><span>"Configuration JSON"</span><textarea rows="7" maxlength="131072" prop:value=move ||pasted.get() on:input=move |e|pasted.set(event_target_value(&e))></textarea></label>
-                <button disabled=move ||ui.snapshot_blocked() on:click=move |_|{let text=pasted.get_untracked();ui.run(move |e|{let token=e.begin_import()?;e.complete_import(token,ImportFormat::Json,text.as_bytes())});}>"Import pasted JSON"</button>
+                <button disabled=move ||ui.snapshot_blocked() on:click=move |_|{let text=pasted.get_untracked();import_pasted(ui,&text);}>"Import pasted JSON"</button>
             </details>
             <p class="hint">"Local saving is per browser and origin. Export a file for a portable backup. Unknown fields, bad checksums and invalid limits are rejected."</p>
             <super::metrics::Measurements ui/>

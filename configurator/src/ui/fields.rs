@@ -1,4 +1,27 @@
+use dashboard_configurator::event_adapters::FieldCommit;
+
 use super::*;
+
+fn finish_field(
+    ui: Ui,
+    commit: StoredValue<FieldCommit>,
+    label: &'static str,
+) {
+    let mut revision = None;
+    let _ = commit.try_update_value(|commit| {
+        let _ = ui.editor.try_with_untracked(|editor| revision = commit.finish(editor));
+    });
+    if let Some(revision) = revision {
+        ui.event(Notice::info(
+            Category::Editor,
+            "editor.accepted",
+            Some(label),
+            format!("Accepted configuration revision {}", revision.get()),
+        ));
+        ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
+        ui.dock.report_restart(ui);
+    }
+}
 
 pub fn field_id(field: RawField) -> String {
     format!("field-{field:?}")
@@ -157,7 +180,7 @@ fn dispatch_raw(
     text: String,
 ) -> bool {
     let inspection = ui.inspection.get_untracked();
-    let ok = ui.run(move |e| {
+    let ok = ui.run_quiet(move |e| {
         match binding {
             RawBinding::Normal(token) => e.set_raw(token, field, text),
             RawBinding::Located(target) => e.set_located_raw(target, field, text),
@@ -342,6 +365,7 @@ pub fn TextField(
     let id = move || if id.is_empty() { ui.raw_dom(field) } else { id.clone() };
     let text = RwSignal::new(ui.editor.with_untracked(|e| raw_value(e, field)));
     let focused = RwSignal::new(false);
+    let focus_key = StoredValue::new(ui.editor.with_untracked(FieldCommit::begin));
     let binding = RwSignal::new(ui.editor.with_untracked(|e| raw_binding(ui, e, field)));
     Effect::new(move |_| {
         ui.editor.with(|editor| {
@@ -361,13 +385,15 @@ pub fn TextField(
             <input id=id aria-label=accessible_label disabled=move ||disabled.is_some_and(|d|d.get()) ||binding.get().is_none() type="text" maxlength="1024" autocomplete="off" spellcheck="false"
                 prop:value=move || text.get()
                 aria-invalid=move || ui.editor.with(|e| e.raw_fields().iter().any(|r| r.field == field)).to_string()
-                on:focus=move |_| focused.set(true)
-                on:blur=move |_| { focused.set(false); text.set(ui.editor.with_untracked(|e| raw_value(e, field))); }
+                on:focus=move |_| {focused.set(true); focus_key.set_value(ui.editor.with_untracked(FieldCommit::begin));}
+                on:blur=move |_| { focused.set(false); text.set(ui.editor.with_untracked(|e| raw_value(e, field))); finish_field(ui,focus_key,label); }
                 on:input=move |event| {
                     let Some(Some(token)) = binding.try_get_untracked() else { return; };
                     let value = event_target_value(&event);
                     text.set(value.clone());
+                    let before=ui.editor.with_untracked(Editor::accepted_config_key);
                     let result = dispatch_raw(ui,token,field,value);
+                    focus_key.update_value(|commit|ui.editor.with_untracked(|editor|commit.observe(before,editor)));
                     if result { binding.set(ui.editor.with_untracked(|e|raw_binding(ui,e,field))); }
                     else { text.set(ui.editor.with_untracked(|e| raw_value(e, field))); }
                 } />
@@ -411,7 +437,9 @@ pub fn Choice(
         <label class="field"><span>{label}</span>
             <select id=id title=move ||ui.control_reason(label) aria-label=accessible_label prop:value=move || value.get() disabled=move || ui.inspect_read_only() || disabled.is_some_and(|d| d.get()) || if repair_invalid_draft { false } else if layout { ui.layout_locked() } else { ui.invalid() }
                 on:change=move |event| {
+                    let before=ui.editor.with_untracked(Editor::accepted_config_key);
                     if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_value(&event))); }
+                    ui.accepted_field(before,label);
                     event_target::<web_sys::HtmlSelectElement>(&event).set_value(&value.get_untracked());
                 }>
                 {options.into_iter().map(|(value,label)| {let check=value.clone();view! { <option value=value disabled=move ||disabled_values.is_some_and(|d|d.get().contains(&check))>{label}</option> }}).collect_view()}
@@ -444,7 +472,9 @@ pub fn Toggle(
         <label class="toggle"><span>{label}</span><input id=id type="checkbox"
             prop:checked=move || value.get() disabled=move || ui.inspect_read_only() || disabled.is_some_and(|d|d.get()) || (!repair_invalid_draft && ui.invalid())
             on:change=move |event| {
+                let before=ui.editor.with_untracked(Editor::accepted_config_key);
                 if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_checked(&event))); }
+                ui.accepted_field(before,label);
                 event_target::<web_sys::HtmlInputElement>(&event).set_checked(value.get_untracked());
             } /><i aria-hidden="true"></i></label>
     }
@@ -555,6 +585,7 @@ pub fn ColorField(
     field: RawField,
     label: &'static str,
 ) -> impl IntoView {
+    let focus_key = StoredValue::new(ui.editor.with_untracked(FieldCommit::begin));
     let binding = RwSignal::new(ui.editor.with_untracked(|e| raw_binding(ui, e, field)));
     Effect::new(move |_| binding.set(ui.editor.with(|e| raw_binding(ui, e, field))));
     view! {
@@ -562,10 +593,14 @@ pub fn ColorField(
             <TextField ui field label/>
             <input type="color" disabled=move ||binding.get().is_none() aria-label=format!("Pick {label}")
                 prop:value=move || ui.editor.with(|e|Color::parse(&raw_value(e,field)).unwrap_or(Color(0)).hex().to_string())
+                on:focus=move |_|focus_key.set_value(ui.editor.with_untracked(FieldCommit::begin))
+                on:change=move |_|finish_field(ui,focus_key,label)
                 on:input=move |event| {
                     if let Some(Some(token)) = binding.try_get_untracked() {
                         let value = event_target_value(&event);
+                        let before=ui.editor.with_untracked(Editor::accepted_config_key);
                         dispatch_raw(ui,token,field,value);
+                        focus_key.update_value(|commit|ui.editor.with_untracked(|editor|commit.observe(before,editor)));
                     }
                 }/>
         </div>
