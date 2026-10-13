@@ -319,7 +319,16 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
     let rows = text[1..].iter().filter(|s| !s.is_empty()).count() as i32;
     let bottom = i32::from(rect.y + rect.height) - 3;
     let graph = valid && widget.shows_graph();
-    let available = (bottom - y - rows * 10 - if graph { 17 } else { 0 }).max(0) as u32;
+    let band_rows = if widget.capabilities().band_labels {
+        widget.advanced.bands().len() as i32
+    } else {
+        0
+    };
+    let reference_row = i32::from(
+        widget.capabilities().markers && widget.advanced.reference_mode != dashboard_config::ReferenceMode::Off,
+    );
+    let legend_height = (band_rows + reference_row) * 8;
+    let available = (bottom - y - rows * 10 - legend_height - if graph { 17 } else { 0 }).max(0) as u32;
     let scale = match widget.placement.span {
         dashboard_config::Span::OneByOne => 1,
         dashboard_config::Span::TwoByOne => 2,
@@ -337,7 +346,7 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
             foreground(palette.value),
         )
     } else {
-        crate::widgets::gauge::draw(
+        crate::widgets::gauge::draw_decorated(
             &mut display,
             widget.gauge.kind,
             Rectangle::new(
@@ -357,10 +366,47 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
                 },
                 foreground(palette.ticks),
             ),
+            Some(crate::widgets::gauge::Decorations {
+                settings: &widget.advanced,
+                unit: Unit::resolve(widget.advanced.readout, scene.boost_psi),
+                stoich: layout.configuration().stoich(),
+                peak_color: foreground(palette.peak),
+            }),
         );
         available
     };
     y += height as i32;
+    // Fixed compact legend lanes are independent of sensor availability. Band
+    // labels only exist in 2x2; references explicitly identify manual/zero input.
+    let legend_style = MonoTextStyle::new(
+        &embedded_graphics::mono_font::ascii::FONT_4X6,
+        foreground(palette.label),
+    );
+    if reference_row != 0 {
+        let label = if widget.advanced.reference_mode == dashboard_config::ReferenceMode::Manual {
+            "MAN REF"
+        } else {
+            "ZERO REF"
+        };
+        Text::with_text_style(label, Point::new(center, y + 6), legend_style, CENTERED)
+            .draw(&mut display)
+            .ok();
+        y += 8;
+    }
+    if band_rows != 0 {
+        for band in widget.advanced.bands() {
+            display
+                .fill_solid(
+                    &Rectangle::new(Point::new(center - 18, y + 1), Size::new(5, 5)),
+                    panel_color(band.color),
+                )
+                .ok();
+            Text::with_text_style(band.label(), Point::new(center - 9, y + 6), legend_style, LEFT_ALIGNED)
+                .draw(&mut display)
+                .ok();
+            y += 8;
+        }
+    }
     if !text[1].is_empty() {
         Text::with_text_style(
             &text[1],

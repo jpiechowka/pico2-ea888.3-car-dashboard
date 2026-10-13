@@ -12,6 +12,65 @@ use dashboard_core::vehicle_status::VehicleStatus;
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]
+fn dense_gauge_markers_and_legends_reach_the_browser_with_shared_framebuffer_parity() {
+    for kind in GaugeKind::ALL {
+        let mut raw = default_config();
+        raw.widgets.clear();
+        let mut widget = default_widget(
+            Channel::Lambda,
+            1,
+            1,
+            Placement {
+                column: 0,
+                row: 0,
+                span: Span::TwoByTwo,
+            },
+        );
+        widget.gauge.kind = kind;
+        widget.display.graph = false;
+        widget.display.average = true;
+        widget.display.extrema = true;
+        widget.advanced.readout = Readout::LambdaAndAfr;
+        widget.advanced.reference_mode = ReferenceMode::Manual;
+        widget.advanced.reference = 1.;
+        widget.advanced.peak_mode = PeakSelection::Minimum;
+        widget
+            .advanced
+            .set_bands(&[
+                Band::new(0.7, 0.9, Color(0x07E0), "ABCDE").unwrap(),
+                Band::new(0.9, 1.1, Color(0x07FF), "FGHIJ").unwrap(),
+                Band::new(1.1, 1.3, Color(0xF81F), "KLMNO").unwrap(),
+            ])
+            .unwrap();
+        raw.widgets.push(widget).unwrap();
+        let config = validate(raw).unwrap();
+        let mut preview = Preview::new();
+        let options = PreviewOptions {
+            values: Some([1., 90., 80., 80., 30., 600., 12., 0.95]),
+            ..Default::default()
+        };
+        preview.render_appearance(&config, 1, options).unwrap();
+        assert_exact_shared_scene(&preview, &config, 1, options);
+        for color in [0x07E0_u16, 0x07FF, 0xF81F] {
+            assert_eq!(
+                preview.rgb565().chunks_exact(2).any(|p| p == color.to_be_bytes()),
+                !kind.is_numeric()
+            );
+        }
+        if let Some(dir) = std::env::var_os("GAUGE_EVIDENCE_DIR") {
+            use std::io::Write;
+            let mut file =
+                std::fs::File::create(std::path::PathBuf::from(dir).join(format!("dense-{kind:?}.ppm"))).unwrap();
+            file.write_all(b"P6\n320 240\n255\n").unwrap();
+            for pixel in preview.rgb565().chunks_exact(2) {
+                file.write_all(&Color(u16::from_be_bytes([pixel[0], pixel[1]])).rgb888())
+                    .unwrap();
+            }
+        }
+    }
+}
+
+#[test]
 fn preview_observed_extrema_only_expand_until_rewind_or_sample_source_changes() {
     let config = fixture();
     let mut preview = Preview::new();

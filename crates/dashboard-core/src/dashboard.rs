@@ -138,17 +138,25 @@ impl DashboardScene<'_> {
     ) -> Option<crate::widgets::gauge::Reading> {
         let layout = self.layout.as_ref()?;
         let widget = layout.widget(cell)?;
-        let value = match self.readings {
-            Some(readings) => readings.widget(cell)?.value,
+        let (value, peak) = match self.readings {
+            Some(readings) => {
+                let reading = readings.widget(cell)?;
+                (reading.value, reading.peak)
+            }
             None => {
-                self.measurements
-                    .value_at(SensorId::from_channel(widget.channel), self.now_ms)
+                (
+                    self.measurements
+                        .value_at(SensorId::from_channel(widget.channel), self.now_ms),
+                    self.measurements
+                        .peak_at(crate::alarms::RuleIndex::new(layout.rule_index(cell)?)?, self.now_ms),
+                )
             }
         };
         Some(crate::widgets::gauge::Reading::presented(
             widget,
             self.measurements,
             value,
+            peak,
             crate::presentation::Unit::resolve(widget.advanced.readout, self.boost_psi),
             layout.configuration().stoich(),
         ))

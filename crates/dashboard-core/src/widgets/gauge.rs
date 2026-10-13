@@ -1,5 +1,5 @@
 //! Bounded integer gauge geometry. No heap, per-frame trig or FPS-dependent state.
-use dashboard_config::{GaugeKind, Widget};
+use dashboard_config::{AdvancedDisplay, GaugeKind, ReferenceMode, Widget};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_4X6;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -8,6 +8,7 @@ use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 
 use crate::acquisition::DashboardSnapshot;
+use crate::presentation::Unit;
 use crate::samples::SensorId;
 use crate::thresholds::BAR_TO_PSI;
 use crate::ui::{LEFT_ALIGNED, RIGHT_ALIGNED};
@@ -18,6 +19,8 @@ pub struct Reading {
     pub min: f32,
     pub max: f32,
     pub value: Option<f32>,
+    /// Converted producer-owned held peak; no renderer history.
+    pub peak: Option<f32>,
 }
 impl Reading {
     pub fn new(
@@ -32,6 +35,7 @@ impl Reading {
             min,
             max,
             value: snapshot.value_at(id, now),
+            peak: None,
         }
     }
 
@@ -40,6 +44,7 @@ impl Reading {
         widget: &Widget,
         snapshot: &DashboardSnapshot,
         value: Option<f32>,
+        peak: Option<f32>,
         unit: crate::presentation::Unit,
         stoich: f32,
     ) -> Self {
@@ -49,7 +54,23 @@ impl Reading {
             min: unit.value(min, stoich),
             max: unit.value(max, stoich),
             value: value.map(|v| unit.value(v, stoich)),
+            peak: peak.map(|v| unit.value(v, stoich)),
         }
+    }
+
+    /// Markers outside the visible scale are omitted, never saturated.
+    pub fn marker_level(
+        self,
+        value: f32,
+    ) -> Option<u16> {
+        if !value.is_finite() || value < self.min || value > self.max {
+            return None;
+        }
+        Self {
+            value: Some(value),
+            ..self
+        }
+        .level()
     }
 
     pub fn level(self) -> Option<u16> {
@@ -174,6 +195,28 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
     psi: bool,
     colors: (Rgb565, Rgb565, Rgb565, Rgb565),
 ) {
+    draw_decorated(display, kind, bounds, reading, text, psi, colors, None);
+}
+
+/// Immutable settings are borrowed for this synchronous draw, never retained.
+#[derive(Clone, Copy)]
+pub struct Decorations<'a> {
+    pub settings: &'a AdvancedDisplay,
+    pub unit: Unit,
+    pub stoich: f32,
+    pub peak_color: Rgb565,
+}
+
+pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    kind: GaugeKind,
+    bounds: Rectangle,
+    reading: Reading,
+    text: &str,
+    psi: bool,
+    colors: (Rgb565, Rgb565, Rgb565, Rgb565),
+    decorations: Option<Decorations<'_>>,
+) {
     if !(-320..=320).contains(&bounds.top_left.x) || !(-240..=240).contains(&bounds.top_left.y) {
         return;
     }
@@ -185,20 +228,45 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
     }
     let bounds = Rectangle::new(bounds.top_left, Size::new(width, height));
     let mut display = display.clipped(&bounds);
-    let number_height = if height >= 100 { 36 } else { 22 };
-    let graphic_height = height.saturating_sub(number_height + 10);
-    let graphic = Rectangle::new(bounds.top_left, Size::new(width, graphic_height));
-    let value = Rectangle::new(
-        bounds.top_left + Point::new(0, graphic_height as i32),
-        Size::new(width, number_height),
-    );
+    // Wide, short cells spend their extra width on the primary reading rather
+    // than squeezing a larger font into the compact graphic's vertical lane.
+    let wide = width >= 120 && height < 100;
+    let number_height = if height >= 100 || wide { 36.min(height - 10) } else { 22 };
+    let graphic_height = if wide {
+        height - 10
+    } else {
+        height.saturating_sub(number_height + 10)
+    };
+    let graphic_width = if wide { width / 2 - 4 } else { width };
+    let graphic = Rectangle::new(bounds.top_left, Size::new(graphic_width, graphic_height));
+    let value = if wide {
+        Rectangle::new(
+            bounds.top_left + Point::new((width / 2) as i32, ((graphic_height - number_height) / 2) as i32),
+            Size::new(width - width / 2, number_height),
+        )
+    } else {
+        Rectangle::new(
+            bounds.top_left + Point::new(0, graphic_height as i32),
+            Size::new(width, number_height),
+        )
+    };
     draw_fitted_value(
         &mut display,
         text,
         value,
-        if height >= 100 { 2 } else { 1 },
+        if height >= 100 || wide { 2 } else { 1 },
         value_color,
     );
+    let decorations = decorations.filter(|_| !kind.is_numeric());
+    let reference = decorations.and_then(|d| {
+        let value = match d.settings.reference_mode {
+            ReferenceMode::Off => return None,
+            ReferenceMode::Zero => 0.0,
+            ReferenceMode::Manual => d.settings.reference,
+        };
+        reading.marker_level(d.unit.value(value, d.stoich))
+    });
+    let peak = reading.peak.and_then(|v| reading.marker_level(v));
     let level = reading.level();
     let center = graphic.center();
     match kind {
@@ -206,9 +274,9 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
         GaugeKind::Circular | GaugeKind::Dial => {
             let dial = kind == GaugeKind::Dial;
             let radius = if dial {
-                (width as i32 / 2 - 4).min(graphic_height as i32 - 4)
+                (graphic_width as i32 / 2 - 4).min(graphic_height as i32 - 4)
             } else {
-                (width.min(graphic_height) as i32 / 2) - 3
+                (graphic_width.min(graphic_height) as i32 / 2) - 3
             };
             if radius >= 4 {
                 let center = if dial {
@@ -219,6 +287,32 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
                 let start = if dial { 32 } else { 24 };
                 let segments = if dial { 32 } else { 48 };
                 let stroke = if radius >= 35 { 3 } else { 2 };
+                // Bands use an inner parallel track, leaving their colour visible
+                // underneath a filled current arc. Draw order is bands, current,
+                // ticks, reference, peak; coincident peak wins.
+                if let Some(d) = decorations {
+                    for band in d.settings.bands() {
+                        if let Some((lo, hi)) = band_levels(reading, d, band) {
+                            let r = radius - 5;
+                            if r >= 2 {
+                                let begin = u32::from(lo) * segments;
+                                let end = u32::from(hi) * segments;
+                                let mut step = begin;
+                                while step < end {
+                                    let next = ((step / 1024 + 1) * 1024).min(end);
+                                    line(
+                                        &mut display,
+                                        polar(center, r, start * 1024 + step),
+                                        polar(center, r, start * 1024 + next),
+                                        band_color(band),
+                                        2,
+                                    );
+                                    step = next;
+                                }
+                            }
+                        }
+                    }
+                }
                 for i in 0..segments {
                     let a = polar(center, radius, (start + i) * 1024);
                     let b = polar(center, radius, (start + i + 1) * 1024);
@@ -258,13 +352,51 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
                         value_color,
                     );
                 }
+                for (marker, is_peak) in [(reference, false), (peak, true)] {
+                    if let Some(n) = marker {
+                        let step = start * 1024 + u32::from(n) * segments;
+                        let color = if is_peak {
+                            decorations.map_or(ticks, |d| d.peak_color)
+                        } else {
+                            ticks
+                        };
+                        line(
+                            &mut display,
+                            polar(center, radius - 8, step),
+                            polar(center, radius + 2, step),
+                            color,
+                            if is_peak { 2 } else { 1 },
+                        );
+                        if !is_peak {
+                            let at = polar(center, radius - 8, step);
+                            fill(
+                                &mut display,
+                                Rectangle::new(at - Point::new(1, 1), Size::new(3, 3)),
+                                color,
+                            );
+                        }
+                    }
+                }
             }
         }
         GaugeKind::Horizontal | GaugeKind::Segmented => {
             let bar = Rectangle::new(
                 Point::new(graphic.top_left.x + 2, center.y - 5),
-                Size::new(width - 4, 10),
+                Size::new(graphic_width - 4, 10),
             );
+            if let Some(d) = decorations {
+                for band in d.settings.bands() {
+                    if let Some((lo, hi)) = band_levels(reading, d, band) {
+                        let left = u32::from(lo) * bar.size.width / 1024;
+                        let right = u32::from(hi) * bar.size.width / 1024;
+                        fill(
+                            &mut display,
+                            Rectangle::new(bar.top_left + Point::new(left as i32, -4), Size::new(right - left, 3)),
+                            band_color(band),
+                        );
+                    }
+                }
+            }
             if kind == GaugeKind::Segmented {
                 for segment in 0..12 {
                     let start = segment * bar.size.width / 12;
@@ -303,12 +435,51 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
                     1,
                 );
             }
+            for (marker, is_peak) in [(reference, false), (peak, true)] {
+                if let Some(n) = marker {
+                    let x = bar.top_left.x + (u32::from(n) * (bar.size.width - 1) / 1024) as i32;
+                    let color = if is_peak {
+                        decorations.map_or(ticks, |d| d.peak_color)
+                    } else {
+                        ticks
+                    };
+                    line(
+                        &mut display,
+                        Point::new(x, bar.top_left.y - 5),
+                        Point::new(x, bar.top_left.y + 10),
+                        color,
+                        if is_peak { 2 } else { 1 },
+                    );
+                    if !is_peak {
+                        line(
+                            &mut display,
+                            Point::new(x - 2, bar.top_left.y - 5),
+                            Point::new(x + 2, bar.top_left.y - 5),
+                            color,
+                            1,
+                        );
+                    }
+                }
+            }
         }
         GaugeKind::Vertical => {
             let bar = Rectangle::new(
                 Point::new(center.x - 6, graphic.top_left.y + 2),
                 Size::new(12, graphic_height.saturating_sub(4)),
             );
+            if let Some(d) = decorations {
+                for band in d.settings.bands() {
+                    if let Some((lo, hi)) = band_levels(reading, d, band) {
+                        let top = (1024 - u32::from(hi)) * bar.size.height / 1024;
+                        let bottom = (1024 - u32::from(lo)) * bar.size.height / 1024;
+                        fill(
+                            &mut display,
+                            Rectangle::new(bar.top_left + Point::new(-4, top as i32), Size::new(3, bottom - top)),
+                            band_color(band),
+                        );
+                    }
+                }
+            }
             fill(&mut display, bar, track);
             if let Some(level) = level {
                 let h = bar.size.height * u32::from(level) / 1024;
@@ -331,6 +502,32 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
                     1,
                 );
             }
+            for (marker, is_peak) in [(reference, false), (peak, true)] {
+                if let Some(n) = marker {
+                    let y = bar.top_left.y + ((1024 - u32::from(n)) * bar.size.height.saturating_sub(1) / 1024) as i32;
+                    let color = if is_peak {
+                        decorations.map_or(ticks, |d| d.peak_color)
+                    } else {
+                        ticks
+                    };
+                    line(
+                        &mut display,
+                        Point::new(bar.top_left.x - 5, y),
+                        Point::new(bar.top_left.x + 12, y),
+                        color,
+                        if is_peak { 2 } else { 1 },
+                    );
+                    if !is_peak {
+                        line(
+                            &mut display,
+                            Point::new(bar.top_left.x - 5, y - 2),
+                            Point::new(bar.top_left.x - 5, y + 2),
+                            color,
+                            1,
+                        );
+                    }
+                }
+            }
         }
     }
     // Half-width endpoint lanes, precision reduced before clipping if needed.
@@ -350,6 +547,23 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
         .ok();
     }
 }
+fn band_color(band: &dashboard_config::Band) -> Rgb565 {
+    embedded_graphics::pixelcolor::raw::RawU16::new(band.color.0).into()
+}
+
+fn band_levels(
+    reading: Reading,
+    d: Decorations<'_>,
+    band: &dashboard_config::Band,
+) -> Option<(u16, u16)> {
+    let lo = d.unit.value(band.min, d.stoich).max(reading.min);
+    let hi = d.unit.value(band.max, d.stoich).min(reading.max);
+    if lo >= hi {
+        return None;
+    }
+    Some((reading.marker_level(lo)?, reading.marker_level(hi)?))
+}
+
 fn endpoint(
     value: f32,
     width: u32,
