@@ -124,6 +124,7 @@ pub fn activate(
     ui: Ui,
     workspace: Workspace,
 ) {
+    command_palette::cancel_focus(ui);
     stage::cancel(ui);
     widget_menu::close(ui, false);
     ui.workspace.update(|s| s.activate(workspace));
@@ -149,58 +150,7 @@ pub fn inspect(
     ui: Ui,
     target: FieldTarget,
 ) {
-    let resolved = ui.editor.with_untracked(|e| Registry::resolve(e, target));
-    match resolved {
-        Ok(field) => {
-            ui.inspection.set(Some(target));
-            if let TargetOwner::Channel(c) = target.owner() {
-                ui.source_channel.set(c);
-            }
-            open(ui, field.workspace, field.group);
-            leptos::leptos_dom::helpers::request_animation_frame(move || {
-                let Ok(field) = ui.editor.with_untracked(|e| Registry::resolve(e, target)) else {
-                    ui.notice
-                        .set("That inspection target is stale. Find the field again.".into());
-                    return;
-                };
-                if let Some(element) = web_sys::window()
-                    .and_then(|w| w.document())
-                    .and_then(|d| d.get_element_by_id(&field.dom_id))
-                    .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-                {
-                    if element.has_attribute("disabled") {
-                        if let Some(detail) = web_sys::window()
-                            .and_then(|w| w.document())
-                            .and_then(|d| d.get_element_by_id("studio-inspection-detail"))
-                            .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-                        {
-                            let _ = detail.focus();
-                        }
-                        return;
-                    }
-                    let mut ancestor = element.parent_element();
-                    while let Some(parent) = ancestor {
-                        if parent.tag_name() == "DETAILS" {
-                            let _ = parent.set_attribute("open", "");
-                        }
-                        ancestor = parent.parent_element();
-                    }
-                    let _ = element.focus();
-                    element.scroll_into_view();
-                } else if let Some(element) = web_sys::window()
-                    .and_then(|w| w.document())
-                    .and_then(|d| d.get_element_by_id("studio-inspection-detail"))
-                    .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-                {
-                    let _ = element.focus();
-                }
-            });
-        }
-        Err(_) => {
-            ui.notice
-                .set("That inspection target is stale or unavailable. Find the field again.".into())
-        }
-    }
+    command_palette::inspect(ui, target);
 }
 
 #[component]
@@ -250,9 +200,9 @@ pub fn BuildFlashEmpty(ui: Ui) -> impl IntoView {
 }
 #[component]
 pub fn InspectionDetail(ui: Ui) -> impl IntoView {
-    view! { <div id="studio-inspection-detail" tabindex="-1" hidden=move ||ui.inspection.with(Option::is_none) class="inspection-detail">
-        <p>{move ||ui.inspection.get().map(|target|ui.editor.with(|e|match Registry::resolve(e,target){Ok(field)=>format!("Inspecting {} · {}{}{}",Registry::descriptor(target.key()).label,field.inspection.json_path.unwrap_or_default(),if !field.inspection.id_lookup_unambiguous || e.has_pending_json(){" · read only candidate"}else{""},field.capability.reason().map(|r|format!(" · {r}")).unwrap_or_default()),Err(_)=>"Inspection target changed. Find the field again.".into()})).unwrap_or_default()}</p>
-        <button on:click=move |_|ui.inspection.set(None)>"Return to selected widget"</button>
+    view! { <div id="studio-inspection-detail" tabindex="-1" hidden=move ||ui.inspection.with(Option::is_none)&&ui.error_inspection.with(Option::is_none) class="inspection-detail">
+        <p>{move ||ui.inspection.get().map(|target|ui.editor.with(|e|match Registry::resolve(e,target){Ok(field)=>format!("Inspecting {} · {} · widget index {:?} · view index {:?} · raw input {:?}{}{}",Registry::descriptor(target.key()).label,field.inspection.json_path.unwrap_or_default(),field.inspection.widget_index,field.inspection.view_index,field.inspection.raw_index,if !field.inspection.id_lookup_unambiguous || e.has_pending_json(){" · read only candidate"}else{""},field.capability.reason().map(|r|format!(" · {r}")).unwrap_or_default()),Err(_)=>"Field changed; find the field again.".into()})).or_else(||ui.error_inspection.get().map(|target|ui.editor.with(|e|match e.inspect(target){Ok(location)=>format!("Read-only JSON location {} · widget index {:?} · view index {:?}",location.json_path.unwrap_or_default(),location.widget_index,location.view_index),Err(_)=>"Field changed; find the field again.".into()}))).unwrap_or_default()}</p>
+        <button on:click=move |_|{command_palette::cancel_focus(ui);ui.inspection.set(None);ui.error_inspection.set(None);}>"Return to selected widget"</button>
     </div> }
 }
 

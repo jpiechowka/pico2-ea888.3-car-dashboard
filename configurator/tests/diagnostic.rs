@@ -698,3 +698,49 @@ fn invalid_widget_warning_pair_uses_its_own_diagnostic_colours() {
     assert_eq!(&preview.rgb565()[at..at + 2], &[255, 255]);
     assert!(editor.begin_save().is_err());
 }
+#[test]
+fn indexed_error_links_keep_actual_raw_authority_without_selection_or_acceptance() {
+    use dashboard_configurator::field_registry::{Registry, TargetOwner};
+    let mut editor = Editor::new(default_config()).unwrap();
+    let selection = editor.selection();
+    let index = 1;
+    let id = editor.preview().config().widgets[index].id;
+    let owner = editor
+        .object_inspection_target(InspectionOwner::Widget { index })
+        .unwrap();
+    editor
+        .set_located_raw(owner, RawField::Widget(id, WidgetField::Label), "bad\n".into())
+        .unwrap();
+    let before = (
+        editor.stamp(),
+        editor.history_len(),
+        editor.raw_fields().to_vec(),
+        editor.preview().config().clone(),
+    );
+    let links = Registry::error_targets(&editor);
+    let raw = links
+        .iter()
+        .find(|link| {
+            link.field
+                .is_some_and(|field| field.owner() == TargetOwner::Widget(index))
+                && editor.inspect(link.inspection.unwrap()).unwrap().raw_index == Some(0)
+        })
+        .expect("semantic-invalid retained raw input must keep authentic repair authority");
+    assert_eq!(
+        editor.inspect(raw.inspection.unwrap()).unwrap().widget_index,
+        Some(index)
+    );
+    assert_eq!(editor.selection(), selection);
+    assert_eq!(
+        (
+            editor.stamp(),
+            editor.history_len(),
+            editor.raw_fields().to_vec(),
+            editor.preview().config().clone()
+        ),
+        before
+    );
+    editor.set_inspected_raw(raw.inspection.unwrap(), "Oil".into()).unwrap();
+    assert!(editor.inspect(raw.inspection.unwrap()).is_err());
+    assert_eq!(editor.selection(), selection);
+}

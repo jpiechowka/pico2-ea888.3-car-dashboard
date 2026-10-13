@@ -1,4 +1,5 @@
 mod advanced;
+mod command_palette;
 mod controls;
 mod fields;
 mod inspector;
@@ -43,6 +44,8 @@ pub struct Ui {
     playing: RwSignal<bool>,
     workspace: RwSignal<WorkspaceState>,
     inspection: RwSignal<Option<FieldTarget>>,
+    error_inspection: RwSignal<Option<InspectionTarget>>,
+    focus: RwSignal<command_palette::FocusState>,
     source_channel: RwSignal<Channel>,
     dock: PreviewDockState,
     trace: RwSignal<metrics::Trace>,
@@ -203,6 +206,8 @@ impl Ui {
         });
         if selection_changed {
             self.inspection.set(None);
+            self.error_inspection.set(None);
+            command_palette::cancel_focus(self);
         }
         if changed && self.pending_at.get_untracked().is_none() {
             self.pending_at.set(Some(started));
@@ -376,6 +381,8 @@ pub fn Studio() -> impl IntoView {
         playing: RwSignal::new(false),
         workspace: RwSignal::new(workspace),
         inspection: RwSignal::new(None),
+        error_inspection: RwSignal::new(None),
+        focus: RwSignal::new(command_palette::FocusState::default()),
         source_channel: RwSignal::new(Channel::Oil),
         dock,
         trace: RwSignal::new(metrics::Trace::default()),
@@ -400,12 +407,14 @@ pub fn Studio() -> impl IntoView {
                 <a class="brand" href="./" aria-label="EA888 View Studio"><b>"EA"<span>"888"</span></b><div>"VIEW STUDIO"<small>"PICO 2 / DNUC"</small></div></a>
                 <div class="device-spec"><span class="dot"></span>"320 × 240"<span>"4 × 2 GRID"</span></div>
                 <div class="header-actions">
+                    <command_palette::CommandPalette ui/>
                     <button title="Undo accepted edit" disabled=move || ui.snapshot_blocked() || ui.editor.with(|e| e.history_len().0 == 0) on:click=move |_| { ui.run(Editor::undo); }>"↶ Undo"</button>
                     <button title="Redo accepted edit" disabled=move || ui.snapshot_blocked() || ui.editor.with(|e| e.history_len().1 == 0) on:click=move |_| { ui.run(Editor::redo); }>"↷ Redo"</button>
                     <button class="primary" disabled=move || ui.snapshot_blocked() on:click=move |_| io::export(ui,false)>"Export for Pico"<span>"↗"</span></button>
                 </div>
             </header>
             <workspaces::WorkspaceTabs ui/>
+            <fields::DiagnosticFocus ui/>
             <div class="workspace-layout" data-workspace=move ||ui.workspace.with(|s|s.active().id())>
                 <section class="workspace-panel views-panel" id="studio-panel-views" role="tabpanel" aria-labelledby="studio-tab-views" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views)>
                     <Library ui/>
@@ -419,7 +428,6 @@ pub fn Studio() -> impl IntoView {
                         <p>{move ||if ui.layout_locked(){"Repair highlighted values or change the affected option, reference mode, band or control binding. Unrelated raw text stays visible; saving and export unlock only when every error is resolved. Discard returns to the accepted configuration."}else{"Repair fields or options, drag, resize or remove widgets. Right-click an overlap to select a covered widget. Save and export unlock once every error is resolved."}}</p>
                         <ul class="draft-details">{move ||ui.editor.with(|e|e.diagnostic().map(|draft|draft.descriptions(e.preview()).into_iter().map(|line|view!{<li>{line}</li>}).collect_view()))}</ul>
                         <button on:click=move |_| { ui.run(Editor::discard_raw); }>"Discard invalid edits"</button>
-                        <fields::DiagnosticFocus ui/>
                     </div>
                     </main>
                 </section>

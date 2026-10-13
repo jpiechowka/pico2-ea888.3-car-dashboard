@@ -4,6 +4,266 @@ use dashboard_configurator::simulator::ControlSimulator;
 use dashboard_configurator::workspace::*;
 
 #[test]
+fn commands_recheck_owner_readiness_and_leave_rejected_state_unchanged() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let mut workspace = WorkspaceState::default();
+    let command = Command::Undo;
+    editor.apply(Edit::SetReducedMotion(true)).unwrap();
+    let stamp = editor.stamp();
+    assert_eq!(command.availability(&editor, stamp), None);
+    let handle = editor.open_json().unwrap();
+    let text = editor.json_draft().unwrap().text().to_string();
+    editor.set_json_text(handle, text.clone()).unwrap();
+    let before = (editor.stamp(), editor.history_len(), editor.preview().config().clone());
+    assert_eq!(
+        command.availability(&editor, stamp),
+        Some("Apply or Discard pending JSON first")
+    );
+    assert!(dispatch(&mut editor, &mut workspace, command, stamp).is_err());
+    assert_eq!(
+        (editor.stamp(), editor.history_len(), editor.preview().config().clone()),
+        before
+    );
+    assert_eq!(editor.json_draft().unwrap().text(), text);
+    editor.discard_json().unwrap();
+    assert!(dispatch(&mut editor, &mut workspace, command, stamp).is_ok());
+    let original = Editor::new(default_config()).unwrap();
+    let stamp = original.stamp();
+    let mut replacement = Editor::new(default_config()).unwrap();
+    assert_eq!(original.revision().get(), replacement.revision().get());
+    assert!(
+        dispatch(
+            &mut replacement,
+            &mut workspace,
+            Command::Navigate(Workspace::Device),
+            stamp
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn captured_duplicate_cannot_follow_deleted_widget_or_changed_selection() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let mut workspace = WorkspaceState::default();
+    let id = editor.preview().config().widgets[0].id;
+    let view = editor.preview().config().widgets[0].view;
+    editor.select(Selection { view, widget: Some(id) }).unwrap();
+    let command = Command::selected_widget(&editor);
+    let stamp = editor.stamp();
+    editor.apply(Edit::DeleteWidget(id)).unwrap();
+    let before = (editor.history_len(), editor.preview().config().clone());
+    assert!(dispatch(&mut editor, &mut workspace, command, stamp).is_err());
+    assert_eq!((editor.history_len(), editor.preview().config().clone()), before);
+}
+
+#[test]
+fn duplicate_and_export_use_real_reducers_and_capacity_reasons() {
+    let mut config = default_config();
+    let widget = config.widgets[0].clone();
+    config.widgets.clear();
+    config.widgets.push(widget).unwrap();
+    let mut editor = Editor::new(config).unwrap();
+    let view = editor.preview().config().widgets[0].view;
+    let id = editor.preview().config().widgets[0].id;
+    editor.select(Selection { view, widget: Some(id) }).unwrap();
+    let mut workspace = WorkspaceState::default();
+    let stamp = editor.stamp();
+    let command = Command::selected_widget(&editor);
+    let history = editor.history_len().0;
+    assert_eq!(
+        dispatch(&mut editor, &mut workspace, command, stamp),
+        Ok(CommandEffect::Changed)
+    );
+    assert_eq!(editor.preview().config().widgets.len(), 2);
+    assert_eq!(editor.history_len().0, history + 1);
+    editor.undo().unwrap();
+    assert_eq!(editor.preview().config().widgets.len(), 1);
+    let import = editor.begin_import().unwrap();
+    let stamp = editor.stamp();
+    assert_eq!(
+        Command::Export(ExportFormat::Eav).availability(&editor, stamp),
+        Some("Wait for or cancel the current import")
+    );
+    let before = (editor.stamp(), editor.history_len());
+    assert!(dispatch(&mut editor, &mut workspace, Command::Export(ExportFormat::Eav), stamp).is_err());
+    assert_eq!((editor.stamp(), editor.history_len()), before);
+    assert!(editor.import_is_current(import));
+    editor.cancel_import(import).unwrap();
+    let pointer = editor.begin_pointer(9, PointerTarget::Library(Channel::Oil)).unwrap();
+    let stamp = editor.stamp();
+    assert_eq!(
+        Command::Undo.availability(&editor, stamp),
+        Some("Finish or cancel the active pointer gesture")
+    );
+    assert!(dispatch(&mut editor, &mut workspace, Command::Undo, stamp).is_err());
+    assert_eq!(editor.active_pointer(), Some(pointer));
+    editor.cancel_pointer(pointer).unwrap();
+    let stamp = editor.stamp();
+    assert_eq!(
+        dispatch(&mut editor, &mut workspace, Command::Export(ExportFormat::Json), stamp),
+        Ok(CommandEffect::Export(ExportFormat::Json))
+    );
+}
+
+#[test]
+fn find_opens_hidden_group_without_accepting_raw_or_changing_selection() {
+    use dashboard_configurator::field_registry::*;
+    let mut editor = Editor::new(default_config()).unwrap();
+    editor
+        .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "bad".into())
+        .unwrap();
+    let target = Registry::retained_raw_target(&editor, 0, TargetOwner::Root).unwrap();
+    let before = (
+        editor.stamp(),
+        editor.selection(),
+        editor.history_len(),
+        editor.raw_fields().to_vec(),
+    );
+    let mut workspace = WorkspaceState::default();
+    workspace.set_expanded(GroupId::Bindings, false);
+    let stamp = editor.stamp();
+    assert_eq!(
+        dispatch(&mut editor, &mut workspace, Command::Find(target), stamp),
+        Ok(CommandEffect::Inspect(target))
+    );
+    assert_eq!(workspace.active(), Workspace::Device);
+    assert!(workspace.expanded(GroupId::Bindings));
+    assert_eq!(
+        (
+            editor.stamp(),
+            editor.selection(),
+            editor.history_len(),
+            editor.raw_fields().to_vec()
+        ),
+        before
+    );
+    for command in [
+        Command::CopyAppearance,
+        Command::ApplyAppearance(AppearanceScope::AllWidgets),
+        Command::OpenJson,
+    ] {
+        assert!(command.availability(&editor, stamp).is_some());
+        assert!(dispatch(&mut editor, &mut workspace, command, stamp).is_err());
+    }
+}
+
+#[test]
+fn shortcuts_preserve_ime_editable_undo_and_browser_commands() {
+    let shortcut =
+        |key: &str, editable, composing| shortcut_action(key, true, false, false, false, composing, editable);
+    assert_eq!(shortcut("k", true, false), Some(ShortcutAction::Palette));
+    assert_eq!(shortcut("k", false, true), None);
+    assert_eq!(shortcut("z", true, false), None);
+    assert_eq!(shortcut("z", false, false), Some(ShortcutAction::Undo));
+    assert_eq!(
+        shortcut_action("z", true, true, false, false, false, false),
+        Some(ShortcutAction::Redo)
+    );
+    for key in ["r", "f", "+", "-", "0", "l"] {
+        assert_eq!(shortcut(key, false, false), None);
+    }
+    assert_eq!(shortcut_action("k", true, false, true, false, false, false), None);
+    assert_eq!(shortcut_action("k", true, false, false, true, false, false), None);
+    assert_eq!(shortcut_action("k", true, true, false, false, false, false), None);
+}
+
+#[test]
+fn focus_requests_are_retired_on_close_supersession_and_exhaustion() {
+    let mut requests = FocusRequests::default();
+    let first = requests.issue().unwrap();
+    assert!(requests.is_current(first));
+    requests.cancel();
+    assert!(!requests.is_current(first));
+    let second = requests.issue().unwrap();
+    let third = requests.issue().unwrap();
+    assert!(!requests.is_current(second));
+    assert!(requests.is_current(third));
+}
+
+#[test]
+fn full_grid_and_view_capacity_reject_without_history_movement() {
+    let mut config = default_config();
+    let widget = config.widgets[0].clone();
+    config.widgets.clear();
+    config.widgets.push(widget).unwrap();
+    let mut editor = Editor::new(config).unwrap();
+    let widget = &editor.preview().config().widgets[0];
+    editor
+        .select(Selection {
+            view: widget.view,
+            widget: Some(widget.id),
+        })
+        .unwrap();
+    let mut workspace = WorkspaceState::default();
+    for _ in 0..8 {
+        let command = Command::selected_widget(&editor);
+        let stamp = editor.stamp();
+        if command.availability(&editor, stamp).is_some() {
+            break;
+        }
+        dispatch(&mut editor, &mut workspace, command, stamp).unwrap();
+    }
+    let command = Command::selected_widget(&editor);
+    let stamp = editor.stamp();
+    assert_eq!(
+        command.availability(&editor, stamp),
+        Some("No free space for this widget size in its view")
+    );
+    let before = (editor.history_len(), editor.preview().config().clone());
+    assert!(dispatch(&mut editor, &mut workspace, command, stamp).is_err());
+    assert_eq!((editor.history_len(), editor.preview().config().clone()), before);
+    while editor.preview().config().views.len() < MAX_VIEWS {
+        editor.apply(Edit::AddView { name: "Extra".into() }).unwrap();
+    }
+    let command = Command::selected_view(&editor);
+    let stamp = editor.stamp();
+    assert_eq!(
+        command.availability(&editor, stamp),
+        Some("The 8-view limit is reached")
+    );
+    let before = editor.history_len();
+    assert!(dispatch(&mut editor, &mut workspace, command, stamp).is_err());
+    assert_eq!(editor.history_len(), before);
+}
+
+#[test]
+fn simulator_recovery_command_preserves_editor_and_matches_protected_y_hold() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let mut workspace = WorkspaceState::default();
+    let mut command_sim = ControlSimulator::new(editor.preview().clone());
+    let mut button_sim = ControlSimulator::new(editor.preview().clone());
+    for sim in [&mut command_sim, &mut button_sim] {
+        sim.advance(1500);
+        sim.tap(ButtonId::B);
+    }
+    let before = (
+        editor.stamp(),
+        editor.selection(),
+        editor.history_len(),
+        editor.accepted_config_key(),
+    );
+    let stamp = editor.stamp();
+    assert_eq!(
+        dispatch(&mut editor, &mut workspace, Command::RecoverSimulator, stamp),
+        Ok(CommandEffect::RecoverSimulator)
+    );
+    command_sim.recover();
+    button_sim.hold(ButtonId::Y);
+    assert_eq!(command_sim.summary(), button_sim.summary());
+    assert_eq!(command_sim.now_ms(), button_sim.now_ms());
+    assert_eq!(
+        (
+            editor.stamp(),
+            editor.selection(),
+            editor.history_len(),
+            editor.accepted_config_key()
+        ),
+        before
+    );
+}
+
+#[test]
 fn manual_focus_and_activation_are_distinct_and_preserve_editor_and_simulator() {
     let mut editor = Editor::new(default_config()).unwrap();
     editor

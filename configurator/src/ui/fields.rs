@@ -73,20 +73,36 @@ fn validation_raw(error: ValidationError) -> Option<RawField> {
 
 #[component]
 pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
-    let target = move || {
+    let syntax = move || {
         ui.editor.with(|e| {
-            if let Some(raw) = e.raw_fields().first() {
-                let owner = Registry::raw_owner(e, raw.field)?;
-                return Registry::retained_raw_target(e, 0, owner).ok();
+            match e.json_draft().map(|d| d.state()) {
+                Some(dashboard_configurator::json_draft::JsonState::SyntaxError { line, column, .. }) => {
+                    Some((*line, *column))
+                }
+                _ => None,
             }
-            let draft = e.diagnostic()?;
-            let issue = draft.validation_report().issues.first().copied()?;
-            let raw = validation_raw(issue.error)?;
-            let owner = Registry::raw_owner(e, raw)?;
-            Registry::semantic_target(e, issue.location, Registry::raw_key(raw), owner).ok()
         })
     };
-    view! { <button hidden=move ||target().is_none() on:click=move |_|{if let Some(target)=target(){workspaces::inspect(ui,target);}}>"Focus invalid field"</button> }
+    let count = move || ui.editor.with(|e| Registry::error_targets(e).len()) + usize::from(syntax().is_some());
+    view! { <details class="error-navigation" hidden=move ||count()==0>
+        <summary>{move ||format!("{} configuration issues · inspect fields",count())}</summary>
+        <ul>{move ||ui.editor.with(|e|Registry::error_targets(e).into_iter().map(|link| {
+            let target=link.inspection;
+            let field=link.field;
+            view!{<li><button disabled=target.is_none() on:click=move |_|{
+                if let Some(field)=field {workspaces::inspect(ui,field);}
+                else if let Some(target)=target {command_palette::inspect_location(ui,target);}
+            }>{link.path}</button><span>{link.label}</span></li>}
+        }).collect_view())}</ul>
+        <p>{move ||syntax().map(|(line,column)|format!("Invalid JSON at line {line}, column {column}. Inline JSON editing is not integrated yet; the owned text is retained."))}</p>
+        <p>{move ||ui.editor.with(|e| {
+            let omitted=match e.json_draft().map(|d|d.state()) {
+                Some(dashboard_configurator::json_draft::JsonState::Candidate{report,..})=>report.omitted,
+                _=>e.diagnostic().map(|d|d.validation_report().omitted).unwrap_or(0),
+            };
+            if omitted>0 {format!("{omitted} more issues omitted from the bounded report")}else{String::new()}
+        })}</p>
+    </details> }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

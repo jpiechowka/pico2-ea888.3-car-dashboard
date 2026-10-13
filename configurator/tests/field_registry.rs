@@ -5,6 +5,45 @@ use dashboard_configurator::editor::*;
 use dashboard_configurator::field_registry::*;
 
 #[test]
+fn query_overflow_preserves_previous_unicode_query_and_stale_result_rejects() {
+    let mut query = SearchQuery::default();
+    query.set("lambda").unwrap();
+    assert!(query.set(&"é".repeat(65)).is_err());
+    assert_eq!(query.text(), "lambda");
+    query.set(&"é".repeat(64)).unwrap();
+    assert_eq!(query.text().len(), 128);
+    let mut editor = Editor::new(default_config()).unwrap();
+    let target = Registry::search(&editor, "smoothing").unwrap().results[0];
+    let stamp = editor.stamp();
+    let handle = editor.open_json().unwrap();
+    let text = editor.json_draft().unwrap().text().to_string();
+    editor.set_json_text(handle, text).unwrap();
+    assert_eq!(editor.stamp(), stamp);
+    assert!(Registry::resolve(&editor, target).is_err());
+}
+
+#[test]
+fn error_navigation_preserves_exact_duplicate_and_unknown_json_locations() {
+    let mut config = default_config();
+    config.widgets[1].id = config.widgets[0].id;
+    let mut editor = Editor::new(default_config()).unwrap();
+    let handle = editor.open_json().unwrap();
+    let token = editor
+        .set_json_text(handle, serde_json::to_string(&config).unwrap())
+        .unwrap();
+    editor.finish_json_parse(token).unwrap();
+    let links = Registry::error_targets(&editor);
+    let duplicate = links.iter().find(|link| link.path.contains("/widgets/1/id")).unwrap();
+    assert!(duplicate.field.is_none());
+    let resolved = editor.inspect(duplicate.inspection.unwrap()).unwrap();
+    assert_eq!(resolved.widget_index, Some(1));
+    assert!(!resolved.id_lookup_unambiguous);
+    let before = (editor.stamp(), editor.selection(), editor.history_len());
+    assert_eq!(duplicate.path, resolved.json_path.unwrap());
+    assert_eq!((editor.stamp(), editor.selection(), editor.history_len()), before);
+}
+
+#[test]
 fn registry_has_each_editable_descriptor_once_and_unique_numeric_dom_ids() {
     let keys = Registry::descriptors().iter().map(|d| d.key).collect::<BTreeSet<_>>();
     assert_eq!(keys.len(), Registry::descriptors().len());

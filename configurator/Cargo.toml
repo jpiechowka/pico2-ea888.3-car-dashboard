@@ -27,7 +27,7 @@ js-sys = "=0.3.106"
 web-sys = { version = "=0.3.106", features = [
     "console", "Blob", "BlobPropertyBag", "CanvasRenderingContext2d", "Document",
     "DomException", "DomRect", "Element", "Event", "EventTarget", "File", "FileList", "FocusOptions",
-    "HtmlAnchorElement", "HtmlCanvasElement", "HtmlElement", "HtmlInputElement",
+    "HtmlAnchorElement", "HtmlCanvasElement", "HtmlDialogElement", "HtmlElement", "HtmlInputElement",
     "HtmlSelectElement", "ImageData", "KeyboardEvent", "MouseEvent", "Navigator", "Node", "NodeList", "Performance", "PointerEvent",
     "PerformanceObserver", "PerformanceObserverInit", "PerformanceObserverEntryList", "PerformanceEntry",
     "Storage", "StorageEvent", "Url", "Window",

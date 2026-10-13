@@ -212,6 +212,29 @@ pub struct SearchResults {
     pub results: Vec<FieldTarget>,
     pub omitted: usize,
 }
+#[derive(Default)]
+pub struct SearchQuery(String);
+impl SearchQuery {
+    pub fn text(&self) -> &str { &self.0 }
+
+    pub fn set(
+        &mut self,
+        text: &str,
+    ) -> Result<(), RegistryError> {
+        if text.len() > 128 {
+            return Err(RegistryError::QueryTooLong);
+        }
+        self.0 = text.into();
+        Ok(())
+    }
+}
+#[derive(Clone, Debug)]
+pub struct ErrorTarget {
+    pub inspection: Option<InspectionTarget>,
+    pub field: Option<FieldTarget>,
+    pub path: String,
+    pub label: String,
+}
 #[derive(Clone, Debug)]
 pub struct ResolvedField {
     pub workspace: Workspace,
@@ -269,6 +292,74 @@ impl FieldId {
     }
 }
 impl Registry {
+    /// Collect current report links without looking up a validation owner's ID.
+    /// Unsupported fields retain their actual JSON/list provenance read-only.
+    pub fn error_targets(editor: &Editor) -> Vec<ErrorTarget> {
+        let visual = editor.diagnostic();
+        let owned_report = visual.as_ref().map(|draft| draft.validation_report());
+        let report = match editor.json_draft().map(|draft| draft.state()) {
+            Some(crate::json_draft::JsonState::Candidate { report, .. }) => Some(report),
+            _ => owned_report.as_ref(),
+        };
+        let Some(report) = report else {
+            return Vec::new();
+        };
+        let mut links = Vec::new();
+        for issue in &report.issues {
+            let location = issue.location;
+            let inspection = editor.inspection_target(location).ok();
+            let owner = if let Some(index) = location.widget_index() {
+                match location.field() {
+                    Field::BandMinimum(b)
+                    | Field::BandMaximum(b)
+                    | Field::BandOrder(b)
+                    | Field::BandLabel(b)
+                    | Field::BandColor(b) => TargetOwner::Band(index, b),
+                    _ => TargetOwner::Widget(index),
+                }
+            } else if let Some(index) = location.view_index() {
+                TargetOwner::View(index)
+            } else if let Some(index) = location.channel_index() {
+                TargetOwner::Channel(Channel::ALL[index])
+            } else {
+                match location.field() {
+                    Field::LedBrightness(w) | Field::LedPeriod(w) | Field::LedOnPercent(w) => TargetOwner::Led(w),
+                    _ => TargetOwner::Root,
+                }
+            };
+            let field = Self::validation_key(location.field()).and_then(|key| {
+                editor
+                    .raw_fields()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, raw)| {
+                        Self::raw_key(raw.field) == key && Self::raw_owner(editor, raw.field) == Some(owner)
+                    })
+                    .and_then(|(index, _)| Self::retained_raw_target(editor, index, owner).ok())
+                    .or_else(|| Self::semantic_target(editor, location, key, owner).ok())
+            });
+            let inspection = field.map(|target| target.inspection()).or(inspection);
+            links.push(ErrorTarget {
+                inspection,
+                field,
+                path: location.to_string(),
+                label: format!("{:?}", issue.error.code),
+            });
+        }
+        for raw in &report.raw_errors {
+            let inspection = editor.raw_inspection_target(raw.raw_index).ok();
+            let field = Self::raw_owner(editor, raw.field)
+                .and_then(|owner| Self::retained_raw_target(editor, raw.raw_index, owner).ok());
+            links.push(ErrorTarget {
+                inspection,
+                field,
+                path: format!("Raw input {} · {:?}", raw.raw_index, raw.field),
+                label: format!("{:?}", raw.error),
+            });
+        }
+        links
+    }
+
     /// Canvas layout/hits use the ordinary editing layout, independently of
     /// any read-only inspected object. Reducers still check mutation authority.
     pub fn layout_widget(

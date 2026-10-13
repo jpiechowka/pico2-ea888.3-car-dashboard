@@ -311,7 +311,7 @@ pub fn SimulationControls(ui: Ui) -> impl IntoView {
         <div class="simulator-buttons">{ButtonId::ALL.into_iter().map(|button| view! {
             <div><strong class="keycap">{button.label()}</strong>
                 <button on:click=move |_|ui.simulate(|s|s.tap(button))>{format!("Tap {}",button.label())}</button>
-                <button on:click=move |_|ui.simulate(|s|s.hold(button))>{if button==ButtonId::Y {"Recover (2 s)".to_string()}else{format!("Hold {}",button.label())}}</button>
+                <button on:click=move |_|{if button==ButtonId::Y {recover(ui);}else{ui.simulate(|s|s.hold(button));}}>{if button==ButtonId::Y {"Recover (2 s)".to_string()}else{format!("Hold {}",button.label())}}</button>
             </div>
         }).collect_view()}</div>
         <div class="simulator-actions">
@@ -324,3 +324,6 @@ pub fn SimulationControls(ui: Ui) -> impl IntoView {
         <small>"Onboard taps and holds use the stored map: Toggle boost units changes the physical-toggle state; Acknowledge warnings uses the last completed Dashboard page. Repeat it before processing to inspect Busy. Dashboard has a canvas; Debug and Logs show control state here."</small>
     </section> }
 }
+
+/// The palette and visible protected Y hold share the persistent control path.
+pub(super) fn recover(ui: Ui) { ui.simulate(ControlSimulator::recover); }
