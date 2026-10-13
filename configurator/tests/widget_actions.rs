@@ -3,6 +3,57 @@ use dashboard_configurator::editor::*;
 use dashboard_configurator::geometry::{PanelPoint, validate_draft_drop};
 use dashboard_configurator::widget_actions::{Direction, WidgetMenu, menu_position};
 
+#[test]
+fn duplicate_widget_copies_advanced_settings_with_independent_identity_and_warning_state() {
+    use dashboard_configurator::simulator::ControlSimulator;
+    use dashboard_core::alarms::RuleIndex;
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0].advanced.smoothing_ms = 250;
+    raw.widgets[0].advanced.peak_mode = PeakSelection::Maximum;
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.trigger = 2.;
+    raw.widgets[0].warning.clear = 1.;
+    raw.widgets[0].warning.on_ms = 1;
+    let mut e = Editor::new(raw).unwrap();
+    let original = e.preview().config().widgets[0].clone();
+    e.apply(Edit::DuplicateWidget {
+        id: 1,
+        view: 1,
+        placement: Placement {
+            column: 1,
+            row: 0,
+            span: Span::OneByOne,
+        },
+    })
+    .unwrap();
+    let mut copy = e.preview().config().widgets[1].clone();
+    assert_ne!(copy.id, original.id);
+    assert_eq!(copy.advanced, original.advanced);
+    assert_eq!(copy.warning, original.warning);
+    copy.advanced.smoothing_ms = 750;
+    copy.advanced.peak_mode = PeakSelection::Minimum;
+    copy.warning.trigger = 3.;
+    copy.warning.clear = 2.8;
+    e.apply(Edit::UpdateWidget(copy)).unwrap();
+    assert_eq!(e.preview().config().widgets[0], original);
+    let mut sim = ControlSimulator::new(e.preview().clone());
+    let start = sim.now_ms();
+    let values = [2.5, 90., 95., 80., 30., 700., 13.8, 1.];
+    sim.advance_to(start, Some(values));
+    sim.advance_to(start + 1, Some(values));
+    let snap = sim.snapshot();
+    assert!(
+        snap.warning_eligibility(RuleIndex::new(0).unwrap(), sim.now_ms())
+            .visible()
+    );
+    assert!(
+        !snap
+            .warning_eligibility(RuleIndex::new(1).unwrap(), sim.now_ms())
+            .visible()
+    );
+}
+
 fn pair() -> Editor {
     let mut config = default_config();
     config.widgets.truncate(2);
