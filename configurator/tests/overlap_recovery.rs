@@ -186,18 +186,16 @@ fn rejected_new_widget_is_selectable_movable_and_cancellable() {
 }
 
 #[test]
-fn invalid_resize_can_be_corrected_without_discard_and_new_field_edits_stay_blocked() {
+fn invalid_resize_preserves_new_field_edits_until_atomic_layout_repair() {
     let mut editor = pair();
     overlap(&mut editor);
     let token = editor.field_token();
-    assert_eq!(
-        editor.set_raw(token, RawField::ViewName(1), "Other".into()),
-        Err(EditorError::InvalidDraft)
-    );
-    assert_eq!(
+    editor.set_raw(token, RawField::ViewName(1), "Other".into()).unwrap();
+    assert!(matches!(
         editor.apply(Edit::SetFuel(Fuel::EquivalentGasoline)),
-        Err(EditorError::InvalidDraft)
-    );
+        Err(EditorError::Validation(_))
+    ));
+    // A complete raw value may still await the layout repair; do not drop it.
     editor
         .apply(Edit::ResizeWidget {
             id: 1,
@@ -212,5 +210,6 @@ fn invalid_resize_can_be_corrected_without_discard_and_new_field_edits_stay_bloc
         .unwrap();
     assert!(!editor.has_invalid_draft());
     assert_ne!(editor.field_token(), token);
-    assert_eq!(editor.history_len(), (0, 0));
+    assert_eq!(editor.history_len(), (1, 0));
+    assert_eq!(editor.preview().config().views[0].name, "Other");
 }

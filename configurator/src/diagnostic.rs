@@ -57,7 +57,8 @@ impl Draft {
                             RawField::Source(channel, _) => channel == w.channel,
                             RawField::ViewName(id) => id == w.view,
                             RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => true,
-                            RawField::ControlHoldMilliseconds => false,
+                            RawField::HistorySeconds(channel) => channel == w.channel,
+                            RawField::ControlHoldMilliseconds | RawField::Led { .. } => false,
                         }
                     })
             })
@@ -133,7 +134,11 @@ impl Draft {
                 if previous.warning != widget.warning {
                     lines.push(format!("Widget {} warning: {:?}", widget.id, widget.warning));
                 }
+                if previous.advanced != widget.advanced {
+                    lines.push(format!("Widget {} advanced display: {:?}", widget.id, widget.advanced));
+                }
             }
+            lines.extend(projection_notes(widget));
         }
         if self.config.fuel != accepted.config().fuel {
             lines.push(format!("Fuel and AFR: {:?}", self.config.fuel));
@@ -198,8 +203,93 @@ pub(crate) fn isolated_widget(
         safe.display.graph_range = GraphRange::Auto;
     }
     safe.colors = WidgetColors::default();
+    let defaults = AdvancedDisplay::for_channel(safe.channel, safe.display.afr);
+    if !safe.advanced.readout.compatible(safe.channel) {
+        safe.advanced.readout = defaults.readout;
+    }
+    safe.display.afr = safe.advanced.readout.includes_afr();
+    if safe.channel != Channel::Boost {
+        safe.advanced.secondary = Secondary::None;
+    }
+    if safe.advanced.smoothing_ms != 0 && !(50..=5000).contains(&safe.advanced.smoothing_ms) {
+        safe.advanced.smoothing_ms = 0;
+    }
+    if !(100..=60000).contains(&safe.advanced.peak_hold_ms) {
+        safe.advanced.peak_hold_ms = 750;
+    }
+    if !safe.advanced.reference.is_finite() || !(low..=high).contains(&safe.advanced.reference) {
+        safe.advanced.reference_mode = ReferenceMode::Off;
+        safe.advanced.reference = 0.;
+    }
+    // Preserve band count/colour inspection while projecting endpoints to
+    // bounded ordered lanes. The raw RGB565 colours are reapplied only through
+    // draw_diagnostic_widget, never used as a validation proof.
+    let mut bands = safe.advanced.bands().to_vec();
+    let valid_bounds = bands.iter().enumerate().all(|(i, b)| {
+        b.min.is_finite()
+            && b.max.is_finite()
+            && b.min >= low
+            && b.max <= high
+            && b.min < b.max
+            && (i == 0 || bands[i - 1].max <= b.min)
+    });
+    let count = bands.len();
+    for (i, band) in bands.iter_mut().enumerate() {
+        if !valid_bounds {
+            let width = (high - low) / count as f32;
+            band.min = low + i as f32 * width;
+            band.max = if i + 1 == count {
+                high
+            } else {
+                low + (i + 1) as f32 * width
+            };
+        }
+        band.color = safe.colors.gauge;
+    }
+    safe.advanced.set_bands(&bands).ok()?;
     safe.warning = default_widget(safe.channel, safe.id, safe.view, safe.placement).warning;
     safe.warning.enabled = false;
     config.widgets.push(safe).ok()?;
     validate(config).ok()
+}
+
+fn projection_notes(widget: &Widget) -> Vec<String> {
+    let mut notes = Vec::new();
+    let a = widget.advanced;
+    let (low, high) = widget.channel.domain();
+    let mut add = |field: &str, fallback: &str| {
+        notes.push(format!(
+            "Widget {} {field}: diagnostic uses {fallback}; rejected input remains stored.",
+            widget.id
+        ))
+    };
+    if !a.readout.compatible(widget.channel) {
+        add("readout", "the channel's default unit");
+    }
+    if widget.channel != Channel::Boost && a.secondary != Secondary::None {
+        add("secondary unit", "no secondary");
+    }
+    if a.smoothing_ms != 0 && !(50..=5000).contains(&a.smoothing_ms) {
+        add("smoothing", "Off");
+    }
+    if !(100..=60000).contains(&a.peak_hold_ms) {
+        add("peak hold", "750 ms");
+    }
+    if !a.reference.is_finite() || (a.reference_mode == ReferenceMode::Manual && !(low..=high).contains(&a.reference)) {
+        add("reference", "Off");
+    }
+    if a.bands().iter().enumerate().any(|(i, b)| {
+        !b.min.is_finite()
+            || !b.max.is_finite()
+            || b.min < low
+            || b.max > high
+            || b.min >= b.max
+            || (i > 0 && a.bands()[i - 1].max > b.min)
+    }) {
+        add(
+            "band bounds/order",
+            "equal ordered lanes in the canonical channel domain, retaining raw colours",
+        );
+    }
+    notes
 }

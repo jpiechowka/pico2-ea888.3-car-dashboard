@@ -2,6 +2,36 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 
+#[test]
+fn invalid_advanced_fields_keep_the_rejected_tile_inspectable() {
+    let mut editor = selected();
+    let mut w = editor.preview().config().widgets[0].clone();
+    w.gauge.kind = GaugeKind::Horizontal;
+    w.advanced.reference_mode = ReferenceMode::Manual;
+    w.advanced.reference = f32::NAN;
+    w.advanced.readout = Readout::Fahrenheit;
+    w.advanced.smoothing_ms = 1;
+    w.advanced.peak_hold_ms = 1;
+    w.advanced
+        .set_bands(&[Band::new(999., 1000., Color(0xF800), "RED").unwrap()])
+        .unwrap();
+    assert!(editor.apply(Edit::UpdateWidget(w)).is_err());
+    let mut preview = Preview::new();
+    preview
+        .render_diagnostic(
+            editor.preview(),
+            &editor.diagnostic().unwrap(),
+            1,
+            PreviewOptions::default(),
+        )
+        .unwrap();
+    // The red invalid header alone is insufficient: the rejected tile must remain.
+    let nonblack = (26..133)
+        .flat_map(|y| (0..80).map(move |x| (y * 320 + x) * 2))
+        .any(|at| preview.rgb565()[at..at + 2] != [0, 0]);
+    assert!(nonblack, "rejected advanced widget disappeared");
+}
+
 fn selected() -> Editor {
     let mut editor = Editor::default();
     editor

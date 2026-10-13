@@ -236,7 +236,7 @@ pub(crate) fn draw_widget<D: DrawTarget<Color = Rgb565>>(
     let Some(widget) = layout.widget(slot) else {
         return;
     };
-    draw_widget_palette(display, scene, slot, layout, widget.colors);
+    draw_widget_palette(display, scene, slot, layout, widget.colors, None);
 }
 
 /// Browser-only diagnostic projection: geometry still comes from a validated
@@ -247,9 +247,23 @@ pub fn draw_diagnostic_widget<D: DrawTarget<Color = Rgb565>>(
     scene: &DashboardScene<'_>,
     slot: usize,
     colors: WidgetColors,
+    band_colors: &[dashboard_config::Color],
 ) {
     if let Some(layout) = &scene.layout {
-        draw_widget_palette(display, scene, slot, layout, colors);
+        let Some(widget) = layout.widget(slot) else {
+            return;
+        };
+        // Only bounded colours cross this diagnostic boundary. Every numeric,
+        // label and geometry field still comes from the validated projection.
+        let mut advanced = widget.advanced;
+        let mut bands = [dashboard_config::Band::EMPTY; 3];
+        let count = advanced.bands().len();
+        bands[..count].copy_from_slice(advanced.bands());
+        for (band, color) in bands[..count].iter_mut().zip(band_colors.iter().take(3)) {
+            band.color = *color;
+        }
+        advanced.set_bands(&bands[..count]).expect("bounded diagnostic bands");
+        draw_widget_palette(display, scene, slot, layout, colors, Some(&advanced));
     }
 }
 
@@ -263,10 +277,12 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
     slot: usize,
     layout: &Layout<'_>,
     palette: WidgetColors,
+    diagnostic_advanced: Option<&dashboard_config::AdvancedDisplay>,
 ) {
     let Some(widget) = layout.widget(slot) else {
         return;
     };
+    let decorations = diagnostic_advanced.unwrap_or(&widget.advanced);
     let Some(rect) = widget.placement.rect() else {
         return;
     };
@@ -367,7 +383,7 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
                 foreground(palette.ticks),
             ),
             Some(crate::widgets::gauge::Decorations {
-                settings: &widget.advanced,
+                settings: decorations,
                 unit: Unit::resolve(widget.advanced.readout, scene.boost_psi),
                 stoich: layout.configuration().stoich(),
                 peak_color: foreground(palette.peak),
@@ -394,7 +410,7 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
         y += 8;
     }
     if band_rows != 0 {
-        for band in widget.advanced.bands() {
+        for band in decorations.bands() {
             display
                 .fill_solid(
                     &Rectangle::new(Point::new(center - 18, y + 1), Size::new(5, 5)),

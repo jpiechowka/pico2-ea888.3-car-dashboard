@@ -113,6 +113,24 @@ pub enum WidgetField {
     WarningLoad,
     WarningOn,
     WarningOff,
+    SmoothingMilliseconds,
+    PeakHoldMilliseconds,
+    Reference,
+    BandMinimum(u8),
+    BandMaximum(u8),
+    BandLabel(u8),
+    BandColor(u8),
+    WarningTriggerHigh,
+    WarningClearHigh,
+    WarningSnoozeSeconds,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LedField {
+    Color,
+    Brightness,
+    Period,
+    OnPercent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +154,8 @@ pub enum SourceField {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RawField {
+    HistorySeconds(Channel),
+    Led { warning: bool, field: LedField },
     ControlHoldMilliseconds,
     ViewName(u8),
     Widget(u16, WidgetField),
@@ -153,6 +173,16 @@ pub struct RawInput {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
+    SetHistory {
+        channel: Channel,
+        seconds: u16,
+    },
+    SetReducedMotion(bool),
+    SetLed(LedSettings),
+    RemoveBand {
+        id: u16,
+        index: u8,
+    },
     SetControls(ControlMap),
     AddView {
         name: String,
@@ -323,7 +353,14 @@ impl Editor {
             .map_or(self.preview().config(), |draft| &draft.config)
     }
 
-    pub fn can_edit_layout(&self) -> bool { self.raw.is_empty() }
+    pub fn can_edit_layout(&self) -> bool {
+        if self.raw.is_empty() {
+            return true;
+        }
+        let mut candidate = self.editing_config().clone();
+        self.raw.iter().all(|input| apply_raw(&mut candidate, input).is_ok())
+            && validate(candidate).is_err_and(|e| matches!(e.field, Field::Placement))
+    }
 
     pub fn revision(&self) -> Revision { self.revision }
 
@@ -608,12 +645,6 @@ impl Editor {
         if token != self.field_token() {
             return Err(EditorError::StaleToken);
         }
-        if self.rejected.is_some()
-            && field != RawField::ControlHoldMilliseconds
-            && !self.raw.iter().any(|input| input.field == field)
-        {
-            return Err(EditorError::InvalidDraft);
-        }
         if text.len() > MAX_RAW_TEXT_BYTES {
             return Err(EditorError::RawTooLong);
         }
@@ -686,8 +717,20 @@ impl Editor {
         &mut self,
         edit: Edit,
     ) -> Result<Revision, EditorError> {
-        let controls_repair = matches!(edit, Edit::SetControls(_));
-        if !controls_repair
+        let field_repair = matches!(
+            edit,
+            Edit::SetControls(_)
+                | Edit::UpdateWidget(_)
+                | Edit::SetWarningMode { .. }
+                | Edit::SetHistory { .. }
+                | Edit::SetReducedMotion(_)
+                | Edit::SetLed(_)
+                | Edit::RemoveBand { .. }
+                | Edit::SetWarningPresentation(_)
+                | Edit::SetFuel(_)
+                | Edit::SetSource { .. }
+        );
+        if !field_repair
             && self.has_invalid_draft()
             && (!self.can_edit_layout()
                 || !matches!(
@@ -700,15 +743,47 @@ impl Editor {
         {
             return Err(EditorError::InvalidDraft);
         }
-        let recovering = self.rejected.is_some();
+        let recovering = self.has_invalid_draft();
         let mut config = self.editing_config().clone();
-        if controls_repair {
-            for input in &self.raw {
-                apply_raw(&mut config, input)?;
-            }
-        }
         let mut selection = self.selection();
         match edit {
+            Edit::SetHistory { channel, seconds } => config.history_seconds[channel.index()] = seconds,
+            Edit::SetReducedMotion(value) => config.reduced_motion = value,
+            Edit::SetLed(value) => config.led = value,
+            Edit::RemoveBand { id, index } => {
+                let slot = widget_index(&config, id)?;
+                let widget = &mut config.widgets[slot];
+                let mut bands = widget.advanced.bands().to_vec();
+                if usize::from(index) >= bands.len() {
+                    return Err(EditorError::InvalidIndex);
+                }
+                bands.remove(usize::from(index));
+                widget.advanced.set_bands(&bands).map_err(EditorError::Validation)?;
+                // Removing a band deliberately removes its own draft fields;
+                // following bands keep their identity and unrelated raw text.
+                self.raw.retain_mut(|raw| {
+                    let RawField::Widget(wid, field) = &mut raw.field else {
+                        return true;
+                    };
+                    if *wid != id {
+                        return true;
+                    }
+                    let band = match field {
+                        WidgetField::BandMinimum(i)
+                        | WidgetField::BandMaximum(i)
+                        | WidgetField::BandLabel(i)
+                        | WidgetField::BandColor(i) => i,
+                        _ => return true,
+                    };
+                    if *band == index {
+                        return false;
+                    }
+                    if *band > index {
+                        *band -= 1;
+                    }
+                    true
+                });
+            }
             Edit::SetControls(mut controls) => {
                 // The current hold text wins over a map captured by a picker.
                 if self.raw.iter().any(|r| r.field == RawField::ControlHoldMilliseconds) {
@@ -863,7 +938,44 @@ impl Editor {
             }
             Edit::SetWarningMode { id, mode } => {
                 let index = widget_index(&config, id)?;
+                let (low, high) = config.widgets[index].channel.domain();
+                let defaults = default_widget(
+                    config.widgets[index].channel,
+                    id,
+                    config.widgets[index].view,
+                    config.widgets[index].placement,
+                )
+                .warning;
                 let warning = &mut config.widgets[index].warning;
+                let window = |m| matches!(m, LimitMode::OutsideWindow | LimitMode::InsideWindow);
+                if window(mode) && warning.mode != mode {
+                    let step = (high - low) / 5.;
+                    let endpoints = [low + step, low + 2. * step, low + 3. * step, low + 4. * step];
+                    let [a, b, c, d] = endpoints;
+                    (
+                        warning.trigger,
+                        warning.clear,
+                        warning.advanced.clear_high,
+                        warning.advanced.trigger_high,
+                    ) = if mode == LimitMode::OutsideWindow {
+                        (a, b, c, d)
+                    } else {
+                        (b, a, d, c)
+                    };
+                } else if window(warning.mode) && !window(mode) {
+                    warning.trigger = if mode == LimitMode::Low {
+                        defaults.clear
+                    } else {
+                        defaults.trigger
+                    };
+                    warning.clear = if mode == LimitMode::Low {
+                        defaults.trigger
+                    } else {
+                        defaults.clear
+                    };
+                    warning.advanced.trigger_high = 0.;
+                    warning.advanced.clear_high = 0.;
+                }
                 if matches!(
                     (warning.mode, mode),
                     (LimitMode::High, LimitMode::Low) | (LimitMode::Low, LimitMode::High)
@@ -876,7 +988,14 @@ impl Editor {
             Edit::SetFuel(fuel) => config.fuel = fuel,
             Edit::SetWarningPresentation(warnings) => config.warnings = warnings,
         }
-        match validate(config.clone()) {
+        let mut raw_error = None;
+        for input in &self.raw {
+            if let Err(error) = apply_raw(&mut config, input) {
+                raw_error.get_or_insert(error);
+            }
+        }
+        let result = raw_error.map_or_else(|| validate(config.clone()).map_err(EditorError::Validation), Err);
+        match result {
             Ok(preview) => {
                 let revision = if recovering { Some(self.next_revision()?) } else { None };
                 self.accept_validated(preview, selection)?;
@@ -902,9 +1021,9 @@ impl Editor {
                     }
                 }
                 self.rejected = Some(Box::new(Rejected { config, selection }));
-                self.draft_error = Some(EditorError::Validation(error));
+                self.draft_error = Some(error);
                 self.changed(revision);
-                Err(EditorError::Validation(error))
+                Err(error)
             }
         }
     }
@@ -1087,7 +1206,11 @@ fn check_raw_target(
                 _ => {}
             }
         }
-        RawField::ControlHoldMilliseconds | RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => {}
+        RawField::ControlHoldMilliseconds
+        | RawField::WarningPageMilliseconds
+        | RawField::WarningColor { .. }
+        | RawField::HistorySeconds(_)
+        | RawField::Led { .. } => {}
     }
     Ok(())
 }
@@ -1101,6 +1224,20 @@ fn apply_raw(
     let number = || text.trim().parse::<f32>().map_err(|_| parse_error());
     let integer = || text.trim().parse::<u16>().map_err(|_| parse_error());
     match *field {
+        RawField::HistorySeconds(channel) => config.history_seconds[channel.index()] = integer()?,
+        RawField::Led { warning, field } => {
+            let pattern = if warning {
+                &mut config.led.warning
+            } else {
+                &mut config.led.normal
+            };
+            match field {
+                LedField::Color => pattern.color = Color::parse(text).ok_or_else(parse_error)?,
+                LedField::Brightness => pattern.brightness_percent = text.trim().parse().map_err(|_| parse_error())?,
+                LedField::Period => pattern.period_ms = integer()?,
+                LedField::OnPercent => pattern.on_percent = text.trim().parse().map_err(|_| parse_error())?,
+            }
+        }
         RawField::ControlHoldMilliseconds => config.controls.hold_ms = integer()?,
         RawField::ViewName(id) => {
             let index = view_index(config, id)?;
@@ -1110,6 +1247,37 @@ fn apply_raw(
             let index = widget_index(config, id)?;
             let widget = &mut config.widgets[index];
             match field {
+                WidgetField::SmoothingMilliseconds => widget.advanced.smoothing_ms = integer()?,
+                WidgetField::PeakHoldMilliseconds => widget.advanced.peak_hold_ms = integer()?,
+                WidgetField::Reference => widget.advanced.reference = number()?,
+                WidgetField::WarningTriggerHigh => widget.warning.advanced.trigger_high = number()?,
+                WidgetField::WarningClearHigh => widget.warning.advanced.clear_high = number()?,
+                WidgetField::WarningSnoozeSeconds => widget.warning.advanced.snooze_s = integer()?,
+                WidgetField::BandMinimum(i)
+                | WidgetField::BandMaximum(i)
+                | WidgetField::BandColor(i)
+                | WidgetField::BandLabel(i) => {
+                    let mut bands = widget.advanced.bands().to_vec();
+                    let band = bands.get_mut(usize::from(i)).ok_or(EditorError::FieldUnavailable)?;
+                    match field {
+                        WidgetField::BandMinimum(_) => band.min = number()?,
+                        WidgetField::BandMaximum(_) => band.max = number()?,
+                        WidgetField::BandColor(_) => band.color = Color::parse(text).ok_or_else(parse_error)?,
+                        WidgetField::BandLabel(_) => {
+                            band.set_label(text).map_err(|code| {
+                                EditorError::Validation(ValidationError {
+                                    code,
+                                    field: Field::BandLabel(i),
+                                    widget: Some(id),
+                                    view: Some(widget.view),
+                                    channel: Some(widget.channel),
+                                })
+                            })?
+                        }
+                        _ => unreachable!(),
+                    }
+                    widget.advanced.set_bands(&bands).map_err(EditorError::Validation)?;
+                }
                 WidgetField::Label => widget.label = bounded(text)?,
                 WidgetField::Decimals => widget.display.decimals = text.trim().parse().map_err(|_| parse_error())?,
                 WidgetField::Color(role) => role.set(&mut widget.colors, Color::parse(text).ok_or_else(parse_error)?),

@@ -399,7 +399,14 @@ impl Preview {
                 backgrounds: [BLACK; 8],
                 overlay: None,
             };
-            dashboard_core::configured_scene::draw_diagnostic_widget(&mut display, &scene, 0, widget.colors);
+            let band_colors: Vec<_> = widget.advanced.bands().iter().map(|band| band.color).collect();
+            dashboard_core::configured_scene::draw_diagnostic_widget(
+                &mut display,
+                &scene,
+                0,
+                widget.colors,
+                &band_colors,
+            );
             let rect = widget.placement.rect().expect("isolated widget has valid geometry");
             let label = Rectangle::new(
                 Point::new(i32::from(rect.x) + 2, i32::from(rect.y) + 2),

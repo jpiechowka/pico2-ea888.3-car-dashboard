@@ -2,6 +2,104 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+fn advanced_window_mode_presets_switch_and_undo_as_one_operation() {
+    let mut e = Editor::default();
+    let original = e.preview().clone();
+    e.apply(Edit::SetWarningMode {
+        id: 1,
+        mode: LimitMode::OutsideWindow,
+    })
+    .unwrap();
+    assert_eq!(e.preview().config().widgets[0].warning.mode, LimitMode::OutsideWindow);
+    e.apply(Edit::SetWarningMode {
+        id: 1,
+        mode: LimitMode::InsideWindow,
+    })
+    .unwrap();
+    e.apply(Edit::SetWarningMode {
+        id: 1,
+        mode: LimitMode::High,
+    })
+    .unwrap();
+    assert_eq!(
+        e.preview().config().widgets[0].warning.advanced.trigger_high.to_bits(),
+        0
+    );
+    e.undo().unwrap();
+    e.undo().unwrap();
+    e.undo().unwrap();
+    assert_eq!(e.preview(), &original);
+}
+
+#[test]
+fn advanced_rejected_widget_repairs_atomically_without_losing_raw_text() {
+    let mut e = Editor::default();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    let before = e.preview().clone();
+    let history = e.history_len();
+    let mut w = before.config().widgets[0].clone();
+    w.advanced.reference_mode = ReferenceMode::Manual;
+    w.advanced.reference = 999.;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    assert_eq!(e.preview(), &before);
+    let mut w = e.editing_config().widgets[0].clone();
+    w.advanced.reference_mode = ReferenceMode::Off;
+    e.apply(Edit::UpdateWidget(w)).unwrap();
+    assert!(!e.has_invalid_draft());
+    assert_eq!(e.history_len().0, history.0 + 1);
+    e.undo().unwrap();
+    assert_eq!(e.preview(), &before);
+    e.redo().unwrap();
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::GaugeMinimum),
+        "oops".into(),
+    )
+    .unwrap();
+    let mut w = e.editing_config().widgets[0].clone();
+    w.advanced.readout = Readout::Kpa;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    assert_eq!(e.raw_fields()[0].text, "oops");
+    assert_eq!(e.editing_config().widgets[0].advanced.readout, Readout::Kpa);
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::GaugeMinimum),
+        "-0.5".into(),
+    )
+    .unwrap();
+    assert_eq!(e.preview().config().widgets[0].advanced.readout, Readout::Kpa);
+}
+
+#[test]
+fn typed_warning_failure_can_be_repaired_with_a_new_numeric_field() {
+    let mut e = Editor::default();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    let mut w = e.preview().config().widgets[0].clone();
+    w.warning.enabled = true;
+    w.warning.advanced.latch = true;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::WarningOn),
+        "100".into(),
+    )
+    .unwrap();
+    let mut controls = e.editing_config().controls;
+    controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    e.apply(Edit::SetControls(controls)).unwrap();
+    assert!(e.preview().config().widgets[0].warning.advanced.latch);
+    assert_eq!(e.preview().config().widgets[0].warning.on_ms, 100);
+}
+
+#[test]
 fn saved_v1_migrates_layout_labels_and_selection_without_changing_boot_view() {
     let mut config: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../crates/dashboard-config/tests/fixtures/v1-default.json"

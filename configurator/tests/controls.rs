@@ -103,7 +103,7 @@ fn mapping_repairs_preserve_unrelated_invalid_edits_and_explain_parse_blockers()
         Err(EditorError::Parse(RawField::WarningPageMilliseconds))
     );
     assert_eq!(editor.raw_fields()[0].text, "bad");
-    assert_eq!(editor.editing_config().controls, ControlMap::default());
+    assert_eq!(editor.editing_config().controls, map);
     assert_exports_blocked(&mut editor);
     editor
         .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "0".into())
@@ -154,7 +154,7 @@ fn mapping_repairs_preserve_unrelated_invalid_edits_and_explain_parse_blockers()
 }
 
 #[test]
-fn rejected_map_only_unlocks_retained_raw_fields_and_existing_hold_target() {
+fn rejected_map_allows_new_existing_fields_but_rejects_missing_targets() {
     let mut editor = Editor::default();
     editor
         .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "0".into())
@@ -163,14 +163,18 @@ fn rejected_map_only_unlocks_retained_raw_fields_and_existing_hold_target() {
     map.screens[0].buttons[0].tap = ControlAction::CycleFps;
     assert!(editor.apply(Edit::SetControls(map)).is_err());
     let before = editor.editing_config().clone();
-    for field in [
-        RawField::WarningColor { foreground: true },
-        RawField::ViewName(255),
-        RawField::Widget(u16::MAX, WidgetField::Label),
-    ] {
+    for field in [RawField::ViewName(255), RawField::Widget(u16::MAX, WidgetField::Label)] {
         assert!(editor.set_raw(editor.field_token(), field, "2500".into()).is_err());
         assert_eq!(editor.editing_config(), &before);
     }
+    editor
+        .set_raw(
+            editor.field_token(),
+            RawField::WarningColor { foreground: true },
+            "#FFFFFF".into(),
+        )
+        .unwrap();
+    assert_eq!(editor.editing_config().controls, before.controls);
     editor
         .set_raw(editor.field_token(), RawField::WarningPageMilliseconds, "bad".into())
         .unwrap();
@@ -228,11 +232,11 @@ fn retained_raw_repair_does_not_drop_another_rejected_setting() {
         editor.editing_config().controls.screens[0].buttons[0].tap,
         ControlAction::CycleFps
     );
-    assert_eq!(
-        editor.set_raw(editor.field_token(), RawField::Fuel(FuelField::Ratio), "14.7".into()),
-        Err(EditorError::InvalidDraft)
-    );
-    assert_exports_blocked(&mut editor);
+    editor
+        .set_raw(editor.field_token(), RawField::Fuel(FuelField::Ratio), "14.7".into())
+        .unwrap();
+    assert!(!editor.has_invalid_draft());
+    assert_eq!(editor.preview().config().fuel, Fuel::Stoichiometric { ratio: 14.7 });
 }
 
 #[test]
