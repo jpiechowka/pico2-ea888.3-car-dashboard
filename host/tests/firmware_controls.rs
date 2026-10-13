@@ -181,8 +181,10 @@ fn warning_route_is_separate_capacity_one_and_applies_after_inputs_before_tick()
 fn completed_diagnostic_scene_and_pending_return_use_the_same_led_owner() {
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
     use dashboard_core::status_led::{LedController, LedDuty, PresentedLed, PresentedScene};
-    let mut settings = dashboard_config::LedSettings::default();
-    settings.on_debug = true;
+    let mut settings = dashboard_config::LedSettings {
+        on_debug: true,
+        ..Default::default()
+    };
     settings.warning.kind = dashboard_config::LedPatternKind::Solid;
     let mut presented = PresentedLed::new();
     let mut led = LedController::new();

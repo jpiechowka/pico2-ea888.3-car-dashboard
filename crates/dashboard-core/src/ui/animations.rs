@@ -124,7 +124,7 @@ impl ColorTransition {
     }
 
     /// Decorative transitions snap under reduced motion. Warning blink is not
-    /// routed through this policy, including later configured LED adapters.
+    /// routed through this policy, including configured LED adapters.
     pub fn update_with_policy(
         &mut self,
         now_ms: u64,

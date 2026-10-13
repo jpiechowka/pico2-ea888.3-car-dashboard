@@ -133,10 +133,10 @@ fn advanced_gauge_markers_use_prepared_raw_peaks_and_static_bands_in_every_span(
                     }
                 }
                 for color in [0x07E0_u16, 0x07FF, 0xF81F] {
-                    let seen = cell.0.chunks_exact(2).any(|p| p == color.to_be_bytes());
+                    let seen = cell.0.as_chunks::<2>().0.iter().any(|p| *p == color.to_be_bytes());
                     assert_eq!(seen, !kind.is_numeric(), "band {color:x} {kind:?}/{span:?}/{now}");
                 }
-                let peak_seen = cell.0.chunks_exact(2).any(|p| p == 0xFFE0_u16.to_be_bytes());
+                let peak_seen = cell.0.as_chunks::<2>().0.iter().any(|p| *p == 0xFFE0_u16.to_be_bytes());
                 assert_eq!(
                     peak_seen,
                     !kind.is_numeric() && now == 100,
@@ -213,8 +213,10 @@ fn wide_compact_gauges_give_short_values_larger_complete_digits() {
             );
             frame
                 .0
-                .chunks_exact(2)
-                .filter(|p| *p == 0xFFE0_u16.to_be_bytes())
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .filter(|p| **p == 0xFFE0_u16.to_be_bytes())
                 .count()
         };
         assert!(count(156, "0.04") > count(76, "0.04") * 3 / 2, "wide digits {kind:?}");
@@ -264,7 +266,7 @@ fn wide_compact_gauges_give_short_values_larger_complete_digits() {
 #[test]
 fn reference_peak_and_adjacent_bands_share_affine_geometry_and_omit_outside_values() {
     use dashboard_host_validation::presentation::Unit;
-    use dashboard_host_validation::widgets::gauge::{Decorations, Reading, draw_decorated};
+    use dashboard_host_validation::widgets::gauge::{Decorations, Paint, Reading, draw_decorated};
     use embedded_graphics::prelude::*;
     use embedded_graphics::primitives::Rectangle;
     for kind in GaugeKind::ALL.into_iter().filter(|k| !k.is_numeric()) {
@@ -302,13 +304,15 @@ fn reference_peak_and_adjacent_bands_share_affine_geometry_and_omit_outside_valu
                     },
                     "--",
                     false,
-                    (colors::WHITE, colors::RED, colors::GRAY, colors::WHITE),
-                    Some(Decorations {
-                        settings: advanced,
-                        unit,
-                        stoich: 14.7,
-                        peak_color: colors::YELLOW,
-                    }),
+                    Paint {
+                        colors: (colors::WHITE, colors::RED, colors::GRAY, colors::WHITE),
+                        decorations: Some(Decorations {
+                            settings: advanced,
+                            unit,
+                            stoich: 14.7,
+                            peak_color: colors::YELLOW,
+                        }),
+                    },
                 );
                 frame
             };
@@ -1032,7 +1036,7 @@ fn warning_foreground_only_phase_and_overlay_palette_change_repaint_both_buffers
 #[test]
 fn zero_reference_omits_positive_and_negative_seed_and_expanded_ranges() {
     use dashboard_host_validation::presentation::Unit;
-    use dashboard_host_validation::widgets::gauge::{Decorations, Reading, draw_decorated};
+    use dashboard_host_validation::widgets::gauge::{Decorations, Paint, Reading, draw_decorated};
     use embedded_graphics::prelude::*;
     use embedded_graphics::primitives::Rectangle;
     for kind in GaugeKind::ALL.into_iter().filter(|k| !k.is_numeric()) {
@@ -1055,13 +1059,15 @@ fn zero_reference_omits_positive_and_negative_seed_and_expanded_ranges() {
                         },
                         "--",
                         false,
-                        (colors::WHITE, colors::RED, colors::GRAY, colors::WHITE),
-                        Some(Decorations {
-                            settings: &settings,
-                            unit,
-                            stoich: 14.7,
-                            peak_color: colors::YELLOW,
-                        }),
+                        Paint {
+                            colors: (colors::WHITE, colors::RED, colors::GRAY, colors::WHITE),
+                            decorations: Some(Decorations {
+                                settings: &settings,
+                                unit,
+                                stoich: 14.7,
+                                peak_color: colors::YELLOW,
+                            }),
+                        },
                     );
                     frame
                 };

@@ -105,6 +105,17 @@ class CaptureTests(unittest.TestCase):
         with patch.object(Path, 'read_bytes', lambda p: original(p) + (b'changed' if p.name == 'README.md' else b'')):
             self.assertTrue(before != capture.inputs(), 'changed README escaped source inventory')
 
+    def test_complete_advanced_runtime_and_seeded_decoder_are_capture_inputs(self):
+        data = capture.inputs()
+        for crate, names in [
+            ('dashboard-core', ('acquisition.rs', 'presentation.rs', 'peak_hold.rs',
+                                'warning_state.rs', 'status_led.rs', 'configured_scene.rs')),
+            ('dashboard-config', ('advanced.rs', 'decode_in_place.rs', 'slot.rs', 'legacy_v3.rs')),
+        ]:
+            for name in names:
+                key = f'crates/{crate}/src/{name}'
+                self.assertEqual(data[key], (capture.REPO / key).read_bytes())
+
     def test_only_cargo_emitted_firmware_executable_is_selected(self):
         executable = (capture.FIRMWARE / 'target/alternative/pico2').resolve()
         artifact = dict(reason='compiler-artifact', manifest_path=str(capture.FIRMWARE / 'pico2/Cargo.toml'),

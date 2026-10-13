@@ -223,25 +223,27 @@ impl RasterCheck {
             let mut raw = AlignedFrame::boxed();
             raw_scene.draw_full(&mut St7789Renderer::new(&mut raw.0));
             assert!(raw.0 == full.0);
-            if !blink_on && !marker.is_empty() && matches!(now, 3400 | 3901 | 4000 | 5100 | 5500 | 10700) {
-                if let Some(directory) = std::env::var_os("WIDGET_WARNING_EVIDENCE") {
-                    let mut ppm = b"P6\n320 240\n255\n".to_vec();
-                    for pixel in full.0.chunks_exact(2) {
-                        let rgb = u16::from_be_bytes([pixel[0], pixel[1]]);
-                        ppm.extend_from_slice(&[
-                            (((rgb >> 11) & 31) * 255 / 31) as u8,
-                            (((rgb >> 5) & 63) * 255 / 63) as u8,
-                            ((rgb & 31) * 255 / 31) as u8,
-                        ]);
-                    }
-                    let widget = &c.config().widgets[0];
-                    std::fs::write(
-                        std::path::PathBuf::from(directory)
-                            .join(format!("{:?}-{:?}-{now}.ppm", widget.gauge.kind, widget.placement.span)),
-                        ppm,
-                    )
-                    .unwrap();
+            if !blink_on
+                && !marker.is_empty()
+                && matches!(now, 3400 | 3901 | 4000 | 5100 | 5500 | 10700)
+                && let Some(directory) = std::env::var_os("WIDGET_WARNING_EVIDENCE")
+            {
+                let mut ppm = b"P6\n320 240\n255\n".to_vec();
+                for pixel in full.0.as_chunks::<2>().0 {
+                    let rgb = u16::from_be_bytes([pixel[0], pixel[1]]);
+                    ppm.extend_from_slice(&[
+                        (((rgb >> 11) & 31) * 255 / 31) as u8,
+                        (((rgb >> 5) & 63) * 255 / 63) as u8,
+                        ((rgb & 31) * 255 / 31) as u8,
+                    ]);
                 }
+                let widget = &c.config().widgets[0];
+                std::fs::write(
+                    std::path::PathBuf::from(directory)
+                        .join(format!("{:?}-{:?}-{now}.ppm", widget.gauge.kind, widget.placement.span)),
+                    ppm,
+                )
+                .unwrap();
             }
             previous = Some(full.0.to_vec());
         }

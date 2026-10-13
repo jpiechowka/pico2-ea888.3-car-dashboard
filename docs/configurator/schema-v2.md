@@ -1,9 +1,13 @@
 # Configuration v2 contract
 
-Version 2 adds gauges and RGB565 palettes. The catalogue remains version 1;
+Historical wire contract, retained for explicit migration. New exports and
+firmware use [current v4](configuration-format.md#current-v4-contract).
+
+Version 2 added gauges and RGB565 palettes. The catalogue remains version 1;
 source, decoder, fuel, warning and placement contracts in [v1](schema-v1.md)
 otherwise remain unchanged. The 16 KiB binary and 128 KiB JSON limits remain.
-The checked-in `configs/default.json` is a complete editable example.
+The frozen v2 fixtures remain under `crates/dashboard-config/tests/fixtures`;
+the checked-in `configs/default.json` follows the current contract.
 
 ## Wire changes
 
@@ -55,9 +59,11 @@ upgrades it to Numeric gauges with channel defaults and the default palette.
 It accepts validated v1 JSON, v1 EAV and the existing saved-browser envelope.
 This does not use Serde defaults to reinterpret an old binary layout.
 
-The firmware parser accepts only v2. An unsupported or damaged embedded file
-takes the existing fault/default path. The host firmware build compiler accepts
-v1 input, validates and upgrades it, then embeds canonical v2 bytes. Captures
+At the v2 stage, the firmware parser accepted only v2. An unsupported or damaged embedded file
+takes the existing fault/default path. The stage
+compiler accepted v1 input, validated and upgraded it to canonical v2 bytes.
+The current compiler explicitly migrates v1/v2/v3 to v4; current firmware
+accepts only v4. Captures
 retain the original input and its hash plus the normalized/embedded hash;
 they independently compile the frozen input and require byte equality.
 

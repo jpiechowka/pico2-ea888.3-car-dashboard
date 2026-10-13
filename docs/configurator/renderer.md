@@ -18,9 +18,22 @@ the whole frame, including old borders and newly empty areas. Overlay removal
 repairs obscured cells. Configuration identity, fuel-dependent strings, quality,
 graph samples, peak expiry and unit changes participate in invalidation.
 The historical fixed renderer remains an explicit host replay adapter;
-firmware uses the configured path.
+firmware uses the configured path. The published `configured_preview` example
+binds acquisition to the selected configuration and prepares display readings
+at each deterministic sample time. Its final snapshot includes configured
+history, warnings, smoothing and peak state; rendering uses the same prepared
+current value as firmware. It is a synthetic snapshot export, without control
+interaction, completed-warning acknowledgment or a hardware LED simulator.
+An unknown view is rejected before opening the output file.
 
-## Verification at the renderer stage
+```powershell
+cargo run --locked --manifest-path host/Cargo.toml --example configured_preview -- dashboard.ppm
+cargo run --locked --manifest-path host/Cargo.toml --example configured_preview -- dashboard.ppm my-dashboard.eav 1
+```
+
+Current v4 behavior/resource evidence is in [the release record](advanced-v4-release.md).
+
+## Historical verification at the renderer stage
 
 Host suites pass 308 tests per outline, including ownership compile-fail cases.
 Eight new configured-scene tests cover all channels, spans and 32 display flag

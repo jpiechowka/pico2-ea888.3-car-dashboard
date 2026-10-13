@@ -133,10 +133,7 @@ impl PresentedLed {
             return false;
         }
         let state = state.into();
-        if self.visible != state {
-            return false;
-        }
-        true
+        self.visible == state
     }
 
     pub const fn warning(&self) -> PresentedWarning { self.visible.warning }

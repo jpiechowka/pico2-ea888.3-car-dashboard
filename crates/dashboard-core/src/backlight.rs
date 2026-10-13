@@ -282,7 +282,9 @@ impl Backlight {
         }
     }
 
-    /// The completed panel reference already matches the popup-free scene.
+    /// The completed panel reference already matches the current scene.
+    /// An unchanged Off popup starts its feedback timer; an unchanged popup-free
+    /// scene finishes Clear and turns the backlight off.
     pub fn frame_unchanged(
         &mut self,
         now_ms: u64,

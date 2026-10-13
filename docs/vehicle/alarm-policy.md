@@ -4,9 +4,19 @@ Alarm decisions belong to the acquisition owner. Every accepted measurement and 
 
 ## Enabled policies
 
-Vehicle mode currently enables **no alarm rules**. A plausible temperature or a valid generic OBD response is insufficient evidence for a DNUC limit. Future enablement requires an exact source/channel mapping, reviewed threshold provenance and operating context. Engine oil and transmission oil are separate channels. Unknown, modeled or catalyst EGT cannot produce a measured-manifold alarm.
+The default Vehicle configuration enables **no qualified alarm rules**. Configured
+VehicleAndDemo applicability admits a rule only when its actual source, quality,
+freshness and operating context qualify. A plausible temperature or generic OBD
+response does not establish a DNUC limit. Exact source/channel mapping and
+threshold provenance remain required; the current Longan deployment is unqualified.
+Engine oil and transmission oil are separate channels. Unknown, modeled or catalyst
+EGT cannot produce a measured-manifold alarm.
 
-Demo rules in `alarms::demo_rules` are synthetic UI fixtures, not driving recommendations. Each carries that provenance. The fixture synthesizes running/warm/high-load/non-fuel-cut context and target lambda1.0. It deliberately uses separate oil/DSG limits. The runtime demo generates lambda directly, without assuming a fuel-dependent AFR conversion.
+Configured Demo rules use each widget's validated thresholds and synthetic
+running/warm/high-load/non-fuel-cut context with target lambda1.0. Defaults are
+DemoOnly UI fixtures, not driving recommendations, and retain separate oil/DSG
+limits. `alarms::demo_rules` belongs to the explicit historical host adapter.
+Runtime Demo generates canonical lambda without assuming fuel-dependent AFR.
 
 ## Timing and failure behavior
 
@@ -20,7 +30,13 @@ Demo rules in `alarms::demo_rules` are synthetic UI fixtures, not driving recomm
 
 ## Rendering
 
-Widgets receive the evaluated state and no longer contain guessed coolant, shared oil/DSG, EGT or voltage thresholds. Old peak values do not imply a current contextual alarm. Warnings appear only on Dashboard. Brightness, unit, FPS and reset feedback takes precedence until its wall-clock deadline (1.5 seconds for Full/Dim or Debug brightness, 3 seconds for unit/FPS/reset), then any active warning resumes its current blink phase. Dashboard Off feedback lasts two seconds from its first completed presentation; after the popup-removal frame completes, the backlight switches off. Page changes or replacement feedback cancel a pending dashboard shutdown. Debug permits its percentage brightness feedback; Logs stays unobstructed. Page changes clear transient feedback without clearing alarm state. The RGB LED uses the completed warning frame's red phase and suppresses green in both warning phases; no visible warning produces steady green, including feedback and backlight Off. Blue remains off. Green is a presentation state, not a claim of engine health. Derived AFR uses the labelled gasoline-equivalent 14.7 scale and never changes lambda alarm inputs. Multiple active channels use deterministic order: coolant, oil, DSG, EGT, lambda, voltage, boost, IAT. This ordering is a UI policy, not a calibrated severity ranking. Explicit backlight off remains off.
+Current v4 warnings support High/Low and direct Inside/Outside window hysteresis,
+priority paging, latch and snooze. Acknowledgment and qualified clear are distinct:
+an active acknowledged condition remains indicated, and unavailable data never
+clears a remembered episode. Raw warning eligibility does not provide a fresh
+number. See [the complete warning presentation contract](../configurator/advanced-controls.md).
+
+Widgets receive the evaluated state and no longer contain guessed coolant, shared oil/DSG, EGT or voltage thresholds. Old peak values do not imply a current contextual alarm. Warnings appear only on Dashboard. Brightness, unit, FPS and reset feedback takes precedence until its wall-clock deadline (1.5 seconds for Full/Dim or Debug brightness, 3 seconds for unit/FPS/reset), then any active warning resumes its current blink phase. Dashboard Off feedback lasts two seconds from its first completed presentation; after the popup-removal frame completes, the backlight switches off. Page changes or replacement feedback cancel a pending dashboard shutdown. Debug permits its percentage brightness feedback; Logs stays unobstructed. Page changes clear transient feedback without clearing alarm state. The RGB policy defaults to completed-warning red/off and otherwise green; configured normal/warning patterns and background switches follow the shared completion-aware policy. Green is a presentation state, not engine-health evidence. Current AFR derives from the same prepared canonical lambda with the declared fuel stoichiometry. Raw alarm inputs remain unsmoothed lambda. Eligible warnings sort Critical/High/Normal/Low then configured view/widget order; this user-selected priority is not calibrated severity. Explicit backlight off remains off.
 
 The retained cache uses the effective overlay, including sensor and blink state. Removing or replacing a warning restores the entire underlay on each framebuffer. Host tests render both buffers and compare with complete redraws.
 

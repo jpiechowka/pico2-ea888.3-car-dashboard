@@ -141,8 +141,8 @@ pub fn prepare(
         }
         let bytes = read_bounded(&canonical, MAX_FILE_BYTES)?;
         let config = decode(&bytes).map_err(Error::Config)?;
-        // Re-encode the validated snapshot so a migrated v1 input is embedded
-        // as v2. Never reopen the source between validation and compilation.
+        // Re-encode all supported legacy inputs into the canonical current format.
+        // Never reopen the source between validation and compilation.
         (Some(requested), Some(canonical), compile(&config)?)
     } else {
         let default = validate(default_config()).expect("reviewed default configuration");

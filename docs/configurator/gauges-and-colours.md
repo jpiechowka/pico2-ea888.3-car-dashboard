@@ -35,7 +35,7 @@ or geometry never become the accepted device configuration. Save/export remain
 blocked until repaired or discarded. Use the stress-value selector to inspect
 channel endpoints, extreme digit widths and unavailable AFR. Export JSON for
 editing and `.eav` for a firmware build. Historical v1/v2/v3 files migrate to the
-complete local v4 schema; release integration remains pending. See
+current v4 schema. See
 [advanced controls](advanced-controls.md) for smoothing, history, markers,
 bands and warning acknowledgment.
 

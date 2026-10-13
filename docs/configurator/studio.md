@@ -88,8 +88,8 @@ and warning latch/acknowledgment state. Debug/Logs raster is a later stage.
 
 The [gauge and colour guide](gauges-and-colours.md) describes fixed/expanding
 scales, per-style capabilities, RGB565 validation and the shared preview/device
-renderer. Historical v1/v2/v3 documents import through explicit migration; local
-exports use the complete v4 schema, with release integration pending. See
+renderer. Historical v1/v2/v3 documents import through explicit migration; exports
+use the current v4 schema. See
 [advanced controls](advanced-controls.md) for units, smoothing, history, bands,
 markers, priorities/latch/snooze and the RGB indicator panel.
 
@@ -156,8 +156,9 @@ From the repository root, after exporting `dashboard.eav`:
 This captures and checks the image; it does not flash. See [building.md](building.md)
 for the complete workflow. The device parses the file once before core 1 starts.
 Returning from Debug/Logs restores the selected view in RAM. Reboot uses the
-configured boot view. Encoder click remains Full / 50% Dim / delayed Off;
-the other screens retain their controls. No new firmware is flashed by the studio.
+configured boot view. Default encoder click cycles Full / 50% Dim / delayed
+Off; accepted per-screen mappings select the actual actions. Protected Y hold
+always recovers Dashboard and Full brightness. No new firmware is flashed by the studio.
 
 ## Verification and limits
 

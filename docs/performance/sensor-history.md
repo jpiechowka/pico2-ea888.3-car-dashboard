@@ -51,8 +51,10 @@ transport deduplication is conservatively disabled while state remains live. Gra
 cache revisions include scrolling, validity, replacement and reset changes; exhaustion
 also disables graph reuse. Browser Appearance labels its generated history and still
 performs a fixed 60+1 synthetic observations through a private shared acquisition owner;
-Simulation keeps its persistent owner. Current source freshness suppresses stale values
-and alerts. The temperature trend uses the existing 0.5 C threshold; EGT uses
+Simulation keeps its persistent owner. Freshness suppresses stale live values
+and raw active warnings. Configured latch episodes retain their independent
+acknowledgment/qualified-clear lifetime, with unavailable quality shown separately;
+they never restore a stale value or advance dwell without fresh data. The temperature trend uses the existing 0.5 C threshold; EGT uses
 5 C, battery 0.05 V and lambda 0.1. These are display-arrow
 sensitivity settings, not validated vehicle alarm thresholds.
 

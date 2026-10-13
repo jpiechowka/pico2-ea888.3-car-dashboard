@@ -10,15 +10,15 @@ Normal defaults: Solid, #00FF00, 100 percent. Warning defaults: Blink, #FF0000, 
 
 Separate switches allow active warnings to remain indicated during Dashboard feedback, on Debug, on Logs, and with the backlight off. All default off. The off-screen switch is a prerequisite when the backlight is off; the applicable page/feedback switch must also permit a hidden warning. With no warning selected by the policy, use the normal pattern. Warning Off means no LED light while a warning is selected, not a return to the normal colour.
 
-Warnings use existing source, freshness, applicability and configured view-scope checks. Extract a bounded shared active-rule query for both warning presentation and LED selection; do not recreate ECU threshold rules in the LED adapter. Stale data cannot keep a non-latched warning active. Future approved latching/acknowledgment rules will feed the same query.
+Warnings use existing source, freshness, applicability and configured view-scope checks. One bounded shared eligibility query drives warning presentation and LED selection; the LED adapter does not recreate ECU threshold rules. Stale data cannot keep a non-latched warning active. Configured latching, acknowledgment and snooze use the same query; remembered episodes never supply a fresh measurement.
 
 ## Presentation and time
 
-Extend the existing presented-frame tracker to capture page, visible overlay and eligible-warning state with the submitted FrameToken. A matching completion commits that state. Wrong, duplicate or superseded completions cannot change the LED. An unchanged scene can update its equivalent presentation without inventing a transfer. A pending page transition must not prematurely change the LED to the destination page's policy.
+The presented-frame tracker captures page, visible overlay and eligible-warning state with the submitted FrameToken. A matching completion commits that state. Wrong, duplicate or superseded completions cannot change the LED. An unchanged scene can update its equivalent presentation without inventing a transfer. A pending page transition must not prematurely change the LED to the destination page's policy.
 
 The pure controller computes three light-duty values from 0 through 10,000. Its animation epoch changes when normal/warning selection changes, not on every frame. Repeated timestamps are stable; regressed timestamps preserve the last output and cannot reset an epoch. Large gaps use bounded modulo arithmetic, never a catch-up loop. Blink starts on. Breathe uses a bounded integer smoothstep over a triangular phase, avoiding floating point and allocation. The same elapsed time yields the same duty regardless of repaint frequency.
 
-Default synchronized warning blinking follows the committed overlay's phase rather than advancing ahead of the displayed warning. Other patterns advance by monotonic time using the committed selection. The later reduced-motion option makes decorative breathing solid; explicitly configured warning blinking remains available, and users can choose Solid or Off.
+Default synchronized warning blinking follows the committed overlay's phase rather than advancing ahead of the displayed warning. Other patterns advance by monotonic time using the committed selection. The reduced-motion option makes decorative breathing solid; explicitly configured warning blinking remains available, and users can choose Solid or Off.
 
 ## Hardware adapter
 
@@ -28,7 +28,7 @@ Use TOP 9,999, divider 1, phase-correct disabled and inverted outputs. With inve
 
 Do not use PWM Drop or disabling a slice as the LED off operation: the HAL disconnects pads with pull-down, which is unsuitable as an active-low off policy. Do not change regulator, display clocks or backlight algorithms in this stage.
 
-The shared controller, owned PWM adapter and Studio RGB indicator panel are implemented locally. Final release integration, physical colour, carrier and startup validation remain pending. Integer conversion and smoothstep use nearest rounding with ties upward.
+The shared controller, owned PWM adapter and Studio RGB indicator panel are integrated in the current v4 release. Physical colour, carrier and startup validation remain pending. Integer conversion and smoothstep use nearest rounding with ties upward.
 
 ## Verification
 

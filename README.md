@@ -128,11 +128,20 @@ Full brightness. Defaults apply when no valid journal exists. Persistence failur
 visible. See [startup status](docs/vehicle/startup-status.md) and
 [settings](docs/performance/settings-journal.md).
 
-| Button | Action |
+The following tables show defaults. Accepted per-screen tap/hold and encoder
+remaps follow [the controls and recovery contract](docs/configurator/control-mapping-design.md).
+Ordinary assigned holds default to 800 ms and suppress the release tap. Dashboard
+A/B holds select previous/next view; Debug A/B/X holds lower/raise/toggle brightness;
+Logs A/B/X holds scroll older/newer/return live. A fixed two-second Y hold always
+recovers Dashboard, the selected view and Full brightness, even from Off.
+The [complete v4 release](docs/configurator/advanced-v4-release.md) delivers advanced
+units/history/markers/warnings/RGB; later workspace and flash stages remain planned.
+
+| Button | Default tap action |
 |---|---|
 | X | Dashboard FPS: Off, Instant, Average, Combined |
 | Y | Dashboard, Debug, Logs |
-| A | Dashboard boost unit: bar / PSI |
+| A | Dashboard FollowBoost unit: bar / PSI; fixed-unit widgets retain their unit |
 | B | Request an acknowledged statistics reset on Dashboard |
 
 | Encoder input | Dashboard | Debug | Logs |

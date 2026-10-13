@@ -44,7 +44,8 @@ These power and IO rules were rechecked against the
 ## 2. Build, check and freeze the image
 
 After the merge, update a clean checkout from `master`. Keep local evidence out
-of commits. Both workspaces pin the reviewed `nightly-2026-10-11`; a newer
+of commits. The four Cargo roots (shared crates, firmware, host and configurator) use the
+reviewed `nightly-2026-10-12`; a newer
 compiler requires rerunning the checks, including the exact flash-code gates.
 
 Run this PowerShell block. It builds only, without contacting the Pico:
@@ -119,13 +120,18 @@ With `demo-stock-01`, require an explicit DEMO identity and changing synthetic
 values. There should be no old scripted 13-second welcome sequence. Record a
 video from power-on through the first usable frame.
 
-| Control | Expected behavior |
+Use the captured configuration's accepted bindings. The matrix below describes
+defaults; test remaps against [the action and fixed recovery contract](../configurator/control-mapping-design.md).
+Run the [configuration-specific checks](../configurator/building.md#configuration-specific-device-checks)
+for units, advanced warnings, RGB and completion ownership.
+
+| Control | Default expected behavior |
 |---|---|
 | Y | Dashboard -> Debug -> Logs -> Dashboard |
 | X, on Dashboard | FPS Off -> Instant -> Average -> Both -> Off |
-| A, on Dashboard | BAR/PSI toggle; value and peak use the selected unit |
+| A, on Dashboard | BAR/PSI toggle changes FollowBoost; fixed readouts retain their units and equal secondaries are omitted |
 | B, on Dashboard | Request statistics reset; successful reset follows acquisition acknowledgement |
-| Encoder rotation, Dashboard | No brightness change; reserved for future dashboard views |
+| Encoder rotation, Dashboard | Previous/next configured view, including wraparound; no brightness change |
 | Encoder press, Dashboard | Full (100% duty) -> Dim (50%) -> Off -> Full; named popups |
 | Dashboard Off | Two seconds after first popup transfer completes, remove popup, complete that frame, then switch off |
 | Encoder clockwise, Debug | Legacy brightness increases in 5% steps and clamps at 100% |
@@ -136,7 +142,11 @@ video from power-on through the first usable frame.
 | Fresh lambda | Main lambda plus derived AFR on the labelled EQ 14.7 gasoline scale; lambda 0.800 gives AFR 11.76 |
 | Stale or unavailable lambda | No current lambda or AFR number |
 
-Press/release once at a time, then test held buttons, quick repeated presses,
+Test default 800 ms A/B Dashboard view holds, Debug A/B/X brightness holds and
+Logs A/B/X navigation holds. Verify release taps are suppressed after holds.
+Hold Y for two seconds on every screen and while Off; Dashboard/Full recovery
+must remain reachable with every accepted map. Press/release once at a time,
+then test quick repeated presses,
 rapid rotation, page changes during popups and unit changes. Leave the graph
 running long enough to wrap. Require no trails, alternating stale digits,
 clipping into neighbours or stale popup rectangles. Red/green/blue rendering

@@ -129,6 +129,14 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
             "v3.eav",
             include_bytes!("../../dashboard-config/tests/fixtures/v3-default.eav").as_slice(),
         ),
+        (
+            "v1.eav",
+            include_bytes!("../../dashboard-config/tests/fixtures/v1-default.eav").as_slice(),
+        ),
+        (
+            "v2.eav",
+            include_bytes!("../../dashboard-config/tests/fixtures/v2-default.eav").as_slice(),
+        ),
     ] {
         std::fs::write(temp.0.join(name), fixture).unwrap();
         let output = run(&["compile", name, "migrated.eav"]);
@@ -138,6 +146,7 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
             output.status,
             String::from_utf8_lossy(&output.stderr)
         );
+        assert!(run(&["inspect", "migrated.eav"]).status.success());
         assert_eq!(
             decode(&std::fs::read(temp.0.join("migrated.eav")).unwrap())
                 .unwrap()

@@ -114,7 +114,7 @@ fn conversion_basis_and_display_domain_are_bounded_and_fail_closed() {
     assert_eq!(Unit::Fahrenheit.difference(10., 14.7), 18.);
     assert_eq!(Unit::Kpa.value(1., 14.7), 100.);
     assert!((Unit::Psi.value(1., 14.7) as f64 - 14.503773773020923).abs() < 0.000001);
-    assert!((Unit::Psi.value(-0.5, 14.7) as f64 + 7.2518868865104615).abs() < 0.000001);
+    assert!((Unit::Psi.value(-0.5, 14.7) as f64 + 7.251_886_886_510_461).abs() < 0.000001);
     assert_eq!(Unit::Afr.value(0.8, 15.), 12.);
     for (unit, min, max) in [
         (Unit::Fahrenheit, -100., 2000.),

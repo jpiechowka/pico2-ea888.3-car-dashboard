@@ -4,8 +4,8 @@ The acquisition owner now accepts canonical `Quantity` values with an explicit
 source, capture time and per-channel sequence. Publication sequence and reset
 acknowledgement remain separate. Vehicle mode starts with every channel unknown.
 The `demo` Cargo feature explicitly selects synthetic data; disconnects never
-select it automatically. This checkpoint provides the model and presentation;
-the UART/protocol owner is the next implementation slice.
+select it automatically. The configured acquisition and diagnostic session
+owners are integrated; transport and ECU qualification remain separate gates.
 
 Vehicle ingestion rejects future times, duplicate/regressed sequences or sample
 times, source/PID mismatches, non-diagnostic response IDs and changes of responder
@@ -19,30 +19,34 @@ producer cannot keep a stale value visible. Provisional age limits are 500 ms fo
 boost/lambda, 2 s for module voltage and 3 s for temperatures. These are software
 presentation limits, not validated polling rates for this car. Unknown, stale,
 unsupported, transport-faulted or invalid channels show `--` with a status label;
-they do not show zero, old graphs or critical colors. A valid zero remains distinct.
+they do not show zero or old graphs. A configured remembered warning uses a
+separate steady latch/acknowledgment badge with the actual unavailable quality;
+it never supplies a fresh reading or a raw active decision. A valid zero remains distinct.
 Both retained framebuffer caches include the effective quality and source.
 
 Lambda is the canonical mixture quantity. No unconditional lean/optimal alarm
 is inferred from a fixed AFR threshold. `ECU V` identifies control-module
-voltage, not a battery-terminal measurement. Vehicle alarm coloring is disabled
-until source semantics and policies have been qualified. The remaining Demo
-temperature/color thresholds are synthetic presentation behavior and are not
-vehicle limits. Dedicated alarm policy and boot changes follow in Stage07.
+voltage, not a battery-terminal measurement. Default Vehicle alarm coloring remains unavailable until source semantics and
+policies are qualified. Configured VehicleAndDemo rules still require the actual
+source, quality and operating-context gates. Demo thresholds are synthetic UI
+fixtures, not vehicle limits; see [alarm policy](alarm-policy.md).
 
 An accepted typed source does not establish vehicle compatibility. The transport
 must still enforce selected responder, request, payload width, capabilities,
 scaling and epoch. In particular, PID4F can change MAP/wideband scaling; the
-future decoder must not silently assume the default when scaling is unknown.
+decoder must not silently assume the default when scaling is unknown.
 No DNU-specific DID, DSG oil or physical EGT source is enabled by this change.
 See [vehicle evidence limits](canchecked-dnu-evidence.md).
 
 ## Lambda and derived AFR
 
-The lambda cell includes a secondary gasoline-equivalent readout:
-`AFR = lambda * 14.7`. Its visible `EQ 14.7` footer identifies the selected
-display scale. Examples: lambda 0.800 gives 11.76, 1.000 gives 14.70, and 1.200
-gives 17.64. Calculation uses the original value before rounding lambda to
-three decimals or AFR to two. The graph, acquisition and alarm model continue
+The default lambda cell includes a secondary gasoline-equivalent readout:
+`AFR = lambda * 14.7`, labelled `EQ 14.7`. Configured readouts may select lambda,
+AFR or both and an explicit stoichiometry/blend estimate; see
+[advanced controls](../configurator/advanced-controls.md). Examples: lambda 0.800 gives 11.76, 1.000 gives 14.70, and 1.200
+gives 17.64. Current AFR and lambda use the same prepared canonical value before rounding,
+including display smoothing when enabled. Raw warnings, history, extrema and
+peaks remain unsmoothed. The graph, acquisition and alarm model continue
 to use lambda; this adds no second sensor or independent AFR alarm.
 
 The user's fuel is Shell V-Power Racing 100 labelled E5.
@@ -63,7 +67,7 @@ guards. Stale or unqualified lambda cannot retain an apparently live AFR.
 Vehicle lambda remains unavailable until its actual source/scaling is qualified;
 Demo continues to use synthetic lambda.
 
-## Verification and cost
+## Historical stage 06 verification and cost
 
 114 runtime host tests and two compile-fail ownership checks pass in both outline
 modes. New tests cover absence versus zero, all channel stale boundaries,

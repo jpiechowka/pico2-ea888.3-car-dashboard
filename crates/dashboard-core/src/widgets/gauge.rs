@@ -215,7 +215,18 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(
     psi: bool,
     colors: (Rgb565, Rgb565, Rgb565, Rgb565),
 ) {
-    draw_decorated(display, kind, bounds, reading, text, psi, colors, None);
+    draw_decorated(
+        display,
+        kind,
+        bounds,
+        reading,
+        text,
+        psi,
+        Paint {
+            colors,
+            decorations: None,
+        },
+    );
 }
 
 /// Immutable settings are borrowed for this synchronous draw, never retained.
@@ -227,6 +238,12 @@ pub struct Decorations<'a> {
     pub peak_color: Rgb565,
 }
 
+/// Transient palette and borrowed decorations for one synchronous draw.
+pub struct Paint<'a> {
+    pub colors: (Rgb565, Rgb565, Rgb565, Rgb565),
+    pub decorations: Option<Decorations<'a>>,
+}
+
 pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     kind: GaugeKind,
@@ -234,9 +251,9 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
     reading: Reading,
     text: &str,
     psi: bool,
-    colors: (Rgb565, Rgb565, Rgb565, Rgb565),
-    decorations: Option<Decorations<'_>>,
+    paint: Paint<'_>,
 ) {
+    let Paint { colors, decorations } = paint;
     if !(-320..=320).contains(&bounds.top_left.x) || !(-240..=240).contains(&bounds.top_left.y) {
         return;
     }

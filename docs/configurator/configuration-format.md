@@ -3,7 +3,7 @@
 `dashboard-config` is a `no_std`, allocation-free device library. Its optional
 `json` feature provides the editable host/browser format; JSON is never linked
 into the device parser. The model, catalogue, validator and binary codec are
-shared by all consumers. See the unreleased v4 contract below, [schema v2](schema-v2.md) for wire history, and
+shared by all consumers. See the current v4 contract below, [schema v2](schema-v2.md) for wire history, and
 [design](design.md) for the deployment and hardware limits.
 
 ## Bounds and validation
@@ -35,7 +35,7 @@ the canonical byte sequence. It adds no payload-sized scratch buffer. Empty
 Postcard remainder is also required. The checksum is corruption detection,
 not authentication or evidence of valid ECU metadata.
 
-## Measured storage and verification
+## Historical v2 storage and verification
 
 With nightly2026-10-11, the actual v2 Thumb target LLVM type layout is:
 
@@ -52,12 +52,13 @@ default v2 binary is 912 bytes; the exercised maximum document is 8,430 bytes.
 Host layouts must not be substituted for device layout. Static type size does
 not establish parser stack peak; the mandatory linked-image gate checks
 static/task/stack budgets separately. See [gauges and colours](gauges-and-colours.md)
-for current resource measurements and the corrected construction/boot paths.
+for that historical stage's resource measurements and corrected construction/boot
+paths; [release evidence](advanced-v4-release.md) gives the current v4 admission.
 
 ### Historical v1 baseline
 
 The following test and timing record describes the initial v1 implementation,
-before gauges and palettes. Current verification is recorded in the gauge guide.
+before gauges and palettes. Current v4 verification is recorded in the release guide.
 Its Config/ValidatedConfig/Widget target sizes were 6,820/6,824/100 bytes.
 
 The initial verification has18 runtime tests plus2 compile-fail contracts with
@@ -100,7 +101,7 @@ FPS measurement. The parser runs at startup, not in the frame loop.
 New direct dependencies are Postcard1.1.3, Serde1.0.229 and optional
 serde_json1.0.154; heapless0.9.3 gains its Serde feature. Postcard defaults are
 disabled, avoiding its separate heapless compatibility edge. Serde defaults
-are disabled on the device. The three lockfiles agree on Syn3.0.8 for current
+are disabled on the device. The four lockfiles agree on Syn3.0.8 for current
 derive macros; unrelated reviewed versions are retained.
 
 The implementation was checked against the resolved crate source, including
@@ -115,15 +116,14 @@ The catalogue exposes pinned request mapping, numeric conversion and byte-order
 references together. These documentary sources do not establish support on the
 user's DNUC ECU or DQ381 transmission.
 
-## Unreleased v4 contract
+## Current v4 contract
 
-Version4 defines the complete advanced data contract. Its schema, validation,
-JSON/EAV codecs, ordinary editor save/export, and host migration are available
-in this local development series. Advanced acquisition, rendering, warning
-acknowledgment, LED policy and their editor controls remain planned integration
-work. Do not publish this series until those adapters and final resource gates
-are complete. The temporary window-rule Unavailable and ignored acknowledgment
-behaviors must be replaced before release; defaults select neither case.
+Version4 is the complete advanced contract shared by ordinary editor save/export,
+JSON/EAV codecs, host migration, configured acquisition, rendering, warning
+acknowledgment and RGB policy. See [advanced controls](advanced-controls.md) for
+actual defaults and capabilities and [release evidence](advanced-v4-release.md)
+for the software resource gates and physical-validation limits. Organized editor
+workspaces, all-screen browser pixels and native Build & Flash remain planned.
 
 Config appends channel-indexed `history_seconds[8]` (10–900, default120),
 `reduced_motion` (defaultfalse), and `led`. Widget appends `advanced`; warnings

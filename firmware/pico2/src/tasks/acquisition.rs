@@ -234,7 +234,7 @@ pub async fn acquisition_task(
             model.tick(now);
         }
         // Statistics include every accepted sample before Watch can coalesce.
-        // At most 100 Hz publication; no repeated 3 KB critical-section copy
+        // At most 100 Hz publication; no repeated bounded snapshot copy
         // when the backend has neither new data, faults nor a reset ack.
         if previous_snapshot.is_none() || last_publication.elapsed() >= Duration::from_millis(10) {
             publish_snapshot(&model, &sender, &mut previous_snapshot);

@@ -20,8 +20,8 @@ available in `configs/default.json` and `configs/default.eav`.
 The editor supports numeric/history, circular, needle, horizontal, vertical and
 segmented gauges, with independent RGB565 palettes. See [gauges and colours](gauges-and-colours.md)
 for layout capabilities, automatic scale expansion and colour validation.
-Version 1 files are explicitly upgraded by the editor or build compiler;
-exported and embedded files use [version 2](schema-v2.md). The capture keeps both
+Historical v1, v2 and v3 files are explicitly upgraded by the editor or build
+compiler; exported and embedded files use [current v4](configuration-format.md#current-v4-contract). The capture keeps both
 the original selected file and the canonical upgraded bytes.
 
 ## Reproducible PowerShell workflow
@@ -34,8 +34,11 @@ Each name must be new. Outputs go into
 `firmware/target/bench-captures/<name>/`: `pico2.elf`, `dashboard.eav`,
 `manifest.json`, and `source.zip`. The manifest identifies the compiler, features,
 source files, selected configuration and ELF with SHA-256 hashes. The capture
-builds against a frozen copy, verifies the build script's embedded bytes, and
-rejects source or selected-file changes during the build. It also runs the
+builds against the working checkout, archives the source bytes read before the
+build, verifies the build script's embedded bytes, and rejects observed source
+or selected-file changes afterward. The selected configuration is frozen before
+compilation. This is change detection, not an isolated source-tree build; avoid
+concurrent source edits. It also runs the
 linked RAM, cumulative stack-frame, flash helper and corrupted-artifact checks.
 
 Available profiles are `stock` (default) and `280-70`. `-Mode Vehicle` selects the
@@ -62,20 +65,27 @@ the linked runbook, then use a **Demo** image for layout and controls:
 2. After flashing, verify Full brightness and the configured boot-view name.
    Rotate through every view in both directions, including wraparound. Check
    borders, empty cells, text, graphs and popup removal for stale pixels.
-3. Click Full → Dim (50% PWM) → Off. Confirm the Off popup remains visible for
+3. With default bindings, click Full → Dim (50% PWM) → Off. Confirm the Off popup remains visible for
    two seconds before disappearing and the backlight switching off. The next
    click returns to Full. Repeat with a click or page change during the delay.
-4. Visit Debug and Logs and confirm their encoder controls are preserved.
+4. Visit Debug and Logs and exercise the exact configured encoder/onboard actions.
    Return to Dashboard and confirm the last view is restored. Reboot and confirm
    the configured boot view is restored instead. Statistics reset must preserve
-   the view configuration; bar/PSI must update every boost presentation.
+   the view configuration. Test FollowBoost and fixed bar/PSI/kPa widgets together:
+   the unit toggle changes only FollowBoost, and an equal secondary unit is omitted.
+   Exercise tap/hold suppression and the fixed two-second Y recovery from Off.
 5. In a Demo-only test configuration, enable multiple warnings with deliberately
    reachable illustrative thresholds. Check CycleOne and ListThree, all-view and
    current-view scope, message clipping, and elapsed-time page rotation. Exercise
    FPS/unit/reset feedback during a warning: feedback wins, then warnings resume.
-   Debug/Logs must stay clear of warning popups. Verify red warning blinking and
-   continuous green without a visible warning.
-6. Compare configured AFR against lambda times the declared stoichiometry.
+   Debug/Logs must stay clear of warning popups. Exercise window hysteresis,
+   priority paging, latch/qualified clear, completed-page acknowledgment and snooze
+   expiry, including stale data and a new episode. Verify default red warning blink
+   and green normal indication, then the selected RGB/background/reduced-motion
+   policy. A queued frame must not change LED or acknowledgment identity.
+6. Compare configured current AFR against the same prepared canonical lambda
+   times the declared stoichiometry, including enabled smoothing and reduced
+   motion. Raw warnings/history/extrema/peaks remain unsmoothed.
    E5 alone is not an exact ethanol measurement. Confirm disabling AFR removes
    its secondary row, and stale/unavailable lambda hides derived values.
 7. Record the exact ELF hash, profile, configuration, controls and observations.

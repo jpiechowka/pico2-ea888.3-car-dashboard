@@ -18,10 +18,14 @@ not currently install a core 0 stack guard using `_stack_end`.
 
 `memory.x` now anchors both boundaries to the eight-byte-aligned `__euninit`,
 asserts that this is inside RAM, and reserves at least 32 KiB of core 0 stack
-headroom. `scripts/check_memory_layout.py` reads the actual ELF sections and
+headroom. The Python admission is stricter: at least 65536 bytes, with
+unchanged Core0/Core1 stack reserves of 8192/4096 bytes. Both guards apply;
+the linker assertion itself remains 32 KiB. `scripts/check_memory_layout.py` reads the actual ELF sections and
 symbols, checks all allocated RAM against those boundaries, and confirms the
 boot footer stays in FLASH. The check failed on the original diagnostic ELF
-and passes after the fix. CI runs it on stock and 300 MHz builds.
+and passes after the fix. CI runs it on nine target matrix entries, covering stock, traced Demo/Vehicle,
+280/70, legacy overclocks and serial/full-outline variants; the exact matrix
+is in `.github/workflows/ci.yml`.
 
 Reproduce from `firmware` with `CARGO_PROFILE_RELEASE_STRIP=none`:
 

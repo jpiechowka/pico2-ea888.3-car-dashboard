@@ -24,12 +24,12 @@ Page changes or other feedback cancel a pending dashboard shutdown, preserving
 the prior lit level. A failed transfer cannot release a shutdown; normal display
 failure recovery still applies.
 
-Debug keeps its previous rotation and on/off controls, including 1.5-second
+With default bindings, Debug keeps its previous rotation and on/off controls, including 1.5-second
 percentage feedback. Its old 0..100 slider maps nonzero values into roughly
 45..100% duty. Rotating away from Dim starts at the nearest old slider position,
 9 (49.95% duty), then applies the usual 5-point step. Debug off/on without
-rotation restores the exact preset. Logs scrolling and its ignored click stay
-unchanged. Main owns all PWM and RGB writes; the encoder task only publishes
+rotation restores the exact preset. Default Logs rotation scrolls and its click has no action. Accepted remaps
+follow the linked action compatibility and protected recovery contract. Main owns all PWM and RGB writes; the encoder task only publishes
 bounded debounced input batches.
 
 ## Electrical/source checks

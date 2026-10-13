@@ -5,6 +5,7 @@ use dashboard_host_validation::acquisition::AcquisitionModel;
 use dashboard_host_validation::configured_scene::Layout;
 use dashboard_host_validation::dashboard::DashboardScene;
 use dashboard_host_validation::display::St7789Renderer;
+use dashboard_host_validation::presentation::PresentationState;
 use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::view_config::{decode, default_config, validate};
 use dashboard_host_validation::{AlignedFrame, colors};
@@ -21,14 +22,17 @@ fn main() {
         .get(2)
         .map_or(config.config().boot_view, |id| id.to_str().unwrap().parse().unwrap());
     let layout = Layout::new(&config, view, false).expect("unknown configured view ID");
-    let mut model = AcquisitionModel::demo();
+    let mut model = AcquisitionModel::demo_configured(&config);
+    let mut presentation = PresentationState::new();
     for n in 0..60 {
         let now = n * 2000;
         model.ingest_batch(dashboard_host_validation::demo::values(now), now);
+        presentation.prepare(&config, &model.snapshot(), view, now, false);
     }
     let snapshot = model.snapshot();
+    let readings = presentation.prepare(&config, &snapshot, view, 118000, false);
     let scene = DashboardScene {
-        readings: None,
+        readings: Some(&readings),
         layout: Some(layout),
         measurements: &snapshot,
         now_ms: 118000,

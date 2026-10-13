@@ -1,0 +1,107 @@
+//! Exercise the published executable, including its fail-before-output contract.
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::OnceLock;
+
+use dashboard_host_validation::acquisition::AcquisitionModel;
+use dashboard_host_validation::configured_scene::Layout;
+use dashboard_host_validation::dashboard::DashboardScene;
+use dashboard_host_validation::display::St7789Renderer;
+use dashboard_host_validation::presentation::PresentationState;
+use dashboard_host_validation::render::FpsMode;
+use dashboard_host_validation::vehicle_status::VehicleStatus;
+use dashboard_host_validation::view_config::*;
+use dashboard_host_validation::{AlignedFrame, colors};
+
+fn executable() -> &'static PathBuf {
+    static EXE: OnceLock<PathBuf> = OnceLock::new();
+    EXE.get_or_init(|| {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut build = Command::new(env!("CARGO"));
+        build
+            .current_dir(&root)
+            .args(["build", "--locked", "--example", "configured_preview"]);
+        if !cfg!(feature = "simple-outline") {
+            build.arg("--no-default-features");
+        }
+        let status = build.status().unwrap();
+        assert!(status.success());
+        let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), |path| root.join(path));
+        target
+            .join("debug/examples")
+            .join(format!("configured_preview{}", std::env::consts::EXE_SUFFIX))
+    })
+}
+
+fn ppm(frame: &AlignedFrame) -> Vec<u8> {
+    let mut out = b"P6\n320 240\n255\n".to_vec();
+    for pixel in frame.0.as_chunks::<2>().0 {
+        let rgb = u16::from_be_bytes([pixel[0], pixel[1]]);
+        let (r, g, b) = ((rgb >> 11) as u8, ((rgb >> 5) & 63) as u8, (rgb & 31) as u8);
+        out.extend_from_slice(&[(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]);
+    }
+    out
+}
+
+#[test]
+fn published_snapshot_uses_bound_advanced_acquisition_and_prepared_readings() {
+    let dir = std::env::temp_dir().join(format!("dashboard-preview-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let selected = dir.join("advanced.eav");
+    let output = dir.join("snapshot.ppm");
+    let mut raw = default_config();
+    raw.history_seconds = [30; 8];
+    raw.widgets[0].advanced.smoothing_ms = 5000;
+    raw.widgets[0].advanced.peak_mode = PeakSelection::Maximum;
+    raw.widgets[0].advanced.peak_hold_ms = 60000;
+    raw.widgets[0].warning.trigger = 0.2;
+    raw.widgets[0].warning.clear = 0.1;
+    raw.widgets[0].warning.on_ms = 100;
+    let config = validate(raw).unwrap();
+    let mut bytes = [0; MAX_FILE_BYTES];
+    std::fs::write(&selected, encode(&config, &mut bytes).unwrap()).unwrap();
+    let result = Command::new(executable()).args([&output, &selected]).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let mut model = AcquisitionModel::demo_configured(&config);
+    let mut presentation = PresentationState::new();
+    for n in 0..60 {
+        let now = n * 2000;
+        model.ingest_batch(dashboard_host_validation::demo::values(now), now);
+        presentation.prepare(&config, &model.snapshot(), config.config().boot_view, now, false);
+    }
+    let snapshot = model.snapshot();
+    let readings = presentation.prepare(&config, &snapshot, config.config().boot_view, 118000, false);
+    let scene = DashboardScene {
+        readings: Some(&readings),
+        layout: Layout::new(&config, config.config().boot_view, false),
+        measurements: &snapshot,
+        now_ms: 118000,
+        status: VehicleStatus::Demo,
+        blink_on: false,
+        boost_psi: false,
+        fps_mode: FpsMode::Combined,
+        fps_instant: 70.0,
+        fps_average: 69.0,
+        backgrounds: [colors::BLACK; 8],
+        overlay: None,
+    };
+    let mut frame = AlignedFrame::boxed();
+    scene.draw_full(&mut St7789Renderer::new(&mut frame.0));
+    assert!(
+        std::fs::read(&output).unwrap() == ppm(&frame),
+        "published snapshot diverges from configured prepared shared renderer"
+    );
+    // Reject an unknown view before opening even an already-existing destination.
+    std::fs::write(&output, b"preserve existing output").unwrap();
+    let result = Command::new(executable())
+        .arg(&output)
+        .arg(&selected)
+        .arg("255")
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert_eq!(std::fs::read(&output).unwrap(), b"preserve existing output");
+    std::fs::remove_file(&selected).unwrap();
+    std::fs::remove_file(&output).unwrap();
+    std::fs::remove_dir(&dir).unwrap();
+}

@@ -222,12 +222,11 @@ impl DashboardSnapshot {
         &mut self,
         incoming: Self,
     ) -> bool {
-        if let (Some(current), Some(next)) = (self.publication_identity(), incoming.publication_identity()) {
-            if next.origin < current.origin
-                || (next.origin == current.origin && (next.revision < current.revision || next == current))
-            {
-                return false;
-            }
+        if let (Some(current), Some(next)) = (self.publication_identity(), incoming.publication_identity())
+            && (next.origin < current.origin
+                || (next.origin == current.origin && (next.revision < current.revision || next == current)))
+        {
+            return false;
         }
         *self = incoming;
         true

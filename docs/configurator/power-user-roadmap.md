@@ -20,15 +20,27 @@ The feature decisions below were approved on 12 October 2026, including the late
 
 Stages may share a schema release where required by integration, but each commit must build and have meaningful focused tests. Historical JSON/binary import uses explicit frozen wire models, not structs that silently grow with new fields. Firmware rejects unsupported versions and records its fallback fault. No new ECU signal is admitted without the existing evidence/qualification gates.
 
-Stage 1 is implemented and reviewed through `4a2ca28`, with all 14 CI jobs passing for that commit. The editor uses the shared control catalogue and gesture/session simulator; invalid mapping and numeric edits remain repairable with atomic undo/redo. Full pixel simulation of Debug and Logs belongs to stage 9. The remaining stages are planned work.
+Stages 1 through 7 are implemented in the complete v4 contract: controls, RGB
+policy, units, smoothing/reduced motion, channel history, markers/bands and
+advanced warnings. The editor uses the shared catalogue, configured acquisition,
+prepared presentation and completion-aware Dashboard simulation; invalid edits
+remain repairable with atomic undo/redo. See [release evidence](advanced-v4-release.md)
+for admitted software artifacts and physical limits. Stages 8 through 11 remain
+planned work, including full Debug/Logs pixels, organized power tools, JSON
+Apply/diff/resources and native Build & Flash. Stage 1's historical `4a2ca28`
+record passed all 14 CI jobs; it is not current v4 CI evidence.
 
-Before growing the configuration, implement and measure the [static configuration storage plan](../superpowers/plans/2026-10-12-config-storage.md). Then recover unnecessary render-cache storage and establish persistent simulation ownership. Stages 2 through 7 share one complete schema release after runtime integration and resource admission. The [workspace contract](workspace-and-diagnostics-design.md) covers stages 8 through 10 and their connection to Build & Flash.
+The reviewed [static configuration storage plan](../superpowers/plans/2026-10-12-config-storage.md),
+render-cache recovery and persistent simulation ownership precede the admitted
+v4 release. Stages 2 through 7 share that complete schema release. The
+[workspace contract](workspace-and-diagnostics-design.md) covers stages 8 through
+10 and their connection to Build & Flash.
 
 ## Architecture and resource rules
 
 - `dashboard-config` owns compact configuration types, defaults, compatibility and validators; `dashboard-core` owns pure control/time/value/renderer behavior. Firmware owns GPIO/PWM, DMA and inter-core adapters. Rust/Leptos owns browser editing, accessibility, storage and console adapters.
 - The display remains 320 x 240, with a 26-pixel header and 4 x 2 cells. Supported spans remain 1 x 1, 2 x 1 and 2 x 2. No feature may rely on pixels outside its clipped rectangle.
-- Keep fixed bounds: eight views, 64 widgets, 16 KiB binary configuration, 128 KiB JSON. The v3 ARM configuration is 9,672 bytes under a 10,240-byte object guard. Any increase requires actual target object/ELF and boot-stack measurements; do not merely relax the assertion.
+- Keep fixed bounds: eight views, 64 widgets, 16 KiB binary configuration, 128 KiB JSON. The historical v3 starting budget was a 9,672-byte ARM configuration under a 10,240-byte object guard. The admitted v4 Config/ConfigSlot are 14,576/14,600 bytes; guard changes followed whole-artifact measurement. Any increase requires actual target object/ELF and boot-stack measurements.
 - History is shared per channel. Render-time animation must use monotonic elapsed time and bounded work, never frame count, catch-up loops proportional to a stall, or fabricated ECU samples.
 - Inputs and outputs have one owner. Frame tokens remain the authority for presented overlays and deferred backlight shutdown; queued drawing is not proof of presentation.
 - Keep logs bounded, avoid nested locks, preserve latest-fault reporting, and make truncation/drops visible. No default per-frame firmware or browser logging.

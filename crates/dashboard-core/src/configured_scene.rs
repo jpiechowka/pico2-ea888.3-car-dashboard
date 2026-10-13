@@ -472,22 +472,24 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
             scene.gauge_reading(slot).expect("validated gauge"),
             &text[0],
             false, // Prepared gauge endpoints are already in the resolved unit.
-            (
-                foreground(palette.value),
-                foreground(palette.gauge),
-                if warning {
-                    background
-                } else {
-                    panel_color(palette.track)
-                },
-                foreground(palette.ticks),
-            ),
-            Some(crate::widgets::gauge::Decorations {
-                settings: decorations,
-                unit: Unit::resolve(widget.advanced.readout, scene.boost_psi),
-                stoich: layout.configuration().stoich(),
-                peak_color: foreground(palette.peak),
-            }),
+            crate::widgets::gauge::Paint {
+                colors: (
+                    foreground(palette.value),
+                    foreground(palette.gauge),
+                    if warning {
+                        background
+                    } else {
+                        panel_color(palette.track)
+                    },
+                    foreground(palette.ticks),
+                ),
+                decorations: Some(crate::widgets::gauge::Decorations {
+                    settings: decorations,
+                    unit: Unit::resolve(widget.advanced.readout, scene.boost_psi),
+                    stoich: layout.configuration().stoich(),
+                    peak_color: foreground(palette.peak),
+                }),
+            },
         );
         available
     };

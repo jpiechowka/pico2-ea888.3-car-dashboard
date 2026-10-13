@@ -16,8 +16,9 @@ command. The producer acknowledges the generation together with the reset data;
 the display does not report completion before this acknowledgement. Replayed
 reset generations do nothing.
 
-Peak and trend presentation expires using the display's current monotonic time,
-even without another producer snapshot. The integrated model now carries typed
+The new-peak highlight and trend presentation expire using the display's current monotonic time,
+even without another producer snapshot. The independently configured gauge
+peak hold has its own 100–60000 ms lifetime and clears on unavailable data. The integrated model now carries typed
 source/quality/disconnect state; Demo is explicit and the optional Longan runtime
 remains unqualified. See [sample quality](../vehicle/sample-quality.md) and
 [transport qualification](../vehicle/diagnostic-transport.md).
@@ -35,8 +36,9 @@ remains unqualified. See [sample quality](../vehicle/sample-quality.md) and
 3. Published `embassy-rp` 0.10.0 `critical_section_impl.rs` uses spinlock 31,
    core ownership and interrupt masking/restoration, including nested calls.
    Host tests use the std critical-section implementation and do not validate
-   RP2350 spinlock latency. The fixed snapshot copy is bounded to 3072 bytes by
-   test; the acquisition owner to 12288 bytes. No allocation or callback is
+   RP2350 spinlock latency. Tests bound DashboardSnapshot at 4160 bytes and the
+   acquisition owner at 16384 bytes. The admitted advanced ARM snapshot is
+   4144 bytes; these bounds are separate from linked task/stack admission. No allocation or callback is
    introduced inside the Watch lock. Target critical-section duration still
    requires measurement. Watch's own u64 revision has no wrap recovery; at
    100 Hz its exhaustion is far beyond a vehicle service life.

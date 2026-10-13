@@ -237,7 +237,7 @@ impl RuleEngineState {
             };
             let status = self.alerts.states[i];
             if status == Status::Active && !was_active {
-                self.alerts.event_serial = self.alerts.event_serial.checked_add(1).unwrap_or(u64::MAX);
+                self.alerts.event_serial = self.alerts.event_serial.saturating_add(1);
                 // MAX is a terminal watermark, never an issued episode identity.
                 episode.activation_serial = if self.alerts.event_serial == u64::MAX {
                     0

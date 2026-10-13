@@ -14,8 +14,9 @@ Logs retain their controls. Returning to Dashboard restores the selected view.
 
 The browser editor supports drag/drop, selection, keyboard alternatives,
 multiple named views, bounded widget settings, source information, warnings,
-fuel-aware optional AFR, import/export and saved drafts. The unit button still
-switches all boost values and associated statistics between bar and psi.
+fuel-aware optional AFR, import/export and saved drafts. The unit button switches
+FollowBoost widgets and their statistics between bar and PSI. Fixed bar/PSI/kPa
+readouts retain their selected units; an equal secondary unit is omitted.
 
 ## Architecture and alternatives
 
@@ -268,9 +269,10 @@ must not claim input-to-visible success. No-op/full-wrap motion does not either.
 
 ## AFR calculation
 
-Optional AFR uses the original canonical lambda before rounding, with the same
-source and freshness guards. Hiding AFR returns its space to the widget. Graphs
-and alarms continue to use lambda. Bar/psi changes do not affect mixture values.
+Current AFR uses the same prepared canonical presentation as lambda before
+rounding, including enabled display smoothing and the same source/freshness
+guards. Hiding AFR returns its space to the widget. Raw warnings, history,
+extrema and peaks retain unsmoothed canonical lambda. Bar/psi changes do not affect mixture values.
 
 Keep the current `EQ14.7` default. For a user-selected ethanol blend, distinguish
 mass fraction from component-volume fraction. For volume fraction `x`:
@@ -359,7 +361,7 @@ A root Cargo workspace owns `crates/dashboard-core`, `crates/dashboard-config`
 and `crates/dashboard-config-tools`. The configurator, firmware and host are
 independent workspaces with their own lockfiles and shared path dependencies,
 preserving separate feature resolution and target flags. All use the repository's
-nightly-2026-10-11 toolchain. Firmware
+nightly-2026-10-12 toolchain (four Cargo roots/lockfiles). Firmware
 forwards `simple-outline` explicitly; the editor uses that default for matching
 preview output. CI checks root formatting/native pure tests, core/config no_std
 Thumb and Wasm builds, production Trunk output, and the existing firmware/host

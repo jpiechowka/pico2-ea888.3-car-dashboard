@@ -4,7 +4,7 @@ Configuration and graph cache keys are runtime proofs with private fields. They
 are never serialized, derived from an address, or computed as a content hash.
 Configuration validation and ConfigSlot publication issue a new identity only
 after accepting a complete configuration. Cloning a validated configuration
-preserves its identity; semantic equality and v3 JSON/EAV ignore it.
+preserves its identity; semantic equality and current JSON/EAV ignore it.
 
 Each acquisition model receives one origin. Graph identities contain that
 origin, the channel, and a checked revision. Graph samples, gaps and resets
@@ -39,7 +39,7 @@ available after a render error. New causes produce one visible and one console
 warning. Clearing visible history does not clear the mask; a new boot or mount
 starts a new lifetime. A dropped sink attempt does not retry every frame.
 
-## Measured ARM storage
+## Historical v3 ARM storage
 
 Pinned nightly-2026-10-12, Cortex-M33, release, traced CPU280/SPI70 builds:
 

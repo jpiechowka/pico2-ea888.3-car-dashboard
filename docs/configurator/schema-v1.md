@@ -1,7 +1,7 @@
 # Configuration v1 contract
 
 Historical wire contract, retained for explicit migration. New exports and
-firmware use [version 2](schema-v2.md).
+firmware use [current v4](configuration-format.md#current-v4-contract).
 
 This closes the typed model used by the [design](design.md). Field/enum order
 is part of the Postcard version1 protocol. A future incompatible edit requires

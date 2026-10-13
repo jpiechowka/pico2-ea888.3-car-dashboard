@@ -9,8 +9,9 @@ accepted-sample dwell and sequence guards remain enforced before publication.
 
 Dashboard rotation selects an ordered view using signed modulo. The selected
 view survives Debug/Logs and resets to the configured boot view at reboot.
-Rotation does not change acquisition or write flash. Other pages keep their
-existing encoder controls. The view name appears briefly as feedback and
+Rotation does not change acquisition or write flash. The defaults use view
+rotation on Dashboard and brightness/log rotation on Debug/Logs; accepted remaps
+follow the shared [controls contract](control-mapping-design.md). The view name appears briefly as feedback and
 remains in the header.
 
 Motion interrupts an older pending screen-off transition before the same
@@ -19,19 +20,28 @@ preserved. Motion while already black changes selection without waking the
 display or being counted as visible input. Full, Dim at 50%, and the existing
 two-second, completion-gated Off cycle are unchanged.
 
-Warnings follow configured view and widget order. CycleOne shows one message;
+Warnings sort Critical, High, Normal, Low priority, then configured view and
+widget order. CycleOne shows one message;
 ListThree shows up to three 20-character lines, with further pages rotating
 by elapsed time. AllViews and CurrentView scopes are configurable. Active-set
-changes preserve a still-active cursor and its deadline, preventing new alarms
-from continually restarting the page. User feedback takes priority. Debug and
+changes preserve a still-eligible cursor unless a new episode or higher priority
+requires interruption. User feedback takes priority. Debug and
 Logs remain clear. The next visible warning sequence restarts after feedback.
 
 One resolved overlay drives drawing, retained keys, input exclusion and the
-presentation-gated LED. Red/off follows a completed warning frame; other
-states remain green. Old frame completions cannot apply a newer view's LED or
+presentation-gated LED. Default red/off follows a completed warning frame;
+normal indication is green. Configured patterns and background switches follow
+[the RGB policy](led-policy-design.md). Old frame completions cannot apply a newer view's LED or
 backlight transition.
 
-## Host evidence
+Latch retains an episode until acknowledgment and qualified clear; missing/stale
+data never supplies that clear or a live number. Acknowledged active/latching
+widgets retain steady badges. Snooze suppresses attention, with indication
+retained; expiry and a new episode resume attention. AcknowledgeWarnings targets
+the completed warning page and reports a matching producer result. Enabled latch
+or snooze requires an onboard Dashboard route. See [advanced controls](advanced-controls.md).
+
+## Historical configured-rule host evidence
 
 The two outline suites contain 319 tests each, including the existing alarm
 guard tests and eleven configured-rule/navigation tests. New coverage includes
@@ -57,7 +67,7 @@ The acquisition enum and snapshot have changed. These establish the new
 configured workloads; they do not claim a speedup against an old fixture.
 Raw samples, confidence intervals and exact sources are retained for review.
 
-## Target scope
+## Historical configured-rule target scope
 
 The traced Demo 280/70 default and maximum documents pass the 64 KiB minimum
 core 0 headroom gate, flash helper/startup/vector checks and 18 corrupted-artifact

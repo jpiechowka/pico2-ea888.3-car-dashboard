@@ -133,10 +133,10 @@ pub fn benchmarks(c: &mut Criterion) {
                 black_box(slot.load_at_boot(black_box(&late)));
             });
         });
-        if name == "maximum" {
-            if let Some(path) = std::env::var_os("TASK11_MAX_EAV") {
-                std::fs::write(path, &bytes).unwrap();
-            }
+        if name == "maximum"
+            && let Some(path) = std::env::var_os("TASK11_MAX_EAV")
+        {
+            std::fs::write(path, &bytes).unwrap();
         }
         c.bench_function(&format!("config/{name}_validate"), |b| {
             b.iter_batched(
