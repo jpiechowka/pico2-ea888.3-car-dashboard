@@ -6,6 +6,59 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
+#[test]
+fn prepared_subpixel_gauge_motion_keeps_both_buffers_clean() {
+    use dashboard_host_validation::presentation::PresentationState;
+    for kind in GaugeKind::ALL.into_iter().filter(|k| !k.is_numeric()) {
+        let mut raw = default_config();
+        raw.widgets.truncate(1);
+        let w = &mut raw.widgets[0];
+        w.gauge.kind = kind;
+        w.gauge.expand = false;
+        w.display.decimals = 0;
+        w.display.extrema = false;
+        w.display.average = false;
+        w.display.graph = false;
+        w.display.trend = false;
+        w.advanced.smoothing_ms = 5000;
+        w.advanced.peak_mode = PeakSelection::Off;
+        w.advanced.reference_mode = ReferenceMode::Zero;
+        w.advanced
+            .set_bands(&[
+                Band::new(-1., 0., Color(0x07E0), "LOW").unwrap(),
+                Band::new(0., 1., Color(0x07FF), "MID").unwrap(),
+                Band::new(1., 3., Color(0xF81F), "HIGH").unwrap(),
+            ])
+            .unwrap();
+        let config = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo_configured(&config);
+        let mut presentation = PresentationState::new();
+        let mut cache = DashboardCache::new();
+        let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+        let mut previous = None;
+        for (now, value) in [(0, 1.), (100, 1.001)] {
+            model.ingest_batch([value; 8], now);
+            let snapshot = model.snapshot();
+            let readings = presentation.prepare(&config, &snapshot, 1, now, false);
+            let mut scene = scene(&config, &snapshot, now);
+            scene.readings = Some(&readings);
+            let mut full = AlignedFrame::boxed();
+            scene.draw_full(&mut St7789Renderer::new(&mut full.0));
+            if let Some(previous) = &previous {
+                assert_eq!(&full.0[..], previous);
+            }
+            for (slot, frame) in frames.iter_mut().enumerate() {
+                let redraw = cache.draw(&mut St7789Renderer::new(&mut frame.0), slot, &scene);
+                assert!(frame.0 == full.0);
+                if now > 0 {
+                    assert_eq!(redraw.cells, 0, "redundant draw {kind:?}/{slot}");
+                }
+            }
+            previous = Some(full.0.to_vec());
+        }
+    }
+}
+
 // These pixels catch missing production marker integration, smoothed peaks,
 // unsupported numeric decoration and writes beyond the owning cell.
 #[test]
@@ -165,7 +218,46 @@ fn wide_compact_gauges_give_short_values_larger_complete_digits() {
                 .count()
         };
         assert!(count(156, "0.04") > count(76, "0.04") * 3 / 2, "wide digits {kind:?}");
-        assert!(count(156, "-1000000.000C") > 0, "complete fallback {kind:?}");
+        // Compare every value-colour pixel in the independent readout lane.
+        // A Dial hub cannot satisfy this complete-string oracle.
+        use embedded_graphics::mono_font::MonoTextStyle;
+        use embedded_graphics::mono_font::ascii::FONT_4X6;
+        use embedded_graphics::text::{Baseline, Text, TextStyleBuilder};
+        let text = "-1000000.000C";
+        let mut actual = AlignedFrame::boxed();
+        draw(
+            &mut St7789Renderer::new(&mut actual.0),
+            kind,
+            Rectangle::new(Point::new(2, 40), Size::new(156, 72)),
+            Reading {
+                min: -1.,
+                max: 3.,
+                value: Some(1.),
+                peak: None,
+            },
+            text,
+            false,
+            (colors::YELLOW, colors::RED, colors::GRAY, colors::WHITE),
+        );
+        let mut expected = AlignedFrame::boxed();
+        // 13 four-pixel glyphs + two outline pixels =54, centered in78.
+        Text::with_text_style(
+            text,
+            Point::new(93, 54),
+            MonoTextStyle::new(&FONT_4X6, colors::YELLOW),
+            TextStyleBuilder::new().baseline(Baseline::Top).build(),
+        )
+        .draw(&mut St7789Renderer::new(&mut expected.0))
+        .unwrap();
+        let mut glyphs = 0;
+        for y in 53..89 {
+            for x in 80..158 {
+                let wanted = expected.pixel(x, y) == 0xFFE0;
+                glyphs += usize::from(wanted);
+                assert_eq!(actual.pixel(x, y) == 0xFFE0, wanted, "full readout {kind:?}/{x}/{y}");
+            }
+        }
+        assert!(glyphs > 0);
     }
 }
 
@@ -934,5 +1026,91 @@ fn warning_foreground_only_phase_and_overlay_palette_change_repaint_both_buffers
             cache.draw(&mut St7789Renderer::new(&mut frame.0), i, &scene);
             assert!(frame.0 == full.0);
         }
+    }
+}
+
+#[test]
+fn zero_reference_omits_positive_and_negative_seed_and_expanded_ranges() {
+    use dashboard_host_validation::presentation::Unit;
+    use dashboard_host_validation::widgets::gauge::{Decorations, Reading, draw_decorated};
+    use embedded_graphics::prelude::*;
+    use embedded_graphics::primitives::Rectangle;
+    for kind in GaugeKind::ALL.into_iter().filter(|k| !k.is_numeric()) {
+        for unit in [Unit::Celsius, Unit::Fahrenheit] {
+            // Seed and expanded ranges, with Zero still outside in canonical units.
+            for (lo, hi) in [(10., 20.), (5., 30.), (-20., -10.), (-30., -5.)] {
+                let render = |mode| {
+                    let mut settings = AdvancedDisplay::for_channel(Channel::Water, false);
+                    settings.reference_mode = mode;
+                    let mut frame = AlignedFrame::boxed();
+                    draw_decorated(
+                        &mut St7789Renderer::new(&mut frame.0),
+                        kind,
+                        Rectangle::new(Point::new(10, 30), Size::new(100, 80)),
+                        Reading {
+                            min: unit.value(lo, 14.7),
+                            max: unit.value(hi, 14.7),
+                            value: None,
+                            peak: None,
+                        },
+                        "--",
+                        false,
+                        (colors::WHITE, colors::RED, colors::GRAY, colors::WHITE),
+                        Some(Decorations {
+                            settings: &settings,
+                            unit,
+                            stoich: 14.7,
+                            peak_color: colors::YELLOW,
+                        }),
+                    );
+                    frame
+                };
+                assert!(
+                    render(ReferenceMode::Zero).0 == render(ReferenceMode::Off).0,
+                    "Zero must be omitted {kind:?}/{unit:?}/{lo}/{hi}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn same_raster_level_with_changed_text_still_repaints_both_buffers() {
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    let w = &mut raw.widgets[0];
+    w.gauge.kind = GaugeKind::Horizontal;
+    w.gauge.min = -1.;
+    w.gauge.max = 10.;
+    w.gauge.expand = false;
+    w.display.decimals = 3;
+    w.display.extrema = false;
+    w.advanced.peak_mode = PeakSelection::Off;
+    let config = validate(raw).unwrap();
+    let mut model = AcquisitionModel::demo_configured(&config);
+    let mut cache = DashboardCache::new();
+    let mut buffers = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let mut level = None;
+    let mut previous = None;
+    for (now, value) in [(0, 1.000), (1, 1.001)] {
+        model.ingest_batch([value; 8], now);
+        let snapshot = model.snapshot();
+        let scene = scene(&config, &snapshot, now);
+        let current = scene.gauge_reading(0).unwrap().level();
+        if now != 0 {
+            assert_eq!(level, current);
+        }
+        level = current;
+        let mut full = AlignedFrame::boxed();
+        scene.draw_full(&mut St7789Renderer::new(&mut full.0));
+        if let Some(previous) = &previous {
+            assert_ne!(&full.0[..], previous);
+        }
+        for (slot, frame) in buffers.iter_mut().enumerate() {
+            let redraw = cache.draw(&mut St7789Renderer::new(&mut frame.0), slot, &scene);
+            assert_eq!(redraw.cells, 1);
+            assert!(full.0 == frame.0);
+        }
+        previous = Some(full.0.to_vec());
     }
 }

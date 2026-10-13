@@ -374,7 +374,7 @@ struct CellKey {
     flags: [bool; 3],
     trend: Option<bool>,
     graph: Option<crate::GraphCacheIdentity>,
-    gauge: Option<crate::widgets::gauge::Reading>,
+    gauge: Option<crate::widgets::gauge::RasterKey>,
 }
 impl DashboardScene<'_> {
     pub(crate) fn quality(
@@ -420,7 +420,7 @@ impl DashboardScene<'_> {
         if let Some(widget) = self.layout.as_ref().and_then(|layout| layout.widget(cell))
             && !widget.gauge.kind.is_numeric()
         {
-            key.gauge = self.gauge_reading(cell);
+            key.gauge = self.gauge_reading(cell).map(|reading| reading.raster_key());
         }
         if let Some(layout) = &self.layout {
             let widget = layout.widget(cell)?;

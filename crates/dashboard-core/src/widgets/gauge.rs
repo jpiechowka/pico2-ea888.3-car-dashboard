@@ -22,7 +22,27 @@ pub struct Reading {
     /// Converted producer-owned held peak; no renderer history.
     pub peak: Option<f32>,
 }
+
+/// Exact dynamic raster dependencies. Bounds stay unquantized: they also
+/// determine endpoint text and the immutable configuration's bands/reference.
+/// Current text, quality, palette and warning state belong to the cell key.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RasterKey {
+    min: f32,
+    max: f32,
+    level: Option<u16>,
+    peak: Option<u16>,
+}
 impl Reading {
+    pub(crate) fn raster_key(self) -> RasterKey {
+        RasterKey {
+            min: self.min,
+            max: self.max,
+            level: self.level(),
+            peak: self.peak.and_then(|value| self.marker_level(value)),
+        }
+    }
+
     pub fn new(
         widget: &Widget,
         snapshot: &DashboardSnapshot,
