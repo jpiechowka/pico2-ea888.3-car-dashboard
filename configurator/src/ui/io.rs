@@ -162,16 +162,9 @@ pub(super) fn save_presets(
     }
     let mut prepared = Err(PresetError::Conflict);
     if replace {
-        match preset_observation() {
-            Ok(current) => {
-                ui.presets
-                    .update(|store| prepared = store.begin_replace(current.as_deref()))
-            }
-            Err(_) => {
-                ui.notice.set("Preset storage is unavailable; export a backup".into());
-                return;
-            }
-        }
+        let observation = preset_observation();
+        ui.presets
+            .update(|store| prepared = store.begin_replace_observation(observation));
     } else {
         ui.presets.update(|store| prepared = store.begin_save());
     }

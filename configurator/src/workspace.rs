@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 pub use crate::appearance_presets::AppearanceScope;
-use crate::appearance_presets::{AppearanceRequest, AppearanceSnapshot};
+use crate::appearance_presets::{AppearanceOffer, AppearanceRequest, AppearanceSnapshot};
 use crate::config::{MAX_VIEWS, MAX_WIDGETS, Placement};
 use crate::editor::{ActionBlock, Edit, Editor, EditorError, EditorStamp, InspectionOwner, InspectionTarget};
 use crate::field_registry::{FieldTarget, Registry};
@@ -123,7 +123,7 @@ impl Command {
         self,
         editor: &Editor,
         captured_stamp: EditorStamp,
-        appearance: Option<AppearanceSnapshot>,
+        appearance: Option<AppearanceOffer>,
     ) -> Option<&'static str> {
         if captured_stamp != editor.stamp() {
             return Some("Field changed; refresh commands and results");
@@ -149,19 +149,29 @@ impl Command {
         }
         match self {
             Self::CopyAppearance => {
-                editor
-                    .selected_appearance(captured_stamp)
-                    .err()
-                    .map(|_| "Select a current clean widget to copy")
+                match appearance.and_then(AppearanceOffer::copy_request) {
+                    Some(request) => {
+                        editor
+                            .check_appearance_request(request)
+                            .err()
+                            .map(|_| "Appearance target changed; refresh this action")
+                    }
+                    None => Some("Select a current clean widget to copy"),
+                }
             }
             Self::ApplyAppearance(scope) => {
                 match appearance {
                     None => Some("Choose a usable appearance source in Views"),
-                    Some(snapshot) => {
-                        editor
-                            .appearance_request(scope, snapshot, captured_stamp)
-                            .err()
-                            .map(|_| "Appearance source or destination is unavailable")
+                    Some(offer) => {
+                        match offer.request(scope) {
+                            Some(request) => {
+                                editor
+                                    .check_appearance_request(request)
+                                    .err()
+                                    .map(|_| "Appearance target changed; refresh this action")
+                            }
+                            None => Some("Appearance source or destination is unavailable"),
+                        }
                     }
                 }
             }
@@ -257,7 +267,7 @@ pub fn dispatch_with_appearance(
     workspace: &mut WorkspaceState,
     command: Command,
     captured_stamp: EditorStamp,
-    appearance: Option<AppearanceSnapshot>,
+    appearance: Option<AppearanceOffer>,
 ) -> Result<CommandEffect, CommandError> {
     if let Some(reason) = command.availability_with_appearance(editor, captured_stamp, appearance) {
         return Err(CommandError::Unavailable(reason));
@@ -265,20 +275,18 @@ pub fn dispatch_with_appearance(
     let changed = |result: Result<_, EditorError>| result.map(|_| CommandEffect::Changed).map_err(CommandError::Editor);
     match command {
         Command::CopyAppearance => {
-            editor
-                .selected_appearance(captured_stamp)
-                .map(CommandEffect::CopiedAppearance)
-                .map_err(CommandError::Editor)
+            let request = appearance
+                .and_then(AppearanceOffer::copy_request)
+                .ok_or(CommandError::Unavailable("Select a current clean widget to copy"))?;
+            editor.check_appearance_request(request).map_err(CommandError::Editor)?;
+            Ok(CommandEffect::CopiedAppearance(request.snapshot()))
         }
         Command::ApplyAppearance(scope) => {
-            editor
-                .appearance_request(
-                    scope,
-                    appearance.ok_or(CommandError::Unavailable("Choose an appearance source"))?,
-                    captured_stamp,
-                )
-                .map(CommandEffect::PreviewAppearance)
-                .map_err(CommandError::Editor)
+            let request = appearance
+                .and_then(|offer| offer.request(scope))
+                .ok_or(CommandError::Unavailable("Choose an appearance source"))?;
+            editor.check_appearance_request(request).map_err(CommandError::Editor)?;
+            Ok(CommandEffect::PreviewAppearance(request))
         }
         Command::Navigate(w) => {
             workspace.activate(w);

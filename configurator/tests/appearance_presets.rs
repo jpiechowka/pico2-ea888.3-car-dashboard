@@ -396,20 +396,24 @@ fn palette_copy_and_preview_produce_actual_typed_authority_without_editing() {
     let before = state(&e);
     let mut workspace = WorkspaceState::default();
     let stamp = e.stamp();
+    let mut session = AppearanceSession::default();
+    let copy_offer = session.offer(&e, stamp);
     let CommandEffect::CopiedAppearance(s) =
-        dispatch_with_appearance(&mut e, &mut workspace, Command::CopyAppearance, stamp, None).unwrap()
+        dispatch_with_appearance(&mut e, &mut workspace, Command::CopyAppearance, stamp, Some(copy_offer)).unwrap()
     else {
         panic!("copy effect");
     };
     assert_eq!(s, e.selected_appearance(stamp).unwrap());
     assert_eq!(state(&e), before);
     let s = changed(&e);
+    session.choose(AppearanceSource::Preset(s), None).unwrap();
+    let offer = session.offer(&e, stamp);
     let CommandEffect::PreviewAppearance(request) = dispatch_with_appearance(
         &mut e,
         &mut workspace,
         Command::ApplyAppearance(AppearanceScope::AllWidgets),
         stamp,
-        Some(s),
+        Some(offer),
     )
     .unwrap() else {
         panic!("preview effect");
@@ -417,7 +421,9 @@ fn palette_copy_and_preview_produce_actual_typed_authority_without_editing() {
     assert_eq!(state(&e), before);
     assert!(e.appearance_preview(request).unwrap().changed);
     e.apply(Edit::ApplyAppearance(request)).unwrap();
-    assert!(dispatch_with_appearance(&mut e, &mut workspace, Command::CopyAppearance, stamp, Some(s)).is_err());
+    assert!(
+        dispatch_with_appearance(&mut e, &mut workspace, Command::CopyAppearance, stamp, Some(copy_offer)).is_err()
+    );
 }
 
 #[test]
@@ -591,4 +597,144 @@ fn failed_explicit_reload_marks_storage_failed_without_losing_memory_records() {
     assert!(store.reload(Err(StorageFailure::Denied)).is_err());
     assert_eq!(store.status(), PresetStatus::Failed(StorageFailure::Denied));
     assert_eq!(store.export().unwrap(), before);
+}
+
+#[test]
+fn captured_appearance_commands_cannot_acquire_post_discard_candidate_authority() {
+    for command in [
+        Command::CopyAppearance,
+        Command::ApplyAppearance(AppearanceScope::Selected),
+        Command::ApplyAppearance(AppearanceScope::ThisView),
+        Command::ApplyAppearance(AppearanceScope::AllWidgets),
+    ] {
+        let mut e = selected();
+        let handle = e.open_json().unwrap();
+        let stamp = e.stamp();
+        let session = AppearanceSession::default();
+        let offer = session.offer(&e, stamp);
+        assert!(offer.snapshot().is_some());
+        let text = e.export_json().unwrap();
+        let token = e.set_json_text(handle, text).unwrap();
+        e.finish_json_parse(token).unwrap();
+        e.discard_json().unwrap();
+        assert_eq!(e.stamp(), stamp);
+        assert!(session.is_current(offer));
+        let before = state(&e);
+        let mut workspace = WorkspaceState::default();
+        assert!(
+            dispatch_with_appearance(&mut e, &mut workspace, command, stamp, Some(offer)).is_err(),
+            "old {command:?} acquired a new target"
+        );
+        assert_eq!(state(&e), before);
+        let fresh = session.offer(&e, stamp);
+        assert!(
+            dispatch_with_appearance(&mut e, &mut workspace, command, stamp, Some(fresh)).is_ok(),
+            "fresh {command:?} did not recover"
+        );
+        assert_eq!(state(&e), before);
+    }
+}
+
+#[test]
+fn failed_reload_observations_retire_saved_status_and_old_write_authority() {
+    let e = selected();
+    let mut original = PresetStore::restore(Ok(None));
+    original.add("Mine", changed(&e)).unwrap();
+    let valid = original.export().unwrap();
+    for invalid in [
+        "{}".into(),
+        valid.replace("\"version\":1", "\"version\":99"),
+        " ".repeat(MAX_PRESET_BYTES + 1),
+    ] {
+        for pending in [false, true] {
+            let mut store = PresetStore::restore(Ok(Some(valid.clone())));
+            let request = if pending {
+                Some(store.begin_save().unwrap())
+            } else {
+                None
+            };
+            let before = store.export().unwrap();
+            assert!(store.reload(Ok(Some(invalid.clone()))).is_err());
+            assert!(
+                matches!(store.status(), PresetStatus::Unavailable(_)),
+                "failed observation retained {:?}",
+                store.status()
+            );
+            assert_eq!(store.export().unwrap(), before);
+            assert!(store.begin_save().is_err());
+            if let Some(request) = request {
+                assert!(!store.save_is_current(&request));
+                assert_eq!(store.finish_save(&request, Ok(())), Err(PresetError::Stale));
+            }
+        }
+    }
+}
+
+#[test]
+fn denied_replace_observation_uses_the_real_producer_and_preserves_presets() {
+    let e = selected();
+    let mut original = PresetStore::restore(Ok(None));
+    original.add("Mine", changed(&e)).unwrap();
+    let valid = original.export().unwrap();
+    for pending in [false, true] {
+        let mut store = PresetStore::restore(Ok(Some(valid.clone())));
+        let request = if pending {
+            Some(store.begin_save().unwrap())
+        } else {
+            None
+        };
+        assert!(matches!(
+            store.begin_replace_observation(Err(StorageFailure::Denied)),
+            Err(PresetError::Storage(StorageFailure::Denied))
+        ));
+        assert_eq!(store.status(), PresetStatus::Failed(StorageFailure::Denied));
+        assert_eq!(store.export().unwrap(), valid);
+        assert!(store.begin_save().is_err());
+        if let Some(request) = request {
+            assert!(!store.save_is_current(&request));
+            assert_eq!(store.check_write(&request, Some(&valid)), Err(PresetError::Stale));
+        }
+    }
+}
+
+#[test]
+fn closing_preview_returns_original_scope_and_retires_stale_focus_returns() {
+    for applied in [false, true] {
+        for scope in AppearanceScope::ALL {
+            let mut e = selected();
+            let mut session = AppearanceSession::default();
+            session.choose(AppearanceSource::Preset(changed(&e)), None).unwrap();
+            let offer = session.offer(&e, e.stamp());
+            let request = offer.request(scope).unwrap();
+            session.stage(request, offer).unwrap();
+            if applied {
+                e.apply(Edit::ApplyAppearance(request)).unwrap();
+            }
+            assert_eq!(session.close_preview(request, offer), Ok(scope));
+            assert_eq!(session.request(), None);
+            assert!(!session.is_current(offer));
+            let returned = session.offer(&e, e.stamp());
+            assert!(session.can_return_focus(returned));
+            assert_eq!(session.close_preview(request, offer), Err(PresetError::Stale));
+            session.choose(AppearanceSource::Selected, None).unwrap();
+            assert!(!session.can_return_focus(returned));
+            let fresh = session.offer(&e, e.stamp());
+            let newer = fresh.request(scope).unwrap();
+            session.stage(newer, fresh).unwrap();
+            assert!(!session.can_return_focus(fresh));
+            assert_eq!(session.close_preview(request, offer), Err(PresetError::Stale));
+            assert_eq!(session.request(), Some(newer));
+        }
+    }
+    let e = selected();
+    let mut session = AppearanceSession::default();
+    let offer = session.offer(&e, e.stamp());
+    let old = offer.request(AppearanceScope::Selected).unwrap();
+    let newer = offer.request(AppearanceScope::AllWidgets).unwrap();
+    session.stage(old, offer).unwrap();
+    session.stage(newer, offer).unwrap();
+    assert!(session.is_current(offer));
+    assert_eq!(session.close_preview(old, offer), Err(PresetError::Stale));
+    assert_eq!(session.request(), Some(newer));
+    assert!(!session.can_return_focus(offer));
 }

@@ -1307,10 +1307,10 @@ impl Editor {
         })
     }
 
-    fn appearance_candidate(
+    pub fn check_appearance_request(
         &self,
         request: AppearanceRequest,
-    ) -> Result<(Config, AppearancePreview), EditorError> {
+    ) -> Result<ResolvedInspection, EditorError> {
         if request.stamp != self.stamp() {
             return Err(EditorError::StaleToken);
         }
@@ -1320,6 +1320,14 @@ impl Editor {
         if !resolved.id_lookup_unambiguous {
             return Err(EditorError::AmbiguousTarget);
         }
+        Ok(resolved)
+    }
+
+    fn appearance_candidate(
+        &self,
+        request: AppearanceRequest,
+    ) -> Result<(Config, AppearancePreview), EditorError> {
+        let resolved = self.check_appearance_request(request)?;
         let mut config = self.preview().config().clone();
         let view = match request.scope {
             AppearanceScope::ThisView => Some(config.views[resolved.view_index.ok_or(EditorError::InvalidIndex)?].id),

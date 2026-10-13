@@ -204,6 +204,62 @@ pub(super) fn offer(
     ui.appearance
         .with(|session| ui.editor.with(|editor| session.offer(editor, stamp)))
 }
+pub(super) fn close_appearance(
+    ui: Ui,
+    request: AppearanceRequest,
+    captured: AppearanceOffer,
+) {
+    let mut closed = Err(PresetError::Stale);
+    ui.appearance
+        .update(|session| closed = session.close_preview(request, captured));
+    let scope = match closed {
+        Ok(scope) => scope,
+        Err(error) => {
+            ui.notice.set(error.message().into());
+            return;
+        }
+    };
+    // Reuse Studio's one focus request/RAF owner after the confirmation's
+    // controls disappear. The destination is a fixed surviving scope control
+    // for both visible-control and palette invocation.
+    cancel_focus(ui);
+    let stamp = ui.editor.with_untracked(Editor::stamp);
+    let returned = offer(ui, stamp);
+    let mut issued = None;
+    ui.focus.update(|state| issued = state.requests.issue());
+    let Some(token) = issued else {
+        ui.notice.set("Focus identity exhausted; reopen Studio".into());
+        return;
+    };
+    match request_animation_frame_with_handle(move || {
+        if ui.focus.try_with_untracked(|state| state.requests.is_current(token)) != Some(true)
+            || ui.workspace.try_with_untracked(WorkspaceState::active) != Some(Workspace::Views)
+            || ui.editor.try_with_untracked(Editor::stamp) != Some(stamp)
+            || ui
+                .appearance
+                .try_with_untracked(|session| session.can_return_focus(returned))
+                != Some(true)
+        {
+            return;
+        }
+        let _ = ui.focus.try_update(|state| state.frame = None);
+        if let Some(node) = element(scope.preview_control_id())
+            .filter(usable)
+            .or_else(|| element("studio-appearance-source").filter(usable))
+        {
+            focus(&node);
+            node.scroll_into_view();
+        } else {
+            focus_tab(ui);
+        }
+    }) {
+        Ok(frame) => ui.focus.update(|state| state.frame = Some(frame)),
+        Err(_) => {
+            cancel_focus(ui);
+            ui.notice.set("The browser could not return appearance focus".into());
+        }
+    }
+}
 pub(super) fn availability(
     ui: Ui,
     command: Command,
@@ -214,7 +270,7 @@ pub(super) fn availability(
         return Some("Appearance source changed; refresh this action");
     }
     ui.editor
-        .with(|editor| command.availability_with_appearance(editor, stamp, offer.snapshot()))
+        .with(|editor| command.availability_with_appearance(editor, stamp, Some(offer)))
 }
 pub(super) fn execute(
     ui: Ui,
@@ -231,7 +287,7 @@ pub(super) fn execute(
     let mut workspace = ui.workspace.get_untracked();
     let mut outcome = None;
     ui.run(|editor| {
-        let result = dispatch_with_appearance(editor, &mut workspace, command, stamp, offer.snapshot());
+        let result = dispatch_with_appearance(editor, &mut workspace, command, stamp, Some(offer));
         let revision = editor.revision();
         let ok = result.is_ok();
         outcome = Some(result);

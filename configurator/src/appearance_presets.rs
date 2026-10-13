@@ -73,6 +73,14 @@ impl AppearanceScope {
             Self::AllWidgets => "All widgets",
         }
     }
+
+    pub const fn preview_control_id(self) -> &'static str {
+        match self {
+            Self::Selected => "studio-appearance-open-selected",
+            Self::ThisView => "studio-appearance-open-view",
+            Self::AllWidgets => "studio-appearance-open-all",
+        }
+    }
 }
 /// Minted by Editor from clean accepted destinations; callers cannot retarget it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,12 +198,28 @@ pub enum AppearanceSource {
 pub struct AppearanceOffer {
     revision: u64,
     snapshot: Option<AppearanceSnapshot>,
+    copy: Option<AppearanceRequest>,
+    requests: [Option<AppearanceRequest>; 3],
 }
 impl AppearanceOffer {
     pub fn snapshot(self) -> Option<AppearanceSnapshot> { self.snapshot }
+
+    pub fn copy_request(self) -> Option<AppearanceRequest> { self.copy }
+
+    pub fn request(
+        self,
+        scope: AppearanceScope,
+    ) -> Option<AppearanceRequest> {
+        self.requests[match scope {
+            AppearanceScope::Selected => 0,
+            AppearanceScope::ThisView => 1,
+            AppearanceScope::AllWidgets => 2,
+        }]
+    }
 }
 /// Persistent Studio state. Choices invalidate old UI events and confirmation;
-/// clipboard values remain portable while destination authority is always fresh.
+/// clipboard values remain portable while destination authority is captured in
+/// the offer and validated at activation without minting replacement authority.
 pub struct AppearanceSession {
     source: AppearanceSource,
     palette: Option<ColorPalette>,
@@ -233,8 +257,9 @@ impl AppearanceSession {
         editor: &crate::editor::Editor,
         stamp: EditorStamp,
     ) -> AppearanceOffer {
+        let selected = editor.selected_appearance(stamp).ok();
         let mut snapshot = match self.source {
-            AppearanceSource::Selected => editor.selected_appearance(stamp).ok(),
+            AppearanceSource::Selected => selected,
             AppearanceSource::Copied => self.copied,
             AppearanceSource::Preset(snapshot) => Some(snapshot),
         };
@@ -246,6 +271,13 @@ impl AppearanceSession {
         AppearanceOffer {
             revision: self.revision,
             snapshot,
+            copy: selected.and_then(|snapshot| {
+                editor
+                    .appearance_request(AppearanceScope::Selected, snapshot, stamp)
+                    .ok()
+            }),
+            requests: AppearanceScope::ALL
+                .map(|scope| snapshot.and_then(|snapshot| editor.appearance_request(scope, snapshot, stamp).ok())),
         }
     }
 
@@ -281,7 +313,7 @@ impl AppearanceSession {
         request: AppearanceRequest,
         offer: AppearanceOffer,
     ) -> Result<(), PresetError> {
-        if !self.is_current(offer) || offer.snapshot != Some(request.snapshot) {
+        if !self.is_current(offer) || offer.request(request.scope()) != Some(request) {
             return Err(PresetError::Stale);
         }
         self.request = Some(request);
@@ -289,6 +321,25 @@ impl AppearanceSession {
     }
 
     pub fn cancel(&mut self) -> Result<(), PresetError> { self.retire() }
+
+    pub fn close_preview(
+        &mut self,
+        request: AppearanceRequest,
+        offer: AppearanceOffer,
+    ) -> Result<AppearanceScope, PresetError> {
+        if !self.is_current(offer) || self.request != Some(request) {
+            return Err(PresetError::Stale);
+        }
+        self.retire()?;
+        Ok(request.scope())
+    }
+
+    pub fn can_return_focus(
+        &self,
+        offer: AppearanceOffer,
+    ) -> bool {
+        self.is_current(offer) && self.request.is_none()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -563,6 +614,8 @@ impl PresetStore {
             }
             Err(failure) => {
                 self.active = None;
+                self.observed = None;
+                self.unavailable_observation = true;
                 self.status = PresetStatus::Failed(failure);
             }
         }
@@ -580,7 +633,15 @@ impl PresetStore {
             }
         };
         let records = match &current {
-            Some(text) => decode(text)?,
+            Some(text) => {
+                match decode(text) {
+                    Ok(records) => records,
+                    Err(error) => {
+                        self.failed_observation(error);
+                        return Err(error);
+                    }
+                }
+            }
             None => heapless::Vec::new(),
         };
         self.publish(records)?;
@@ -609,9 +670,35 @@ impl PresetStore {
         current: Option<&str>,
     ) -> Result<PresetSaveRequest, PresetError> {
         if current.is_some_and(|text| text.len() > MAX_PRESET_BYTES) {
+            self.failed_observation(PresetError::TooLarge);
             return Err(PresetError::TooLarge);
         }
         self.prepare(current.map(str::to_owned))
+    }
+
+    fn failed_observation(
+        &mut self,
+        error: PresetError,
+    ) {
+        self.active = None;
+        self.observed = None;
+        self.unavailable_observation = true;
+        self.status = PresetStatus::Unavailable(error);
+    }
+
+    /// The browser passes the actual read result to this producer; a failure
+    /// retires persistence authority instead of being only a transient notice.
+    pub fn begin_replace_observation(
+        &mut self,
+        observation: Result<Option<String>, StorageFailure>,
+    ) -> Result<PresetSaveRequest, PresetError> {
+        match observation {
+            Ok(current) => self.begin_replace(current.as_deref()),
+            Err(failure) => {
+                self.observe(Err(failure));
+                Err(PresetError::Storage(failure))
+            }
+        }
     }
 
     fn prepare(

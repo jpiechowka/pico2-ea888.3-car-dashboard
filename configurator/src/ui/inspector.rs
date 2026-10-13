@@ -23,14 +23,6 @@ fn choose_appearance(
     }
 }
 
-fn cancel_appearance(ui: Ui) {
-    let mut result = Ok(());
-    ui.appearance.update(|session| result = session.cancel());
-    if let Err(error) = result {
-        ui.notice.set(error.message().into());
-    }
-}
-
 #[component]
 fn AppearancePanel(ui: Ui) -> impl IntoView {
     let name = RwSignal::new(String::new());
@@ -38,7 +30,7 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
         <details class="appearance-tools"><summary>"Copy appearance and presets"</summary>
             <p class="hint">"Colors, gauge style, decimal precision and supported visibility only. Ranges, units, bands and warning rules stay as configured."</p>
             <label class="field"><span>"Appearance source"</span>
-                <select prop:value=move ||ui.appearance.with(|s|match s.source(){AppearanceSource::Selected=>"selected",AppearanceSource::Copied=>"copied",AppearanceSource::Preset(_)=>"preset"})
+                <select id="studio-appearance-source" prop:value=move ||ui.appearance.with(|s|match s.source(){AppearanceSource::Selected=>"selected",AppearanceSource::Copied=>"copied",AppearanceSource::Preset(_)=>"preset"})
                     on:change=move |event|{let source=match event_target_value(&event).as_str(){"selected"=>AppearanceSource::Selected,"copied"=>AppearanceSource::Copied,_=>return};let palette=ui.appearance.with_untracked(AppearanceSession::palette);choose_appearance(ui,source,palette);}>
                     <option value="selected">"Selected widget"</option><option value="copied">"Copied appearance"</option><option value="preset" disabled=true>"Named preset snapshot"</option>
                 </select>
@@ -55,7 +47,7 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
                 let copy=Command::CopyAppearance;
                 view! {<div class="appearance-actions"><button disabled=move ||command_palette::availability(ui,copy,stamp,offer).is_some()
                     on:click=move |_|{command_palette::execute(ui,copy,stamp,offer);}>"Copy selected appearance"</button>
-                    {AppearanceScope::ALL.into_iter().map(move |scope|{let command=Command::ApplyAppearance(scope);view!{<button disabled=move ||command_palette::availability(ui,command,stamp,offer).is_some()
+                    {AppearanceScope::ALL.into_iter().map(move |scope|{let command=Command::ApplyAppearance(scope);view!{<button id=scope.preview_control_id() disabled=move ||command_palette::availability(ui,command,stamp,offer).is_some()
                         on:click=move |_|{command_palette::execute(ui,command,stamp,offer);}>{format!("Preview: {}",scope.label())}</button>}}).collect_view()}
                     <p class="hint">{if offer.snapshot().is_none(){"Choose a clean selected widget, usable copied appearance or named preset."}else{"Preview shows all settings and omissions before Apply."}}</p>
                 </div>}
@@ -83,8 +75,8 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
                     <p class="hint">"Gauges omit history and trend; compact gauges also omit average and extrema. Unsupported visibility stays unchanged. Every stored band must contrast with the new track; a conflict rejects the whole operation."</p>
                     <div class="appearance-actions"><button class="primary" disabled=!can_apply on:click=move |_| {
                         if !ui.appearance.with_untracked(|s|s.is_current(offer)&&s.request()==Some(request)){ui.notice.set("Appearance source changed; preview again".into());return;}
-                        if ui.run(|editor|editor.apply(Edit::ApplyAppearance(request))) {cancel_appearance(ui);}
-                    }>"Apply appearance"</button><button on:click=move |_|cancel_appearance(ui)>"Cancel preview"</button></div>
+                        if ui.run(|editor|editor.apply(Edit::ApplyAppearance(request))) {command_palette::close_appearance(ui,request,offer);}
+                    }>"Apply appearance"</button><button on:click=move |_|command_palette::close_appearance(ui,request,offer)>"Cancel preview"</button></div>
                 </section>}
             })}
             <h3>"Named appearance presets"</h3>
