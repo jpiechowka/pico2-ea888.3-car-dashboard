@@ -12,6 +12,26 @@ use dashboard_core::vehicle_status::VehicleStatus;
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]
+fn borrowed_debug_data_and_actual_map_draw_into_existing_preview_without_simulator_submission() {
+    use dashboard_core::debug_view::{DebugData, DebugPage};
+    let mut map = dashboard_config::ControlMap::default();
+    map.screens[dashboard_config::ControlPage::Debug.index()].buttons[0].tap = dashboard_config::ControlAction::Logs;
+    let data = DebugData {
+        source_status: Some("synthetic"),
+        config_fault: Some(false),
+        ..Default::default()
+    };
+    let mut preview = Preview::new();
+    let storage = preview.rgb565().as_ptr();
+    let rgba = preview.render_debug(&data, &map);
+    assert_eq!(rgba.len(), 320 * 240 * 4);
+    assert_eq!(preview.rgb565().as_ptr(), storage, "one persistent framebuffer");
+    let mut wanted = Box::new(FrameBuffer::new());
+    DebugPage::new(&data, &map).draw(&mut St7789Renderer::new(&mut wanted));
+    assert_eq!(preview.rgb565(), &wanted[..]);
+}
+
+#[test]
 fn dense_gauge_markers_and_legends_reach_the_browser_with_shared_framebuffer_parity() {
     for kind in GaugeKind::ALL {
         let mut raw = default_config();

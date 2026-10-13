@@ -6,6 +6,69 @@ use dashboard_host_validation::samples::{Quality, Quantity, Sample, Source};
 use dashboard_host_validation::{AlignedFrame, colors};
 use embedded_graphics::prelude::IntoStorage;
 
+#[test]
+fn debug_unavailable_trace_fault_clocks_and_nonfinite_fps_are_not_measured_zero() {
+    use dashboard_host_validation::debug_view::{DebugData, DebugLine, DebugPage};
+    use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
+    use dashboard_host_validation::display::telemetry::{FrameTrace, RenderTrace};
+    let unknown = DebugData::default();
+    let known = DebugData {
+        trace: Some(
+            FrameTrace::finish(
+                FrameToken {
+                    buffer: BufferId::A,
+                    sequence: 1,
+                },
+                RenderTrace {
+                    sample_us: Some(0),
+                    ..RenderTrace::instant(0)
+                },
+                0,
+                0,
+                2,
+            )
+            .unwrap(),
+        ),
+        current_fps: Some(0.),
+        config_fault: Some(false),
+        configured_cpu_hz: Some(0),
+        requested_cpu_hz: Some(0),
+        vreg_setting_mv: Some(0),
+        requested_voltage_mv: Some(0),
+        source_status: Some(""),
+        ..Default::default()
+    };
+    let map = dashboard_config::ControlMap::default();
+    for line in [
+        DebugLine::RenderTime,
+        DebugLine::TransferTime,
+        DebugLine::FrameTime,
+        DebugLine::SampleAge,
+        DebugLine::DoneFps,
+        DebugLine::ConfigFault,
+        DebugLine::CpuClock,
+        DebugLine::VregSetting,
+        DebugLine::SourceStatus,
+    ] {
+        let mut a = AlignedFrame::boxed();
+        let mut b = AlignedFrame::boxed();
+        DebugPage::new(&unknown, &map).draw_line(&mut St7789Renderer::new(&mut a.0), line);
+        DebugPage::new(&known, &map).draw_line(&mut St7789Renderer::new(&mut b.0), line);
+        assert!(a.0 != b.0, "missing and zero differ for {line:?}");
+    }
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let data = DebugData {
+            current_fps: Some(value),
+            ..Default::default()
+        };
+        let mut a = AlignedFrame::boxed();
+        let mut b = AlignedFrame::boxed();
+        DebugPage::new(&data, &map).draw_line(&mut St7789Renderer::new(&mut a.0), DebugLine::DoneFps);
+        DebugPage::new(&unknown, &map).draw_line(&mut St7789Renderer::new(&mut b.0), DebugLine::DoneFps);
+        assert!(a.0 == b.0);
+    }
+}
+
 fn scene(
     snapshot: &DashboardSnapshot,
     now_ms: u64,

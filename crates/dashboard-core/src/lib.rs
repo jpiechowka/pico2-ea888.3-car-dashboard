@@ -21,6 +21,7 @@ pub mod configured_scene;
 pub mod control_session;
 pub mod controls;
 pub mod dashboard;
+pub mod debug_view;
 pub mod demo;
 pub mod diagnostics;
 pub mod display;

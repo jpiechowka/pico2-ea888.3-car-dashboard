@@ -1,2 +1,1 @@
-pub use dashboard_pico2::colors::{BLACK, GREEN, WHITE, YELLOW};
-pub use dashboard_pico2::styles::LABEL_FONT;
+pub use dashboard_pico2::colors::BLACK;

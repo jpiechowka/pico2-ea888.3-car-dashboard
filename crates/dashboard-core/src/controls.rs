@@ -3,6 +3,64 @@ use dashboard_config::{ButtonId, ControlAction, ControlMap, ControlPage};
 
 use crate::input_trace::Observation;
 
+/// A bounded factual route from the actual current-page map, followed by the
+/// immutable recovery gesture. No route is invented for unreachable/raw maps.
+pub fn navigation_hint(
+    map: &ControlMap,
+    page: ControlPage,
+    requested: ControlPage,
+) -> heapless::String<52> {
+    use core::fmt::Write;
+    let screen = &map.screens[page.index()];
+    let mut fallback = None;
+    let mut selected = None;
+    for hold in [false, true] {
+        for button in ButtonId::ALL {
+            if hold && button == ButtonId::Y {
+                continue;
+            }
+            let binding = screen.buttons[button.index()];
+            let action = if hold { binding.hold } else { binding.tap };
+            if !action.allowed_on(page) {
+                continue;
+            }
+            if let Some(destination) = action.destination(page).filter(|p| *p != page) {
+                let route = (button.label(), if hold { "hold" } else { "tap" }, destination);
+                if fallback.is_none() {
+                    fallback = Some(route);
+                }
+                if selected.is_none() && destination == requested {
+                    selected = Some(route);
+                }
+            }
+        }
+    }
+    if screen.encoder_click.allowed_on(page)
+        && let Some(destination) = screen.encoder_click.destination(page).filter(|p| *p != page)
+    {
+        let route = ("Enc", "tap", destination);
+        if fallback.is_none() {
+            fallback = Some(route);
+        }
+        if selected.is_none() && destination == requested {
+            selected = Some(route);
+        }
+    }
+    let mut text = heapless::String::new();
+    // Finite labels: longest dynamic part plus separator is 16 ASCII bytes.
+    // Fixed recovery has its own budget and can never be truncated by a label.
+    if let Some((input, gesture, destination)) = selected.or(fallback) {
+        let label = match destination {
+            ControlPage::Dashboard => "Dash",
+            ControlPage::Debug => "Debug",
+            ControlPage::Logs => "Logs",
+        };
+        let _ = write!(text, "{input} {gesture}:{label} | ");
+    }
+    text.push_str("Y hold 2s:Dash/Full").expect("finite control hint fits");
+    text
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ControlEvent {
     pub button: ButtonId,

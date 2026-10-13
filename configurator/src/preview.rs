@@ -123,6 +123,18 @@ impl Preview {
 
     pub const fn mode(&self) -> PreviewMode { self.mode }
 
+    /// Draw-only adapter for borrowed synthetic/unknown diagnostics and the
+    /// actual bindings. This never submits a simulator frame or advances it.
+    pub fn render_debug(
+        &mut self,
+        data: &dashboard_core::debug_view::DebugData<'_>,
+        map: &dashboard_config::ControlMap,
+    ) -> &[u8] {
+        dashboard_core::debug_view::DebugPage::new(data, map).draw(&mut St7789Renderer::new(&mut self.framebuffer));
+        rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
+        &self.rgba
+    }
+
     /// Compatibility entry point for synthetic appearance inspection.
     pub fn render(
         &mut self,

@@ -6,6 +6,74 @@ use dashboard_core::input_trace::Observation;
 use dashboard_core::logging::{LogStore, log_warning_rejection};
 
 #[test]
+fn navigation_hints_follow_current_page_actions_and_never_advertise_reserved_or_self_routes() {
+    use dashboard_config::{ButtonId, ControlPage};
+    use dashboard_core::controls::navigation_hint;
+    let mut map = ControlMap::default();
+    for (page, want) in [
+        (ControlPage::Dashboard, "Y tap:Debug | Y hold 2s:Dash/Full"),
+        (ControlPage::Debug, "Y tap:Logs | Y hold 2s:Dash/Full"),
+        (ControlPage::Logs, "Y tap:Dash | Y hold 2s:Dash/Full"),
+    ] {
+        assert_eq!(navigation_hint(&map, page, page.next()).as_str(), want);
+    }
+    let page = ControlPage::Debug;
+    let screen = &mut map.screens[page.index()];
+    screen.buttons[ButtonId::Y.index()].tap = ControlAction::Debug;
+    screen.buttons[ButtonId::A.index()].hold = ControlAction::Logs;
+    assert_eq!(
+        navigation_hint(&map, page, ControlPage::Logs).as_str(),
+        "A hold:Logs | Y hold 2s:Dash/Full"
+    );
+    let c = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+    let mut session = ControlSession::new(&c, dashboard_core::render::FpsMode::Off, false);
+    let logs = LogStore::<NoopRawMutex>::new();
+    let mut batch = dashboard_core::controls::ControlBatch::default();
+    batch
+        .actions
+        .push(dashboard_core::controls::ControlEvent {
+            button: ButtonId::Y,
+            action: ControlAction::Debug,
+            observation: Observation::new(0, 0).unwrap(),
+        })
+        .unwrap();
+    session.apply(&c, &map, batch, EncoderBatch::default(), &logs, 0);
+    let mut gestures = ControlGestures::new();
+    for (pressed, now) in [
+        ([false; 4], 1),
+        ([true, false, false, false], 100),
+        ([true, false, false, false], 150),
+        ([true, false, false, false], 900),
+    ] {
+        let batch = gestures.update(&map, session.page(), pressed, now);
+        session.apply(&c, &map, batch, EncoderBatch::default(), &logs, now);
+    }
+    assert_eq!(
+        session.page(),
+        ControlPage::Logs,
+        "advertised hold reaches the real dispatcher destination"
+    );
+    let screen = &mut map.screens[page.index()];
+    screen.buttons[ButtonId::A.index()].hold = ControlAction::NextView; // incompatible
+    screen.buttons[ButtonId::Y.index()].hold = ControlAction::Logs; // recovery is protected, even for raw inspection
+    screen.encoder_click = ControlAction::Logs;
+    assert_eq!(
+        navigation_hint(&map, page, ControlPage::Logs).as_str(),
+        "Enc tap:Logs | Y hold 2s:Dash/Full"
+    );
+    map.screens[page.index()].encoder_click = ControlAction::Debug;
+    assert_eq!(
+        navigation_hint(&map, page, ControlPage::Logs).as_str(),
+        "Y hold 2s:Dash/Full"
+    );
+    map.screens[page.index()].buttons[ButtonId::B.index()].tap = ControlAction::PreviousScreen;
+    assert_eq!(
+        navigation_hint(&map, page, ControlPage::Logs).as_str(),
+        "B tap:Dash | Y hold 2s:Dash/Full"
+    );
+}
+
+#[test]
 fn warning_rejection_is_logged_once_at_the_consumed_result_edge() {
     use dashboard_core::acquisition::AcquisitionModel;
     use dashboard_core::status_led::PresentedWarning;

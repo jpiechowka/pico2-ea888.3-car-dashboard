@@ -7,6 +7,82 @@ use dashboard_host_validation::render::FpsMode;
 use dashboard_host_validation::{AlignedFrame, colors};
 
 #[test]
+fn diagnostic_screens_clear_both_prior_histories_and_logs_hints_preserve_counters() {
+    use dashboard_host_validation::debug_view::{DebugData, DebugLine, DebugPage};
+    use dashboard_host_validation::logging::{Level, LogStore};
+    use dashboard_host_validation::logging_view::LogPage;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    let map = dashboard_config::ControlMap::default();
+    let logs = LogStore::<NoopRawMutex>::new();
+    logs.push(Level::Fault, 1, format_args!("separate latest fault"));
+    for n in 0..150 {
+        logs.push(Level::Info, n, format_args!("{}", "X".repeat(41)));
+    }
+    let page = LogPage::capture(&logs, None);
+    let mut reference = AlignedFrame::boxed();
+    page.draw_full(&mut St7789Renderer::new(&mut reference.0));
+    let counters = reference.0[219 * 320 * 2..].to_vec();
+    page.draw_hint(&mut St7789Renderer::new(&mut reference.0), &map);
+    assert_eq!(&reference.0[219 * 320 * 2..], counters.as_slice());
+    assert!(reference.0[205 * 320 * 2..215 * 320 * 2].iter().any(|b| *b != 0));
+    let mut histories = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    histories[0].0.fill(0x55);
+    histories[1].0.fill(0xCC);
+    let model = AcquisitionModel::demo();
+    let measurements = model.snapshot();
+    let dashboard = DashboardScene {
+        readings: None,
+        layout: None,
+        measurements: &measurements,
+        now_ms: 0,
+        status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+        blink_on: true,
+        boost_psi: false,
+        fps_mode: FpsMode::Off,
+        fps_instant: 0.,
+        fps_average: 0.,
+        backgrounds: [colors::BLACK; 8],
+        overlay: None,
+    };
+    let mut dashboard_reference = AlignedFrame::boxed();
+    dashboard.draw_full(&mut St7789Renderer::new(&mut dashboard_reference.0));
+    let long = DebugData {
+        source_status: Some("long source status survives until replaced"),
+        config_fault: Some(true),
+        config_fault_label: Some("long configuration error label"),
+        ..Default::default()
+    };
+    for frame in &mut histories {
+        dashboard.draw_full(&mut St7789Renderer::new(&mut frame.0));
+        DebugPage::new(&long, &map).draw(&mut St7789Renderer::new(&mut frame.0));
+        let short = DebugData {
+            source_status: Some(""),
+            config_fault: Some(false),
+            ..Default::default()
+        };
+        for line in [DebugLine::SourceStatus, DebugLine::ConfigFault] {
+            DebugPage::new(&short, &map).draw_line(&mut St7789Renderer::new(&mut frame.0), line);
+        }
+        let mut clean = AlignedFrame::boxed();
+        DebugPage::new(&short, &map).draw(&mut St7789Renderer::new(&mut clean.0));
+        assert!(frame.0 == clean.0);
+        page.draw_header(&mut St7789Renderer::new(&mut frame.0));
+        for row in 0..=12 {
+            logs.push(Level::Info, 200, format_args!("producer changes between operations"));
+            page.draw_row(&mut St7789Renderer::new(&mut frame.0), row);
+        }
+        page.draw_hint(&mut St7789Renderer::new(&mut frame.0), &map);
+        page.draw_footer(&mut St7789Renderer::new(&mut frame.0));
+        assert!(frame.0 == reference.0);
+        dashboard.draw_full(&mut St7789Renderer::new(&mut frame.0));
+        assert!(
+            frame.0 == dashboard_reference.0,
+            "diagnostic glyphs cannot survive the return to Dashboard"
+        );
+    }
+}
+
+#[test]
 fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     let mut model = AcquisitionModel::demo();
     model.ingest_batch([-12345.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);

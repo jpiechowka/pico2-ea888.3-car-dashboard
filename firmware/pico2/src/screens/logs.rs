@@ -6,6 +6,7 @@ use embedded_graphics::prelude::*;
 pub async fn draw_logs_page<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     anchor: Option<u64>,
+    map: &dashboard_pico2::view_config::ControlMap,
     work: &mut crate::profiling::RenderWork,
 ) {
     let page = LogPage::capture(&crate::profiling::LOGS, anchor);
@@ -15,5 +16,7 @@ pub async fn draw_logs_page<D: DrawTarget<Color = Rgb565>>(
         page.draw_row(display, row);
         work.checkpoint().await;
     }
+    page.draw_hint(display, map);
+    work.checkpoint().await;
     page.draw_footer(display);
 }

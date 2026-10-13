@@ -128,6 +128,20 @@ impl LogPage {
         }
         self.draw_footer(display);
     }
+
+    /// Independent of counters/fault/history; callers can yield between rows.
+    pub fn draw_hint<D: DrawTarget<Color = Rgb565>>(
+        &self,
+        display: &mut D,
+        map: &dashboard_config::ControlMap,
+    ) {
+        let hint = crate::controls::navigation_hint(
+            map,
+            dashboard_config::ControlPage::Logs,
+            dashboard_config::ControlPage::Dashboard,
+        );
+        crate::debug_view::draw_row(display, 4, 212, 316, hint.as_str(), GREEN);
+    }
 }
 fn draw_entry<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,

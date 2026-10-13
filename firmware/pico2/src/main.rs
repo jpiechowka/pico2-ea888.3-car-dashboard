@@ -738,13 +738,16 @@ async fn dashboard_task(
                         cpu0_util_percent,
                         cpu1_util_percent,
                         frame_cycles: frame_cycles_used,
-                        requested_cpu_mhz: requested_cpu_mhz(),
-                        configured_cpu_mhz: cpu_freq_hz / 1_000_000,
+                        requested_cpu_hz: requested_cpu_mhz()
+                            .checked_mul(1_000_000)
+                            .expect("requested CPU Hz overflow"),
+                        configured_cpu_hz: cpu_freq_hz,
                         requested_spi_hz,
                         configured_spi_hz: actual_spi_hz,
                         requested_voltage_mv: requested_voltage_mv(),
                         vreg_setting_mv: vreg_setting_mv(),
                     },
+                    controls,
                     &mut render_work,
                 )
                 .await;
@@ -755,7 +758,7 @@ async fn dashboard_task(
                 dashboard_cache.invalidate(render_idx);
                 display.clear(BLACK).ok();
                 render_work.checkpoint().await;
-                draw_logs_page(&mut display, session.log_anchor(), &mut render_work).await;
+                draw_logs_page(&mut display, session.log_anchor(), controls, &mut render_work).await;
             }
         }
 
