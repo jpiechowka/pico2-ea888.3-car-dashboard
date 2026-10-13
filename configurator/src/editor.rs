@@ -4,6 +4,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use dashboard_config::*;
 use serde::{Deserialize, Serialize};
 
+use crate::appearance_presets::{
+    AppearancePreview,
+    AppearanceRequest,
+    AppearanceScope,
+    AppearanceSnapshot,
+    apply_snapshot,
+};
 use crate::json_draft::{JsonDraft, JsonState};
 pub use crate::json_draft::{JsonDraftHandle, JsonParseToken};
 
@@ -252,6 +259,7 @@ pub struct RawInput {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
+    ApplyAppearance(AppearanceRequest),
     SetHistory {
         channel: Channel,
         seconds: u16,
@@ -1250,10 +1258,105 @@ impl Editor {
         Ok(bytes)
     }
 
+    pub fn selected_appearance(
+        &self,
+        stamp: EditorStamp,
+    ) -> Result<AppearanceSnapshot, EditorError> {
+        if stamp != self.stamp() {
+            return Err(EditorError::StaleToken);
+        }
+        self.ensure_snapshot_ready()?;
+        let id = self.accepted.selection.widget.ok_or(EditorError::SelectionMismatch)?;
+        let index = unique_widget_index(self.preview().config(), id)?;
+        Ok(AppearanceSnapshot::from_widget(&self.preview().config().widgets[index]))
+    }
+
+    pub fn appearance_request(
+        &self,
+        scope: AppearanceScope,
+        snapshot: AppearanceSnapshot,
+        stamp: EditorStamp,
+    ) -> Result<AppearanceRequest, EditorError> {
+        if stamp != self.stamp() {
+            return Err(EditorError::StaleToken);
+        }
+        self.ensure_snapshot_ready()?;
+        snapshot.validate()?;
+        let config = self.preview().config();
+        let owner = match scope {
+            AppearanceScope::Selected => {
+                InspectionOwner::Widget {
+                    index: unique_widget_index(
+                        config,
+                        self.accepted.selection.widget.ok_or(EditorError::SelectionMismatch)?,
+                    )?,
+                }
+            }
+            AppearanceScope::ThisView => {
+                InspectionOwner::View {
+                    index: unique_view_index(config, self.accepted.selection.view)?,
+                }
+            }
+            AppearanceScope::AllWidgets => InspectionOwner::Root,
+        };
+        Ok(AppearanceRequest {
+            stamp,
+            target: self.object_inspection_target(owner)?,
+            scope,
+            snapshot,
+        })
+    }
+
+    fn appearance_candidate(
+        &self,
+        request: AppearanceRequest,
+    ) -> Result<(Config, AppearancePreview), EditorError> {
+        if request.stamp != self.stamp() {
+            return Err(EditorError::StaleToken);
+        }
+        self.ensure_snapshot_ready()?;
+        request.snapshot.validate()?;
+        let resolved = self.inspect(request.target)?;
+        if !resolved.id_lookup_unambiguous {
+            return Err(EditorError::AmbiguousTarget);
+        }
+        let mut config = self.preview().config().clone();
+        let view = match request.scope {
+            AppearanceScope::ThisView => Some(config.views[resolved.view_index.ok_or(EditorError::InvalidIndex)?].id),
+            _ => None,
+        };
+        let mut preview = AppearancePreview::default();
+        for (index, widget) in config.widgets.iter_mut().enumerate() {
+            let included = match request.scope {
+                AppearanceScope::Selected => Some(index) == resolved.widget_index,
+                AppearanceScope::ThisView => Some(widget.view) == view,
+                AppearanceScope::AllWidgets => true,
+            };
+            if included {
+                apply_snapshot(widget, request.snapshot, &mut preview);
+            }
+        }
+        Ok((config, preview))
+    }
+
+    pub fn appearance_preview(
+        &self,
+        request: AppearanceRequest,
+    ) -> Result<AppearancePreview, EditorError> {
+        let (config, mut preview) = self.appearance_candidate(request)?;
+        preview.error = validate(config).err().map(EditorError::Validation);
+        Ok(preview)
+    }
+
     pub fn apply(
         &mut self,
         edit: Edit,
     ) -> Result<Revision, EditorError> {
+        if let Edit::ApplyAppearance(request) = edit {
+            let (config, _) = self.appearance_candidate(request)?;
+            let preview = validate(config).map_err(EditorError::Validation)?;
+            return self.accept_validated(preview, self.accepted.selection);
+        }
         self.ensure_no_json()?;
         let field_repair = matches!(
             edit,
@@ -1286,6 +1389,7 @@ impl Editor {
         let mut selection = self.selection();
         let mut remapped_raw = None;
         match edit {
+            Edit::ApplyAppearance(_) => unreachable!("appearance is admitted atomically above"),
             Edit::SetHistory { channel, seconds } => config.history_seconds[channel.index()] = seconds,
             Edit::SetReducedMotion(value) => config.reduced_motion = value,
             Edit::SetLed(value) => config.led = value,

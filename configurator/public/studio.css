@@ -65,3 +65,11 @@
     .header-actions > button { justify-content: center; }
     .header-actions > .primary { margin-left: 0; gap: 8px; }
 }
+:root .appearance-tools { min-width: 0; margin: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.appearance-tools summary { cursor: pointer; font-weight: 600; }
+.appearance-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; margin: 8px 0; }
+.appearance-actions button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.appearance-actions .hint { flex-basis: 100%; }
+.appearance-preview { min-width: 0; padding: 10px; border: 1px solid var(--red); border-radius: 6px; overflow-wrap: anywhere; }
+.appearance-presets { padding: 0; list-style: none; min-width: 0; }
+.appearance-presets li { margin: 10px 0; overflow-wrap: anywhere; }

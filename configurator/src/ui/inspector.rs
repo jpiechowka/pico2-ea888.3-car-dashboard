@@ -1,4 +1,116 @@
+use dashboard_configurator::workspace::Command;
+
 use super::*;
+
+fn preset_result(
+    ui: Ui,
+    result: Result<(), PresetError>,
+) {
+    ui.notice.set(match result {
+        Ok(()) => "Presets changed in memory. Save presets or export a backup.".into(),
+        Err(error) => error.message().into(),
+    });
+}
+fn choose_appearance(
+    ui: Ui,
+    source: AppearanceSource,
+    palette: Option<ColorPalette>,
+) {
+    let mut result = Ok(());
+    ui.appearance.update(|session| result = session.choose(source, palette));
+    if let Err(error) = result {
+        ui.notice.set(error.message().into());
+    }
+}
+
+#[component]
+fn AppearancePanel(ui: Ui) -> impl IntoView {
+    let name = RwSignal::new(String::new());
+    view! {
+        <details class="appearance-tools" open=true><summary>"Copy appearance and presets"</summary>
+            <p class="hint">"Colors, gauge style, decimal precision and supported visibility only. Ranges, units, bands and warning rules stay as configured."</p>
+            <label class="field"><span>"Appearance source"</span>
+                <select prop:value=move ||ui.appearance.with(|s|match s.source(){AppearanceSource::Selected=>"selected",AppearanceSource::Copied=>"copied",AppearanceSource::Preset(_)=>"preset"})
+                    on:change=move |event|{let source=match event_target_value(&event).as_str(){"selected"=>AppearanceSource::Selected,"copied"=>AppearanceSource::Copied,_=>return};let palette=ui.appearance.with_untracked(AppearanceSession::palette);choose_appearance(ui,source,palette);}>
+                    <option value="selected">"Selected widget"</option><option value="copied">"Copied appearance"</option><option value="preset" disabled=true>"Named preset snapshot"</option>
+                </select>
+            </label>
+            <label class="field"><span>"Color palette over this source"</span>
+                <select prop:value=move ||ui.appearance.with(|s|match s.palette(){None=>"source",Some(ColorPalette::Default)=>"default",Some(ColorPalette::Monochrome)=>"mono",Some(ColorPalette::RedAccent)=>"red"})
+                    on:change=move |event|{let palette=match event_target_value(&event).as_str(){"default"=>Some(ColorPalette::Default),"mono"=>Some(ColorPalette::Monochrome),"red"=>Some(ColorPalette::RedAccent),_=>None};let source=ui.appearance.with_untracked(AppearanceSession::source);choose_appearance(ui,source,palette);}>
+                    <option value="source">"Keep source colors"</option><option value="default">"Default color palette"</option><option value="mono">"High-contrast monochrome"</option><option value="red">"Red accent"</option>
+                </select>
+            </label>
+            {move || {
+                let stamp=ui.editor.with(Editor::stamp);
+                let offer=command_palette::offer(ui,stamp);
+                let copy=Command::CopyAppearance;
+                view! {<div class="appearance-actions"><button disabled=move ||command_palette::availability(ui,copy,stamp,offer).is_some()
+                    on:click=move |_|{command_palette::execute(ui,copy,stamp,offer);}>"Copy selected appearance"</button>
+                    {AppearanceScope::ALL.into_iter().map(move |scope|{let command=Command::ApplyAppearance(scope);view!{<button disabled=move ||command_palette::availability(ui,command,stamp,offer).is_some()
+                        on:click=move |_|{command_palette::execute(ui,command,stamp,offer);}>{format!("Preview: {}",scope.label())}</button>}}).collect_view()}
+                    <p class="hint">{if offer.snapshot().is_none(){"Choose a clean selected widget, usable copied appearance or named preset."}else{"Preview shows all settings and omissions before Apply."}}</p>
+                </div>}
+            }}
+            {move ||ui.appearance.with(|session|session.request()).map(|request| {
+                let stamp=ui.editor.with(Editor::stamp);
+                let offer=command_palette::offer(ui,stamp);
+                let snapshot=request.snapshot();
+                let result=ui.editor.with(|editor|editor.appearance_preview(request));
+                let can_apply=result.as_ref().is_ok_and(|preview|preview.error.is_none()&&preview.changed);
+                let description=match result {
+                    Ok(preview)=>format!("{} targets · {} omitted fields (history {}, average {}, extrema {}, trend {}). {}",preview.target_count,preview.omitted_fields,preview.omissions[0],preview.omissions[1],preview.omissions[2],preview.omissions[3],match preview.error {Some(error)=>error_text(error),None if !preview.changed=>"No changes".into(),None=>"Ready to Apply as one undo entry".into()}),
+                    Err(error)=>error_text(error),
+                };
+                view!{<section id="studio-appearance-preview" class="appearance-preview" tabindex="-1" aria-label="Appearance preview">
+                    <h3>{format!("Appearance preview: {}",request.scope().label())}</h3>
+                    <p>{format!("{} · {} decimal places · history {} · average {} · extrema {} · trend {}",snapshot.gauge_style.label(),snapshot.decimals,snapshot.graph,snapshot.average,snapshot.extrema,snapshot.trend)}</p>
+                    <p role="status">{description}</p>
+                    <p class="hint">"Gauges omit history and trend; compact gauges also omit average and extrema. Unsupported visibility stays unchanged. Every stored band must contrast with the new track; a conflict rejects the whole operation."</p>
+                    <div class="appearance-actions"><button class="primary" disabled=!can_apply on:click=move |_| {
+                        if !ui.appearance.with_untracked(|s|s.is_current(offer)&&s.request()==Some(request)){ui.notice.set("Appearance source changed; preview again".into());return;}
+                        if ui.run(|editor|editor.apply(Edit::ApplyAppearance(request))) {let _=ui.appearance.try_update(|s|{let _=s.cancel();});}
+                    }>"Apply appearance"</button><button on:click=move |_|{let _=ui.appearance.try_update(|s|{let _=s.cancel();});}>"Cancel preview"</button></div>
+                </section>}
+            })}
+            <h3>"Named appearance presets"</h3>
+            <label class="field"><span>"Preset name"</span><input maxlength="32" prop:value=move ||name.get() on:input=move |event|{
+                let input=event_target::<web_sys::HtmlInputElement>(&event);
+                if let Some(text)=io::bounded_input(&input,32){name.set(text);}else{input.set_value(&name.get_untracked());ui.notice.set("Preset names are limited to 32 bytes".into());}
+            }/><small>"1–32 printable ASCII bytes, including spaces; cannot be blank"</small></label>
+            {move || {
+                let stamp=ui.editor.with(Editor::stamp);let offer=command_palette::offer(ui,stamp);
+                view!{<button disabled=offer.snapshot().is_none() on:click=move |_|{
+                    if !ui.appearance.with_untracked(|s|s.is_current(offer)) || ui.editor.with_untracked(Editor::stamp)!=stamp {ui.notice.set("Appearance changed; choose it again".into());return;}
+                    let Some(snapshot)=offer.snapshot() else{return;};let mut result=Ok(());ui.presets.update(|store|result=store.add(&name.get_untracked(),snapshot));preset_result(ui,result);
+                }>"Add named preset in memory"</button>}
+            }}
+            <ul class="appearance-presets">{move ||ui.presets.with(|store| {
+                let version=store.version();
+                store.records().iter().enumerate().map(|(index,record)| {
+                    let label=record.name().to_owned();let snapshot=record.snapshot;
+                    view!{<li><span>{label}</span><div class="appearance-actions">
+                        <button on:click=move |_|{if ui.presets.with_untracked(|s|s.record(version,index).is_ok()){choose_appearance(ui,AppearanceSource::Preset(snapshot),None);}else{ui.notice.set(PresetError::Stale.message().into());}}>"Use snapshot"</button>
+                        <button on:click=move |_|{
+                            let stamp=ui.editor.with_untracked(Editor::stamp);let offer=command_palette::offer(ui,stamp);let Some(snapshot)=offer.snapshot() else{ui.notice.set("Choose a usable source first".into());return;};
+                            let mut result=Ok(());ui.presets.update(|s|result=s.replace(version,index,snapshot));preset_result(ui,result);
+                        }>"Replace with source"</button>
+                        <button on:click=move |_|{let mut result=Ok(());ui.presets.update(|s|result=s.remove(version,index));preset_result(ui,result);}>"Delete"</button>
+                    </div></li>}
+                }).collect_view()
+            })}</ul>
+            <p role="status">{move ||ui.presets.with(|store|match store.status(){
+                PresetStatus::Empty=>"No saved presets".into(),PresetStatus::Saved=>"Presets Saved in this browser".into(),PresetStatus::Dirty=>"Presets unsaved in memory".into(),PresetStatus::Saving=>"Saving presets…".into(),PresetStatus::Conflict=>PresetError::Conflict.message().into(),
+                PresetStatus::Failed(StorageFailure::Quota)=>"Preset storage full; memory presets remain usable. Export a backup.".into(),PresetStatus::Failed(_)=>"Preset storage unavailable; memory presets remain usable. Export a backup.".into(),PresetStatus::Unavailable(error)=>format!("Presets unavailable: {}. Existing storage preserved.",error.message()),
+            })}</p>
+            <div class="appearance-actions"><button on:click=move |_|io::save_presets(ui,false)>"Save presets"</button>
+                <button on:click=move |_|io::save_presets(ui,true)>"Replace stored record explicitly"</button><button on:click=move |_|io::reload_presets(ui)>"Reload stored presets"</button>
+                <button on:click=move |_|io::export_presets(ui)>"Export presets"</button></div>
+            <p class="hint">"Replacing captures and compares the current record under its lock. Reload discards only the in-memory preset list. Export first to keep it."</p>
+            <label class="field"><span>"Import preset record into memory"</span><input type="file" accept=".json,application/json" on:change=move |event|{let input=event_target::<web_sys::HtmlInputElement>(&event);if let Some(file)=input.files().and_then(|f|f.get(0)){io::import_presets(ui,file);}input.set_value("");}/><small>"16 records maximum; complete file at most 32 KiB. Import does not write browser storage."</small></label>
+        </details>
+    }
+}
 
 #[component]
 pub fn Inspector(ui: Ui) -> impl IntoView {
@@ -8,6 +120,7 @@ pub fn Inspector(ui: Ui) -> impl IntoView {
             <Show when=move || ui.inspected_widget().is_none()>
                 <div class="empty-inspector"><div class="grid-icon" aria-hidden="true">"▦"</div><h3>"Select a widget"</h3><p>"Click a tile on the display to edit its label, size, graph and warnings."</p><p>"Drag a sensor from the library into a free cell. Create an empty view for a fresh layout."</p><div class="size-samples"><span>"1 × 1"</span><span>"2 × 1"</span><span>"2 × 2"</span></div></div>
             </Show>
+            <AppearancePanel ui/>
             <For each=move ||{ui.inspected_widget().into_iter().collect::<Vec<_>>()} key=|key|(key.0,key.1.index()) children=move |(id,_)|view!{<WidgetInspector ui id/>}/>
 
         </aside>

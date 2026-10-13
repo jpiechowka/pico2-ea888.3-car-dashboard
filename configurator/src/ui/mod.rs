@@ -10,6 +10,7 @@ mod stage;
 mod widget_menu;
 mod workspaces;
 
+use dashboard_configurator::appearance_presets::*;
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::field_registry::{FieldId, FieldKey, FieldTarget, Registry, TargetOwner};
@@ -30,6 +31,9 @@ pub struct Ui {
     notice: RwSignal<String>,
     conflict: RwSignal<bool>,
     saved_bytes: RwSignal<Option<String>>,
+    appearance: RwSignal<AppearanceSession>,
+    presets: RwSignal<PresetStore>,
+    preset_lock_busy: RwSignal<bool>,
     psi: RwSignal<bool>,
     warnings: RwSignal<bool>,
     sample_ms: RwSignal<u64>,
@@ -367,6 +371,9 @@ pub fn Studio() -> impl IntoView {
         }),
         conflict: RwSignal::new(false),
         saved_bytes: RwSignal::new(saved_bytes),
+        appearance: RwSignal::new(AppearanceSession::default()),
+        presets: RwSignal::new(io::restore_presets()),
+        preset_lock_busy: RwSignal::new(false),
         psi: RwSignal::new(false),
         warnings: RwSignal::new(false),
         sample_ms: RwSignal::new(118_000),
@@ -396,8 +403,14 @@ pub fn Studio() -> impl IntoView {
         if event.key().as_deref().is_none_or(|key| key == io::STORAGE_KEY) {
             io::storage_changed(ui);
         }
+        if event.key().as_deref().is_none_or(|key| key == PRESET_STORAGE_KEY) {
+            io::presets_changed(ui);
+        }
     });
-    on_cleanup(move || storage_listener.remove());
+    on_cleanup(move || {
+        storage_listener.remove();
+        let _ = ui.presets.try_update(PresetStore::cancel);
+    });
     view! {
         <div class="studio" on:pointermove=move |e| stage::drag_move(ui, e)
             on:pointerup=move |e| stage::drag_end(ui,e) on:pointercancel=move |e| stage::cancel_event(ui,e)

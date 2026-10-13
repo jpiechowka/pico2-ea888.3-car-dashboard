@@ -6,7 +6,7 @@ use dashboard_configurator::workspace::{
     ExportFormat,
     FocusRequests,
     ShortcutAction,
-    dispatch,
+    dispatch_with_appearance,
     shortcut_action,
 };
 use leptos::leptos_dom::helpers::{AnimationFrameRequestHandle, request_animation_frame_with_handle};
@@ -150,17 +150,79 @@ pub fn inspect_location(
         ui.notice.set("Field changed; refresh commands and results".into());
     }
 }
-fn execute(
+fn schedule_appearance(
+    ui: Ui,
+    request: AppearanceRequest,
+) {
+    cancel_focus(ui);
+    let mut issued = None;
+    ui.focus.update(|state| issued = state.requests.issue());
+    let Some(token) = issued else {
+        ui.notice.set("Focus identity exhausted; reopen Studio".into());
+        return;
+    };
+    match request_animation_frame_with_handle(move || {
+        if ui.focus.try_with_untracked(|state| state.requests.is_current(token)) != Some(true)
+            || ui.workspace.try_with_untracked(WorkspaceState::active) != Some(Workspace::Views)
+            || ui.appearance.try_with_untracked(AppearanceSession::request) != Some(Some(request))
+        {
+            return;
+        }
+        let _ = ui.focus.try_update(|state| state.frame = None);
+        if ui
+            .editor
+            .try_with_untracked(|editor| editor.appearance_preview(request).is_ok())
+            != Some(true)
+        {
+            return;
+        }
+        if let Some(node) = element("studio-appearance-preview").filter(usable) {
+            focus(&node);
+            node.scroll_into_view();
+        }
+    }) {
+        Ok(frame) => ui.focus.update(|state| state.frame = Some(frame)),
+        Err(_) => {
+            cancel_focus(ui);
+            ui.notice.set("The browser could not schedule appearance focus".into());
+        }
+    }
+}
+pub(super) fn offer(
+    ui: Ui,
+    stamp: EditorStamp,
+) -> AppearanceOffer {
+    ui.appearance
+        .with(|session| ui.editor.with(|editor| session.offer(editor, stamp)))
+}
+pub(super) fn availability(
     ui: Ui,
     command: Command,
     stamp: EditorStamp,
+    offer: AppearanceOffer,
+) -> Option<&'static str> {
+    if matches!(command, Command::ApplyAppearance(_)) && !ui.appearance.with(|session| session.is_current(offer)) {
+        return Some("Appearance source changed; refresh this action");
+    }
+    ui.editor
+        .with(|editor| command.availability_with_appearance(editor, stamp, offer.snapshot()))
+}
+pub(super) fn execute(
+    ui: Ui,
+    command: Command,
+    stamp: EditorStamp,
+    offer: AppearanceOffer,
 ) -> bool {
+    if let Some(reason) = availability(ui, command, stamp, offer) {
+        ui.notice.set(reason.into());
+        return false;
+    }
     // Ui::run retains normal save/latency behavior. The pure dispatch is the
     // authority; a rejected command cannot cancel import/pointer/draft state.
     let mut workspace = ui.workspace.get_untracked();
     let mut outcome = None;
     ui.run(|editor| {
-        let result = dispatch(editor, &mut workspace, command, stamp);
+        let result = dispatch_with_appearance(editor, &mut workspace, command, stamp, offer.snapshot());
         let revision = editor.revision();
         let ok = result.is_ok();
         outcome = Some(result);
@@ -169,6 +231,24 @@ fn execute(
     match outcome.expect("synchronous command dispatch") {
         Ok(effect) => {
             match effect {
+                CommandEffect::CopiedAppearance(snapshot) => {
+                    let mut result = Ok(());
+                    ui.appearance.update(|session| result = session.copy(snapshot));
+                    ui.notice.set(match result {
+                        Ok(()) => "Appearance copied. Choose Copied appearance explicitly to use it.".into(),
+                        Err(error) => error.message().into(),
+                    });
+                }
+                CommandEffect::PreviewAppearance(request) => {
+                    let mut result = Ok(());
+                    ui.appearance.update(|session| result = session.stage(request, offer));
+                    if let Err(error) = result {
+                        ui.notice.set(error.message().into());
+                        return false;
+                    }
+                    workspaces::open(ui, Workspace::Views, GroupId::Appearance);
+                    schedule_appearance(ui, request);
+                }
                 CommandEffect::Navigate(w) => workspaces::activate(ui, w),
                 CommandEffect::Inspect(target) => inspect(ui, target),
                 CommandEffect::Changed => {}
@@ -333,7 +413,7 @@ pub fn CommandPalette(ui: Ui) -> impl IntoView {
             let stamp = ui.editor.with_untracked(Editor::stamp);
             if ui.editor.with_untracked(|e| command.availability(e, stamp).is_none()) {
                 event.prevent_default();
-                execute(ui, command, stamp);
+                execute(ui, command, stamp, offer(ui, stamp));
             }
         }
     });
@@ -369,9 +449,9 @@ pub fn CommandPalette(ui: Ui) -> impl IntoView {
                     ui.editor.with(|editor| {
                         let stamp=editor.stamp();
                         Command::inventory(editor).into_iter().filter(|command|query.split_whitespace().all(|token|command.label().to_lowercase().contains(token)))
-                            .map(|command| view!{<button class="command-result" disabled=move ||ui.editor.with(|e|command.availability(e,stamp).is_some())
-                                on:click=move |_|{if ui.editor.with_untracked(|e|command.availability(e,stamp).is_none()){palette.close(ui);execute(ui,command,stamp);}else{ui.notice.set("Command changed; refresh commands and results".into());}}>
-                                <span>{command.label()}</span><small>{move ||ui.editor.with(|e|command.availability(e,stamp).unwrap_or("Ready"))}</small></button>}).collect_view()
+                            .map(|command| {let source=offer(ui,stamp); view!{<button class="command-result" disabled=move ||availability(ui,command,stamp,source).is_some()
+                                on:click=move |_|{if availability(ui,command,stamp,source).is_none(){palette.close(ui);execute(ui,command,stamp,source);}else{ui.notice.set("Command changed; refresh commands and results".into());}}>
+                                <span>{command.label()}</span><small>{move ||availability(ui,command,stamp,source).unwrap_or("Ready")}</small></button>}}).collect_view()
                     })
                 }}
                 <h3>"Settings"</h3>
@@ -389,7 +469,7 @@ pub fn CommandPalette(ui: Ui) -> impl IntoView {
                                 });
                                 let reason=Registry::resolve(editor,target).ok().and_then(|r|r.capability.reason()).unwrap_or("Inspect setting");
                                 view!{<button class="command-result" disabled=move ||ui.editor.with(|e|Command::Find(target).availability(e,stamp).is_some())
-                                    on:click=move |_|{palette.close(ui);execute(ui,Command::Find(target),stamp);}>
+                                    on:click=move |_|{palette.close(ui);execute(ui,Command::Find(target),stamp,offer(ui,stamp));}>
                                     <span>{descriptor.label}</span><small>{format!("{} / {} · {context}",descriptor.workspace.label(),descriptor.group.label())}</small><small>{reason}</small></button>}
                             }).collect_view();
                             view!{<div>{rows}<p class="hint">{if omitted>0{format!("{omitted} more settings; refine the search")}else{"All matching settings shown".into()}}</p></div>}.into_any()

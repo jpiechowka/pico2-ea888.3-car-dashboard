@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::appearance_presets::AppearanceScope;
+use crate::appearance_presets::{AppearanceRequest, AppearanceSnapshot};
 use crate::config::{MAX_VIEWS, MAX_WIDGETS, Placement};
 use crate::editor::{ActionBlock, Edit, Editor, EditorError, EditorStamp, InspectionOwner, InspectionTarget};
 use crate::field_registry::{FieldTarget, Registry};
@@ -12,13 +14,6 @@ pub enum ExportFormat {
     Json,
     Eav,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AppearanceScope {
-    Selected,
-    ThisView,
-    AllWidgets,
-}
-
 /// A closed action allowlist. Object authority is minted only by Editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -36,6 +31,8 @@ pub enum Command {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandEffect {
+    CopiedAppearance(AppearanceSnapshot),
+    PreviewAppearance(AppearanceRequest),
     Navigate(Workspace),
     Inspect(FieldTarget),
     Changed,
@@ -119,6 +116,15 @@ impl Command {
         editor: &Editor,
         captured_stamp: EditorStamp,
     ) -> Option<&'static str> {
+        self.availability_with_appearance(editor, captured_stamp, None)
+    }
+
+    pub fn availability_with_appearance(
+        self,
+        editor: &Editor,
+        captured_stamp: EditorStamp,
+        appearance: Option<AppearanceSnapshot>,
+    ) -> Option<&'static str> {
         if captured_stamp != editor.stamp() {
             return Some("Field changed; refresh commands and results");
         }
@@ -128,9 +134,6 @@ impl Command {
                 return Registry::resolve(editor, target)
                     .err()
                     .map(|_| "Field changed; refresh commands and results");
-            }
-            Self::CopyAppearance | Self::ApplyAppearance(_) => {
-                return Some("Appearance commands arrive with the appearance preview integration");
             }
             Self::OpenJson => return Some("Inline JSON editing is not integrated yet; use configuration Import"),
             _ => {}
@@ -145,6 +148,23 @@ impl Command {
             });
         }
         match self {
+            Self::CopyAppearance => {
+                editor
+                    .selected_appearance(captured_stamp)
+                    .err()
+                    .map(|_| "Select a current clean widget to copy")
+            }
+            Self::ApplyAppearance(scope) => {
+                match appearance {
+                    None => Some("Choose a usable appearance source in Views"),
+                    Some(snapshot) => {
+                        editor
+                            .appearance_request(scope, snapshot, captured_stamp)
+                            .err()
+                            .map(|_| "Appearance source or destination is unavailable")
+                    }
+                }
+            }
             Self::Undo if editor.history_len().0 == 0 => Some("No accepted edit to undo"),
             Self::Redo if editor.history_len().1 == 0 => Some("No accepted edit to redo"),
             Self::DuplicateWidget(target) => {
@@ -229,11 +249,37 @@ pub fn dispatch(
     command: Command,
     captured_stamp: EditorStamp,
 ) -> Result<CommandEffect, CommandError> {
-    if let Some(reason) = command.availability(editor, captured_stamp) {
+    dispatch_with_appearance(editor, workspace, command, captured_stamp, None)
+}
+
+pub fn dispatch_with_appearance(
+    editor: &mut Editor,
+    workspace: &mut WorkspaceState,
+    command: Command,
+    captured_stamp: EditorStamp,
+    appearance: Option<AppearanceSnapshot>,
+) -> Result<CommandEffect, CommandError> {
+    if let Some(reason) = command.availability_with_appearance(editor, captured_stamp, appearance) {
         return Err(CommandError::Unavailable(reason));
     }
     let changed = |result: Result<_, EditorError>| result.map(|_| CommandEffect::Changed).map_err(CommandError::Editor);
     match command {
+        Command::CopyAppearance => {
+            editor
+                .selected_appearance(captured_stamp)
+                .map(CommandEffect::CopiedAppearance)
+                .map_err(CommandError::Editor)
+        }
+        Command::ApplyAppearance(scope) => {
+            editor
+                .appearance_request(
+                    scope,
+                    appearance.ok_or(CommandError::Unavailable("Choose an appearance source"))?,
+                    captured_stamp,
+                )
+                .map(CommandEffect::PreviewAppearance)
+                .map_err(CommandError::Editor)
+        }
         Command::Navigate(w) => {
             workspace.activate(w);
             Ok(CommandEffect::Navigate(w))

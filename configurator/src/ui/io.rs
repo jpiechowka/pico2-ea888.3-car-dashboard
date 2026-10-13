@@ -21,6 +21,62 @@ fn storage() -> Result<web_sys::Storage, StorageFailure> {
         .ok_or(StorageFailure::Unavailable)
 }
 
+pub(super) fn bounded_input(
+    input: &web_sys::HtmlInputElement,
+    limit: u32,
+) -> Option<String> {
+    let value = js_sys::Reflect::get(input.as_ref(), &"value".into()).ok()?;
+    if !value.is_string() {
+        return None;
+    }
+    let value: js_sys::JsString = value.unchecked_into();
+    if value.length() > limit {
+        return None;
+    }
+    let text = value.as_string()?;
+    (text.len() <= limit as usize).then_some(text)
+}
+fn preset_observation() -> Result<Option<String>, StorageFailure> {
+    let storage = storage()?;
+    // Read as a JS string first so oversized cross-tab records are never copied
+    // in full to Rust. A bounded oversize marker retains unavailable semantics.
+    let method = js_sys::Reflect::get(storage.as_ref(), &"getItem".into())
+        .map_err(storage_error)?
+        .dyn_into::<js_sys::Function>()
+        .map_err(storage_error)?;
+    let value = method
+        .call1(storage.as_ref(), &PRESET_STORAGE_KEY.into())
+        .map_err(storage_error)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    if !value.is_string() {
+        return Err(StorageFailure::Unavailable);
+    }
+    let text: js_sys::JsString = value.unchecked_into();
+    if text.length() as usize > MAX_PRESET_BYTES {
+        return Ok(Some(" ".repeat(MAX_PRESET_BYTES + 1)));
+    }
+    let text = text.as_string().ok_or(StorageFailure::Unavailable)?;
+    if text.len() > MAX_PRESET_BYTES {
+        return Ok(Some(" ".repeat(MAX_PRESET_BYTES + 1)));
+    }
+    Ok(Some(text))
+}
+pub(super) fn restore_presets() -> PresetStore { PresetStore::restore(preset_observation()) }
+pub(super) fn presets_changed(ui: Ui) {
+    let current = preset_observation();
+    let _ = ui.presets.try_update(|store| store.observe(current));
+}
+pub(super) fn reload_presets(ui: Ui) {
+    let observation = preset_observation();
+    let mut result = Ok(());
+    ui.presets.update(|store| result = store.reload(observation));
+    if let Err(error) = result {
+        ui.notice.set(error.message().into());
+    }
+}
+
 pub fn restore() -> (Editor, String, Option<String>) {
     match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
         Ok(Some(json)) => {
@@ -61,6 +117,141 @@ extern "C" {
         name: &str,
         callback: &js_sys::Function,
     ) -> Result<js_sys::Promise, JsValue>;
+}
+fn request_lock(
+    key: &str,
+    callback: &js_sys::Function,
+) -> Result<js_sys::Promise, JsValue> {
+    let navigator = web_sys::window().ok_or(JsValue::NULL)?.navigator();
+    let locks = js_sys::Reflect::get(navigator.as_ref(), &"locks".into())?;
+    if locks.is_null() || locks.is_undefined() {
+        return Err(JsValue::NULL);
+    }
+    locks.unchecked_into::<DraftLocks>().request_draft_lock(key, callback)
+}
+
+pub(super) fn save_presets(
+    ui: Ui,
+    replace: bool,
+) {
+    if ui.preset_lock_busy.get_untracked() {
+        ui.notice.set("A preset write is already waiting for its lock".into());
+        return;
+    }
+    let mut prepared = Err(PresetError::Conflict);
+    if replace {
+        match preset_observation() {
+            Ok(current) => {
+                ui.presets
+                    .update(|store| prepared = store.begin_replace(current.as_deref()))
+            }
+            Err(_) => {
+                ui.notice.set("Preset storage is unavailable; export a backup".into());
+                return;
+            }
+        }
+    } else {
+        ui.presets.update(|store| prepared = store.begin_save());
+    }
+    let request = match prepared {
+        Ok(request) => std::rc::Rc::new(request),
+        Err(error) => {
+            ui.notice.set(error.message().into());
+            return;
+        }
+    };
+    ui.preset_lock_busy.set(true);
+    let captured = request.clone();
+    let callback = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new(move |_| {
+        if ui.presets.try_with_untracked(|store| store.save_is_current(&captured)) != Some(true) {
+            return;
+        }
+        let result = storage().and_then(|storage| {
+            let current = preset_observation()?;
+            let check = ui
+                .presets
+                .try_with_untracked(|store| store.check_write(&captured, current.as_deref()));
+            if check != Some(Ok(())) {
+                if check == Some(Err(PresetError::Conflict)) {
+                    let _ = ui.presets.try_update(|store| store.observe(Ok(current)));
+                }
+                return Err(StorageFailure::Denied);
+            }
+            storage
+                .set_item(PRESET_STORAGE_KEY, captured.json())
+                .map_err(storage_error)
+        });
+        let _ = ui.presets.try_update(|store| {
+            let _ = store.finish_save(&captured, result);
+        });
+    });
+    let promise = request_lock(PRESET_STORAGE_KEY, callback.as_ref().unchecked_ref());
+    spawn_local(async move {
+        let result = match promise {
+            Ok(promise) => JsFuture::from(promise).await,
+            Err(error) => Err(error),
+        };
+        if result.is_err() {
+            let _ = ui.presets.try_update(|store| {
+                let _ = store.finish_save(&request, Err(StorageFailure::Unavailable));
+            });
+            let _ = ui.notice.try_set(
+                "Preset saving needs Web Locks and storage permission. Memory presets remain usable; export a backup."
+                    .into(),
+            );
+        }
+        let _ = ui.preset_lock_busy.try_set(false);
+        drop(callback);
+    });
+}
+pub(super) fn export_presets(ui: Ui) {
+    match ui.presets.with_untracked(PresetStore::export) {
+        Ok(text) => {
+            if download("appearance-presets.json", "application/json", text.as_bytes()).is_err() {
+                ui.notice.set("The browser could not download presets".into());
+            }
+        }
+        Err(error) => ui.notice.set(error.message().into()),
+    }
+}
+pub(super) fn import_presets(
+    ui: Ui,
+    file: web_sys::File,
+) {
+    if !file.size().is_finite() || file.size() > MAX_PRESET_BYTES as f64 {
+        ui.notice.set(PresetError::TooLarge.message().into());
+        return;
+    }
+    let version = ui.presets.with_untracked(PresetStore::version);
+    spawn_local(async move {
+        let result = JsFuture::from(file.text()).await;
+        if ui.presets.try_with_untracked(PresetStore::version) != Some(version) {
+            return;
+        }
+        match result {
+            Ok(value) => {
+                let text: js_sys::JsString = value.unchecked_into();
+                if text.length() as usize > MAX_PRESET_BYTES {
+                    let _ = ui.notice.try_set(PresetError::TooLarge.message().into());
+                    return;
+                }
+                let Some(text) = text.as_string() else {
+                    return;
+                };
+                let mut result = Ok(());
+                let _ = ui.presets.try_update(|store| result = store.import(&text));
+                let _ = ui.notice.try_set(match result {
+                    Ok(()) => "Presets imported into memory. Save or export explicitly.".into(),
+                    Err(error) => error.message().into(),
+                });
+            }
+            Err(_) => {
+                let _ = ui
+                    .notice
+                    .try_set("Preset file could not be read; previous list retained".into());
+            }
+        }
+    });
 }
 
 fn conflict(ui: Ui) {
@@ -114,16 +305,7 @@ pub fn save(
             let _ = e.acknowledge_save(token, result);
         });
     });
-    let promise = (|| {
-        let navigator = web_sys::window().ok_or(JsValue::NULL)?.navigator();
-        let locks = js_sys::Reflect::get(navigator.as_ref(), &JsValue::from_str("locks"))?;
-        if locks.is_null() || locks.is_undefined() {
-            return Err(JsValue::NULL);
-        }
-        locks
-            .unchecked_into::<DraftLocks>()
-            .request_draft_lock(STORAGE_KEY, callback.as_ref().unchecked_ref())
-    })();
+    let promise = request_lock(STORAGE_KEY, callback.as_ref().unchecked_ref());
     spawn_local(async move {
         let outcome = match promise {
             Ok(p) => JsFuture::from(p).await,
