@@ -48,6 +48,7 @@ fn maximum(
 }
 
 pub fn benchmarks(c: &mut Criterion) {
+    complete_paging(c);
     use dashboard_host_validation::status_led::{LedController, PresentedScene};
     let mut settings = LedSettings::default();
     settings.normal.kind = LedPatternKind::Breathe;
@@ -122,4 +123,47 @@ pub fn benchmarks(c: &mut Criterion) {
     c.bench_function("rules/64_warning_page", |b| {
         b.iter(|| black_box(pager.select(black_box(&config), black_box(&snapshot), 1, black_box(1000), true)))
     });
+}
+
+// Snapshot creation stays outside the timed pager cycle. Each snapshot is fresh
+// at its page deadline; the preflight proves every global rule is reached once.
+fn complete_paging(c: &mut Criterion) {
+    for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
+        let mut raw = maximum(64, false).config().clone();
+        raw.warnings.mode = mode;
+        raw.warnings.page_ms = 500;
+        let config = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo_configured(&config);
+        let values = [10., 90., 95., 80., 30., 700., 13.8, 1.];
+        for now in [0, 250, 500, 750] {
+            model.ingest_batch(values, now);
+        }
+        let count = if mode == WarningMode::CycleOne { 64 } else { 22 };
+        let snapshots: Vec<_> = (0..count)
+            .map(|index| {
+                let now = 1000 + index * 500;
+                model.ingest_batch(values, now);
+                (now, model.snapshot())
+            })
+            .collect();
+        let mut pager = WarningPager::new();
+        let mut seen = 0u64;
+        for (now, snapshot) in &snapshots {
+            let page = pager.select(&config, snapshot, 1, *now, true).unwrap();
+            assert_eq!(seen & page.rules, 0);
+            seen |= page.rules;
+        }
+        assert_eq!(seen, u64::MAX);
+        c.bench_function(&format!("advanced/all64_warning_cycle_{mode:?}"), |b| {
+            b.iter_batched_ref(
+                WarningPager::new,
+                |pager| {
+                    for (now, snapshot) in &snapshots {
+                        black_box(pager.select(black_box(&config), black_box(snapshot), 1, *now, true));
+                    }
+                },
+                BatchSize::PerIteration,
+            )
+        });
+    }
 }

@@ -146,7 +146,10 @@ pub fn benchmarks(c: &mut Criterion) {
 // for keys and drawing, then computes physical-buffer damage. Setup is excluded.
 fn advanced(c: &mut Criterion) {
     use dashboard_host_validation::display::damage::DamagePlan;
-    for kind in [GaugeKind::Circular, GaugeKind::Horizontal] {
+    for (kind, moving) in [GaugeKind::Circular, GaugeKind::Horizontal]
+        .into_iter()
+        .flat_map(|kind| [false, true].map(|moving| (kind, moving)))
+    {
         let mut raw = default_config();
         for w in &mut raw.widgets {
             w.gauge.kind = kind;
@@ -174,7 +177,7 @@ fn advanced(c: &mut Criterion) {
         let mut model = AcquisitionModel::demo_configured(&config);
         model.ingest_batch(initial, 0);
         let before = model.snapshot();
-        model.ingest_batch(initial.map(|v| v + 0.001), 100);
+        model.ingest_batch(initial.map(|v| if moving { v * 1.5 } else { v + 0.001 }), 100);
         let after = model.snapshot();
         let make_scene = |snapshot, now_ms| {
             DashboardScene {
@@ -214,8 +217,21 @@ fn advanced(c: &mut Criterion) {
         };
         let mut full = AlignedFrame::boxed();
         scene.draw_full(&mut St7789Renderer::new(&mut full.0));
-        assert!(full.0 == checked.2[0].0, "subpixel fixture must preserve every pixel");
-        c.bench_function(&format!("advanced/{kind:?}_eight_smoothed_three_bands_subpixel"), |b| {
+        assert_eq!(
+            full.0 == checked.2[0].0,
+            !moving,
+            "fixture must distinguish visible motion"
+        );
+        for (slot, frame) in checked.2.iter_mut().enumerate() {
+            let redraw = checked.1.draw(&mut St7789Renderer::new(&mut frame.0), slot, &scene);
+            if moving {
+                assert_eq!(redraw.cells, 255, "all eight gauges must move");
+            }
+            assert!(frame.0 == full.0);
+        }
+        let [baseline, _] = ready().2;
+        let suffix = if moving { "moving" } else { "subpixel" };
+        c.bench_function(&format!("advanced/{kind:?}_eight_smoothed_three_bands_{suffix}"), |b| {
             b.iter_batched_ref(
                 ready,
                 |(state, cache, frames)| {
@@ -227,7 +243,10 @@ fn advanced(c: &mut Criterion) {
                     for (slot, frame) in frames.iter_mut().enumerate() {
                         black_box(cache.draw(&mut St7789Renderer::new(&mut frame.0), slot, &scene));
                     }
-                    black_box(DamagePlan::between(&frames[0].0, &frames[1].0));
+                    black_box(DamagePlan::between(
+                        if moving { &baseline.0 } else { &frames[0].0 },
+                        &frames[1].0,
+                    ));
                 },
                 BatchSize::PerIteration,
             )
