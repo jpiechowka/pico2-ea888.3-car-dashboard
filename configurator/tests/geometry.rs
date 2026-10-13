@@ -272,3 +272,192 @@ fn drop_validation_obeys_references_labels_capacity_and_sparse_widget_ids() {
         Err(GeometryError::Capacity)
     );
 }
+
+#[test]
+fn stationary_and_jittered_release_after_canvas_reflow_only_keeps_selection() {
+    use dashboard_configurator::editor::{Editor, PointerTarget, Selection};
+    for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
+        let mut config = default_config();
+        config.widgets.clear();
+        config
+            .widgets
+            .push(default_widget(Channel::Oil, 1, 1, place(0, 0, span)))
+            .unwrap();
+        let mut editor = Editor::new(config).unwrap();
+        let accepted = editor.preview().clone();
+        let original = place(0, 0, span);
+        let (x, y) = client(RECT, 20.0, 46.0);
+        let offset = grab_offset(RECT, x, y, original).unwrap();
+        let shifted = ContentRect {
+            top: RECT.top - 150.0,
+            ..RECT
+        };
+        // The old unconditional release mapping would move even this still pointer.
+        assert_ne!(drop_placement(shifted, x, y, span, offset), Ok(original));
+        for jitter in [0.0, 1.0, DRAG_THRESHOLD_CSS_PX - 0.01] {
+            let history_before = editor.history_len();
+            let token = editor.begin_pointer(7, PointerTarget::Widget(1)).unwrap();
+            assert!(matches!(
+                editor.begin_save(),
+                Err(dashboard_configurator::editor::EditorError::PointerActive)
+            ));
+            let selected_revision = editor.revision();
+            let selected_history = editor.history_len();
+            assert_eq!(selected_history, history_before);
+            let mut gesture = DragGesture::new(x, y).unwrap();
+            assert_eq!(
+                gesture
+                    .placement(shifted, x + jitter, y, token.target(), span, offset)
+                    .unwrap(),
+                None
+            );
+            assert!(!gesture.is_dragging());
+            editor.cancel_pointer(token).unwrap();
+            assert_eq!(
+                editor.selection(),
+                Selection {
+                    view: 1,
+                    widget: Some(1)
+                }
+            );
+            assert_eq!(editor.revision(), selected_revision);
+            assert_eq!(editor.history_len(), selected_history);
+            assert_eq!(editor.preview(), &accepted);
+            assert!(!editor.has_invalid_draft());
+            let request = editor.begin_save().unwrap();
+            let restored = Editor::from_saved_state(request.json().as_bytes()).unwrap();
+            assert_eq!(restored.selection(), editor.selection());
+            assert_eq!(restored.preview(), &accepted);
+            assert_eq!(editor.history_len(), selected_history);
+        }
+    }
+}
+
+#[test]
+fn real_drag_uses_original_anchor_and_library_uses_pointed_cell() {
+    use dashboard_configurator::editor::Editor;
+    for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
+        let mut config = default_config();
+        config.widgets.clear();
+        config
+            .widgets
+            .push(default_widget(Channel::Oil, 1, 1, place(0, 0, span)))
+            .unwrap();
+        let mut editor = Editor::new(config).unwrap();
+        let (x, y) = client(RECT, 20.0, 46.0);
+        let offset = grab_offset(RECT, x, y, place(0, 0, span)).unwrap();
+        let resized = ContentRect {
+            width: 320.0,
+            height: 240.0,
+            ..RECT
+        };
+        let (mx, my) = client(resized, 100.0, 46.0);
+        let token = editor.begin_pointer(7, PointerTarget::Widget(1)).unwrap();
+        let mut gesture = DragGesture::new(x, y).unwrap();
+        let position = gesture
+            .placement(resized, mx, my, token.target(), span, offset)
+            .unwrap()
+            .unwrap();
+        assert_eq!(position, place(1, 0, span));
+        editor.commit_pointer(token, 7, position).unwrap();
+        assert_eq!(editor.preview().config().widgets[0].placement, position);
+    }
+    let (x, y) = client(RECT, 0.0, 26.0);
+    let mut library = DragGesture::new(0.0, 0.0).unwrap();
+    assert_eq!(
+        library
+            .placement(
+                RECT,
+                x,
+                y,
+                PointerTarget::Library(Channel::Oil),
+                Span::OneByOne,
+                GrabOffset::center(Span::OneByOne)
+            )
+            .unwrap(),
+        Some(place(0, 0, Span::OneByOne))
+    );
+}
+
+#[test]
+fn drag_threshold_is_css_distance_latches_and_rejects_nonfinite_samples() {
+    for (dx, dy, active) in [
+        (3.99, 0.0, false),
+        (4.0, 0.0, true),
+        (0.0, -4.0, true),
+        (2.9, 2.9, true),
+    ] {
+        let mut gesture = DragGesture::new(100.0, 200.0).unwrap();
+        gesture
+            .placement(
+                RECT,
+                100.0 + dx,
+                200.0 + dy,
+                PointerTarget::Library(Channel::Oil),
+                Span::OneByOne,
+                GrabOffset::TOP_LEFT,
+            )
+            .unwrap();
+        assert_eq!(gesture.is_dragging(), active);
+        if active {
+            gesture
+                .placement(
+                    RECT,
+                    100.0,
+                    200.0,
+                    PointerTarget::Library(Channel::Oil),
+                    Span::OneByOne,
+                    GrabOffset::TOP_LEFT,
+                )
+                .unwrap();
+            assert!(gesture.is_dragging());
+        }
+    }
+    assert_eq!(DragGesture::new(f64::NAN, 0.0), Err(GeometryError::NonFinitePointer));
+    let mut gesture = DragGesture::new(100.0, 200.0).unwrap();
+    for (x, y) in [(f64::NAN, 200.0), (100.0, f64::INFINITY)] {
+        assert_eq!(
+            gesture.placement(
+                RECT,
+                x,
+                y,
+                PointerTarget::Library(Channel::Oil),
+                Span::OneByOne,
+                GrabOffset::TOP_LEFT
+            ),
+            Err(GeometryError::NonFinitePointer)
+        );
+        assert!(!gesture.is_dragging());
+    }
+}
+
+#[test]
+fn moved_gesture_does_not_bypass_wrong_pointer_cancel_or_stale_token() {
+    use dashboard_configurator::editor::{Edit, Editor, EditorError};
+    let mut editor = Editor::new(default_config()).unwrap();
+    let token = editor.begin_pointer(7, PointerTarget::Widget(1)).unwrap();
+    let mut gesture = DragGesture::new(0.0, 0.0).unwrap();
+    let (x, y) = client(RECT, 40.0, 80.0);
+    let position = gesture
+        .placement(
+            RECT,
+            x,
+            y,
+            token.target(),
+            Span::OneByOne,
+            GrabOffset::center(Span::OneByOne),
+        )
+        .unwrap()
+        .unwrap();
+    let selected = editor.revision();
+    assert_eq!(editor.commit_pointer(token, 8, position), Err(EditorError::StaleToken));
+    assert_eq!(editor.active_pointer(), Some(token));
+    editor.cancel_pointer(token).unwrap();
+    assert_eq!(editor.commit_pointer(token, 7, position), Err(EditorError::StaleToken));
+    assert_eq!(editor.revision(), selected);
+    let token = editor.begin_pointer(7, PointerTarget::Widget(1)).unwrap();
+    editor.apply(Edit::SetReducedMotion(true)).unwrap();
+    let revision = editor.revision();
+    assert_eq!(editor.commit_pointer(token, 7, position), Err(EditorError::StaleToken));
+    assert_eq!(editor.revision(), revision);
+}

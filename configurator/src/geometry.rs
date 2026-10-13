@@ -68,6 +68,67 @@ pub enum GeometryError {
     Validation(ValidationError),
 }
 
+/// A physical client-space movement is required before layout mapping. Canvas
+/// reflow, scroll and resize alone never turn a click into a placement commit.
+pub const DRAG_THRESHOLD_CSS_PX: f64 = 4.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragGesture {
+    origin: PanelPoint,
+    dragging: bool,
+}
+impl DragGesture {
+    pub fn new(
+        client_x: f64,
+        client_y: f64,
+    ) -> Result<Self, GeometryError> {
+        if !client_x.is_finite() || !client_y.is_finite() {
+            return Err(GeometryError::NonFinitePointer);
+        }
+        Ok(Self {
+            origin: PanelPoint {
+                x: client_x,
+                y: client_y,
+            },
+            dragging: false,
+        })
+    }
+
+    pub fn is_dragging(self) -> bool { self.dragging }
+
+    /// The threshold is Euclidean distance in CSS pixels, independent of canvas
+    /// scale. Once crossed, a gesture remains a drag even if it returns to origin.
+    pub fn placement(
+        &mut self,
+        rect: ContentRect,
+        client_x: f64,
+        client_y: f64,
+        target: PointerTarget,
+        span: Span,
+        offset: GrabOffset,
+    ) -> Result<Option<Placement>, GeometryError> {
+        if !client_x.is_finite() || !client_y.is_finite() {
+            return Err(GeometryError::NonFinitePointer);
+        }
+        self.dragging |= (client_x - self.origin.x).hypot(client_y - self.origin.y) >= DRAG_THRESHOLD_CSS_PX;
+        if !self.dragging {
+            return Ok(None);
+        }
+        // Library tiles belong to the pointed cell; existing widgets retain
+        // their original panel-space grab anchor through canvas resizing.
+        if matches!(target, PointerTarget::Library(_)) {
+            let cell = cell_at(rect, client_x, client_y)?;
+            Ok(Some(Placement {
+                column: cell.column,
+                row: cell.row,
+                span: Span::OneByOne,
+            }))
+        } else {
+            drop_placement(rect, client_x, client_y, span, offset).map(Some)
+        }
+    }
+}
+
 /// Half-open bounds keep right/bottom edges from becoming nonexistent cells.
 pub fn panel_point(
     rect: ContentRect,

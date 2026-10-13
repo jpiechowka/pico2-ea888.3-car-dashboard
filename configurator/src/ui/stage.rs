@@ -1,4 +1,4 @@
-use dashboard_configurator::geometry::{self, ContentRect, GrabOffset};
+use dashboard_configurator::geometry::{self, ContentRect, DragGesture, GrabOffset};
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 use leptos::leptos_dom::helpers::request_animation_frame;
 use wasm_bindgen::Clamped;
@@ -10,6 +10,8 @@ pub struct Drag {
     token: PointerToken,
     span: Span,
     offset: GrabOffset,
+    gesture: DragGesture,
+    selection_changed: bool,
     position: Option<Placement>,
     valid: bool,
 }
@@ -37,6 +39,9 @@ fn start(
     if ui.drag.get_untracked().is_some() {
         return;
     }
+    let Ok(gesture) = DragGesture::new(f64::from(event.client_x()), f64::from(event.client_y())) else {
+        return;
+    };
     event.prevent_default();
     event.stop_propagation();
     widget_menu::close(ui, false);
@@ -72,6 +77,7 @@ fn start(
         return;
     }
     let mut accepted = None;
+    let selection_before = ui.editor.with_untracked(Editor::selection);
     // Selecting a widget is persistent even when its drag is cancelled or
     // commits the same placement. Replace any pending save at selection time.
     ui.run(|editor| {
@@ -84,13 +90,19 @@ fn start(
                 ui.inspection.set(None);
             }
             if let Some(button) = element.dyn_ref::<web_sys::HtmlElement>() {
-                let _ = button.focus();
+                let options = web_sys::FocusOptions::new();
+                options.set_prevent_scroll(true);
+                if button.focus_with_options(&options).is_err() {
+                    ui.notice.set("Widget selected; browser focus was unavailable.".into());
+                }
             }
             ui.capture.set(Some((event.pointer_id(), element)));
             ui.drag.set(Some(Drag {
                 token,
                 span,
                 offset,
+                gesture,
+                selection_changed: ui.editor.with_untracked(Editor::selection) != selection_before,
                 position: None,
                 valid: false,
             }));
@@ -102,14 +114,35 @@ fn start(
     }
 }
 
+fn save_selection(
+    ui: Ui,
+    drag: Drag,
+) {
+    // Start cannot serialize while its pointer is active. After a legitimate
+    // changed selection resolves without a layout edit, schedule that save now.
+    if drag.selection_changed
+        && !ui.conflict.get_untracked()
+        && ui
+            .editor
+            .with_untracked(|e| e.save_status() == SaveStatus::Dirty && e.action_readiness().block.is_none())
+    {
+        io::save(ui, false);
+    }
+}
+
 pub fn cancel(ui: Ui) {
-    if let Some(drag) = ui.drag.get_untracked() {
+    let drag = ui.drag.get_untracked();
+    let mut cancelled = false;
+    if let Some(drag) = drag {
         ui.editor.update(|e| {
-            let _ = e.cancel_pointer(drag.token);
+            cancelled = e.cancel_pointer(drag.token).is_ok();
         });
         ui.drag.set(None);
     }
     release_capture(ui);
+    if cancelled && let Some(drag) = drag {
+        save_selection(ui, drag);
+    }
 }
 
 fn release_capture(ui: Ui) {
@@ -149,28 +182,17 @@ pub fn drag_move(
     }
     event.prevent_default();
     drag.position = content_rect(ui).and_then(|rect| {
-        if matches!(drag.token.target(), PointerTarget::Library(_)) {
-            // A new compact widget belongs to the pointed cell. It has no
-            // existing grab anchor: requiring its center made half of the
-            // first cell unusable and was surprising near outer edges.
-            return geometry::cell_at(rect, f64::from(event.client_x()), f64::from(event.client_y()))
-                .ok()
-                .map(|cell| {
-                    Placement {
-                        column: cell.column,
-                        row: cell.row,
-                        span: Span::OneByOne,
-                    }
-                });
-        }
-        geometry::drop_placement(
-            rect,
-            f64::from(event.client_x()),
-            f64::from(event.client_y()),
-            drag.span,
-            drag.offset,
-        )
-        .ok()
+        drag.gesture
+            .placement(
+                rect,
+                f64::from(event.client_x()),
+                f64::from(event.client_y()),
+                drag.token.target(),
+                drag.span,
+                drag.offset,
+            )
+            .ok()
+            .flatten()
     });
     drag.valid = drag.position.is_some_and(|p| {
         ui.editor.with_untracked(|e| {
@@ -197,13 +219,21 @@ pub fn drag_end(
     ui.drag.set(None);
     release_capture(ui);
     if let Some(position) = drag.position {
-        ui.run(move |e| e.commit_pointer(drag.token, event.pointer_id(), position));
+        if ui.run(move |e| e.commit_pointer(drag.token, event.pointer_id(), position)) {
+            save_selection(ui, drag);
+        }
     } else {
+        let mut cancelled = false;
         ui.editor.update(|e| {
-            let _ = e.cancel_pointer(drag.token);
+            cancelled = e.cancel_pointer(drag.token).is_ok();
         });
-        ui.notice
-            .set("Drop inside the display grid. Your layout is unchanged.".into());
+        if cancelled {
+            save_selection(ui, drag);
+        }
+        if drag.gesture.is_dragging() {
+            ui.notice
+                .set("Drop inside the display grid. Your layout is unchanged.".into());
+        }
     }
 }
 
