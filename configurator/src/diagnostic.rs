@@ -241,7 +241,9 @@ pub(crate) fn isolated_widget(
     if !(100..=60000).contains(&safe.advanced.peak_hold_ms) {
         safe.advanced.peak_hold_ms = 750;
     }
-    if !safe.advanced.reference.is_finite() || !(low..=high).contains(&safe.advanced.reference) {
+    if !safe.advanced.reference.is_finite()
+        || (safe.advanced.reference_mode == ReferenceMode::Manual && !(low..=high).contains(&safe.advanced.reference))
+    {
         safe.advanced.reference_mode = ReferenceMode::Off;
         safe.advanced.reference = 0.;
     }
@@ -316,4 +318,55 @@ fn projection_notes(widget: &Widget) -> Vec<String> {
         );
     }
     notes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn review_reference_projection_bounds_only_manual_and_always_bounds_nonfinite() {
+        let accepted = validate(default_config()).unwrap();
+        let mut widget = accepted.config().widgets[0].clone();
+        for mode in [ReferenceMode::Off, ReferenceMode::Zero] {
+            widget.advanced.reference_mode = mode;
+            widget.advanced.reference = 999.;
+            let projected = isolated_widget(&accepted, &widget).unwrap();
+            assert_eq!(projected.config().widgets[0].advanced.reference_mode, mode);
+            assert_eq!(projected.config().widgets[0].advanced.reference, 999.);
+            assert!(
+                !projection_notes(&widget)
+                    .iter()
+                    .any(|line| line.contains(" reference:"))
+            );
+        }
+        widget.advanced.reference_mode = ReferenceMode::Manual;
+        let projected = isolated_widget(&accepted, &widget).unwrap();
+        assert_eq!(
+            projected.config().widgets[0].advanced.reference_mode,
+            ReferenceMode::Off
+        );
+        assert!(
+            projection_notes(&widget)
+                .iter()
+                .any(|line| line.contains(" reference:"))
+        );
+        for mode in [ReferenceMode::Off, ReferenceMode::Zero, ReferenceMode::Manual] {
+            for number in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                widget.advanced.reference_mode = mode;
+                widget.advanced.reference = number;
+                let projected = isolated_widget(&accepted, &widget).unwrap();
+                assert_eq!(
+                    projected.config().widgets[0].advanced.reference_mode,
+                    ReferenceMode::Off
+                );
+                assert_eq!(projected.config().widgets[0].advanced.reference, 0.);
+                assert!(
+                    projection_notes(&widget)
+                        .iter()
+                        .any(|line| line.contains(" reference:"))
+                );
+            }
+        }
+    }
 }

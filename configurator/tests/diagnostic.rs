@@ -3,6 +3,49 @@ use dashboard_configurator::editor::*;
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 
 #[test]
+fn review_diagnostic_zero_ignores_a_finite_out_of_domain_manual_reference() {
+    let mut c = default_config();
+    c.widgets.truncate(1);
+    c.widgets[0].gauge.kind = GaugeKind::Horizontal;
+    c.widgets[0].advanced.reference_mode = ReferenceMode::Zero;
+    c.widgets[0].advanced.reference = 999.;
+    let mut e = Editor::new(c).unwrap();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::SmoothingMilliseconds),
+        "49".into(),
+    )
+    .unwrap();
+    let d = e.diagnostic().unwrap();
+    let accepted = e.preview().clone();
+    let mut oracle = dashboard_configurator::diagnostic::Draft {
+        config: d.config.clone(),
+        raw: d.raw.clone(),
+        error: d.error,
+    };
+    oracle.config.widgets[0].advanced.reference = 0.;
+    let mut actual = Preview::new();
+    let mut expected = Preview::new();
+    actual
+        .render_diagnostic(e.preview(), &d, 1, PreviewOptions::default())
+        .unwrap();
+    expected
+        .render_diagnostic(e.preview(), &oracle, 1, PreviewOptions::default())
+        .unwrap();
+    assert!(
+        actual.rgb565() == expected.rgb565(),
+        "Zero marker must ignore the retained finite manual value"
+    );
+    assert_eq!(e.preview(), &accepted);
+    assert_eq!(d.config.widgets[0].advanced.reference, 999.);
+}
+
+#[test]
 fn invalid_typed_shared_history_marks_associated_widgets_and_lists_the_attempt() {
     let mut e = selected();
     assert!(

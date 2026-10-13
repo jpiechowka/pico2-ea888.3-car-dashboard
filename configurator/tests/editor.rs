@@ -2,6 +2,193 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+fn review_battery_window_restores_both_direct_polarities_atomically() {
+    for window in [LimitMode::OutsideWindow, LimitMode::InsideWindow] {
+        for direct in [LimitMode::High, LimitMode::Low] {
+            let mut c = default_config();
+            c.widgets.clear();
+            c.widgets
+                .push(default_widget(
+                    Channel::Battery,
+                    1,
+                    1,
+                    Placement {
+                        column: 0,
+                        row: 0,
+                        span: Span::OneByOne,
+                    },
+                ))
+                .unwrap();
+            let mut e = Editor::new(c).unwrap();
+            let original = e.preview().clone();
+            e.apply(Edit::SetWarningMode { id: 1, mode: window }).unwrap();
+            let windowed = e.preview().clone();
+            let stale = e.field_token();
+            e.apply_if_current(stale, Edit::SetWarningMode { id: 1, mode: direct })
+                .unwrap();
+            let w = &e.preview().config().widgets[0].warning;
+            assert_eq!(
+                (w.trigger, w.clear),
+                if direct == LimitMode::Low {
+                    (11.5, 12.)
+                } else {
+                    (12., 11.5)
+                }
+            );
+            assert_eq!(w.mode, direct);
+            assert_eq!(w.advanced.trigger_high.to_bits(), 0);
+            assert_eq!(w.advanced.clear_high.to_bits(), 0);
+            assert_eq!(e.history_len(), (2, 0));
+            assert_eq!(
+                e.apply_if_current(stale, Edit::SetWarningMode { id: 1, mode: window }),
+                Err(EditorError::StaleToken)
+            );
+            e.undo().unwrap();
+            assert_eq!(e.preview(), &windowed);
+            e.undo().unwrap();
+            assert_eq!(e.preview(), &original);
+            e.redo().unwrap();
+            e.redo().unwrap();
+            assert_eq!(e.preview().config().widgets[0].warning.mode, direct);
+        }
+    }
+}
+
+#[test]
+fn review_fixed_graph_raw_fields_keep_their_parent_and_repair_path() {
+    for (field, text) in [(WidgetField::GraphMinimum, "-0.4"), (WidgetField::GraphMaximum, "4.4")] {
+        let mut c = default_config();
+        c.widgets.truncate(1);
+        let (min, max) = Channel::Boost.domain();
+        c.widgets[0].display.graph_range = GraphRange::Fixed { min, max };
+        let mut e = Editor::new(c).unwrap();
+        e.select(Selection {
+            view: 1,
+            widget: Some(1),
+        })
+        .unwrap();
+        let original = e.preview().clone();
+        let old = e.field_token();
+        let raw = RawField::Widget(1, field);
+        e.set_raw(old, raw, "bad".into()).unwrap();
+        let invalid = e.field_token();
+        let rev = e.revision();
+        let history = e.history_len();
+        let mut attempted = e.editing_config().widgets[0].clone();
+        attempted.display.graph_range = GraphRange::Auto;
+        assert_eq!(
+            e.apply_if_current(invalid, Edit::UpdateWidget(attempted.clone())),
+            Err(EditorError::RepairFieldFirst(raw))
+        );
+        assert_eq!(
+            e.editing_config().widgets[0].display.graph_range,
+            GraphRange::Fixed { min, max },
+            "transition must not hide the retained field"
+        );
+        assert_eq!(e.raw_fields()[0].field, raw);
+        assert_eq!(e.raw_fields()[0].text, "bad");
+        assert_eq!(e.revision(), rev);
+        assert_eq!(e.history_len(), history);
+        assert_eq!(e.preview(), &original);
+        assert_eq!(
+            e.apply_if_current(old, Edit::UpdateWidget(attempted.clone())),
+            Err(EditorError::StaleToken)
+        );
+        e.set_raw(e.field_token(), raw, text.into()).unwrap();
+        assert_eq!(e.history_len().0, history.0 + 1);
+        assert!(!e.has_invalid_draft());
+        let repaired = e.preview().clone();
+        assert_eq!(
+            e.apply_if_current(invalid, Edit::UpdateWidget(attempted)),
+            Err(EditorError::StaleToken)
+        );
+        let mut w = e.editing_config().widgets[0].clone();
+        w.display.graph_range = GraphRange::Auto;
+        e.apply(Edit::UpdateWidget(w)).unwrap();
+        e.undo().unwrap();
+        assert_eq!(e.preview(), &repaired);
+        e.undo().unwrap();
+        assert_eq!(e.preview(), &original);
+    }
+}
+
+#[test]
+fn review_fuel_raw_fields_keep_their_variant_and_commit_complete_repairs_once() {
+    let mut common = Blend::illustrative();
+    common.density_reference = DensityReference::CommonCelsius(20.);
+    let mut unknown = common;
+    unknown.density_reference = DensityReference::UnknownAssumed;
+    for (fuel, field, replacement, text) in [
+        (
+            Fuel::Stoichiometric { ratio: 14.7 },
+            FuelField::Ratio,
+            Fuel::EquivalentGasoline,
+            "14.5",
+        ),
+        (
+            Fuel::EthanolBlend(Blend::illustrative()),
+            FuelField::Percent,
+            Fuel::Stoichiometric { ratio: 14.7 },
+            "10",
+        ),
+        (
+            Fuel::EthanolBlend(common),
+            FuelField::ReferenceCelsius,
+            Fuel::EthanolBlend(unknown),
+            "21",
+        ),
+    ] {
+        let mut c = default_config();
+        c.fuel = fuel;
+        let mut e = Editor::new(c).unwrap();
+        let original = e.preview().clone();
+        let old = e.field_token();
+        let raw = RawField::Fuel(field);
+        e.set_raw(old, raw, "bad".into()).unwrap();
+        e.set_raw(e.field_token(), RawField::WarningPageMilliseconds, "bad".into())
+            .unwrap();
+        let invalid = e.field_token();
+        let rev = e.revision();
+        assert_eq!(
+            e.apply_if_current(invalid, Edit::SetFuel(replacement)),
+            Err(EditorError::RepairFieldFirst(raw))
+        );
+        assert_eq!(
+            e.editing_config().fuel,
+            fuel,
+            "transition must not hide the retained fuel field"
+        );
+        assert_eq!(e.revision(), rev);
+        assert_eq!(e.history_len(), (0, 0));
+        assert_eq!(e.preview(), &original);
+        assert_eq!(e.raw_fields().len(), 2);
+        assert_eq!(e.raw_fields()[0].text, "bad");
+        assert_eq!(
+            e.apply_if_current(old, Edit::SetFuel(replacement)),
+            Err(EditorError::StaleToken)
+        );
+        e.set_raw(e.field_token(), raw, text.into()).unwrap();
+        assert_eq!(e.raw_fields()[1].text, "bad");
+        assert!(e.has_invalid_draft());
+        assert_eq!(e.history_len(), (0, 0));
+        e.set_raw(e.field_token(), RawField::WarningPageMilliseconds, "2500".into())
+            .unwrap();
+        assert!(!e.has_invalid_draft());
+        assert_eq!(e.history_len(), (1, 0));
+        let repaired = e.preview().clone();
+        assert_eq!(
+            e.apply_if_current(invalid, Edit::SetFuel(replacement)),
+            Err(EditorError::StaleToken)
+        );
+        e.apply(Edit::SetFuel(replacement)).unwrap();
+        e.undo().unwrap();
+        assert_eq!(e.preview(), &repaired);
+        e.undo().unwrap();
+        assert_eq!(e.preview(), &original);
+    }
+}
+
+#[test]
 fn raw_band_targets_must_exist_before_accepting_the_keystroke() {
     let mut e = Editor::default();
     e.select(Selection {

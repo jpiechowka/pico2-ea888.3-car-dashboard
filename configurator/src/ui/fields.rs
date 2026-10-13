@@ -76,7 +76,7 @@ pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
     let target = move || {
         ui.editor.with(|e| {
             match e.draft_error()? {
-                EditorError::Parse(field) => Some(field_id(field)),
+                EditorError::Parse(field) | EditorError::RepairFieldFirst(field) => Some(field_id(field)),
                 EditorError::Validation(error) => {
                     validation_raw(error).map(field_id).or_else(|| {
                         match error.field {
@@ -399,6 +399,27 @@ pub fn error_text(error: EditorError) -> String {
             format!("{field}: {reason}")
         }
         EditorError::InvalidDraft => "Correct the highlighted fields, or discard the invalid edits first.".into(),
+        EditorError::RepairFieldFirst(field) => {
+            let label = match field {
+                RawField::Widget(_, WidgetField::GraphMinimum) => "Graph minimum",
+                RawField::Widget(_, WidgetField::GraphMaximum) => "Graph maximum",
+                RawField::Fuel(FuelField::Ratio) => "Stoichiometric ratio",
+                RawField::Fuel(FuelField::Percent) => "Ethanol content",
+                RawField::Fuel(FuelField::GasolineRatio) => "Gasoline ratio",
+                RawField::Fuel(FuelField::EthanolRatio) => "Ethanol ratio",
+                RawField::Fuel(FuelField::GasolineDensity) => "Gasoline density",
+                RawField::Fuel(FuelField::EthanolDensity) => "Ethanol density",
+                RawField::Fuel(FuelField::ReferenceCelsius) => "Reference temperature",
+                RawField::Source(_, SourceField::Request) => "Request ID",
+                RawField::Source(_, SourceField::Response) => "Response ID",
+                RawField::Source(_, SourceField::PollMilliseconds) => "Poll period",
+                _ => "the highlighted field",
+            };
+            format!(
+                "Resolve the {label} edit before switching this setting. Repair any other highlighted fields too. Its \
+                 current option and raw input remain available."
+            )
+        }
         EditorError::Parse(
             RawField::Widget(_, WidgetField::Color(_) | WidgetField::BandColor(_))
             | RawField::WarningColor { .. }

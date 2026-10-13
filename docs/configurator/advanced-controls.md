@@ -45,7 +45,12 @@ Warnings retain source, quality, freshness and operating-context gates. High,
 Low, Outside window and Inside window apply to direct rules; lambda retains
 qualified deviation from its verified target and required warm/load/fuel-cut
 context. Choosing a window initializes illustrative channel-domain endpoints;
-configure your own intended thresholds:
+configure your own intended thresholds.
+
+Returning from a window to a direct rule restores that channel's example
+thresholds in the chosen High/Low order. Battery's Low examples remain
+trigger 11.5 V and clear 12.0 V; High uses the reversed pair. These are synthetic
+examples, not recommended vehicle limits.
 
 | Mode | Valid ordering |
 | --- | --- |
@@ -81,8 +86,12 @@ Synthetic controls do not qualify an ECU source or physical device timing.
 
 Rejected edits show **INVALID PREVIEW** and block save/export. Repair the actual
 field, change reference mode/value, remove a band, or add the required control
-route. Other raw text stays visible. Diagnostic rendering bounds numbers and
-geometry while retaining raw RGB565 colours, including unreadable choices.
+route. Other raw text stays visible. Settings that would hide a retained
+graph/fuel input remain on the current
+option until that edit and other invalid fields are repaired. The message names
+the field that needs attention.
+Diagnostic rendering bounds numbers and geometry while retaining raw RGB565
+colours, including unreadable choices.
 Outside-grid placement projects to the nearest valid position, retaining
 size/style; exact attempts and fallbacks are listed. A complete valid repair
 creates one undo entry.

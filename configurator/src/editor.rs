@@ -263,6 +263,7 @@ pub enum EditorError {
     RawTooLong,
     RawCapacity,
     FieldUnavailable,
+    RepairFieldFirst(RawField),
     Parse(RawField),
     SavedVersion,
     Storage(StorageFailure),
@@ -963,15 +964,10 @@ impl Editor {
                         (b, a, d, c)
                     };
                 } else if window(warning.mode) && !window(mode) {
-                    warning.trigger = if mode == LimitMode::Low {
-                        defaults.clear
+                    (warning.trigger, warning.clear) = if mode == defaults.mode {
+                        (defaults.trigger, defaults.clear)
                     } else {
-                        defaults.trigger
-                    };
-                    warning.clear = if mode == LimitMode::Low {
-                        defaults.trigger
-                    } else {
-                        defaults.clear
+                        (defaults.clear, defaults.trigger)
                     };
                     warning.advanced.trigger_high = 0.;
                     warning.advanced.clear_high = 0.;
@@ -987,6 +983,12 @@ impl Editor {
             Edit::SetSource { channel, source } => config.sources[channel.index()] = source,
             Edit::SetFuel(fuel) => config.fuel = fuel,
             Edit::SetWarningPresentation(warnings) => config.warnings = warnings,
+        }
+        // A variant change cannot remove the parent of a retained raw field.
+        // Reject before storing the candidate so its original input, token and
+        // diagnostics remain addressable until the user repairs that field.
+        for input in &self.raw {
+            check_raw_available(&config, input.field).map_err(|_| EditorError::RepairFieldFirst(input.field))?;
         }
         let mut raw_error = None;
         for input in &self.raw {
@@ -1148,6 +1150,30 @@ fn json_error(error: serde_json::Error) -> EditorError {
         line: error.line(),
         column: error.column(),
     })
+}
+
+fn check_raw_available(
+    config: &Config,
+    field: RawField,
+) -> Result<(), EditorError> {
+    // Availability is independent of current selection. Reuse the same target
+    // checks as text entry without treating navigation as a variant change.
+    let selection = match field {
+        RawField::Widget(id, _) => {
+            Selection {
+                view: config.widgets[widget_index(config, id)?].view,
+                widget: Some(id),
+            }
+        }
+        RawField::ViewName(view) => Selection { view, widget: None },
+        _ => {
+            Selection {
+                view: config.boot_view,
+                widget: None,
+            }
+        }
+    };
+    check_raw_target(config, selection, field)
 }
 
 fn check_raw_target(

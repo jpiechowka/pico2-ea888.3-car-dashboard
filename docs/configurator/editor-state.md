@@ -35,6 +35,14 @@ or otherwise invalid raw fields keep layout locked. Each partial repair retires
 stale callbacks without changing accepted bytes/history. See [preview hardening](preview-hardening.md)
 for the inspection-only rendering and safe fallback contract.
 
+A setting switch that would remove the input for a retained raw edit is refused
+before changing its current option. For example, Fixed graph limits remain
+visible until repaired before Automatic can be selected; fuel inputs retain
+their ratio/blend/reference variant while their raw edits await repair. The
+message names the field to resolve. That refused switch preserves revision,
+tokens and history; correcting the complete draft retires earlier callbacks and
+creates the one accepted repair transaction.
+
 Pointer, field, import and save operations carry private owner/revision/request
 tokens. Old callbacks cannot change a newer selection, undo result, imported
 document or replacement editor. A pointer also retains its original pointer ID.
