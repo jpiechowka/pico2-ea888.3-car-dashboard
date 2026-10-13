@@ -271,7 +271,7 @@ pub fn DeviceControls(ui: Ui) -> impl IntoView {
                 }>{Channel::ALL.into_iter().map(|c|view!{<option value=c.index().to_string()>{c.label()}</option>}).collect_view()}</select></label>
                 <output aria-label="History gaps and duration">{move ||sim.with(|s|{
                     let snapshot=s.snapshot();let h=snapshot.sensor(dashboard_core::samples::SensorId::from_channel(channel.get())).history();
-                    format!("{} shared history · {} s · {} / 60 samples · {} gaps",channel.get().label(),h.duration_seconds(),h.count(),60-h.count())
+                    format!("{} shared history · {} s · {} / 60 filled buckets · {} blank / gap buckets",channel.get().label(),h.duration_seconds(),h.count(),60-h.count())
                 })}</output>
                 <ul aria-label="Warning episode state">{move ||sim.with(|s|{
                     let snap=s.snapshot();s.config().config().widgets.iter().enumerate().filter(|(_,w)|w.warning.enabled).map(|(i,w)|{
@@ -332,7 +332,7 @@ pub fn DeviceControls(ui: Ui) -> impl IntoView {
                     <button on:click=move |_|sim.update(|s|s.advance(2500))>"Advance 2.5 s"</button>
                     <button disabled=move || !sim.with(ControlSimulator::reset_pending) on:click=move |_|sim.update(ControlSimulator::acknowledge_reset)>"Acknowledge statistics reset"</button>
                 </div>
-                <small>"Onboard taps and holds use the stored map: Toggle boost units changes the physical-toggle state; Acknowledge warnings uses the last completed Dashboard page. Repeat it before processing to inspect Busy. Debug/Logs retain state readouts; their raster screens are a later workspace capability."</small>
+                <small>"Onboard taps and holds use the stored map: Toggle boost units changes the physical-toggle state; Acknowledge warnings uses the last completed Dashboard page. Repeat it before processing to inspect Busy. Dashboard has a canvas; Debug and Logs show control state here."</small>
             </section>
         </section>
     }
