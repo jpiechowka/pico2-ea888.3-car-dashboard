@@ -190,6 +190,9 @@ pub fn WarningControls(
         <Toggle ui repair_invalid_draft=true label="Latch until acknowledged and cleared" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.warning.advanced.latch)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.warning.advanced.latch=value))/>
         <TextField ui field=RawField::Widget(id,WidgetField::WarningSnoozeSeconds) label="Acknowledgment snooze (seconds)" hint="0 = Off; otherwise 5–900. Acknowledgment suppresses attention for this time, preserving active/latch indication; a new episode interrupts snooze."/>
         <p class="hint">"Enabled latch or snooze requires an onboard Dashboard button bound to Acknowledge warnings in Device controls. Stale latches retain LATCHED / DATA STALE; statistics reset does not acknowledge a warning."</p>
-        <p class="hint">{move ||ui.widget(id).map(|w|format!("Threshold units: {} · canonical domain {} to {}. Display units and smoothing never change these thresholds.",match w.channel{Channel::Boost=>"relative bar",Channel::Battery=>"volts",Channel::Lambda=>"lambda deviation",_=>"°C"},w.channel.domain().0,w.channel.domain().1)).unwrap_or_default()}</p>
+        <p class="hint">{move ||ui.widget(id).map(|w|{
+            let (low,high)=if w.channel==Channel::Lambda{(0.,2.)}else{w.channel.domain()};
+            format!("Threshold units: {} · canonical domain {} to {}. Display units and smoothing never change these thresholds.",match w.channel{Channel::Boost=>"relative bar",Channel::Battery=>"volts",Channel::Lambda=>"lambda deviation",_=>"°C"},low,high)
+        }).unwrap_or_default()}</p>
     }
 }

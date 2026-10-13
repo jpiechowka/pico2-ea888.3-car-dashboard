@@ -34,6 +34,16 @@ fn validation_raw(error: ValidationError) -> Option<RawField> {
                 field: LedField::OnPercent,
             });
         }
+        Field::WarningPage => return Some(RawField::WarningPageMilliseconds),
+        Field::WarningColors => return Some(RawField::WarningColor { foreground: true }),
+        Field::ViewName => return Some(RawField::ViewName(error.view?)),
+        Field::FuelRatio => return Some(RawField::Fuel(FuelField::Ratio)),
+        Field::FuelPercent => return Some(RawField::Fuel(FuelField::Percent)),
+        Field::FuelGasolineRatio => return Some(RawField::Fuel(FuelField::GasolineRatio)),
+        Field::FuelEthanolRatio => return Some(RawField::Fuel(FuelField::EthanolRatio)),
+        Field::FuelGasolineDensity => return Some(RawField::Fuel(FuelField::GasolineDensity)),
+        Field::FuelEthanolDensity => return Some(RawField::Fuel(FuelField::EthanolDensity)),
+        Field::FuelReference => return Some(RawField::Fuel(FuelField::ReferenceCelsius)),
         Field::Smoothing => WidgetField::SmoothingMilliseconds,
         Field::PeakHold => WidgetField::PeakHoldMilliseconds,
         Field::Reference => WidgetField::Reference,
@@ -50,6 +60,8 @@ fn validation_raw(error: ValidationError) -> Option<RawField> {
         Field::WarningOn => WidgetField::WarningOn,
         Field::WarningOff => WidgetField::WarningOff,
         Field::WarningMessage => WidgetField::WarningMessage,
+        Field::WarningLoad => WidgetField::WarningLoad,
+        Field::GraphRange => WidgetField::GraphMinimum,
         Field::Color(role) => WidgetField::Color(role),
         Field::GaugeRange => WidgetField::GaugeMinimum,
         Field::Label => WidgetField::Label,
@@ -83,6 +95,9 @@ pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
     view! { <button hidden=move ||target().is_none() on:click=move |_| {
         if let Some(target) = target() {
             if target == "control-routes" { ui.global_tab.set("controls"); }
+            if target.contains("field-led-") {ui.global_tab.set("led");}
+            if target.contains("field-warning") {ui.global_tab.set("warnings");}
+            if target.contains("field-fuel") {ui.global_tab.set("fuel");}
             leptos::leptos_dom::helpers::request_animation_frame(move ||{
                 if let Some(element)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&target)).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()) {
                     if let Ok(Some(details))=element.closest("details") { let _=details.set_attribute("open",""); }
@@ -353,7 +368,8 @@ pub fn error_text(error: EditorError) -> String {
                 }
                 ErrorCode::Overlap => "Widgets overlap. Choose free cells or a smaller size.",
                 ErrorCode::Text if matches!(e.field, Field::BandLabel(_)) => {
-                    "Use 0–5 printable ASCII characters. Empty is allowed; a nonempty label cannot be only spaces."
+                    "Use 0–5 printable ASCII characters. Empty is allowed; a nonempty label cannot be only spaces. The \
+                     invalid preview keeps the last bounded label; exact typed text stays here."
                 }
                 ErrorCode::Text => "Use nonempty printable ASCII within the shown character limit.",
                 ErrorCode::Hysteresis => {

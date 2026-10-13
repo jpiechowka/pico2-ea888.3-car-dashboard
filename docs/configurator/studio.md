@@ -38,7 +38,8 @@ action catalogue and offer only compatible assignments. Ordinary holds accept
 selected view and Full brightness on every screen. The panel lists onboard
 navigation routes; an encoder cannot satisfy the screen/view fallback checks.
 Invalid mappings remain editable, with linked errors, while save/export stay
-blocked. Correct hold text before applying a mapping if that text cannot parse.
+blocked. Mapping repairs retain incomplete hold text and its parse blocker until
+corrected; they cannot silently clear unrelated raw input.
 
 The control simulator runs deterministic press/debounce/release traces through
 the firmware's shared gestures and action dispatcher. Its readout shows page,
@@ -49,7 +50,9 @@ uses synthetic completed presentations, including its clear phase. Changing
 the accepted configuration restarts the simulator explicitly; navigating device
 pages retains view/units/FPS choices. Rejected bindings are inspection only under
 **INVALID SIMULATION**, with the accepted layout and protected recovery. This
-stage provides a state readout; full simulated screen pixels are a later stage.
+stage also offers a persistent Dashboard timing canvas with explicit submit and
+completion, sample/fault/stale/recovery controls, shared-history gaps/duration,
+and warning latch/acknowledgment state. Debug/Logs raster is a later stage.
 
 1. Start with Overview or add an empty view. Name it using 1–14 printable ASCII
    characters. Reorder view tabs using the arrows; that is the Pico encoder order.
@@ -85,8 +88,10 @@ stage provides a state readout; full simulated screen pixels are a later stage.
 
 The [gauge and colour guide](gauges-and-colours.md) describes fixed/expanding
 scales, per-style capabilities, RGB565 validation and the shared preview/device
-renderer. Version 1 documents import through explicit migration; new exports
-use version 2 and require matching firmware.
+renderer. Historical v1/v2/v3 documents import through explicit migration; local
+exports use the complete v4 schema, with release integration pending. See
+[advanced controls](advanced-controls.md) for units, smoothing, history, bands,
+markers, priorities/latch/snooze and the RGB indicator panel.
 
 The grid has four columns and two rows. Up to eight named views and 64 total
 widgets are supported. Overlaps, unsupported glyphs, inconsistent limits,
@@ -99,15 +104,17 @@ Size, Column, Row and Remove widget can repair rejected layouts in steps. Right
 click (or Shift+F10) opens Move left/right/up/down and Delete. The menu also lists
 widgets under that point, including a fully covered widget; select one to raise
 its drag target. Movement keys stop at the grid boundary. Save/export remain
-blocked until the entire draft validates. Correct raw text before moving widgets,
-or use **Discard invalid edits**. Rejected source and other non-layout choices
-still require discard before changing those settings.
+blocked until the entire draft validates. Incomplete or otherwise invalid raw
+fields keep layout locked; field/options and control-route repairs remain
+available and preserve unrelated raw text. Parsed fields awaiting only placement
+repair permit layout repair. **Discard invalid edits** restores accepted state.
 Undo/redo restores accepted edits after the invalid draft is resolved.
 
 Diagnostics are deliberately approximate: numeric/style errors use bounded
 fallbacks, source/fuel calculations use the accepted document, and warnings are
 suspended. Unsupported glyphs become `?`; bounded label prefixes are clipped.
-Off-screen placements are described instead of rendered. The invalid watermark
+Off-screen positions project to the nearest valid grid position, preserving
+size/style; the exact attempted position and fallback are described. The invalid watermark
 is embedded in the canvas pixels, and badges are browser overlays. No invalid
 draft is saved, exported or passed to the firmware configuration parser.
 

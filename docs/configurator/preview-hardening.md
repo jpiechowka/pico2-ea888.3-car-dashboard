@@ -53,12 +53,17 @@ sensor acquisition and undo history. Raw fields and rejected typed edits have
 separate storage. Every invalid edit retires pending field/pointer/save/import
 callbacks. No raw or rejected configuration is converted to `ValidatedConfig`.
 
-For inspection, each in-bounds widget is validated in isolation. Decimal counts
+For inspection, each widget is projected to bounded grid geometry and validated
+in isolation. Outside-grid positions clamp to the nearest valid position while
+retaining size/style, with explicit fallback descriptions. Decimal counts
 above three are capped, invalid fixed graph ranges become Auto, unsupported AFR
 is disabled, and warning simulation is suspended. Accepted source/fuel settings
 are retained. Raw labels use at most 54 characters (view names 34), substitute
 unsupported glyphs, then clip to their own lane. Exact rejected inputs and
-global choices are listed in a wrapping, scrollable diagnostic panel.
+global choices are listed in a wrapping, scrollable diagnostic panel. Advanced
+readout, smoothing, hold, reference and band bounds/order use named safe
+fallbacks. Raw RGB565 widget and band colours cross a separate diagnostic-only
+override, so invalid contrast remains inspectable without weakening validation.
 
 Both participants of overlaps are marked. Overlap can obscure content, as on a
 screen; the marked placement and attempted size remain inspectable. Out-of-bounds

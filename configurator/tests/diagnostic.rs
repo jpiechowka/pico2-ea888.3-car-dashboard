@@ -3,6 +3,25 @@ use dashboard_configurator::editor::*;
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 
 #[test]
+fn invalid_typed_shared_history_marks_associated_widgets_and_lists_the_attempt() {
+    let mut e = selected();
+    assert!(
+        e.apply(Edit::SetHistory {
+            channel: Channel::Boost,
+            seconds: 999
+        })
+        .is_err()
+    );
+    let d = e.diagnostic().unwrap();
+    assert!(d.affected(e.preview(), 1).contains(&1));
+    assert!(
+        d.descriptions(e.preview())
+            .iter()
+            .any(|s| s.contains("999") && s.contains("history"))
+    );
+}
+
+#[test]
 fn invalid_advanced_fields_keep_the_rejected_tile_inspectable() {
     let mut editor = selected();
     let mut w = editor.preview().config().widgets[0].clone();

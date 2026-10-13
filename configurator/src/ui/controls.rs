@@ -276,7 +276,7 @@ pub fn DeviceControls(ui: Ui) -> impl IntoView {
                 <ul aria-label="Warning episode state">{move ||sim.with(|s|{
                     let snap=s.snapshot();s.config().config().widgets.iter().enumerate().filter(|(_,w)|w.warning.enabled).map(|(i,w)|{
                         let e=snap.warning_eligibility(dashboard_core::alarms::RuleIndex::new(i).expect("bounded widget"),s.now_ms());
-                        view!{<li>{format!("{} · {}{}{}",w.label,e.label(),if e.snoozed{" · SNOOZED"}else{""},if e.latched{" · LATCHED"}else{""})}</li>}
+                        view!{<li>{format!("{} · {}{}{}",w.label,e.label(),if e.snoozed{" · SNOOZED"}else{""},if e.latched && !e.label().contains("LATCHED"){" · LATCHED"}else{""})}</li>}
                     }).collect_view()
                 })}</ul>
                 <output aria-label="Warning acknowledgment state">{move ||sim.with(|s| match s.session().popup(){

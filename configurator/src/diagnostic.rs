@@ -48,6 +48,9 @@ impl Draft {
                     || (w.channel == Channel::Lambda && self.config.fuel != accepted.config().fuel)
                     || self.config.sources[w.channel.index()] != accepted.config().sources[w.channel.index()]
                     || self.config.warnings != accepted.config().warnings
+                    || self.config.history_seconds[w.channel.index()]
+                        != accepted.config().history_seconds[w.channel.index()]
+                    || self.config.reduced_motion != accepted.config().reduced_motion
                     || self.config.views.iter().find(|v| v.id == w.view)
                         != accepted.config().views.iter().find(|v| v.id == w.view)
                     || self.raw.iter().any(|input| {
@@ -154,6 +157,14 @@ impl Draft {
             lines.push(format!("Warning presentation: {:?}", self.config.warnings));
         }
         for channel in Channel::ALL {
+            if self.config.history_seconds[channel.index()] != accepted.config().history_seconds[channel.index()] {
+                lines.push(format!(
+                    "{} shared history: {} seconds; diagnostic uses the last accepted {} seconds.",
+                    channel.label(),
+                    self.config.history_seconds[channel.index()],
+                    accepted.config().history_seconds[channel.index()]
+                ));
+            }
             if self.config.sources[channel.index()] != accepted.config().sources[channel.index()] {
                 lines.push(format!(
                     "{} source: {:?}",
@@ -161,6 +172,18 @@ impl Draft {
                     self.config.sources[channel.index()]
                 ));
             }
+        }
+        if self.config.led != accepted.config().led {
+            lines.push(format!(
+                "RGB indicator settings: {:?}; live timing uses the accepted settings until repair.",
+                self.config.led
+            ));
+        }
+        if self.config.reduced_motion != accepted.config().reduced_motion {
+            lines.push(format!(
+                "Reduced motion: {}; diagnostic uses the accepted global motion setting.",
+                self.config.reduced_motion
+            ));
         }
         for view in &self.config.views {
             if accepted.config().views.iter().find(|v| v.id == view.id) != Some(view) {
