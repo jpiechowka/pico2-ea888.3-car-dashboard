@@ -51,7 +51,7 @@ fn statistic_reset_preserves_current_and_rejects_duplicate_repopulation() {
         (Some(-14.0), Some(-14.0), Some(-14.0))
     );
     assert_eq!(state.get_average(), None);
-    assert_eq!(state.get_graph_data().2, 0);
+    assert_eq!(state.history().count(), 0);
     assert_eq!(state.get_trend(), None);
     assert!(!state.is_new_peak);
     assert!(!state.ingest(-10.0, 6_000, PeakMode::Maximum));

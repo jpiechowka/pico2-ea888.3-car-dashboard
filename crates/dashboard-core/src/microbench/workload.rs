@@ -27,7 +27,7 @@ impl Kernel {
             Self::Clear => 3402950085,
             Self::Clipped => 4004879533,
             Self::GraphWidget => 3907113197,
-            Self::History => 1850849861,
+            Self::History => 2271814903,
         }
     }
 }
@@ -132,7 +132,8 @@ impl Fixture {
         };
         if kind == Kernel::History {
             let s = self.history.snapshot();
-            let (graph, start, count, min, max) = s.get_graph_data();
+            let history = s.history();
+            let (min, max) = history.bounds().ok_or(Error::Checksum)?;
             let values = [
                 s.value(),
                 s.minimum(),
@@ -147,16 +148,20 @@ impl Fixture {
                 }
             }
             for v in [
-                start as u32,
-                count as u32,
+                history.newest_ordinal() as u32,
+                history.count() as u32,
                 s.sampled_at_ms().ok_or(Error::Checksum)? as u32,
             ] {
                 for byte in v.to_le_bytes() {
                     append(byte);
                 }
             }
-            for i in 0..count {
-                for byte in graph[(start + i) % 60].to_bits().to_le_bytes() {
+            for (at, value) in history.iter() {
+                for byte in at.to_le_bytes() {
+                    append(byte);
+                }
+                append(u8::from(value.is_some()));
+                for byte in value.unwrap_or(0.0).to_bits().to_le_bytes() {
                     append(byte);
                 }
             }

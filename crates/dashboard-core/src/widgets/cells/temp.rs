@@ -5,7 +5,7 @@ use embedded_graphics::text::Text;
 
 use super::{SensorDisplayData, label_color_for_bg, label_style_for_text, peak_highlight_for_text};
 use crate::ui::{BLACK, CENTERED, LABEL_FONT, ORANGE, VALUE_FONT, VALUE_FONT_MEDIUM, WHITE};
-use crate::widgets::primitives::{draw_cell_background, draw_mini_graph, draw_trend_arrow, draw_value_with_outline};
+use crate::widgets::primitives::{draw_cell_background, draw_history_graph, draw_trend_arrow, draw_value_with_outline};
 
 const TEMP_LARGE_VALUE_THRESHOLD: f32 = 999.5;
 
@@ -77,18 +77,14 @@ where
     let graph_x = x as i32 + 8;
 
     let graph_line_color = base_text;
-    draw_mini_graph(
+    draw_history_graph(
         display,
         graph_x,
         graph_y,
         graph_w,
         graph_h,
-        state.graph_buffer,
-        state.graph_buffer_size,
-        state.graph_start_idx,
-        state.graph_count,
-        state.graph_min,
-        state.graph_max,
+        state.history,
+        state.history.bounds(),
         |_| graph_line_color,
     );
 

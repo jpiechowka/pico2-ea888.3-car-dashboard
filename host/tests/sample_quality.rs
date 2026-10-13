@@ -89,7 +89,25 @@ fn faults_suppress_values_preserve_statistics_and_recover_only_with_a_new_valid_
     );
     assert_eq!(model.snapshot().quality(SensorId::Water, 30), Quality::InvalidPayload);
     assert_eq!(model.snapshot().value_at(SensorId::Water, 30), None);
-    assert_eq!(*model.snapshot().sensor(SensorId::Water), before);
+    let snapshot = model.snapshot();
+    let after = snapshot.sensor(SensorId::Water);
+    assert_eq!(
+        (
+            after.value(),
+            after.minimum(),
+            after.maximum(),
+            after.get_average(),
+            after.sampled_at_ms()
+        ),
+        (
+            before.value(),
+            before.minimum(),
+            before.maximum(),
+            before.get_average(),
+            before.sampled_at_ms()
+        )
+    );
+    assert_eq!(after.history().bounds(), None);
     assert!(!model.mark_fault(SensorId::Water, Quality::Valid, 31));
     assert!(!model.mark_fault(SensorId::Water, Quality::TransportError, 29));
     assert!(model.mark_fault(SensorId::Water, Quality::TransportError, 40));

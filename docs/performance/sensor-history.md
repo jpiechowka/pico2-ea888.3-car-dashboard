@@ -15,7 +15,7 @@ reject non-advancing millisecond timestamps.
 
 | Statistic | Provisional wall-clock rule | Value policy |
 | --- | --- | --- |
-| Graph | At most one point per 2,000 ms; 60 points | Latest accepted value at or after the due time; no gap backfill |
+| Graph | 60 timed buckets across the channel's selected 10-900 s duration (default 120 s) | Last qualified observation in each bucket; absent buckets break the line |
 | Average | At most one point per 5,000 ms; 60 points | Sample-weighted mean of those accepted points |
 | Trend | At most one point per 200 ms; 50 points | Compare accepted points aged 0-2 s with those aged >2-4 s; no arrow without both windows |
 | Peak highlight | 750 ms from the measurement timestamp | Expires even if no new measurement arrives |
@@ -26,18 +26,40 @@ value, extrema and history share one acceptance check. The maximum, range and
 no-highlight policies are explicit. A reset retains the current value, seeds
 extrema from it, empties the average, graph and trend, and clears the peak
 highlight; the next **new** sample
-starts each window. A long gap inserts at most one point when measurements
-resume. The graph's horizontal spacing therefore represents accepted points,
-not elapsed time across a gap. Current source freshness suppresses stale values
+starts each window. Every widget of a channel borrows the same canonical history,
+including widgets with different display units. The graph reserves sixty positions
+across the selected duration and labels that duration while filling. A slow sensor
+can leave gaps at short durations. No observation is held, interpolated or copied
+into missing buckets; raw extrema and peak processing still see every sample.
+
+The producer's existing tick advances history even without measurements. It clears
+at most sixty slots after a stall, never loops through every missed interval, and
+uses quotient/remainder arithmetic in both timestamp directions. HistoryView
+returns bucket times and Option values, with Option bounds over valid buckets only.
+A single point is visible; segments join adjacent valid buckets only. Faults and
+freshness loss break connectivity. Recovery within the same bucket can replace that
+bucket, so invalidating an outage also deliberately discards at most one preceding
+valid point. Older qualified history then ages out normally. New source/configuration
+owners, time regression and statistics reset clear the window; changing duration
+clears history without resetting independent extrema or averages.
+
+Publication uses the acquisition owner's private run identity and a separate checked
+revision, independent of raw sample sequence and reset generation. Timer-only scrolling,
+peak expiry and alarm output changes therefore reach both retained framebuffers without
+advancing per-sensor identity or warning dwell. After revision/issuer exhaustion,
+transport deduplication is conservatively disabled while state remains live. Graph
+cache revisions include scrolling, validity, replacement and reset changes; exhaustion
+also disables graph reuse. Browser Appearance labels its generated history and still
+performs a fixed 60+1 synthetic observations through a private shared acquisition owner;
+Simulation keeps its persistent owner. Current source freshness suppresses stale values
 and alerts. The temperature trend uses the existing 0.5 C threshold; EGT uses
 5 C, battery 0.05 V and lambda 0.1. These are display-arrow
 sensitivity settings, not validated vehicle alarm thresholds.
 
-Nine host tests cover 20/40/60 Hz and irregular render ticks, duplicate and
-regressed timestamps, nonfinite samples, an empty interval, graph-ring wrap and
-negative-minimum eviction, average-ring eviction, peak expiry, late samples,
-reset and source-specific
-trend sensitivity. They are model tests from the stage 03 checkpoint. The
+Focused host tests cover rendering schedules, duplicate/regressed timestamps,
+nonfinite samples, explicit fault gaps, negative bounds/eviction, all duration presets,
+a custom 137 s duration, u64 timestamp boundaries, fixed work after day-long stalls,
+publication exhaustion, average/peak independence and canonical dual-unit history. The
 subsequent acquisition-owner tests cover real Watch coalescing without losing
 between-frame statistics. Physical acquisition and interrupt behavior remain
 unverified.

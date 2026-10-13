@@ -300,16 +300,10 @@ fn display_data(
     state: &SensorSnapshot,
     now_ms: u64,
 ) -> SensorDisplayData<'_> {
-    let (buffer, start_idx, count, min, max) = state.get_graph_data();
     SensorDisplayData {
         trend: state.get_trend_at(now_ms),
         is_new_peak: state.is_new_peak_at(now_ms),
-        graph_buffer: buffer,
-        graph_buffer_size: crate::sensor_state::GRAPH_HISTORY_SIZE,
-        graph_start_idx: start_idx,
-        graph_count: count,
-        graph_min: min,
-        graph_max: max,
+        history: state.history(),
         average: state.get_average(),
     }
 }

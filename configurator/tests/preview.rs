@@ -168,7 +168,10 @@ fn preview_reuses_complete_buffers_and_populates_only_demo_histories() {
             assert_eq!(snapshot.metadata[sensor as usize].source, Source::Demo);
             assert_eq!(snapshot.quality(sensor, now), Quality::Valid);
             let state = &snapshot.sensors[sensor as usize];
-            assert_eq!(state.get_graph_data().2, 60);
+            assert_eq!(
+                state.history().count(),
+                if sensor.stale_after_ms() < 2000 { 1 } else { 60 }
+            );
             assert!(state.get_average().is_some());
             assert!(state.minimum().is_some());
             assert!(state.maximum().is_some());
@@ -635,7 +638,7 @@ fn simulation_preview_borrows_persistent_samples_and_uses_real_dwell() {
         );
     }
     assert!(preview.warning_page().is_some());
-    assert_eq!(preview.snapshot().unwrap().sensors[0].get_graph_data().2, 1);
+    assert_eq!(preview.snapshot().unwrap().sensors[0].history().count(), 1);
     sim.advance_to(start + 1_000_000, None);
     preview.render_simulation(&sim).unwrap();
     assert_eq!(preview.snapshot().unwrap().sequence, 3);
@@ -644,4 +647,38 @@ fn simulation_preview_borrows_persistent_samples_and_uses_real_dwell() {
         .render_appearance(sim.config(), 1, PreviewOptions::default())
         .unwrap();
     assert_eq!(preview.mode(), PreviewMode::Appearance);
+}
+
+#[test]
+fn appearance_history_stays_fixed_work_for_every_duration_and_has_its_own_origin() {
+    use dashboard_core::acquisition::AcquisitionModel;
+    for seconds in [10, 30, 60, 120, 300, 600, 900, 137] {
+        let mut raw = default_config();
+        raw.history_seconds = [seconds; 8];
+        let cfg = validate(raw).unwrap();
+        let mut live = AcquisitionModel::demo_configured(&cfg);
+        live.ingest_batch([1.; 8], 0);
+        let live_snapshot = live.snapshot();
+        let mut preview = Preview::new();
+        preview.render_appearance(&cfg, 1, PreviewOptions::default()).unwrap();
+        assert_eq!(preview.mode(), PreviewMode::Appearance);
+        let generated = preview.snapshot().unwrap();
+        assert_eq!(generated.sequence, 61, "fixed 60+1 synthetic observations");
+        for i in 0..8 {
+            let history = generated.sensors[i].history();
+            assert_eq!(history.duration_seconds(), seconds);
+            assert!(history.iter().count() <= 60);
+            assert!(history.iter().any(|(_, value)| value.is_some()));
+            assert_ne!(
+                generated.sensors[i].graph_cache_identity(),
+                live_snapshot.sensors[i].graph_cache_identity()
+            );
+        }
+        if seconds == 10 {
+            assert!(
+                generated.sensors[1].history().iter().any(|(_, value)| value.is_none()),
+                "sparse synthetic readings are not backfilled"
+            );
+        }
+    }
 }

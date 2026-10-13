@@ -69,7 +69,7 @@ fn WidgetInspector(
             </Show>
             <TextField ui field=RawField::Widget(id,WidgetField::Decimals) label="Decimal places" hint="0–3; units stay canonical in rules"/>
             <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
-            {flag(ui,id,"History graph",|d|d.graph,|d,v|d.graph=v)}
+            <span title="History keeps the last qualified reading in each of 60 timed buckets. Slow sensors can leave gaps; no values are backfilled. Faults can discard one preceding point to show a brief outage. This is a trend view, not a lossless waveform or peak recorder.">{flag(ui,id,"History graph",|d|d.graph,|d,v|d.graph=v)}</span>
             </Show>
             <Show when=move ||ui.widget(id).is_some_and(|w|w.supports_statistics())>
             {flag(ui,id,"Average",|d|d.average,|d,v|d.average=v)}

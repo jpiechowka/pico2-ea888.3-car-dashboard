@@ -468,6 +468,13 @@ fn every_span_and_display_option_stays_inside_its_declared_rectangle() {
                 widget.display.extrema = flags & 4 != 0;
                 widget.display.trend = flags & 8 != 0;
                 widget.display.afr = channel == Channel::Lambda && flags & 16 != 0;
+                if channel == Channel::Lambda {
+                    widget.advanced.readout = if widget.display.afr {
+                        dashboard_host_validation::view_config::Readout::LambdaAndAfr
+                    } else {
+                        dashboard_host_validation::view_config::Readout::Lambda
+                    };
+                }
                 config.widgets.push(widget).unwrap();
                 let config = validate(config).unwrap();
                 let scene = DashboardScene {
@@ -512,6 +519,7 @@ fn cache_repairs_empty_views_and_reused_ids_with_changed_options() {
     let mut configs = vec![validate(default_config()).unwrap()];
     let mut changed = default_config();
     changed.widgets[1].display.afr = false;
+    changed.widgets[1].advanced.readout = dashboard_host_validation::view_config::Readout::Lambda;
     changed.widgets[1].display.graph = false;
     changed.widgets[1].label = "RENAMED".try_into().unwrap();
     configs.push(validate(changed).unwrap());

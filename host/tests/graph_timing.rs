@@ -61,10 +61,11 @@ fn coalesced_graph_history_and_both_buffers_match_literal_points_after_a_long_di
                 }
             }
         }
-        let (values, start, count, min, max) = displayed.sensor(SensorId::Oil).get_graph_data();
-        assert_eq!((count, min, max), (60, 6.0, 124.0));
-        let actual: Vec<_> = (0..count).map(|i| values[(start + i) % 60]).collect();
-        let expected: Vec<_> = (6..=124).step_by(2).map(|value| value as f32).collect();
+        let history = displayed.sensor(SensorId::Oil).history();
+        assert_eq!((history.count(), history.bounds()), (60, Some((7.9, 124.0))));
+        let actual: Vec<_> = history.iter().filter_map(|(_, v)| v).collect();
+        let mut expected: Vec<_> = (6..124).step_by(2).map(|v| v as f32 + 1.9).collect();
+        expected.push(124.0);
         assert_eq!(actual, expected);
         assert!(frames[0].0 == frames[1].0, "both old buffers must converge after stall");
         // Independent pixel oracle: oil cell starts at (0,133), its center
@@ -88,10 +89,9 @@ fn irregular_acquisition_selects_real_samples_without_backfill_or_fps_ticks() {
         state.tick(at);
     }
     assert!(!state.update_at(99.0, false, 100_000));
-    let (values, start, count, ..) = state.get_graph_data();
-    assert_eq!(start, 0);
-    assert_eq!(count, 4);
-    assert_eq!(&values[..4], &[1.0, 3.0, 5.0, 9.0]);
+    let actual: Vec<_> = state.history().iter().filter_map(|(_, v)| v).collect();
+    assert_eq!(actual, [2.0, 3.0, 5.0, 9.0]);
+    assert!(state.history().iter().any(|(_, v)| v.is_none()));
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn graph_identity_tracks_only_history_changes_and_reset_not_display_ticks() {
     model.ingest_batch([1.0; 8], 0);
     let first = model.snapshot().sensors[0].graph_cache_identity();
     model.ingest_batch([2.0; 8], 1000);
-    assert_eq!(model.snapshot().sensors[0].graph_cache_identity(), first);
+    assert_ne!(model.snapshot().sensors[0].graph_cache_identity(), first);
     model.ingest_batch([3.0; 8], 2000);
     let sampled = model.snapshot().sensors[0].graph_cache_identity();
     assert_ne!(sampled, first);
@@ -108,4 +108,80 @@ fn graph_identity_tracks_only_history_changes_and_reset_not_display_ticks() {
     assert_eq!(model.snapshot().sensors[0].graph_cache_identity(), sampled);
     model.reset_statistics(1);
     assert_ne!(model.snapshot().sensors[0].graph_cache_identity(), sampled);
+}
+
+#[test]
+fn timed_graph_connects_only_adjacent_buckets_and_draws_isolated_points() {
+    use dashboard_host_validation::history::History;
+    use dashboard_host_validation::widgets::primitives::draw_history_graph;
+    let mut history = History::new(10);
+    history.observe(1.0, 9500); // bucket57
+    history.observe(1.0, 9667); // bucket58
+    history.advance(9834); // bucket59, absent
+    let mut frame = AlignedFrame::boxed();
+    draw_history_graph(
+        &mut St7789Renderer::new(&mut frame.0),
+        0,
+        0,
+        240,
+        30,
+        history.view(),
+        history.view().bounds(),
+        |_| colors::WHITE,
+    );
+    // Width236, 59 intervals: quotient/remainder positions 229,233,237. y=11.
+    assert_eq!(frame.pixel(229, 11), 0xFFFF);
+    assert_eq!(frame.pixel(231, 11), 0xFFFF, "adjacent buckets form a segment");
+    assert_eq!(frame.pixel(236, 11), 0, "missing newest bucket is blank");
+    history.invalidate(9835);
+    history.observe(1.0, 9836); // recovery leaves bucket58 blank
+    let mut gap = AlignedFrame::boxed();
+    draw_history_graph(
+        &mut St7789Renderer::new(&mut gap.0),
+        0,
+        0,
+        240,
+        30,
+        history.view(),
+        history.view().bounds(),
+        |_| colors::WHITE,
+    );
+    assert_eq!(gap.pixel(229, 11), 0xFFFF);
+    assert_eq!(gap.pixel(233, 11), 0, "fault breaks connectivity");
+    assert_eq!(gap.pixel(237, 11), 0xFFFF, "single newest point remains visible");
+}
+
+#[test]
+fn timer_scrolls_repeated_values_in_both_retained_buffers() {
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.0; 8], 0);
+    model.ingest_batch([1.0; 8], 2000);
+    let mut cache = DashboardCache::new();
+    let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+    let before = model.snapshot();
+    for now in [2000, 4000] {
+        model.tick(now);
+        let snapshot = model.snapshot();
+        let scene = DashboardScene {
+            layout: None,
+            measurements: &snapshot,
+            status: VehicleStatus::Demo,
+            now_ms: now,
+            blink_on: true,
+            boost_psi: false,
+            fps_mode: FpsMode::Off,
+            fps_instant: 0.0,
+            fps_average: 0.0,
+            backgrounds: [colors::BLACK; 8],
+            overlay: None,
+        };
+        for (buffer, frame) in frames.iter_mut().enumerate() {
+            cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
+        }
+        assert!(frames[0].0 == frames[1].0);
+        // Oil's newest graph point moves left when the new bucket is absent.
+        assert_eq!(frames[0].pixel(69, 196), if now == 2000 { 0xFFFF } else { 0 });
+        assert_eq!(snapshot.sequence, before.sequence);
+        assert_eq!(snapshot.sensor(SensorId::Oil).value(), Some(1.0));
+    }
 }

@@ -150,6 +150,14 @@ impl<'a> Session<'a> {
 
     pub fn snapshot(&self) -> DashboardSnapshot { self.model.snapshot() }
 
+    /// Presentation advances even when transport is offline or parked.
+    pub fn tick_measurements(
+        &mut self,
+        now: u64,
+    ) {
+        self.model.tick(now);
+    }
+
     pub const fn counters(&self) -> Counters { self.counters }
 
     /// Lifetime counters, including discovery pages, retained across epochs.
@@ -318,6 +326,7 @@ impl<'a> Session<'a> {
         &mut self,
         now: u64,
     ) -> Result<(), SessionError> {
+        self.tick_measurements(now);
         self.clock(now)?;
         let result = self.client.tick(now);
         let event = self.client_result(result, now)?;

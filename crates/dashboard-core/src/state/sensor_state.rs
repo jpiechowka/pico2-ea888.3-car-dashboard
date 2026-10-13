@@ -1,4 +1,5 @@
 use super::extrema::{Extrema, valid_sample};
+use super::history::{History, HistoryData, HistoryView};
 use crate::config::{HISTORY_SIZE, TREND_THRESHOLD};
 
 /// Exact graph proof, issued only by the acquisition owner. Channel participates
@@ -41,11 +42,7 @@ pub struct SensorSnapshot {
     trend: Option<bool>,
     sampled_at_ms: Option<u64>,
     peak_until_ms: Option<u64>,
-    graph: [f32; GRAPH_HISTORY_SIZE],
-    graph_start: usize,
-    graph_count: usize,
-    graph_min: f32,
-    graph_max: f32,
+    graph: HistoryData,
     graph_identity: Option<GraphCacheIdentity>,
 }
 
@@ -63,10 +60,6 @@ impl PartialEq for SensorSnapshot {
             && self.sampled_at_ms == other.sampled_at_ms
             && self.peak_until_ms == other.peak_until_ms
             && self.graph == other.graph
-            && self.graph_start == other.graph_start
-            && self.graph_count == other.graph_count
-            && self.graph_min == other.graph_min
-            && self.graph_max == other.graph_max
     }
 }
 
@@ -79,11 +72,7 @@ impl SensorSnapshot {
         trend: None,
         sampled_at_ms: None,
         peak_until_ms: None,
-        graph: [0.0; GRAPH_HISTORY_SIZE],
-        graph_start: 0,
-        graph_count: 0,
-        graph_min: f32::MAX,
-        graph_max: f32::MIN,
+        graph: HistoryData::EMPTY,
         graph_identity: None,
     };
 
@@ -130,15 +119,7 @@ impl SensorSnapshot {
         self.sampled_at_ms.is_some_and(|at| at <= now_ms) && self.peak_until_ms.is_some_and(|until| now_ms < until)
     }
 
-    pub fn get_graph_data(&self) -> (&[f32; GRAPH_HISTORY_SIZE], usize, usize, f32, f32) {
-        (
-            &self.graph,
-            self.graph_start,
-            self.graph_count,
-            self.graph_min,
-            self.graph_max,
-        )
-    }
+    pub fn history(&self) -> HistoryView<'_> { self.graph.view() }
 }
 
 pub struct SensorState {
@@ -162,13 +143,7 @@ pub struct SensorState {
     avg_sum: f32,
     avg_last_sample_ms: Option<u64>,
 
-    graph_buffer: [f32; GRAPH_HISTORY_SIZE],
-    graph_index: usize,
-    graph_count: usize,
-    graph_last_sample_ms: Option<u64>,
-    graph_min: f32,
-    graph_max: f32,
-    graph_revision: Option<u32>,
+    graph: History,
 }
 
 impl SensorState {
@@ -177,12 +152,10 @@ impl SensorState {
         &mut self,
         revision: u32,
     ) {
-        self.graph_revision = Some(revision);
+        self.graph.force_revision(revision);
     }
 
-    pub(crate) const fn graph_revision(&self) -> Option<u32> { self.graph_revision }
-
-    fn advance_graph(&mut self) { self.graph_revision = self.graph_revision.and_then(|r| r.checked_add(1)); }
+    pub(crate) const fn graph_revision(&self) -> Option<u32> { self.graph.revision() }
 
     pub const fn new() -> Self {
         Self {
@@ -203,13 +176,7 @@ impl SensorState {
             avg_count: 0,
             avg_sum: 0.0,
             avg_last_sample_ms: None,
-            graph_buffer: [0.0; GRAPH_HISTORY_SIZE],
-            graph_index: 0,
-            graph_count: 0,
-            graph_last_sample_ms: None,
-            graph_min: f32::MAX,
-            graph_max: f32::MIN,
-            graph_revision: Some(0),
+            graph: History::new(120),
         }
     }
 
@@ -224,7 +191,7 @@ impl SensorState {
         origin: Option<core::num::NonZeroU32>,
         channel: dashboard_config::Channel,
     ) -> SensorSnapshot {
-        let identity = origin.zip(self.graph_revision).map(|(origin, revision)| {
+        let identity = origin.zip(self.graph.revision()).map(|(origin, revision)| {
             GraphCacheIdentity {
                 origin,
                 revision,
@@ -238,7 +205,6 @@ impl SensorState {
         &self,
         graph_identity: Option<GraphCacheIdentity>,
     ) -> SensorSnapshot {
-        let (graph, graph_start, graph_count, graph_min, graph_max) = self.get_graph_data();
         SensorSnapshot {
             value: self.value,
             minimum: self.minimum(),
@@ -247,11 +213,7 @@ impl SensorState {
             trend: self.get_trend(),
             sampled_at_ms: self.last_sample_ms,
             peak_until_ms: self.peak_until_ms,
-            graph: *graph,
-            graph_start,
-            graph_count,
-            graph_min,
-            graph_max,
+            graph: self.graph.data(),
             graph_identity,
         }
     }
@@ -316,10 +278,7 @@ impl SensorState {
             self.avg_last_sample_ms = Some(sampled_at_ms);
         }
 
-        if sample_due(self.graph_last_sample_ms, sampled_at_ms, GRAPH_SAMPLE_PERIOD_MS) {
-            self.add_graph_sample(value);
-            self.graph_last_sample_ms = Some(sampled_at_ms);
-        }
+        self.graph.observe(value, sampled_at_ms);
         true
     }
 
@@ -327,6 +286,7 @@ impl SensorState {
         &mut self,
         now_ms: u64,
     ) {
+        self.graph.advance(now_ms);
         if self.last_tick_ms.is_some_and(|last| now_ms < last) {
             return;
         }
@@ -368,84 +328,23 @@ impl SensorState {
         self.avg_last_sample_ms = None;
     }
 
-    fn add_graph_sample(
+    pub fn history(&self) -> HistoryView<'_> { self.graph.view() }
+
+    pub fn set_history_duration(
         &mut self,
-        value: f32,
+        seconds: u16,
     ) {
-        self.advance_graph();
-        let needs_recalculation = if self.graph_count == GRAPH_HISTORY_SIZE {
-            let old_value = self.graph_buffer[self.graph_index];
-            old_value == self.graph_min || old_value == self.graph_max
-        } else {
-            false
-        };
-
-        self.graph_buffer[self.graph_index] = value;
-        self.graph_index = (self.graph_index + 1) % GRAPH_HISTORY_SIZE;
-
-        if self.graph_count < GRAPH_HISTORY_SIZE {
-            self.graph_count += 1;
-        }
-
-        if needs_recalculation {
-            self.recalculate_graph_minmax();
-        } else {
-            if value < self.graph_min {
-                self.graph_min = value;
-            }
-            if value > self.graph_max {
-                self.graph_max = value;
-            }
-        }
+        self.graph.set_duration(seconds);
     }
 
-    fn recalculate_graph_minmax(&mut self) {
-        if self.graph_count == 0 {
-            self.graph_min = f32::MAX;
-            self.graph_max = f32::MIN;
-            return;
-        }
-
-        let mut min = f32::MAX;
-        let mut max = f32::MIN;
-
-        for &val in self.graph_buffer.iter().take(self.graph_count) {
-            if val < min {
-                min = val;
-            }
-            if val > max {
-                max = val;
-            }
-        }
-
-        self.graph_min = min;
-        self.graph_max = max;
+    pub fn invalidate_history(
+        &mut self,
+        now_ms: u64,
+    ) {
+        self.graph.invalidate(now_ms);
     }
 
-    pub const fn get_graph_data(&self) -> (&[f32; GRAPH_HISTORY_SIZE], usize, usize, f32, f32) {
-        let start_idx = if self.graph_count < GRAPH_HISTORY_SIZE {
-            0
-        } else {
-            self.graph_index
-        };
-        (
-            &self.graph_buffer,
-            start_idx,
-            self.graph_count,
-            self.graph_min,
-            self.graph_max,
-        )
-    }
-
-    pub fn reset_graph(&mut self) {
-        self.advance_graph();
-        self.graph_buffer = [0.0; GRAPH_HISTORY_SIZE];
-        self.graph_index = 0;
-        self.graph_count = 0;
-        self.graph_last_sample_ms = None;
-        self.graph_min = f32::MAX;
-        self.graph_max = f32::MIN;
-    }
+    pub fn reset_graph(&mut self) { self.graph.clear(); }
 
     pub fn reset_peak(&mut self) {
         self.is_new_peak = false;

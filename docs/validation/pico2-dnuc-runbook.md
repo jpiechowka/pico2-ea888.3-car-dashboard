@@ -247,7 +247,7 @@ probe-rs run --chip RP235x --protocol swd --speed 1000 --verify --no-catch-reset
 
 Require complete build/clock/environment/XIP metadata, four ordered `BENCH1`
 rows, 8 iterations each, checksums 3402950085 / 4004879533 / 3907113197 /
-1850849861, zero row status and `BENCHEND1,0,4`. Missing early RTT records,
+2271814903, zero row status and `BENCHEND1,0,4`. Missing early RTT records,
 debugger stops or a nonzero status invalidate the run. Record the failure;
 do not infer a timing from a partial run. These are finite software kernels,
 not display FPS. [Full contract](../performance/target-benchmarks.md).

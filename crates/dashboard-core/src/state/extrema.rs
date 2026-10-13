@@ -1,6 +1,6 @@
 //! Extrema start empty: zero is a measurement, not an initialization value.
 
-pub(super) fn valid_sample(value: f32) -> bool { value.is_finite() && value.abs() <= 1_000_000.0 }
+pub(crate) fn valid_sample(value: f32) -> bool { value.is_finite() && value.abs() <= 1_000_000.0 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Extrema {

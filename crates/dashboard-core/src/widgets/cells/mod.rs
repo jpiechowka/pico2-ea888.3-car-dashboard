@@ -25,12 +25,7 @@ use crate::ui::{
 pub struct SensorDisplayData<'a> {
     pub trend: Option<bool>,
     pub is_new_peak: bool,
-    pub graph_buffer: &'a [f32],
-    pub graph_buffer_size: usize,
-    pub graph_start_idx: usize,
-    pub graph_count: usize,
-    pub graph_min: f32,
-    pub graph_max: f32,
+    pub history: crate::history::HistoryView<'a>,
     pub average: Option<f32>,
 }
 

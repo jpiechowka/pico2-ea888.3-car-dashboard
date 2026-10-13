@@ -14,7 +14,7 @@ use crate::samples::{DataMode, Quality, SensorId};
 use crate::thresholds::BAR_TO_PSI;
 use crate::ui::{CENTERED, LABEL_FONT, LEFT_ALIGNED, RED, RIGHT_ALIGNED, WHITE};
 use crate::widgets::cell_text::CellText;
-use crate::widgets::primitives::{draw_mini_graph, draw_trend_arrow};
+use crate::widgets::primitives::{draw_history_graph, draw_trend_arrow};
 use crate::widgets::value_text::draw_fitted_value;
 
 /// Validated lookup table for one view. No configuration copy or repeated
@@ -321,7 +321,7 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
     let rows = text[1..].iter().filter(|s| !s.is_empty()).count() as i32;
     let bottom = i32::from(rect.y + rect.height) - 3;
     let graph = valid && widget.shows_graph();
-    let available = (bottom - y - rows * 10 - if graph { 10 } else { 0 }).max(0) as u32;
+    let available = (bottom - y - rows * 10 - if graph { 17 } else { 0 }).max(0) as u32;
     let scale = match widget.placement.span {
         dashboard_config::Span::OneByOne => 1,
         dashboard_config::Span::TwoByOne => 2,
@@ -377,23 +377,19 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
     let footer_rows = text[2..].iter().filter(|s| !s.is_empty()).count() as i32;
     let footer_top = bottom - footer_rows * 10;
     if graph {
-        let (values, start, count, min, max) = state.get_graph_data();
-        let (min, max) = match widget.display.graph_range {
-            GraphRange::Auto => (min, max),
-            GraphRange::Fixed { min, max } => (min, max),
+        let history = state.history();
+        let bounds = match widget.display.graph_range {
+            GraphRange::Auto => history.bounds(),
+            GraphRange::Fixed { min, max } => Some((min, max)),
         };
-        draw_mini_graph(
+        draw_history_graph(
             &mut display,
             i32::from(rect.x) + 5,
             y,
             u32::from(rect.width) - 10,
             (footer_top - y).max(0) as u32,
-            values,
-            values.len(),
-            start,
-            count,
-            min,
-            max,
+            history,
+            bounds,
             |_| foreground(palette.graph),
         );
     }

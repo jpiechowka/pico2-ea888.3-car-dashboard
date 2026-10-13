@@ -566,6 +566,7 @@ impl<'a, P: Port> Vehicle<'a, P> {
         cx: &mut Context<'_>,
         now: u64,
     ) {
+        self.session.tick_measurements(now);
         if matches!(self.owner, OwnerState::Quarantined) {
             return;
         }

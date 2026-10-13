@@ -234,9 +234,10 @@ fn target_workloads_match_reference_pixels_and_history_after_every_bounded_batch
                 assert_eq!((s.minimum(), s.maximum()), (Some(-9.0), Some(9.0)));
                 let expected: Vec<f32> = (512..572).map(|i| (i % 19) as f32 - 9.0).collect();
                 assert_eq!(s.get_average(), Some(expected.iter().sum::<f32>() / 60.0));
-                let (graph, start, count, min, max) = s.get_graph_data();
-                assert_eq!((count, min, max), (60, -9.0, 9.0));
-                assert_eq!((0..60).map(|i| graph[(start + i) % 60]).collect::<Vec<_>>(), expected);
+                let history = s.history();
+                assert_eq!((history.count(), history.bounds()), (24, Some((-9.0, 9.0))));
+                let expected: Vec<_> = (548..572).map(|i| (i % 19) as f32 - 9.0).collect();
+                assert_eq!(history.iter().filter_map(|(_, v)| v).collect::<Vec<_>>(), expected);
             }
         }
         for (pixel, expected) in frame.as_chunks::<2>().0.iter().zip(reference.0) {

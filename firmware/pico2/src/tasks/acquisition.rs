@@ -56,13 +56,13 @@ fn publish_snapshot(
     #[cfg(feature = "longan-rx12")] model: &Vehicle<'_, crate::drivers::longan::HardwarePort>,
     #[cfg(not(feature = "longan-rx12"))] model: &AcquisitionModel<'_>,
     sender: &embassy_sync::watch::DynSender<'_, DashboardSnapshot>,
-    previous: &mut Option<(u64, u64, dashboard_pico2::cache_diagnostics::CacheExhaustionStatus)>,
+    previous: &mut Option<dashboard_pico2::acquisition::PublicationIdentity>,
 ) {
     let snapshot = model.snapshot();
     let identity = snapshot.publication_identity();
-    if *previous != Some(identity) {
+    if identity.is_none() || *previous != identity {
         sender.send(snapshot);
-        *previous = Some(identity);
+        *previous = identity;
     }
 }
 
@@ -222,6 +222,8 @@ pub async fn acquisition_task(
             })
             .await;
         }
+        #[cfg(not(feature = "longan-rx12"))]
+        model.tick(Instant::now().as_millis());
         // Statistics include every accepted sample before Watch can coalesce.
         // At most 100 Hz publication; no repeated 3 KB critical-section copy
         // when the backend has neither new data, faults nor a reset ack.

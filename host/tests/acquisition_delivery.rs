@@ -61,7 +61,7 @@ fn display_cadence_never_changes_statistics() {
         }
         assert_eq!(*display.sensor(SensorId::Oil), reference.snapshot());
         assert_eq!(display.sensor(SensorId::Oil).maximum(), Some(125.0));
-        assert_eq!(display.sensor(SensorId::Oil).get_graph_data().2, 60);
+        assert_eq!(display.sensor(SensorId::Oil).history().count(), 60);
     }
 }
 
@@ -123,7 +123,7 @@ fn reset_generation_is_acknowledged_atomically_and_replays_do_nothing() {
     assert_eq!(oil.value(), Some(2.0));
     assert_eq!(oil.maximum(), Some(2.0));
     assert_eq!(oil.get_average(), None);
-    assert_eq!(oil.get_graph_data().2, 0);
+    assert_eq!(oil.history().count(), 0);
     assert!(!oil.is_new_peak_at(20));
     assert!(!model.reset_statistics(2));
     assert!(!model.reset_statistics(1));
@@ -216,4 +216,86 @@ fn untracked_public_snapshots_do_not_invent_diagnostic_events() {
         snapshot.publication_identity(),
         DashboardSnapshot::EMPTY.publication_identity()
     );
+}
+
+#[test]
+fn timer_only_publication_is_accepted_without_advancing_sample_identity() {
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.0; 8], 0);
+    let mut displayed = model.snapshot();
+    model.tick(2_000);
+    let scrolled = model.snapshot();
+    assert_eq!(scrolled.sequence, displayed.sequence);
+    assert_eq!(scrolled.metadata, displayed.metadata);
+    assert!(displayed.accept(scrolled), "timer changes must reach the receiver");
+    assert!(!displayed.accept(scrolled), "duplicate publication remains suppressed");
+}
+
+#[test]
+fn freshness_gap_preserves_prior_qualified_buckets_until_eviction() {
+    let mut model = AcquisitionModel::demo();
+    model.ingest_batch([1.0; 8], 0);
+    model.ingest_batch([2.0; 8], 2_000);
+    model.ingest_batch([3.0; 8], 4_000);
+    let before = model.snapshot();
+    model.tick(8_000);
+    let gap = model.snapshot();
+    assert_eq!(gap.metadata, before.metadata);
+    assert_eq!(gap.sensors[1].history().bounds(), Some((1.0, 3.0)));
+    assert_eq!(gap.sensors[1].history().iter().last().unwrap().1, None);
+    model.ingest_batch([4.0; 8], 8_001);
+    let recovered = model.snapshot();
+    assert_eq!(recovered.sensors[1].history().count(), 4);
+    assert_eq!(recovered.sensors[1].minimum(), Some(1.0));
+}
+
+#[test]
+fn configured_dual_units_share_channel_history_and_new_owner_clears_it() {
+    use dashboard_host_validation::view_config::{Channel, default_config, validate};
+    let mut raw = default_config();
+    raw.history_seconds[Channel::Lambda.index()] = 10;
+    let placement = raw.widgets[0].placement;
+    let id = raw.widgets[0].id;
+    let mut twin = raw
+        .widgets
+        .iter()
+        .find(|w| w.channel == Channel::Lambda)
+        .unwrap()
+        .clone();
+    twin.placement = placement;
+    twin.id = id;
+    twin.display.afr = !twin.display.afr;
+    twin.advanced.readout = if twin.display.afr {
+        dashboard_host_validation::view_config::Readout::Afr
+    } else {
+        dashboard_host_validation::view_config::Readout::Lambda
+    };
+    raw.widgets[0] = twin;
+    let config = validate(raw).unwrap();
+    let mut model = AcquisitionModel::demo_configured(&config);
+    model.ingest_batch([1.0; 8], 0);
+    model.ingest_batch([2.0; 8], 167);
+    let snapshot = model.snapshot();
+    assert_eq!(snapshot.sensors[7].history().duration_seconds(), 10);
+    assert_eq!(
+        snapshot.sensors[7].history().iter().collect::<Vec<_>>(),
+        [(0, Some(1.0)), (167, Some(2.0))]
+    );
+    assert_eq!(
+        config
+            .config()
+            .widgets
+            .iter()
+            .filter(|w| w.channel == Channel::Lambda)
+            .count(),
+        2
+    );
+    let mut replacement = AcquisitionModel::demo_configured(&config);
+    let empty = replacement.snapshot();
+    assert_eq!(empty.sensors[7].history().bounds(), None);
+    let mut displayed = snapshot;
+    assert!(displayed.accept(empty), "new run can begin with sequence zero");
+    assert!(!displayed.accept(snapshot), "old run cannot replace new run");
+    replacement.ingest_batch([3.0; 8], 0);
+    assert!(displayed.accept(replacement.snapshot()));
 }

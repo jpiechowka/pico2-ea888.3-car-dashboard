@@ -13,7 +13,7 @@ graph plus boost widget, and 64 timestamped history updates plus snapshot.
 The same production functions and fixture compile on the host. An independent
 coordinate renderer checks every raster pixel; explicit history reference
 values check all 512 new updates. Final FNV32 witnesses are respectively
-3402950085, 4004879533, 3907113197 and 1850849861. These are output checks,
+3402950085, 4004879533, 3907113197 and 2271814903. The timed-history workload now hashes bucket times and explicit gaps; its previous sample-ring checksum was 1850849861. These are output checks,
 not cryptographic identity. Setup and checksums are outside each timed batch.
 
 Each iteration passes the actual mutable fixture, framebuffer and kernel

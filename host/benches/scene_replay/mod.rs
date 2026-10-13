@@ -144,10 +144,9 @@ pub fn verify() {
             assert_eq!(sensor.sampled_at_ms(), Some(at));
             assert_eq!(current.quality(id, at), Quality::Valid);
             assert_ne!(sensor.value(), previous.sensor(id).value());
-            let (_, start, count, ..) = sensor.get_graph_data();
-            let (_, old_start, ..) = previous.sensor(id).get_graph_data();
-            assert_eq!(count, 60);
-            assert_eq!(start, (old_start + 1) % 60);
+            let history = sensor.history();
+            assert_eq!(history.count(), 24); // Qualified points remain separated by timed gaps.
+            assert!(history.newest_ordinal() > previous.sensor(id).history().newest_ordinal());
         }
         assert!(
             retained.draw(&current, step, true) == reference.draw(expected, step, false),

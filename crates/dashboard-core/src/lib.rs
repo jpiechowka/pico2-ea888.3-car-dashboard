@@ -49,6 +49,7 @@ mod profiling {
 
 mod state {
     pub mod extrema;
+    pub mod history;
     pub mod pages;
     pub mod popup;
     pub mod sensor_state;
@@ -63,5 +64,5 @@ pub mod ui {
 }
 
 pub use profiling::{cycle_segments, stack_samples};
-pub use state::{extrema, pages, popup, sensor_state};
+pub use state::{extrema, history, pages, popup, sensor_state};
 pub use ui::{animations, colors, styles};

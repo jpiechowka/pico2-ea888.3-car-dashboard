@@ -111,17 +111,50 @@ fn timeout_and_malformed_refresh_invalidate_without_corrupting_last_good_statist
     let failed = session.snapshot();
     assert_eq!(failed.value_at(SensorId::Water, 1526), None);
     assert_eq!(failed.quality(SensorId::Water, 1526), Quality::TransportError);
-    assert_eq!(failed.sensor(SensorId::Water), before.sensor(SensorId::Water));
+    let old = before.sensor(SensorId::Water);
+    let water = failed.sensor(SensorId::Water);
+    assert_eq!(
+        (
+            water.value(),
+            water.minimum(),
+            water.maximum(),
+            water.get_average(),
+            water.sampled_at_ms()
+        ),
+        (
+            old.value(),
+            old.minimum(),
+            old.maximum(),
+            old.get_average(),
+            old.sampled_at_ms()
+        )
+    );
+    assert_eq!(water.history().bounds(), None, "fault invalidates connectivity");
     begin(&mut session, 2526, 5);
     session.receive(&reply(5, &[140, 0]), 1, 2528).unwrap(); // bad decoder width
     assert_eq!(
         session.snapshot().quality(SensorId::Water, 2528),
         Quality::InvalidPayload
     );
+    let snapshot = session.snapshot();
+    let malformed = snapshot.sensor(SensorId::Water);
     assert_eq!(
-        session.snapshot().sensor(SensorId::Water),
-        before.sensor(SensorId::Water)
+        (
+            malformed.value(),
+            malformed.minimum(),
+            malformed.maximum(),
+            malformed.get_average(),
+            malformed.sampled_at_ms()
+        ),
+        (
+            old.value(),
+            old.minimum(),
+            old.maximum(),
+            old.get_average(),
+            old.sampled_at_ms()
+        )
     );
+    assert_eq!(malformed.history().bounds(), None);
     exchange(&mut session, 3528, 5, &[140]);
     assert_eq!(session.snapshot().value_at(SensorId::Water, 3530), Some(100.0));
     assert_eq!(session.counters().malformed, 1);

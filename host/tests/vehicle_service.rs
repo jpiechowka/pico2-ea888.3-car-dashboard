@@ -626,3 +626,20 @@ fn receive_backlog_cannot_starve_an_active_response_deadline() {
     assert_eq!(vehicle.link().state, LinkState::Polling);
     assert!(hw.take_tx().is_empty());
 }
+
+#[test]
+fn parked_vehicle_forwards_timer_publication_without_transport_or_samples() {
+    let (mut vehicle, hw) = new(ReceiveContract::Unqualified);
+    vehicle.request_pause(0).unwrap();
+    tick(&mut vehicle, 0);
+    assert!(vehicle.paused());
+    let mut displayed = vehicle.snapshot();
+    let reads = hw.0.borrow().reads;
+    tick(&mut vehicle, 2_000);
+    let scrolled = vehicle.snapshot();
+    assert_eq!(scrolled.sequence, displayed.sequence);
+    assert_eq!(scrolled.metadata, displayed.metadata);
+    assert_eq!(scrolled.sensors[0].history().newest_ordinal(), 1);
+    assert!(displayed.accept(scrolled));
+    assert_eq!(hw.0.borrow().reads, reads);
+}

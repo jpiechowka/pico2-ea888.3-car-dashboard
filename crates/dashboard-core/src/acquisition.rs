@@ -72,7 +72,15 @@ impl ResetRequests {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Private origin and checked counter; absence disables transport deduplication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PublicationIdentity {
+    origin: NonZeroU32,
+    revision: core::num::NonZeroU64,
+    diagnostics: CacheExhaustionStatus,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct DashboardSnapshot {
     pub sensors: [SensorSnapshot; SENSOR_COUNT],
     pub metadata: [SampleMeta; SENSOR_COUNT],
@@ -83,6 +91,8 @@ pub struct DashboardSnapshot {
     pub(crate) rule_alerts: RuleAlerts,
     pub(crate) freshness: [u16; SENSOR_COUNT],
     cache_exhaustion: CacheExhaustionStatus,
+    origin: Option<NonZeroU32>,
+    publication: u64,
 }
 
 impl DashboardSnapshot {
@@ -96,13 +106,23 @@ impl DashboardSnapshot {
         rule_alerts: RuleAlerts::DISABLED,
         freshness: DEFAULT_FRESHNESS,
         cache_exhaustion: CacheExhaustionStatus::EMPTY,
+        origin: None,
+        publication: 0,
     };
 
     /// Transport equality includes diagnostic-only transitions without advancing
     /// the raw sample sequence (or warning dwell).
-    pub const fn publication_identity(&self) -> (u64, u64, CacheExhaustionStatus) {
-        (self.sequence, self.reset_generation, self.cache_exhaustion)
+    pub fn publication_identity(&self) -> Option<PublicationIdentity> {
+        Some(PublicationIdentity {
+            origin: self.origin?,
+            revision: core::num::NonZeroU64::new(self.publication)?,
+            diagnostics: self.cache_exhaustion,
+        })
     }
+
+    /// Independent of measurement sequence and reset generation. None means
+    /// exhaustion: publish/accept conservatively forever, without ID reuse.
+    pub fn publication_revision(&self) -> Option<u64> { core::num::NonZeroU64::new(self.publication).map(|r| r.get()) }
 
     pub const fn cache_exhaustion_status(&self) -> CacheExhaustionStatus { self.cache_exhaustion }
 
@@ -172,14 +192,33 @@ impl DashboardSnapshot {
         &mut self,
         incoming: Self,
     ) -> bool {
-        if incoming.sequence < self.sequence
-            || incoming.reset_generation < self.reset_generation
-            || (incoming.sequence == self.sequence && incoming.reset_generation == self.reset_generation)
-        {
-            return false;
+        if let (Some(current), Some(next)) = (self.publication_identity(), incoming.publication_identity()) {
+            if next.origin < current.origin
+                || (next.origin == current.origin && (next.revision < current.revision || next == current))
+            {
+                return false;
+            }
         }
         *self = incoming;
         true
+    }
+}
+
+// Runtime transport proof, like graph proof, is not semantic snapshot data.
+impl PartialEq for DashboardSnapshot {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.sensors == other.sensors
+            && self.metadata == other.metadata
+            && self.mode == other.mode
+            && self.sequence == other.sequence
+            && self.reset_generation == other.reset_generation
+            && self.alerts == other.alerts
+            && self.rule_alerts == other.rule_alerts
+            && self.freshness == other.freshness
+            && self.cache_exhaustion == other.cache_exhaustion
     }
 }
 
@@ -232,9 +271,62 @@ struct AcquisitionState {
     expected_sources: [Option<Source>; SENSOR_COUNT],
     freshness: [u16; SENSOR_COUNT],
     origin: Option<NonZeroU32>,
+    publication: u64,
 }
 
 impl AcquisitionState {
+    fn publish_change(&mut self) {
+        // Zero is sticky exhaustion; every subsequent snapshot is untracked.
+        if self.publication != 0 {
+            self.publication = self.publication.checked_add(1).unwrap_or(0);
+        }
+    }
+
+    fn prepare_history(
+        &mut self,
+        index: usize,
+        now: u64,
+    ) {
+        if self.metadata[index].received_at_ms.is_some_and(|at| {
+            now.checked_sub(at)
+                .is_none_or(|age| age > u64::from(self.freshness[index]))
+        }) && self.sensors[index].history().count() != 0
+        {
+            self.sensors[index].invalidate_history(now);
+        }
+    }
+
+    fn tick(
+        &mut self,
+        config: Option<&ValidatedConfig>,
+        now: u64,
+    ) {
+        let mut changed = false;
+        for i in 0..SENSOR_COUNT {
+            let sensor = &self.sensors[i];
+            let before = (
+                sensor.history().newest_ordinal(),
+                sensor.history().validity(),
+                sensor.graph_revision(),
+                sensor.is_new_peak,
+            );
+            self.prepare_history(i, now);
+            self.sensors[i].tick(now);
+            let sensor = &self.sensors[i];
+            changed |= before
+                != (
+                    sensor.history().newest_ordinal(),
+                    sensor.history().validity(),
+                    sensor.graph_revision(),
+                    sensor.is_new_peak,
+                );
+        }
+        if changed {
+            self.publish_change();
+        }
+        self.update_alarms(config, now);
+    }
+
     // Build the final policy directly. Creating a legacy owner and replacing
     // its alarms kept several complete sampling-ring copies live on ARM.
     fn with_policy(
@@ -268,6 +360,7 @@ impl AcquisitionState {
             expected_sources,
             freshness,
             origin,
+            publication: 1,
         }
     }
 
@@ -311,7 +404,11 @@ impl AcquisitionState {
         let value = sample.value.value();
         // Shared statistics already reject nonfinite/unrepresentable values.
         // Protocol-specific ranges belong to the decoder, not an alarm rule.
+        self.prepare_history(index, sample.received_at_ms);
         let valid = self.sensors[index].ingest(value, sample.received_at_ms, PEAK_MODES[index]);
+        if !valid {
+            self.sensors[index].invalidate_history(sample.received_at_ms);
+        }
         self.metadata[index] = SampleMeta {
             received_at_ms: if valid {
                 Some(sample.received_at_ms)
@@ -324,6 +421,7 @@ impl AcquisitionState {
             quality: if valid { Quality::Valid } else { Quality::InvalidPayload },
         };
         self.sequence = next;
+        self.publish_change();
         self.contexts[index] = context;
         self.update_alarms(config, now_ms);
         if valid { Ok(()) } else { Err(SampleError::InvalidValue) }
@@ -347,6 +445,8 @@ impl AcquisitionState {
         meta.quality = quality;
         meta.status_at_ms = at_ms;
         self.sequence = next;
+        self.publish_change();
+        self.sensors[sensor as usize].invalidate_history(at_ms);
         self.contexts[sensor as usize] = None;
         self.update_alarms(config, at_ms);
         true
@@ -369,7 +469,13 @@ impl AcquisitionState {
             .metadata
             .map(|meta| meta.sequence.checked_add(1).expect("channel sequence exhausted"));
         let mut accepted = false;
-        for (i, ((state, value), mode)) in self.sensors.iter_mut().zip(values).zip(PEAK_MODES).enumerate() {
+        for i in 0..SENSOR_COUNT {
+            if captured_ms > self.metadata[i].status_at_ms && crate::extrema::valid_sample(values[i]) {
+                self.prepare_history(i, captured_ms);
+            }
+            let state = &mut self.sensors[i];
+            let value = values[i];
+            let mode = PEAK_MODES[i];
             if captured_ms >= self.metadata[i].status_at_ms && state.ingest(value, captured_ms, mode) {
                 accepted = true;
                 self.metadata[i] = SampleMeta {
@@ -383,6 +489,7 @@ impl AcquisitionState {
         }
         if accepted {
             self.sequence = next_sequence;
+            self.publish_change();
             self.contexts = demo_contexts_for(self.mode, &self.metadata);
             self.update_alarms(config, captured_ms);
         }
@@ -401,6 +508,7 @@ impl AcquisitionState {
             state.reset_statistics();
         }
         self.reset_generation = generation;
+        self.publish_change();
         true
     }
 
@@ -451,6 +559,8 @@ impl AcquisitionState {
             },
             freshness: self.freshness,
             cache_exhaustion: self.cache_exhaustion_status(config),
+            origin: self.origin,
+            publication: self.publication,
         }
     }
 
@@ -472,6 +582,10 @@ impl AcquisitionState {
                 u64::from(self.freshness[i]),
             )
         });
+        let before = match &self.alarms {
+            Alarms::Legacy(e) => (e.snapshot(), RuleAlerts::DISABLED),
+            Alarms::Configured(e) => (Alerts::DISABLED, e.snapshot()),
+        };
         self.alarms.update_inputs(
             config,
             &Inputs {
@@ -482,6 +596,13 @@ impl AcquisitionState {
             &self.contexts,
             now_ms,
         );
+        let after = match &self.alarms {
+            Alarms::Legacy(e) => (e.snapshot(), RuleAlerts::DISABLED),
+            Alarms::Configured(e) => (Alerts::DISABLED, e.snapshot()),
+        };
+        if before != after {
+            self.publish_change();
+        }
     }
 }
 
@@ -605,12 +726,15 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         sources: [Option<Source>; SENSOR_COUNT],
     ) -> Self {
         let config = configuration.configuration();
-        let state = AcquisitionState::with_policy(
+        let mut state = AcquisitionState::with_policy(
             mode,
             sources,
             config.config().sources.map(|source| source.freshness_ms),
             Alarms::Configured(RuleEngineState::new(config, mode, sources)),
         );
+        for (sensor, seconds) in state.sensors.iter_mut().zip(config.config().history_seconds) {
+            sensor.set_history_duration(seconds);
+        }
         Self {
             configuration: Some(configuration),
             state,
@@ -683,7 +807,7 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         &mut self,
         now_ms: u64,
     ) {
-        self.state.update_alarms(
+        self.state.tick(
             self.configuration.as_ref().map(ConfigurationHandle::configuration),
             now_ms,
         );
@@ -727,6 +851,31 @@ mod cache_tests {
     use crate::display::{FrameBuffer, St7789Renderer};
     use crate::render::FpsMode;
     use crate::vehicle_status::VehicleStatus;
+
+    #[test]
+    fn publication_exhaustion_disables_deduplication_without_freezing_state() {
+        let mut model = AcquisitionModel::demo();
+        model.ingest_batch([1.0; 8], 0);
+        model.tick(2_000);
+        model.state.publication = u64::MAX - 1;
+        model.state.publish_change();
+        let mut displayed = model.snapshot();
+        assert_eq!(displayed.publication_revision(), Some(u64::MAX));
+        model.tick(6_000);
+        let exhausted = model.snapshot();
+        assert_eq!(exhausted.publication_revision(), None);
+        assert_eq!(exhausted.publication_identity(), None);
+        assert_eq!(exhausted.sequence, displayed.sequence);
+        assert!(displayed.accept(exhausted));
+        assert!(displayed.accept(exhausted)); // Explicit conservative fallback.
+        model.ingest_batch([2.0; 8], 6_001);
+        assert!(displayed.accept(model.snapshot()));
+        assert_eq!(displayed.sensors[1].maximum(), Some(2.0));
+        model.reset_statistics(1);
+        assert!(displayed.accept(model.snapshot()));
+        assert_eq!(displayed.reset_generation, 1);
+        assert_eq!(displayed.publication_identity(), None);
+    }
 
     #[cfg(feature = "alloc")]
     #[test]
@@ -808,7 +957,7 @@ mod cache_tests {
         let mut accepted = before;
         let mut seen = CacheExhaustionSeen::new();
         assert_eq!(seen.observe(failed.cache_exhaustion_status()).causes().count(), 1);
-        assert!(!accepted.accept(failed));
+        assert!(accepted.accept(failed));
         let mut cache = DashboardCache::new();
         let mut frames = [Box::new(FrameBuffer::new()), Box::new(FrameBuffer::new())];
         let mut full = Box::new(FrameBuffer::new());

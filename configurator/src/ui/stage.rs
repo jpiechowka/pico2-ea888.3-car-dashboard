@@ -371,6 +371,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
     });
     view! {
         <div class="invalid-preview-heading" hidden=move || !ui.invalid() role="status"><strong>"INVALID PREVIEW"</strong><span>"Rejected draft · save and export blocked"</span></div>
+        <p class="hint">"Appearance preview · generated history"</p>
         <div class="display-stage" class:invalid-preview=move ||ui.invalid()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
                 <canvas node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid(){"INVALID PREVIEW. Rejected draft with safe rendering fallbacks. Save and export blocked."}else{"Exact Pico dashboard preview with synthetic values"}></canvas>

@@ -86,6 +86,88 @@ pub fn draw_mini_graph<D, F>(
         return;
     }
 
+    draw_graph_points(
+        display,
+        x,
+        y,
+        w,
+        h,
+        count,
+        data_min,
+        data_max,
+        |i| {
+            let v = buffer[(start_idx + i) % buffer_size];
+            v.is_finite().then_some(v)
+        },
+        color_fn,
+    );
+}
+
+/// The window always occupies sixty positions; absent buckets break connectivity.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_history_graph<D, F>(
+    display: &mut D,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    history: crate::history::HistoryView<'_>,
+    bounds: Option<(f32, f32)>,
+    color_fn: F,
+) where
+    D: DrawTarget<Color = Rgb565>,
+    F: Fn(f32) -> Rgb565,
+{
+    use core::fmt::Write;
+    if w < 5 || h < 12 || w > crate::config::SCREEN_WIDTH || h > crate::config::SCREEN_HEIGHT {
+        return;
+    }
+    let (Some(label_x), Some(label_y)) = (x.checked_add(w as i32 / 2), y.checked_add(h as i32 - 1)) else {
+        return;
+    };
+    let mut label = heapless::String::<8>::new();
+    write!(label, "{}s", history.duration_seconds()).ok();
+    Text::with_text_style(
+        &label,
+        Point::new(label_x, label_y),
+        MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, color_fn(0.0)),
+        crate::ui::CENTERED,
+    )
+    .draw(display)
+    .ok();
+    if let Some((min, max)) = bounds {
+        draw_graph_points(
+            display,
+            x,
+            y,
+            w,
+            h - 7,
+            60,
+            min,
+            max,
+            |i| history.point(i).and_then(|(_, v)| v),
+            color_fn,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_graph_points<D, F, V>(
+    display: &mut D,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    count: usize,
+    data_min: f32,
+    data_max: f32,
+    value_at: V,
+    color_fn: F,
+) where
+    D: DrawTarget<Color = Rgb565>,
+    F: Fn(f32) -> Rgb565,
+    V: Fn(usize) -> Option<f32>,
+{
     let data_range = data_max - data_min;
     if w < 5
         || h < 5
@@ -128,12 +210,10 @@ pub fn draw_mini_graph<D, F>(
                 next_x += 1;
             }
         }
-        let buffer_idx = (start_idx + i) % buffer_size;
-        let value = buffer[buffer_idx];
-        if !value.is_finite() {
+        let Some(value) = value_at(i) else {
             previous = None;
             continue;
-        }
+        };
 
         let screen_y = if data_range > 0.0 {
             let fraction = (value.clamp(data_min, data_max) - data_min) / data_range;

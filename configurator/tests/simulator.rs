@@ -175,11 +175,12 @@ fn persistent_samples_keep_history_and_restart_resets_origin() {
     assert_eq!(snap.sequence, 3);
     assert_eq!(snap.sensor(SensorId::Water).minimum(), Some(90.));
     assert_eq!(snap.sensor(SensorId::Water).maximum(), Some(110.));
-    assert_eq!(snap.sensor(SensorId::Water).get_graph_data().2, 3);
+    assert_eq!(snap.sensor(SensorId::Water).history().count(), 3);
     let identity = snap.sensor(SensorId::Water).graph_cache_identity();
     sim.advance_to(start + 1_000_000_000, None);
     assert_eq!(sim.snapshot().sequence, 3);
-    assert_eq!(sim.snapshot().sensor(SensorId::Water).graph_cache_identity(), identity);
+    assert_ne!(sim.snapshot().sensor(SensorId::Water).graph_cache_identity(), identity);
+    assert_eq!(sim.snapshot().sensor(SensorId::Water).history().bounds(), None);
     assert_eq!(sim.snapshot().value_at(SensorId::Water, sim.now_ms()), None);
     let mut second = ControlSimulator::new(cfg.clone());
     for (offset, water) in [(0, 95.0), (2000, 110.0), (4000, 90.0)] {
