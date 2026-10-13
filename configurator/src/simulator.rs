@@ -111,7 +111,7 @@ impl ControlSimulator {
             .session
             .backlight_mut()
             .frame_unchanged(self.simulation.now_ms);
-        self.simulation.prepare();
+        self.simulation.prepare(effects.view_changed);
     }
 
     /// Stateful sampling uses real warning dwell. None advances time without readings.
@@ -185,7 +185,8 @@ impl ControlSimulator {
 
     pub fn recover(&mut self) { self.hold(ButtonId::Y); }
 
-    fn encoder(
+    /// Submit one bounded encoder batch through the shared control dispatcher.
+    pub fn encoder(
         &mut self,
         delta: i32,
         presses: u8,
@@ -202,7 +203,10 @@ impl ControlSimulator {
                 delta,
                 presses,
                 motion: (delta != 0).then_some(observation).flatten(),
-                button: (presses != 0).then_some(observation).flatten(),
+                button: (presses != 0).then_some(observation).flatten().map(|mut o| {
+                    o.events = u32::from(presses);
+                    o
+                }),
             },
         );
     }

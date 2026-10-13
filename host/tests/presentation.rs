@@ -33,6 +33,81 @@ fn configured_readout_uses_affine_temperature_and_fixed_pressure_units() {
 use dashboard_host_validation::presentation::{PresentationState, Unit, smoothing_alpha};
 
 #[test]
+fn accepted_same_batch_view_round_trip_resets_the_prepared_filter() {
+    use dashboard_core::control_session::ControlSession;
+    use dashboard_core::controls::ControlBatch;
+    use dashboard_core::input_model::EncoderBatch;
+    use dashboard_core::input_trace::Observation;
+    use dashboard_core::logging::LogStore;
+    use dashboard_core::render::FpsMode;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    let mut raw = default_config();
+    raw.widgets[0].advanced.smoothing_ms = 5000;
+    raw.controls.screens[0].encoder_click = ControlAction::NextView;
+    raw.views
+        .push(View {
+            id: 2,
+            name: "Other".try_into().unwrap(),
+        })
+        .unwrap();
+    let mut widget = raw.widgets[0].clone();
+    widget.id = 100;
+    widget.view = 2;
+    raw.widgets.push(widget).unwrap();
+    let cfg = validate(raw).unwrap();
+    let mut model = AcquisitionModel::demo_configured(&cfg);
+    let mut state = PresentationState::new();
+    model.ingest_batch(values(0.), 1000);
+    state.prepare(&cfg, &model.snapshot(), 1, 1000, false);
+    model.ingest_batch(values(1.), 1100);
+    let snapshot = model.snapshot();
+    let smooth = state
+        .prepare(&cfg, &snapshot, 1, 1100, false)
+        .widget(0)
+        .unwrap()
+        .value
+        .unwrap();
+    assert!(smooth > 0. && smooth < 0.1);
+    let mut session = ControlSession::new(&cfg, FpsMode::Off, false);
+    let effect = session.apply(
+        &cfg,
+        &cfg.config().controls,
+        ControlBatch::default(),
+        EncoderBatch {
+            presses: 2,
+            button: Some(Observation {
+                observed_us: 1101000,
+                accepted_us: 1101000,
+                events: 2,
+            }),
+            ..Default::default()
+        },
+        &LogStore::<NoopRawMutex>::new(),
+        1101,
+    );
+    assert_eq!(effect.ignored, 0);
+    assert!(effect.view_changed);
+    assert_eq!(effect.observations.unwrap().events, 2);
+    assert_eq!(session.view_id(), 1);
+    // Firmware consumes this sticky effect before preparing the frozen frame.
+    if effect.view_changed {
+        state.reset();
+    }
+    let actual = state
+        .prepare(&cfg, &snapshot, session.view_id(), 1101, false)
+        .widget(0)
+        .unwrap()
+        .value;
+    let expected = PresentationState::new()
+        .prepare(&cfg, &snapshot, 1, 1101, false)
+        .widget(0)
+        .unwrap()
+        .value;
+    assert_eq!(actual, expected);
+    assert_eq!(actual, Some(1.));
+}
+
+#[test]
 fn conversion_basis_and_display_domain_are_bounded_and_fail_closed() {
     assert_eq!(Unit::Fahrenheit.value(0., 14.7), 32.);
     assert_eq!(Unit::Fahrenheit.value(100., 14.7), 212.);

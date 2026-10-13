@@ -833,3 +833,62 @@ fn hidden_view_round_trip_without_intermediate_render_snaps_original_widgets() {
         "hidden widgets resumed an old trajectory"
     );
 }
+
+#[test]
+fn same_batch_view_round_trip_snaps_existing_trajectory_without_changing_acquisition() {
+    use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
+    let mut raw = default_config();
+    raw.widgets[0].advanced.smoothing_ms = 5000;
+    raw.controls.screens[0].encoder_click = dashboard_config::ControlAction::NextView;
+    raw.views
+        .push(View {
+            id: 2,
+            name: "Other".try_into().unwrap(),
+        })
+        .unwrap();
+    let mut widget = raw.widgets[0].clone();
+    widget.id = 100;
+    widget.view = 2;
+    raw.widgets.push(widget).unwrap();
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let mut preview = Preview::new();
+    sim.advance_to(SAMPLE_START_MS + 1, Some([0., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    sim.advance_to(SAMPLE_START_MS + 101, Some([1., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    let mut fresh = Preview::new();
+    fresh.render_simulation(&sim).unwrap();
+    assert!(
+        preview.rgb565() != fresh.rgb565(),
+        "must establish a filtered trajectory"
+    );
+    let before = sim.snapshot();
+    let ignored = sim.ignored();
+    sim.encoder(0, 2);
+    assert_eq!(sim.session().view_id(), 1);
+    assert_eq!(sim.ignored(), ignored, "both NextView actions must be accepted");
+    let after = sim.snapshot();
+    assert_eq!(before.sequence, after.sequence);
+    assert_eq!(before.reset_generation, after.reset_generation);
+    for (before, after) in before.sensors.iter().zip(after.sensors.iter()) {
+        assert_eq!(before.value().map(f32::to_bits), after.value().map(f32::to_bits));
+        assert_eq!(before.minimum().map(f32::to_bits), after.minimum().map(f32::to_bits));
+        assert_eq!(before.maximum().map(f32::to_bits), after.maximum().map(f32::to_bits));
+        assert_eq!(
+            before.get_average().map(f32::to_bits),
+            after.get_average().map(f32::to_bits)
+        );
+        assert_eq!(before.graph_cache_identity(), after.graph_cache_identity());
+        assert_eq!(
+            before.history().iter().collect::<Vec<_>>(),
+            after.history().iter().collect::<Vec<_>>()
+        );
+    }
+    assert!(sim.now_ms() - SAMPLE_START_MS < 5000);
+    preview.render_simulation(&sim).unwrap();
+    fresh.render_simulation(&sim).unwrap();
+    assert!(
+        preview.rgb565() == fresh.rgb565(),
+        "same-batch view round trip retained smoothing"
+    );
+}

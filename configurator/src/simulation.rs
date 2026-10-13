@@ -51,14 +51,18 @@ impl Simulation {
             self.model.tick(now_ms);
         }
         self.now_ms = self.now_ms.max(now_ms);
-        self.prepare();
+        self.prepare(false);
     }
 
-    pub(crate) fn prepare(&mut self) {
-        // Observe every control transition, including hidden page/view round
-        // trips between renders. Exhaustion permanently disables continuity.
+    pub(crate) fn prepare(
+        &mut self,
+        view_changed: bool,
+    ) {
+        // Accepted view actions can return to the starting view in one batch.
+        // Preserve their sticky effect as well as transitions between calls.
+        // Exhaustion permanently disables continuity.
         let visible = (self.session.page(), self.session.view_id());
-        if self.visible != visible {
+        if view_changed || self.visible != visible {
             self.presentation_epoch = self.presentation_epoch.and_then(|epoch| epoch.checked_add(1));
             self.visible = visible;
         }
@@ -87,11 +91,10 @@ mod tests {
             0,
         );
         simulation.presentation_epoch = Some(u64::MAX);
-        simulation.visible = (Page::Debug, 1);
-        simulation.prepare();
+        simulation.prepare(true);
         assert_eq!(simulation.presentation_epoch, None);
         simulation.visible = (Page::Logs, 1);
-        simulation.prepare();
+        simulation.prepare(false);
         assert_eq!(simulation.presentation_epoch, None);
     }
 }

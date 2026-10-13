@@ -535,6 +535,7 @@ async fn dashboard_task(
             );
         }
         if input.view_changed {
+            presentation.reset();
             dashboard_layout = dashboard_pico2::configured_scene::Layout::new(
                 &dashboard_configuration.config,
                 session.view_id(),
