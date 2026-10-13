@@ -15,6 +15,73 @@ use crate::widgets::cell_text::CellText;
 use crate::widgets::primitives::{draw_history_graph, draw_trend_arrow};
 use crate::widgets::value_text::draw_fitted_value;
 
+/// Only the visible badge identity is retained, never another warning owner.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WarningMarker {
+    None,
+    ActiveAck,
+    ActiveSnoozed,
+    Latched,
+    LatchedAck,
+    LatchedSnoozed,
+    Cleared,
+}
+impl WarningMarker {
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::ActiveAck => "ACTIVE / ACK",
+            Self::ActiveSnoozed => "ACTIVE ACK SNOOZE",
+            Self::Latched => "LATCHED",
+            Self::LatchedAck => "LATCHED / ACK",
+            Self::LatchedSnoozed => "LATCH ACK SNOOZE",
+            Self::Cleared => "CLEARED ACK DUE",
+        }
+    }
+}
+
+pub(crate) struct WidgetWarning {
+    pub marker: WarningMarker,
+    pub unavailable: bool,
+    pub blink: bool,
+}
+impl WidgetWarning {
+    pub fn new(
+        eligibility: crate::warning_state::WarningEligibility,
+        valid: bool,
+        blink_on: bool,
+    ) -> Self {
+        use crate::alarms::Status;
+        let active = eligibility.status == Status::Active;
+        let marker = if !eligibility.visible() {
+            WarningMarker::None
+        } else if active && eligibility.acknowledged {
+            if eligibility.snoozed {
+                WarningMarker::ActiveSnoozed
+            } else {
+                WarningMarker::ActiveAck
+            }
+        } else if eligibility.latched {
+            if eligibility.status != Status::Unavailable && eligibility.cleared {
+                WarningMarker::Cleared
+            } else if eligibility.snoozed {
+                WarningMarker::LatchedSnoozed
+            } else if eligibility.acknowledged {
+                WarningMarker::LatchedAck
+            } else {
+                WarningMarker::Latched
+            }
+        } else {
+            WarningMarker::None
+        };
+        Self {
+            marker,
+            unavailable: eligibility.latched && eligibility.status == Status::Unavailable,
+            blink: valid && active && eligibility.attention() && blink_on,
+        }
+    }
+}
+
 /// Validated lookup table for one view. No configuration copy or repeated
 /// 64-widget search is needed while drawing its eight visible slots.
 #[derive(Clone, Copy)]
@@ -301,7 +368,8 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
     let id = SensorId::from_channel(widget.channel);
     let quality = scene.quality(slot);
     let valid = quality == Quality::Valid;
-    let warning = valid && scene.blink_on && layout.alarm_active(slot, scene.measurements, scene.now_ms);
+    let indication = scene.widget_warning(slot).expect("validated visible warning");
+    let warning = indication.blink;
     let background = panel_color(if warning {
         palette.warning.background
     } else {
@@ -320,6 +388,38 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
         .draw(&mut display)
         .ok();
     y += 12;
+    if indication.marker != WarningMarker::None {
+        // Fixed compact lanes fit every span independently of style, statistics
+        // and availability. The badge keeps its warning palette in both phases.
+        let height = if indication.unavailable { 16 } else { 8 };
+        display
+            .fill_solid(
+                &Rectangle::new(
+                    Point::new(interior.top_left.x, y),
+                    Size::new(interior.size.width, height),
+                ),
+                panel_color(palette.warning.background),
+            )
+            .ok();
+        let style = MonoTextStyle::new(
+            &embedded_graphics::mono_font::ascii::FONT_4X6,
+            panel_color(palette.warning.foreground),
+        );
+        Text::with_text_style(indication.marker.label(), Point::new(center, y + 6), style, CENTERED)
+            .draw(&mut display)
+            .ok();
+        if indication.unavailable {
+            let label = if quality == Quality::Stale {
+                "DATA STALE"
+            } else {
+                "UNAVAILABLE"
+            };
+            Text::with_text_style(label, Point::new(center, y + 14), style, CENTERED)
+                .draw(&mut display)
+                .ok();
+        }
+        y += height as i32;
+    }
     let state = scene.measurements.sensor(id);
     if widget.shows_trend() {
         if valid && let Some(rising) = state.get_trend_at(scene.now_ms) {

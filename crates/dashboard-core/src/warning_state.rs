@@ -49,7 +49,7 @@ impl WarningFeedback {
         match self {
             Self::Pending => "ACK PENDING",
             Self::Busy => "ACK BUSY / PENDING",
-            Self::Accepted => "WARNINGS ACKNOWLEDGED",
+            Self::Accepted => "WARNINGS ACKED",
             Self::Partial => "PARTIAL ACK",
             Self::Rejected => "ACK REJECTED",
             Self::Unavailable => "NO SHOWN WARNINGS",

@@ -108,6 +108,26 @@ pub struct DashboardScene<'a> {
 }
 
 impl DashboardScene<'_> {
+    pub(crate) fn widget_warning(
+        &self,
+        cell: usize,
+    ) -> Option<configured_scene::WidgetWarning> {
+        let eligibility = match self.readings {
+            Some(readings) => readings.widget(cell)?.warning,
+            None => {
+                self.measurements.warning_eligibility(
+                    crate::alarms::RuleIndex::new(self.layout.as_ref()?.rule_index(cell)?)?,
+                    self.now_ms,
+                )
+            }
+        };
+        Some(configured_scene::WidgetWarning::new(
+            eligibility,
+            self.quality(cell) == Quality::Valid,
+            self.blink_on,
+        ))
+    }
+
     pub fn configured_text(
         &self,
         cell: usize,
@@ -372,6 +392,7 @@ struct CellKey {
     text: CellText,
     background: Rgb565,
     flags: [bool; 3],
+    warning_marker: configured_scene::WarningMarker,
     trend: Option<bool>,
     graph: Option<crate::GraphCacheIdentity>,
     gauge: Option<crate::widgets::gauge::RasterKey>,
@@ -411,6 +432,7 @@ impl DashboardScene<'_> {
             text: core::array::from_fn(|_| heapless::String::new()),
             background: self.backgrounds[cell],
             flags: [false; 3],
+            warning_marker: configured_scene::WarningMarker::None,
             trend: None,
             graph: None,
             gauge: None,
@@ -424,9 +446,10 @@ impl DashboardScene<'_> {
         }
         if let Some(layout) = &self.layout {
             let widget = layout.widget(cell)?;
-            key.flags[1] = key.quality == Quality::Valid
-                && self.blink_on
-                && layout.alarm_active(cell, self.measurements, self.now_ms);
+            let warning = self.widget_warning(cell)?;
+            key.flags[1] = warning.blink;
+            key.flags[2] = warning.unavailable;
+            key.warning_marker = warning.marker;
             key.background = configured_scene::panel_color(if key.flags[1] {
                 widget.colors.warning.background
             } else {

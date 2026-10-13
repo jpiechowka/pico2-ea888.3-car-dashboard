@@ -9,6 +9,36 @@ use dashboard_core::render::FpsMode;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 fn config() -> ValidatedConfig { dashboard_config::validate(dashboard_config::default_config()).unwrap() }
+
+#[test]
+fn every_warning_feedback_constructs_draws_and_expires_without_losing_its_meaning() {
+    use dashboard_core::dashboard::Overlay;
+    use dashboard_core::display::St7789Renderer;
+    use dashboard_core::warning_state::WarningFeedback;
+    use dashboard_host_validation::AlignedFrame;
+    for (feedback, expected, remains_pending) in [
+        (WarningFeedback::Pending, "ACK PENDING", true),
+        (WarningFeedback::Busy, "ACK BUSY / PENDING", true),
+        (WarningFeedback::Accepted, "WARNINGS ACKED", false),
+        (WarningFeedback::Partial, "PARTIAL ACK", false),
+        (WarningFeedback::Rejected, "ACK REJECTED", false),
+        (WarningFeedback::Unavailable, "NO SHOWN WARNINGS", false),
+    ] {
+        let c = config();
+        let mut controls = ControlSession::new(&c, FpsMode::Off, false);
+        controls.warning_feedback(feedback, 100);
+        let overlay = controls.overlay(&c).expect("feedback must be renderable");
+        let Overlay::View(text) = overlay else {
+            panic!("wrong feedback overlay");
+        };
+        assert_eq!(text.as_str(), expected);
+        let mut frame = AlignedFrame::boxed();
+        overlay.draw(&mut St7789Renderer::new(&mut frame.0));
+        assert!(frame.0.iter().any(|byte| *byte != 0));
+        controls.expire_feedback(3400);
+        assert_eq!(controls.overlay(&c).is_some(), remains_pending);
+    }
+}
 fn apply_action(
     s: &mut ControlSession,
     c: &ValidatedConfig,
