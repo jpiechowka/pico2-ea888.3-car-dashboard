@@ -156,6 +156,100 @@ fn all_page_round_trips_equal_fresh_full_raster_and_inspection_reads_live_sample
     assert!(reused.rgb565() == full.rgb565());
 }
 
+#[test]
+fn invalid_dashboard_off_masks_diagnostics_and_recovery_preserves_accepted_pending_pixels() {
+    use dashboard_configurator::editor::{Editor, RawField};
+    use dashboard_configurator::event_adapters::complete_simulation_pixels;
+    use dashboard_configurator::simulator::ControlSimulator;
+    use dashboard_core::backlight::Brightness;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+
+    let mut editor = Editor::new(default_config()).unwrap();
+    let mut sim = ControlSimulator::new(editor.preview().clone());
+    sim.advance_to(sim.now_ms() + 1, Some([2., 90., 95., 80., 30., 700., 13.8, 1.]));
+    let accepted_snapshot = sim.snapshot();
+    let accepted_source = sim.source_key();
+    let accepted_now = sim.now_ms();
+    let accepted_compare = sim.session().backlight().compare();
+    let accepted_completed = sim.completed_frame();
+    let accepted_warning = sim.completed_warning();
+    let mut timing = Preview::new();
+    let token = FrameToken {
+        buffer: BufferId::A,
+        sequence: 55,
+    };
+    let pending_bytes = timing.render_simulation_submitted(&mut sim, token).unwrap().to_vec();
+
+    editor
+        .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "bad".into())
+        .unwrap();
+    let mut draft = editor.diagnostic().unwrap();
+    // Also exercise the optional warning-palette paint after the widget pass.
+    draft.config.warning_colors.foreground = Color(0x07E0);
+    draft.config.warning_colors.background = Color(0x001F);
+    sim.inspect_invalid(draft.config.controls);
+    let mut scratch = Preview::new();
+    scratch.render_inspection(&sim, Some(&draft)).unwrap();
+    assert_eq!(
+        &scratch.rgb565()[..2],
+        &[0xF8, 0x00],
+        "visible invalid watermark before Off"
+    );
+
+    sim.hold(ButtonId::X); // Full -> Dim
+    sim.hold(ButtonId::X); // Dim -> Off, with feedback still visible
+    assert_eq!(sim.display_session().page(), ControlPage::Dashboard);
+    assert_eq!(sim.display_session().backlight().brightness(), Brightness::Off);
+    assert!(sim.display_session().backlight().compare() > 0);
+    sim.advance(2100);
+    assert_eq!(sim.display_session().backlight().compare(), 0);
+    scratch.render_inspection(&sim, Some(&draft)).unwrap();
+    assert!(
+        scratch.rgb565().iter().all(|byte| *byte == 0),
+        "Off must mask widgets, palette and watermark"
+    );
+    assert!(
+        scratch
+            .rgba()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [0, 0, 0, 255])
+    );
+
+    sim.recover(); // Protected held Y restores candidate Full.
+    assert_eq!(sim.display_session().backlight().brightness(), Brightness::Full);
+    assert!(sim.display_session().backlight().compare() > 0);
+    scratch.render_inspection(&sim, Some(&draft)).unwrap();
+    assert_eq!(
+        &scratch.rgb565()[..2],
+        &[0xF8, 0x00],
+        "recovery restores invalid diagnostic pixels"
+    );
+
+    assert_eq!(sim.session().page(), ControlPage::Dashboard);
+    assert_eq!(sim.session().backlight().brightness(), Brightness::Full);
+    assert_eq!(sim.session().backlight().compare(), accepted_compare);
+    assert_eq!(sim.now_ms(), accepted_now);
+    assert_eq!(sim.source_key(), accepted_source);
+    assert_eq!(sim.snapshot(), accepted_snapshot);
+    assert_eq!(sim.completed_frame(), accepted_completed);
+    assert_eq!(sim.completed_warning(), accepted_warning);
+    assert_eq!(timing.pending_frame(), Some(token));
+    assert_eq!(timing.pending_pixels(&sim, token), Some(pending_bytes.as_slice()));
+    assert!(
+        !sim.complete_frame(token),
+        "candidate cannot complete the accepted pending frame"
+    );
+    sim.resume_accepted_bindings();
+    complete_simulation_pixels(&mut sim, &mut timing, token, |pixels| {
+        assert_eq!(pixels, pending_bytes);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(sim.completed_frame(), Some(token));
+}
+
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]

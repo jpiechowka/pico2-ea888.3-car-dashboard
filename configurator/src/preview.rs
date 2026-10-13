@@ -648,6 +648,11 @@ impl Preview {
         Text::new(&name, Point::new(108, 17), MonoTextStyle::new(&FONT_6X10, WHITE))
             .draw(&mut display.clipped(&header))
             .ok();
+        // Candidate Off masks every diagnostic layer, including the watermark.
+        // Invalid status and protected recovery remain in the browser controls.
+        if live.is_some_and(|simulation| simulation.display_session().backlight().compare() == 0) {
+            display.clear(BLACK).ok();
+        }
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba)?;
         Ok(&self.rgba)
     }
