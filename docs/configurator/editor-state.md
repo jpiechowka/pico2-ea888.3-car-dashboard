@@ -18,16 +18,21 @@ leaving the accepted document/history intact. The browser automatically renders
 an explicitly marked diagnostic draft. Raw fields can be corrected together.
 Rejected typed candidates retain their own selection and expose unvalidated
 `editing_config()` to the browser hit targets, pointer anchors, menu and inspector.
-Move, resize, delete and control mapping commands are allowed while repairing that candidate;
+Move, resize, delete, control mapping and widget/global field commands are allowed while repairing that candidate;
 each command runs the full shared validator. Partial repairs preserve accepted
 bytes/history, and the first valid result becomes one undo transaction. Discard
 restores the accepted selection. Control mappings are read from the rejected
 candidate, and hold-duration text remains editable while mappings are rejected.
 Retained unrelated raw inputs remain editable against the current candidate too;
 they must still identify an existing, applicable field in that candidate.
-Mapping repairs replay retained raw inputs and identify any parse blocker;
-they never clear an unrelated invalid setting. Other rejected non-layout choices
-still require discard before those settings can change. See [preview hardening](preview-hardening.md)
+Field and mapping repairs replay retained raw inputs and identify any parse blocker;
+they never clear an unrelated invalid setting. New fields must identify existing
+applicable targets. Reference mode/value, bands, warning endpoints, shared
+history and LED settings stay repairable. Removing a band deliberately removes
+its raw fields and reindexes later band drafts, preserving unrelated text.
+Parsed raw fields awaiting only placement repair permit layout repair; incomplete
+or otherwise invalid raw fields keep layout locked. Each partial repair retires
+stale callbacks without changing accepted bytes/history. See [preview hardening](preview-hardening.md)
 for the inspection-only rendering and safe fallback contract.
 
 Pointer, field, import and save operations carry private owner/revision/request

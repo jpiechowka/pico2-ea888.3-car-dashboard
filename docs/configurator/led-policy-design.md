@@ -28,7 +28,7 @@ Use TOP 9,999, divider 1, phase-correct disabled and inverted outputs. With inve
 
 Do not use PWM Drop or disabling a slice as the LED off operation: the HAL disconnects pads with pull-down, which is unsuitable as an active-low off policy. Do not change regulator, display clocks or backlight algorithms in this stage.
 
-The shared controller and owned PWM adapter are implemented locally. Editor integration and final release admission remain subsequent tasks; physical colour, carrier and startup validation remain pending. Integer conversion and smoothstep use nearest rounding with ties upward.
+The shared controller, owned PWM adapter and Studio RGB indicator panel are implemented locally. Final release integration, physical colour, carrier and startup validation remain pending. Integer conversion and smoothstep use nearest rounding with ties upward.
 
 ## Verification
 

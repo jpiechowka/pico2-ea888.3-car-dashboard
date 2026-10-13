@@ -1,5 +1,98 @@
 use super::*;
 
+pub fn field_id(field: RawField) -> String {
+    format!("field-{field:?}")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn validation_raw(error: ValidationError) -> Option<RawField> {
+    let field = match error.field {
+        Field::HistorySeconds(c) => return Some(RawField::HistorySeconds(c)),
+        Field::LedBrightness(warning) => {
+            return Some(RawField::Led {
+                warning,
+                field: LedField::Brightness,
+            });
+        }
+        Field::LedPeriod(warning) => {
+            return Some(RawField::Led {
+                warning,
+                field: LedField::Period,
+            });
+        }
+        Field::LedOnPercent(warning) => {
+            return Some(RawField::Led {
+                warning,
+                field: LedField::OnPercent,
+            });
+        }
+        Field::Smoothing => WidgetField::SmoothingMilliseconds,
+        Field::PeakHold => WidgetField::PeakHoldMilliseconds,
+        Field::Reference => WidgetField::Reference,
+        Field::BandMinimum(i) => WidgetField::BandMinimum(i),
+        Field::BandMaximum(i) => WidgetField::BandMaximum(i),
+        Field::BandOrder(i) => WidgetField::BandMinimum(i),
+        Field::BandLabel(i) => WidgetField::BandLabel(i),
+        Field::BandColor(i) => WidgetField::BandColor(i),
+        Field::WarningTriggerHigh => WidgetField::WarningTriggerHigh,
+        Field::WarningClearHigh => WidgetField::WarningClearHigh,
+        Field::WarningSnooze => WidgetField::WarningSnoozeSeconds,
+        Field::WarningTrigger => WidgetField::WarningTrigger,
+        Field::WarningClear => WidgetField::WarningClear,
+        Field::WarningOn => WidgetField::WarningOn,
+        Field::WarningOff => WidgetField::WarningOff,
+        Field::WarningMessage => WidgetField::WarningMessage,
+        Field::Color(role) => WidgetField::Color(role),
+        Field::GaugeRange => WidgetField::GaugeMinimum,
+        Field::Label => WidgetField::Label,
+        Field::Decimals => WidgetField::Decimals,
+        _ => return None,
+    };
+    Some(RawField::Widget(error.widget?, field))
+}
+
+#[component]
+pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
+    let target = move || {
+        ui.editor.with(|e| {
+            match e.draft_error()? {
+                EditorError::Parse(field) => Some(field_id(field)),
+                EditorError::Validation(error) => {
+                    validation_raw(error).map(field_id).or_else(|| {
+                        match error.field {
+                            Field::WarningAcknowledge => Some("control-routes".into()),
+                            Field::Readout | Field::Afr => error.widget.map(|id| format!("widget-{id}-readout")),
+                            Field::Secondary => error.widget.map(|id| format!("widget-{id}-secondary")),
+                            Field::Placement => error.widget.map(|id| format!("widget-{id}")),
+                            _ => None,
+                        }
+                    })
+                }
+                _ => None,
+            }
+        })
+    };
+    view! { <button hidden=move ||target().is_none() on:click=move |_| {
+        if let Some(target) = target() {
+            if target == "control-routes" { ui.global_tab.set("controls"); }
+            leptos::leptos_dom::helpers::request_animation_frame(move ||{
+                if let Some(element)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&target)).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()) {
+                    if let Ok(Some(details))=element.closest("details") { let _=details.set_attribute("open",""); }
+                    let _=element.focus(); element.scroll_into_view();
+                }
+            });
+        }
+    }>"Focus invalid field"</button> }
+}
+
 pub fn raw_value(
     editor: &Editor,
     field: RawField,
@@ -9,6 +102,16 @@ pub fn raw_value(
     }
     let c = editor.editing_config();
     match field {
+        RawField::HistorySeconds(channel) => c.history_seconds[channel.index()].to_string(),
+        RawField::Led { warning, field } => {
+            let p = if warning { c.led.warning } else { c.led.normal };
+            match field {
+                LedField::Color => p.color.hex().to_string(),
+                LedField::Brightness => p.brightness_percent.to_string(),
+                LedField::Period => p.period_ms.to_string(),
+                LedField::OnPercent => p.on_percent.to_string(),
+            }
+        }
         RawField::ControlHoldMilliseconds => c.controls.hold_ms.to_string(),
         RawField::ViewName(id) => {
             c.views
@@ -23,6 +126,25 @@ pub fn raw_value(
                 .find(|w| w.id == id)
                 .map(|w| {
                     match field {
+                        WidgetField::SmoothingMilliseconds => w.advanced.smoothing_ms.to_string(),
+                        WidgetField::PeakHoldMilliseconds => w.advanced.peak_hold_ms.to_string(),
+                        WidgetField::Reference => w.advanced.reference.to_string(),
+                        WidgetField::WarningTriggerHigh => w.warning.advanced.trigger_high.to_string(),
+                        WidgetField::WarningClearHigh => w.warning.advanced.clear_high.to_string(),
+                        WidgetField::WarningSnoozeSeconds => w.warning.advanced.snooze_s.to_string(),
+                        WidgetField::BandMinimum(i)
+                        | WidgetField::BandMaximum(i)
+                        | WidgetField::BandColor(i)
+                        | WidgetField::BandLabel(i) => {
+                            w.advanced.bands().get(usize::from(i)).map_or(String::new(), |b| {
+                                match field {
+                                    WidgetField::BandMinimum(_) => b.min.to_string(),
+                                    WidgetField::BandMaximum(_) => b.max.to_string(),
+                                    WidgetField::BandColor(_) => b.color.hex().to_string(),
+                                    _ => b.label().to_string(),
+                                }
+                            })
+                        }
                         WidgetField::Label => w.label.to_string(),
                         WidgetField::Color(role) => role.get(&w.colors).hex().to_string(),
                         WidgetField::Decimals => w.display.decimals.to_string(),
@@ -117,7 +239,9 @@ pub fn TextField(
     #[prop(default = "")] hint: &'static str,
     #[prop(default = String::new())] id: String,
     #[prop(optional)] accessible_label: Option<String>,
+    #[prop(optional)] disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
+    let id = if id.is_empty() { field_id(field) } else { id };
     let text = RwSignal::new(ui.editor.with_untracked(|e| raw_value(e, field)));
     let focused = RwSignal::new(false);
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
@@ -136,7 +260,7 @@ pub fn TextField(
     view! {
         <label class="field">
             <span>{label}</span>
-            <input id=id aria-label=accessible_label type="text" maxlength="1024" autocomplete="off" spellcheck="false"
+            <input id=id aria-label=accessible_label disabled=move ||disabled.is_some_and(|d|d.get()) type="text" maxlength="1024" autocomplete="off" spellcheck="false"
                 prop:value=move || text.get()
                 aria-invalid=move || ui.editor.with(|e| e.raw_fields().iter().any(|r| r.field == field)).to_string()
                 on:focus=move |_| focused.set(true)
@@ -150,6 +274,11 @@ pub fn TextField(
                     else { text.set(ui.editor.with_untracked(|e| raw_value(e, field))); }
                 } />
             <small>{hint}</small>
+            <small class="control-error">{move || ui.editor.with(|e| e.draft_error().filter(|error| match error {
+                EditorError::Parse(f) => *f == field,
+                EditorError::Validation(v) => validation_raw(*v) == Some(field),
+                _ => false,
+            }).map(error_text))}</small>
         </label>
     }
 }
@@ -165,17 +294,19 @@ pub fn Choice(
     #[prop(default = false)] repair_invalid_draft: bool,
     #[prop(default = String::new())] id: String,
     #[prop(optional)] accessible_label: Option<String>,
+    #[prop(optional)] disabled: Option<Signal<bool>>,
+    #[prop(optional)] disabled_values: Option<Signal<Vec<String>>>,
 ) -> impl IntoView {
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {
         <label class="field"><span>{label}</span>
-            <select id=id aria-label=accessible_label prop:value=move || value.get() disabled=move || if repair_invalid_draft { false } else if layout { ui.layout_locked() } else { ui.invalid() }
+            <select id=id aria-label=accessible_label prop:value=move || value.get() disabled=move || disabled.is_some_and(|d| d.get()) || if repair_invalid_draft { false } else if layout { ui.layout_locked() } else { ui.invalid() }
                 on:change=move |event| {
                     if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_value(&event))); }
                     event_target::<web_sys::HtmlSelectElement>(&event).set_value(&value.get_untracked());
                 }>
-                {options.into_iter().map(|(value,label)| view! { <option value=value>{label}</option> }).collect_view()}
+                {options.into_iter().map(|(value,label)| {let check=value.clone();view! { <option value=value disabled=move ||disabled_values.is_some_and(|d|d.get().contains(&check))>{label}</option> }}).collect_view()}
             </select>
         </label>
     }
@@ -187,12 +318,14 @@ pub fn Toggle(
     label: &'static str,
     value: Signal<bool>,
     on_change: Callback<(FieldToken, bool)>,
+    #[prop(default = false)] repair_invalid_draft: bool,
+    #[prop(optional)] disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {
         <label class="toggle"><span>{label}</span><input type="checkbox"
-            prop:checked=move || value.get() disabled=move || ui.invalid()
+            prop:checked=move || value.get() disabled=move || disabled.is_some_and(|d|d.get()) || (!repair_invalid_draft && ui.invalid())
             on:change=move |event| {
                 if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_checked(&event))); }
                 event_target::<web_sys::HtmlInputElement>(&event).set_checked(value.get_untracked());
@@ -215,13 +348,26 @@ pub fn error_text(error: EditorError) -> String {
                     "Colours need at least 3:1 contrast after RGB565 conversion. Repair the palette or discard the \
                      edit."
                 }
+                ErrorCode::Overlap if matches!(e.field, Field::BandOrder(_)) => {
+                    "Bands must be ordered without overlap. Touching endpoints are allowed."
+                }
                 ErrorCode::Overlap => "Widgets overlap. Choose free cells or a smaller size.",
+                ErrorCode::Text if matches!(e.field, Field::BandLabel(_)) => {
+                    "Use 0–5 printable ASCII characters. Empty is allowed; a nonempty label cannot be only spaces."
+                }
                 ErrorCode::Text => "Use nonempty printable ASCII within the shown character limit.",
-                ErrorCode::Hysteresis => "Clear must be below a high trigger, or above a low trigger.",
+                ErrorCode::Hysteresis => {
+                    "High: clear < trigger; low: trigger < clear. Outside window: trigger low < clear low ≤ clear high \
+                     < trigger high. Inside window: clear low < trigger low ≤ trigger high < clear high."
+                }
                 ErrorCode::Bounds => "The value is outside the allowed range.",
                 ErrorCode::Incompatible => "This option does not apply to this channel.",
                 ErrorCode::FuelBasis => "Measured volume blends need a common density reference temperature.",
                 ErrorCode::SourceMetadata => "Source metadata must match the selected catalogue definition.",
+                _ if e.field == Field::WarningAcknowledge => {
+                    "Bind a Dashboard onboard button to Acknowledge warnings in Device controls before enabling latch \
+                     or snooze."
+                }
                 _ => "The configuration has an invalid or missing reference.",
             };
             let field = match e.field {
@@ -237,9 +383,13 @@ pub fn error_text(error: EditorError) -> String {
             format!("{field}: {reason}")
         }
         EditorError::InvalidDraft => "Correct the highlighted fields, or discard the invalid edits first.".into(),
-        EditorError::Parse(RawField::Widget(_, WidgetField::Color(_)) | RawField::WarningColor { .. }) => {
-            "Enter a colour as #RRGGBB, for example #FF3048.".into()
-        }
+        EditorError::Parse(
+            RawField::Widget(_, WidgetField::Color(_) | WidgetField::BandColor(_))
+            | RawField::WarningColor { .. }
+            | RawField::Led {
+                field: LedField::Color, ..
+            },
+        ) => "Enter a colour as #RRGGBB, for example #FF3048.".into(),
         EditorError::Parse(field) => format!("Correct {field:?}: enter a complete number before applying this change."),
         EditorError::LastView => "Keep at least one view.".into(),
         EditorError::ViewCapacity => "Up to eight views are supported.".into(),

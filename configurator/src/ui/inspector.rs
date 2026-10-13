@@ -58,12 +58,12 @@ fn WidgetInspector(
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(row)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.row=row);}})/>
             </div>
             <h3 class="subheading">"Display"</h3>
-            <Choice ui label="Gauge style" value=Signal::derive(move ||ui.widget(id).map(|w|format!("{:?}",w.gauge.kind)).unwrap_or_default())
+            <Choice ui repair_invalid_draft=true label="Gauge style" value=Signal::derive(move ||ui.widget(id).map(|w|format!("{:?}",w.gauge.kind)).unwrap_or_default())
                 options=GaugeKind::ALL.into_iter().map(|kind|(format!("{kind:?}"),kind.label().to_string())).collect()
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|{if let Some(kind)=GaugeKind::ALL.into_iter().find(|kind|format!("{kind:?}")==value) {ui.update_widget(token,id,|w|w.gauge.kind=kind);}})/>
             <Show when=move ||ui.widget(id).is_some_and(|w|!w.gauge.kind.is_numeric())>
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GaugeMinimum) label="Scale minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GaugeMaximum) label="Scale maximum"/></div>
-                <Toggle ui label="Expand with observed values" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.gauge.expand)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.gauge.expand=value))/>
+                <Toggle ui repair_invalid_draft=true label="Expand with observed values" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.gauge.expand)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.gauge.expand=value))/>
                 <p class="hint">"Limits use canonical units (boost in bar), at least 0.001 apart. Expansion lasts until statistics reset. Fixed scales clamp the indicator; numbers still show the actual reading."</p>
                 <p class="hint">"Gauges replace history and trend. Average and extrema are available at 2 × 2. Numeric-view preferences are preserved."</p>
             </Show>
@@ -78,13 +78,9 @@ fn WidgetInspector(
             <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
             {flag(ui,id,"Trend arrow",|d|d.trend,|d,v|d.trend=v)}
             </Show>
-            <Show when=move || channel==Channel::Lambda>
-                {flag(ui,id,"AFR alongside lambda",|d|d.afr,|d,v|d.afr=v)}
-                <p class="hint">"AFR uses the Fuel & AFR assumptions below the preview. Graphs and rules still use lambda."</p>
-            </Show>
-            <Show when=move || channel==Channel::Boost><p class="hint">"The dashboard button switches bar / PSI, including statistics. Warning and graph limits are in bar."</p></Show>
+            <super::advanced::DisplayControls ui id/>
             <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
-            <Choice ui label="Graph range" value=Signal::derive(move ||ui.widget(id).map(|w|if matches!(w.display.graph_range,GraphRange::Auto){"auto"}else{"fixed"}.to_string()).unwrap_or_default()) options=choices(&[("auto","Automatic"),("fixed","Fixed canonical range")])
+            <Choice ui repair_invalid_draft=true label="Graph range" value=Signal::derive(move ||ui.widget(id).map(|w|if matches!(w.display.graph_range,GraphRange::Auto){"auto"}else{"fixed"}.to_string()).unwrap_or_default()) options=choices(&[("auto","Automatic"),("fixed","Fixed canonical range")])
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.update_widget(token,id,|w|w.display.graph_range=if value=="fixed" {let(min,max)=w.channel.domain();GraphRange::Fixed{min,max}}else{GraphRange::Auto}))/>
             <Show when=move || ui.widget(id).is_some_and(|w|matches!(w.display.graph_range,GraphRange::Fixed{..}))>
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GraphMinimum) label="Graph minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GraphMaximum) label="Graph maximum"/></div>
@@ -96,14 +92,14 @@ fn WidgetInspector(
                 <p class="hint">"Gauge styles use indicator, track and ticks. Numeric uses history and trend. Compact gauges hide statistics. Warning colours apply to this tile and cycle-one popups; list warnings use the separate combined palette."</p>
             </details>
             <h3 class="subheading">"Warning rule"</h3>
-            <Toggle ui label="Enable warning" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.warning.enabled)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.warning.enabled=value))/>
-            <Choice ui label="Applies to" value=Signal::derive(move ||ui.widget(id).map(|w|if w.warning.applicability==Applicability::DemoOnly{"demo"}else{"vehicle"}.to_string()).unwrap_or_default()) options=choices(&[("demo","Demo only"),("vehicle","Vehicle and demo")])
+            <Toggle ui repair_invalid_draft=true label="Enable warning" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.warning.enabled)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.warning.enabled=value))/>
+            <Choice ui repair_invalid_draft=true label="Applies to" value=Signal::derive(move ||ui.widget(id).map(|w|if w.warning.applicability==Applicability::DemoOnly{"demo"}else{"vehicle"}.to_string()).unwrap_or_default()) options=choices(&[("demo","Demo only"),("vehicle","Vehicle and demo")])
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.update_widget(token,id,|w|w.warning.applicability=if value=="demo"{Applicability::DemoOnly}else{Applicability::VehicleAndDemo}))/>
             <p class="hint">"Demo limits are examples. Vehicle thresholds are your own configuration; source and operating-context guards remain enforced."</p>
-            <Choice ui label="Rule type" value=Signal::derive(move ||ui.widget(id).map(|w|match w.warning.mode {LimitMode::High=>"high",LimitMode::Low=>"low",LimitMode::LambdaDeviation=>"lambda",LimitMode::OutsideWindow=>"outside",LimitMode::InsideWindow=>"inside"}.to_string()).unwrap_or_default())
-                options=if channel==Channel::Lambda {choices(&[("lambda","Deviation from target lambda")])} else {choices(&[("high","High value"),("low","Low value")])}
+            <Choice ui repair_invalid_draft=true label="Rule type" value=Signal::derive(move ||ui.widget(id).map(|w|match w.warning.mode {LimitMode::High=>"high",LimitMode::Low=>"low",LimitMode::LambdaDeviation=>"lambda",LimitMode::OutsideWindow=>"outside",LimitMode::InsideWindow=>"inside"}.to_string()).unwrap_or_default())
+                options=if channel==Channel::Lambda {choices(&[("lambda","Deviation from target lambda")])} else {choices(&[("high","High value"),("low","Low value"),("outside","Outside window"),("inside","Inside window")])}
                 on_change=Callback::new(move |(token,value):(FieldToken,String)| {
-                    let mode=match value.as_str(){"low"=>LimitMode::Low,"high"=>LimitMode::High,_=>return};
+                    let mode=match value.as_str(){"low"=>LimitMode::Low,"high"=>LimitMode::High,"outside"=>LimitMode::OutsideWindow,"inside"=>LimitMode::InsideWindow,_=>return};
                     ui.typed(token,Edit::SetWarningMode{id,mode});
                 })/>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningTrigger) label="Trigger"/><TextField ui field=RawField::Widget(id,WidgetField::WarningClear) label="Clear"/></div>
@@ -111,6 +107,7 @@ fn WidgetInspector(
                 <TextField ui field=RawField::Widget(id,WidgetField::WarningLoad) label="Minimum load (%)" hint="0–100; required lambda context stays enforced"/>
             </Show>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningOn) label="On dwell (ms)" hint="1–30000"/><TextField ui field=RawField::Widget(id,WidgetField::WarningOff) label="Off dwell (ms)" hint="1–30000"/></div>
+            <super::advanced::WarningControls ui id/>
             <TextField ui field=RawField::Widget(id,WidgetField::WarningMessage) label="Warning message" hint="1–20 ASCII characters; one line per warning"/>
             <div class="field"><span>"Warning order within this view"</span><div class="field-pair">
                 <button disabled=move ||ui.invalid() on:click=move |_|reorder(ui,id,false)>"↑ Earlier"</button>
@@ -150,12 +147,12 @@ fn reorder(
 #[component]
 pub fn WarningSettingsPanel(ui: Ui) -> impl IntoView {
     view! {
-        <div class="settings-content"><div class="settings-copy"><h3>"Give each warning its moment."</h3><p>"Messages follow view order, then widget order. Button feedback takes priority; warnings resume afterward."</p><p class="hint">"Preview warning appearance uses synthetic data and compressed dwell. It does not test ECU support or physical timing."</p></div><div class="settings-form">
-            <Choice ui label="Show warnings from" value=Signal::derive(move ||ui.editor.with(|e|if e.preview().config().warnings.scope==WarningScope::AllViews{"all"}else{"view"}.to_string())) options=choices(&[("all","All views"),("view","Current view only")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {
-                let mut settings=ui.editor.with_untracked(|e|e.preview().config().warnings);settings.scope=if value=="all"{WarningScope::AllViews}else{WarningScope::CurrentView};ui.typed(token,Edit::SetWarningPresentation(settings));
+        <div class="settings-content"><div class="settings-copy"><h3>"Give each warning its moment."</h3><p>"Messages follow priority first, then stable view and widget order. All eligible warnings cycle, including lower priorities. A new episode restarts paging; button feedback takes display priority."</p><p class="hint">"The appearance Warnings button uses synthetic data with compressed dwell. Device controls has a separate persistent timing simulation with real configured dwell and completed-page acknowledgment. Neither qualifies ECU support."</p></div><div class="settings-form">
+            <Choice ui repair_invalid_draft=true label="Show warnings from" value=Signal::derive(move ||ui.editor.with(|e|if e.editing_config().warnings.scope==WarningScope::AllViews{"all"}else{"view"}.to_string())) options=choices(&[("all","All views"),("view","Current view only")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {
+                let mut settings=ui.editor.with_untracked(|e|e.editing_config().warnings);settings.scope=if value=="all"{WarningScope::AllViews}else{WarningScope::CurrentView};ui.typed(token,Edit::SetWarningPresentation(settings));
             })/>
-            <Choice ui label="Presentation" value=Signal::derive(move ||ui.editor.with(|e|if e.preview().config().warnings.mode==WarningMode::CycleOne{"one"}else{"three"}.to_string())) options=choices(&[("one","Cycle one warning"),("three","List up to three warnings")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {
-                let mut settings=ui.editor.with_untracked(|e|e.preview().config().warnings);settings.mode=if value=="one"{WarningMode::CycleOne}else{WarningMode::ListThree};ui.typed(token,Edit::SetWarningPresentation(settings));
+            <Choice ui repair_invalid_draft=true label="Presentation" value=Signal::derive(move ||ui.editor.with(|e|if e.editing_config().warnings.mode==WarningMode::CycleOne{"one"}else{"three"}.to_string())) options=choices(&[("one","Cycle one warning"),("three","List up to three warnings")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {
+                let mut settings=ui.editor.with_untracked(|e|e.editing_config().warnings);settings.mode=if value=="one"{WarningMode::CycleOne}else{WarningMode::ListThree};ui.typed(token,Edit::SetWarningPresentation(settings));
             })/>
             <TextField ui field=RawField::WarningPageMilliseconds label="Page interval (ms)" hint="500–10000; elapsed time, independent of FPS"/>
             <h3>"Combined warning colours"</h3>
@@ -170,16 +167,16 @@ pub fn WarningSettingsPanel(ui: Ui) -> impl IntoView {
 pub fn FuelSettings(ui: Ui) -> impl IntoView {
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"Lambda, in your fuel's language."</h3><p>"AFR = lambda × stoichiometric ratio. E5 means up to 5% ethanol, not a measured tank composition."</p><p>"An ethanol blend remains an estimate. Declare the inputs and their basis; the Pico resolves the ratio once at boot."</p><div class="ratio-readout"><small>"RESOLVED STOICHIOMETRY"</small><b>{move || ui.editor.with(|e|format!("{:.4} : 1",e.preview().stoich()))}</b></div></div><div class="settings-form">
-            <Choice ui label="AFR scale" value=Signal::derive(move ||ui.editor.with(|e|match e.preview().config().fuel{Fuel::EquivalentGasoline=>"eq",Fuel::Stoichiometric{..}=>"ratio",Fuel::EthanolBlend(_)=>"blend"}.to_string())) options=choices(&[("eq","Gasoline-equivalent 14.7"),("ratio","Explicit stoichiometric ratio"),("blend","Ethanol blend estimate")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.typed(token,Edit::SetFuel(match value.as_str(){"ratio"=>Fuel::Stoichiometric{ratio:14.7},"blend"=>Fuel::EthanolBlend(Blend::illustrative()),_=>Fuel::EquivalentGasoline})))/>
-            <Show when=move ||ui.editor.with(|e|matches!(e.preview().config().fuel,Fuel::Stoichiometric{..}))><TextField ui field=RawField::Fuel(FuelField::Ratio) label="Stoichiometric ratio" hint="5–25"/></Show>
-            <Show when=move ||ui.editor.with(|e|matches!(e.preview().config().fuel,Fuel::EthanolBlend(_)))><BlendSettings ui/></Show>
+            <Choice ui repair_invalid_draft=true label="AFR scale" value=Signal::derive(move ||ui.editor.with(|e|match e.editing_config().fuel{Fuel::EquivalentGasoline=>"eq",Fuel::Stoichiometric{..}=>"ratio",Fuel::EthanolBlend(_)=>"blend"}.to_string())) options=choices(&[("eq","Gasoline-equivalent 14.7"),("ratio","Explicit stoichiometric ratio"),("blend","Ethanol blend estimate")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.typed(token,Edit::SetFuel(match value.as_str(){"ratio"=>Fuel::Stoichiometric{ratio:14.7},"blend"=>Fuel::EthanolBlend(Blend::illustrative()),_=>Fuel::EquivalentGasoline})))/>
+            <Show when=move ||ui.editor.with(|e|matches!(e.editing_config().fuel,Fuel::Stoichiometric{..}))><TextField ui field=RawField::Fuel(FuelField::Ratio) label="Stoichiometric ratio" hint="5–25"/></Show>
+            <Show when=move ||ui.editor.with(|e|matches!(e.editing_config().fuel,Fuel::EthanolBlend(_)))><BlendSettings ui/></Show>
         </div></div>
     }
 }
 
 fn blend(ui: Ui) -> Blend {
     ui.editor.with(|e| {
-        match e.preview().config().fuel {
+        match e.editing_config().fuel {
             Fuel::EthanolBlend(b) => b,
             _ => Blend::illustrative(),
         }
@@ -199,9 +196,9 @@ fn edit_blend(
 fn BlendSettings(ui: Ui) -> impl IntoView {
     view! {
         <TextField ui field=RawField::Fuel(FuelField::Percent) label="Ethanol content (%)" hint="0–100; enter an explicit assumption or measurement"/>
-        <Choice ui label="Percentage basis" value=Signal::derive(move ||if blend(ui).basis==BlendBasis::Volume{"volume"}else{"mass"}.to_string()) options=choices(&[("volume","Component volume"),("mass","Mass")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|edit_blend(ui,token,|b|b.basis=if value=="volume"{BlendBasis::Volume}else{BlendBasis::Mass}))/>
-        <Choice ui label="Composition input" value=Signal::derive(move ||if blend(ui).composition_origin==CompositionOrigin::Assumed{"assumed"}else{"measured"}.to_string()) options=choices(&[("assumed","Assumed"),("measured","Measured")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|edit_blend(ui,token,|b|b.composition_origin=if value=="measured"{CompositionOrigin::Measured}else{CompositionOrigin::Assumed}))/>
-        <Choice ui label="Density reference" value=Signal::derive(move ||if matches!(blend(ui).density_reference,DensityReference::UnknownAssumed){"unknown"}else{"common"}.to_string()) options=choices(&[("unknown","Unknown / assumed"),("common","Common temperature")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|edit_blend(ui,token,|b|b.density_reference=if value=="common"{DensityReference::CommonCelsius(20.0)}else{DensityReference::UnknownAssumed}))/>
+        <Choice ui repair_invalid_draft=true label="Percentage basis" value=Signal::derive(move ||if blend(ui).basis==BlendBasis::Volume{"volume"}else{"mass"}.to_string()) options=choices(&[("volume","Component volume"),("mass","Mass")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|edit_blend(ui,token,|b|b.basis=if value=="volume"{BlendBasis::Volume}else{BlendBasis::Mass}))/>
+        <Choice ui repair_invalid_draft=true label="Composition input" value=Signal::derive(move ||if blend(ui).composition_origin==CompositionOrigin::Assumed{"assumed"}else{"measured"}.to_string()) options=choices(&[("assumed","Assumed"),("measured","Measured")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|edit_blend(ui,token,|b|b.composition_origin=if value=="measured"{CompositionOrigin::Measured}else{CompositionOrigin::Assumed}))/>
+        <Choice ui repair_invalid_draft=true label="Density reference" value=Signal::derive(move ||if matches!(blend(ui).density_reference,DensityReference::UnknownAssumed){"unknown"}else{"common"}.to_string()) options=choices(&[("unknown","Unknown / assumed"),("common","Common temperature")]) on_change=Callback::new(move |(token,value):(FieldToken,String)|edit_blend(ui,token,|b|b.density_reference=if value=="common"{DensityReference::CommonCelsius(20.0)}else{DensityReference::UnknownAssumed}))/>
         <Show when=move ||matches!(blend(ui).density_reference,DensityReference::CommonCelsius(_))><TextField ui field=RawField::Fuel(FuelField::ReferenceCelsius) label="Reference temperature (°C)" hint="−30 to 60; both component densities at this temperature"/></Show>
         <div class="field-pair"><TextField ui field=RawField::Fuel(FuelField::GasolineRatio) label="Gasoline ratio" hint="5–25"/><TextField ui field=RawField::Fuel(FuelField::EthanolRatio) label="Ethanol ratio" hint="5–25; below gasoline"/></div>
         <div class="field-pair"><TextField ui field=RawField::Fuel(FuelField::GasolineDensity) label="Gasoline kg/L" hint="0.5–1.2"/><TextField ui field=RawField::Fuel(FuelField::EthanolDensity) label="Ethanol kg/L" hint="0.5–1.2"/></div>
@@ -225,7 +222,7 @@ fn SourcePanel(
     ui: Ui,
     channel: Channel,
 ) -> impl IntoView {
-    let source = move || ui.editor.with(|e| e.preview().config().sources[channel.index()]);
+    let source = move || ui.editor.with(|e| e.editing_config().sources[channel.index()]);
     let options = DEFINITIONS
         .into_iter()
         .filter(|id| definition(*id).channel.is_none_or(|c| c == channel))
@@ -233,18 +230,18 @@ fn SourcePanel(
         .collect::<Vec<_>>();
     view! {
         <div class="source-panel">
-            <Choice ui label="Source definition" value=Signal::derive(move ||format!("{:?}",source().definition)) options on_change=Callback::new(move |(token,value):(FieldToken,String)| {
+            <Choice ui repair_invalid_draft=true label="Source definition" value=Signal::derive(move ||format!("{:?}",source().definition)) options on_change=Callback::new(move |(token,value):(FieldToken,String)| {
                 if let Some(id)=DEFINITIONS.into_iter().find(|id|format!("{id:?}")==value){ui.typed(token,Edit::SetSource{channel,source:definition(id).source(channel)});}
             })/>
             <div class="source-evidence"><span class="chip">{move ||format!("{:?}",source().evidence)}</span><code>{move ||format!("{:?}",source().access)}</code><p>{move ||definition(source().definition).interpretation}</p>
                 <p class="hint">{move ||match definition(source().definition).unavailable{Some(reason)=>format!("Unavailable in vehicle mode: {reason:?}"),None if source().definition==DefinitionId::Disabled=>"Channel disabled".into(),None=>"Implemented generic decoder. Deployment qualification and ECU capability are still required.".into()}}</p>
                 <div class="source-links">{move ||definition(source().definition).references().iter().enumerate().map(|(n,url)|view!{<a href=*url target="_blank" rel="noopener noreferrer">{format!("Reference {} ↗",n+1)}</a>}).collect_view()}</div>
             </div>
-            <Choice ui label="Route" value=Signal::derive(move ||match source().route{Route::DeploymentProfile=>"profile",Route::Unknown=>"unknown",Route::Physical11{..}=>"physical"}.to_string()) options=choices(&[("profile","Deployment profile"),("unknown","Unknown"),("physical","Explicit physical 11-bit pair")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {
+            <Choice ui repair_invalid_draft=true label="Route" value=Signal::derive(move ||match source().route{Route::DeploymentProfile=>"profile",Route::Unknown=>"unknown",Route::Physical11{..}=>"physical"}.to_string()) options=choices(&[("profile","Deployment profile"),("unknown","Unknown"),("physical","Explicit physical 11-bit pair")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {
                 let mut s=source();s.route=match value.as_str(){"profile"=>Route::DeploymentProfile,"physical"=>Route::Physical11{request:0x7e0,response:0x7e8},_=>Route::Unknown};ui.typed(token,Edit::SetSource{channel,source:s});
             })/>
             <Show when=move ||matches!(source().route,Route::Physical11{..})><p class="hint">"Explicit IDs must match the reviewed deployment pair. Defaults shown here are examples, not a discovered ECU."</p><div class="field-pair"><TextField ui field=RawField::Source(channel,SourceField::Request) label="Request ID" hint="0x000–0x7FF physical route"/><TextField ui field=RawField::Source(channel,SourceField::Response) label="Response ID" hint="11-bit; distinct from request"/></div></Show>
-            <Toggle ui label="Polling requested" value=Signal::derive(move ||matches!(source().poll,Poll::EveryMs(_))) on_change=Callback::new(move |(token,value)| {let mut s=source();s.poll=if value{Poll::EveryMs(minimum_period(channel))}else{Poll::Off};ui.typed(token,Edit::SetSource{channel,source:s});})/>
+            <Toggle ui repair_invalid_draft=true label="Polling requested" value=Signal::derive(move ||matches!(source().poll,Poll::EveryMs(_))) on_change=Callback::new(move |(token,value)| {let mut s=source();s.poll=if value{Poll::EveryMs(minimum_period(channel))}else{Poll::Off};ui.typed(token,Edit::SetSource{channel,source:s});})/>
             <Show when=move ||matches!(source().poll,Poll::EveryMs(_))><TextField ui field=RawField::Source(channel,SourceField::PollMilliseconds) label="Poll period (ms)" hint="Channel floor applies; maximum 10000"/></Show>
             <TextField ui field=RawField::Source(channel,SourceField::FreshnessMilliseconds) label="Freshness limit (ms)" hint="May tighten the channel cap; cannot extend it"/>
         </div>

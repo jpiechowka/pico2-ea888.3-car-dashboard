@@ -14,7 +14,10 @@ numeric reading and warning thresholds remain independent of that scale.
 | Circular arc, needle dial, horizontal, vertical, segmented bar | 1×1, 2×1, 2×2 | Replaced by gauge | Optional at 2×2 |
 
 Every style retains fitted values, labels and unavailable-state feedback.
-Lambda can retain its AFR and conversion label; boost retains bar/PSI switching.
+Lambda offers lambda, AFR estimate or both with declared fuel assumptions;
+boost offers Follow dashboard bar/PSI or fixed bar, PSI and kPa. Only Follow
+dashboard responds to the physical/preview toggle. Equal primary/secondary units
+are omitted. Compact gauges retain secondary choices for wider sizes.
 Hidden numeric-view preferences remain stored when changing gauge styles.
 Round gauges use a bounded line lookup; bars use fixed geometry. None adds a
 frame-count-driven animation or a second data generator.
@@ -31,8 +34,10 @@ Invalid colours remain visible for diagnosis with safe geometry; invalid rules
 or geometry never become the accepted device configuration. Save/export remain
 blocked until repaired or discarded. Use the stress-value selector to inspect
 channel endpoints, extreme digit widths and unavailable AFR. Export JSON for
-editing and `.eav` for a firmware build. [Version 1 migration](schema-v2.md) is
-explicit in the editor/build compiler; exported files now use version 2.
+editing and `.eav` for a firmware build. Historical v1/v2/v3 files migrate to the
+complete local v4 schema; release integration remains pending. See
+[advanced controls](advanced-controls.md) for smoothing, history, markers,
+bands and warning acknowledgment.
 
 ## Implementation plan, 2026-10-12
 
