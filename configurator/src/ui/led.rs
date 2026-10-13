@@ -27,7 +27,7 @@ fn Pattern(
     };
     view! {
         <fieldset><legend>{if warning{"Warning indicator"}else{"Normal indicator"}}</legend>
-            <Choice ui repair_invalid_draft=true label="Pattern" accessible_label=if warning{"Warning LED pattern".into()}else{"Normal LED pattern".into()}
+            <Choice ui repair_invalid_draft=true label="Pattern" id=Registry::dom_id(FieldKey::LedPattern,TargetOwner::Led(warning)) accessible_label=if warning{"Warning LED pattern".into()}else{"Normal LED pattern".into()}
                 value=Signal::derive(move ||format!("{:?}",pattern().kind)) options=choices(&[("Off","Off"),("Solid","Solid"),("Blink","Blink"),("Breathe","Breathe")])
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|change(ui,token,|s|{
                     let p=if warning{&mut s.warning}else{&mut s.normal};

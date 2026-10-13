@@ -288,18 +288,17 @@ fn import_file(
 pub fn Files(ui: Ui) -> impl IntoView {
     let pasted = RwSignal::new(String::new());
     view! {
-        <div class="settings-content"><div class="settings-copy"><h3>"From this canvas to your Pico."</h3><p>"Keep the JSON to edit later. The compact .eav contains the same validated settings and is parsed once when the firmware starts."</p>
-            <p>"Build with the working 280 / 70 profile. This studio does not flash your device."</p>
-            <code class="build-command">"./firmware/scripts/Build-Dashboard.ps1 -Name my-views -Profile 280-70 -Mode Demo -Config ./dashboard.eav"</code>
+        <div class="settings-content"><div class="settings-copy"><h3>"Configuration files"</h3><p>"Keep the JSON to edit later. The compact .eav contains the same validated settings and is parsed once when the firmware starts."</p>
+
         </div><div class="settings-form">
-            <button class="primary" disabled=move ||ui.invalid() on:click=move |_|export(ui,false)>"Export runtime .eav"</button>
-            <button disabled=move ||ui.invalid() on:click=move |_|export(ui,true)>"Export editable JSON"</button>
-            <label class="field"><span>"Import JSON or .eav"</span><input type="file" accept=".json,.eav,application/json,application/octet-stream" disabled=move ||ui.invalid() on:change=move |event|{
+            <button class="primary" disabled=move ||ui.snapshot_blocked() on:click=move |_|export(ui,false)>"Export runtime .eav"</button>
+            <button disabled=move ||ui.snapshot_blocked() on:click=move |_|export(ui,true)>"Export editable JSON"</button>
+            <label class="field"><span>"Import JSON or .eav"</span><input type="file" accept=".json,.eav,application/json,application/octet-stream" disabled=move ||ui.snapshot_blocked() on:change=move |event|{
                 let input=event_target::<web_sys::HtmlInputElement>(&event);
                 if let Some(file)=input.files().and_then(|files|files.get(0)){import_file(ui,file);}input.set_value("");
             }/><small>"Maximum 128 KiB JSON or 16 KiB device binary"</small></label>
             <details><summary>"Paste editable JSON"</summary><label class="field"><span>"Configuration JSON"</span><textarea rows="7" maxlength="131072" prop:value=move ||pasted.get() on:input=move |e|pasted.set(event_target_value(&e))></textarea></label>
-                <button disabled=move ||ui.invalid() on:click=move |_|{let text=pasted.get_untracked();ui.run(move |e|{let token=e.begin_import()?;e.complete_import(token,ImportFormat::Json,text.as_bytes())});}>"Import pasted JSON"</button>
+                <button disabled=move ||ui.snapshot_blocked() on:click=move |_|{let text=pasted.get_untracked();ui.run(move |e|{let token=e.begin_import()?;e.complete_import(token,ImportFormat::Json,text.as_bytes())});}>"Import pasted JSON"</button>
             </details>
             <p class="hint">"Local saving is per browser and origin. Export a file for a portable backup. Unknown fields, bad checksums and invalid limits are rejected."</p>
             <super::metrics::Measurements ui/>

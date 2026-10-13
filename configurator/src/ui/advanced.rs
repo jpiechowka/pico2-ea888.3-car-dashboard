@@ -82,7 +82,7 @@ fn WidgetChoice(
     });
     view! { <Choice ui label value options repair_invalid_draft=true
         disabled_values=Signal::derive(move ||if matches!(setting,Setting::Readout) && !ui.invalid() && ui.widget(id).is_some_and(|w|!w.capabilities().secondary) {vec!["LambdaAndAfr".into()]}else{Vec::new()})
-        id=format!("widget-{id}-{}",match setting {Setting::Readout=>"readout",Setting::Secondary=>"secondary",Setting::Peak=>"peak",Setting::Reference=>"reference-mode",Setting::Priority=>"priority"})
+        id=ui.control_id(label)
         disabled=Signal::derive(move || !ui.invalid() && ui.widget(id).is_some_and(|w| match setting {
             Setting::Secondary=>!w.capabilities().secondary,
             Setting::Peak | Setting::Reference=>!w.capabilities().markers,
@@ -108,11 +108,11 @@ fn Preset(
     let known = options.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
     let mut options = options;
     options.push(("custom".into(), "Custom (edit below)".into()));
-    view! { <Choice ui label repair_invalid_draft=true options value=Signal::derive(move ||{
+    view! { <Choice ui label id=format!("{}-preset",ui.raw_dom(field)) repair_invalid_draft=true options value=Signal::derive(move ||{
         let raw=ui.editor.with(|e|fields::raw_value(e,field));
         if known.contains(&raw) {raw}else{"custom".into()}
     }) on_change=Callback::new(move |(token,value):(FieldToken,String)|{
-        if value!="custom" {ui.run(move |e|e.set_raw(token,field,value));}else if let Some(input)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&fields::field_id(field))).and_then(|e|e.dyn_into::<web_sys::HtmlInputElement>().ok()){let _=input.focus();input.select();}
+        if value!="custom" {fields::preset_raw(ui,token,field,value);}else if let Some(input)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&ui.raw_dom(field))).and_then(|e|e.dyn_into::<web_sys::HtmlInputElement>().ok()){let _=input.focus();input.select();}
     })/> }
 }
 
@@ -123,7 +123,7 @@ pub fn DisplayControls(
 ) -> impl IntoView {
     let channel = ui.widget(id).expect("selected widget").channel;
     view! {
-        <h3 class="subheading">"Units & current value"</h3>
+
         <WidgetChoice ui id label="Primary readout" setting=Setting::Readout/>
         <Show when=move ||channel==Channel::Boost>
             <WidgetChoice ui id label="Secondary boost unit" setting=Setting::Secondary/>
@@ -133,10 +133,15 @@ pub fn DisplayControls(
         <Show when=move ||ui.widget(id).is_some_and(|w|!w.capabilities().secondary)><p class="hint">"A compact 1 × 1 gauge shows one readout. Secondary boost units and the AFR companion return at 2 × 1 or 2 × 2; stored choices are retained."</p></Show>
         <Preset ui field=RawField::Widget(id,WidgetField::SmoothingMilliseconds) label="Current-value smoothing" options=choices(&[("0","Off"),("250","Gentle · 250 ms"),("750","Strong · 750 ms")])/>
         <TextField ui field=RawField::Widget(id,WidgetField::SmoothingMilliseconds) label="Smoothing time (ms)" hint="0 = Off; custom 50–5000. Current number and gauge only; history, statistics, peaks and warning thresholds use raw canonical readings."/>
-        <h3 class="subheading">"Channel-shared history"</h3>
-        <Preset ui field=RawField::HistorySeconds(channel) label="History duration preset" options=choices(&[("10","10 seconds"),("30","30 seconds"),("120","2 minutes"),("300","5 minutes")])/>
-        <TextField ui field=RawField::HistorySeconds(channel) label="Channel-shared history (seconds)" hint="10–900. Every widget using this channel shares the duration; changing it clears its history, preserving independent extrema."/>
-        <p class="hint">{move ||if ui.widget(id).is_some_and(|w|w.capabilities().history){"History uses 60 timed buckets. Sparse samples and faults leave visible gaps; nothing is backfilled. Duration is shown while filling. This is a trend view, not a waveform or peak recorder."}else{"Gauge styles replace history. This channel-shared duration remains stored for numeric widgets."}}</p>
+    }
+}
+
+#[component]
+pub fn GaugeControls(
+    ui: Ui,
+    id: u16,
+) -> impl IntoView {
+    view! {
         <h3 class="subheading">"Peak & reference markers"</h3>
         <WidgetChoice ui id label="Peak marker" setting=Setting::Peak/>
         <TextField ui field=RawField::Widget(id,WidgetField::PeakHoldMilliseconds) label="Peak hold (ms)" hint="100–60000; default 750. At expiry the next fresh sample starts a new hold; stale/fault clears the marker."/>

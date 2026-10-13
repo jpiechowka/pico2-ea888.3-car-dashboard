@@ -222,6 +222,14 @@ pub struct ResolvedField {
 }
 pub struct Registry;
 impl Registry {
+    /// Synchronous read-only candidate access. A Config is data, never validation proof.
+    pub fn with_candidate<R>(
+        editor: &Editor,
+        read: impl FnOnce(&Config) -> R,
+    ) -> R {
+        editor.with_inspection_config(read)
+    }
+
     pub fn retained_raw_target(
         editor: &Editor,
         index: usize,
@@ -246,6 +254,28 @@ impl Registry {
         key: FieldKey,
         owner: TargetOwner,
     ) -> Result<FieldTarget, RegistryError> {
+        if Self::validation_key(location.field()) != Some(key) {
+            return Err(RegistryError::Unavailable);
+        }
+        let subowner_matches = match (owner, location.field()) {
+            (
+                TargetOwner::Led(actual),
+                Field::LedBrightness(expected) | Field::LedPeriod(expected) | Field::LedOnPercent(expected),
+            ) => actual == expected,
+            (
+                TargetOwner::Band(_, actual),
+                Field::BandMinimum(expected)
+                | Field::BandMaximum(expected)
+                | Field::BandLabel(expected)
+                | Field::BandColor(expected)
+                | Field::BandOrder(expected),
+            ) => actual == expected,
+            (TargetOwner::Led(_) | TargetOwner::Band(..), _) => false,
+            _ => true,
+        };
+        if !subowner_matches {
+            return Err(RegistryError::Unavailable);
+        }
         let target = FieldTarget {
             key,
             owner,
@@ -265,6 +295,60 @@ impl Registry {
             return Err(RegistryError::Unavailable);
         }
         Ok(target)
+    }
+
+    pub fn validation_key(field: Field) -> Option<FieldKey> {
+        use FieldKey::*;
+        Some(match field {
+            Field::BootView => BootView,
+            Field::ViewName => ViewName,
+            Field::Placement => Span,
+            Field::Label => Label,
+            Field::Decimals => Decimals,
+            Field::Readout | Field::Afr => Readout,
+            Field::Secondary => Secondary,
+            Field::Smoothing => Smoothing,
+            Field::PeakHold => PeakHold,
+            Field::Reference => Reference,
+            Field::BandMinimum(_) | Field::BandOrder(_) => BandMinimum,
+            Field::BandMaximum(_) => BandMaximum,
+            Field::BandLabel(_) => BandLabel,
+            Field::BandColor(_) => BandColor,
+            Field::HistorySeconds(_) => HistorySeconds,
+            Field::WarningTriggerHigh => WarningTriggerHigh,
+            Field::WarningClearHigh => WarningClearHigh,
+            Field::WarningSnooze => WarningSnooze,
+            Field::LedBrightness(_) => LedBrightness,
+            Field::LedPeriod(_) => LedPeriod,
+            Field::LedOnPercent(_) => LedOnPercent,
+            Field::GraphRange => GraphMinimum,
+            Field::GaugeRange => GaugeMinimum,
+            Field::Color(role) => Self::raw_key(RawField::Widget(0, WidgetField::Color(role))),
+            Field::WarningColors => WarningForeground,
+            Field::WarningMode => WarningMode,
+            Field::WarningTrigger => WarningTrigger,
+            Field::WarningClear => WarningClear,
+            Field::WarningLoad => WarningLoad,
+            Field::WarningOn => WarningOn,
+            Field::WarningOff => WarningOff,
+            Field::WarningMessage => WarningMessage,
+            Field::WarningPage => WarningPage,
+            Field::SourceDefinition | Field::SourceAccess | Field::SourceDecoder | Field::SourceEvidence => {
+                SourceDefinition
+            }
+            Field::SourceRoute => SourceRoute,
+            Field::SourcePoll => SourcePoll,
+            Field::SourceFreshness => SourceFreshness,
+            Field::FuelRatio => FuelRatio,
+            Field::FuelPercent => FuelPercent,
+            Field::FuelGasolineRatio => FuelGasolineRatio,
+            Field::FuelEthanolRatio => FuelEthanolRatio,
+            Field::FuelGasolineDensity => FuelGasolineDensity,
+            Field::FuelEthanolDensity => FuelEthanolDensity,
+            Field::FuelReference => FuelTemperature,
+            Field::Controls(ControlError::HoldDuration) => ControlDuration,
+            _ => return None,
+        })
     }
 
     pub fn candidate_widget(
@@ -457,6 +541,46 @@ impl Registry {
             }
             Ok(match target.owner {
                 TargetOwner::Widget(i) | TargetOwner::Band(i, _) => Self::widget_capability(target.key, &c.widgets[i]),
+                TargetOwner::Channel(channel) => {
+                    let source = c.sources[channel.index()];
+                    if matches!(target.key, FieldKey::SourceRequest | FieldKey::SourceResponse)
+                        && !matches!(source.route, Route::Physical11 { .. })
+                    {
+                        Capability::Inactive("Choose an explicit physical route to edit request and response IDs")
+                    } else if target.key == FieldKey::SourcePeriod && matches!(source.poll, Poll::Off) {
+                        Capability::Inactive("Enable polling to edit its period")
+                    } else {
+                        Capability::Active
+                    }
+                }
+                TargetOwner::Root => {
+                    let active = match target.key {
+                        FieldKey::FuelRatio => matches!(c.fuel, Fuel::Stoichiometric { .. }),
+                        FieldKey::FuelTemperature => {
+                            matches!(
+                                c.fuel,
+                                Fuel::EthanolBlend(Blend {
+                                    density_reference: DensityReference::CommonCelsius(_),
+                                    ..
+                                })
+                            )
+                        }
+                        FieldKey::FuelPercent
+                        | FieldKey::FuelBasis
+                        | FieldKey::FuelOrigin
+                        | FieldKey::FuelDensityMode
+                        | FieldKey::FuelGasolineRatio
+                        | FieldKey::FuelEthanolRatio
+                        | FieldKey::FuelGasolineDensity
+                        | FieldKey::FuelEthanolDensity => matches!(c.fuel, Fuel::EthanolBlend(_)),
+                        _ => true,
+                    };
+                    if active {
+                        Capability::Active
+                    } else {
+                        Capability::Inactive("Choose the applicable Fuel & AFR mode to edit this field")
+                    }
+                }
                 TargetOwner::Led(w) => {
                     let p = if w { c.led.warning } else { c.led.normal };
                     if (target.key == FieldKey::LedPeriod
@@ -489,7 +613,8 @@ impl Registry {
         use FieldKey::*;
         let c = w.capabilities();
         let active = match key {
-            Graph | GraphMode | GraphMinimum | GraphMaximum | Trend => c.history,
+            Graph | GraphMode | Trend => c.history,
+            GraphMinimum | GraphMaximum => c.history && matches!(w.display.graph_range, GraphRange::Fixed { .. }),
             Average | Extrema => c.statistics,
             PeakMode | PeakHold | ReferenceMode | Reference | BandMinimum | BandMaximum | BandColor => c.markers,
             BandLabel => c.band_labels,

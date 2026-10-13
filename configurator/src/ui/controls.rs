@@ -35,14 +35,23 @@ fn binding_id(
 
 fn error_target(error: ControlError) -> String {
     match error {
-        ControlError::HoldDuration => "control-hold-ms".into(),
+        ControlError::HoldDuration => Registry::dom_id(FieldKey::ControlDuration, TargetOwner::Root),
         ControlError::ReservedRecovery { page } => binding_id(page, ButtonId::Y, true),
-        ControlError::IncompatibleButton { page, button, hold } => binding_id(page, button, hold),
+        ControlError::IncompatibleButton { page, button, hold } => {
+            Registry::dom_id(
+                if hold {
+                    FieldKey::ControlHold
+                } else {
+                    FieldKey::ControlTap
+                },
+                TargetOwner::Button(page, button),
+            )
+        }
         ControlError::IncompatibleEncoderClick { page } => {
-            format!("control-{}-encoder-click", page.label().to_lowercase())
+            Registry::dom_id(FieldKey::EncoderClick, TargetOwner::Encoder(page))
         }
         ControlError::IncompatibleEncoderRotation { page } => {
-            format!("control-{}-encoder-rotation", page.label().to_lowercase())
+            Registry::dom_id(FieldKey::EncoderRotation, TargetOwner::Encoder(page))
         }
         ControlError::UnreachableScreen { .. } | ControlError::MissingViewNavigation => "control-routes".into(),
     }
@@ -127,7 +136,7 @@ fn ActionPicker(
             view! {
                 <Choice ui repair_invalid_draft=true
                     accessible_label=button.map_or_else(||format!("{} encoder click",page.label()),|button|format!("{} {} {}",page.label(),button.label(),if hold{"hold"}else{"tap"}))
-                    id=button.map_or_else(||format!("control-{}-encoder-click",page.label().to_lowercase()), |b|binding_id(page,b,hold))
+                    id=button.map_or_else(||Registry::dom_id(FieldKey::EncoderClick,TargetOwner::Encoder(page)), |b|Registry::dom_id(if hold{FieldKey::ControlHold}else{FieldKey::ControlTap},TargetOwner::Button(page,b)))
                     label=if button.is_none() { "Encoder click" } else if hold { "Hold" } else { "Tap" }
                     value=Signal::derive(move ||format!("{:?}",action())) options
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {
@@ -159,7 +168,7 @@ fn RotationPicker(
             let mut options:Vec<_>=RotationAction::ALL.into_iter().filter(|a|a.allowed_on(page)).map(|a|(format!("{a:?}"),a.label().to_string())).collect();
             if !action().allowed_on(page) {let rejected=action();options.push((format!("{rejected:?}"),format!("INVALID: {}",rejected.label())));}
             view! {
-                <Choice ui repair_invalid_draft=true label="Encoder rotation" id=format!("control-{}-encoder-rotation",page.label().to_lowercase())
+                <Choice ui repair_invalid_draft=true label="Encoder rotation" id=Registry::dom_id(FieldKey::EncoderRotation,TargetOwner::Encoder(page))
                     accessible_label=format!("{} encoder rotation",page.label())
                     value=Signal::derive(move ||format!("{:?}",action())) options
                     on_change=Callback::new(move |(token,value):(FieldToken,String)| {
@@ -172,51 +181,14 @@ fn RotationPicker(
 
 #[component]
 pub fn DeviceControls(ui: Ui) -> impl IntoView {
-    let sim = RwSignal::<ControlSimulator, LocalStorage>::new_local(
-        ui.editor.with_untracked(|e| ControlSimulator::new(e.preview().clone())),
-    );
-    Effect::new(move |_| ui.observe_cache(sim.with(ControlSimulator::cache_exhaustion_status)));
-    let previous = StoredValue::new(ui.editor.with_untracked(|e| e.preview().config().clone()));
-    let simulation_notice = RwSignal::new("Ready · accepted configuration".to_string());
-    let timing_preview = RwSignal::<dashboard_configurator::preview::Preview, LocalStorage>::new_local(
-        dashboard_configurator::preview::Preview::new(),
-    );
-    let timing_canvas = NodeRef::<leptos::html::Canvas>::new();
-    let sequence = RwSignal::new(0u64);
-    let pending_frame = RwSignal::new(None::<dashboard_core::display::pipeline::FrameToken>);
-    let canvas_accepted = RwSignal::new(false);
-    let channel = RwSignal::new(Channel::Boost);
-    Effect::new(move |_| {
-        ui.editor.with(|e| {
-            let accepted = e.preview().config();
-            if previous.with_value(|old| old != accepted) {
-                sim.update(|s| s.restart(e.preview().clone()));
-                previous.set_value(accepted.clone());
-                pending_frame.set(None);
-                canvas_accepted.set(false);
-                simulation_notice.set("Simulation restarted · accepted configuration changed".into());
-            }
-            if e.has_invalid_draft() {
-                let map = e
-                    .diagnostic()
-                    .map_or(e.editing_config().controls, |draft| draft.config.controls);
-                sim.update(|s| s.inspect_invalid(map));
-            } else if sim.with_untracked(ControlSimulator::invalid) {
-                sim.update(|s| s.restart(e.preview().clone()));
-                simulation_notice.set("Simulation restarted · candidate repaired".into());
-                pending_frame.set(None);
-                canvas_accepted.set(false);
-            }
-        });
-    });
     view! {
         <section class="device-controls" aria-label="Device controls">
             <h2>"Device controls"</h2>
             <p>"Map onboard buttons for each screen. Keep button routes to Debug, Logs and every dashboard view, even when an encoder is installed."</p>
-            <TextField ui field=RawField::ControlHoldMilliseconds id="control-hold-ms".to_string() label="Ordinary hold duration" hint="400–1500 ms · Y recovery is always 2000 ms"/>
+            <TextField ui field=RawField::ControlHoldMilliseconds id=Registry::dom_id(FieldKey::ControlDuration,TargetOwner::Root) label="Ordinary hold duration" hint="400–1500 ms · Y recovery is always 2000 ms"/>
             <div role="alert" class="control-error">{move || ui.editor.with(|e| {
                 if matches!(e.draft_error(),Some(EditorError::Parse(RawField::ControlHoldMilliseconds))) {
-                    return view!{<a href="#control-hold-ms">"Hold duration: enter a complete number."</a>}.into_any();
+                    return view!{<a href="#studio-field-root-controlduration">"Hold duration: enter a complete number."</a>}.into_any();
                 }
                 let map=e.diagnostic().map_or(e.editing_config().controls,|draft|draft.config.controls);
                 validate_controls(&map).err().map(|error| view! {
@@ -259,81 +231,96 @@ pub fn DeviceControls(ui: Ui) -> impl IntoView {
                     <p class="recovery-note">"Y hold always wakes Full, returns to Dashboard and cancels pending shutdown. Encoder bindings cannot replace onboard fallback routes."</p>
                 </fieldset>
             }).collect_view()}</div>
-            <section class="control-simulator" aria-label="Control simulator">
-                <h3>"Try device controls"</h3>
-                <strong class="control-error" hidden=move || !sim.with(ControlSimulator::invalid)>"INVALID SIMULATION · candidate bindings / accepted layout · inspection only"</strong>
-                <p role="status">{move ||simulation_notice.get()}</p>
-                <output id="control-simulator-state" aria-live="polite">{move ||sim.with(ControlSimulator::summary)}</output>
-                <output aria-label="RGB indicator duty">{move ||sim.with(|s|{let d=s.led_duty();format!("LED light duty · R {} · G {} · B {} / 10000",d.red,d.green,d.blue)})}</output>
-                <p class="hint">"Persistent timing simulation · real configured dwell · explicit sample, fault, stale and frame-completion steps. Appearance stress values above are separate."</p>
-                <label class="field"><span>"Fault / history channel"</span><select aria-label="Simulation channel" on:change=move |event|{
-                    if let Ok(i)=event_target_value(&event).parse::<usize>() && let Some(c)=Channel::ALL.get(i){channel.set(*c);}
-                }>{Channel::ALL.into_iter().map(|c|view!{<option value=c.index().to_string()>{c.label()}</option>}).collect_view()}</select></label>
-                <output aria-label="History gaps and duration">{move ||sim.with(|s|{
-                    let snapshot=s.snapshot();let h=snapshot.sensor(dashboard_core::samples::SensorId::from_channel(channel.get())).history();
-                    format!("{} shared history · {} s · {} / 60 filled buckets · {} blank / gap buckets",channel.get().label(),h.duration_seconds(),h.count(),60-h.count())
-                })}</output>
-                <ul aria-label="Warning episode state">{move ||sim.with(|s|{
-                    let snap=s.snapshot();s.config().config().widgets.iter().enumerate().filter(|(_,w)|w.warning.enabled).map(|(i,w)|{
-                        let e=snap.warning_eligibility(dashboard_core::alarms::RuleIndex::new(i).expect("bounded widget"),s.now_ms());
-                        view!{<li>{format!("{} · {}{}{}",w.label,e.label(),if e.snoozed{" · SNOOZED"}else{""},if e.latched && !e.label().contains("LATCHED"){" · LATCHED"}else{""})}</li>}
-                    }).collect_view()
-                })}</ul>
-                <output aria-label="Warning acknowledgment state">{move ||sim.with(|s| match s.session().popup(){
-                    Some(dashboard_core::popup::Popup::Warnings(_, feedback))=>feedback.label().to_string(),
-                    _ if s.pending_warning_command().is_some()=>"ACK PENDING".into(),
-                    _=>"No pending warning acknowledgment".into(),
-                })}</output>
-                <div class="simulator-actions">
-                    <button disabled=move ||ui.invalid() on:click=move |_|sim.update(|s|s.advance_to(s.now_ms().saturating_add(250),Some([1.,90.,95.,80.,30.,700.,13.8,1.])))>"Sample normal / recover +250 ms"</button>
-                    <button disabled=move ||ui.invalid() on:click=move |_|sim.update(|s|s.advance_to(s.now_ms().saturating_add(250),Some([3.,150.,120.,150.,80.,1000.,11.,1.4])))>"Sample elevated +250 ms"</button>
-                    <button disabled=move ||ui.invalid() on:click=move |_|sim.update(|s|s.inject_fault(dashboard_core::samples::SensorId::from_channel(channel.get_untracked()),dashboard_core::samples::Quality::TransportError,s.now_ms().saturating_add(1)))>"Inject source fault"</button>
-                    <button disabled=move ||ui.invalid() on:click=move |_|sim.update(|s|s.advance_to(s.now_ms().saturating_add(10000),None))>"No samples +10 s (stale)"</button>
-                    <button disabled=move ||ui.invalid() on:click=move |_|sim.update(|s|s.advance_to(s.now_ms().saturating_add(250),None))>"No samples +250 ms"</button>
-                    <button disabled=move ||ui.invalid() on:click=move |_|sim.update(|s|s.producer_step(None))>"Process acknowledgment result"</button>
-                </div>
-                <canvas node_ref=timing_canvas width="320" height="240" aria-label="Persistent dashboard timing simulation"></canvas>
-                <output aria-label="Simulation frame state">{move ||if pending_frame.get().is_some(){if canvas_accepted.get(){"Dashboard pixels accepted · awaiting completion"}else{"Dashboard candidate retained · retry the same pixels before completion"}}else{"Ready to submit dashboard frame"}}</output>
-                <div class="simulator-actions">
-                    <button disabled=move ||ui.invalid() || (pending_frame.get().is_some() && canvas_accepted.get()) || (pending_frame.get().is_none() && sim.with(|s|s.session().page()!=ControlPage::Dashboard)) on:click=move |_|{
-                        if pending_frame.get_untracked().is_some(){
-                            match timing_preview.with_untracked(|p|write_timing_canvas(timing_canvas,p.rgba())){
-                                Ok(())=>{canvas_accepted.set(true);simulation_notice.set("Retained Dashboard pixels accepted. Complete the submitted frame.".into());},
-                                Err(error)=>simulation_notice.set(format!("{error}. Candidate retained; retry the same pixels.")),
-                            }
-                            return;
-                        }
-                        let Some(next)=sequence.get_untracked().checked_add(1) else {simulation_notice.set("Frame counter exhausted. Reload to restart.".into());return;};
-                        let token=dashboard_core::display::pipeline::FrameToken{buffer:dashboard_core::display::pipeline::BufferId::A,sequence:next};
-                        let mut result=Ok(());
-                        sim.update(|s| timing_preview.update(|p|{
-                            result=(||{
-                                let pixels=p.render_simulation_submitted(s,token).map_err(|e|format!("Timing preview: {e:?}"))?;
-                                sequence.set(next);pending_frame.set(Some(token));
-                                write_timing_canvas(timing_canvas,pixels)
-                            })();
-                        }));
-                        match result { Ok(())=>{canvas_accepted.set(true);simulation_notice.set("Dashboard pixels submitted. Complete the frame to commit LED and acknowledgment identity.".into());},Err(error)=>simulation_notice.set(format!("{error}. Candidate retained when submitted; retry its same pixels.")), }
-                    }>{move ||if pending_frame.get().is_some() && !canvas_accepted.get(){"Retry same submitted pixels"}else{"Render / submit dashboard frame"}}</button>
-                    <button disabled=move ||ui.invalid() || pending_frame.get().is_none() || !canvas_accepted.get() on:click=move |_|{
-                        if let Some(token)=pending_frame.get_untracked(){sim.update(|s|{if s.complete_frame(token){simulation_notice.set("Dashboard frame completed · LED and warning identity committed".into());pending_frame.set(None);canvas_accepted.set(false);}});}
-                    }>"Complete submitted frame"</button>
-                </div>
-                <div class="simulator-buttons">{ButtonId::ALL.into_iter().map(|button| view! {
-                    <div><strong class="keycap">{button.label()}</strong>
-                        <button on:click=move |_|sim.update(|s|s.tap(button))>{format!("Tap {}",button.label())}</button>
-                        <button on:click=move |_|sim.update(|s|s.hold(button))>{if button==ButtonId::Y {"Recover (2 s)".to_string()}else{format!("Hold {}",button.label())}}</button>
-                    </div>
-                }).collect_view()}</div>
-                <div class="simulator-actions">
-                    <button on:click=move |_|sim.update(|s|s.rotate(-1))>"Encoder −"</button>
-                    <button on:click=move |_|sim.update(|s|s.rotate(1))>"Encoder +"</button>
-                    <button on:click=move |_|sim.update(ControlSimulator::click)>"Encoder click"</button>
-                    <button on:click=move |_|sim.update(|s|s.advance(2500))>"Advance 2.5 s"</button>
-                    <button disabled=move || !sim.with(ControlSimulator::reset_pending) on:click=move |_|sim.update(ControlSimulator::acknowledge_reset)>"Acknowledge statistics reset"</button>
-                </div>
-                <small>"Onboard taps and holds use the stored map: Toggle boost units changes the physical-toggle state; Acknowledge warnings uses the last completed Dashboard page. Repeat it before processing to inspect Busy. Dashboard has a canvas; Debug and Logs show control state here."</small>
-            </section>
+
         </section>
     }
+}
+
+#[component]
+pub fn SimulationControls(ui: Ui) -> impl IntoView {
+    let sim = ui.dock.sim;
+    let timing_preview = ui.dock.timing;
+    let timing_canvas = ui.canvas;
+    let sequence = ui.dock.sequence;
+    let pending_frame = ui.dock.pending;
+    let canvas_accepted = ui.dock.consumed;
+    let simulation_notice = ui.dock.notice;
+    let channel = ui.dock.channel;
+    view! {            <section class="control-simulator" aria-label="Control simulator">
+        <h3>"Try device controls"</h3>
+        <strong class="control-error" hidden=move || !sim.with(ControlSimulator::invalid)>"INVALID SIMULATION · candidate bindings / accepted layout · inspection only"</strong>
+        <p role="status">{move ||simulation_notice.get()}</p>
+        <output id="control-simulator-state" aria-live="polite">{move ||sim.with(ControlSimulator::summary)}</output>
+        <output aria-label="RGB indicator duty">{move ||sim.with(|s|{let d=s.led_duty();format!("LED light duty · R {} · G {} · B {} / 10000",d.red,d.green,d.blue)})}</output>
+        <p class="hint">"Persistent timing simulation · real configured dwell · explicit sample, fault, stale and frame-completion steps. Appearance stress values above are separate."</p>
+        <label class="field"><span>"Fault / history channel"</span><select aria-label="Simulation channel" on:change=move |event|{
+            if let Ok(i)=event_target_value(&event).parse::<usize>() && let Some(c)=Channel::ALL.get(i){channel.set(*c);}
+        }>{Channel::ALL.into_iter().map(|c|view!{<option value=c.index().to_string()>{c.label()}</option>}).collect_view()}</select></label>
+        <output aria-label="History gaps and duration">{move ||sim.with(|s|{
+            let snapshot=s.snapshot();let h=snapshot.sensor(dashboard_core::samples::SensorId::from_channel(channel.get())).history();
+            format!("{} shared history · {} s · {} / 60 filled buckets · {} blank / gap buckets",channel.get().label(),h.duration_seconds(),h.count(),60-h.count())
+        })}</output>
+        <ul aria-label="Warning episode state">{move ||sim.with(|s|{
+            let snap=s.snapshot();s.config().config().widgets.iter().enumerate().filter(|(_,w)|w.warning.enabled).map(|(i,w)|{
+                let e=snap.warning_eligibility(dashboard_core::alarms::RuleIndex::new(i).expect("bounded widget"),s.now_ms());
+                view!{<li>{format!("{} · {}{}{}",w.label,e.label(),if e.snoozed{" · SNOOZED"}else{""},if e.latched && !e.label().contains("LATCHED"){" · LATCHED"}else{""})}</li>}
+            }).collect_view()
+        })}</ul>
+        <output aria-label="Warning acknowledgment state">{move ||sim.with(|s| match s.session().popup(){
+            Some(dashboard_core::popup::Popup::Warnings(_, feedback))=>feedback.label().to_string(),
+            _ if s.pending_warning_command().is_some()=>"ACK PENDING".into(),
+            _=>"No pending warning acknowledgment".into(),
+        })}</output>
+        <div class="simulator-actions">
+            <button disabled=move ||ui.invalid() on:click=move |_|ui.simulate(|s|s.advance_to(s.now_ms().saturating_add(250),Some([1.,90.,95.,80.,30.,700.,13.8,1.])))>"Sample normal / recover +250 ms"</button>
+            <button disabled=move ||ui.invalid() on:click=move |_|ui.simulate(|s|s.advance_to(s.now_ms().saturating_add(250),Some([3.,150.,120.,150.,80.,1000.,11.,1.4])))>"Sample elevated +250 ms"</button>
+            <button disabled=move ||ui.invalid() on:click=move |_|ui.simulate(|s|s.inject_fault(dashboard_core::samples::SensorId::from_channel(channel.get_untracked()),dashboard_core::samples::Quality::TransportError,s.now_ms().saturating_add(1)))>"Inject source fault"</button>
+            <button disabled=move ||ui.invalid() on:click=move |_|ui.simulate(|s|s.advance_to(s.now_ms().saturating_add(10000),None))>"No samples +10 s (stale)"</button>
+            <button disabled=move ||ui.invalid() on:click=move |_|ui.simulate(|s|s.advance_to(s.now_ms().saturating_add(250),None))>"No samples +250 ms"</button>
+            <button disabled=move ||ui.invalid() on:click=move |_|ui.simulate(|s|s.producer_step(None))>"Process acknowledgment result"</button>
+        </div>
+
+        <output aria-label="Simulation frame state">{move ||if pending_frame.get().is_some(){if canvas_accepted.get(){"Dashboard pixels accepted · awaiting completion"}else{"Dashboard candidate retained · retry the same pixels before completion"}}else{"Ready to submit dashboard frame"}}</output>
+        <div class="simulator-actions">
+            <button disabled=move ||ui.invalid() || (pending_frame.get().is_some() && canvas_accepted.get()) || (pending_frame.get().is_none() && sim.with(|s|s.session().page()!=ControlPage::Dashboard)) on:click=move |_|{
+                ui.dock.mode.set(PreviewMode::Simulation);
+                ui.editor.with_untracked(|e|ui.dock.synchronize(e));
+                if pending_frame.get_untracked().is_some(){
+                    match timing_preview.with_untracked(|p|write_timing_canvas(timing_canvas,p.rgba())){
+                        Ok(())=>{canvas_accepted.set(true);ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);simulation_notice.set("Retained Dashboard pixels accepted. Complete the submitted frame.".into());},
+                        Err(error)=>simulation_notice.set(format!("{error}. Candidate retained; retry the same pixels.")),
+                    }
+                    return;
+                }
+                let Some(next)=sequence.get_untracked().checked_add(1) else {simulation_notice.set("Frame counter exhausted. Reload to restart.".into());return;};
+                let token=dashboard_core::display::pipeline::FrameToken{buffer:dashboard_core::display::pipeline::BufferId::A,sequence:next};
+                let mut result=Ok(());
+                ui.simulate(|s| timing_preview.update(|p|{
+                    result=(||{
+                        let pixels=p.render_simulation_submitted(s,token).map_err(|e|format!("Timing preview: {e:?}"))?;
+                        sequence.set(next);pending_frame.set(Some(token));
+                        write_timing_canvas(timing_canvas,pixels)
+                    })();
+                }));
+                match result { Ok(())=>{canvas_accepted.set(true);ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);simulation_notice.set("Dashboard pixels submitted. Complete the frame to commit LED and acknowledgment identity.".into());},Err(error)=>simulation_notice.set(format!("{error}. Candidate retained when submitted; retry its same pixels.")), }
+            }>{move ||if pending_frame.get().is_some() && !canvas_accepted.get(){"Retry same submitted pixels"}else{"Render / submit dashboard frame"}}</button>
+            <button disabled=move ||ui.invalid() || pending_frame.get().is_none() || !canvas_accepted.get() on:click=move |_|{
+                ui.dock.mode.set(PreviewMode::Simulation);ui.editor.with_untracked(|e|ui.dock.synchronize(e));if let Some(token)=pending_frame.get_untracked(){if let Err(error)=timing_preview.with_untracked(|p|write_timing_canvas(timing_canvas,p.rgba())) {canvas_accepted.set(false);simulation_notice.set(error);return;} ui.dock.pixels_key.set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));ui.dock.displayed.set(PreviewMode::Simulation);ui.dock.invalid_pixels.set(false);ui.simulate(|s|{if s.complete_frame(token){simulation_notice.set("Dashboard frame completed · LED and warning identity committed".into());pending_frame.set(None);canvas_accepted.set(false);}});}
+            }>"Complete submitted frame"</button>
+        </div>
+        <div class="simulator-buttons">{ButtonId::ALL.into_iter().map(|button| view! {
+            <div><strong class="keycap">{button.label()}</strong>
+                <button on:click=move |_|ui.simulate(|s|s.tap(button))>{format!("Tap {}",button.label())}</button>
+                <button on:click=move |_|ui.simulate(|s|s.hold(button))>{if button==ButtonId::Y {"Recover (2 s)".to_string()}else{format!("Hold {}",button.label())}}</button>
+            </div>
+        }).collect_view()}</div>
+        <div class="simulator-actions">
+            <button on:click=move |_|ui.simulate(|s|s.rotate(-1))>"Encoder −"</button>
+            <button on:click=move |_|ui.simulate(|s|s.rotate(1))>"Encoder +"</button>
+            <button on:click=move |_|ui.simulate(ControlSimulator::click)>"Encoder click"</button>
+            <button on:click=move |_|ui.simulate(|s|s.advance(2500))>"Advance 2.5 s"</button>
+            <button disabled=move || !sim.with(ControlSimulator::reset_pending) on:click=move |_|ui.simulate(ControlSimulator::acknowledge_reset)>"Acknowledge statistics reset"</button>
+        </div>
+        <small>"Onboard taps and holds use the stored map: Toggle boost units changes the physical-toggle state; Acknowledge warnings uses the last completed Dashboard page. Repeat it before processing to inspect Busy. Dashboard has a canvas; Debug and Logs show control state here."</small>
+    </section> }
 }

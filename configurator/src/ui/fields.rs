@@ -75,37 +75,103 @@ fn validation_raw(error: ValidationError) -> Option<RawField> {
 pub fn DiagnosticFocus(ui: Ui) -> impl IntoView {
     let target = move || {
         ui.editor.with(|e| {
-            match e.draft_error()? {
-                EditorError::Parse(field) | EditorError::RepairFieldFirst(field) => Some(field_id(field)),
-                EditorError::Validation(error) => {
-                    validation_raw(error).map(field_id).or_else(|| {
-                        match error.field {
-                            Field::WarningAcknowledge => Some("control-routes".into()),
-                            Field::Readout | Field::Afr => error.widget.map(|id| format!("widget-{id}-readout")),
-                            Field::Secondary => error.widget.map(|id| format!("widget-{id}-secondary")),
-                            Field::Placement => error.widget.map(|id| format!("widget-{id}")),
-                            _ => None,
-                        }
-                    })
-                }
-                _ => None,
+            if let Some(raw) = e.raw_fields().first() {
+                let owner = Registry::raw_owner(e, raw.field)?;
+                return Registry::retained_raw_target(e, 0, owner).ok();
             }
+            let draft = e.diagnostic()?;
+            let issue = draft.validation_report().issues.first().copied()?;
+            let raw = validation_raw(issue.error)?;
+            let owner = Registry::raw_owner(e, raw)?;
+            Registry::semantic_target(e, issue.location, Registry::raw_key(raw), owner).ok()
         })
     };
-    view! { <button hidden=move ||target().is_none() on:click=move |_| {
-        if let Some(target) = target() {
-            if target == "control-routes" { ui.global_tab.set("controls"); }
-            if target.contains("field-led-") {ui.global_tab.set("led");}
-            if target.contains("field-warning") {ui.global_tab.set("warnings");}
-            if target.contains("field-fuel") {ui.global_tab.set("fuel");}
-            leptos::leptos_dom::helpers::request_animation_frame(move ||{
-                if let Some(element)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&target)).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()) {
-                    if let Ok(Some(details))=element.closest("details") { let _=details.set_attribute("open",""); }
-                    let _=element.focus(); element.scroll_into_view();
-                }
-            });
+    view! { <button hidden=move ||target().is_none() on:click=move |_|{if let Some(target)=target(){workspaces::inspect(ui,target);}}>"Focus invalid field"</button> }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RawBinding {
+    Normal(FieldToken),
+    Located(InspectionTarget),
+    Retained(InspectionTarget),
+}
+fn raw_binding(
+    ui: Ui,
+    editor: &Editor,
+    field: RawField,
+) -> Option<RawBinding> {
+    if editor.has_pending_json() {
+        return None;
+    }
+    if let Some(target) = ui.inspection.get() {
+        let resolved = Registry::resolve(editor, target).ok()?;
+        if !resolved.inspection.id_lookup_unambiguous {
+            return None;
         }
-    }>"Focus invalid field"</button> }
+        let owner = Registry::raw_owner(editor, field)?;
+        let same = owner == target.owner()
+            || matches!((owner,target.owner()),(TargetOwner::Widget(a),TargetOwner::Band(b,_))|(TargetOwner::Band(a,_),TargetOwner::Widget(b))|(TargetOwner::Band(a,_),TargetOwner::Band(b,_)) if a==b);
+        if same {
+            if let Some(index) = editor.raw_fields().iter().position(|r| r.field == field) {
+                return editor.raw_inspection_target(index).ok().map(RawBinding::Retained);
+            }
+            if resolved.inspection.field.is_none()
+                && resolved.inspection.raw_field.is_none()
+                && editor.action_readiness().block.is_none()
+            {
+                return editor
+                    .object_inspection_target(match owner {
+                        TargetOwner::Widget(index) | TargetOwner::Band(index, _) => InspectionOwner::Widget { index },
+                        TargetOwner::View(index) => InspectionOwner::View { index },
+                        TargetOwner::Channel(c) => InspectionOwner::Channel(c),
+                        _ => InspectionOwner::Root,
+                    })
+                    .ok()
+                    .map(RawBinding::Located);
+            }
+            return None;
+        }
+    }
+    Some(RawBinding::Normal(editor.field_token()))
+}
+fn dispatch_raw(
+    ui: Ui,
+    binding: RawBinding,
+    field: RawField,
+    text: String,
+) -> bool {
+    let inspection = ui.inspection.get_untracked();
+    let ok = ui.run(move |e| {
+        match binding {
+            RawBinding::Normal(token) => e.set_raw(token, field, text),
+            RawBinding::Located(target) => e.set_located_raw(target, field, text),
+            RawBinding::Retained(target) => e.set_inspected_raw(target, text),
+        }
+    });
+    if ok && let Some(target) = inspection {
+        ui.refresh_inspection(target);
+    }
+    ok
+}
+
+pub(super) fn preset_raw(
+    ui: Ui,
+    token: FieldToken,
+    field: RawField,
+    text: String,
+) {
+    let binding = ui.editor.with_untracked(|e| {
+        if token == e.field_token() {
+            raw_binding(ui, e, field)
+        } else {
+            None
+        }
+    });
+    if let Some(binding) = binding {
+        dispatch_raw(ui, binding, field, text);
+    } else {
+        ui.notice.set("That field callback is stale or unavailable.".into());
+    }
 }
 
 pub fn raw_value(
@@ -115,135 +181,136 @@ pub fn raw_value(
     if let Some(raw) = editor.raw_fields().iter().find(|raw| raw.field == field) {
         return raw.text.clone();
     }
-    let c = editor.editing_config();
-    match field {
-        RawField::HistorySeconds(channel) => c.history_seconds[channel.index()].to_string(),
-        RawField::Led { warning, field } => {
-            let p = if warning { c.led.warning } else { c.led.normal };
-            match field {
-                LedField::Color => p.color.hex().to_string(),
-                LedField::Brightness => p.brightness_percent.to_string(),
-                LedField::Period => p.period_ms.to_string(),
-                LedField::OnPercent => p.on_percent.to_string(),
+    Registry::with_candidate(editor, |c| {
+        match field {
+            RawField::HistorySeconds(channel) => c.history_seconds[channel.index()].to_string(),
+            RawField::Led { warning, field } => {
+                let p = if warning { c.led.warning } else { c.led.normal };
+                match field {
+                    LedField::Color => p.color.hex().to_string(),
+                    LedField::Brightness => p.brightness_percent.to_string(),
+                    LedField::Period => p.period_ms.to_string(),
+                    LedField::OnPercent => p.on_percent.to_string(),
+                }
             }
-        }
-        RawField::ControlHoldMilliseconds => c.controls.hold_ms.to_string(),
-        RawField::ViewName(id) => {
-            c.views
-                .iter()
-                .find(|v| v.id == id)
-                .map(|v| v.name.to_string())
-                .unwrap_or_default()
-        }
-        RawField::Widget(id, field) => {
-            c.widgets
-                .iter()
-                .find(|w| w.id == id)
-                .map(|w| {
-                    match field {
-                        WidgetField::SmoothingMilliseconds => w.advanced.smoothing_ms.to_string(),
-                        WidgetField::PeakHoldMilliseconds => w.advanced.peak_hold_ms.to_string(),
-                        WidgetField::Reference => w.advanced.reference.to_string(),
-                        WidgetField::WarningTriggerHigh => w.warning.advanced.trigger_high.to_string(),
-                        WidgetField::WarningClearHigh => w.warning.advanced.clear_high.to_string(),
-                        WidgetField::WarningSnoozeSeconds => w.warning.advanced.snooze_s.to_string(),
-                        WidgetField::BandMinimum(i)
-                        | WidgetField::BandMaximum(i)
-                        | WidgetField::BandColor(i)
-                        | WidgetField::BandLabel(i) => {
-                            w.advanced.bands().get(usize::from(i)).map_or(String::new(), |b| {
-                                match field {
-                                    WidgetField::BandMinimum(_) => b.min.to_string(),
-                                    WidgetField::BandMaximum(_) => b.max.to_string(),
-                                    WidgetField::BandColor(_) => b.color.hex().to_string(),
-                                    _ => b.label().to_string(),
+            RawField::ControlHoldMilliseconds => c.controls.hold_ms.to_string(),
+            RawField::ViewName(id) => {
+                c.views
+                    .iter()
+                    .find(|v| v.id == id)
+                    .map(|v| v.name.to_string())
+                    .unwrap_or_default()
+            }
+            RawField::Widget(id, field) => {
+                c.widgets
+                    .iter()
+                    .find(|w| w.id == id)
+                    .map(|w| {
+                        match field {
+                            WidgetField::SmoothingMilliseconds => w.advanced.smoothing_ms.to_string(),
+                            WidgetField::PeakHoldMilliseconds => w.advanced.peak_hold_ms.to_string(),
+                            WidgetField::Reference => w.advanced.reference.to_string(),
+                            WidgetField::WarningTriggerHigh => w.warning.advanced.trigger_high.to_string(),
+                            WidgetField::WarningClearHigh => w.warning.advanced.clear_high.to_string(),
+                            WidgetField::WarningSnoozeSeconds => w.warning.advanced.snooze_s.to_string(),
+                            WidgetField::BandMinimum(i)
+                            | WidgetField::BandMaximum(i)
+                            | WidgetField::BandColor(i)
+                            | WidgetField::BandLabel(i) => {
+                                w.advanced.bands().get(usize::from(i)).map_or(String::new(), |b| {
+                                    match field {
+                                        WidgetField::BandMinimum(_) => b.min.to_string(),
+                                        WidgetField::BandMaximum(_) => b.max.to_string(),
+                                        WidgetField::BandColor(_) => b.color.hex().to_string(),
+                                        _ => b.label().to_string(),
+                                    }
+                                })
+                            }
+                            WidgetField::Label => w.label.to_string(),
+                            WidgetField::Color(role) => role.get(&w.colors).hex().to_string(),
+                            WidgetField::Decimals => w.display.decimals.to_string(),
+                            WidgetField::GaugeMinimum => w.gauge.min.to_string(),
+                            WidgetField::GaugeMaximum => w.gauge.max.to_string(),
+                            WidgetField::GraphMinimum => {
+                                match w.display.graph_range {
+                                    GraphRange::Fixed { min, .. } => min.to_string(),
+                                    _ => String::new(),
                                 }
-                            })
-                        }
-                        WidgetField::Label => w.label.to_string(),
-                        WidgetField::Color(role) => role.get(&w.colors).hex().to_string(),
-                        WidgetField::Decimals => w.display.decimals.to_string(),
-                        WidgetField::GaugeMinimum => w.gauge.min.to_string(),
-                        WidgetField::GaugeMaximum => w.gauge.max.to_string(),
-                        WidgetField::GraphMinimum => {
-                            match w.display.graph_range {
-                                GraphRange::Fixed { min, .. } => min.to_string(),
-                                _ => String::new(),
                             }
-                        }
-                        WidgetField::GraphMaximum => {
-                            match w.display.graph_range {
-                                GraphRange::Fixed { max, .. } => max.to_string(),
-                                _ => String::new(),
+                            WidgetField::GraphMaximum => {
+                                match w.display.graph_range {
+                                    GraphRange::Fixed { max, .. } => max.to_string(),
+                                    _ => String::new(),
+                                }
                             }
+                            WidgetField::WarningMessage => w.warning.message.to_string(),
+                            WidgetField::WarningTrigger => w.warning.trigger.to_string(),
+                            WidgetField::WarningClear => w.warning.clear.to_string(),
+                            WidgetField::WarningLoad => w.warning.min_load_percent.to_string(),
+                            WidgetField::WarningOn => w.warning.on_ms.to_string(),
+                            WidgetField::WarningOff => w.warning.off_ms.to_string(),
                         }
-                        WidgetField::WarningMessage => w.warning.message.to_string(),
-                        WidgetField::WarningTrigger => w.warning.trigger.to_string(),
-                        WidgetField::WarningClear => w.warning.clear.to_string(),
-                        WidgetField::WarningLoad => w.warning.min_load_percent.to_string(),
-                        WidgetField::WarningOn => w.warning.on_ms.to_string(),
-                        WidgetField::WarningOff => w.warning.off_ms.to_string(),
-                    }
-                })
-                .unwrap_or_default()
-        }
-        RawField::WarningPageMilliseconds => c.warnings.page_ms.to_string(),
-        RawField::WarningColor { foreground } => {
-            if foreground {
-                c.warning_colors.foreground
-            } else {
-                c.warning_colors.background
+                    })
+                    .unwrap_or_default()
             }
-            .hex()
-            .to_string()
-        }
-        RawField::Fuel(field) => {
-            match c.fuel {
-                Fuel::Stoichiometric { ratio } => ratio.to_string(),
-                Fuel::EthanolBlend(b) => {
-                    match field {
-                        FuelField::Percent => b.percent.to_string(),
-                        FuelField::GasolineRatio => b.gasoline_stoich.to_string(),
-                        FuelField::EthanolRatio => b.ethanol_stoich.to_string(),
-                        FuelField::GasolineDensity => b.gasoline_density.to_string(),
-                        FuelField::EthanolDensity => b.ethanol_density.to_string(),
-                        FuelField::ReferenceCelsius => {
-                            match b.density_reference {
-                                DensityReference::CommonCelsius(t) => t.to_string(),
-                                _ => String::new(),
-                            }
-                        }
-                        FuelField::Ratio => String::new(),
-                    }
+            RawField::WarningPageMilliseconds => c.warnings.page_ms.to_string(),
+            RawField::WarningColor { foreground } => {
+                if foreground {
+                    c.warning_colors.foreground
+                } else {
+                    c.warning_colors.background
                 }
-                _ => String::new(),
+                .hex()
+                .to_string()
             }
-        }
-        RawField::Source(channel, field) => {
-            let source = c.sources[channel.index()];
-            match field {
-                SourceField::Request => {
-                    match source.route {
-                        Route::Physical11 { request, .. } => format!("0x{request:03X}"),
-                        _ => String::new(),
+            RawField::Fuel(field) => {
+                match c.fuel {
+                    Fuel::Stoichiometric { ratio } => ratio.to_string(),
+                    Fuel::EthanolBlend(b) => {
+                        match field {
+                            FuelField::Percent => b.percent.to_string(),
+                            FuelField::GasolineRatio => b.gasoline_stoich.to_string(),
+                            FuelField::EthanolRatio => b.ethanol_stoich.to_string(),
+                            FuelField::GasolineDensity => b.gasoline_density.to_string(),
+                            FuelField::EthanolDensity => b.ethanol_density.to_string(),
+                            FuelField::ReferenceCelsius => {
+                                match b.density_reference {
+                                    DensityReference::CommonCelsius(t) => t.to_string(),
+                                    _ => String::new(),
+                                }
+                            }
+                            FuelField::Ratio => String::new(),
+                        }
                     }
+                    _ => String::new(),
                 }
-                SourceField::Response => {
-                    match source.route {
-                        Route::Physical11 { response, .. } => format!("0x{response:03X}"),
-                        _ => String::new(),
+            }
+            RawField::Source(channel, field) => {
+                let source = c.sources[channel.index()];
+                match field {
+                    SourceField::Request => {
+                        match source.route {
+                            Route::Physical11 { request, .. } => format!("0x{request:03X}"),
+                            _ => String::new(),
+                        }
                     }
-                }
-                SourceField::PollMilliseconds => {
-                    match source.poll {
-                        Poll::EveryMs(t) => t.to_string(),
-                        _ => String::new(),
+                    SourceField::Response => {
+                        match source.route {
+                            Route::Physical11 { response, .. } => format!("0x{response:03X}"),
+                            _ => String::new(),
+                        }
                     }
+                    SourceField::PollMilliseconds => {
+                        match source.poll {
+                            Poll::EveryMs(t) => t.to_string(),
+                            _ => String::new(),
+                        }
+                    }
+                    SourceField::FreshnessMilliseconds => source.freshness_ms.to_string(),
                 }
-                SourceField::FreshnessMilliseconds => source.freshness_ms.to_string(),
             }
         }
-    }
+    })
 }
 
 #[component]
@@ -256,13 +323,13 @@ pub fn TextField(
     #[prop(optional)] accessible_label: Option<String>,
     #[prop(optional)] disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
-    let id = if id.is_empty() { field_id(field) } else { id };
+    let id = if id.is_empty() { ui.raw_dom(field) } else { id };
     let text = RwSignal::new(ui.editor.with_untracked(|e| raw_value(e, field)));
     let focused = RwSignal::new(false);
-    let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
+    let binding = RwSignal::new(ui.editor.with_untracked(|e| raw_binding(ui, e, field)));
     Effect::new(move |_| {
         ui.editor.with(|editor| {
-            let current = editor.field_token();
+            let current = raw_binding(ui, editor, field);
             // Keep a local numeric prefix ("0.") only for this field's own
             // acknowledged input. Import/undo/external revisions replace it,
             // even when focus never left this input.
@@ -275,17 +342,17 @@ pub fn TextField(
     view! {
         <label class="field">
             <span>{label}</span>
-            <input id=id aria-label=accessible_label disabled=move ||disabled.is_some_and(|d|d.get()) type="text" maxlength="1024" autocomplete="off" spellcheck="false"
+            <input id=id aria-label=accessible_label disabled=move ||disabled.is_some_and(|d|d.get()) ||binding.get().is_none() type="text" maxlength="1024" autocomplete="off" spellcheck="false"
                 prop:value=move || text.get()
                 aria-invalid=move || ui.editor.with(|e| e.raw_fields().iter().any(|r| r.field == field)).to_string()
                 on:focus=move |_| focused.set(true)
                 on:blur=move |_| { focused.set(false); text.set(ui.editor.with_untracked(|e| raw_value(e, field))); }
                 on:input=move |event| {
-                    let Some(token) = binding.try_get_untracked() else { return; };
+                    let Some(Some(token)) = binding.try_get_untracked() else { return; };
                     let value = event_target_value(&event);
                     text.set(value.clone());
-                    let result = ui.run(move |editor| editor.set_raw(token, field, value));
-                    if result { binding.set(ui.editor.with_untracked(Editor::field_token)); }
+                    let result = dispatch_raw(ui,token,field,value);
+                    if result { binding.set(ui.editor.with_untracked(|e|raw_binding(ui,e,field))); }
                     else { text.set(ui.editor.with_untracked(|e| raw_value(e, field))); }
                 } />
             <small>{hint}</small>
@@ -312,17 +379,19 @@ pub fn Choice(
     #[prop(optional)] disabled: Option<Signal<bool>>,
     #[prop(optional)] disabled_values: Option<Signal<Vec<String>>>,
 ) -> impl IntoView {
+    let id = if id.is_empty() { ui.control_id(label) } else { id };
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {
         <label class="field"><span>{label}</span>
-            <select id=id aria-label=accessible_label prop:value=move || value.get() disabled=move || disabled.is_some_and(|d| d.get()) || if repair_invalid_draft { false } else if layout { ui.layout_locked() } else { ui.invalid() }
+            <select id=id title=move ||ui.control_reason(label) aria-label=accessible_label prop:value=move || value.get() disabled=move || ui.inspect_read_only() || disabled.is_some_and(|d| d.get()) || if repair_invalid_draft { false } else if layout { ui.layout_locked() } else { ui.invalid() }
                 on:change=move |event| {
                     if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_value(&event))); }
                     event_target::<web_sys::HtmlSelectElement>(&event).set_value(&value.get_untracked());
                 }>
                 {options.into_iter().map(|(value,label)| {let check=value.clone();view! { <option value=value disabled=move ||disabled_values.is_some_and(|d|d.get().contains(&check))>{label}</option> }}).collect_view()}
             </select>
+            <small class="hint">{move ||ui.control_reason(label)}</small>
         </label>
     }
 }
@@ -334,13 +403,15 @@ pub fn Toggle(
     value: Signal<bool>,
     on_change: Callback<(FieldToken, bool)>,
     #[prop(default = false)] repair_invalid_draft: bool,
+    #[prop(default = String::new())] id: String,
     #[prop(optional)] disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
+    let id = if id.is_empty() { ui.control_id(label) } else { id };
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {
-        <label class="toggle"><span>{label}</span><input type="checkbox"
-            prop:checked=move || value.get() disabled=move || disabled.is_some_and(|d|d.get()) || (!repair_invalid_draft && ui.invalid())
+        <label class="toggle"><span>{label}</span><input id=id type="checkbox"
+            prop:checked=move || value.get() disabled=move || ui.inspect_read_only() || disabled.is_some_and(|d|d.get()) || (!repair_invalid_draft && ui.invalid())
             on:change=move |event| {
                 if let Some(token) = binding.try_get_untracked() { on_change.run((token,event_target_checked(&event))); }
                 event_target::<web_sys::HtmlInputElement>(&event).set_checked(value.get_untracked());
@@ -399,6 +470,11 @@ pub fn error_text(error: EditorError) -> String {
             format!("{field}: {reason}")
         }
         EditorError::InvalidDraft => "Correct the highlighted fields, or discard the invalid edits first.".into(),
+        EditorError::JsonPending => {
+            "Apply or discard the pending JSON edits before changing or exporting the configuration.".into()
+        }
+        EditorError::PointerActive => "Finish or cancel the current placement before exporting.".into(),
+        EditorError::ImportPending => "Wait for or cancel the current import before exporting.".into(),
         EditorError::RepairFieldFirst(field) => {
             let label = match field {
                 RawField::Widget(_, WidgetField::GraphMinimum) => "Graph minimum",
@@ -448,17 +524,17 @@ pub fn ColorField(
     field: RawField,
     label: &'static str,
 ) -> impl IntoView {
-    let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
-    Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
+    let binding = RwSignal::new(ui.editor.with_untracked(|e| raw_binding(ui, e, field)));
+    Effect::new(move |_| binding.set(ui.editor.with(|e| raw_binding(ui, e, field))));
     view! {
         <div class="colour-control">
             <TextField ui field label/>
-            <input type="color" aria-label=format!("Pick {label}")
+            <input type="color" disabled=move ||binding.get().is_none() aria-label=format!("Pick {label}")
                 prop:value=move || ui.editor.with(|e|Color::parse(&raw_value(e,field)).unwrap_or(Color(0)).hex().to_string())
                 on:input=move |event| {
-                    if let Some(token) = binding.try_get_untracked() {
+                    if let Some(Some(token)) = binding.try_get_untracked() {
                         let value = event_target_value(&event);
-                        ui.run(move |e|e.set_raw(token,field,value));
+                        dispatch_raw(ui,token,field,value);
                     }
                 }/>
         </div>

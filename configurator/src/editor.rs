@@ -2073,6 +2073,40 @@ mod transaction_tests {
     use super::*;
 
     #[test]
+    fn located_object_exhaustion_never_publishes_raw_or_history() {
+        for request_exhausted in [false, true] {
+            let mut editor = Editor {
+                revision: Revision(if request_exhausted { 0 } else { u64::MAX }),
+                request: if request_exhausted { u64::MAX } else { 0 },
+                ..Editor::default()
+            };
+            let target = editor.object_inspection_target(InspectionOwner::Root).unwrap();
+            let before = (
+                editor.stamp(),
+                editor.accepted_config_key(),
+                editor.history_len(),
+                editor.selection(),
+                editor.preview().clone(),
+            );
+            assert_eq!(
+                editor.set_located_raw(target, RawField::ControlHoldMilliseconds, "900".into()),
+                Err(EditorError::CounterExhausted)
+            );
+            assert_eq!(
+                (
+                    editor.stamp(),
+                    editor.accepted_config_key(),
+                    editor.history_len(),
+                    editor.selection(),
+                    editor.preview().clone()
+                ),
+                before
+            );
+            assert!(editor.raw_fields().is_empty());
+        }
+    }
+
+    #[test]
     fn final_save_request_remains_current_and_completes_while_next_issuance_is_exhausted() {
         let mut editor = Editor {
             request: u64::MAX - 1,

@@ -3,12 +3,13 @@ use super::*;
 #[component]
 pub fn Inspector(ui: Ui) -> impl IntoView {
     view! {
-        <aside class="inspector panel">
-            <div class="panel-heading"><p class="eyebrow">"WIDGET INSPECTOR"</p><h2>{move || ui.editor.with(|e|e.selection().widget.and_then(|id|e.editing_config().widgets.iter().find(|w|w.id==id)).map(|w|w.channel.label()).unwrap_or("Make it yours"))}</h2></div>
-            <Show when=move || ui.editor.with(|e|e.selection().widget.is_none())>
+        <aside id="studio-widget-inspector" class="inspector panel" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views)>
+            <div class="panel-heading"><p class="eyebrow">"WIDGET INSPECTOR"</p><h2>{move || ui.inspected_widget().map(|(_,channel)|channel.label()).unwrap_or("Make it yours")}</h2></div>
+            <Show when=move || ui.inspected_widget().is_none()>
                 <div class="empty-inspector"><div class="grid-icon" aria-hidden="true">"▦"</div><h3>"Select a widget"</h3><p>"Click a tile on the display to edit its label, size, graph and warnings."</p><p>"Drag a sensor from the library into a free cell. Create an empty view for a fresh layout."</p><div class="size-samples"><span>"1 × 1"</span><span>"2 × 1"</span><span>"2 × 2"</span></div></div>
             </Show>
-            <For each=move || ui.editor.with(|e|e.selection().widget.and_then(|id|e.editing_config().widgets.iter().find(|w|w.id==id).map(|w|(id,w.channel))).into_iter().collect::<Vec<_>>()) key=|key|(key.0,key.1.index()) children=move |(id,_)| view! { <WidgetInspector ui id/> }/>
+            <For each=move ||{ui.inspected_widget().into_iter().collect::<Vec<_>>()} key=|key|(key.0,key.1.index()) children=move |(id,_)|view!{<WidgetInspector ui id/>}/>
+
         </aside>
     }
 }
@@ -35,18 +36,10 @@ fn WidgetInspector(
     ui: Ui,
     id: u16,
 ) -> impl IntoView {
-    let channel = ui
-        .editor
-        .with_untracked(|e| {
-            e.editing_config()
-                .widgets
-                .iter()
-                .find(|w| w.id == id)
-                .map(|w| w.channel)
-        })
-        .unwrap_or(Channel::Oil);
+    let channel = ui.widget(id).map(|w| w.channel).unwrap_or(Channel::Oil);
     view! {
         <div class="inspector-body">
+            <Group ui group=GroupId::Layout>
             <TextField ui field=RawField::Widget(id,WidgetField::Label) label="Label" hint="ASCII · 12 characters at 1×1, 24 at wider sizes"/>
             <Choice ui layout=true label="Size" value=Signal::derive(move || ui.widget(id).map(|w|match w.placement.span { Span::OneByOne=>"1",Span::TwoByOne=>"2",Span::TwoByTwo=>"4" }.to_string()).unwrap_or_default())
                 options=choices(&[("1","1 × 1 · compact"),("2","2 × 1 · wide"),("4","2 × 2 · large")])
@@ -57,18 +50,26 @@ fn WidgetInspector(
                 <Choice ui layout=true label="Row" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.row.to_string())) options=choices(&[("0","Top"),("1","Bottom")])
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(row)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.row=row);}})/>
             </div>
-            <h3 class="subheading">"Display"</h3>
+            </Group>
+            <Group ui group=GroupId::Gauge>
+
             <Choice ui repair_invalid_draft=true label="Gauge style" value=Signal::derive(move ||ui.widget(id).map(|w|format!("{:?}",w.gauge.kind)).unwrap_or_default())
                 options=GaugeKind::ALL.into_iter().map(|kind|(format!("{kind:?}"),kind.label().to_string())).collect()
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|{if let Some(kind)=GaugeKind::ALL.into_iter().find(|kind|format!("{kind:?}")==value) {ui.update_widget(token,id,|w|w.gauge.kind=kind);}})/>
             <Show when=move ||ui.widget(id).is_some_and(|w|!w.gauge.kind.is_numeric()) || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::GaugeMinimum,WidgetField::GaugeMaximum],Field::GaugeRange))>
-                <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())><p class="hint">"Stored gauge limits remain visible to repair this edit. Numeric style does not use the gauge scale."</p></Show>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())><p class="hint">"Stored gauge limits remain visible to repair this edit. Numeric style does not use the gauge scale."</p></Show>
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GaugeMinimum) label="Scale minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GaugeMaximum) label="Scale maximum"/></div>
                 <Toggle ui repair_invalid_draft=true label="Expand with observed values" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.gauge.expand)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.gauge.expand=value))/>
                 <p class="hint">"Limits use canonical units (boost in bar), at least 0.001 apart. Expansion lasts until statistics reset. Fixed scales clamp the indicator; numbers still show the actual reading."</p>
                 <p class="hint">"Gauges replace history and trend. Average and extrema are available at 2 × 2. Numeric-view preferences are preserved."</p>
             </Show>
+            <super::advanced::GaugeControls ui id/>
+            </Group>
+            <Group ui group=GroupId::Readout>
             <TextField ui field=RawField::Widget(id,WidgetField::Decimals) label="Decimal places" hint="0–3; units stay canonical in rules"/>
+            <super::advanced::DisplayControls ui id/>
+            </Group>
+            <Group ui group=GroupId::HistoryStatistics>
             <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
             <span title="History keeps the last qualified reading in each of 60 timed buckets. Slow sensors can leave gaps; no values are backfilled. Faults can discard one preceding point to show a brief outage. This is a trend view, not a lossless waveform or peak recorder.">{flag(ui,id,"History graph",|d|d.graph,|d,v|d.graph=v)}</span>
             </Show>
@@ -79,7 +80,6 @@ fn WidgetInspector(
             <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
             {flag(ui,id,"Trend arrow",|d|d.trend,|d,v|d.trend=v)}
             </Show>
-            <super::advanced::DisplayControls ui id/>
             <Show when=move ||ui.widget(id).is_some_and(|w|w.capabilities().history) || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::GraphMinimum,WidgetField::GraphMaximum],Field::GraphRange))>
             <Show when=move ||ui.widget(id).is_some_and(|w|!w.capabilities().history)><p class="hint">"Stored graph limits remain visible to repair this edit. This gauge style does not draw history."</p></Show>
             <Choice ui repair_invalid_draft=true label="Graph range" value=Signal::derive(move ||ui.widget(id).map(|w|if matches!(w.display.graph_range,GraphRange::Auto){"auto"}else{"fixed"}.to_string()).unwrap_or_default()) options=choices(&[("auto","Automatic"),("fixed","Fixed canonical range")])
@@ -88,12 +88,17 @@ fn WidgetInspector(
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GraphMinimum) label="Graph minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GraphMaximum) label="Graph maximum"/></div>
             </Show>
             </Show>
+            <button on:click=move |_|workspaces::open(ui,Workspace::DataWarnings,GroupId::Channels)>"Open channel-shared history"</button>
+            </Group>
+            <Group ui group=GroupId::Appearance>
             <details class="palette-panel"><summary>"Widget colours"</summary>
                 <p class="hint">"Exact panel colours · #RRGGBB quantized to RGB565. Foregrounds need 3:1 contrast. Inactive roles stay stored for other styles; edit them here to keep future changes valid."</p>
                 {ColorRole::ALL.into_iter().map(move |role|view! { <ColorField ui field=RawField::Widget(id,WidgetField::Color(role)) label=role.label()/> }).collect_view()}
                 <p class="hint">"Gauge styles use indicator, track and ticks. Numeric uses history and trend. Compact gauges hide statistics. Warning colours apply to this tile and cycle-one popups; list warnings use the separate combined palette."</p>
             </details>
-            <h3 class="subheading">"Warning rule"</h3>
+            </Group>
+            <Group ui group=GroupId::Warnings>
+
             <Toggle ui repair_invalid_draft=true label="Enable warning" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.warning.enabled)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.warning.enabled=value))/>
             <Choice ui repair_invalid_draft=true label="Applies to" value=Signal::derive(move ||ui.widget(id).map(|w|if w.warning.applicability==Applicability::DemoOnly{"demo"}else{"vehicle"}.to_string()).unwrap_or_default()) options=choices(&[("demo","Demo only"),("vehicle","Vehicle and demo")])
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.update_widget(token,id,|w|w.warning.applicability=if value=="demo"{Applicability::DemoOnly}else{Applicability::VehicleAndDemo}))/>
@@ -116,7 +121,8 @@ fn WidgetInspector(
                 <button disabled=move ||ui.invalid() on:click=move |_|reorder(ui,id,false)>"↑ Earlier"</button>
                 <button disabled=move ||ui.invalid() on:click=move |_|reorder(ui,id,true)>"↓ Later"</button>
             </div></div>
-            <details><summary>"Source & decoder"</summary><SourcePanel ui channel/></details>
+            </Group>
+            <button on:click=move |_|{ui.source_channel.set(channel);workspaces::open(ui,Workspace::DataWarnings,GroupId::Sources);}>"Open channel source & decoder"</button>
             <div class="widget-actions">
                 <button disabled=move ||ui.invalid() on:click=move |_| {
                     if let Some(widget)=ui.widget(id) {if let Some(placement)=ui.free(widget.placement.span,None){ui.apply(Edit::DuplicateWidget{id,view:widget.view,placement});}else{ui.notice.set("No free space for this size in the current view.".into());}}
@@ -210,10 +216,10 @@ fn BlendSettings(ui: Ui) -> impl IntoView {
 
 #[component]
 pub fn SourceSettings(ui: Ui) -> impl IntoView {
-    let selected = RwSignal::new(Channel::Oil);
+    let selected = ui.source_channel;
     view! {
         <div class="settings-content"><div class="settings-copy"><h3>"Know where a value comes from."</h3><p>"Each channel shares one source across all views. Catalogue entries retain request, decoder and documentary evidence."</p><p class="hint">"DNUC / Simos candidates are unverified on your ECU. A configuration cannot qualify a transport or enable an unimplemented decoder."</p>
-            <label class="field"><span>"Channel"</span><select disabled=move ||ui.invalid() prop:value=move ||selected.get().index().to_string() on:change=move |event|{if let Ok(n)=event_target_value(&event).parse::<usize>() && let Some(channel)=Channel::ALL.get(n){selected.set(*channel);}}>
+            <label class="field"><span>"Channel"</span><select disabled=move ||ui.editor.with(Editor::has_pending_json) prop:value=move ||selected.get().index().to_string() on:change=move |event|{if let Ok(n)=event_target_value(&event).parse::<usize>() && let Some(channel)=Channel::ALL.get(n){selected.set(*channel);}}>
                 {Channel::ALL.into_iter().map(|channel|view!{<option value=channel.index().to_string()>{channel.label()}</option>}).collect_view()}
             </select></label>
         </div><div class="settings-form"><For each=move ||vec![selected.get()] key=|channel|channel.index() children=move |channel|view!{<SourcePanel ui channel/>}/></div></div>

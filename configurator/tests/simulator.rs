@@ -627,3 +627,47 @@ fn unchanged_config_invalid_resume_restores_bindings_without_restarting_state() 
     sim.tap(ButtonId::A);
     assert!(sim.session().boost_psi());
 }
+
+#[test]
+fn appearance_inspection_scratch_never_overwrites_retained_timing_candidate() {
+    use dashboard_configurator::config::*;
+    use dashboard_configurator::editor::*;
+    use dashboard_configurator::preview::*;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut editor = Editor::new(default_config()).unwrap();
+    let mut sim = dashboard_configurator::simulator::ControlSimulator::new(editor.preview().clone());
+    let mut timing = Preview::new();
+    let token = FrameToken {
+        buffer: BufferId::A,
+        sequence: 19,
+    };
+    let bytes = timing.render_simulation_submitted(&mut sim, token).unwrap().to_vec();
+    let completed = sim.completed_warning();
+    // Model an unavailable canvas: no complete_frame is issued yet.
+    editor
+        .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "bad".into())
+        .unwrap();
+    let draft = editor.diagnostic().unwrap();
+    let mut inspection = Preview::new();
+    inspection
+        .render_diagnostic(
+            editor.preview(),
+            &draft,
+            editor.selection().view,
+            PreviewOptions {
+                sample_ms: 120000,
+                warnings: true,
+                ..PreviewOptions::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(timing.rgba(), bytes);
+    assert_eq!(sim.completed_warning(), completed);
+    assert!(!sim.complete_frame(FrameToken { sequence: 20, ..token }));
+    editor.discard_raw().unwrap();
+    // The consumer retries the exact retained slice under its original token.
+    let consumed = timing.rgba().to_vec();
+    assert_eq!(consumed, bytes);
+    assert!(sim.complete_frame(token));
+    assert!(!sim.complete_frame(token));
+}

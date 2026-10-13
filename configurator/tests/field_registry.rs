@@ -156,8 +156,16 @@ fn registry_has_each_editable_descriptor_once_and_unique_numeric_dom_ids() {
     for i in 0..64 {
         let mut w = template.clone();
         w.id = i + 1;
+        w.advanced
+            .set_bands(&[
+                Band::new(0., 0.5, w.colors.gauge, "Low").unwrap(),
+                Band::new(0.5, 1., w.colors.gauge, "Mid").unwrap(),
+                Band::new(1., 1.5, w.colors.gauge, "High").unwrap(),
+            ])
+            .unwrap();
         config.widgets.push(w).unwrap();
     }
+    config.widgets[63].id = config.widgets[0].id;
     let mut editor = Editor::new(default_config()).unwrap();
     // A rejected import is not silently accepted; inspect a JSON candidate instead.
     let handle = editor.open_json().unwrap();
@@ -203,6 +211,59 @@ fn forged_scope_and_absent_band_never_resolve_and_raw_target_stays_authentic() {
     assert_eq!(resolved.inspection.field, None);
     assert_eq!(resolved.inspection.json_path, None);
     assert!(Registry::retained_raw_target(&editor, 0, TargetOwner::Widget(0)).is_err());
+}
+
+#[test]
+fn variant_inactive_fields_explain_actual_absent_input_controls() {
+    let editor = Editor::new(default_config()).unwrap();
+    for (key, owner) in [
+        (FieldKey::FuelRatio, TargetOwner::Root),
+        (FieldKey::FuelPercent, TargetOwner::Root),
+        (FieldKey::SourceRequest, TargetOwner::Channel(Channel::Oil)),
+        (FieldKey::GraphMinimum, TargetOwner::Widget(0)),
+    ] {
+        let target = Registry::target(&editor, key, owner).unwrap();
+        let field = Registry::resolve(&editor, target).unwrap();
+        assert!(!field.capability.is_active(), "{key:?} variant is absent");
+        assert!(field.capability.reason().is_some());
+    }
+}
+
+#[test]
+fn semantic_locations_cannot_be_relabelled_as_an_unrelated_registry_field() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let root = editor.object_inspection_target(InspectionOwner::Root).unwrap();
+    editor
+        .set_located_raw(root, RawField::ControlHoldMilliseconds, "bad".into())
+        .unwrap();
+    let mut malformed = default_config();
+    malformed.widgets[0].label = "bad\n".try_into().unwrap();
+    let issue = dashboard_configurator::diagnostic::collect_candidate(&malformed).issues[0];
+    assert!(Registry::semantic_target(&editor, issue.location, FieldKey::GaugeStyle, TargetOwner::Widget(0)).is_err());
+}
+
+#[test]
+fn semantic_led_identity_cannot_focus_the_other_pattern() {
+    let editor = Editor::new(default_config()).unwrap();
+    let mut malformed = default_config();
+    malformed.led.warning.brightness_percent = 101;
+    let issue = dashboard_configurator::diagnostic::collect_candidate(&malformed)
+        .issues
+        .into_iter()
+        .find(|issue| issue.error.field == Field::LedBrightness(true))
+        .unwrap();
+    assert!(
+        Registry::semantic_target(
+            &editor,
+            issue.location,
+            FieldKey::LedBrightness,
+            TargetOwner::Led(false)
+        )
+        .is_err()
+    );
+    assert!(
+        Registry::semantic_target(&editor, issue.location, FieldKey::LedBrightness, TargetOwner::Led(true)).is_ok()
+    );
 }
 
 #[test]

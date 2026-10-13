@@ -299,6 +299,10 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         ui.warnings.get();
         ui.sample_ms.get();
         ui.sample_set.get();
+        ui.dock.mode.get();
+        if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.invalid() {
+            return;
+        }
         // Mount/readiness is reactive too. Multiple input events share one draw.
         if ui.canvas.get().is_none() || queued.get_untracked() {
             return;
@@ -311,6 +315,11 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
             let Some(canvas) = ui.canvas.get_untracked() else {
                 return;
             };
+            if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.invalid() {
+                return;
+            }
+            // Appearance/invalid inspection pixels never consume the retained timing candidate.
+            ui.dock.consumed.set(false);
             let started = now();
             let result = ui.editor.with_untracked(|e| {
                 let options = PreviewOptions {
@@ -350,6 +359,11 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 return;
             }
             ui.preview_error.set(None);
+            ui.dock
+                .pixels_key
+                .set(Some(ui.editor.with_untracked(Editor::accepted_config_key)));
+            ui.dock.displayed.set(PreviewMode::Appearance);
+            ui.dock.invalid_pixels.set(ui.invalid());
             metrics::first_frame(ui);
             let submitted = now();
             let render = submitted - started;
@@ -370,13 +384,13 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         });
     });
     view! {
-        <div class="invalid-preview-heading" hidden=move || !ui.invalid() role="status"><strong>"INVALID PREVIEW"</strong><span>"Rejected draft · save and export blocked"</span></div>
-        <p class="hint">"Appearance preview · generated history"</p>
-        <div class="display-stage" class:invalid-preview=move ||ui.invalid()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
+        <div class="invalid-preview-heading" hidden=move || !ui.invalid() && !ui.dock.invalid_pixels.get() role="status"><strong>"INVALID PREVIEW"</strong><span>{move ||if ui.invalid(){"Rejected draft · save and export blocked"}else{"Last inspection pixels · restore timing pixels in Diagnostics"}}</span></div>
+        <p class="hint">{move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"Invalid appearance inspection · accepted timing candidate retained separately"}else if ui.dock.pixels_key.get()!=Some(ui.editor.with(Editor::accepted_config_key)){"Last frame · configuration changed · submit a current frame in Diagnostics"}else if ui.dock.displayed.get()==PreviewMode::Simulation {"Timing simulation · Dashboard pixels only"}else if ui.dock.mode.get()==PreviewMode::Simulation {"Last appearance frame · submit or restore timing pixels in Diagnostics"}else{"Appearance preview · generated history"}}</p>
+        <div class="display-stage" class:invalid-preview=move ||ui.invalid() ||ui.dock.invalid_pixels.get()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
-                <canvas node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid(){"INVALID PREVIEW. Rejected draft with safe rendering fallbacks. Save and export blocked."}else{"Exact Pico dashboard preview with synthetic values"}></canvas>
+                <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent Dashboard timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>
                 <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Last frame only. Change the test values or reload to retry."</p></div>
-                <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid">
+                <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views) ||ui.dock.mode.get()!=PreviewMode::Appearance>
                     <For each=move ||ui.editor.with(|e|e.editing_config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{
                         <button id=format!("widget-{id}") class="widget-hit" disabled=move ||ui.layout_locked() class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
                             style=move ||ui.widget(id).map_or("display:none".into(),|w|style(w.placement))
