@@ -761,6 +761,7 @@ impl Editor {
         let recovering = self.has_invalid_draft();
         let mut config = self.editing_config().clone();
         let mut selection = self.selection();
+        let mut remapped_raw = None;
         match edit {
             Edit::SetHistory { channel, seconds } => config.history_seconds[channel.index()] = seconds,
             Edit::SetReducedMotion(value) => config.reduced_motion = value,
@@ -776,7 +777,8 @@ impl Editor {
                 widget.advanced.set_bands(&bands).map_err(EditorError::Validation)?;
                 // Removing a band deliberately removes its own draft fields;
                 // following bands keep their identity and unrelated raw text.
-                self.raw.retain_mut(|raw| {
+                let raw = remapped_raw.insert(self.raw.clone());
+                raw.retain_mut(|raw| {
                     let RawField::Widget(wid, field) = &mut raw.field else {
                         return true;
                     };
@@ -1001,11 +1003,12 @@ impl Editor {
         // A variant change cannot remove the parent of a retained raw field.
         // Reject before storing the candidate so its original input, token and
         // diagnostics remain addressable until the user repairs that field.
-        for input in &self.raw {
+        let candidate_raw = remapped_raw.as_ref().unwrap_or(&self.raw);
+        for input in candidate_raw {
             check_raw_available(&config, input.field).map_err(|_| EditorError::RepairFieldFirst(input.field))?;
         }
         let mut raw_error = None;
-        for input in &self.raw {
+        for input in candidate_raw {
             if let Err(error) = apply_raw(&mut config, input) {
                 raw_error.get_or_insert(error);
             }
@@ -1035,6 +1038,9 @@ impl Editor {
                             widget: None,
                         };
                     }
+                }
+                if let Some(raw) = remapped_raw {
+                    self.raw = raw;
                 }
                 self.rejected = Some(Box::new(Rejected { config, selection }));
                 self.draft_error = Some(error);
@@ -1164,6 +1170,143 @@ fn json_error(error: serde_json::Error) -> EditorError {
         line: error.line(),
         column: error.column(),
     })
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+
+    #[test]
+    fn rejected_band_removal_preserves_the_complete_transaction() {
+        // Both a successful repair and a still-invalid partial repair must
+        // reserve the revision before deleting or retargeting retained text.
+        for partial in [false, true] {
+            let mut config = default_config();
+            config.widgets.truncate(1);
+            config.widgets[0]
+                .advanced
+                .set_bands(&[
+                    Band::new(0., 1., Color(0xFFFF), "ONE").unwrap(),
+                    Band::new(1., 2., Color(0xFFFF), "TWO").unwrap(),
+                ])
+                .unwrap();
+            let mut editor = Editor::new(config).unwrap();
+            editor
+                .select(Selection {
+                    view: 1,
+                    widget: Some(1),
+                })
+                .unwrap();
+            editor.apply(Edit::SetReducedMotion(true)).unwrap();
+            editor.apply(Edit::SetReducedMotion(false)).unwrap();
+            editor.undo().unwrap();
+            for (field, value) in [
+                (WidgetField::BandMinimum(0), "bad"),
+                (WidgetField::BandMaximum(1), if partial { "bad" } else { "2.5" }),
+            ] {
+                editor
+                    .set_raw(editor.field_token(), RawField::Widget(1, field), value.into())
+                    .unwrap();
+            }
+            // Populate all callback slots to detect accidental retirement.
+            editor.revision = Revision(u64::MAX);
+            editor.pointer = Some(PointerToken {
+                owner: editor.owner,
+                request: 11,
+                revision: editor.revision,
+                pointer_id: 7,
+                target: PointerTarget::Widget(1),
+                view: 1,
+            });
+            editor.import = Some(ImportToken {
+                owner: editor.owner,
+                request: 12,
+                revision: editor.revision,
+            });
+            editor.save = Some(SaveToken {
+                owner: editor.owner,
+                request: 13,
+                revision: editor.revision,
+            });
+            editor.request = 13;
+            editor.saved_revision = Some(Revision(1));
+            editor.save_failure = Some(StorageFailure::Quota);
+            let accepted = editor.preview().clone();
+            let candidate = editor.editing_config().clone();
+            let raw = editor.raw.clone();
+            let error = editor.draft_error;
+            let diagnostic = editor.diagnostic().map(|d| (d.config, d.raw, d.error));
+            let selection = editor.selection();
+            let tokens = (editor.field_token(), editor.pointer, editor.import, editor.save);
+            let history = |e: &Editor| {
+                (
+                    e.undo
+                        .iter()
+                        .map(|s| (s.preview.clone(), s.selection))
+                        .collect::<Vec<_>>(),
+                    e.redo
+                        .iter()
+                        .map(|s| (s.preview.clone(), s.selection))
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let before_history = history(&editor);
+            assert_eq!(
+                editor.apply(Edit::RemoveBand { id: 1, index: 0 }),
+                Err(EditorError::CounterExhausted)
+            );
+            assert_eq!(editor.preview(), &accepted);
+            assert_eq!(editor.editing_config(), &candidate);
+            assert_eq!(editor.raw, raw);
+            assert_eq!(editor.draft_error, error);
+            assert_eq!(editor.diagnostic().map(|d| (d.config, d.raw, d.error)), diagnostic);
+            assert_eq!(editor.selection(), selection);
+            assert_eq!(
+                (editor.field_token(), editor.pointer, editor.import, editor.save),
+                tokens
+            );
+            assert_eq!(history(&editor), before_history);
+            assert_eq!(editor.revision, Revision(u64::MAX));
+            assert_eq!(editor.request, 13);
+            assert_eq!(editor.saved_revision, Some(Revision(1)));
+            assert_eq!(editor.save_failure, Some(StorageFailure::Quota));
+            // Once admission is possible, the same operation either repairs
+            // completely or retains the surviving band's invalid text at 0.
+            editor.revision = Revision(20);
+            let result = editor.apply(Edit::RemoveBand { id: 1, index: 0 });
+            assert_eq!(editor.editing_config().widgets[0].advanced.bands().len(), 1);
+            assert!(editor.pointer.is_none() && editor.import.is_none() && editor.save.is_none());
+            assert_eq!(editor.revision, Revision(21));
+            if partial {
+                assert_eq!(
+                    result,
+                    Err(EditorError::Parse(RawField::Widget(1, WidgetField::BandMaximum(0))))
+                );
+                assert_eq!(
+                    editor.raw,
+                    vec![RawInput {
+                        field: RawField::Widget(1, WidgetField::BandMaximum(0)),
+                        text: "bad".into()
+                    }]
+                );
+                assert_eq!(editor.preview(), &accepted);
+                assert_eq!(history(&editor), before_history);
+                editor
+                    .set_raw(
+                        editor.field_token(),
+                        RawField::Widget(1, WidgetField::BandMaximum(0)),
+                        "2.5".into(),
+                    )
+                    .unwrap();
+            } else {
+                assert!(result.is_ok());
+            }
+            assert!(!editor.has_invalid_draft());
+            assert_eq!(editor.preview().config().widgets[0].advanced.bands()[0].max, 2.5);
+            editor.undo().unwrap();
+            assert_eq!(editor.preview(), &accepted);
+        }
+    }
 }
 
 fn check_raw_available(
