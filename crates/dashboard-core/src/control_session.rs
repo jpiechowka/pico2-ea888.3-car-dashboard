@@ -20,6 +20,7 @@ pub struct ControlEffects {
     pub fps_changed: bool,
     pub recovered: bool,
     pub reset_requested: bool,
+    pub acknowledge_requested: bool,
     pub observations: Option<Observation>,
     pub reset_observation: Option<Observation>,
     pub ignored: u32,
@@ -123,6 +124,15 @@ impl ControlSession {
             return;
         }
         self.last_ms = now_ms;
+        if matches!(
+            self.popup,
+            Some(Popup::Warnings(
+                _,
+                crate::warning_state::WarningFeedback::Pending | crate::warning_state::WarningFeedback::Busy
+            ))
+        ) {
+            return;
+        }
         if let Some(popup) = self.popup
             && self.backlight.expire_popup(popup, now_ms)
         {
@@ -142,6 +152,52 @@ impl ControlSession {
         if self.page == Page::Dashboard {
             self.feedback(Popup::Reset(now_ms));
         }
+    }
+
+    pub fn warning_feedback(
+        &mut self,
+        feedback: crate::warning_state::WarningFeedback,
+        now: u64,
+    ) {
+        if now < self.last_ms {
+            return;
+        }
+        self.last_ms = now;
+        if self.page == Page::Dashboard {
+            self.feedback(Popup::Warnings(now, feedback));
+        }
+    }
+
+    pub fn overlay(
+        &self,
+        config: &ValidatedConfig,
+    ) -> Option<crate::dashboard::Overlay> {
+        use crate::dashboard::Overlay;
+        self.popup.map(|popup| {
+            match popup {
+                Popup::Reset(_) => Overlay::Reset,
+                Popup::Warnings(_, feedback) => {
+                    Overlay::View(crate::view_state::PopupText::new(feedback.label()).unwrap())
+                }
+                Popup::Fps(_) => Overlay::Fps(self.fps),
+                Popup::BoostUnit(_) => Overlay::BoostUnit(self.boost_psi),
+                Popup::Brightness(_, b) => Overlay::Brightness(b),
+                Popup::View(_) => {
+                    Overlay::View(
+                        crate::view_state::PopupText::new(
+                            &config
+                                .config()
+                                .views
+                                .iter()
+                                .find(|v| v.id == self.view_id())
+                                .expect("validated selected view")
+                                .name,
+                        )
+                        .unwrap(),
+                    )
+                }
+            }
+        })
     }
 
     fn action<M: RawMutex>(
@@ -164,8 +220,7 @@ impl ControlSession {
             return true;
         }
         match action {
-            // Unreleased v4 schema: Task 8 supplies the warning command route.
-            ControlAction::AcknowledgeWarnings => return false,
+            ControlAction::AcknowledgeWarnings => effects.acknowledge_requested = true,
             ControlAction::NextView | ControlAction::PreviousView => {
                 if !self.views.rotate(
                     config,

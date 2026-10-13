@@ -5,6 +5,7 @@ pub const POPUP_DURATION_SHORT_MS: u64 = 1500;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Popup {
     Reset(u64),
+    Warnings(u64, crate::warning_state::WarningFeedback),
     Fps(u64),
     BoostUnit(u64),
     View(u64),
@@ -16,7 +17,12 @@ impl Popup {
     #[inline]
     pub const fn start_time(&self) -> u64 {
         match self {
-            Self::Reset(t) | Self::Fps(t) | Self::BoostUnit(t) | Self::View(t) | Self::Brightness(t, _) => *t,
+            Self::Warnings(t, _)
+            | Self::Reset(t)
+            | Self::Fps(t)
+            | Self::BoostUnit(t)
+            | Self::View(t)
+            | Self::Brightness(t, _) => *t,
         }
     }
 

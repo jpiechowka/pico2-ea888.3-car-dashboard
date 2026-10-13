@@ -191,12 +191,12 @@ fn set_churn_preserves_cursor_deadline_and_configured_view_order() {
         pager.select(&cfg, &model.snapshot(), 1, 501, true).unwrap().lines()[0].as_str(),
         "OIL 2"
     );
-    // New arrivals don't reset the next deadline or replace the active cursor.
+    // New episodes interrupt immediately without replacing the retained rotation cursor.
     for at in [600, 601] {
         model.ingest_batch([1., 150., 95., 80., 30., 700., 13.8, 1.], at);
         assert_eq!(
             pager.select(&cfg, &model.snapshot(), 1, at, true).unwrap().lines()[0].as_str(),
-            "OIL 2"
+            if at == 600 { "OIL 2" } else { "OIL 0" }
         );
     }
     assert_eq!(
@@ -273,19 +273,29 @@ fn multiple_warning_pixels_and_indicator_follow_the_same_completed_overlay() {
     );
     assert!(led.complete(second));
     assert_eq!(led.output(true), StatusLed::Green);
-    for overlay in [
+    for (sequence, overlay) in [
         Some(warning),
         Some(feedback),
         Some(Overlay::Warnings(pager.select(&cfg, &snapshot, 1, 501, false).unwrap())),
         None,
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         scene.overlay = overlay;
         scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
         for (slot, frame) in frames.iter_mut().enumerate() {
             cache.draw(&mut St7789Renderer::new(&mut frame.0), slot, &scene);
             assert!(frame.0 == reference.0);
         }
-        assert!(led.unchanged(overlay));
+        if !led.unchanged(overlay) {
+            let token = FrameToken {
+                buffer: BufferId::A,
+                sequence: 10 + sequence as u64,
+            };
+            assert!(led.submit(token, overlay));
+            assert!(led.complete(token));
+        }
         assert_eq!(
             led.output(true),
             match overlay.and_then(Overlay::warning_phase) {
@@ -460,4 +470,272 @@ fn warning_palettes_follow_actual_rule_and_list_mode_even_for_a_single_line() {
         old.colors.background = Color(0xF800);
         assert_ne!(old, before, "overlay retained key must include palette");
     }
+}
+
+#[test]
+fn priorities_are_stable_and_lower_priorities_rotate() {
+    for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
+        let mut raw = config(mode, WarningScope::AllViews).config().clone();
+        for (w, priority) in raw.widgets.iter_mut().zip([
+            Priority::Low,
+            Priority::High,
+            Priority::Critical,
+            Priority::High,
+            Priority::Normal,
+        ]) {
+            w.warning.advanced.priority = priority;
+        }
+        let cfg = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo_configured(&cfg);
+        let values = [1., 150., 95., 80., 30., 700., 13.8, 1.];
+        model.ingest_batch(values, 0);
+        model.ingest_batch(values, 1);
+        let mut pager = WarningPager::new();
+        let mut seen = Vec::new();
+        for step in 0..if mode == WarningMode::CycleOne { 5 } else { 2 } {
+            let now = 1 + step * 500;
+            model.ingest_batch(values, now);
+            let page = pager.select(&cfg, &model.snapshot(), 1, now, true).unwrap();
+            seen.extend(page.lines().iter().map(|l| l.as_str().to_owned()));
+        }
+        assert_eq!(seen, ["OIL 2", "OIL 1", "OIL 3", "OIL 4", "OIL 0"]);
+    }
+}
+
+#[test]
+fn repeated_new_episodes_interrupt_without_erasing_scheduled_rotation() {
+    for offset in [-1i64, 0, 1] {
+        let mut raw = config(WarningMode::CycleOne, WarningScope::AllViews).config().clone();
+        raw.widgets.truncate(4);
+        raw.warnings.page_ms = 1000;
+        // Independently reactivate the first critical rule; three normal rules persist.
+        raw.widgets[0].warning.trigger = 140.;
+        raw.widgets[0].warning.clear = 138.;
+        raw.widgets[0].warning.off_ms = 1;
+        raw.widgets[0].warning.advanced.priority = Priority::Critical;
+        let c = validate(raw).unwrap();
+        let mut m = AcquisitionModel::demo_configured(&c);
+        let mut pager = WarningPager::new();
+        let sample = |m: &mut AcquisitionModel<'_>, oil, now| {
+            m.ingest_batch([1., oil, 95., 80., 30., 700., 13.8, 1.], now);
+        };
+        sample(&mut m, 150., 0);
+        sample(&mut m, 150., 1);
+        pager.select(&c, &m.snapshot(), 1, 1, true).unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        for cycle in 1..=4 {
+            let boundary = 1 + cycle * 1000;
+            let event_at = (boundary as i64 + offset) as u64;
+            for now in [event_at - 4, event_at - 3] {
+                sample(&mut m, 135., now);
+                seen.insert(
+                    pager.select(&c, &m.snapshot(), 1, now, true).unwrap().lines()[0]
+                        .as_str()
+                        .to_owned(),
+                );
+            }
+            sample(&mut m, 150., event_at - 1);
+            seen.insert(
+                pager.select(&c, &m.snapshot(), 1, event_at - 1, true).unwrap().lines()[0]
+                    .as_str()
+                    .to_owned(),
+            );
+            sample(&mut m, 150., event_at);
+            assert_eq!(
+                pager.select(&c, &m.snapshot(), 1, event_at, true).unwrap().lines()[0].as_str(),
+                "OIL 0"
+            );
+            let resumed_at = boundary.max(event_at) + 1;
+            let page = pager.select(&c, &m.snapshot(), 1, resumed_at, true).unwrap();
+            seen.insert(page.lines()[0].as_str().to_owned());
+        }
+        for message in ["OIL 1", "OIL 2", "OIL 3"] {
+            assert!(seen.contains(message), "{offset}: {seen:?}");
+        }
+    }
+}
+
+#[test]
+fn max_message_status_changes_invalidate_both_retained_frames() {
+    use dashboard_host_validation::configured_scene::Layout;
+    use dashboard_host_validation::dashboard::{DashboardCache, DashboardScene};
+    use dashboard_host_validation::display::St7789Renderer;
+    use dashboard_host_validation::render::FpsMode;
+    use dashboard_host_validation::samples::{Quality, SensorId};
+    use dashboard_host_validation::vehicle_status::VehicleStatus;
+    use dashboard_host_validation::warning_state::WarningCommand;
+    use dashboard_host_validation::{AlignedFrame, colors};
+    for mode in [WarningMode::CycleOne, WarningMode::ListThree] {
+        let mut raw = config(mode, WarningScope::AllViews).config().clone();
+        raw.widgets.truncate(3);
+        raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+        for w in &mut raw.widgets {
+            w.warning.advanced.latch = true;
+            w.warning.off_ms = 1;
+            w.warning.message = "ABCDEFGHIJKLMNOPQRST".try_into().unwrap();
+        }
+        let c = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo_configured(&c);
+        let mut pager = WarningPager::new();
+        let mut cache = DashboardCache::new();
+        let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
+        let mut reference = AlignedFrame::boxed();
+        let mut previous = None;
+        for stage in 0..4 {
+            let now = 1 + stage * 10;
+            match stage {
+                0 => {
+                    for at in [0, 1] {
+                        model.ingest_batch([1., 150., 95., 80., 30., 700., 13.8, 1.], at);
+                    }
+                }
+                1 => {
+                    model.mark_fault(SensorId::Oil, Quality::TransportError, now);
+                }
+                2 => {
+                    for at in [now - 1, now] {
+                        model.ingest_batch([1., 90., 95., 80., 30., 700., 13.8, 1.], at);
+                    }
+                }
+                _ => {
+                    for at in [now - 1, now] {
+                        model.ingest_batch([1., 150., 95., 80., 30., 700., 13.8, 1.], at);
+                    }
+                    let snap = model.snapshot();
+                    model.apply_warning_command(
+                        WarningCommand {
+                            request_id: 1,
+                            run_id: snap.warning_run_id().unwrap(),
+                            observed_event_serial: snap.warning_event_serial(),
+                            rules: 7,
+                        },
+                        now,
+                    );
+                }
+            }
+            let snapshot = model.snapshot();
+            let page = pager.select(&c, &snapshot, 1, now, true).unwrap();
+            assert_eq!(
+                page.status(0),
+                [
+                    "LATCHED",
+                    "LATCHED / DATA STALE",
+                    "CLEARED / ACK",
+                    "ACTIVE / ACKNOWLEDGED"
+                ][stage as usize]
+            );
+            if let Some(previous) = previous {
+                assert_ne!(page, previous);
+            }
+            previous = Some(page);
+            let scene = DashboardScene {
+                readings: None,
+                layout: Layout::new(&c, 1, false),
+                measurements: &snapshot,
+                status: VehicleStatus::Demo,
+                now_ms: now,
+                blink_on: true,
+                boost_psi: false,
+                fps_mode: FpsMode::Off,
+                fps_instant: 0.,
+                fps_average: 0.,
+                backgrounds: [colors::BLACK; 8],
+                overlay: Some(Overlay::Warnings(page)),
+            };
+            scene.draw_full(&mut St7789Renderer::new(&mut reference.0));
+            for (slot, frame) in frames.iter_mut().enumerate() {
+                cache.draw(&mut St7789Renderer::new(&mut frame.0), slot, &scene);
+                assert!(frame.0 == reference.0, "{mode:?} stage{stage} slot{slot}");
+            }
+            if let Some(dir) = std::env::var_os("WARNING_EVIDENCE_DIR") {
+                std::fs::write(
+                    std::path::Path::new(&dir).join(format!("{mode:?}-{stage}.rgb565")),
+                    &reference.0[..],
+                )
+                .unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn interruption_churn_and_long_stall_keep_bounded_rotation_and_run_reset() {
+    let mut raw = config(WarningMode::CycleOne, WarningScope::AllViews).config().clone();
+    raw.widgets.truncate(4);
+    raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    for w in &mut raw.widgets {
+        w.warning.advanced.latch = true;
+        w.warning.off_ms = 1;
+    }
+    raw.widgets[0].warning.trigger = 140.;
+    raw.widgets[0].warning.clear = 138.;
+    raw.widgets[0].warning.advanced.priority = Priority::Critical;
+    raw.widgets[1].warning.trigger = 145.;
+    raw.widgets[1].warning.clear = 143.;
+    raw.widgets[1].warning.advanced.priority = Priority::High;
+    let c = validate(raw).unwrap();
+    let mut m = AcquisitionModel::demo_configured(&c);
+    let mut p = WarningPager::new();
+    let sample = |m: &mut AcquisitionModel<'_>, value, now| {
+        m.ingest_batch([1., value, 95., 80., 30., 700., 13.8, 1.], now);
+    };
+    sample(&mut m, 150., 0);
+    sample(&mut m, 150., 1);
+    assert_eq!(p.select(&c, &m.snapshot(), 1, 1, true).unwrap().rules, 1);
+    assert_eq!(p.select(&c, &m.snapshot(), 1, 501, true).unwrap().rules, 2);
+    sample(&mut m, 135., 550);
+    sample(&mut m, 135., 551);
+    sample(&mut m, 142., 600);
+    sample(&mut m, 142., 601);
+    assert_eq!(p.select(&c, &m.snapshot(), 1, 601, true).unwrap().rules, 1);
+    sample(&mut m, 150., 650);
+    sample(&mut m, 150., 651);
+    assert_eq!(p.select(&c, &m.snapshot(), 1, 651, true).unwrap().rules, 1);
+    assert_eq!(p.select(&c, &m.snapshot(), 1, 1001, true).unwrap().rules, 4);
+    m.tick(4501);
+    assert_eq!(p.select(&c, &m.snapshot(), 1, 4501, true).unwrap().rules, 2);
+    let mut replacement = AcquisitionModel::demo_configured(&c);
+    sample(&mut replacement, 150., 4501);
+    sample(&mut replacement, 150., 4502);
+    assert_eq!(p.select(&c, &replacement.snapshot(), 1, 4502, true).unwrap().rules, 1);
+}
+
+#[test]
+fn out_of_view_event_interrupts_snooze_without_overriding_current_view_scope() {
+    use dashboard_host_validation::warning_state::WarningCommand;
+    let mut raw = config(WarningMode::CycleOne, WarningScope::CurrentView)
+        .config()
+        .clone();
+    let other = raw.widgets[4].clone();
+    raw.widgets.truncate(1);
+    raw.widgets.push(other).unwrap();
+    raw.widgets[1].warning.trigger = 140.;
+    raw.widgets[1].warning.clear = 138.;
+    raw.widgets[1].warning.advanced.priority = Priority::Critical;
+    raw.widgets[0].warning.advanced.snooze_s = 5;
+    raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    let c = validate(raw).unwrap();
+    let mut m = AcquisitionModel::demo_configured(&c);
+    let mut p = WarningPager::new();
+    for at in [0, 1] {
+        m.ingest_batch([1., 135., 95., 80., 30., 700., 13.8, 1.], at);
+    }
+    assert_eq!(p.select(&c, &m.snapshot(), 1, 1, true).unwrap().rules, 1);
+    let before = m.snapshot();
+    m.apply_warning_command(
+        WarningCommand {
+            request_id: 1,
+            run_id: before.warning_run_id().unwrap(),
+            observed_event_serial: before.warning_event_serial(),
+            rules: 1,
+        },
+        2,
+    );
+    assert!(p.select(&c, &m.snapshot(), 1, 2, true).is_none());
+    for at in [100, 101] {
+        m.ingest_batch([1., 150., 95., 80., 30., 700., 13.8, 1.], at);
+    }
+    let page = p.select(&c, &m.snapshot(), 1, 101, true).unwrap();
+    assert_eq!(page.rules, 1);
+    assert_eq!(page.lines()[0].as_str(), "OIL 0");
 }

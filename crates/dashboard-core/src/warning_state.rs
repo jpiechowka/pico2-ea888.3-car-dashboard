@@ -33,6 +33,36 @@ pub enum RequestError {
     Busy,
     Exhausted,
     InvalidRun,
+    NoWarnings,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WarningFeedback {
+    Pending,
+    Busy,
+    Accepted,
+    Partial,
+    Rejected,
+    Unavailable,
+}
+impl WarningFeedback {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "ACK PENDING",
+            Self::Busy => "ACK BUSY / PENDING",
+            Self::Accepted => "WARNINGS ACKNOWLEDGED",
+            Self::Partial => "PARTIAL ACK",
+            Self::Rejected => "ACK REJECTED",
+            Self::Unavailable => "NO SHOWN WARNINGS",
+        }
+    }
+
+    pub const fn requested(result: Result<WarningCommand, RequestError>) -> Self {
+        match result {
+            Ok(_) => Self::Pending,
+            Err(RequestError::Busy) => Self::Busy,
+            Err(_) => Self::Unavailable,
+        }
+    }
 }
 /// Caller retains exactly one request until its result arrives; retries reuse its bytes.
 #[derive(Default)]
@@ -70,6 +100,43 @@ impl WarningRequests {
         self.last_id = request_id;
         self.pending = Some(command);
         Ok(command)
+    }
+
+    pub fn request_presented(
+        &mut self,
+        page: crate::status_led::PresentedWarning,
+    ) -> Result<WarningCommand, RequestError> {
+        if self.pending.is_some() {
+            return Err(RequestError::Busy);
+        }
+        if page.rules == 0 {
+            return Err(RequestError::NoWarnings);
+        }
+        self.request(page.run_id, page.event_serial, page.rules)
+    }
+
+    /// Caller first accepts the coherent snapshot into its current source owner.
+    /// A replacement source cancels an old request without claiming producer success.
+    pub fn observe(
+        &mut self,
+        snapshot: &crate::acquisition::DashboardSnapshot,
+    ) -> Option<WarningFeedback> {
+        let command = self.pending?;
+        if snapshot.warning_run_id() != Some(command.run_id) {
+            self.pending = None;
+            return Some(WarningFeedback::Rejected);
+        }
+        let result = snapshot.warning_command_result();
+        if !self.complete(result) {
+            return None;
+        }
+        Some(if result.accepted == 0 {
+            WarningFeedback::Rejected
+        } else if result.rejected == 0 {
+            WarningFeedback::Accepted
+        } else {
+            WarningFeedback::Partial
+        })
     }
 
     pub const fn pending(&self) -> Option<WarningCommand> { self.pending }

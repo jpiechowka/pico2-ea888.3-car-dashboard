@@ -920,13 +920,34 @@ fn observations_in_current_millisecond_bucket_are_accepted_including_recovery() 
 }
 
 #[test]
-fn interim_v4_acknowledge_is_ignored_and_never_resets_statistics() {
+fn acknowledge_emits_intent_without_success_or_statistics_reset() {
     let c = config();
     let mut s = ControlSession::new(&c, FpsMode::Off, false);
     let effect = apply_action(&mut s, &c, ControlAction::AcknowledgeWarnings, 1);
-    assert_eq!(effect.ignored, 1);
+    assert_eq!(effect.ignored, 0);
+    assert!(effect.acknowledge_requested);
     assert!(!effect.reset_requested);
-    assert!(effect.observations.is_none());
+    assert!(effect.observations.is_some());
     s.statistics_acknowledged(2);
+    assert!(s.popup().is_none());
+}
+
+#[test]
+fn warning_feedback_remains_pending_until_result_and_never_confirms_reset() {
+    use dashboard_host_validation::popup::Popup;
+    use dashboard_host_validation::warning_state::WarningFeedback;
+    let c = config();
+    let mut s = ControlSession::new(&c, FpsMode::Off, false);
+    s.warning_feedback(WarningFeedback::Pending, 1);
+    s.expire_feedback(10000);
+    assert!(matches!(s.popup(), Some(Popup::Warnings(_, WarningFeedback::Pending))));
+    s.warning_feedback(WarningFeedback::Busy, 10001);
+    s.expire_feedback(20000);
+    assert!(matches!(s.popup(), Some(Popup::Warnings(_, WarningFeedback::Busy))));
+    s.warning_feedback(WarningFeedback::Accepted, 20001);
+    assert!(matches!(s.popup(), Some(Popup::Warnings(_, WarningFeedback::Accepted))));
+    s.expire_feedback(23001);
+    assert!(s.popup().is_none());
+    s.statistics_acknowledged(23002);
     assert!(s.popup().is_none());
 }

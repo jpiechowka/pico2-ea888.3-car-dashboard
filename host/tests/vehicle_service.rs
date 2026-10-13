@@ -643,3 +643,79 @@ fn parked_vehicle_forwards_timer_publication_without_transport_or_samples() {
     assert!(displayed.accept(scrolled));
     assert_eq!(hw.0.borrow().reads, reads);
 }
+
+#[test]
+fn queued_command_observes_activation_from_the_same_vehicle_receive_pass() {
+    use dashboard_host_validation::alarms::{RuleIndex, Status};
+    use dashboard_host_validation::view_config::*;
+    use dashboard_host_validation::warning_state::WarningCommand;
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0] = default_widget(Channel::Water, 1, 1, raw.widgets[0].placement);
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.applicability = Applicability::VehicleAndDemo;
+    raw.widgets[0].warning.trigger = 90.;
+    raw.widgets[0].warning.clear = 89.;
+    raw.widgets[0].warning.on_ms = 1;
+    let c = validate(raw).unwrap();
+    let hw = Hardware::default();
+    let mut vehicle = Vehicle::configured(
+        hw.clone(),
+        Profile {
+            responder: 0x7E8,
+            receive: ReceiveContract::PaddedStandardDataDlc8,
+        },
+        0,
+        &c,
+    )
+    .unwrap();
+    coolant_request(&mut vehicle, &hw);
+    let mut replies = 0;
+    let mut apply = false;
+    for now in 79..2000 {
+        if apply {
+            let before = vehicle.snapshot();
+            assert_eq!(before.warning_event_serial(), 0);
+            vehicle.step_with_warning(
+                &mut Context::from_waker(Waker::noop()),
+                now,
+                Some(WarningCommand {
+                    request_id: 1,
+                    run_id: before.warning_run_id().unwrap(),
+                    observed_event_serial: 0,
+                    rules: 1,
+                }),
+            );
+            let after = vehicle.snapshot();
+            assert_eq!(after.rule_status_at(RuleIndex::new(0).unwrap(), now), Status::Active);
+            assert_eq!(after.warning_event_serial(), 1);
+            assert_eq!(after.warning_command_result().rejected, 1);
+            assert_eq!(after.warning_command_result().accepted, 0);
+            let seq = after.sequence;
+            let revision = after.publication_revision();
+            vehicle.step_with_warning(
+                &mut Context::from_waker(Waker::noop()),
+                now,
+                Some(WarningCommand {
+                    request_id: 2,
+                    run_id: after.warning_run_id().unwrap(),
+                    observed_event_serial: 1,
+                    rules: 1,
+                }),
+            );
+            assert_eq!(vehicle.snapshot().sequence, seq);
+            assert_ne!(vehicle.snapshot().publication_revision(), revision);
+            assert_eq!(vehicle.snapshot().warning_command_result().accepted, 1);
+            return;
+        }
+        tick(&mut vehicle, now);
+        let tx = hw.take_tx();
+        if !tx.is_empty() {
+            assert_eq!(tx[8], 5);
+            hw.feed(&record(0x7E8, [3, 0x41, 5, 135, 0, 0, 0, 0]));
+            replies += 1;
+            apply = replies == 2;
+        }
+    }
+    panic!("second qualified measurement not received");
+}

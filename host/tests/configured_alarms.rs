@@ -231,3 +231,47 @@ fn v4_windows_use_inclusive_endpoints_and_measurement_dwell() {
         assert_eq!(model.snapshot().rule_status_at(index(0), 300), Status::Normal);
     }
 }
+
+#[test]
+fn v4_window_high_endpoints_and_adjacent_hysteresis_are_inclusive() {
+    for mode in [LimitMode::InsideWindow, LimitMode::OutsideWindow] {
+        for high in [false, true] {
+            let mut c = default_config();
+            c.widgets.truncate(1);
+            let w = &mut c.widgets[0].warning;
+            w.enabled = true;
+            w.mode = mode;
+            w.on_ms = 100;
+            w.off_ms = 100;
+            (w.trigger, w.clear, w.advanced.trigger_high, w.advanced.clear_high) = if mode == LimitMode::OutsideWindow {
+                (0., 1., 3., 2.)
+            } else {
+                (1., 0., 2., 3.)
+            };
+            let (trigger, clear, adjacent) = match (mode, high) {
+                (LimitMode::OutsideWindow, false) => (0., 1., 0.5),
+                (LimitMode::OutsideWindow, true) => (3., 2., 2.5),
+                (LimitMode::InsideWindow, false) => (1., 0., 0.5),
+                _ => (2., 3., 2.5),
+            };
+            let c = validate(c).unwrap();
+            let mut m = AcquisitionModel::demo_configured(&c);
+            sample(&mut m, adjacent, 0);
+            sample(&mut m, adjacent, 100);
+            assert_eq!(m.snapshot().rule_status_at(index(0), 100), Status::Normal);
+            sample(&mut m, trigger, 200);
+            m.tick(300);
+            assert_eq!(m.snapshot().rule_status_at(index(0), 300), Status::Pending);
+            sample(&mut m, trigger, 300);
+            assert_eq!(m.snapshot().rule_status_at(index(0), 300), Status::Active);
+            sample(&mut m, adjacent, 400);
+            sample(&mut m, adjacent, 500);
+            assert_eq!(m.snapshot().rule_status_at(index(0), 500), Status::Active);
+            sample(&mut m, clear, 600);
+            m.tick(700);
+            assert_eq!(m.snapshot().rule_status_at(index(0), 700), Status::Active);
+            sample(&mut m, clear, 700);
+            assert_eq!(m.snapshot().rule_status_at(index(0), 700), Status::Normal);
+        }
+    }
+}

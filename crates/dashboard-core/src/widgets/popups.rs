@@ -212,8 +212,17 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     for (row, line) in page.lines().iter().enumerate() {
         Text::with_text_style(
             line.as_str(),
-            Point::new(CENTER_X, CENTER_Y - 12 + row as i32 * 22),
+            Point::new(CENTER_X, CENTER_Y - 24 + row as i32 * 28),
             text,
+            CENTERED,
+        )
+        .draw(&mut display)
+        .ok();
+        let small = MonoTextStyle::new(crate::ui::LABEL_FONT, fg);
+        Text::with_text_style(
+            page.status(row),
+            Point::new(CENTER_X, CENTER_Y - 13 + row as i32 * 28),
+            small,
             CENTERED,
         )
         .draw(&mut display)
@@ -222,7 +231,7 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     let mut page_text: heapless::String<8> = heapless::String::new();
     write!(page_text, "{}/{}", page.number, page.total).ok();
     let small = MonoTextStyle::new(crate::ui::LABEL_FONT, text.text_color.unwrap());
-    Text::with_text_style(&page_text, Point::new(CENTER_X, CENTER_Y + 55), small, CENTERED)
+    Text::with_text_style(&page_text, Point::new(CENTER_X, CENTER_Y + 59), small, CENTERED)
         .draw(&mut display)
         .ok();
 }

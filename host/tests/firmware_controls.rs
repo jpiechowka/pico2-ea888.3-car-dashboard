@@ -142,3 +142,37 @@ fn reset_acknowledgment_after_navigation_clears_pending_without_late_popup() {
     s.statistics_acknowledged(450);
     assert!(s.popup().is_none());
 }
+
+#[test]
+fn warning_route_is_separate_capacity_one_and_applies_after_inputs_before_tick() {
+    let main = include_str!("../../firmware/pico2/src/main.rs");
+    let acquisition = include_str!("../../firmware/pico2/src/tasks/acquisition.rs");
+    let service = include_str!("../../crates/dashboard-core/src/diagnostics/service.rs");
+    assert!(
+        acquisition.contains("Channel<CriticalSectionRawMutex, dashboard_pico2::warning_state::WarningCommand, 1>")
+    );
+    assert!(acquisition.contains("RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64>"));
+    assert!(
+        main.find("request_presented(led_presentation.warning())").unwrap()
+            < main.find("measurement_receiver.try_changed()").unwrap()
+    );
+    assert!(main.contains("warning_requests.observe(&measurements)"));
+    assert!(main.contains("WARNING_COMMANDS.try_send(command)"));
+    assert!(!service.contains("self.session.tick(now)"));
+    assert!(!service.contains("self.session.poll(now)"));
+    let start = service.find("pub fn step_with_warning").unwrap();
+    let code = &service[start..];
+    assert!(
+        code.find("self.step_inputs(cx, now)").unwrap()
+            < code.find("self.apply_warning_command(command, now)").unwrap()
+    );
+    assert!(
+        code.find("self.apply_warning_command(command, now)").unwrap()
+            < code.find("self.session.tick_measurements(now)").unwrap()
+    );
+    assert!(acquisition.contains("model.step_with_warning(cx, now, WARNING_COMMANDS.try_receive().ok())"));
+    let start = acquisition.find("model.ingest_batch").unwrap();
+    let code = &acquisition[start..];
+    assert!(code.find("model.ingest_batch").unwrap() < code.find("model.apply_warning_command(command, now)").unwrap());
+    assert!(code.find("model.apply_warning_command(command, now)").unwrap() < code.find("model.tick(now)").unwrap());
+}

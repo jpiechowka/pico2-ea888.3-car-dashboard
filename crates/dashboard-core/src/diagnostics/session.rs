@@ -335,6 +335,14 @@ impl<'a> Session<'a> {
         now: u64,
     ) -> Result<(), SessionError> {
         self.tick_measurements(now);
+        self.tick_protocol(now)
+    }
+
+    // Vehicle batches measurement expiry after received inputs and commands.
+    pub(crate) fn tick_protocol(
+        &mut self,
+        now: u64,
+    ) -> Result<(), SessionError> {
         self.clock(now)?;
         let result = self.client.tick(now);
         let event = self.client_result(result, now)?;
@@ -349,7 +357,15 @@ impl<'a> Session<'a> {
         &mut self,
         now: u64,
     ) -> Result<Option<TxAction>, SessionError> {
-        self.tick(now)?;
+        self.tick_measurements(now);
+        self.poll_protocol(now)
+    }
+
+    pub(crate) fn poll_protocol(
+        &mut self,
+        now: u64,
+    ) -> Result<Option<TxAction>, SessionError> {
+        self.tick_protocol(now)?;
         if self.client.active() || now < self.next_query {
             return Ok(None);
         }

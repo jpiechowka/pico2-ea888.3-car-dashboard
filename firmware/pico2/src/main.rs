@@ -31,7 +31,8 @@ use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
 use dashboard_pico2::settings::Settings;
 use dashboard_pico2::settings::policy::Policy;
-use dashboard_pico2::status_led::{PresentedLed, StatusLed};
+use dashboard_pico2::status_led::{PresentedLed, PresentedScene, StatusLed};
+use dashboard_pico2::warning_state::{WarningFeedback, WarningRequests};
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
@@ -50,7 +51,7 @@ use crate::drivers::{St7789Flusher, St7789Renderer, display_spi_config, get_actu
 use crate::peripherals::{ENCODER_EVENTS, encoder_task};
 use crate::profiling as cpu_profiling;
 use crate::screens::{ProfilingData, draw_logs_page, draw_profiling_page};
-use crate::state::{Page, Popup};
+use crate::state::Page;
 use crate::tasks::{
     BUFFER_SWAPS,
     BUFFER_WAITS,
@@ -446,6 +447,7 @@ async fn dashboard_task(
     let mut fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
     let mut last_trace: Option<FrameTrace> = None;
     let mut led_presentation = PresentedLed::new();
+    let mut warning_requests = WarningRequests::new();
     let mut last_profile_log = Instant::now();
 
     let mut frame_cycles_used = 0u32;
@@ -549,6 +551,10 @@ async fn dashboard_task(
             log_info!("Controls recovered: Dashboard Full");
         }
         session.expire_feedback(input_ms);
+        if input.acknowledge_requested {
+            let requested = warning_requests.request_presented(led_presentation.warning());
+            session.warning_feedback(WarningFeedback::requested(requested), input_ms);
+        }
         if input.reset_requested {
             crate::tasks::acquisition::RESET_STATISTICS.signal(reset_requests.request());
             log_info!("Stats reset requested");
@@ -569,6 +575,13 @@ async fn dashboard_task(
                 }
                 session.statistics_acknowledged(Instant::now().as_millis());
             }
+        }
+        if let Some(feedback) = warning_requests.observe(&measurements) {
+            session.warning_feedback(feedback, Instant::now().as_millis());
+        }
+        if let Some(command) = warning_requests.pending() {
+            // Full preserves the one logical request for an identical retry.
+            let _ = crate::tasks::acquisition::WARNING_COMMANDS.try_send(command);
         }
         let now_ms = Instant::now().as_millis();
         apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
@@ -605,20 +618,7 @@ async fn dashboard_task(
             average_fps = rate.average;
         }
 
-        let user_overlay = session.popup().as_ref().map(|popup| {
-            match popup {
-                Popup::Reset(_) => Overlay::Reset,
-                Popup::Fps(_) => Overlay::Fps(session.fps()),
-                Popup::BoostUnit(_) => Overlay::BoostUnit(session.boost_psi()),
-                Popup::Brightness(_, brightness) => Overlay::Brightness(*brightness),
-                Popup::View(_) => {
-                    Overlay::View(
-                        dashboard_pico2::view_state::PopupText::new(dashboard_layout.name())
-                            .expect("validated view name"),
-                    )
-                }
-            }
-        });
+        let user_overlay = session.overlay(&dashboard_configuration.config);
         let warning_page = if session.page() == Page::Dashboard && user_overlay.is_none() {
             warning_pager.select(
                 &dashboard_configuration.config,
@@ -632,6 +632,14 @@ async fn dashboard_task(
             None
         };
         let visible_overlay = Overlay::configured_for_page(session.page(), user_overlay, warning_page);
+        let presented_scene = PresentedScene::capture(
+            &dashboard_configuration.config,
+            &measurements,
+            session.page(),
+            session.view_id(),
+            visible_overlay,
+            now_ms,
+        );
         input_tracker.exclude_obscured(visible_overlay.and_then(Overlay::warning_phase).is_some());
         let render_start = Instant::now();
         let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
@@ -801,11 +809,15 @@ async fn dashboard_task(
         let reference = panel_history
             .reference()
             .filter(|reference| reference.buffer == next_frame.id());
-        let plan = if cfg!(feature = "full-frame") || reference.is_none() {
+        let mut plan = if cfg!(feature = "full-frame") || reference.is_none() {
             DamagePlan::full()
         } else {
             DamagePlan::between(next_frame.pixels(), render_frame.pixels())
         };
+        if plan.is_empty() && !led_presentation.equivalent(presented_scene) {
+            // Identical pixels with a new episode still need completed ownership.
+            plan = DamagePlan::full();
+        }
         let idle = plan.is_empty();
         if idle {
             input_tracker.no_damage();
@@ -827,7 +839,7 @@ async fn dashboard_task(
         };
         if idle {
             lifecycle.discard(token).expect("cannot discard active frame");
-            assert!(led_presentation.unchanged(visible_overlay), "pending indicator at idle");
+            assert!(led_presentation.unchanged(presented_scene), "pending indicator at idle");
             session.backlight_mut().frame_unchanged(Instant::now().as_millis());
             apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
             apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
@@ -844,7 +856,7 @@ async fn dashboard_task(
             crate::tasks::recovery::DISPLAY_PENDING.store(true, Ordering::Relaxed);
             let request = render_frame.submit_plan(token, trace, plan);
             assert!(
-                led_presentation.submit(token, visible_overlay),
+                led_presentation.submit(token, presented_scene),
                 "pending indicator submission"
             );
             session.backlight_mut().frame_submitted(token);

@@ -368,3 +368,90 @@ fn exact_transport_retry_does_not_mutate_publication_or_snooze_deadline() {
     m.tick(5100);
     assert!(!m.snapshot().warning_eligibility(index(0), 5100).snoozed);
 }
+
+#[test]
+fn completed_page_request_waits_for_exact_current_run_result() {
+    use dashboard_host_validation::status_led::PresentedWarning;
+    use dashboard_host_validation::warning_state::WarningFeedback;
+    let c = config(true, 5);
+    let mut model = AcquisitionModel::demo_configured(&c);
+    sample(&mut model, 3., 0);
+    sample(&mut model, 3., 100);
+    let snap = model.snapshot();
+    let page = PresentedWarning {
+        rules: 1,
+        event_serial: snap.warning_event_serial(),
+        run_id: snap.warning_run_id().unwrap(),
+    };
+    let mut requests = WarningRequests::new();
+    let cmd = requests.request_presented(page).unwrap();
+    assert_eq!(requests.request_presented(page), Err(RequestError::Busy));
+    assert_eq!(requests.observe(&snap), None);
+    model.apply_warning_command(cmd, 101);
+    assert_eq!(requests.observe(&model.snapshot()), Some(WarningFeedback::Accepted));
+    assert_eq!(requests.observe(&model.snapshot()), None);
+    let _ = requests.request_presented(page).unwrap();
+    let replacement = AcquisitionModel::demo_configured(&c);
+    assert_eq!(
+        requests.observe(&replacement.snapshot()),
+        Some(WarningFeedback::Rejected)
+    );
+    assert_eq!(requests.pending(), None);
+    assert_eq!(requests.observe(&model.snapshot()), None);
+}
+
+#[test]
+fn old_completed_page_cannot_ack_new_hidden_episode_with_same_bit() {
+    use dashboard_host_validation::dashboard::Overlay;
+    use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
+    use dashboard_host_validation::pages::Page;
+    use dashboard_host_validation::status_led::{PresentedLed, PresentedScene};
+    use dashboard_host_validation::view_state::WarningPager;
+    let c = config(true, 5);
+    let mut m = AcquisitionModel::demo_configured(&c);
+    sample(&mut m, 3., 0);
+    sample(&mut m, 3., 100);
+    let mut pager = WarningPager::new();
+    let snapshot = m.snapshot();
+    let old = PresentedScene::capture(
+        &c,
+        &snapshot,
+        Page::Dashboard,
+        1,
+        pager.select(&c, &snapshot, 1, 100, true).map(Overlay::Warnings),
+        100,
+    );
+    let mut shown = PresentedLed::new();
+    let first = FrameToken {
+        buffer: BufferId::A,
+        sequence: 1,
+    };
+    shown.submit(first, old);
+    shown.complete(first);
+    sample(&mut m, 0., 200);
+    sample(&mut m, 0., 300);
+    sample(&mut m, 3., 400);
+    sample(&mut m, 3., 500);
+    let snapshot = m.snapshot();
+    let next = PresentedScene::capture(
+        &c,
+        &snapshot,
+        Page::Dashboard,
+        1,
+        pager.select(&c, &snapshot, 1, 500, true).map(Overlay::Warnings),
+        500,
+    );
+    let second = FrameToken {
+        buffer: BufferId::B,
+        sequence: 2,
+    };
+    assert!(shown.submit(second, next));
+    let mut requests = WarningRequests::new();
+    let command = requests.request_presented(shown.warning()).unwrap();
+    assert_eq!(command.observed_event_serial, old.warning.event_serial);
+    let result = m.apply_warning_command(command, 501);
+    assert_eq!((result.accepted, result.rejected), (0, 1));
+    assert!(!m.snapshot().warning_eligibility(index(0), 501).acknowledged);
+    assert!(shown.complete(second));
+    assert_ne!(shown.warning().event_serial, command.observed_event_serial);
+}

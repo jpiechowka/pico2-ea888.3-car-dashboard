@@ -39,7 +39,13 @@ fn indicator_changes_only_on_matching_completed_or_unchanged_presentation() {
     assert_eq!(presenter.output(true), StatusLed::Red);
     assert!(presenter.complete(second));
     assert_eq!(presenter.output(true), StatusLed::Green);
-    assert!(presenter.unchanged(Some(Overlay::Critical(SensorId::Water, false))));
+    assert!(!presenter.unchanged(Some(Overlay::Critical(SensorId::Water, false))));
+    let third = FrameToken {
+        buffer: BufferId::A,
+        sequence: 3,
+    };
+    assert!(presenter.submit(third, Some(Overlay::Critical(SensorId::Water, false))));
+    assert!(presenter.complete(third));
     assert_eq!(presenter.output(true), StatusLed::Off);
 }
 
@@ -84,4 +90,41 @@ fn hidden_warnings_are_green_during_feedback_and_on_diagnostic_pages() {
         let warning = Overlay::for_page(Page::Dashboard, None, alerts, phase);
         assert_eq!(StatusLed::for_overlay(warning, false), StatusLed::Green);
     }
+}
+
+#[test]
+fn completed_warning_metadata_is_immutable_until_matching_transfer() {
+    use dashboard_host_validation::status_led::{PresentedScene, PresentedWarning};
+    let first = FrameToken {
+        buffer: BufferId::A,
+        sequence: 1,
+    };
+    let second = FrameToken {
+        buffer: BufferId::B,
+        sequence: 2,
+    };
+    let mut old = PresentedScene::legacy(Some(Overlay::Critical(SensorId::Oil, true)));
+    old.warning = PresentedWarning {
+        rules: 1,
+        event_serial: 4,
+        run_id: 7,
+    };
+    let mut newer = old;
+    newer.warning.event_serial = 5;
+    let mut presented = PresentedLed::new();
+    assert!(presented.submit(first, old));
+    assert_eq!(presented.warning().rules, 0);
+    assert!(!presented.complete(second));
+    assert!(presented.complete(first));
+    assert_eq!(presented.warning(), old.warning);
+    assert!(!presented.unchanged(newer));
+    assert!(presented.unchanged(old));
+    assert!(presented.submit(second, newer));
+    assert_eq!(presented.warning(), old.warning);
+    assert!(!presented.complete(first));
+    assert!(presented.complete(second));
+    assert_eq!(presented.warning(), newer.warning);
+    assert!(!presented.complete(second));
+    assert!(!presented.submit(second, old));
+    assert!(!presented.submit(first, old));
 }

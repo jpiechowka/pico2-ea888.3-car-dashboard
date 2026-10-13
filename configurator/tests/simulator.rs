@@ -109,10 +109,16 @@ fn every_catalogue_action_runs_through_gestures_and_shared_session() {
         } else {
             match action {
                 ControlAction::None => assert_eq!(sim.session().page(), page),
-                // Unreleased Task3 behavior; Task8 installs the command route.
+                // Summary mode cannot acknowledge an unseen warning.
                 ControlAction::AcknowledgeWarnings => {
                     assert!(!sim.reset_pending());
-                    assert!(sim.session().popup().is_none());
+                    assert!(matches!(
+                        sim.session().popup(),
+                        Some(dashboard_core::popup::Popup::Warnings(
+                            _,
+                            dashboard_core::warning_state::WarningFeedback::Unavailable
+                        ))
+                    ));
                     assert_eq!(sim.session().page(), page);
                 }
                 ControlAction::NextView | ControlAction::PreviousView => assert_ne!(sim.session().view_id(), old_view),
@@ -206,6 +212,7 @@ fn owned_and_borrowed_ingestion_match_including_rejected_values() {
     for (offset, water) in [(0, 95.0), (250, f32::NAN), (200, 99.0), (500, 110.0)] {
         let values = [1., 95., water, 80., 30., 700., 13.8, 1.];
         borrowed.ingest_batch(values, start + offset);
+        borrowed.tick(start + offset);
         sim.advance_to(start + offset, Some(values));
         assert_eq!(sim.snapshot(), borrowed.snapshot());
     }
@@ -263,4 +270,245 @@ fn reset_acknowledgment_resets_owned_statistics_once_and_time_expires_feedback()
     sim.advance_to(sim.now_ms() + 10, None);
     sim.advance_to(sim.now_ms() + 3000, None);
     assert_eq!(sim.session().popup(), None);
+}
+
+#[test]
+fn warnings_require_render_acceptance_and_matching_completion_before_ack() {
+    use dashboard_configurator::preview::Preview;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    use dashboard_core::warning_state::WarningFeedback;
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.trigger = 2.;
+    raw.widgets[0].warning.clear = 1.;
+    raw.widgets[0].warning.on_ms = 1;
+    raw.widgets[0].warning.advanced.latch = true;
+    raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let now = sim.now_ms();
+    let values = [3., 90., 95., 80., 30., 700., 13.8, 1.];
+    sim.advance_to(now, Some(values));
+    sim.advance_to(now + 1, Some(values));
+    sim.tap(ButtonId::A);
+    assert!(
+        sim.pending_warning_command().is_none(),
+        "summary cannot acknowledge unseen warning"
+    );
+    sim.advance(3001);
+    sim.advance_to(sim.now_ms(), Some(values));
+    sim.advance_to(sim.now_ms() + 1, Some(values));
+    let mut preview = Preview::new();
+    let token = FrameToken {
+        buffer: BufferId::A,
+        sequence: 1,
+    };
+    let wrong = FrameToken {
+        buffer: BufferId::B,
+        sequence: 1,
+    };
+    preview.render_simulation_submitted(&mut sim, token).unwrap();
+    assert_eq!(sim.completed_warning().rules, 0);
+    assert!(!sim.complete_frame(wrong));
+    assert!(sim.complete_frame(token));
+    assert_eq!(sim.completed_warning().rules, 1);
+    sim.tap(ButtonId::A);
+    assert!(sim.pending_warning_command().is_some());
+    assert!(matches!(
+        sim.session().popup(),
+        Some(dashboard_core::popup::Popup::Warnings(_, WarningFeedback::Pending))
+    ));
+    sim.producer_step(None);
+    assert!(sim.pending_warning_command().is_none());
+    assert!(matches!(
+        sim.session().popup(),
+        Some(dashboard_core::popup::Popup::Warnings(_, WarningFeedback::Accepted))
+    ));
+}
+
+#[test]
+fn rendered_transport_off_waits_for_feedback_and_clear_completions() {
+    use dashboard_configurator::preview::Preview;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let mut preview = Preview::new();
+    let token = |sequence| {
+        FrameToken {
+            buffer: BufferId::A,
+            sequence,
+        }
+    };
+    preview.render_simulation_submitted(&mut sim, token(1)).unwrap();
+    sim.complete_frame(token(1));
+    sim.click();
+    sim.click();
+    sim.advance(5000);
+    assert!(sim.session().backlight().compare() > 0);
+    preview.render_simulation_submitted(&mut sim, token(2)).unwrap();
+    sim.advance(5000);
+    assert!(sim.session().backlight().compare() > 0);
+    assert!(!sim.complete_frame(token(1)));
+    assert!(sim.complete_frame(token(2)));
+    sim.advance(2000);
+    assert!(sim.session().backlight().compare() > 0);
+    preview.render_simulation_submitted(&mut sim, token(3)).unwrap();
+    assert!(sim.session().backlight().compare() > 0);
+    assert!(sim.complete_frame(token(3)));
+    assert_eq!(sim.session().backlight().compare(), 0);
+}
+
+#[test]
+fn diagnostic_pages_cannot_submit_dashboard_preview_pixels() {
+    use dashboard_configurator::preview::{Preview, PreviewError};
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let mut preview = Preview::new();
+    let token = FrameToken {
+        buffer: BufferId::A,
+        sequence: 1,
+    };
+    preview.render_simulation_submitted(&mut sim, token).unwrap();
+    sim.complete_frame(token);
+    let pixels = preview.rgb565().to_vec();
+    let shown = sim.completed_warning();
+    sim.tap(ButtonId::Y);
+    assert_eq!(
+        preview
+            .render_simulation_submitted(
+                &mut sim,
+                FrameToken {
+                    buffer: BufferId::B,
+                    sequence: 2
+                }
+            )
+            .unwrap_err(),
+        PreviewError::UnsupportedPage(ControlPage::Debug)
+    );
+    assert_eq!(preview.rgb565(), pixels);
+    assert_eq!(sim.completed_warning(), shown);
+    assert!(!sim.complete_frame(FrameToken {
+        buffer: BufferId::B,
+        sequence: 2
+    }));
+    sim.tap(ButtonId::Y);
+    assert_eq!(
+        preview
+            .render_simulation_submitted(
+                &mut sim,
+                FrameToken {
+                    buffer: BufferId::B,
+                    sequence: 3
+                }
+            )
+            .unwrap_err(),
+        PreviewError::UnsupportedPage(ControlPage::Logs)
+    );
+    assert_eq!(preview.rgb565(), pixels);
+    assert_eq!(sim.completed_warning(), shown);
+    assert!(!sim.complete_frame(FrameToken {
+        buffer: BufferId::B,
+        sequence: 3
+    }));
+}
+
+#[test]
+fn deadline_interruption_and_dropped_preparation_never_change_completed_identity() {
+    use dashboard_configurator::preview::{Preview, PreviewError};
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut raw = default_config();
+    raw.widgets.clear();
+    raw.warnings.page_ms = 1000;
+    raw.warnings.mode = WarningMode::CycleOne;
+    for i in 0..4 {
+        let mut w = default_widget(
+            Channel::Oil,
+            i + 1,
+            1,
+            Placement {
+                column: i as u8,
+                row: 0,
+                span: Span::OneByOne,
+            },
+        );
+        w.warning.on_ms = 1;
+        w.warning.off_ms = 1;
+        if i == 0 {
+            w.warning.trigger = 140.;
+            w.warning.clear = 138.;
+            w.warning.advanced.priority = Priority::Critical;
+        }
+        raw.widgets.push(w).unwrap();
+    }
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let mut preview = Preview::new();
+    let token = |sequence| {
+        FrameToken {
+            buffer: BufferId::A,
+            sequence,
+        }
+    };
+    let start = sim.now_ms();
+    for offset in [0, 1] {
+        sim.advance_to(start + offset, Some([1., 150., 95., 80., 30., 700., 13.8, 1.]));
+    }
+    preview.render_simulation_submitted(&mut sim, token(1)).unwrap();
+    sim.complete_frame(token(1));
+    let old = sim.completed_warning();
+    for (offset, oil) in [(997, 135.), (998, 135.), (1000, 150.), (1001, 150.)] {
+        sim.advance_to(start + offset, Some([1., oil, 95., 80., 30., 700., 13.8, 1.]));
+    }
+    preview.render_simulation_submitted(&mut sim, token(2)).unwrap();
+    assert_eq!(preview.warning_page().unwrap().rules, 1);
+    assert_eq!(sim.completed_warning(), old);
+    // The next selection resumes the retained cursor, but pending transport drops it.
+    sim.advance_to(start + 1002, None);
+    assert_eq!(
+        preview.render_simulation_submitted(&mut sim, token(3)).unwrap_err(),
+        PreviewError::PendingFrame
+    );
+    assert_eq!(preview.warning_page().unwrap().rules, 2);
+    assert_eq!(sim.completed_warning(), old);
+    assert!(!sim.complete_frame(token(3)));
+    assert!(sim.complete_frame(token(2)));
+    assert_eq!(sim.completed_warning().rules, 1);
+    assert!(sim.completed_warning().event_serial > old.event_serial);
+    preview.render_simulation_submitted(&mut sim, token(3)).unwrap();
+    sim.complete_frame(token(3));
+    assert_eq!(sim.completed_warning().rules, 2);
+    for (offset, sequence, rules) in [(2001, 4, 4), (3001, 5, 8)] {
+        sim.advance_to(start + offset, Some([1., 150., 95., 80., 30., 700., 13.8, 1.]));
+        preview.render_simulation_submitted(&mut sim, token(sequence)).unwrap();
+        sim.complete_frame(token(sequence));
+        assert_eq!(sim.completed_warning().rules, rules);
+    }
+}
+
+#[test]
+fn injected_fault_and_stale_tick_use_owner_qualification_and_preserve_latch() {
+    use dashboard_core::alarms::RuleIndex;
+    use dashboard_core::samples::{Quality, SensorId};
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.on_ms = 1;
+    raw.widgets[0].warning.advanced.latch = true;
+    raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let start = sim.now_ms();
+    for at in [start, start + 1] {
+        sim.advance_to(at, Some([3., 90., 95., 80., 30., 700., 13.8, 1.]));
+    }
+    sim.inject_fault(SensorId::Boost, Quality::TransportError, start + 2);
+    let e = sim
+        .snapshot()
+        .warning_eligibility(RuleIndex::new(0).unwrap(), start + 2);
+    assert!(e.latched);
+    assert_eq!(e.label(), "LATCHED / DATA STALE");
+    sim.advance_to(start + 10000, None);
+    assert!(
+        sim.snapshot()
+            .warning_eligibility(RuleIndex::new(0).unwrap(), sim.now_ms())
+            .latched
+    );
+    assert_eq!(sim.completed_warning().rules, 0);
 }

@@ -105,12 +105,18 @@ impl ControlSimulator {
         );
         self.ignored = self.ignored.saturating_add(effects.ignored);
         self.reset_pending |= effects.reset_requested;
-        // Treat the summary presentation as completed. Off feedback starts here;
+        if effects.acknowledge_requested {
+            self.simulation.request_acknowledgment();
+        }
+        self.simulation.retry();
+        // Summary feedback completes only its backlight model, never warning identity. Off feedback starts here;
         // a later expired popup still requires a separate clear presentation.
-        self.simulation
-            .session
-            .backlight_mut()
-            .frame_unchanged(self.simulation.now_ms);
+        if !self.simulation.render_transport {
+            self.simulation
+                .session
+                .backlight_mut()
+                .frame_unchanged(self.simulation.now_ms);
+        }
         self.simulation.prepare(effects.view_changed);
     }
 
@@ -123,13 +129,72 @@ impl ControlSimulator {
         self.simulation.advance_to(now_ms, values);
         self.simulation.session.expire_feedback(self.simulation.now_ms);
         // Same synthetic summary completion used by the existing controls UI.
-        self.simulation
-            .session
-            .backlight_mut()
-            .frame_unchanged(self.simulation.now_ms);
+        if !self.simulation.render_transport {
+            self.simulation
+                .session
+                .backlight_mut()
+                .frame_unchanged(self.simulation.now_ms);
+        }
     }
 
     pub(crate) fn warning_page(&self) -> Option<dashboard_core::view_state::WarningPage> { self.simulation.warning }
+
+    pub fn completed_warning(&self) -> dashboard_core::status_led::PresentedWarning {
+        self.simulation.presented.warning()
+    }
+
+    pub fn pending_warning_command(&self) -> Option<dashboard_core::warning_state::WarningCommand> {
+        self.simulation.requests.pending()
+    }
+
+    pub(crate) fn presented_scene(&self) -> dashboard_core::status_led::PresentedScene { self.simulation.scene() }
+
+    pub(crate) fn blink_on(&self) -> bool { self.simulation.blink_on() }
+
+    pub(crate) fn accept_rendered(
+        &mut self,
+        token: dashboard_core::display::pipeline::FrameToken,
+    ) -> bool {
+        if !self.simulation.presented.submit(token, self.simulation.scene()) {
+            return false;
+        }
+        self.simulation.render_transport = true;
+        self.simulation.session.backlight_mut().frame_submitted(token);
+        true
+    }
+
+    pub fn complete_frame(
+        &mut self,
+        token: dashboard_core::display::pipeline::FrameToken,
+    ) -> bool {
+        if !self.simulation.presented.complete(token) {
+            return false;
+        }
+        self.simulation
+            .session
+            .backlight_mut()
+            .frame_completed(token, self.simulation.now_ms);
+        true
+    }
+
+    /// Explicit producer step allows deterministic command/result delay and sample races.
+    pub fn producer_step(
+        &mut self,
+        values: Option<[f32; 8]>,
+    ) {
+        self.simulation.advance_to(self.simulation.now_ms, values);
+    }
+
+    /// Explicit fault injection uses the same qualified owner route as firmware.
+    pub fn inject_fault(
+        &mut self,
+        sensor: dashboard_core::samples::SensorId,
+        quality: dashboard_core::samples::Quality,
+        now_ms: u64,
+    ) {
+        self.simulation.model.mark_fault(sensor, quality, now_ms);
+        self.simulation.advance_to(now_ms, None);
+    }
 
     pub fn snapshot(&self) -> DashboardSnapshot { self.simulation.snapshot() }
 

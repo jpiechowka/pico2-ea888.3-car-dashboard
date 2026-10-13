@@ -574,7 +574,28 @@ impl<'a, P: Port> Vehicle<'a, P> {
         cx: &mut Context<'_>,
         now: u64,
     ) {
+        self.step_with_warning(cx, now, None);
+    }
+
+    /// One coherent producer iteration: samples/faults, command, timed expiry.
+    pub fn step_with_warning(
+        &mut self,
+        cx: &mut Context<'_>,
+        now: u64,
+        command: Option<crate::warning_state::WarningCommand>,
+    ) {
+        self.step_inputs(cx, now);
+        if let Some(command) = command {
+            self.apply_warning_command(command, now);
+        }
         self.session.tick_measurements(now);
+    }
+
+    fn step_inputs(
+        &mut self,
+        cx: &mut Context<'_>,
+        now: u64,
+    ) {
         if matches!(self.owner, OwnerState::Quarantined) {
             return;
         }
@@ -605,7 +626,7 @@ impl<'a, P: Port> Vehicle<'a, P> {
             } else if self.bootstrap.status() == bootstrap::Status::Online
                 && self.profile.receive == ReceiveContract::PaddedStandardDataDlc8
             {
-                let result = self.session.tick(now);
+                let result = self.session.tick_protocol(now);
                 self.session_event(result.map(|()| None), now);
             }
         }
@@ -664,7 +685,7 @@ impl<'a, P: Port> Vehicle<'a, P> {
             // let a pre-request record straddle admission of a new request.
             if self.profile.receive == ReceiveContract::PaddedStandardDataDlc8 && receive_empty && self.rx.at_boundary()
             {
-                let result = self.session.poll(now);
+                let result = self.session.poll_protocol(now);
                 self.session_event(result, now);
             }
         } else {

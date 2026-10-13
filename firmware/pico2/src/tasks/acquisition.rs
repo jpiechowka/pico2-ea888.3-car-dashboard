@@ -8,6 +8,7 @@ use dashboard_pico2::diagnostics::service::{LinkSnapshot, Vehicle};
 use dashboard_pico2::maintenance::{Command, Owner};
 use dashboard_pico2::stack_samples::StackSamples;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Instant, Timer};
@@ -18,6 +19,8 @@ use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT};
 pub static DASHBOARD_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1> = Watch::new();
 // Only the newest requested generation matters. The acquisition owner echoes
 // its acknowledgement in the same snapshot as the reset statistics.
+pub static WARNING_COMMANDS: Channel<CriticalSectionRawMutex, dashboard_pico2::warning_state::WarningCommand, 1> =
+    Channel::new();
 pub static RESET_STATISTICS: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 #[cfg(feature = "longan-rx12")]
 pub static VEHICLE_LINK: Watch<CriticalSectionRawMutex, LinkSnapshot, 1> = Watch::new();
@@ -217,13 +220,19 @@ pub async fn acquisition_task(
             // Always Ready: exposes this executor's waker to bounded HAL polls
             // without suspending between the segmented cycle measurements.
             core::future::poll_fn(|cx| {
-                model.step(cx, now);
+                model.step_with_warning(cx, now, WARNING_COMMANDS.try_receive().ok());
                 core::task::Poll::Ready(())
             })
             .await;
         }
         #[cfg(not(feature = "longan-rx12"))]
-        model.tick(Instant::now().as_millis());
+        {
+            let now = Instant::now().as_millis();
+            if let Ok(command) = WARNING_COMMANDS.try_receive() {
+                model.apply_warning_command(command, now);
+            }
+            model.tick(now);
+        }
         // Statistics include every accepted sample before Watch can coalesce.
         // At most 100 Hz publication; no repeated 3 KB critical-section copy
         // when the backend has neither new data, faults nor a reset ack.

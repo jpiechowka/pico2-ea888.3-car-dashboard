@@ -248,7 +248,7 @@ fn assert_exact_shared_scene(
     let snapshot = preview.snapshot().unwrap();
     let now = preview.rendered_at_ms().unwrap();
     let layout = Layout::new(config, view, false).unwrap();
-    let blink = options.warnings && (options.sample_ms / 500).is_multiple_of(2);
+    let blink = options.warnings && dashboard_core::animations::blink_on(options.sample_ms);
     let scene = DashboardScene {
         readings: None,
         layout: Some(layout),
@@ -950,4 +950,123 @@ fn same_batch_view_round_trip_snaps_existing_trajectory_without_changing_acquisi
         preview.rgb565() == fresh.rgb565(),
         "same-batch view round trip retained smoothing"
     );
+}
+
+#[test]
+fn shared_blink_boundaries_match_appearance_simulation_and_palette() {
+    use dashboard_configurator::simulator::ControlSimulator;
+    let mut raw = warnings_config();
+    for w in &mut raw.widgets {
+        w.warning.on_ms = 1;
+    }
+    let config = validate(raw).unwrap();
+    let mut preview = Preview::new();
+    let mut sim = ControlSimulator::new(config.clone());
+    let start = sim.now_ms();
+    sim.advance_to(start, Some(dashboard_configurator::preview::WARNING_VALUES));
+    for elapsed in [1, 199, 200, 201, 399, 400, 401, 599, 600] {
+        let expected = dashboard_core::animations::blink_on(elapsed);
+        sim.advance_to(start + elapsed, Some(dashboard_configurator::preview::WARNING_VALUES));
+        preview.render_simulation(&sim).unwrap();
+        assert_eq!(preview.warning_page().unwrap().blink, expected);
+        preview
+            .render_appearance(
+                &config,
+                1,
+                PreviewOptions {
+                    sample_ms: elapsed,
+                    warnings: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(preview.warning_page().unwrap().blink, expected);
+        assert_exact_shared_scene(
+            &preview,
+            &config,
+            1,
+            PreviewOptions {
+                sample_ms: elapsed,
+                warnings: true,
+                ..Default::default()
+            },
+        );
+    }
+    preview
+        .render_appearance(
+            &config,
+            1,
+            PreviewOptions {
+                warnings: false,
+                sample_ms: 400,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(preview.warning_page().is_none());
+}
+
+#[test]
+fn diagnostic_palette_uses_shared_phase_at_boundaries_and_long_skip() {
+    use dashboard_configurator::diagnostic::Draft;
+    use dashboard_configurator::editor::EditorError;
+    let c = validate(default_config()).unwrap();
+    let mut raw = c.config().clone();
+    raw.warning_colors.foreground = Color(0x07E0);
+    raw.warning_colors.background = Color(0x001F);
+    let colors = raw.warning_colors;
+    let draft = Draft {
+        config: raw,
+        raw: Vec::new(),
+        error: EditorError::InvalidDraft,
+    };
+    let mut preview = Preview::new();
+    for elapsed in [199, 200, 399, 400, 120_599, 120_600] {
+        preview
+            .render_diagnostic(
+                &c,
+                &draft,
+                1,
+                PreviewOptions {
+                    sample_ms: elapsed,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let color = if dashboard_core::animations::blink_on(elapsed) {
+            colors.background
+        } else {
+            colors.foreground
+        };
+        let at = (60 * 320 + 60) * 2;
+        assert_eq!(&preview.rgb565()[at..at + 2], &color.0.to_be_bytes());
+    }
+}
+
+#[test]
+fn simulation_feedback_expiry_selects_warning_in_the_same_preparation() {
+    use dashboard_configurator::simulator::ControlSimulator;
+    let mut raw = warnings_config();
+    for w in &mut raw.widgets {
+        w.warning.on_ms = 1;
+    }
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let start = sim.now_ms();
+    sim.advance_to(start, Some(dashboard_configurator::preview::WARNING_VALUES));
+    sim.advance_to(start + 1, Some(dashboard_configurator::preview::WARNING_VALUES));
+    sim.tap(ButtonId::A);
+    let expires = sim.session().popup().unwrap().start_time() + 3000;
+    sim.advance_to(expires, Some(dashboard_configurator::preview::WARNING_VALUES));
+    sim.advance_to(expires + 1, Some(dashboard_configurator::preview::WARNING_VALUES));
+    // A second action creates feedback with all alarms freshly active.
+    sim.tap(ButtonId::A);
+    let expires = sim.session().popup().unwrap().start_time() + 3000;
+    for now in (sim.now_ms() + 100..expires).step_by(100) {
+        sim.advance_to(now, Some(dashboard_configurator::preview::WARNING_VALUES));
+    }
+    sim.advance_to(expires, Some(dashboard_configurator::preview::WARNING_VALUES));
+    assert!(sim.session().popup().is_none());
+    let mut preview = Preview::new();
+    preview.render_simulation(&sim).unwrap();
+    assert!(preview.warning_page().is_some());
 }

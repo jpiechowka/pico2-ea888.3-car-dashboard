@@ -72,6 +72,8 @@ pub enum PreviewError {
     InvalidSample(Channel),
     TimeOverflow,
     BufferLength,
+    PendingFrame,
+    UnsupportedPage(dashboard_config::ControlPage),
 }
 
 /// Appearance reconstructs synthetic history; Simulation borrows the live owner.
@@ -131,8 +133,25 @@ impl Preview {
         self.render_appearance(config, view, options)
     }
 
-    /// Render prepared dashboard state without advancing or rebuilding acquisition.
-    /// Other control screens and frame completion are integrated separately.
+    /// Explicit synthetic transport accepts the rendered bytes before submission.
+    /// Call complete_frame only after the consumer accepts those bytes; tests may delay it.
+    pub fn render_simulation_submitted(
+        &mut self,
+        simulation: &mut crate::simulator::ControlSimulator,
+        token: dashboard_core::display::pipeline::FrameToken,
+    ) -> Result<&[u8], PreviewError> {
+        if simulation.session().page() != dashboard_config::ControlPage::Dashboard {
+            return Err(PreviewError::UnsupportedPage(simulation.session().page()));
+        }
+        self.render_simulation(simulation)?;
+        if !simulation.accept_rendered(token) {
+            return Err(PreviewError::PendingFrame);
+        }
+        Ok(&self.rgba)
+    }
+
+    /// Readonly dashboard appearance of the prepared state, without advancing acquisition.
+    /// This does not render or accept Debug/Logs pixels. Submission rejects those pages.
     pub fn render_simulation(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
@@ -162,13 +181,13 @@ impl Preview {
             measurements: &snapshot,
             status: VehicleStatus::Demo,
             now_ms: now,
-            blink_on: (now / 500).is_multiple_of(2),
+            blink_on: simulation.blink_on(),
             boost_psi: session.boost_psi(),
             fps_mode: session.fps(),
             fps_instant: 0.0,
             fps_average: 0.0,
             backgrounds: [BLACK; 8],
-            overlay: warning.map(Overlay::Warnings),
+            overlay: simulation.presented_scene().overlay,
         };
         scene.draw_full(&mut St7789Renderer::new(&mut self.framebuffer));
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
@@ -260,9 +279,9 @@ impl Preview {
         {
             self.pager = WarningPager::new();
         }
-        let blink = options.warnings && (options.sample_ms / 500).is_multiple_of(2);
+        let blink = options.warnings && dashboard_core::animations::blink_on(options.sample_ms);
         let warning = if options.warnings {
-            self.pager.select(config, &snapshot, view, now, blink)
+            self.pager.select_appearance(config, &snapshot, view, now, blink)
         } else {
             self.pager.pause(now);
             None
@@ -427,7 +446,7 @@ impl Preview {
         if let Some(colors) = palette {
             dashboard_core::widgets::draw_warning_page(
                 &mut display,
-                WarningPage::palette_sample(colors, (options.sample_ms / 500).is_multiple_of(2)),
+                WarningPage::palette_sample(colors, dashboard_core::animations::blink_on(options.sample_ms)),
             );
         }
         // This watermark is part of the pixels as well as the browser chrome,
