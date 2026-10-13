@@ -460,3 +460,21 @@ fn new_enum_spellings_are_bounded_and_unknown_values_report_json_location() {
         );
     }
 }
+
+#[test]
+fn pretty_reordered_advanced_json_normalizes_to_exact_compact_wire() {
+    let original = validate(default_config()).unwrap();
+    let compact = to_json(&original).unwrap();
+    // serde_json's sorted Value maps reorder Config and all nested custom fields.
+    let reordered: serde_json::Value = serde_json::from_str(&compact).unwrap();
+    let pretty = serde_json::to_string_pretty(&reordered).unwrap();
+    assert!(pretty.contains('\n'));
+    assert!(pretty.find("\"bands\"").unwrap() < pretty.find("\"smoothing_ms\"").unwrap());
+    let imported = from_json_bytes(pretty.as_bytes()).unwrap();
+    assert_eq!(to_json(&imported).unwrap(), compact);
+    let mut a = [0; MAX_FILE_BYTES];
+    let mut b = [0; MAX_FILE_BYTES];
+    let bytes = encode(&original, &mut a).unwrap();
+    assert_eq!(bytes, encode(&imported, &mut b).unwrap());
+    assert_eq!(ConfigSlot::new().load_at_boot(bytes).config, original);
+}

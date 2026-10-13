@@ -286,3 +286,32 @@ fn publications_have_distinct_runtime_identity_but_equal_wire_content() {
         dashboard_config::encode(second, &mut b).unwrap()
     );
 }
+
+#[test]
+fn late_advanced_decode_and_validation_failures_replace_all_slot_fields() {
+    let mut slot = ConfigSlot::new();
+    let mut custom = customized();
+    custom.history_seconds = [900; 8];
+    custom.reduced_motion = true;
+    custom.led.normal.period_ms = 9999;
+    custom.led.backlight_off = true;
+    let good = raw(&custom);
+    for mutation in 0..4 {
+        assert_eq!(slot.load_at_boot(&good).fault, None);
+        let mut bad = custom.clone();
+        match mutation {
+            0 => bad.widgets[7].advanced.smoothing_ms = 49,
+            1 => bad.widgets[7].warning.advanced.snooze_s = 4,
+            2 => bad.history_seconds[7] = 901,
+            _ => bad.led.warning.on_percent = 99,
+        }
+        let bytes = raw(&bad);
+        assert!(matches!(decode(&bytes), Err(ConfigError::Validation(_))));
+        assert_same(&mut slot, &bytes);
+    }
+    let mut payload = good[HEADER_BYTES..].to_vec();
+    *payload.last_mut().unwrap() = 2;
+    let malformed = envelope(&payload);
+    assert_eq!(decode(&malformed), Err(ConfigError::Payload));
+    assert_same(&mut slot, &malformed);
+}
