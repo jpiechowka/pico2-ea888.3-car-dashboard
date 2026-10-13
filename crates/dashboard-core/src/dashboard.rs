@@ -89,6 +89,8 @@ impl Overlay {
 }
 
 pub struct DashboardScene<'a> {
+    /// Prepared once per configured frame; None is the raw legacy fixture path.
+    pub readings: Option<&'a crate::presentation::DisplayReadings<'a>>,
     /// None retains the original fixed scene for historical replay contracts.
     /// Device and browser use the same validated configurable path.
     pub layout: Option<Layout<'a>>,
@@ -106,6 +108,52 @@ pub struct DashboardScene<'a> {
 }
 
 impl DashboardScene<'_> {
+    pub fn configured_text(
+        &self,
+        cell: usize,
+    ) -> Option<CellText> {
+        let layout = self.layout.as_ref()?;
+        let widget = layout.widget(cell)?;
+        let current = match self.readings {
+            Some(readings) => readings.widget(cell)?.value,
+            None => {
+                self.measurements
+                    .value_at(SensorId::from_channel(widget.channel), self.now_ms)
+            }
+        };
+        Some(configured_scene::widget_text_with_value(
+            widget,
+            self.measurements,
+            self.now_ms,
+            self.boost_psi,
+            layout.configuration().stoich(),
+            &layout.configuration().config().fuel,
+            current,
+        ))
+    }
+
+    pub fn gauge_reading(
+        &self,
+        cell: usize,
+    ) -> Option<crate::widgets::gauge::Reading> {
+        let layout = self.layout.as_ref()?;
+        let widget = layout.widget(cell)?;
+        let value = match self.readings {
+            Some(readings) => readings.widget(cell)?.value,
+            None => {
+                self.measurements
+                    .value_at(SensorId::from_channel(widget.channel), self.now_ms)
+            }
+        };
+        Some(crate::widgets::gauge::Reading::presented(
+            widget,
+            self.measurements,
+            value,
+            crate::presentation::Unit::resolve(widget.advanced.readout, self.boost_psi),
+            layout.configuration().stoich(),
+        ))
+    }
+
     pub fn cell_sensor(
         &self,
         cell: usize,
@@ -364,12 +412,7 @@ impl DashboardScene<'_> {
         if let Some(widget) = self.layout.as_ref().and_then(|layout| layout.widget(cell))
             && !widget.gauge.kind.is_numeric()
         {
-            key.gauge = Some(crate::widgets::gauge::Reading::new(
-                widget,
-                self.measurements,
-                self.now_ms,
-            ));
-            key.flags[2] = self.boost_psi && widget.channel == dashboard_config::Channel::Boost;
+            key.gauge = self.gauge_reading(cell);
         }
         if let Some(layout) = &self.layout {
             let widget = layout.widget(cell)?;
@@ -384,14 +427,7 @@ impl DashboardScene<'_> {
             if key.quality != Quality::Valid {
                 return Some(key);
             }
-            key.text = configured_scene::widget_text(
-                widget,
-                self.measurements,
-                self.now_ms,
-                self.boost_psi,
-                layout.configuration().stoich(),
-                &layout.configuration().config().fuel,
-            );
+            key.text = self.configured_text(cell)?;
             key.graph = widget.shows_graph().then(|| state.graph_cache_identity()).flatten();
             key.flags[0] = widget.shows_extrema() && state.is_new_peak_at(self.now_ms);
             key.trend = widget.shows_trend().then(|| state.get_trend_at(self.now_ms)).flatten();

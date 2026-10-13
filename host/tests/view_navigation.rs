@@ -228,6 +228,7 @@ fn multiple_warning_pixels_and_indicator_follow_the_same_completed_overlay() {
     let snapshot = model.snapshot();
     let mut pager = WarningPager::new();
     let mut scene = DashboardScene {
+        readings: None,
         layout: Layout::new(&cfg, 1, false),
         measurements: &snapshot,
         status: VehicleStatus::Demo,

@@ -210,6 +210,7 @@ impl Replay {
         retained: bool,
     ) {
         let scene = DashboardScene {
+            readings: None,
             layout: None,
             measurements: black_box(snapshot),
             status: VehicleStatus::derive(false, None, snapshot, now),

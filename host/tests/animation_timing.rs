@@ -111,3 +111,18 @@ fn demo_does_not_freeze_acquisition_steps_after_days_of_uptime() {
         }
     }
 }
+
+#[test]
+fn reduced_motion_snaps_decorative_fades_without_disabling_warning_blink() {
+    use dashboard_host_validation::animations::MotionPolicy;
+    let mut fade = ColorTransition::new();
+    fade.set_target(0, Rgb565::RED, 0);
+    fade.update(100);
+    assert_ne!(fade.get_current(0), Rgb565::RED);
+    fade.update_with_policy(100, MotionPolicy::new(true));
+    assert_eq!(fade.get_current(0), Rgb565::RED);
+    assert_eq!(MotionPolicy::new(true).smoothing_ms(1000), 0);
+    assert!(!MotionPolicy::new(true).decorative());
+    assert!(blink_on(0));
+    assert!(!blink_on(200));
+}

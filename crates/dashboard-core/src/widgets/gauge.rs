@@ -35,6 +35,23 @@ impl Reading {
         }
     }
 
+    /// Transform current and bounds together; raw extrema still set the scale.
+    pub fn presented(
+        widget: &Widget,
+        snapshot: &DashboardSnapshot,
+        value: Option<f32>,
+        unit: crate::presentation::Unit,
+        stoich: f32,
+    ) -> Self {
+        let state = snapshot.sensor(SensorId::from_channel(widget.channel));
+        let (min, max) = widget.gauge.limits(state.minimum(), state.maximum());
+        Self {
+            min: unit.value(min, stoich),
+            max: unit.value(max, stoich),
+            value: value.map(|v| unit.value(v, stoich)),
+        }
+    }
+
     pub fn level(self) -> Option<u16> {
         let value = self.value.filter(|v| v.is_finite())?;
         let span = self.max - self.min;

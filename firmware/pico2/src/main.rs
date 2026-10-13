@@ -440,6 +440,7 @@ async fn dashboard_task(
         |cause| log_info!("{}", cause),
     );
     let mut dashboard_cache = DashboardCache::new();
+    let mut presentation = dashboard_pico2::presentation::PresentationState::new();
     let mut current_fps = 0.0f32;
     let mut average_fps = 0.0f32;
     let mut fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
@@ -642,7 +643,15 @@ async fn dashboard_task(
 
         match session.page() {
             Page::Dashboard => {
+                let readings = presentation.prepare(
+                    &dashboard_configuration.config,
+                    &measurements,
+                    session.view_id(),
+                    now_ms,
+                    session.boost_psi(),
+                );
                 let scene = DashboardScene {
+                    readings: Some(&readings),
                     layout: Some(dashboard_layout),
                     measurements: &measurements,
                     status: vehicle_status,
@@ -668,6 +677,7 @@ async fn dashboard_task(
             }
 
             Page::Debug => {
+                presentation.reset();
                 dashboard_cache.invalidate(render_idx);
                 display.clear(BLACK).ok();
                 render_work.checkpoint().await;
@@ -718,6 +728,7 @@ async fn dashboard_task(
             }
 
             Page::Logs => {
+                presentation.reset();
                 dashboard_cache.invalidate(render_idx);
                 display.clear(BLACK).ok();
                 render_work.checkpoint().await;

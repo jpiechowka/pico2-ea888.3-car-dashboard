@@ -104,6 +104,7 @@ fn feedback_expiration_resumes_warning_at_wall_clock_deadline() {
 fn warning_feedback_and_page_round_trip_repair_both_buffers() {
     let snapshot = alarm_model().snapshot();
     let mut scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &snapshot,
         status: VehicleStatus::Demo,

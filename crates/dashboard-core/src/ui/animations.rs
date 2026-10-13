@@ -9,6 +9,24 @@ const COLOR_TRANSITION_DURATION_MS: u32 = 300;
 
 pub const fn blink_on(elapsed_ms: u64) -> bool { (elapsed_ms / 200).is_multiple_of(2) }
 
+/// Shared motion preference. Explicit warning blink has an independent clock.
+#[derive(Clone, Copy, Debug)]
+pub struct MotionPolicy {
+    reduced: bool,
+}
+impl MotionPolicy {
+    pub const fn new(reduced: bool) -> Self { Self { reduced } }
+
+    pub const fn decorative(self) -> bool { !self.reduced }
+
+    pub const fn smoothing_ms(
+        self,
+        configured: u16,
+    ) -> u16 {
+        if self.reduced { 0 } else { configured }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Transition {
     from: Rgb565,
@@ -103,6 +121,31 @@ impl ColorTransition {
         cell_idx: usize,
     ) -> Rgb565 {
         self.cells.get(cell_idx).map_or(BLACK, |cell| cell.current)
+    }
+
+    /// Decorative transitions snap under reduced motion. Warning blink is not
+    /// routed through this policy, including later configured LED adapters.
+    pub fn update_with_policy(
+        &mut self,
+        now_ms: u64,
+        policy: MotionPolicy,
+    ) -> u8 {
+        if policy.decorative() {
+            return self.update(now_ms);
+        }
+        if !self.accept_time(now_ms) {
+            return 0;
+        }
+        let mut changed = 0;
+        for (index, cell) in self.cells.iter_mut().enumerate() {
+            if cell.current != cell.target {
+                changed |= 1 << index;
+            }
+            cell.current = cell.target;
+            cell.from = cell.target;
+            cell.started_ms = now_ms;
+        }
+        changed
     }
 
     pub fn update(

@@ -28,6 +28,7 @@ fn main() {
     }
     let snapshot = model.snapshot();
     let scene = DashboardScene {
+        readings: None,
         layout: Some(layout),
         measurements: &snapshot,
         now_ms: 118000,

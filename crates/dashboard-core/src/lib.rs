@@ -14,6 +14,7 @@ pub mod backlight;
 pub mod cache_diagnostics;
 pub mod config;
 pub mod peak_hold;
+pub mod presentation;
 pub mod warning_state;
 pub use sensor_state::GraphCacheIdentity;
 pub mod configured_scene;

@@ -44,6 +44,7 @@ fn coalesced_graph_history_and_both_buffers_match_literal_points_after_a_long_di
             // Readers continue coalescing independently until the next paint.
             if now == 0 || now == 124_000 {
                 let scene = DashboardScene {
+                    readings: None,
                     layout: None,
                     measurements: &displayed,
                     status: VehicleStatus::Demo,
@@ -163,6 +164,7 @@ fn timer_scrolls_repeated_values_in_both_retained_buffers() {
         model.tick(now);
         let snapshot = model.snapshot();
         let scene = DashboardScene {
+            readings: None,
             layout: None,
             measurements: &snapshot,
             status: VehicleStatus::Demo,

@@ -206,6 +206,7 @@ fn dashboard_scene(c: &mut Criterion) {
     }
     let snapshot = model.snapshot();
     let scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &snapshot,
         now_ms: 2000,
@@ -265,6 +266,7 @@ fn dashboard_scene(c: &mut Criterion) {
             b.iter(|| {
                 toggle = !toggle;
                 let scene = DashboardScene {
+                    readings: None,
                     layout: None,
                     measurements: if toggle { &snapshot } else { &alternate },
                     ..scene

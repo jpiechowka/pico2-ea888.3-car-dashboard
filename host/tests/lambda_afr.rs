@@ -14,6 +14,7 @@ fn scene(
     now_ms: u64,
 ) -> DashboardScene<'_> {
     DashboardScene {
+        readings: None,
         layout: None,
         measurements: snapshot,
         status: VehicleStatus::Demo,

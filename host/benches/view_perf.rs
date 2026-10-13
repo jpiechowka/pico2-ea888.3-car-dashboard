@@ -55,6 +55,7 @@ pub fn benchmarks(c: &mut Criterion) {
             }
             let snapshot = model.snapshot();
             let scene = DashboardScene {
+                readings: None,
                 layout: Layout::new(&config, 1, false),
                 measurements: &snapshot,
                 now_ms: 118000,
@@ -100,6 +101,7 @@ pub fn benchmarks(c: &mut Criterion) {
                 model.ingest_batch([1.81, 88., 96., 83., 39., 801., 13.7, 0.91], 118001);
                 let changed_snapshot = model.snapshot();
                 let changed = DashboardScene {
+                    readings: None,
                     measurements: &changed_snapshot,
                     now_ms: 118001,
                     ..scene

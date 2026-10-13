@@ -11,6 +11,7 @@ fn scene_cell_order_and_overlay_removal_match_a_fresh_frame() {
     model.ingest_batch([1.2, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let snapshot = model.snapshot();
     let mut scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &snapshot,
         now_ms: 0,

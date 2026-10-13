@@ -1089,6 +1089,7 @@ mod cache_tests {
             // Sink has already dropped the one report. Drawing is independent.
             assert_eq!(seen.observe(snapshot.cache_exhaustion_status()).causes().count(), 0);
             let scene = DashboardScene {
+                readings: None,
                 layout: None,
                 measurements: &snapshot,
                 now_ms: step * 2000,

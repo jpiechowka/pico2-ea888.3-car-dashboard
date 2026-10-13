@@ -1,6 +1,4 @@
 //! Bounded view geometry and one widget renderer for device and browser.
-use core::fmt::Write;
-
 use dashboard_config::{Channel, Fuel, GraphRange, ValidatedConfig, Widget, WidgetColors};
 use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -10,8 +8,8 @@ use embedded_graphics::text::Text;
 
 use crate::acquisition::DashboardSnapshot;
 use crate::dashboard::DashboardScene;
+use crate::presentation::{Unit, format_value, number};
 use crate::samples::{DataMode, Quality, SensorId};
-use crate::thresholds::BAR_TO_PSI;
 use crate::ui::{CENTERED, LABEL_FONT, LEFT_ALIGNED, RED, RIGHT_ALIGNED, WHITE};
 use crate::widgets::cell_text::CellText;
 use crate::widgets::primitives::{draw_history_graph, draw_trend_arrow};
@@ -87,19 +85,6 @@ impl<'a> Layout<'a> {
     }
 }
 
-fn number(
-    out: &mut heapless::String<16>,
-    prefix: &str,
-    value: f32,
-    decimals: usize,
-    suffix: &str,
-) {
-    if !value.is_finite() || write!(out, "{prefix}{value:.decimals$}{suffix}").is_err() {
-        out.clear();
-        let _ = out.push_str("--");
-    }
-}
-
 /// Exact strings used both for pixels and retained equality. Units convert
 /// presentation only; histories, configured bounds and alarms stay canonical.
 pub fn widget_text(
@@ -110,40 +95,60 @@ pub fn widget_text(
     stoich: f32,
     fuel: &Fuel,
 ) -> CellText {
+    widget_text_with_value(
+        widget,
+        snapshot,
+        now,
+        psi,
+        stoich,
+        fuel,
+        snapshot.value_at(SensorId::from_channel(widget.channel), now),
+    )
+}
+
+/// Format canonical presentation current while statistics remain in the snapshot.
+pub fn widget_text_with_value(
+    widget: &Widget,
+    snapshot: &DashboardSnapshot,
+    now: u64,
+    psi: bool,
+    stoich: f32,
+    fuel: &Fuel,
+    current: Option<f32>,
+) -> CellText {
     let mut text = core::array::from_fn(|_| heapless::String::new());
     let id = SensorId::from_channel(widget.channel);
-    let Some(value) = snapshot.value_at(id, now) else {
+    let Some(value) = current else {
         text[0].push_str("--").ok();
         text[5].push_str(snapshot.quality(id, now).label()).ok();
         return text;
     };
     let state = snapshot.sensor(id);
-    let scale = if widget.channel == Channel::Boost && psi {
-        BAR_TO_PSI
-    } else {
-        1.0
-    };
+    let unit = Unit::resolve(widget.advanced.readout, psi);
     let suffix = match widget.channel {
-        Channel::Boost | Channel::Lambda => "",
-        Channel::Battery => "V",
-        _ => "C",
+        Channel::Boost => "",
+        _ => unit.suffix(),
     };
     let decimals = usize::from(widget.display.decimals.min(3));
-    number(&mut text[0], "", value * scale, decimals, suffix);
-    if widget.channel == Channel::Boost {
-        if psi {
-            number(&mut text[1], "", value, 2, " BAR");
-        } else {
-            number(&mut text[1], "", value * BAR_TO_PSI, 1, " PSI");
+    let prefix = if unit == Unit::Afr { "AFR " } else { "" };
+    format_value(&mut text[0], value, unit, stoich, decimals, prefix, suffix);
+    if unit == Unit::Afr && !(0.01..=999.99).contains(&unit.value(value, stoich)) {
+        text[0].clear();
+        text[0].push_str("AFR --").ok();
+    }
+    if widget.capabilities().secondary {
+        if let Some(secondary) = Unit::secondary(widget.advanced.secondary, unit) {
+            format_value(&mut text[1], value, secondary, stoich, decimals, "", secondary.suffix());
+        }
+        if widget.advanced.readout == dashboard_config::Readout::LambdaAndAfr {
+            if (0.01..=999.99).contains(&Unit::Afr.value(value, stoich)) {
+                format_value(&mut text[1], value, Unit::Afr, stoich, 2, "AFR ", "");
+            } else {
+                text[1].push_str("AFR --").ok();
+            }
         }
     }
-    if widget.channel == Channel::Lambda && widget.display.afr {
-        let afr = value * stoich;
-        if (0.01..=999.99).contains(&afr) {
-            number(&mut text[1], "AFR ", afr, 2, "");
-        } else {
-            text[1].push_str("AFR --").ok();
-        }
+    if unit == Unit::Afr || (widget.capabilities().secondary && widget.advanced.readout.includes_afr()) {
         match fuel {
             Fuel::EquivalentGasoline => number(&mut text[5], "EQ ", stoich, 2, ""),
             Fuel::Stoichiometric { .. } => number(&mut text[5], "S ", stoich, 2, ""),
@@ -153,14 +158,14 @@ pub fn widget_text(
     if widget.shows_average()
         && let Some(value) = state.get_average()
     {
-        number(&mut text[2], "AVG ", value * scale, decimals, suffix);
+        format_value(&mut text[2], value, unit, stoich, decimals, "AVG ", suffix);
     }
     if widget.shows_extrema() {
         if let Some(value) = state.minimum() {
-            number(&mut text[3], "MIN ", value * scale, decimals, suffix);
+            format_value(&mut text[3], value, unit, stoich, decimals, "MIN ", suffix);
         }
         if let Some(value) = state.maximum() {
-            number(&mut text[4], "MAX ", value * scale, decimals, suffix);
+            format_value(&mut text[4], value, unit, stoich, decimals, "MAX ", suffix);
         }
     }
     text
@@ -306,14 +311,7 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
         }
         y += 10;
     }
-    let mut text = widget_text(
-        widget,
-        scene.measurements,
-        scene.now_ms,
-        scene.boost_psi,
-        layout.configuration.stoich(),
-        &layout.configuration.config().fuel,
-    );
+    let mut text = scene.configured_text(slot).expect("validated visible widget");
     if !valid {
         text[5].clear();
         text[5].push_str(quality.label()).ok();
@@ -346,9 +344,9 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
                 Point::new(interior.top_left.x, y),
                 Size::new(interior.size.width, available),
             ),
-            crate::widgets::gauge::Reading::new(widget, scene.measurements, scene.now_ms),
+            scene.gauge_reading(slot).expect("validated gauge"),
             &text[0],
-            scene.boost_psi && widget.channel == Channel::Boost,
+            false, // Prepared gauge endpoints are already in the resolved unit.
             (
                 foreground(palette.value),
                 foreground(palette.gauge),

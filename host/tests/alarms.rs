@@ -476,6 +476,7 @@ fn user_feedback_precedes_warning_and_clear_restores_both_retained_buffers() {
         );
     }
     let mut scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &active,
         now_ms: 1000,

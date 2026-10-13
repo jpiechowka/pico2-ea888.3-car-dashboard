@@ -318,6 +318,7 @@ fn scene<'a>(
     now: u64,
 ) -> DashboardScene<'a> {
     DashboardScene {
+        readings: None,
         layout: Layout::new(config, 1, false),
         measurements: snapshot,
         status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
@@ -518,6 +519,9 @@ fn each_active_palette_role_has_its_own_pixels_without_leaking_from_the_cell() {
                 span: Span::TwoByTwo,
             },
         );
+        if w.channel == Channel::Boost {
+            w.advanced.secondary = Secondary::Psi;
+        }
         w.display.graph = true;
         w.display.trend = true;
         w.display.average = true;

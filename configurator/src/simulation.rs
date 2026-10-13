@@ -10,6 +10,8 @@ pub(crate) struct Simulation {
     pub(crate) session: ControlSession,
     pub(crate) now_ms: u64,
     pager: WarningPager,
+    visible: (dashboard_core::pages::Page, u8),
+    pub(crate) presentation_epoch: Option<u64>,
     pub(crate) warning: Option<WarningPage>,
 }
 impl Simulation {
@@ -18,7 +20,10 @@ impl Simulation {
         now_ms: u64,
     ) -> Self {
         let session = ControlSession::new(&config, FpsMode::Off, false);
+        let visible = (session.page(), session.view_id());
         Self {
+            visible,
+            presentation_epoch: Some(0),
             model: OwnedAcquisitionModel::demo_configured(Box::new(config)),
             session,
             now_ms,
@@ -50,6 +55,13 @@ impl Simulation {
     }
 
     pub(crate) fn prepare(&mut self) {
+        // Observe every control transition, including hidden page/view round
+        // trips between renders. Exhaustion permanently disables continuity.
+        let visible = (self.session.page(), self.session.view_id());
+        if self.visible != visible {
+            self.presentation_epoch = self.presentation_epoch.and_then(|epoch| epoch.checked_add(1));
+            self.visible = visible;
+        }
         let snapshot = self.model.snapshot();
         self.warning = self.pager.select(
             self.model.configuration().expect("simulation config"),
@@ -61,4 +73,25 @@ impl Simulation {
     }
 
     pub(crate) fn snapshot(&self) -> DashboardSnapshot { self.model.snapshot() }
+}
+
+#[cfg(test)]
+mod tests {
+    use dashboard_core::pages::Page;
+
+    use super::*;
+    #[test]
+    fn exhausted_visibility_epoch_never_recycles_old_continuity() {
+        let mut simulation = Simulation::new(
+            dashboard_config::validate(dashboard_config::default_config()).unwrap(),
+            0,
+        );
+        simulation.presentation_epoch = Some(u64::MAX);
+        simulation.visible = (Page::Debug, 1);
+        simulation.prepare();
+        assert_eq!(simulation.presentation_epoch, None);
+        simulation.visible = (Page::Logs, 1);
+        simulation.prepare();
+        assert_eq!(simulation.presentation_epoch, None);
+    }
 }

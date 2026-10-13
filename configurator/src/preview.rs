@@ -84,6 +84,8 @@ pub enum PreviewMode {
 
 pub struct Preview {
     mode: PreviewMode,
+    presentation: dashboard_core::presentation::PresentationState,
+    simulation_epoch: Option<u64>,
     framebuffer: Box<FrameBuffer>,
     rgba: Vec<u8>,
     snapshot: Option<DashboardSnapshot>,
@@ -103,6 +105,8 @@ impl Preview {
     pub fn new() -> Self {
         Self {
             mode: PreviewMode::Appearance,
+            presentation: dashboard_core::presentation::PresentationState::new(),
+            simulation_epoch: None,
             framebuffer: Box::new(FrameBuffer::new()),
             rgba: vec![0; WIDTH * HEIGHT * 4],
             snapshot: None,
@@ -140,7 +144,20 @@ impl Preview {
         let snapshot = simulation.snapshot();
         let now = simulation.now_ms();
         let warning = simulation.warning_page();
+        let epoch = simulation.presentation_epoch();
+        if self.mode != PreviewMode::Simulation
+            || epoch.is_none()
+            || self.simulation_epoch != epoch
+            || session.page() != dashboard_core::pages::Page::Dashboard
+        {
+            self.presentation.reset();
+        }
+        self.simulation_epoch = epoch;
+        let readings = self
+            .presentation
+            .prepare(config, &snapshot, view, now, session.boost_psi());
         let scene = DashboardScene {
+            readings: Some(&readings),
             layout: Some(layout),
             measurements: &snapshot,
             status: VehicleStatus::Demo,
@@ -175,7 +192,6 @@ impl Preview {
         view: u8,
         options: PreviewOptions,
     ) -> Result<&[u8], PreviewError> {
-        self.prepared_status = CacheExhaustionStatus::from_config(config.cache_identity_status());
         let layout = Layout::new(config, view, false).ok_or(PreviewError::UnknownView(view))?;
         let now = options
             .sample_ms
@@ -189,6 +205,8 @@ impl Preview {
                 }
             }
         }
+
+        self.prepared_status = CacheExhaustionStatus::from_config(config.cache_identity_status());
 
         // Appearance demonstration only: avoid unbounded work proportional to
         // dwell/freshness. The original thresholds, context gates and order stay
@@ -249,7 +267,19 @@ impl Preview {
             self.pager.pause(now);
             None
         };
+        if self.mode != PreviewMode::Appearance
+            || changed_config
+            || self
+                .options
+                .is_none_or(|old| old.warnings != options.warnings || options.sample_ms < old.sample_ms)
+        {
+            self.presentation.reset();
+        }
+        let readings = self
+            .presentation
+            .prepare_appearance(config, &snapshot, view, now, options.boost_psi);
         let scene = DashboardScene {
+            readings: Some(&readings),
             layout: Some(layout),
             measurements: &snapshot,
             status: VehicleStatus::Demo,
@@ -333,7 +363,10 @@ impl Preview {
             self.prepared_status = self
                 .prepared_status
                 .union(CacheExhaustionStatus::from_config(status(&config)));
+            let mut presentation = dashboard_core::presentation::PresentationState::new();
+            let readings = presentation.prepare(&config, snapshot, view, now, options.boost_psi);
             let scene = DashboardScene {
+                readings: Some(&readings),
                 layout: Layout::new(&config, view, false),
                 measurements: snapshot,
                 status: VehicleStatus::Demo,

@@ -191,6 +191,7 @@ fn assert_exact_shared_scene(
     let layout = Layout::new(config, view, false).unwrap();
     let blink = options.warnings && (options.sample_ms / 500).is_multiple_of(2);
     let scene = DashboardScene {
+        readings: None,
         layout: Some(layout),
         measurements: snapshot,
         status: VehicleStatus::Demo,
@@ -681,4 +682,154 @@ fn appearance_history_stays_fixed_work_for_every_duration_and_has_its_own_origin
             );
         }
     }
+}
+
+#[test]
+fn appearance_smoothing_continues_across_synthetic_owners_and_rejection_is_atomic() {
+    let mut raw = dashboard_config::default_config();
+    raw.widgets[0].advanced.smoothing_ms = 1000;
+    let config = dashboard_config::validate(raw).unwrap();
+    let mut preview = Preview::new();
+    let mut options = PreviewOptions {
+        values: Some([0., 90., 80., 80., 30., 600., 12., 1.]),
+        ..Default::default()
+    };
+    preview.render_appearance(&config, 1, options).unwrap();
+    options.sample_ms = 100;
+    options.values.as_mut().unwrap()[0] = 1.;
+    preview.render_appearance(&config, 1, options).unwrap();
+    let smooth = preview.rgb565().to_vec();
+    let mut fresh = Preview::new();
+    fresh.render_appearance(&config, 1, options).unwrap();
+    assert!(smooth != fresh.rgb565(), "appearance reconstruction reset the filter");
+    let rgba = preview.rgba().to_vec();
+    let before_revision = preview.snapshot().unwrap().publication_identity();
+    let mut bad = options;
+    bad.sample_ms = 200;
+    bad.values.as_mut().unwrap()[0] = f32::NAN;
+    assert!(preview.render_appearance(&config, 1, bad).is_err());
+    assert!(preview.rgb565() == smooth);
+    assert!(preview.rgba() == rgba);
+    assert_eq!(preview.snapshot().unwrap().publication_identity(), before_revision);
+    // Duplicate-time successful rendering is still the same prepared value.
+    preview.render_appearance(&config, 1, options).unwrap();
+    assert!(preview.rgb565() == smooth);
+    // Backward visual time starts a new trajectory at the fresh input.
+    options.sample_ms = 50;
+    preview.render_appearance(&config, 1, options).unwrap();
+    fresh.render_appearance(&config, 1, options).unwrap();
+    assert!(preview.rgb565() == fresh.rgb565());
+}
+
+#[test]
+fn simulation_owner_replacement_and_mode_config_view_reset_never_adopt_old_filters() {
+    use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
+    let mut raw = default_config();
+    raw.widgets[0].advanced.smoothing_ms = 1000;
+    let cfg = validate(raw.clone()).unwrap();
+    let mut sim = ControlSimulator::new(cfg.clone());
+    let mut preview = Preview::new();
+    sim.advance_to(SAMPLE_START_MS + 1, Some([0., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    sim.advance_to(SAMPLE_START_MS + 101, Some([1., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    let filtered = preview.rgb565().to_vec();
+    let mut fresh = Preview::new();
+    fresh.render_simulation(&sim).unwrap();
+    assert!(filtered != fresh.rgb565());
+    sim.restart(cfg.clone());
+    sim.advance_to(SAMPLE_START_MS + 101, Some([1., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    fresh.render_simulation(&sim).unwrap();
+    assert!(preview.rgb565() == fresh.rgb565());
+    // Switching through appearance cannot lend its trajectory back to Simulation.
+    preview
+        .render_appearance(
+            &cfg,
+            1,
+            PreviewOptions {
+                values: Some([0., 90., 80., 80., 30., 600., 12., 1.]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    preview.render_simulation(&sim).unwrap();
+    assert!(preview.rgb565() == fresh.rgb565());
+    // Changing immutable config at the same time also starts at raw current.
+    raw.widgets[0].advanced.readout = Readout::Kpa;
+    let changed = validate(raw).unwrap();
+    let options = PreviewOptions {
+        sample_ms: 100,
+        values: Some([1., 90., 80., 80., 30., 600., 12., 1.]),
+        ..Default::default()
+    };
+    preview.render_appearance(&changed, 1, options).unwrap();
+    fresh = Preview::new();
+    fresh.render_appearance(&changed, 1, options).unwrap();
+    assert!(preview.rgb565() == fresh.rgb565());
+}
+
+#[test]
+fn hidden_control_page_round_trip_without_intermediate_render_snaps_same_view() {
+    use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
+    use dashboard_core::pages::Page;
+    let mut raw = default_config();
+    raw.widgets[0].advanced.smoothing_ms = 5000;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let mut preview = Preview::new();
+    sim.advance_to(SAMPLE_START_MS + 1, Some([0., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    sim.advance_to(SAMPLE_START_MS + 101, Some([1., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    sim.tap(ButtonId::Y);
+    assert_eq!(sim.session().page(), Page::Debug);
+    sim.tap(ButtonId::Y);
+    assert_eq!(sim.session().page(), Page::Logs);
+    sim.tap(ButtonId::Y);
+    assert_eq!(sim.session().page(), Page::Dashboard);
+    assert_eq!(sim.session().view_id(), 1);
+    assert!(sim.now_ms() - SAMPLE_START_MS < 5000);
+    sim.advance_to(sim.now_ms() + 1, Some([1., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    let mut fresh = Preview::new();
+    fresh.render_simulation(&sim).unwrap();
+    assert!(
+        preview.rgb565() == fresh.rgb565(),
+        "hidden cells resumed their old trajectory"
+    );
+}
+
+#[test]
+fn hidden_view_round_trip_without_intermediate_render_snaps_original_widgets() {
+    use dashboard_configurator::simulator::{ControlSimulator, SAMPLE_START_MS};
+    let mut raw = default_config();
+    raw.widgets[0].advanced.smoothing_ms = 5000;
+    raw.views
+        .push(View {
+            id: 2,
+            name: "Other".try_into().unwrap(),
+        })
+        .unwrap();
+    let mut widget = raw.widgets[0].clone();
+    widget.id = 100;
+    widget.view = 2;
+    raw.widgets.push(widget).unwrap();
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let mut preview = Preview::new();
+    sim.advance_to(SAMPLE_START_MS + 1, Some([0., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    sim.advance_to(SAMPLE_START_MS + 101, Some([1., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    sim.rotate(1);
+    assert_eq!(sim.session().view_id(), 2);
+    sim.rotate(-1);
+    assert_eq!(sim.session().view_id(), 1);
+    sim.advance_to(sim.now_ms() + 1, Some([1., 90., 80., 80., 30., 600., 12., 1.]));
+    preview.render_simulation(&sim).unwrap();
+    let mut fresh = Preview::new();
+    fresh.render_simulation(&sim).unwrap();
+    assert!(
+        preview.rgb565() == fresh.rgb565(),
+        "hidden widgets resumed an old trajectory"
+    );
 }

@@ -32,6 +32,7 @@ fn configuration_fault_keeps_mode_visible_and_repairs_both_headers() {
         let mut expected = AlignedFrame::boxed();
         for fault in [false, true, false] {
             let scene = DashboardScene {
+                readings: None,
                 layout: Layout::new(&config, 1, fault),
                 measurements: &snapshot,
                 now_ms: 0,
@@ -111,6 +112,7 @@ fn wider_and_taller_widgets_use_visibly_larger_primary_digits() {
         model.ingest_batch([1.7, 90.0, 90.0, 80.0, 30.0, 700.0, 13.8, 1.0], 0);
         let snapshot = model.snapshot();
         let scene = DashboardScene {
+            readings: None,
             layout: Layout::new(&config, 1, false),
             measurements: &snapshot,
             now_ms: 0,
@@ -199,6 +201,7 @@ fn growing_and_shrinking_digits_repair_both_buffers_across_fit_thresholds() {
             );
             for psi in [false, true, false] {
                 let scene = DashboardScene {
+                    readings: None,
                     layout: Layout::new(&config, 1, false),
                     measurements: &snapshot,
                     now_ms: step as u64,
@@ -272,6 +275,7 @@ fn configured_text_respects_precision_units_flags_and_fuel_scale() {
     assert_eq!(text[5], "S 14.00");
     let mut boost = config.config().widgets[0].clone();
     boost.display.decimals = 3;
+    boost.advanced.secondary = Secondary::Bar;
     let bar = widget_text(&boost, &snapshot, 0, false, config.stoich(), &config.config().fuel);
     let psi = widget_text(&boost, &snapshot, 0, true, config.stoich(), &config.config().fuel);
     assert_eq!(bar[0], "1.234");
@@ -291,6 +295,7 @@ fn peak_highlight_expires_on_elapsed_time_without_a_new_sample() {
     model.ingest_batch([1.0, 100.0, 95.0, 80.0, 30.0, 750.0, 13.8, 0.8], 1);
     let snapshot = model.snapshot();
     let mut scene = DashboardScene {
+        readings: None,
         layout: Layout::new(&config, 1, false),
         measurements: &snapshot,
         now_ms: 1,
@@ -339,6 +344,7 @@ fn blend_percentage_is_explicit_and_afr_only_changes_repaint_both_buffers() {
     let mut reference = AlignedFrame::boxed();
     for (snapshot, now) in [(&first, 0), (&second, 1), (&second, 502)] {
         let scene = DashboardScene {
+            readings: None,
             layout: Layout::new(&config, 1, false),
             measurements: snapshot,
             now_ms: now,
@@ -366,6 +372,7 @@ fn blend_percentage_is_explicit_and_afr_only_changes_repaint_both_buffers() {
         model.mark_fault(dashboard_host_validation::samples::SensorId::Lambda, quality, 600);
         let snapshot = model.snapshot();
         let scene = DashboardScene {
+            readings: None,
             layout: Layout::new(&config, 1, false),
             measurements: &snapshot,
             now_ms: 600,
@@ -419,6 +426,7 @@ fn both_buffers_match_full_redraw_for_spans_holes_views_overlays_and_options() {
         );
         let snapshot = model.snapshot();
         let scene = DashboardScene {
+            readings: None,
             layout: Layout::new(&config, if step % 4 < 2 { 1 } else { 2 }, step == 11),
             measurements: &snapshot,
             now_ms: now,
@@ -478,6 +486,7 @@ fn every_span_and_display_option_stays_inside_its_declared_rectangle() {
                 config.widgets.push(widget).unwrap();
                 let config = validate(config).unwrap();
                 let scene = DashboardScene {
+                    readings: None,
                     layout: Layout::new(&config, 1, false),
                     measurements: &snapshot,
                     now_ms: 0,
@@ -531,6 +540,7 @@ fn cache_repairs_empty_views_and_reused_ids_with_changed_options() {
     let mut reference = AlignedFrame::boxed();
     for selection in [None, Some(2), Some(0), Some(1), None, Some(2), Some(0)] {
         let scene = DashboardScene {
+            readings: None,
             layout: selection.map(|i| Layout::new(&configs[i], 1, false).unwrap()),
             measurements: &snapshot,
             now_ms: 0,

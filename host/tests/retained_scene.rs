@@ -12,6 +12,7 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     model.ingest_batch([-12345.5, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let snapshot = model.snapshot();
     let scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &snapshot,
         now_ms: 0,
@@ -37,6 +38,7 @@ fn extreme_cell_text_cannot_overwrite_a_neighbor_or_leave_old_glyphs() {
     model.reset_statistics(1);
     let shortened = model.snapshot();
     let scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &shortened,
         now_ms: 1,
@@ -58,6 +60,7 @@ fn retained_peak_and_trend_expire_without_a_new_snapshot() {
     }
     let snapshot = model.snapshot();
     let mut scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &snapshot,
         now_ms: 5800,
@@ -91,6 +94,7 @@ fn each_buffer_retains_exact_visible_values_and_ignores_hidden_precision() {
     model.ingest_batch([1.0001, 90.0, 95.0, 80.0, 30.0, 750.0, 13.8, 1.0], 0);
     let first = model.snapshot();
     let mut scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &first,
         now_ms: 0,
@@ -180,6 +184,7 @@ fn alternating_retained_frames_and_partial_panel_equal_full_redraw_after_every_c
             _ => None,
         };
         let scene = DashboardScene {
+            readings: None,
             layout: None,
             measurements: &snapshot,
             now_ms: now,
@@ -237,6 +242,7 @@ fn public_untracked_snapshots_force_each_physical_buffer_dirty() {
         quality: Quality::Valid,
     }; 8];
     let scene = DashboardScene {
+        readings: None,
         layout: None,
         measurements: &snapshot,
         now_ms: 0,
@@ -296,6 +302,7 @@ fn identities_cover_independent_histories_channel_reassignment_and_config_republ
         (&reset, &first_config, 4000),
     ] {
         let scene = DashboardScene {
+            readings: None,
             layout: Layout::new(config, config.config().boot_view, false),
             measurements: snapshot,
             now_ms: now,

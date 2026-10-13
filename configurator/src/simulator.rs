@@ -80,6 +80,8 @@ impl ControlSimulator {
 
     pub fn config(&self) -> &ValidatedConfig { self.simulation.configuration() }
 
+    pub(crate) fn presentation_epoch(&self) -> Option<u64> { self.simulation.presentation_epoch }
+
     fn sample(
         &mut self,
         pressed: [bool; 4],
