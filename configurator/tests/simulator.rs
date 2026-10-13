@@ -476,6 +476,15 @@ fn deadline_interruption_and_dropped_preparation_never_change_completed_identity
     assert!(sim.complete_frame(token(2)));
     assert_eq!(sim.completed_warning().rules, 1);
     assert!(sim.completed_warning().event_serial > old.event_serial);
+    let completed = sim.completed_warning();
+    assert_eq!(
+        preview.render_simulation_submitted(&mut sim, token(2)).unwrap_err(),
+        PreviewError::PendingFrame
+    );
+    assert_eq!(preview.rgb565(), submitted_rgb);
+    assert_eq!(preview.rgba(), submitted_rgba);
+    assert_eq!(preview.warning_page().unwrap().rules, 1);
+    assert_eq!(sim.completed_warning(), completed);
     preview.render_simulation_submitted(&mut sim, token(3)).unwrap();
     sim.complete_frame(token(3));
     assert_eq!(sim.completed_warning().rules, 2);
