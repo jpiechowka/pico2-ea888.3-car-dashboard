@@ -3,6 +3,107 @@ use dashboard_configurator::editor::*;
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 
 #[test]
+fn collecting_report_is_bounded_with_an_exact_omitted_count() {
+    let mut config = default_config();
+    config.views.clear();
+    config.widgets.clear();
+    for view in 1..=8 {
+        config
+            .views
+            .push(View {
+                id: view,
+                name: "MAX".try_into().unwrap(),
+            })
+            .unwrap();
+        for cell in 0..8 {
+            let mut w = default_widget(
+                Channel::Oil,
+                config.widgets.len() as u16 + 1,
+                view,
+                Placement {
+                    column: cell % 4,
+                    row: cell / 4,
+                    span: Span::OneByOne,
+                },
+            );
+            w.label.clear();
+            w.display.decimals = 255;
+            config.widgets.push(w).unwrap();
+        }
+    }
+    config.history_seconds[0] = 0;
+    let first = validate(config.clone()).unwrap_err();
+    let report = dashboard_configurator::diagnostic::collect_candidate(&config);
+    assert_eq!(report.issues.len(), 128);
+    assert_eq!(report.omitted, 1);
+    assert_eq!(report.issues[0].error, first);
+    assert_eq!(report.first_config_error(), Some(ConfigError::Validation(first)));
+    assert_eq!(
+        report.describe(&config, &report.issues[1]),
+        "/widgets/0/label (view 1, widget 1: \"\"): Text"
+    );
+}
+
+#[test]
+fn raw_parse_capacity_and_unavailable_errors_are_separate_from_semantic_errors() {
+    use dashboard_configurator::diagnostic::{Draft, RawDiagnosticCategory};
+    let mut config = default_config();
+    config.widgets[1].display.decimals = 255;
+    let field = RawField::Widget(1, WidgetField::Decimals);
+    let draft = Draft {
+        config,
+        raw: vec![
+            RawInput {
+                field,
+                text: "oops".into(),
+            },
+            RawInput {
+                field: RawField::ViewName(1),
+                text: "x".repeat(15),
+            },
+            RawInput {
+                field: RawField::Widget(1, WidgetField::BandMinimum(0)),
+                text: "oops".into(),
+            },
+        ],
+        error: EditorError::Parse(field),
+    };
+    let report = draft.validation_report();
+    assert_eq!(report.raw_errors.len(), 3);
+    assert_eq!(report.raw_errors[0].category, RawDiagnosticCategory::Parse);
+    assert_eq!(report.raw_errors[0].raw_index, 0);
+    assert_eq!(report.raw_errors[1].category, RawDiagnosticCategory::Capacity);
+    assert_eq!(report.raw_errors[2].category, RawDiagnosticCategory::Unavailable);
+    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+    assert_eq!(report.issues[0].location.widget_index(), Some(1));
+    assert_eq!(report.omitted, 0);
+    assert_eq!(draft.raw[0].text, "oops");
+    assert_eq!(draft.config.widgets[0].display.decimals, 2);
+}
+
+#[test]
+fn raw_errors_share_the_retained_issue_budget() {
+    use dashboard_configurator::diagnostic::Draft;
+    let field = RawField::ControlHoldMilliseconds;
+    let draft = Draft {
+        config: default_config(),
+        raw: (0..130)
+            .map(|_| {
+                RawInput {
+                    field,
+                    text: "oops".into(),
+                }
+            })
+            .collect(),
+        error: EditorError::Parse(field),
+    };
+    let report = draft.validation_report();
+    assert_eq!(report.raw_errors.len(), 128);
+    assert_eq!(report.issues.len(), 0);
+    assert_eq!(report.omitted, 2);
+}
+
+#[test]
 fn review_diagnostic_zero_ignores_a_finite_out_of_domain_manual_reference() {
     let mut c = default_config();
     c.widgets.truncate(1);

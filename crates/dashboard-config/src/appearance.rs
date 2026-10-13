@@ -361,21 +361,33 @@ impl WidgetColors {
     /// turn a valid document into an unrepairable typed edit. Decorative border
     /// and track may be subtle; the indicator must contrast with track and fill.
     pub fn invalid_role(self) -> Option<ColorRole> {
+        let mut first = None;
+        let _ = self.visit_invalid_roles(|role| {
+            first = Some(role);
+            core::ops::ControlFlow::Break(())
+        });
+        first
+    }
+
+    pub(crate) fn visit_invalid_roles(
+        self,
+        mut emit: impl FnMut(ColorRole) -> core::ops::ControlFlow<()>,
+    ) -> core::ops::ControlFlow<()> {
         use ColorRole::*;
         for role in [
             Label, Value, Secondary, Graph, Gauge, Ticks, Average, Minimum, Maximum, Trend, Peak,
         ] {
             if !role.get(&self).contrasts(self.background) {
-                return Some(role);
+                emit(role)?;
             }
         }
         if !self.gauge.contrasts(self.track) {
-            return Some(Gauge);
+            emit(Gauge)?;
         }
         if !self.warning.foreground.contrasts(self.warning.background) {
-            return Some(WarningForeground);
+            emit(WarningForeground)?;
         }
-        None
+        core::ops::ControlFlow::Continue(())
     }
 }
 

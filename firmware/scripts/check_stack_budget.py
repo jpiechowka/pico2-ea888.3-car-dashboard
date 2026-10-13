@@ -94,7 +94,9 @@ def configuration_frames(functions, sizes):
         return select('dashboard_config', *tokens, optional=True)
 
     loader = select('dashboard_config', 'ConfigSlot', '12load_at_boot')
-    validate = select('dashboard_config', '12validate_ref')
+    # Shared generic helpers embed validate_ref in their callback type names.
+    # Match the actual free-function entry rather than those child symbols.
+    validate = select('dashboard_config', '8validate12validate_ref')
     canonical = select('dashboard_config', '17compare_canonical')
     utf8 = select('4core', '9from_utf8')
     # The only boot children without .stack_sizes are compiler-builtins memory
@@ -150,11 +152,25 @@ def configuration_frames(functions, sizes):
         serial_children.extend([ser('serialize_fieldAtj8_'),
                                 branch(ser('11LedSettings'), ser('10LedPattern'), ser('serialize_fieldb'))])
     canonical = branch(canonical, *serial_children)
-    validation = branch(validate, outlined('8controls17validate_controls'),
+    guarded = any('19visit_invalid_roles' in n or '19visit_stoichiometry' in n
+                  for n in functions if 'dashboard_config' in n)
+    if guarded:
+        # Traced Oct12 ARM: visit_validation/visit_controls and callback bodies
+        # inline into validate_ref. Colour/fuel visitors emit leaf siblings
+        # (contrast is inlined in the colour leaf), not a nested visitor frame.
+        # A newly outlined visitor is intentionally still an unknown helper.
+        colour_validation = select('dashboard_config', '12WidgetColors19visit_invalid_roles')
+        fuel_validation = select('dashboard_config', '4fuel19visit_stoichiometry')
+    else:
+        # Retain admission for frozen predecessor captures.
+        colour_validation = select('dashboard_config', '12WidgetColors12invalid_role')
+        fuel_validation = select('dashboard_config', '4fuel13stoichiometry')
+    validation = branch(validate, colour_validation, fuel_validation,
+                        outlined('8controls17validate_controls'),
                         outlined('8validate10text_valid'),
                         *[select('dashboard_config', token) for token in (
-        '9Placement8occupied', '12WidgetColors12invalid_role', '5Gauge5valid',
-        '5Color9contrasts', '7catalog10definition', '4fuel13stoichiometry',
+        '9Placement8occupied', '5Gauge5valid',
+        '5Color9contrasts', '7catalog10definition',
         '6AccessNt')])
     decoding = branch(outlined('19decode_current_into'), header, seed, canonical, validation)
     fallback = branch(outlined('19fill_default_config'), outlined('14default_widget'),

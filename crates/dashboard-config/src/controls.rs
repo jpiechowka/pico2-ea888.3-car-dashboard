@@ -287,27 +287,39 @@ pub enum ControlError {
 }
 
 pub fn validate_controls(map: &ControlMap) -> Result<(), ControlError> {
+    let mut first = None;
+    let _ = visit_controls(map, |error| {
+        first = Some(error);
+        core::ops::ControlFlow::Break(())
+    });
+    first.map_or(Ok(()), Err)
+}
+
+pub(crate) fn visit_controls(
+    map: &ControlMap,
+    mut emit: impl FnMut(ControlError) -> core::ops::ControlFlow<()>,
+) -> core::ops::ControlFlow<()> {
     if !(400..=1500).contains(&map.hold_ms) {
-        return Err(ControlError::HoldDuration);
+        emit(ControlError::HoldDuration)?;
     }
     for page in ControlPage::ALL {
         let screen = &map.screens[page.index()];
         if screen.buttons[ButtonId::Y.index()].hold != ControlAction::None {
-            return Err(ControlError::ReservedRecovery { page });
+            emit(ControlError::ReservedRecovery { page })?;
         }
         for button in ButtonId::ALL {
             let binding = screen.buttons[button.index()];
             for (action, hold) in [(binding.tap, false), (binding.hold, true)] {
                 if !action.allowed_on(page) {
-                    return Err(ControlError::IncompatibleButton { page, button, hold });
+                    emit(ControlError::IncompatibleButton { page, button, hold })?;
                 }
             }
         }
         if !screen.encoder_click.allowed_on(page) {
-            return Err(ControlError::IncompatibleEncoderClick { page });
+            emit(ControlError::IncompatibleEncoderClick { page })?;
         }
         if !screen.encoder_rotation.allowed_on(page) {
-            return Err(ControlError::IncompatibleEncoderRotation { page });
+            emit(ControlError::IncompatibleEncoderRotation { page })?;
         }
     }
     // Every page has an immutable Y recovery edge back to Dashboard.
@@ -331,7 +343,7 @@ pub fn validate_controls(map: &ControlMap) -> Result<(), ControlError> {
     }
     for page in ControlPage::ALL {
         if reachable & (1 << page.index()) == 0 {
-            return Err(ControlError::UnreachableScreen { page });
+            emit(ControlError::UnreachableScreen { page })?;
         }
     }
     if !map.screens[ControlPage::Dashboard.index()]
@@ -343,7 +355,7 @@ pub fn validate_controls(map: &ControlMap) -> Result<(), ControlError> {
                 .any(|action| matches!(action, ControlAction::NextView | ControlAction::PreviousView))
         })
     {
-        return Err(ControlError::MissingViewNavigation);
+        emit(ControlError::MissingViewNavigation)?;
     }
-    Ok(())
+    core::ops::ControlFlow::Continue(())
 }

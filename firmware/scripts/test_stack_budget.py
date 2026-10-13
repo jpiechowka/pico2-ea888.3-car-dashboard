@@ -52,6 +52,50 @@ class StackBudget(unittest.TestCase):
         return ({n: (int(a, 16) | 1, 4, 0) for a, _, n in rows},
                 {int(a, 16): int(size) for a, size, _ in rows})
 
+    def guarded_fixture(self):
+        functions, sizes = self.slot_fixture()
+        replacements = {
+            '12WidgetColors12invalid_role': ('_RINvMs7_NtCsfF7AG8So2wt_16dashboard_config10appearanceNtB6_12WidgetColors19visit_invalid_rolesNCINvNtB8_8validate16visit_validationNCNvB1z_12validate_ref0Es8_0EB8_', 140),
+            '4fuel13stoichiometry': ('_RINvNtCsfF7AG8So2wt_16dashboard_config4fuel19visit_stoichiometryNCINvNtB4_8validate16visit_validationNCNvB15_12validate_ref0Esc_0EB4_', 24),
+        }
+        for token, (new, frame) in replacements.items():
+            old = next(n for n in functions if token in n)
+            address, length, section = functions.pop(old)
+            functions[new] = (address, length, section)
+            sizes[address & ~1] = frame
+        adapter = next(a & ~1 for n, (a, _, _) in functions.items() if '8validate12validate_ref' in n)
+        sizes[adapter] = 288
+        return functions, sizes
+
+    def test_guarded_helpers_embedding_adapter_name_are_counted_as_siblings(self):
+        functions, sizes = self.guarded_fixture()
+        self.assertEqual(configuration_frames(functions, sizes), 1292)
+        color = next(a & ~1 for n, (a, _, _) in functions.items() if '19visit_invalid_roles' in n)
+        fuel = next(a & ~1 for n, (a, _, _) in functions.items() if '19visit_stoichiometry' in n)
+        sizes[color] = 2000
+        self.assertEqual(configuration_frames(functions, sizes), 3056)
+        sizes[fuel] = 2400
+        # loader768 + adapter288 + max(colour2000, fuel2400), not their sum.
+        self.assertEqual(configuration_frames(functions, sizes), 3456)
+
+    def test_guarded_helpers_require_exact_symbols_metadata_and_review_new_outlining(self):
+        functions, sizes = self.guarded_fixture()
+        for token in ['8validate12validate_ref', '19visit_invalid_roles', '19visit_stoichiometry']:
+            name = next(n for n in functions if token in n)
+            without_symbol = dict(functions)
+            del without_symbol[name]
+            with self.assertRaisesRegex(AssertionError, 'missing or ambiguous'):
+                configuration_frames(without_symbol, sizes)
+            without_frame = dict(sizes)
+            del without_frame[functions[name][0] & ~1]
+            with self.assertRaisesRegex(AssertionError, 'missing config frame metadata'):
+                configuration_frames(functions, without_frame)
+        # A newly outlined visitor is not silently exempted as a validation helper.
+        functions['dashboard_config8validate16visit_validation'] = (1, 4, 0)
+        sizes[0] = 2000
+        with self.assertRaisesRegex(AssertionError, 'unreviewed config stack helpers'):
+            configuration_frames(functions, sizes)
+
     def test_v4_visitors_led_history_and_serializer_children_are_counted(self):
         functions, sizes = self.slot_fixture()
         old = next(n for n in functions if '12next_elementA' in n)

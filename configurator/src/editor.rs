@@ -1269,7 +1269,7 @@ fn check_raw_target(
     Ok(())
 }
 
-fn apply_raw(
+pub(crate) fn apply_raw(
     config: &mut Config,
     input: &RawInput,
 ) -> Result<(), EditorError> {

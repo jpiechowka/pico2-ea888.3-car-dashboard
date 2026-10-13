@@ -1,7 +1,86 @@
 //! Browser-only inspection of rejected drafts, never a configuration proof.
+use core::ops::ControlFlow;
+
 use dashboard_config::*;
 
 use crate::editor::{EditorError, RawField, RawInput, WidgetField};
+
+const ISSUE_LIMIT: usize = 128;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RawDiagnosticCategory {
+    Parse,
+    Capacity,
+    Unavailable,
+    SemanticInput,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RawDiagnostic {
+    pub raw_index: usize,
+    pub field: RawField,
+    pub category: RawDiagnosticCategory,
+    pub error: EditorError,
+}
+
+/// Retention is shared across categories; traversal continues after the cap.
+/// No raw text is copied into the report. The candidate owns the repair input.
+#[derive(Debug, Default)]
+pub struct ValidationReport {
+    pub issues: Vec<ValidationIssue>,
+    pub raw_errors: Vec<RawDiagnostic>,
+    pub omitted: usize,
+}
+
+impl ValidationReport {
+    fn has_capacity(&self) -> bool { self.issues.len() + self.raw_errors.len() < ISSUE_LIMIT }
+
+    fn collect(
+        &mut self,
+        config: &Config,
+    ) {
+        let _ = visit_validation(config, |issue| {
+            if self.has_capacity() {
+                self.issues.push(issue);
+            } else {
+                self.omitted += 1;
+            }
+            ControlFlow::Continue(())
+        });
+    }
+
+    pub fn first_config_error(&self) -> Option<ConfigError> {
+        self.issues.first().map(|issue| ConfigError::Validation(issue.error))
+    }
+
+    pub fn describe(
+        &self,
+        config: &Config,
+        issue: &ValidationIssue,
+    ) -> String {
+        let label = if let Some(widget) = issue.location.widget_index().and_then(|i| config.widgets.get(i)) {
+            format!(
+                " (view {}, widget {}: {:?})",
+                widget.view,
+                widget.id,
+                widget.label.as_str()
+            )
+        } else if let Some(view) = issue.location.view_index().and_then(|i| config.views.get(i)) {
+            format!(" (view {}: {:?})", view.id, view.name.as_str())
+        } else if let Some(channel) = issue.location.channel_index().and_then(|i| Channel::ALL.get(i)) {
+            format!(" ({})", channel.label())
+        } else {
+            String::new()
+        };
+        format!("{}{label}: {:?}", issue.location, issue.error.code)
+    }
+}
+
+pub fn collect_candidate(config: &Config) -> ValidationReport {
+    let mut report = ValidationReport::default();
+    report.collect(config);
+    report
+}
 
 pub struct Draft {
     pub config: Config,
@@ -10,6 +89,35 @@ pub struct Draft {
 }
 
 impl Draft {
+    pub fn validation_report(&self) -> ValidationReport {
+        let mut report = ValidationReport::default();
+        let mut scratch = self.config.clone();
+        for (raw_index, input) in self.raw.iter().enumerate() {
+            if let Err(error) = crate::editor::apply_raw(&mut scratch, input) {
+                let category = match error {
+                    EditorError::Parse(_) => RawDiagnosticCategory::Parse,
+                    EditorError::TextCapacity | EditorError::RawTooLong | EditorError::RawCapacity => {
+                        RawDiagnosticCategory::Capacity
+                    }
+                    EditorError::Validation(_) => RawDiagnosticCategory::SemanticInput,
+                    _ => RawDiagnosticCategory::Unavailable,
+                };
+                if report.has_capacity() {
+                    report.raw_errors.push(RawDiagnostic {
+                        raw_index,
+                        field: input.field,
+                        category,
+                        error,
+                    });
+                } else {
+                    report.omitted += 1;
+                }
+            }
+        }
+        report.collect(&scratch);
+        report
+    }
+
     pub fn label<'a>(
         &'a self,
         widget: &'a Widget,
