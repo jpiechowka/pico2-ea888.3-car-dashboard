@@ -376,6 +376,20 @@ impl Editor {
 
     pub fn raw_fields(&self) -> &[RawInput] { &self.raw }
 
+    /// Inspector reveal seam for inactive preferences. Raw drafts and precise
+    /// shared errors both keep their actual controls visible, including future
+    /// candidate adapters that have not constructed per-field raw text.
+    pub fn widget_fields_need_repair(
+        &self,
+        id: u16,
+        fields: &[WidgetField],
+        validation_field: Field,
+    ) -> bool {
+        self.raw.iter().any(
+            |input| matches!(input.field, RawField::Widget(widget, field) if widget == id && fields.contains(&field)),
+        ) || matches!(self.draft_error, Some(EditorError::Validation(error)) if error.widget == Some(id) && error.field == validation_field)
+    }
+
     pub fn draft_error(&self) -> Option<EditorError> { self.draft_error }
 
     pub fn has_invalid_draft(&self) -> bool { !self.raw.is_empty() || self.rejected.is_some() }

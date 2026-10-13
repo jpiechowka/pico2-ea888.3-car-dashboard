@@ -2,6 +2,126 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+fn review_widget_repair_visibility_keeps_graph_fields_across_style_and_graph_disable() {
+    let fields = [WidgetField::GraphMinimum, WidgetField::GraphMaximum];
+    let mut c = default_config();
+    c.widgets.truncate(1);
+    c.widgets[0].display.graph = true;
+    let (min, max) = Channel::Boost.domain();
+    c.widgets[0].display.graph_range = GraphRange::Fixed { min, max };
+    let mut e = Editor::new(c).unwrap();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    let original = e.preview().clone();
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::GraphMinimum),
+        "bad".into(),
+    )
+    .unwrap();
+    assert!(e.widget_fields_need_repair(1, &fields, Field::GraphRange));
+    let mut w = e.editing_config().widgets[0].clone();
+    w.gauge.kind = GaugeKind::Horizontal;
+    w.display.graph = false;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    assert_eq!(e.editing_config().widgets[0].gauge.kind, GaugeKind::Horizontal);
+    assert!(!e.editing_config().widgets[0].display.graph);
+    assert!(e.widget_fields_need_repair(1, &fields, Field::GraphRange));
+    assert!(!e.widget_fields_need_repair(2, &fields, Field::GraphRange));
+    assert_eq!(e.preview(), &original);
+    assert_eq!(e.history_len(), (0, 0));
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::GraphMinimum),
+        "-0.4".into(),
+    )
+    .unwrap();
+    assert!(!e.has_invalid_draft());
+    assert!(!e.widget_fields_need_repair(1, &fields, Field::GraphRange));
+    assert_eq!(e.history_len(), (1, 0));
+    e.undo().unwrap();
+    assert_eq!(e.preview(), &original);
+}
+
+#[test]
+fn review_widget_repair_visibility_reveals_inactive_typed_errors_without_raw_text() {
+    let mut e = Editor::default();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    let mut w = e.editing_config().widgets[0].clone();
+    w.gauge.min = f32::NAN;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    assert!(e.raw_fields().is_empty());
+    assert!(e.widget_fields_need_repair(
+        1,
+        &[WidgetField::GaugeMinimum, WidgetField::GaugeMaximum],
+        Field::GaugeRange
+    ));
+    assert!(!e.widget_fields_need_repair(
+        1,
+        &[WidgetField::GraphMinimum, WidgetField::GraphMaximum],
+        Field::GraphRange
+    ));
+    e.discard_raw().unwrap();
+    let mut w = e.editing_config().widgets[0].clone();
+    w.gauge.kind = GaugeKind::Horizontal;
+    w.display.graph_range = GraphRange::Fixed { min: 2., max: 1. };
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    assert!(e.raw_fields().is_empty());
+    assert!(e.widget_fields_need_repair(
+        1,
+        &[WidgetField::GraphMinimum, WidgetField::GraphMaximum],
+        Field::GraphRange
+    ));
+    assert!(!e.widget_fields_need_repair(
+        2,
+        &[WidgetField::GraphMinimum, WidgetField::GraphMaximum],
+        Field::GraphRange
+    ));
+    e.discard_raw().unwrap();
+    let mut w = e.editing_config().widgets[0].clone();
+    w.warning.min_load_percent = 101.;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    assert!(e.raw_fields().is_empty());
+    assert!(e.widget_fields_need_repair(1, &[WidgetField::WarningLoad], Field::WarningLoad));
+}
+
+#[test]
+fn review_disabling_warning_keeps_its_retained_raw_fields_repairable() {
+    let mut e = Editor::default();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    let mut w = e.editing_config().widgets[0].clone();
+    w.warning.enabled = true;
+    e.apply(Edit::UpdateWidget(w)).unwrap();
+    let original = e.preview().clone();
+    let history = e.history_len();
+    let field = RawField::Widget(1, WidgetField::WarningOn);
+    e.set_raw(e.field_token(), field, "bad".into()).unwrap();
+    let mut w = e.editing_config().widgets[0].clone();
+    w.warning.enabled = false;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    assert!(!e.editing_config().widgets[0].warning.enabled);
+    assert_eq!(e.raw_fields()[0].text, "bad");
+    assert!(e.widget_fields_need_repair(1, &[WidgetField::WarningOn], Field::WarningOn));
+    assert_eq!(e.preview(), &original);
+    assert_eq!(e.history_len(), history);
+    e.set_raw(e.field_token(), field, "1000".into()).unwrap();
+    assert!(!e.has_invalid_draft());
+    assert!(!e.preview().config().widgets[0].warning.enabled);
+    assert_eq!(e.history_len().0, history.0 + 1);
+}
+
+#[test]
 fn review_battery_window_restores_both_direct_polarities_atomically() {
     for window in [LimitMode::OutsideWindow, LimitMode::InsideWindow] {
         for direct in [LimitMode::High, LimitMode::Low] {

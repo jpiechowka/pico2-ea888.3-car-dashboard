@@ -43,6 +43,15 @@ message names the field to resolve. That refused switch preserves revision,
 tokens and history; correcting the complete draft retires earlier callbacks and
 creates the one accepted repair transaction.
 
+Style changes retain repair controls for graph/gauge preferences while raw
+edits or a precise shared field error still require them. Disabling history or
+warnings cannot hide their retained failing numeric inputs. The pure
+`widget_fields_need_repair` query supplies the inspector reveal seam for
+validation errors that have no raw text, including inactive stored fields.
+A future JSON candidate adapter must select the error's widget/view and keep
+the reported field's control or applicable option control mounted before focus;
+the accepted configuration proof and export gates must remain strict.
+
 Pointer, field, import and save operations carry private owner/revision/request
 tokens. Old callbacks cannot change a newer selection, undo result, imported
 document or replacement editor. A pointer also retains its original pointer ID.

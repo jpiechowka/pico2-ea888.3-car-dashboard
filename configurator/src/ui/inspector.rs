@@ -61,7 +61,8 @@ fn WidgetInspector(
             <Choice ui repair_invalid_draft=true label="Gauge style" value=Signal::derive(move ||ui.widget(id).map(|w|format!("{:?}",w.gauge.kind)).unwrap_or_default())
                 options=GaugeKind::ALL.into_iter().map(|kind|(format!("{kind:?}"),kind.label().to_string())).collect()
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|{if let Some(kind)=GaugeKind::ALL.into_iter().find(|kind|format!("{kind:?}")==value) {ui.update_widget(token,id,|w|w.gauge.kind=kind);}})/>
-            <Show when=move ||ui.widget(id).is_some_and(|w|!w.gauge.kind.is_numeric())>
+            <Show when=move ||ui.widget(id).is_some_and(|w|!w.gauge.kind.is_numeric()) || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::GaugeMinimum,WidgetField::GaugeMaximum],Field::GaugeRange))>
+                <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())><p class="hint">"Stored gauge limits remain visible to repair this edit. Numeric style does not use the gauge scale."</p></Show>
                 <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::GaugeMinimum) label="Scale minimum"/><TextField ui field=RawField::Widget(id,WidgetField::GaugeMaximum) label="Scale maximum"/></div>
                 <Toggle ui repair_invalid_draft=true label="Expand with observed values" value=Signal::derive(move ||ui.widget(id).is_some_and(|w|w.gauge.expand)) on_change=Callback::new(move |(token,value)|ui.update_widget(token,id,|w|w.gauge.expand=value))/>
                 <p class="hint">"Limits use canonical units (boost in bar), at least 0.001 apart. Expansion lasts until statistics reset. Fixed scales clamp the indicator; numbers still show the actual reading."</p>
@@ -79,7 +80,8 @@ fn WidgetInspector(
             {flag(ui,id,"Trend arrow",|d|d.trend,|d,v|d.trend=v)}
             </Show>
             <super::advanced::DisplayControls ui id/>
-            <Show when=move ||ui.widget(id).is_some_and(|w|w.gauge.kind.is_numeric())>
+            <Show when=move ||ui.widget(id).is_some_and(|w|w.capabilities().history) || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::GraphMinimum,WidgetField::GraphMaximum],Field::GraphRange))>
+            <Show when=move ||ui.widget(id).is_some_and(|w|!w.capabilities().history)><p class="hint">"Stored graph limits remain visible to repair this edit. This gauge style does not draw history."</p></Show>
             <Choice ui repair_invalid_draft=true label="Graph range" value=Signal::derive(move ||ui.widget(id).map(|w|if matches!(w.display.graph_range,GraphRange::Auto){"auto"}else{"fixed"}.to_string()).unwrap_or_default()) options=choices(&[("auto","Automatic"),("fixed","Fixed canonical range")])
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.update_widget(token,id,|w|w.display.graph_range=if value=="fixed" {let(min,max)=w.channel.domain();GraphRange::Fixed{min,max}}else{GraphRange::Auto}))/>
             <Show when=move || ui.widget(id).is_some_and(|w|matches!(w.display.graph_range,GraphRange::Fixed{..}))>
@@ -103,7 +105,8 @@ fn WidgetInspector(
                     ui.typed(token,Edit::SetWarningMode{id,mode});
                 })/>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningTrigger) label="Trigger"/><TextField ui field=RawField::Widget(id,WidgetField::WarningClear) label="Clear"/></div>
-            <Show when=move || channel==Channel::Lambda>
+            <Show when=move || channel==Channel::Lambda || ui.editor.with(|e|e.widget_fields_need_repair(id,&[WidgetField::WarningLoad],Field::WarningLoad))>
+                <Show when=move ||channel!=Channel::Lambda><p class="hint">"This stored load preference is shown for repair; this channel's rule does not use it."</p></Show>
                 <TextField ui field=RawField::Widget(id,WidgetField::WarningLoad) label="Minimum load (%)" hint="0–100; required lambda context stays enforced"/>
             </Show>
             <div class="field-pair"><TextField ui field=RawField::Widget(id,WidgetField::WarningOn) label="On dwell (ms)" hint="1–30000"/><TextField ui field=RawField::Widget(id,WidgetField::WarningOff) label="Off dwell (ms)" hint="1–30000"/></div>
