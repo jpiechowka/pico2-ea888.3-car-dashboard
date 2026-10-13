@@ -68,6 +68,14 @@ impl ControlSimulator {
         self.sample([false; 4], EncoderBatch::default());
     }
 
+    /// End unchanged-config inspection without sampling candidate side effects
+    /// or replacing acquisition, pending presentation, history or warning state.
+    pub fn resume_accepted_bindings(&mut self) {
+        self.map = self.simulation.configuration().config().controls;
+        self.gestures.reset();
+        self.invalid = false;
+    }
+
     pub const fn session(&self) -> &ControlSession { &self.simulation.session }
 
     pub fn led_duty(&self) -> dashboard_core::status_led::LedDuty { self.simulation.led.duty() }

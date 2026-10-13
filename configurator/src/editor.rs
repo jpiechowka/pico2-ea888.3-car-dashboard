@@ -70,6 +70,16 @@ pub struct InspectionTarget {
 enum InspectionKey {
     Semantic(ValidationLocation),
     Raw { index: usize, field: RawField },
+    Object(InspectionOwner),
+}
+
+/// Requested browser inspection coordinates; only Editor can mint authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InspectionOwner {
+    Root,
+    View { index: usize },
+    Widget { index: usize },
+    Channel(Channel),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -651,6 +661,31 @@ impl Editor {
         Ok(target)
     }
 
+    pub fn object_inspection_target(
+        &self,
+        owner: InspectionOwner,
+    ) -> Result<InspectionTarget, EditorError> {
+        let target = InspectionTarget {
+            stamp: self.stamp(),
+            candidate_epoch: self.inspection_epoch(),
+            key: InspectionKey::Object(owner),
+        };
+        self.inspect(target)?;
+        Ok(target)
+    }
+
+    /// One shared, borrowed candidate selection for bounded browser discovery.
+    pub(crate) fn with_inspection_config<R>(
+        &self,
+        inspect: impl FnOnce(&Config) -> R,
+    ) -> R {
+        if let Some(JsonState::Candidate { config, .. }) = self.json.as_ref().map(|draft| &draft.state) {
+            return inspect(config);
+        }
+        let visual = self.diagnostic();
+        inspect(visual.as_ref().map_or(self.preview().config(), |draft| &draft.config))
+    }
+
     pub fn raw_inspection_target(
         &self,
         index: usize,
@@ -680,6 +715,22 @@ impl Editor {
             _ => visual.as_ref().map_or(self.preview().config(), |draft| &draft.config),
         };
         let (view_index, widget_index, channel_index, field, raw_field, raw_index, json_path) = match target.key {
+            InspectionKey::Object(owner) => {
+                let (view, widget, channel, path) = match owner {
+                    InspectionOwner::Root => (None, None, None, String::new()),
+                    InspectionOwner::View { index } => (Some(index), None, None, format!("/views/{index}")),
+                    InspectionOwner::Widget { index } => (None, Some(index), None, format!("/widgets/{index}")),
+                    InspectionOwner::Channel(channel) => {
+                        (
+                            None,
+                            None,
+                            Some(channel.index()),
+                            format!("/sources/{}", channel.index()),
+                        )
+                    }
+                };
+                (view, widget, channel, None, None, None, Some(path))
+            }
             InspectionKey::Semantic(location) => {
                 (
                     location.view_index(),
@@ -1085,6 +1136,45 @@ impl Editor {
         let resolved = self.inspect(target)?;
         let field = resolved.raw_field.ok_or(EditorError::FieldUnavailable)?;
         check_raw_available(self.editing_config(), field)?;
+        self.set_raw_transaction(field, text)
+    }
+
+    /// Explicit clean accepted-object editing without changing persisted selection.
+    /// Invalid repair remains restricted to a genuine retained Raw capability.
+    pub fn set_located_raw(
+        &mut self,
+        target: InspectionTarget,
+        field: RawField,
+        text: String,
+    ) -> Result<Revision, EditorError> {
+        self.ensure_snapshot_ready()?;
+        let resolved = self.inspect(target)?;
+        let InspectionKey::Object(owner) = target.key else {
+            return Err(EditorError::FieldUnavailable);
+        };
+        let config = self.preview().config();
+        let matches = match (owner, field) {
+            (InspectionOwner::Widget { index }, RawField::Widget(id, _)) => {
+                config.widgets.get(index).is_some_and(|widget| widget.id == id)
+            }
+            (InspectionOwner::View { index }, RawField::ViewName(id)) => {
+                config.views.get(index).is_some_and(|view| view.id == id)
+            }
+            (InspectionOwner::Channel(a), RawField::Source(b, _) | RawField::HistorySeconds(b)) => a == b,
+            (
+                InspectionOwner::Root,
+                RawField::Fuel(_)
+                | RawField::Led { .. }
+                | RawField::ControlHoldMilliseconds
+                | RawField::WarningPageMilliseconds
+                | RawField::WarningColor { .. },
+            ) => true,
+            _ => false,
+        };
+        if !matches || !resolved.id_lookup_unambiguous {
+            return Err(EditorError::FieldUnavailable);
+        }
+        check_raw_available(config, field)?;
         self.set_raw_transaction(field, text)
     }
 

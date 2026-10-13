@@ -32,6 +32,7 @@
 pub mod cache_reporting;
 pub mod diagnostic;
 pub mod editor;
+pub mod field_registry;
 pub mod geometry;
 pub mod json_draft;
 pub mod preview;
@@ -39,5 +40,6 @@ mod simulation;
 pub mod simulator;
 pub mod timing;
 pub mod widget_actions;
+pub mod workspace;
 
 pub use dashboard_config as config;

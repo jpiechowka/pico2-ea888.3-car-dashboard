@@ -597,3 +597,33 @@ fn summary_navigation_does_not_fabricate_completed_led_warnings() {
     assert_eq!(sim.led_duty().blue, 10000);
     assert_eq!(sim.completed_warning().rules, 0);
 }
+#[test]
+fn unchanged_config_invalid_resume_restores_bindings_without_restarting_state() {
+    use dashboard_configurator::config::*;
+    use dashboard_configurator::simulator::ControlSimulator;
+    let accepted = validate(default_config()).unwrap();
+    let mut sim = ControlSimulator::new(accepted.clone());
+    sim.advance_to(sim.now_ms() + 250, Some([1., 90., 95., 80., 30., 700., 13.8, 1.]));
+    let now = sim.now_ms();
+    let view = sim.session().view_id();
+    let snapshot = sim.snapshot();
+    let mut map = accepted.config().controls;
+    map.screens[0].buttons[0].tap = ControlAction::None;
+    sim.inspect_invalid(map);
+    sim.resume_accepted_bindings();
+    assert!(!sim.invalid());
+    assert_eq!(sim.now_ms(), now);
+    assert_eq!(sim.session().view_id(), view);
+    assert_eq!(
+        sim.snapshot()
+            .sensor(dashboard_core::samples::SensorId::Boost)
+            .history()
+            .count(),
+        snapshot
+            .sensor(dashboard_core::samples::SensorId::Boost)
+            .history()
+            .count()
+    );
+    sim.tap(ButtonId::A);
+    assert!(sim.session().boost_psi());
+}
