@@ -1,4 +1,109 @@
-use dashboard_configurator::timing::Playback;
+use dashboard_configurator::timing::{Playback, TraceCapture, TraceError, TraceSample, TraceStatus};
+
+fn trace_sample(input: f64) -> TraceSample {
+    TraceSample {
+        input_ms: input,
+        canvas_ms: input + 1.0,
+        presentation_boundary_ms: input + 2.0,
+        render_ms: 1.0,
+        widgets: 2,
+        views: 1,
+        warning_preview: false,
+    }
+}
+
+#[test]
+fn timing_duplicate_and_foreign_owner_permits_cannot_complete_other_work() {
+    let mut trace = TraceCapture::default();
+    trace.start(0.0).unwrap();
+    let mut a = trace.begin(1.0).unwrap();
+    let mut b = trace.begin(2.0).unwrap();
+    assert_eq!(trace.in_flight(), 2);
+    trace.finish(&mut a, trace_sample(1.0)).unwrap();
+    assert_eq!(trace.finish(&mut a, trace_sample(1.0)), Err(TraceError::StalePermit));
+    assert_eq!(trace.in_flight(), 1);
+    let mut replacement = TraceCapture::default();
+    replacement.start(0.0).unwrap();
+    let mut foreign = replacement.begin(2.0).unwrap();
+    assert_eq!(
+        trace.finish(&mut foreign, trace_sample(2.0)),
+        Err(TraceError::StalePermit)
+    );
+    assert_eq!(trace.in_flight(), 1);
+    replacement.abandon(&mut foreign).unwrap();
+    trace.finish(&mut b, trace_sample(2.0)).unwrap();
+    assert_eq!(trace.in_flight(), 0);
+    assert_eq!(trace.samples().len(), 2);
+}
+
+#[test]
+fn timing_restart_stop_and_abandon_keep_callback_accounting_explicit() {
+    let mut trace = TraceCapture::default();
+    trace.start(0.0).unwrap();
+    let mut old = trace.begin(1.0).unwrap();
+    trace.start(10.0).unwrap();
+    let mut current = trace.begin(11.0).unwrap();
+    assert_eq!(trace.finish(&mut old, trace_sample(1.0)), Err(TraceError::StalePermit));
+    assert_eq!(trace.in_flight(), 1);
+    trace.stop(12.0).unwrap();
+    assert_eq!(trace.status(), TraceStatus::Stopped);
+    trace.finish(&mut current, trace_sample(11.0)).unwrap();
+    let mut queued_before_stop = trace.begin(11.5).unwrap();
+    assert_eq!(trace.begin(13.0).unwrap_err(), TraceError::OutsideRun);
+    trace.abandon(&mut queued_before_stop).unwrap();
+    assert_eq!(trace.abandon(&mut queued_before_stop), Err(TraceError::StalePermit));
+    assert_eq!(trace.in_flight(), 0);
+}
+
+#[test]
+fn timing_invalid_sample_finishes_permit_without_inventing_evidence() {
+    let mut trace = TraceCapture::default();
+    assert_eq!(trace.start(f64::NAN), Err(TraceError::InvalidTime));
+    trace.start(10.0).unwrap();
+    for value in [f64::NAN, f64::INFINITY, 9.0] {
+        assert_eq!(trace.begin(value).unwrap_err(), TraceError::OutsideRun);
+    }
+    let mut permit = trace.begin(11.0).unwrap();
+    let mut invalid = trace_sample(11.0);
+    invalid.canvas_ms = f64::NAN;
+    assert_eq!(trace.finish(&mut permit, invalid), Err(TraceError::InvalidTime));
+    assert_eq!(trace.in_flight(), 0);
+    assert!(trace.samples().is_empty());
+}
+
+#[test]
+fn timing_sample_and_long_task_limits_are_independent() {
+    let mut trace = TraceCapture::default();
+    trace.start(0.0).unwrap();
+    for n in 0..513 {
+        let input = n as f64;
+        let mut permit = trace.begin(input).unwrap();
+        trace.finish(&mut permit, trace_sample(input)).unwrap();
+    }
+    assert_eq!(trace.samples().len(), 512);
+    assert_eq!(trace.dropped().value, 1);
+    for n in 0..513 {
+        trace.record_long_task(n as f64, 25.0).unwrap();
+    }
+    assert_eq!(trace.long_tasks().len(), 512);
+    assert_eq!(trace.samples().len(), 512);
+    assert_eq!(trace.dropped().value, 2);
+    assert_eq!(trace.in_flight(), 0);
+}
+
+#[test]
+fn timing_export_keeps_sample_shape_and_exposes_no_owner_authority() {
+    let mut trace = TraceCapture::default();
+    trace.start(0.0).unwrap();
+    let mut permit = trace.begin(1.0).unwrap();
+    trace.finish(&mut permit, trace_sample(1.0)).unwrap();
+    let json = serde_json::to_value(&trace).unwrap();
+    assert_eq!(json["id"].as_u64(), Some(1));
+    assert_eq!(json["samples"][0]["canvas_ms"].as_f64(), Some(2.0));
+    assert!(json.get("owner").is_none());
+    assert_eq!(json["in_flight"].as_u64(), Some(0));
+    assert_eq!(json["status"], "Recording");
+}
 
 #[test]
 fn elapsed_time_dropped_frames_pause_and_restart_do_not_depend_on_fps() {

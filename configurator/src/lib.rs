@@ -33,6 +33,7 @@ pub mod appearance_presets;
 pub mod cache_reporting;
 pub mod diagnostic;
 pub mod editor;
+pub mod events;
 pub mod field_registry;
 pub mod geometry;
 pub mod json_draft;

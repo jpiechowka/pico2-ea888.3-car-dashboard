@@ -407,12 +407,10 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                     .editor
                     .with_untracked(|e| (e.preview().config().widgets.len(), e.preview().config().views.len()));
                 let warnings = ui.warnings.get_untracked();
-                let trace_id = metrics::begin(ui, start);
+                let trace_permit = metrics::begin(ui, start);
                 // Next animation boundary includes the browser's opportunity
                 // to present the canvas, not just Rust rendering duration.
-                request_animation_frame(move || {
-                    metrics::record(ui, trace_id, start, submitted, render, (widgets, views), warnings);
-                });
+                metrics::schedule_record(ui, trace_permit, start, submitted, render, (widgets, views), warnings);
             }
         });
     });
