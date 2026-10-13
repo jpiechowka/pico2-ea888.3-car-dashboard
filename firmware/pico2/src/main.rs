@@ -31,7 +31,7 @@ use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
 use dashboard_pico2::display::telemetry::{CompletionRate, FrameTrace, RenderTrace};
 use dashboard_pico2::settings::Settings;
 use dashboard_pico2::settings::policy::Policy;
-use dashboard_pico2::status_led::{PresentedLed, PresentedScene, StatusLed};
+use dashboard_pico2::status_led::{LedController, PresentedLed, PresentedScene};
 use dashboard_pico2::warning_state::{WarningFeedback, WarningRequests};
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
@@ -109,24 +109,19 @@ fn apply_backlight(
 }
 
 fn apply_indicator(
-    red: &mut Output<'_>,
-    green: &mut Output<'_>,
+    rgb: &mut drivers::rgb_led::RgbLed<'_>,
+    controller: &mut LedController,
     presentation: &PresentedLed,
     backlight: &Backlight,
+    config: &dashboard_pico2::view_config::Config,
 ) {
-    let led = presentation.output(backlight.compare() != 0);
-    // Active-low cathodes. Disable the other color before enabling a new one.
-    if led == StatusLed::Red {
-        green.set_high();
-        red.set_low();
-    } else {
-        red.set_high();
-        green.set_level(if led == StatusLed::Green {
-            Level::Low
-        } else {
-            Level::High
-        });
-    }
+    rgb.apply(controller.update(
+        &config.led,
+        presentation.visible(),
+        backlight.compare() != 0,
+        Instant::now().as_millis(),
+        config.reduced_motion,
+    ));
 }
 
 fn vreg_setting_mv() -> Option<u32> {
@@ -362,9 +357,15 @@ async fn dashboard_task(
 
     cpu_profiling::init(cpu_freq_hz);
 
-    let mut led_r = Output::new(p.PIN_26, Level::High);
-    let _led_b = Output::new(p.PIN_28, Level::High);
-    let mut led_g = Output::new(p.PIN_27, Level::Low);
+    let mut rgb_led = drivers::rgb_led::RgbLed::new(p.PWM_SLICE5, p.PIN_26, p.PIN_27, p.PWM_SLICE6, p.PIN_28);
+    let mut led_controller = LedController::new();
+    rgb_led.apply(led_controller.update(
+        &dashboard_configuration.config.config().led,
+        PresentedScene::EMPTY,
+        true,
+        Instant::now().as_millis(),
+        dashboard_configuration.config.config().reduced_motion,
+    ));
 
     let cs = Output::new(p.PIN_17, Level::High);
     let dc = Output::new(p.PIN_16, Level::Low);
@@ -585,7 +586,13 @@ async fn dashboard_task(
         }
         let now_ms = Instant::now().as_millis();
         apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
-        apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
+        apply_indicator(
+            &mut rgb_led,
+            &mut led_controller,
+            &led_presentation,
+            session.backlight(),
+            dashboard_configuration.config.config(),
+        );
         // Brightness is runtime-only. Keep legacy journal fields canonical,
         // preserving saved boost/FPS without writing flash for every click.
         let desired = Settings::new(100, 100, session.boost_psi(), session.fps()).expect("invalid live preferences");
@@ -764,7 +771,13 @@ async fn dashboard_task(
                 .backlight_mut()
                 .frame_completed(expected, Instant::now().as_millis());
             apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
-            apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
+            apply_indicator(
+                &mut rgb_led,
+                &mut led_controller,
+                &led_presentation,
+                session.backlight(),
+                dashboard_configuration.config.config(),
+            );
             panel_history
                 .complete(expected)
                 .expect("invalid completed panel generation");
@@ -842,7 +855,13 @@ async fn dashboard_task(
             assert!(led_presentation.unchanged(presented_scene), "pending indicator at idle");
             session.backlight_mut().frame_unchanged(Instant::now().as_millis());
             apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
-            apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
+            apply_indicator(
+                &mut rgb_led,
+                &mut led_controller,
+                &led_presentation,
+                session.backlight(),
+                dashboard_configuration.config.config(),
+            );
             spare_frame = Some(next_frame);
             crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
             // Keep the completed reference unchanged and reuse this render buffer.
@@ -871,7 +890,13 @@ async fn dashboard_task(
                     .backlight_mut()
                     .frame_completed(token, Instant::now().as_millis());
                 apply_backlight(&mut backlight_pwm, &mut pwm_config, session.backlight());
-                apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
+                apply_indicator(
+                    &mut rgb_led,
+                    &mut led_controller,
+                    &led_presentation,
+                    session.backlight(),
+                    dashboard_configuration.config.config(),
+                );
                 panel_history.complete(token).expect("invalid serial panel generation");
                 crate::tasks::recovery::DISPLAY_PENDING.store(false, Ordering::Relaxed);
                 last_trace = Some(completed.trace);
@@ -920,6 +945,12 @@ async fn dashboard_task(
 
         crate::tasks::recovery::RENDER_PROGRESS.fetch_add(1, Ordering::Relaxed);
 
-        apply_indicator(&mut led_r, &mut led_g, &led_presentation, session.backlight());
+        apply_indicator(
+            &mut rgb_led,
+            &mut led_controller,
+            &led_presentation,
+            session.backlight(),
+            dashboard_configuration.config.config(),
+        );
     }
 }

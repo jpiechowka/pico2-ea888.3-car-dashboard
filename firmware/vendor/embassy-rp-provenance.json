@@ -85,6 +85,7 @@
     "src/uart/buffered_io.rs": "59df101eb441253fca61181467ce074a8691e083c837af1a38da64ff7e42a549",
     "src/multicore.rs": "9fb684e2bd7e17494d28b6b1c76175666346dd1dbded9a023322775bc83e8f42",
     "src/flash.rs": "fecaf4c3d5e6d2d0b20b626e2b930fe375e77aba6c6d91e950a20a8e72013b09",
-    "src/flash_probe.rs": "bdd09e823d46b84458794552a805c429f2fe12443172d61abf476075db1ac1c0"
+    "src/flash_probe.rs": "bdd09e823d46b84458794552a805c429f2fe12443172d61abf476075db1ac1c0",
+    "src/pwm.rs": "e4e60fa655e00b8be097520dfbb26504e9177e1fa6ff4648e0553b5b688758ff"
   }
 }

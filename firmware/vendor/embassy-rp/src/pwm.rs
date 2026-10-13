@@ -13,7 +13,7 @@ use crate::{RegExt, pac, peripherals};
 
 /// The configuration of a PWM slice.
 /// Note the period in clock cycles of a slice can be computed as:
-/// `(top + 1) * (phase_correct ? 1 : 2) * divider`
+/// `(top + 1) * (phase_correct ? 2 : 1) * divider`
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct Config {

@@ -1,6 +1,7 @@
 mod display;
 #[cfg(feature = "longan-rx12")]
 pub mod longan;
+pub mod rgb_led;
 pub mod settings_flash;
 mod st7789;
 pub mod watchdog;

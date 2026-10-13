@@ -161,10 +161,119 @@ impl StatusLed {
         visible: Option<Overlay>,
         backlight_on: bool,
     ) -> Self {
-        if backlight_on && let Some(phase) = visible.and_then(Overlay::warning_phase) {
-            if phase { Self::Red } else { Self::Off }
-        } else {
+        // Compatibility projection of the shared default policy. Runtime adapters
+        // retain their own LedController and consume all three channels.
+        let duty = LedController::new().update(
+            &dashboard_config::LedSettings::DEFAULT,
+            PresentedScene::legacy(visible),
+            backlight_on,
+            0,
+            false,
+        );
+        if duty.red != 0 {
+            Self::Red
+        } else if duty.green != 0 {
             Self::Green
+        } else {
+            Self::Off
         }
+    }
+}
+
+/// Per-channel emitted light, before the board's active-low inversion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LedDuty {
+    pub red: u16,
+    pub green: u16,
+    pub blue: u16,
+}
+
+/// One animation epoch follows completed normal/warning selection, never repaint cadence.
+#[derive(Default)]
+pub struct LedController {
+    epoch: u64,
+    last_ms: u64,
+    duty: LedDuty,
+    warning: bool,
+    initialized: bool,
+}
+impl LedController {
+    pub const fn new() -> Self {
+        Self {
+            epoch: 0,
+            last_ms: 0,
+            duty: LedDuty {
+                red: 0,
+                green: 0,
+                blue: 0,
+            },
+            warning: false,
+            initialized: false,
+        }
+    }
+
+    pub const fn duty(&self) -> LedDuty { self.duty }
+
+    pub fn update(
+        &mut self,
+        settings: &dashboard_config::LedSettings,
+        scene: PresentedScene,
+        backlight_on: bool,
+        now_ms: u64,
+        reduced_motion: bool,
+    ) -> LedDuty {
+        use dashboard_config::LedPatternKind;
+        if self.initialized && now_ms < self.last_ms {
+            return self.duty;
+        }
+        let phase = scene.overlay.and_then(Overlay::warning_phase);
+        let permitted = match scene.page {
+            crate::pages::Page::Dashboard => scene.overlay.is_none() || phase.is_some() || settings.during_feedback,
+            crate::pages::Page::Debug => settings.on_debug,
+            crate::pages::Page::Logs => settings.on_logs,
+        };
+        let warning = (scene.eligible || phase.is_some()) && permitted && (backlight_on || settings.backlight_off);
+        if !self.initialized || warning != self.warning {
+            self.epoch = now_ms;
+        }
+        self.initialized = true;
+        self.warning = warning;
+        self.last_ms = now_ms;
+        let pattern = if warning { settings.warning } else { settings.normal };
+        // Validated callers supply these bounds; clamps also keep this pure public API total.
+        let period = u64::from(pattern.period_ms.clamp(200, 10000));
+        let elapsed = (now_ms - self.epoch) % period;
+        let amplitude = match pattern.kind {
+            LedPatternKind::Off => 0,
+            LedPatternKind::Solid => 10000,
+            LedPatternKind::Breathe if reduced_motion => 10000,
+            LedPatternKind::Blink => {
+                let on = if warning && settings.sync_warning_blink && backlight_on {
+                    phase.unwrap_or(elapsed * 100 < period * u64::from(pattern.on_percent.clamp(10, 90)))
+                } else {
+                    elapsed * 100 < period * u64::from(pattern.on_percent.clamp(10, 90))
+                };
+                if on { 10000 } else { 0 }
+            }
+            LedPatternKind::Breathe => {
+                // Triangle 0..1..0 followed by smoothstep x*x*(3-2*x).
+                // Fixed scale10000, nearest integer (ties up), bounded u64 intermediates.
+                let triangle = elapsed.min(period - elapsed) * 2;
+                let x = (triangle * 10000 + period / 2) / period;
+                ((x * x * (30000 - 2 * x) + 50000000) / 100000000) as u32
+            }
+        };
+        let color = pattern.color.0;
+        let channel = |value: u16, maximum: u32| {
+            let denominator = maximum * 100;
+            ((u32::from(value) * u32::from(pattern.brightness_percent.min(100)) * amplitude + denominator / 2)
+                / denominator) as u16
+        };
+        self.duty = LedDuty {
+            red: channel((color >> 11) & 31, 31),
+            green: channel((color >> 5) & 63, 63),
+            blue: channel(color & 31, 31),
+        };
+        self.duty
     }
 }

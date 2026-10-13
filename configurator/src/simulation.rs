@@ -3,7 +3,7 @@ use dashboard_config::ValidatedConfig;
 use dashboard_core::acquisition::{DashboardSnapshot, OwnedAcquisitionModel};
 use dashboard_core::control_session::ControlSession;
 use dashboard_core::render::FpsMode;
-use dashboard_core::status_led::{PresentedLed, PresentedScene};
+use dashboard_core::status_led::{LedController, PresentedLed, PresentedScene};
 use dashboard_core::view_state::{WarningPage, WarningPager};
 use dashboard_core::warning_state::{WarningCommand, WarningFeedback, WarningRequests};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -14,6 +14,7 @@ pub(crate) struct Simulation {
     pub(crate) session: ControlSession,
     pub(crate) now_ms: u64,
     pager: WarningPager,
+    pub(crate) led: LedController,
     pub(crate) presented: PresentedLed,
     pub(crate) requests: WarningRequests,
     queue: Channel<NoopRawMutex, WarningCommand, 1>,
@@ -37,6 +38,7 @@ impl Simulation {
             session,
             now_ms,
             pager: WarningPager::new(),
+            led: LedController::new(),
             presented: PresentedLed::new(),
             requests: WarningRequests::new(),
             queue: Channel::new(),
@@ -98,6 +100,18 @@ impl Simulation {
                 self.pager.pause(self.now_ms);
                 None
             };
+        self.update_led();
+    }
+
+    pub(crate) fn update_led(&mut self) {
+        let config = self.model.configuration().expect("simulation config").config();
+        self.led.update(
+            &config.led,
+            self.presented.visible(),
+            self.session.backlight().compare() != 0,
+            self.now_ms,
+            config.reduced_motion,
+        );
     }
 
     pub(crate) fn blink_on(&self) -> bool {

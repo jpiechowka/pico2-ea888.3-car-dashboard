@@ -37,8 +37,9 @@ bounded debounced input batches.
 1. The [PIM715 schematic](https://cdn.shopify.com/s/files/1/0174/1800/files/pico_display_2_8_schematic.pdf?v=1728314048)
    connects GP20 to the AP2502 active-high EN input. RGB has a common 3V3 anode
    and 330-ohm cathode resistors to GP26 red, GP27 green and GP28 blue. These GPIO
-   channels are active low. Red and blue initialize High (off), then green
-   initializes Low (on) when firmware takes ownership.
+   channels are active low. Owned PWM slices5 (red/green A/B) and6 (blue A)
+   initialize inverted with zero compares before pad connection, then apply
+   the configured normal pattern. GP20 retains its separate slice2 owner.
 2. The [AP2502 datasheet](https://www.diodes.com/datasheet/download/AP2502.pdf),
    pages 2 and 5, specifies PWM up to 150 kHz, minimum high 1 us and low 100 ns.
    The retained 1 kHz configuration supplies 500 us high/low at Dim.
@@ -52,24 +53,35 @@ bounded debounced input batches.
 The exact vendored Embassy RP 0.10.0 implementation was checked against these
 specs: `pwm.rs` Config defaults and `configure` preserve enabled, noninverted,
 non-phase-correct operation; `set_config` writes CC without waiting for wrap.
-`gpio.rs` writes initial levels before enabling output and uses SIO SET/CLR for
-subsequent levels. The published [PWM source](https://docs.rs/embassy-rp/0.10.0/src/embassy_rp/pwm.rs.html)
+For RGB, `new_output_ab`/`new_output_a` configure inversion and zero compares
+before selecting PWM on the pads. The adapter retains owners and uses separate
+A/B compares; Off never disables a slice or invokes Drop. RGB TOP9999/divider1
+uses the actual system clock divided by10000 (280MHz implies28kHz), distinct
+from GP20's1kHz and the selected animation period. The published [PWM source](https://docs.rs/embassy-rp/0.10.0/src/embassy_rp/pwm.rs.html)
 and [GPIO source](https://docs.rs/embassy-rp/0.10.0/src/embassy_rp/gpio.rs.html)
 provide upstream reference. No dependency or clock profile was changed here.
 
 ## Indicator and physical limits
 
-The last completed frame's effective overlay determines the warning indicator.
-Its red phase lights red; its white phase turns red off. Green is suppressed
-throughout either warning phase. Feedback covering a warning, diagnostic pages
-and backlight Off use continuous green. Blue remains off. Green indicates no
-visible warning; it does not certify sensor availability or engine health.
-Future queued/rendering frames cannot change the indicator early.
+The shared LED controller selects independent normal/warning Off, Solid, Blink
+or Breathe patterns from the last completed scene. Defaults remain green and
+red blinking with the completed popup phase; synchronized Blink never runs
+ahead of that phase. Other timing uses a monotonic selection epoch. Reduced
+motion makes breathing solid. Brightness and RGB565 colours scale each channel
+independently into0..10000 light duty.
 
-The pure indicator state is exclusively Off, Green or Red. GPIO application
-disables the previous color before enabling another. Completion paths apply it
-before settings maintenance can await or continue, including serial and idle
-presentation. The encoder task and acquisition core never own these pins.
+Qualified active/latching state comes from the same warning eligibility query
+as presentation. Acknowledged/snoozed active conditions retain indication.
+Switches permit background warnings during Dashboard feedback, on Debug/Logs
+and with backlight off; off-screen indication also requires the applicable
+page/feedback permission. All switches default off. Normal is the fallback
+only when no warning is selected; warning Off suppresses all RGB light.
+Green does not certify sensor availability or engine health.
+
+Pending frames cannot change the selected policy. Matching completion commits
+its scene, then actual backlight output and LED duty are applied in that order.
+Idle updates advance timed patterns without changing completed identity. Main
+owns the PWM writes; encoder/acquisition tasks never own these pins.
 
 Completion means the HAL returned after the transfer. LCD scanout follows its
 own timing, and GPIO/PWM application and optical response have additional delay.

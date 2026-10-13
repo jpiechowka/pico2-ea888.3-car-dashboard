@@ -28,6 +28,8 @@ Use TOP 9,999, divider 1, phase-correct disabled and inverted outputs. With inve
 
 Do not use PWM Drop or disabling a slice as the LED off operation: the HAL disconnects pads with pull-down, which is unsuitable as an active-low off policy. Do not change regulator, display clocks or backlight algorithms in this stage.
 
+The shared controller and owned PWM adapter are implemented locally. Editor integration and final release admission remain subsequent tasks; physical colour, carrier and startup validation remain pending. Integer conversion and smoothstep use nearest rounding with ties upward.
+
 ## Verification
 
 - Test all pattern endpoints, period/on-time/brightness boundaries, RGB primaries and mixed colours, zero light, rounding and channel independence.
@@ -41,4 +43,4 @@ Do not use PWM Drop or disabling a slice as the LED off operation: the HAL disco
 
 - [PIM715 product](https://shop.pimoroni.com/products/pico-display-pack-2-8) and [schematic](https://cdn.shopify.com/s/files/1/0174/1800/files/pico_display_2_8_schematic.pdf?v=1728314048): RGB wiring and pins.
 - [RP2350 datasheet](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf), GPIO function table and section 12.5.2: PWM mapping, counter period, output inversion and exact endpoints.
-- [Raspberry Pi PWM source](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_pwm/include/hardware/pwm.h) and the exact vendored `firmware/vendor/embassy-rp/src/pwm.rs`: construction, register updates, pin ownership and Drop behavior. The vendored top-level period comment reverses the phase-correction factor; the datasheet and field documentation govern the design.
+- [Raspberry Pi PWM source](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_pwm/include/hardware/pwm.h) and the exact vendored `firmware/vendor/embassy-rp/src/pwm.rs`: construction, register updates, pin ownership and Drop behavior. The original HAL top-level period comment reversed the phase-correction factor; the tracked comment-only correction now agrees with the datasheet and field documentation.

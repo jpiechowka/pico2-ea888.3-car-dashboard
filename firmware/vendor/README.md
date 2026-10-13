@@ -3,9 +3,9 @@
 Base: the complete published `embassy-rp 0.10.0` crate, upstream commit
 `84444a19eb57d978e3c09fcdc8e60cdd7278eb03`. Both original licenses are retained.
 `embassy-rp-provenance.json` records the download URL, archive SHA-256, all 73
-original file hashes and all six patched/added file hashes. `.gitattributes`
-preserves these bytes across platforms. UART, multicore and flash are the only
-modified HAL modules; UART ring operations and the fixed JEDEC transaction have
+original file hashes and all seven patched/added file hashes. `.gitattributes`
+preserves these bytes across platforms. UART, multicore and flash have runtime corrections. PWM has only a period-comment
+correction (phase-correct factor2, ordinary factor1); UART ring operations and the fixed JEDEC transaction have
 additional shared helpers compiled by the host tests.
 
 Run `python scripts/check_vendor.py` from `firmware`. Supply
@@ -130,3 +130,12 @@ program data and retain a running watchdog. HAL pause/resume/DMA/ROM waits still
 have no software-returning timeout. Debug persistence is disabled until its
 distinct machine code is reviewed. Physical flash and recovery validation is
 pending; host protocol tests do not exercise QMI registers.
+
+## PWM documentation correction (13 October 2026)
+
+The `Config` period comment now agrees with RP2350 section12.5.2.6:
+`(top + 1) * (phase_correct ? 2 : 1) * divider`. No PWM instructions or API
+changed. Five original files are modified and two helpers added; the provenance
+manifest retains the original PWM hash alongside its exact corrected hash.
+The PIM715 RGB adapter uses the existing constructor and independent compare
+configuration with owned slices5/6, inversion, TOP9999 and divider1.

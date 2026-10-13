@@ -37,6 +37,23 @@ fn maximum() -> ValidatedConfig {
 }
 
 pub fn benchmarks(c: &mut Criterion) {
+    use dashboard_host_validation::status_led::{LedController, PresentedScene};
+    let mut settings = LedSettings::default();
+    settings.normal.kind = LedPatternKind::Breathe;
+    let mut led = LedController::new();
+    let mut at = 0u64;
+    c.bench_function("led/breathe_rgb_duty", |b| {
+        b.iter(|| {
+            at = at.saturating_add(17);
+            black_box(led.update(
+                black_box(&settings),
+                black_box(PresentedScene::EMPTY),
+                true,
+                black_box(at),
+                false,
+            ))
+        })
+    });
     let config = maximum();
     let values = [10., 90., 95., 80., 30., 700., 13.8, 1.];
     let ready = || {

@@ -135,6 +135,7 @@ impl Preview {
 
     /// Explicit synthetic transport accepts the rendered bytes before submission.
     /// Call complete_frame only after the consumer accepts those bytes; tests may delay it.
+    /// LED duty continues using the previous completed scene until that completion.
     pub fn render_simulation_submitted(
         &mut self,
         simulation: &mut crate::simulator::ControlSimulator,

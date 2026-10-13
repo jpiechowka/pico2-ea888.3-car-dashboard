@@ -512,3 +512,75 @@ fn injected_fault_and_stale_tick_use_owner_qualification_and_preserve_latch() {
     );
     assert_eq!(sim.completed_warning().rules, 0);
 }
+
+#[test]
+fn led_follows_completed_warning_and_actual_backlight_shutdown() {
+    use dashboard_configurator::preview::Preview;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    use dashboard_core::status_led::LedDuty;
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.on_ms = 1;
+    raw.widgets[0].warning.trigger = 2.;
+    raw.widgets[0].warning.clear = 1.;
+    raw.widgets[0].warning.advanced.latch = true;
+    raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    raw.led.warning.kind = dashboard_config::LedPatternKind::Solid;
+    raw.led.during_feedback = true;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    let green = LedDuty {
+        red: 0,
+        green: 10000,
+        blue: 0,
+    };
+    let red = LedDuty {
+        red: 10000,
+        green: 0,
+        blue: 0,
+    };
+    assert_eq!(sim.led_duty(), green);
+    let now = sim.now_ms();
+    let v = [3., 90., 95., 80., 30., 700., 13.8, 1.];
+    sim.advance_to(now, Some(v));
+    sim.advance_to(now + 1, Some(v));
+    let mut p = Preview::new();
+    let token = |sequence| {
+        FrameToken {
+            buffer: BufferId::A,
+            sequence,
+        }
+    };
+    p.render_simulation_submitted(&mut sim, token(1)).unwrap();
+    assert_eq!(sim.led_duty(), green);
+    assert!(!sim.complete_frame(token(2)));
+    assert!(sim.complete_frame(token(1)));
+    assert_eq!(sim.led_duty(), red);
+    sim.click();
+    sim.click();
+    p.render_simulation_submitted(&mut sim, token(2)).unwrap();
+    assert!(sim.complete_frame(token(2)));
+    assert_eq!(sim.led_duty(), red);
+    sim.advance(2000);
+    p.render_simulation_submitted(&mut sim, token(3)).unwrap();
+    assert_eq!(sim.led_duty(), red);
+    assert!(sim.complete_frame(token(3)));
+    assert_eq!(sim.session().backlight().compare(), 0);
+    assert_eq!(sim.led_duty(), green);
+    assert!(!sim.complete_frame(token(3)));
+}
+
+#[test]
+fn summary_navigation_does_not_fabricate_completed_led_warnings() {
+    use dashboard_config::{Color, LedPatternKind};
+    let mut raw = default_config();
+    raw.led.normal.color = Color(0x001F);
+    raw.led.normal.kind = LedPatternKind::Breathe;
+    raw.reduced_motion = true;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    assert_eq!(sim.led_duty().blue, 10000);
+    sim.tap(ButtonId::Y);
+    sim.advance(5000);
+    assert_eq!(sim.led_duty().blue, 10000);
+    assert_eq!(sim.completed_warning().rules, 0);
+}

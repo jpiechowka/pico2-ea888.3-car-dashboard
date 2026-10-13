@@ -70,6 +70,8 @@ impl ControlSimulator {
 
     pub const fn session(&self) -> &ControlSession { &self.simulation.session }
 
+    pub fn led_duty(&self) -> dashboard_core::status_led::LedDuty { self.simulation.led.duty() }
+
     pub const fn now_ms(&self) -> u64 { self.simulation.now_ms }
 
     pub const fn ignored(&self) -> u32 { self.ignored }
@@ -135,6 +137,7 @@ impl ControlSimulator {
                 .backlight_mut()
                 .frame_unchanged(self.simulation.now_ms);
         }
+        self.simulation.update_led();
     }
 
     pub(crate) fn warning_page(&self) -> Option<dashboard_core::view_state::WarningPage> { self.simulation.warning }
@@ -174,6 +177,7 @@ impl ControlSimulator {
             .session
             .backlight_mut()
             .frame_completed(token, self.simulation.now_ms);
+        self.simulation.update_led();
         true
     }
 

@@ -176,3 +176,41 @@ fn warning_route_is_separate_capacity_one_and_applies_after_inputs_before_tick()
     assert!(code.find("model.ingest_batch").unwrap() < code.find("model.apply_warning_command(command, now)").unwrap());
     assert!(code.find("model.apply_warning_command(command, now)").unwrap() < code.find("model.tick(now)").unwrap());
 }
+
+#[test]
+fn completed_diagnostic_scene_and_pending_return_use_the_same_led_owner() {
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    use dashboard_core::status_led::{LedController, LedDuty, PresentedLed, PresentedScene};
+    let mut settings = dashboard_config::LedSettings::default();
+    settings.on_debug = true;
+    settings.warning.kind = dashboard_config::LedPatternKind::Solid;
+    let mut presented = PresentedLed::new();
+    let mut led = LedController::new();
+    let token = |sequence| {
+        FrameToken {
+            buffer: BufferId::A,
+            sequence,
+        }
+    };
+    let debug = PresentedScene {
+        page: Page::Debug,
+        eligible: true,
+        ..PresentedScene::EMPTY
+    };
+    assert!(presented.submit(token(1), debug));
+    assert_eq!(
+        led.update(&settings, presented.visible(), true, 0, false),
+        LedDuty {
+            red: 0,
+            green: 10000,
+            blue: 0
+        }
+    );
+    assert!(presented.complete(token(1)));
+    assert_eq!(led.update(&settings, presented.visible(), true, 1, false).red, 10000);
+    assert!(presented.submit(token(2), PresentedScene::EMPTY));
+    assert!(!presented.complete(token(3)));
+    assert_eq!(led.update(&settings, presented.visible(), true, 2, false).red, 10000);
+    assert!(presented.complete(token(2)));
+    assert_eq!(led.update(&settings, presented.visible(), true, 3, false).green, 10000);
+}

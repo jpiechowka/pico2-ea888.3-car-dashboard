@@ -234,6 +234,7 @@ pub fn DeviceControls(ui: Ui) -> impl IntoView {
                 <strong class="control-error" hidden=move || !sim.with(ControlSimulator::invalid)>"INVALID SIMULATION · candidate bindings / accepted layout · inspection only"</strong>
                 <p role="status">{move ||simulation_notice.get()}</p>
                 <output id="control-simulator-state" aria-live="polite">{move ||sim.with(ControlSimulator::summary)}</output>
+                <output aria-label="RGB indicator duty">{move ||sim.with(|s|{let d=s.led_duty();format!("LED light duty · R {} · G {} · B {} / 10000",d.red,d.green,d.blue)})}</output>
                 <div class="simulator-buttons">{ButtonId::ALL.into_iter().map(|button| view! {
                     <div><strong class="keycap">{button.label()}</strong>
                         <button on:click=move |_|sim.update(|s|s.tap(button))>{format!("Tap {}",button.label())}</button>
