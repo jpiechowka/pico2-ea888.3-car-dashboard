@@ -37,6 +37,83 @@ fn overlap(editor: &mut Editor) {
 }
 
 #[test]
+fn guarded_raw_repair_of_another_retained_owner_preserves_inspection_selection() {
+    let mut editor = pair();
+    overlap(&mut editor);
+    editor
+        .select(Selection {
+            view: 1,
+            widget: Some(1),
+        })
+        .unwrap();
+    editor
+        .set_raw(
+            editor.field_token(),
+            RawField::Widget(1, WidgetField::Label),
+            "ONE".into(),
+        )
+        .unwrap();
+    editor
+        .select(Selection {
+            view: 1,
+            widget: Some(2),
+        })
+        .unwrap();
+    editor
+        .set_raw(
+            editor.field_token(),
+            RawField::Widget(2, WidgetField::Label),
+            "TWO".into(),
+        )
+        .unwrap();
+    let target = editor.raw_inspection_target(0).unwrap();
+    let selection = editor.selection();
+    let revision = editor.revision();
+    let accepted = editor.preview().clone();
+    assert_eq!(
+        editor.set_inspected_raw(target, "x".repeat(MAX_RAW_TEXT_BYTES + 1)),
+        Err(EditorError::RawTooLong)
+    );
+    assert_eq!(editor.revision(), revision);
+    assert_eq!(editor.raw_fields()[0].text, "ONE");
+    assert_eq!(
+        editor.set_raw(
+            editor.field_token(),
+            RawField::Widget(1, WidgetField::Label),
+            "FIX".into()
+        ),
+        Err(EditorError::SelectionMismatch)
+    );
+    editor.set_inspected_raw(target, "FIX".into()).unwrap();
+    assert_eq!(editor.selection(), selection);
+    assert_ne!(editor.revision(), revision);
+    assert_eq!(editor.preview(), &accepted);
+    assert_eq!(editor.raw_fields()[0].text, "FIX");
+    assert_eq!(editor.raw_fields()[1].text, "TWO");
+    assert_eq!(
+        editor.set_inspected_raw(target, "LATE".into()),
+        Err(EditorError::StaleToken)
+    );
+    let report = editor.diagnostic().unwrap().validation_report();
+    let semantic = editor.inspection_target(report.issues[0].location).unwrap();
+    assert_eq!(
+        editor.set_inspected_raw(semantic, "ARBITRARY".into()),
+        Err(EditorError::FieldUnavailable)
+    );
+    editor
+        .apply(Edit::MoveWidget {
+            id: 1,
+            view: 1,
+            column: 2,
+            row: 0,
+        })
+        .unwrap();
+    assert_eq!(editor.preview().config().widgets[0].label, "FIX");
+    assert_eq!(editor.preview().config().widgets[1].label, "TWO");
+    assert!(editor.raw_fields().is_empty());
+}
+
+#[test]
 fn placing_a_focused_widget_selects_it_and_undo_restores_previous_selection() {
     let mut editor = pair();
     editor

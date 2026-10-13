@@ -122,6 +122,16 @@ impl Draft {
         &'a self,
         widget: &'a Widget,
     ) -> &'a str {
+        if self
+            .config
+            .widgets
+            .iter()
+            .filter(|candidate| candidate.id == widget.id)
+            .count()
+            != 1
+        {
+            return &widget.label;
+        }
         self.raw
             .iter()
             .find_map(|input| {
@@ -134,6 +144,16 @@ impl Draft {
         &self,
         view: u8,
     ) -> &str {
+        if self
+            .config
+            .views
+            .iter()
+            .filter(|candidate| candidate.id == view)
+            .count()
+            > 1
+        {
+            return "AMBIGUOUS VIEW";
+        }
         self.raw
             .iter()
             .find_map(|input| (input.field == RawField::ViewName(view)).then_some(input.text.as_str()))

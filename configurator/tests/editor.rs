@@ -2,6 +2,111 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+fn accepted_configuration_key_tracks_canonical_transitions_instead_of_current_content() {
+    let mut editor = Editor::default();
+    let first = editor.accepted_config_key();
+    let bytes = editor.export_binary().unwrap();
+    editor.apply(Edit::SetReducedMotion(true)).unwrap();
+    let second = editor.accepted_config_key();
+    assert_ne!(first, second);
+    editor.apply(Edit::SetReducedMotion(false)).unwrap();
+    assert_eq!(editor.export_binary().unwrap(), bytes);
+    assert_ne!(editor.accepted_config_key(), first);
+    let third = editor.accepted_config_key();
+    editor.undo().unwrap();
+    assert_ne!(editor.accepted_config_key(), second);
+    assert_ne!(editor.accepted_config_key(), third);
+    let undone = editor.accepted_config_key();
+    editor.redo().unwrap();
+    assert_ne!(editor.accepted_config_key(), undone);
+    assert_ne!(editor.accepted_config_key(), first);
+    assert_ne!(Editor::default().accepted_config_key(), first);
+}
+
+#[test]
+fn accepted_configuration_key_ignores_selection_noop_import_and_repaired_draft_activity() {
+    let mut editor = Editor::default();
+    let first = editor.accepted_config_key();
+    editor
+        .select(Selection {
+            view: 1,
+            widget: Some(1),
+        })
+        .unwrap();
+    assert_eq!(editor.accepted_config_key(), first);
+    let accepted = editor.accepted_revision();
+    editor
+        .set_raw(editor.field_token(), RawField::ViewName(1), "".into())
+        .unwrap();
+    assert_ne!(editor.revision(), accepted);
+    assert_eq!(editor.accepted_revision(), accepted);
+    assert_eq!(editor.accepted_config_key(), first);
+    editor.discard_raw().unwrap();
+    assert_eq!(editor.accepted_revision(), editor.revision());
+    assert_eq!(editor.accepted_config_key(), first);
+    let json = editor.export_json().unwrap();
+    let old = editor.accepted_revision();
+    let import = editor.begin_import().unwrap();
+    editor
+        .complete_import(import, ImportFormat::Json, json.as_bytes())
+        .unwrap();
+    assert_ne!(editor.accepted_revision(), old);
+    assert_eq!(editor.accepted_config_key(), first);
+    // Import changes persisted selection alone and adds a history entry.
+    editor.undo().unwrap();
+    assert_eq!(editor.selection().widget, Some(1));
+    assert_eq!(editor.accepted_config_key(), first);
+    editor.redo().unwrap();
+    assert_eq!(editor.accepted_config_key(), first);
+}
+
+#[test]
+fn signed_zero_import_changes_configuration_key_and_keeps_canonical_bytes() {
+    let mut editor = Editor::default();
+    let before = editor.accepted_config_key();
+    let mut config = editor.preview().config().clone();
+    config.widgets[0].advanced.reference = -0.0;
+    let text = serde_json::to_string(&config).unwrap();
+    let import = editor.begin_import().unwrap();
+    editor
+        .complete_import(import, ImportFormat::Json, text.as_bytes())
+        .unwrap();
+    assert!(
+        editor.preview().config().widgets[0]
+            .advanced
+            .reference
+            .is_sign_negative()
+    );
+    assert_ne!(editor.accepted_config_key(), before);
+}
+
+#[test]
+fn snapshot_admission_reports_actual_pointer_and_import_blockers() {
+    let mut editor = Editor::default();
+    let mut invalid = default_config();
+    invalid.widgets[0].label.clear();
+    let location = dashboard_configurator::diagnostic::collect_candidate(&invalid).issues[0].location;
+    let pointer = editor.begin_pointer(1, PointerTarget::Widget(1)).unwrap();
+    let target = editor.inspection_target(location).unwrap();
+    editor.inspect(target).unwrap();
+    assert_eq!(editor.active_pointer(), Some(pointer));
+    assert_eq!(editor.action_readiness().block, Some(ActionBlock::PointerActive));
+    assert_eq!(editor.export_json(), Err(EditorError::PointerActive));
+    assert!(matches!(editor.begin_save(), Err(EditorError::PointerActive)));
+    editor.cancel_pointer(pointer).unwrap();
+    let import = editor.begin_import().unwrap();
+    let target = editor.inspection_target(location).unwrap();
+    editor.inspect(target).unwrap();
+    assert!(editor.import_is_current(import));
+    assert_eq!(editor.action_readiness().block, Some(ActionBlock::ImportPending));
+    assert_eq!(editor.export_binary(), Err(EditorError::ImportPending));
+    assert!(matches!(editor.begin_save(), Err(EditorError::ImportPending)));
+    editor.cancel_import(import).unwrap();
+    assert_eq!(editor.action_readiness().block, None);
+    assert!(editor.export_binary().is_ok());
+}
+
+#[test]
 fn review_widget_repair_visibility_keeps_graph_fields_across_style_and_graph_disable() {
     let fields = [WidgetField::GraphMinimum, WidgetField::GraphMaximum];
     let mut c = default_config();
@@ -1376,78 +1481,64 @@ fn late_save_acknowledgments_never_mark_newer_edits_or_requests_saved() {
 }
 
 #[test]
-fn pointer_selection_save_survives_noop_cancel_rejection_and_successful_move() {
+fn pointer_selection_save_waits_for_noop_cancel_rejection_or_successful_move() {
     for outcome in 0..4 {
-        for save_before_release in [false, true] {
-            let mut editor = empty();
-            let first = add(&mut editor, 0, 0, Span::OneByOne);
-            add(&mut editor, 1, 0, Span::OneByOne);
-            editor
-                .apply(Edit::RenameView {
-                    id: 1,
-                    name: "Pending edit".into(),
-                })
-                .unwrap();
-            let previous = editor.begin_save().unwrap();
-            let pointer = editor.begin_pointer(7, PointerTarget::Widget(first)).unwrap();
-            assert!(!editor.save_is_current(previous.token()));
-            // The browser adapter must schedule this replacement even if the
-            // subsequent placement does not change the document.
-            let selected = editor.begin_save().unwrap();
-            assert_eq!(editor.active_pointer(), Some(pointer));
-            if save_before_release {
-                editor.acknowledge_save(selected.token(), Ok(())).unwrap();
+        let mut editor = empty();
+        let first = add(&mut editor, 0, 0, Span::OneByOne);
+        add(&mut editor, 1, 0, Span::OneByOne);
+        editor
+            .apply(Edit::RenameView {
+                id: 1,
+                name: "Pending edit".into(),
+            })
+            .unwrap();
+        let previous = editor.begin_save().unwrap();
+        let pointer = editor.begin_pointer(7, PointerTarget::Widget(first)).unwrap();
+        assert!(!editor.save_is_current(previous.token()));
+        // Snapshot actions wait until the real pointer transaction ends.
+        assert!(matches!(editor.begin_save(), Err(EditorError::PointerActive)));
+        assert_eq!(editor.active_pointer(), Some(pointer));
+        match outcome {
+            0 => {
+                editor
+                    .commit_pointer(pointer, 7, placement(0, 0, Span::OneByOne))
+                    .unwrap();
             }
-            match outcome {
-                0 => {
+            1 => editor.cancel_pointer(pointer).unwrap(),
+            2 => {
+                assert!(
                     editor
-                        .commit_pointer(pointer, 7, placement(0, 0, Span::OneByOne))
-                        .unwrap();
-                }
-                1 => editor.cancel_pointer(pointer).unwrap(),
-                2 => {
-                    assert!(
-                        editor
-                            .commit_pointer(pointer, 7, placement(1, 0, Span::OneByOne))
-                            .is_err()
-                    );
-                }
-                _ => {
-                    editor
-                        .commit_pointer(pointer, 7, placement(2, 1, Span::OneByOne))
-                        .unwrap();
-                }
+                        .commit_pointer(pointer, 7, placement(1, 0, Span::OneByOne))
+                        .is_err()
+                );
             }
-            assert_eq!(editor.active_pointer(), None);
-            assert!(!editor.save_is_current(previous.token()));
-            if outcome == 2 {
-                assert_eq!(editor.save_status(), SaveStatus::InvalidDraft);
-                assert!(!editor.save_is_current(selected.token()));
-                assert!(matches!(editor.begin_save(), Err(EditorError::InvalidDraft)));
-                editor.discard_raw().unwrap();
+            _ => {
+                editor
+                    .commit_pointer(pointer, 7, placement(2, 1, Span::OneByOne))
+                    .unwrap();
             }
-            let final_save = if outcome >= 2 {
-                assert!(!editor.save_is_current(selected.token()));
-                editor.begin_save().unwrap()
-            } else {
-                selected
-            };
-            if !save_before_release || outcome >= 2 {
-                assert!(editor.save_is_current(final_save.token()));
-                editor.acknowledge_save(final_save.token(), Ok(())).unwrap();
-            }
-            assert_eq!(editor.save_status(), SaveStatus::Saved);
-            let restored = Editor::from_saved_state(final_save.json().as_bytes()).unwrap();
-            assert_eq!(restored.preview(), editor.preview());
-            assert_eq!(
-                restored.selection(),
-                Selection {
-                    view: 1,
-                    widget: Some(first)
-                }
-            );
-            assert_eq!(restored.preview().config().views[0].name, "Pending edit");
         }
+        assert_eq!(editor.active_pointer(), None);
+        assert!(!editor.save_is_current(previous.token()));
+        if outcome == 2 {
+            assert_eq!(editor.save_status(), SaveStatus::InvalidDraft);
+            assert!(matches!(editor.begin_save(), Err(EditorError::InvalidDraft)));
+            editor.discard_raw().unwrap();
+        }
+        let final_save = editor.begin_save().unwrap();
+        assert!(editor.save_is_current(final_save.token()));
+        editor.acknowledge_save(final_save.token(), Ok(())).unwrap();
+        assert_eq!(editor.save_status(), SaveStatus::Saved);
+        let restored = Editor::from_saved_state(final_save.json().as_bytes()).unwrap();
+        assert_eq!(restored.preview(), editor.preview());
+        assert_eq!(
+            restored.selection(),
+            Selection {
+                view: 1,
+                widget: Some(first)
+            }
+        );
+        assert_eq!(restored.preview().config().views[0].name, "Pending edit");
     }
 }
 
@@ -1513,9 +1604,10 @@ fn replacing_editor_instance_cannot_reuse_tokens_from_an_older_instance() {
         Err(EditorError::StaleToken)
     );
     assert_eq!(replacement.active_pointer(), Some(current_pointer));
+    old.cancel_pointer(old_pointer).unwrap();
+    let bytes = old.export_binary().unwrap();
     let old_import = old.begin_import().unwrap();
     let current_import = replacement.begin_import().unwrap();
-    let bytes = old.export_binary().unwrap();
     assert_eq!(
         replacement.complete_import(old_import, ImportFormat::Binary, &bytes),
         Err(EditorError::StaleToken)

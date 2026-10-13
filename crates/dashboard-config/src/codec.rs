@@ -185,6 +185,34 @@ pub fn encode<'a>(
     Ok(&out[..end])
 }
 
+/// Current-schema inspection only. It preserves unknown/duplicate property
+/// checks and serde's default recursion bound; no validation proof is issued.
+/// Frozen legacy migration remains exclusively in `from_json_bytes`.
+#[cfg(feature = "json")]
+pub fn parse_current_json_candidate(bytes: &[u8]) -> Result<Config, ConfigError> {
+    if bytes.len() > MAX_JSON_BYTES {
+        return Err(ConfigError::Length);
+    }
+    let json_error = |e: serde_json::Error| {
+        ConfigError::Json {
+            line: e.line(),
+            column: e.column(),
+        }
+    };
+    // A small direct serde preflight classifies legacy files even when their
+    // shape lacks current fields. The full Config parse below still sees the
+    // original bytes, including every duplicate and unknown property.
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u16,
+    }
+    let version: Version = serde_json::from_slice(bytes).map_err(json_error)?;
+    if version.version != VERSION {
+        return Err(ConfigError::Version);
+    }
+    serde_json::from_slice(bytes).map_err(json_error)
+}
+
 #[cfg(feature = "json")]
 pub fn from_json_bytes(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
     if bytes.len() > MAX_JSON_BYTES {

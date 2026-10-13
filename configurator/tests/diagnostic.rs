@@ -3,6 +3,51 @@ use dashboard_configurator::editor::*;
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 
 #[test]
+fn raw_labels_and_repairs_never_choose_the_first_duplicate_id_owner() {
+    use dashboard_configurator::diagnostic::Draft;
+    let mut config = default_config();
+    config.widgets[1].id = config.widgets[0].id;
+    let label = RawField::Widget(1, WidgetField::Label);
+    let draft = Draft {
+        config,
+        raw: vec![RawInput {
+            field: label,
+            text: "Raw label".into(),
+        }],
+        error: EditorError::Parse(label),
+    };
+    let report = draft.validation_report();
+    assert_eq!(report.raw_errors.len(), 1, "ambiguous raw owner must be rejected");
+    assert_eq!(report.raw_errors[0].error, EditorError::AmbiguousTarget);
+    assert_eq!(
+        draft.label(&draft.config.widgets[0]),
+        draft.config.widgets[0].label.as_str()
+    );
+    assert_eq!(
+        draft.label(&draft.config.widgets[1]),
+        draft.config.widgets[1].label.as_str()
+    );
+}
+
+#[test]
+fn ambiguous_view_name_inspection_never_claims_the_first_owner_or_its_raw_name() {
+    use dashboard_configurator::diagnostic::Draft;
+    let mut config = default_config();
+    config.views.push(config.views[0].clone()).unwrap();
+    let draft = Draft {
+        config,
+        raw: vec![RawInput {
+            field: RawField::ViewName(1),
+            text: "Wrong owner".into(),
+        }],
+        error: EditorError::Parse(RawField::ViewName(1)),
+    };
+    let report = draft.validation_report();
+    assert_eq!(report.raw_errors[0].error, EditorError::AmbiguousTarget);
+    assert_eq!(draft.name(1), "AMBIGUOUS VIEW");
+}
+
+#[test]
 fn collecting_report_is_bounded_with_an_exact_omitted_count() {
     let mut config = default_config();
     config.views.clear();

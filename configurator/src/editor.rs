@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use dashboard_config::*;
 use serde::{Deserialize, Serialize};
 
+use crate::json_draft::{JsonDraft, JsonState};
+pub use crate::json_draft::{JsonDraftHandle, JsonParseToken};
+
 pub const HISTORY_LIMIT: usize = 32;
 pub const MAX_RAW_TEXT_BYTES: usize = 1024;
 pub const MAX_RAW_FIELDS: usize = 64;
@@ -16,6 +19,72 @@ static NEXT_EDITOR: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Revision(u64);
+
+impl Revision {
+    pub const fn get(self) -> u64 { self.0 }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Owner and revision cannot be supplied by a caller.
+/// ```compile_fail
+/// let stamp = dashboard_configurator::editor::EditorStamp { owner: 1, revision: 0 };
+/// ```
+pub struct EditorStamp {
+    owner: usize,
+    revision: Revision,
+}
+
+/// Acquisition synchronization key. Its revision changes only when accepted
+/// canonical configuration changes; it is never restored from undo history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AcceptedConfigKey {
+    owner: usize,
+    revision: Revision,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionBlock {
+    InvalidDraft,
+    JsonPending,
+    PointerActive,
+    ImportPending,
+    IdentityExhausted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActionReadiness {
+    pub stamp: EditorStamp,
+    pub block: Option<ActionBlock>,
+}
+
+/// A navigation capability for the exact current candidate. IDs are hints,
+/// never the owner of an indexed semantic inspection target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InspectionTarget {
+    stamp: EditorStamp,
+    candidate_epoch: Option<(u64, u64, bool)>,
+    key: InspectionKey,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InspectionKey {
+    Semantic(ValidationLocation),
+    Raw { index: usize, field: RawField },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedInspection {
+    pub view_index: Option<usize>,
+    pub widget_index: Option<usize>,
+    pub channel_index: Option<usize>,
+    pub field: Option<Field>,
+    pub raw_field: Option<RawField>,
+    pub raw_index: Option<usize>,
+    /// False for duplicate/missing widget or view ID owners. Even when true,
+    /// mutation must use normal reducer admission and field capability checks.
+    pub id_lookup_unambiguous: bool,
+    pub json_path: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -259,6 +328,11 @@ pub enum EditorError {
     NoRedo,
     CounterExhausted,
     InvalidDraft,
+    JsonPending,
+    JsonTooLong,
+    PointerActive,
+    ImportPending,
+    AmbiguousTarget,
     StaleToken,
     RawTooLong,
     RawCapacity,
@@ -293,6 +367,10 @@ pub struct Editor {
     owner: usize,
     accepted: Box<Accepted>,
     revision: Revision,
+    accepted_revision: Revision,
+    accepted_config_revision: Revision,
+    json: Option<JsonDraft>,
+    json_epoch: u64,
     undo: VecDeque<Box<Accepted>>,
     redo: VecDeque<Box<Accepted>>,
     raw: Vec<RawInput>,
@@ -324,6 +402,10 @@ impl Editor {
             owner,
             accepted: Box::new(Accepted { preview, selection }),
             revision: Revision(0),
+            accepted_revision: Revision(0),
+            accepted_config_revision: Revision(0),
+            json: None,
+            json_epoch: 0,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             raw: Vec::new(),
@@ -364,6 +446,315 @@ impl Editor {
     }
 
     pub fn revision(&self) -> Revision { self.revision }
+
+    pub fn stamp(&self) -> EditorStamp {
+        EditorStamp {
+            owner: self.owner,
+            revision: self.revision,
+        }
+    }
+
+    /// Revision of last accepted config/selection publication. Raw/rejected
+    /// activity advances ordinary revision without publishing accepted state.
+    pub fn accepted_revision(&self) -> Revision { self.accepted_revision }
+
+    pub fn accepted_config_key(&self) -> AcceptedConfigKey {
+        AcceptedConfigKey {
+            owner: self.owner,
+            revision: self.accepted_config_revision,
+        }
+    }
+
+    pub fn has_pending_json(&self) -> bool { self.json.as_ref().is_some_and(|draft| draft.pending) }
+
+    pub fn action_readiness(&self) -> ActionReadiness {
+        let block = if self.has_pending_json() {
+            Some(ActionBlock::JsonPending)
+        } else if self.has_invalid_draft() {
+            Some(ActionBlock::InvalidDraft)
+        } else if self.pointer.is_some() {
+            Some(ActionBlock::PointerActive)
+        } else if self.import.is_some() {
+            Some(ActionBlock::ImportPending)
+        } else if self.revision.0 == u64::MAX || self.request == u64::MAX {
+            Some(ActionBlock::IdentityExhausted)
+        } else {
+            None
+        };
+        ActionReadiness {
+            stamp: self.stamp(),
+            block,
+        }
+    }
+
+    pub fn json_draft(&self) -> Option<&JsonDraft> { self.json.as_ref() }
+
+    pub fn open_json(&mut self) -> Result<JsonDraftHandle, EditorError> {
+        if let Some(draft) = &self.json {
+            return Ok(draft.handle);
+        }
+        let epoch = self.json_epoch.checked_add(1).ok_or(EditorError::CounterExhausted)?;
+        let handle = JsonDraftHandle {
+            stamp: self.stamp(),
+            accepted_revision: self.accepted_revision,
+            epoch,
+        };
+        let diagnostic = self.diagnostic();
+        let (text, state, read_only) = if let Some(diagnostic) = diagnostic {
+            let text = serde_json::to_string(&diagnostic.config).map_err(json_error)?;
+            let report = diagnostic.validation_report();
+            (
+                text,
+                JsonState::Candidate {
+                    config: Box::new(diagnostic.config),
+                    report,
+                },
+                true,
+            )
+        } else {
+            (
+                to_json(self.preview()).map_err(EditorError::Codec)?,
+                JsonState::Unparsed,
+                false,
+            )
+        };
+        if text.len() > MAX_JSON_BYTES {
+            return Err(EditorError::JsonTooLong);
+        }
+        self.json = Some(JsonDraft {
+            handle,
+            text,
+            text_epoch: 0,
+            pending: false,
+            read_only,
+            state,
+        });
+        self.json_epoch = epoch;
+        Ok(handle)
+    }
+
+    pub fn set_json_text(
+        &mut self,
+        handle: JsonDraftHandle,
+        text: String,
+    ) -> Result<JsonParseToken, EditorError> {
+        self.check_json_handle(handle)?;
+        self.next_revision()?;
+        let token = self.json.as_mut().ok_or(EditorError::StaleToken)?.replace_text(text)?;
+        // JSON typing does not publish an editor revision, but older I/O must
+        // never revive after Discard at that same revision.
+        self.import = None;
+        self.save = None;
+        self.pointer = None;
+        Ok(token)
+    }
+
+    /// Debounce completion parses the actual owned text, never caller-supplied
+    /// Config/result data. Check every identity component before doing work.
+    pub fn finish_json_parse(
+        &mut self,
+        token: JsonParseToken,
+    ) -> Result<(), EditorError> {
+        self.check_json_handle(token.handle)?;
+        let draft = self.json.as_mut().ok_or(EditorError::StaleToken)?;
+        if draft.text_epoch != token.text_epoch || !draft.pending || draft.read_only {
+            return Err(EditorError::StaleToken);
+        }
+        draft.parse();
+        Ok(())
+    }
+
+    pub fn apply_json(&mut self) -> Result<Revision, EditorError> {
+        let draft = self.json.as_ref().ok_or(EditorError::StaleToken)?;
+        self.check_json_handle(draft.handle)?;
+        if draft.read_only || self.has_invalid_draft() {
+            return Err(EditorError::InvalidDraft);
+        }
+        if !draft.pending {
+            return Ok(self.revision);
+        }
+        let config = parse_current_json_candidate(draft.text.as_bytes()).map_err(EditorError::Codec)?;
+        let preview = validate(config).map_err(EditorError::Validation)?;
+        let selection = if check_selection(preview.config(), self.accepted.selection).is_ok() {
+            self.accepted.selection
+        } else {
+            Selection {
+                view: preview.config().boot_view,
+                widget: None,
+            }
+        };
+        let changed_config = !same_canonical_config(self.preview(), &preview)?;
+        let revision = self.next_revision()?;
+        let current = std::mem::replace(&mut self.accepted, Box::new(Accepted { preview, selection }));
+        push_history(&mut self.undo, current);
+        self.redo.clear();
+        if changed_config {
+            self.accepted_config_revision = revision;
+        }
+        self.changed(revision);
+        self.accepted_revision = revision;
+        Ok(revision)
+    }
+
+    pub fn discard_json(&mut self) -> Result<(), EditorError> {
+        self.json = None;
+        Ok(())
+    }
+
+    pub fn json_preview_label(&self) -> Option<&'static str> {
+        let draft = self.json.as_ref()?;
+        match &draft.state {
+            JsonState::SyntaxError { .. } => Some("INVALID JSON"),
+            JsonState::Candidate { report, .. }
+                if draft.read_only
+                    || !report.issues.is_empty()
+                    || !report.raw_errors.is_empty()
+                    || report.omitted != 0 =>
+            {
+                Some("INVALID PREVIEW")
+            }
+            JsonState::Candidate { .. } if draft.pending => Some("UNAPPLIED JSON PREVIEW"),
+            _ => None,
+        }
+    }
+
+    fn check_json_handle(
+        &self,
+        handle: JsonDraftHandle,
+    ) -> Result<(), EditorError> {
+        if self.json.as_ref().is_none_or(|draft| draft.handle != handle)
+            || handle.stamp != self.stamp()
+            || handle.accepted_revision != self.accepted_revision
+        {
+            Err(EditorError::StaleToken)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn inspection_target(
+        &self,
+        location: ValidationLocation,
+    ) -> Result<InspectionTarget, EditorError> {
+        let target = InspectionTarget {
+            stamp: self.stamp(),
+            candidate_epoch: self.inspection_epoch(),
+            key: InspectionKey::Semantic(location),
+        };
+        self.inspect(target)?;
+        Ok(target)
+    }
+
+    pub fn raw_inspection_target(
+        &self,
+        index: usize,
+    ) -> Result<InspectionTarget, EditorError> {
+        let field = self.raw.get(index).ok_or(EditorError::InvalidIndex)?.field;
+        let target = InspectionTarget {
+            stamp: self.stamp(),
+            candidate_epoch: self.inspection_epoch(),
+            key: InspectionKey::Raw { index, field },
+        };
+        self.inspect(target)?;
+        Ok(target)
+    }
+
+    /// Pure navigation. No selection, revision, text, I/O or acceptance state
+    /// changes; consumers open their workspace/group before focusing details.
+    pub fn inspect(
+        &self,
+        target: InspectionTarget,
+    ) -> Result<ResolvedInspection, EditorError> {
+        if target.stamp != self.stamp() || target.candidate_epoch != self.inspection_epoch() {
+            return Err(EditorError::StaleToken);
+        }
+        let visual = self.diagnostic();
+        let config = match self.json.as_ref().map(|draft| &draft.state) {
+            Some(JsonState::Candidate { config, .. }) => config.as_ref(),
+            _ => visual.as_ref().map_or(self.preview().config(), |draft| &draft.config),
+        };
+        let (view_index, widget_index, channel_index, field, raw_field, raw_index, json_path) = match target.key {
+            InspectionKey::Semantic(location) => {
+                (
+                    location.view_index(),
+                    location.widget_index(),
+                    location.channel_index(),
+                    Some(location.field()),
+                    None,
+                    None,
+                    Some(location.to_string()),
+                )
+            }
+            InspectionKey::Raw { index, field } => {
+                if self.raw.get(index).is_none_or(|raw| raw.field != field) {
+                    return Err(EditorError::StaleToken);
+                }
+                let view = match field {
+                    RawField::ViewName(id) => Some(unique_view_index(config, id)?),
+                    _ => None,
+                };
+                let widget = match field {
+                    RawField::Widget(id, _) => Some(unique_widget_index(config, id)?),
+                    _ => None,
+                };
+                if let Some(index) = widget {
+                    unique_view_index(config, config.widgets[index].view)?;
+                }
+                check_raw_available(config, field)?;
+                let channel = match field {
+                    RawField::Source(channel, _) | RawField::HistorySeconds(channel) => Some(channel.index()),
+                    _ => None,
+                };
+                (view, widget, channel, None, Some(field), Some(index), None)
+            }
+        };
+        if view_index.is_some_and(|index| config.views.get(index).is_none())
+            || widget_index.is_some_and(|index| config.widgets.get(index).is_none())
+            || channel_index.is_some_and(|index| config.sources.get(index).is_none())
+        {
+            return Err(EditorError::InvalidIndex);
+        }
+        if let Some(index) = widget_index {
+            let band = match field {
+                Some(
+                    Field::BandLabel(i)
+                    | Field::BandMinimum(i)
+                    | Field::BandMaximum(i)
+                    | Field::BandOrder(i)
+                    | Field::BandColor(i),
+                ) => Some(i as usize),
+                _ => None,
+            };
+            if band.is_some_and(|band| config.widgets[index].advanced.bands().get(band).is_none()) {
+                return Err(EditorError::InvalidIndex);
+            }
+        }
+        let id_lookup_unambiguous = widget_index.is_none_or(|index| {
+            let widget = &config.widgets[index];
+            unique_widget_index(config, widget.id).is_ok() && unique_view_index(config, widget.view).is_ok()
+        }) && view_index
+            .is_none_or(|index| unique_view_index(config, config.views[index].id).is_ok());
+        Ok(ResolvedInspection {
+            view_index,
+            widget_index,
+            channel_index,
+            field,
+            raw_field,
+            raw_index,
+            id_lookup_unambiguous,
+            json_path,
+        })
+    }
+
+    fn inspection_epoch(&self) -> Option<(u64, u64, bool)> {
+        self.json.as_ref().map(|draft| {
+            (
+                draft.handle.epoch,
+                draft.text_epoch,
+                matches!(draft.state, JsonState::Candidate { .. }),
+            )
+        })
+    }
 
     pub fn history_len(&self) -> (usize, usize) { (self.undo.len(), self.redo.len()) }
 
@@ -419,7 +810,10 @@ impl Editor {
         &self,
         token: ImportToken,
     ) -> bool {
-        self.import == Some(token) && token.revision == self.revision && !self.has_invalid_draft()
+        self.import == Some(token)
+            && token.revision == self.revision
+            && !self.has_invalid_draft()
+            && !self.has_pending_json()
     }
 
     pub fn last_saved_revision(&self) -> Option<Revision> { self.saved_revision }
@@ -430,11 +824,11 @@ impl Editor {
         &self,
         token: SaveToken,
     ) -> bool {
-        self.save == Some(token) && token.revision == self.revision && !self.has_invalid_draft()
+        self.save == Some(token) && token.revision == self.revision && self.action_readiness().block.is_none()
     }
 
     pub fn save_status(&self) -> SaveStatus {
-        if self.has_invalid_draft() {
+        if self.has_invalid_draft() || self.has_pending_json() {
             SaveStatus::InvalidDraft
         } else if self.save.is_some() {
             SaveStatus::Saving
@@ -450,7 +844,7 @@ impl Editor {
     /// Return the exact versioned bytes to write. This does not claim that any
     /// storage operation succeeded; the adapter must acknowledge its result.
     pub fn begin_save(&mut self) -> Result<SaveRequest, EditorError> {
-        self.ensure_clean()?;
+        self.ensure_snapshot_ready()?;
         let request = self.next_request()?;
         let envelope = SavedEnvelope {
             editor_version: SAVED_STATE_VERSION,
@@ -532,6 +926,7 @@ impl Editor {
         pointer_id: i32,
         target: PointerTarget,
     ) -> Result<PointerToken, EditorError> {
+        self.ensure_no_json()?;
         if matches!(target, PointerTarget::Library(_)) {
             self.ensure_clean()?;
         } else if !self.can_edit_layout() {
@@ -633,6 +1028,7 @@ impl Editor {
         let revision = self.next_revision()?;
         self.accept_validated(preview, selection)?;
         self.changed(revision);
+        self.accepted_revision = revision;
         Ok(self.revision)
     }
 
@@ -660,6 +1056,7 @@ impl Editor {
         if token != self.field_token() {
             return Err(EditorError::StaleToken);
         }
+        self.ensure_no_json()?;
         if text.len() > MAX_RAW_TEXT_BYTES {
             return Err(EditorError::RawTooLong);
         }
@@ -667,6 +1064,32 @@ impl Editor {
         // creates a rejected candidate. It must still exist and apply to the
         // current candidate; the accepted document cannot prove that target.
         check_raw_target(self.editing_config(), self.selection(), field)?;
+        self.set_raw_transaction(field, text)
+    }
+
+    /// Repair only the actual retained raw entry authorized by a current
+    /// inspection capability. This does not select its owner or permit new
+    /// arbitrary fields; ordinary set_raw retains its selection guard.
+    pub fn set_inspected_raw(
+        &mut self,
+        target: InspectionTarget,
+        text: String,
+    ) -> Result<Revision, EditorError> {
+        self.ensure_no_json()?;
+        let resolved = self.inspect(target)?;
+        let field = resolved.raw_field.ok_or(EditorError::FieldUnavailable)?;
+        check_raw_available(self.editing_config(), field)?;
+        self.set_raw_transaction(field, text)
+    }
+
+    fn set_raw_transaction(
+        &mut self,
+        field: RawField,
+        text: String,
+    ) -> Result<Revision, EditorError> {
+        if text.len() > MAX_RAW_TEXT_BYTES {
+            return Err(EditorError::RawTooLong);
+        }
         let revision = self.next_revision()?;
         let mut fields = self.raw.clone();
         if let Some(input) = fields.iter_mut().find(|input| input.field == field) {
@@ -691,6 +1114,7 @@ impl Editor {
                 // Correcting an invalid draft back to its original value is
                 // still a new interaction and must retire earlier callbacks.
                 self.changed(revision);
+                self.accepted_revision = revision;
             }
             Err(error) => {
                 if let Some(rejected) = &mut self.rejected {
@@ -705,23 +1129,25 @@ impl Editor {
     }
 
     pub fn discard_raw(&mut self) -> Result<Revision, EditorError> {
+        self.ensure_no_json()?;
         if self.has_invalid_draft() {
             let revision = self.next_revision()?;
             self.raw.clear();
             self.rejected = None;
             self.draft_error = None;
             self.changed(revision);
+            self.accepted_revision = revision;
         }
         Ok(self.revision)
     }
 
     pub fn export_json(&self) -> Result<String, EditorError> {
-        self.ensure_clean()?;
+        self.ensure_snapshot_ready()?;
         to_json(self.preview()).map_err(EditorError::Codec)
     }
 
     pub fn export_binary(&self) -> Result<Vec<u8>, EditorError> {
-        self.ensure_clean()?;
+        self.ensure_snapshot_ready()?;
         let mut bytes = vec![0; MAX_FILE_BYTES];
         let len = encode(self.preview(), &mut bytes).map_err(EditorError::Codec)?.len();
         bytes.truncate(len);
@@ -732,6 +1158,7 @@ impl Editor {
         &mut self,
         edit: Edit,
     ) -> Result<Revision, EditorError> {
+        self.ensure_no_json()?;
         let field_repair = matches!(
             edit,
             Edit::SetControls(_)
@@ -1025,6 +1452,7 @@ impl Editor {
                 // callbacks created for the rejected layout.
                 if let Some(revision) = revision {
                     self.changed(revision);
+                    self.accepted_revision = revision;
                 }
                 Ok(self.revision)
             }
@@ -1067,6 +1495,7 @@ impl Editor {
         &mut self,
         selection: Selection,
     ) -> Result<Revision, EditorError> {
+        self.ensure_no_json()?;
         if !self.can_edit_layout() {
             return Err(EditorError::InvalidDraft);
         }
@@ -1076,6 +1505,9 @@ impl Editor {
             match &mut self.rejected {
                 Some(draft) => draft.selection = selection,
                 None => self.accepted.selection = selection,
+            }
+            if !self.has_invalid_draft() {
+                self.accepted_revision = self.revision;
             }
         }
         Ok(self.revision)
@@ -1087,10 +1519,16 @@ impl Editor {
             return Err(EditorError::NoUndo);
         }
         let revision = self.next_revision()?;
+        let changed_config =
+            !same_canonical_config(self.preview(), &self.undo.back().ok_or(EditorError::NoUndo)?.preview)?;
         let previous = self.undo.pop_back().ok_or(EditorError::NoUndo)?;
         let current = std::mem::replace(&mut self.accepted, previous);
         push_history(&mut self.redo, current);
         self.changed(revision);
+        self.accepted_revision = revision;
+        if changed_config {
+            self.accepted_config_revision = revision;
+        }
         Ok(revision)
     }
 
@@ -1100,10 +1538,16 @@ impl Editor {
             return Err(EditorError::NoRedo);
         }
         let revision = self.next_revision()?;
+        let changed_config =
+            !same_canonical_config(self.preview(), &self.redo.back().ok_or(EditorError::NoRedo)?.preview)?;
         let next = self.redo.pop_back().ok_or(EditorError::NoRedo)?;
         let current = std::mem::replace(&mut self.accepted, next);
         push_history(&mut self.undo, current);
         self.changed(revision);
+        self.accepted_revision = revision;
+        if changed_config {
+            self.accepted_config_revision = revision;
+        }
         Ok(revision)
     }
 
@@ -1125,23 +1569,19 @@ impl Editor {
         selection: Selection,
     ) -> Result<Revision, EditorError> {
         check_selection(preview.config(), selection)?;
-        if preview == *self.preview() && selection == self.accepted.selection {
-            // f32 equality treats negative zero as positive zero. Those have
-            // different canonical payloads and can produce different labels;
-            // avoid silently discarding them during an otherwise equal import.
-            let mut before = vec![0; MAX_FILE_BYTES];
-            let mut after = vec![0; MAX_FILE_BYTES];
-            if encode(self.preview(), &mut before).map_err(EditorError::Codec)?
-                == encode(&preview, &mut after).map_err(EditorError::Codec)?
-            {
-                return Ok(self.revision);
-            }
+        let same_config = same_canonical_config(self.preview(), &preview)?;
+        if same_config && selection == self.accepted.selection {
+            return Ok(self.revision);
         }
         let revision = self.next_revision()?;
         let current = std::mem::replace(&mut self.accepted, Box::new(Accepted { preview, selection }));
         push_history(&mut self.undo, current);
         self.redo.clear();
         self.changed(revision);
+        self.accepted_revision = revision;
+        if !same_config {
+            self.accepted_config_revision = revision;
+        }
         Ok(revision)
     }
 
@@ -1150,6 +1590,7 @@ impl Editor {
         revision: Revision,
     ) {
         self.revision = revision;
+        self.json = None;
         self.pointer = None;
         self.import = None;
         self.save = None;
@@ -1157,12 +1598,74 @@ impl Editor {
     }
 
     fn ensure_clean(&self) -> Result<(), EditorError> {
+        self.ensure_no_json()?;
         if self.has_invalid_draft() {
             Err(EditorError::InvalidDraft)
         } else {
             Ok(())
         }
     }
+
+    fn ensure_no_json(&self) -> Result<(), EditorError> {
+        if self.has_pending_json() {
+            Err(EditorError::JsonPending)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn ensure_snapshot_ready(&self) -> Result<(), EditorError> {
+        match self.action_readiness().block {
+            None => Ok(()),
+            Some(ActionBlock::InvalidDraft) => Err(EditorError::InvalidDraft),
+            Some(ActionBlock::JsonPending) => Err(EditorError::JsonPending),
+            Some(ActionBlock::PointerActive) => Err(EditorError::PointerActive),
+            Some(ActionBlock::ImportPending) => Err(EditorError::ImportPending),
+            Some(ActionBlock::IdentityExhausted) => Err(EditorError::CounterExhausted),
+        }
+    }
+}
+
+fn same_canonical_config(
+    before: &ValidatedConfig,
+    after: &ValidatedConfig,
+) -> Result<bool, EditorError> {
+    let mut before_bytes = vec![0; MAX_FILE_BYTES];
+    let mut after_bytes = vec![0; MAX_FILE_BYTES];
+    Ok(encode(before, &mut before_bytes).map_err(EditorError::Codec)?
+        == encode(after, &mut after_bytes).map_err(EditorError::Codec)?)
+}
+
+fn unique_view_index(
+    config: &Config,
+    id: u8,
+) -> Result<usize, EditorError> {
+    let mut indices = config
+        .views
+        .iter()
+        .enumerate()
+        .filter_map(|(index, view)| (view.id == id).then_some(index));
+    let index = indices.next().ok_or(EditorError::MissingView(id))?;
+    if indices.next().is_some() {
+        return Err(EditorError::AmbiguousTarget);
+    }
+    Ok(index)
+}
+
+fn unique_widget_index(
+    config: &Config,
+    id: u16,
+) -> Result<usize, EditorError> {
+    let mut indices = config
+        .widgets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, widget)| (widget.id == id).then_some(index));
+    let index = indices.next().ok_or(EditorError::MissingWidget(id))?;
+    if indices.next().is_some() {
+        return Err(EditorError::AmbiguousTarget);
+    }
+    Ok(index)
 }
 
 fn json_error(error: serde_json::Error) -> EditorError {
@@ -1428,22 +1931,14 @@ fn view_index(
     config: &Config,
     id: u8,
 ) -> Result<usize, EditorError> {
-    config
-        .views
-        .iter()
-        .position(|view| view.id == id)
-        .ok_or(EditorError::MissingView(id))
+    unique_view_index(config, id)
 }
 
 fn widget_index(
     config: &Config,
     id: u16,
 ) -> Result<usize, EditorError> {
-    config
-        .widgets
-        .iter()
-        .position(|widget| widget.id == id)
-        .ok_or(EditorError::MissingWidget(id))
+    unique_widget_index(config, id)
 }
 
 fn check_selection(
@@ -1480,6 +1975,128 @@ fn fresh_widget(config: &Config) -> Result<u16, EditorError> {
 #[cfg(test)]
 mod transaction_tests {
     use super::*;
+
+    #[test]
+    fn inspected_raw_authority_rechecks_index_ambiguity_missing_owner_applicability_and_exhaustion() {
+        for case in 0..5 {
+            let mut config = default_config();
+            config.widgets[0].display.graph_range = GraphRange::Fixed { min: -0.4, max: 2.5 };
+            let mut editor = Editor::new(config).unwrap();
+            editor
+                .select(Selection {
+                    view: 1,
+                    widget: Some(1),
+                })
+                .unwrap();
+            let field = RawField::Widget(1, WidgetField::GraphMinimum);
+            editor.set_raw(editor.field_token(), field, "bad".into()).unwrap();
+            editor.rejected = Some(Box::new(Rejected {
+                config: editor.preview().config().clone(),
+                selection: editor.selection(),
+            }));
+            let mut target = editor.raw_inspection_target(0).unwrap();
+            let expected = match case {
+                0 => {
+                    target.key = InspectionKey::Raw { index: 1, field };
+                    EditorError::StaleToken
+                }
+                1 => {
+                    editor.rejected.as_mut().unwrap().config.widgets[1].id = 1;
+                    EditorError::AmbiguousTarget
+                }
+                2 => {
+                    editor.rejected.as_mut().unwrap().config.widgets.clear();
+                    EditorError::MissingWidget(1)
+                }
+                3 => {
+                    editor.rejected.as_mut().unwrap().config.widgets[0].display.graph_range = GraphRange::Auto;
+                    EditorError::FieldUnavailable
+                }
+                _ => {
+                    editor.revision = Revision(u64::MAX);
+                    target = editor.raw_inspection_target(0).unwrap();
+                    EditorError::CounterExhausted
+                }
+            };
+            let before = (
+                editor.stamp(),
+                editor.accepted_config_key(),
+                editor.history_len(),
+                editor.raw.clone(),
+                editor.selection(),
+            );
+            assert_eq!(editor.set_inspected_raw(target, "-0.4".into()), Err(expected));
+            assert_eq!(
+                (
+                    editor.stamp(),
+                    editor.accepted_config_key(),
+                    editor.history_len(),
+                    editor.raw.clone(),
+                    editor.selection()
+                ),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn json_exhaustion_leaves_owned_text_identity_history_and_callbacks_unchanged() {
+        let mut editor = Editor::default();
+        let handle = editor.open_json().unwrap();
+        let original = editor.json_draft().unwrap().text().to_owned();
+        editor.json.as_mut().unwrap().text_epoch = u64::MAX;
+        let before = (editor.stamp(), editor.accepted_config_key(), editor.history_len());
+        assert_eq!(
+            editor.set_json_text(handle, "{}".into()),
+            Err(EditorError::CounterExhausted)
+        );
+        assert_eq!(editor.json_draft().unwrap().text(), original);
+        assert!(!editor.has_pending_json());
+        assert_eq!(
+            (editor.stamp(), editor.accepted_config_key(), editor.history_len()),
+            before
+        );
+        editor.discard_json().unwrap();
+        editor.json_epoch = u64::MAX;
+        assert_eq!(editor.open_json(), Err(EditorError::CounterExhausted));
+        assert!(editor.json_draft().is_none());
+        editor.json_epoch = 0;
+        editor.revision = Revision(u64::MAX);
+        let handle = editor.open_json().unwrap();
+        assert_eq!(editor.action_readiness().block, Some(ActionBlock::IdentityExhausted));
+        assert_eq!(
+            editor.set_json_text(handle, "{}".into()),
+            Err(EditorError::CounterExhausted)
+        );
+        assert!(!editor.has_pending_json());
+    }
+
+    #[test]
+    fn accepted_configuration_exhaustion_is_atomic_for_apply_undo_and_redo() {
+        let mut editor = Editor::default();
+        editor.apply(Edit::SetReducedMotion(true)).unwrap();
+        editor.undo().unwrap();
+        let key = editor.accepted_config_key();
+        let accepted = editor.preview().clone();
+        let history = editor.history_len();
+        editor.revision = Revision(u64::MAX);
+        assert_eq!(editor.redo(), Err(EditorError::CounterExhausted));
+        assert_eq!(
+            editor.apply(Edit::SetReducedMotion(true)),
+            Err(EditorError::CounterExhausted)
+        );
+        assert_eq!(editor.accepted_config_key(), key);
+        assert_eq!(editor.preview(), &accepted);
+        assert_eq!(editor.history_len(), history);
+        editor.revision = Revision(5);
+        editor.redo().unwrap();
+        let key = editor.accepted_config_key();
+        let history = editor.history_len();
+        editor.revision = Revision(u64::MAX);
+        assert_eq!(editor.undo(), Err(EditorError::CounterExhausted));
+        assert_eq!(editor.accepted_config_key(), key);
+        assert_eq!(editor.history_len(), history);
+    }
 
     #[test]
     fn rejected_band_removal_preserves_the_complete_transaction() {
