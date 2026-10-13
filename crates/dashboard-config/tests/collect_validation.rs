@@ -292,3 +292,42 @@ fn ambiguous_view_ids_never_supply_an_arbitrary_view_coordinate_or_overlap() {
     assert_eq!(decimal.location.view_index(), None);
     assert!(!found.iter().any(|i| i.error.code == ErrorCode::Overlap));
 }
+
+#[test]
+fn invalid_band_minimum_never_blames_a_valid_maximum_and_keeps_later_errors() {
+    // Boost's domain is [-1, 10]; 2 is an independently valid maximum.
+    for min in [11.0, -2.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut config = default_config();
+        config.widgets[0]
+            .advanced
+            .set_bands(&[Band::new(min, 2.0, Color(0xFFFF), "A").unwrap()])
+            .unwrap();
+        config.widgets[0].warning.on_ms = 0;
+        let found = issues(&config);
+        assert_eq!(found[0].error, validate(config.clone()).unwrap_err());
+        assert_eq!(found[0].error.field, Field::BandMinimum(0));
+        assert_eq!(found[0].location.to_string(), "/widgets/0/advanced/bands/0/min");
+        assert_eq!(
+            found.iter().map(|i| i.error.field).collect::<Vec<_>>(),
+            [Field::BandMinimum(0), Field::WarningOn],
+            "minimum {min:?}"
+        );
+    }
+}
+
+#[test]
+fn band_maximum_keeps_independent_bounds_and_valid_minimum_ordering_checks() {
+    for (min, max, expected) in [
+        (11.0, 12.0, vec![Field::BandMinimum(0), Field::BandMaximum(0)]),
+        (2.0, 1.0, vec![Field::BandMaximum(0)]),
+    ] {
+        let mut config = default_config();
+        config.widgets[0]
+            .advanced
+            .set_bands(&[Band::new(min, max, Color(0xFFFF), "A").unwrap()])
+            .unwrap();
+        let found = issues(&config);
+        assert_eq!(found[0].error, validate(config.clone()).unwrap_err());
+        assert_eq!(found.iter().map(|i| i.error.field).collect::<Vec<_>>(), expected);
+    }
+}

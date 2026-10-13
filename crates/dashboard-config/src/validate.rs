@@ -586,7 +586,7 @@ pub fn visit_validation(
             if !in_range(band.min, low, high) {
                 issue!(at(ErrorCode::Bounds, Field::BandMinimum(index)));
             }
-            if !in_range(band.max, low, high) || band.min >= band.max {
+            if !in_range(band.max, low, high) || (in_range(band.min, low, high) && band.min >= band.max) {
                 issue!(at(ErrorCode::Bounds, Field::BandMaximum(index)));
             }
             if index > 0
