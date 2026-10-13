@@ -1,7 +1,7 @@
 use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 4;
 pub const CATALOGUE_VERSION: u16 = 1;
 pub const MAX_VIEWS: usize = 8;
 pub const MAX_WIDGETS: usize = 64;
@@ -21,6 +21,9 @@ pub struct Config {
     pub fuel: Fuel,
     pub warning_colors: crate::WarningColors,
     pub controls: crate::ControlMap,
+    pub history_seconds: [u16; 8],
+    pub reduced_motion: bool,
+    pub led: crate::LedSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +45,7 @@ pub struct Widget {
     pub warning: WarningSettings,
     pub gauge: crate::Gauge,
     pub colors: crate::WidgetColors,
+    pub advanced: crate::AdvancedDisplay,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,10 +190,11 @@ pub enum LimitMode {
     High,
     Low,
     LambdaDeviation,
+    OutsideWindow,
+    InsideWindow,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WarningSettings {
     pub enabled: bool,
     pub applicability: Applicability,
@@ -200,6 +205,7 @@ pub struct WarningSettings {
     pub on_ms: u16,
     pub off_ms: u16,
     pub message: String<20>,
+    pub advanced: crate::AdvancedWarning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,5 +360,6 @@ pub enum Fuel {
 }
 
 // Host pointer widths are not a substitute for the target's actual layout.
+// Admitted by the traced v4 whole-artifact memory and stack gates.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<Config>() <= 10_240);
+const _: () = assert!(core::mem::size_of::<Config>() <= 14_576);

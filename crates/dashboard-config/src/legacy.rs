@@ -40,6 +40,7 @@ impl LegacyConfig {
                     channel: w.channel,
                     placement: w.placement,
                     label: w.label,
+                    advanced: AdvancedDisplay::for_channel(w.channel, w.display.afr),
                     display: w.display.into(),
                     warning: w.warning.into(),
                     gauge: Gauge::for_channel(w.channel),
@@ -58,6 +59,9 @@ impl LegacyConfig {
             fuel: self.fuel,
             warning_colors: WarningColors::default(),
             controls: ControlMap::default(),
+            history_seconds: [120; 8],
+            reduced_motion: false,
+            led: LedSettings::default(),
         })
         .map_err(ConfigError::Validation)
     }
@@ -103,6 +107,7 @@ impl LegacyConfigV2 {
                     channel: w.channel,
                     placement: w.placement,
                     label: w.label,
+                    advanced: AdvancedDisplay::for_channel(w.channel, w.display.afr),
                     display: w.display.into(),
                     warning: w.warning.into(),
                     gauge: w.gauge.into(),
@@ -121,6 +126,9 @@ impl LegacyConfigV2 {
             fuel: self.fuel,
             warning_colors: self.warning_colors,
             controls: ControlMap::default(),
+            history_seconds: [120; 8],
+            reduced_motion: false,
+            led: LedSettings::default(),
         })
         .map_err(ConfigError::Validation)
     }
@@ -255,6 +263,7 @@ impl OldWarningSettings {
             on_ms: self.on_ms,
             off_ms: self.off_ms,
             message: self.message,
+            advanced: AdvancedWarning::default(),
         }
     }
 }

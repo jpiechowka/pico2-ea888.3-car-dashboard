@@ -25,6 +25,7 @@ pub fn default_widget(
         label: channel.label().try_into().expect("bounded built-in label"),
         gauge: Gauge::for_channel(channel),
         colors: WidgetColors::default(),
+        advanced: AdvancedDisplay::for_channel(channel, channel == Channel::Lambda),
         display: DisplayOptions {
             decimals: match channel {
                 Channel::Boost => 2,
@@ -49,6 +50,7 @@ pub fn default_widget(
             on_ms: 1000,
             off_ms: 500,
             message: channel.label().try_into().expect("bounded built-in warning"),
+            advanced: AdvancedWarning::DEFAULT,
         },
     }
 }
@@ -87,6 +89,9 @@ pub(crate) const fn empty_config() -> Config {
             foreground: Color(0),
             background: Color(0),
         },
+        history_seconds: [120; 8],
+        reduced_motion: false,
+        led: LedSettings::DEFAULT,
         controls: ControlMap {
             hold_ms: 0,
             screens: [ScreenBindings {
@@ -163,4 +168,7 @@ pub(crate) fn fill_default_config(config: &mut Config) {
     config.fuel = Fuel::EquivalentGasoline;
     config.warning_colors = WarningColors::default();
     config.controls = ControlMap::default();
+    config.history_seconds = [120; 8];
+    config.reduced_motion = false;
+    config.led = LedSettings::DEFAULT;
 }

@@ -34,12 +34,12 @@ fn minimal() -> Config {
 }
 
 #[test]
-fn crc_known_answers_and_independently_built_golden_v3() {
+fn crc_known_answers_and_independently_built_golden_v4() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
     assert_eq!(crc32(b""), 0);
     // Constructed from schema field order with a standalone Python uvarint
     // encoder, struct.pack('<HH') and zlib.crc32, not the production serializer.
-    let hex = "454156310300730013ff845f0301010101014100000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f0010001101000300";
+    let hex = "4541563104009000f60a022f0401010101014100000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f001000110100030078787878787878780001e00f649003320280f003649003320100000000";
     let golden: Vec<u8> = hex
         .as_bytes()
         .as_chunks::<2>()
@@ -47,7 +47,7 @@ fn crc_known_answers_and_independently_built_golden_v3() {
         .iter()
         .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect();
-    assert_eq!(golden.len(), 127);
+    assert_eq!(golden.len(), 156);
     let expected = validate(minimal()).unwrap();
     assert_eq!(decode(&golden).unwrap(), expected);
     let mut out = [0; MAX_FILE_BYTES];
@@ -225,15 +225,15 @@ fn deterministic_random_inputs_and_generated_layouts_never_escape_validation() {
 fn json_nested_unknown_duplicate_enum_and_collection_overflow_are_rejected() {
     let json = to_json(&validate(default_config()).unwrap()).unwrap();
     for bad in [
-        json.replacen("\"id\": 1", "\"id\": 1, \"id\": 1", 1),
-        json.replacen("\"row\": 0", "\"row\": 0, \"bogus\": true", 1),
-        json.replacen("\"decimals\": 2", "\"decimals\": 2, \"decimals\": 2", 1),
+        json.replacen("\"id\":1", "\"id\":1, \"id\":1", 1),
+        json.replacen("\"row\":0", "\"row\":0, \"bogus\":true", 1),
+        json.replacen("\"decimals\":2", "\"decimals\":2, \"decimals\":2", 1),
         json.replacen("\"High\"", "\"Critical\"", 1),
         json.replacen("\"OneByOne\"", "\"FourByTwo\"", 1),
         json.replacen("\"DemoOnly\"", "\"Qualified\"", 1),
         json.replacen("\"Overview\"", "\"123456789012345\"", 1),
         json.replacen("\"Overview\"", "\"\\u00e9\"", 1),
-        json.replacen("\"trigger\": 2.5", "\"trigger\": 1e400", 1),
+        json.replacen("\"trigger\":2.5", "\"trigger\":1e400", 1),
     ] {
         assert!(from_json_bytes(bad.as_bytes()).is_err());
     }
@@ -251,13 +251,13 @@ fn json_nested_unknown_duplicate_enum_and_collection_overflow_are_rejected() {
         from_json_bytes(serde_json::to_string(&value).unwrap().as_bytes()),
         Err(ConfigError::Json { .. })
     ));
-    for text in ["null", "[]", "{}", "true", "1", "{\"version\": 1}"] {
+    for text in ["null", "[]", "{}", "true", "1", "{\"version\":1}"] {
         assert!(from_json_bytes(text.as_bytes()).is_err());
     }
 }
 
 #[test]
-fn cache_publication_does_not_change_v3_bytes() {
+fn cache_publication_does_not_change_current_bytes() {
     let first = validate(default_config()).unwrap();
     let second = validate(default_config()).unwrap();
     assert_ne!(first.cache_identity(), second.cache_identity());

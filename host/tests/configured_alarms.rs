@@ -197,3 +197,27 @@ fn time_only_ticks_invalidate_expired_dwell_without_sampling_or_rebinding() {
         assert_eq!(model.snapshot().rule_status_at(index(63), at), status);
     }
 }
+
+#[test]
+fn interim_v4_window_modes_are_unavailable_and_never_alias_high_or_low() {
+    for mode in [LimitMode::InsideWindow, LimitMode::OutsideWindow] {
+        let mut c = default_config();
+        c.widgets.truncate(1);
+        let w = &mut c.widgets[0].warning;
+        w.enabled = true;
+        w.mode = mode;
+        w.on_ms = 1;
+        w.off_ms = 1;
+        (w.trigger, w.clear, w.advanced.trigger_high, w.advanced.clear_high) = if mode == LimitMode::OutsideWindow {
+            (0.0, 1.0, 3.0, 2.0)
+        } else {
+            (1.0, 0.0, 2.0, 3.0)
+        };
+        let c = validate(c).unwrap();
+        let mut model = AcquisitionModel::demo_configured(&c);
+        for (at, value) in [(0, -0.5), (100, 1.5), (200, 3.5), (300, 1.5)] {
+            sample(&mut model, value, at);
+            assert_eq!(model.snapshot().rule_status_at(index(0), at), Status::Unavailable);
+        }
+    }
+}

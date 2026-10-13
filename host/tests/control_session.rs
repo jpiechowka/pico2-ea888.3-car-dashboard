@@ -181,9 +181,8 @@ fn assert_action_result(
     let page = before.page;
     let compatible = match action {
         None | NextScreen | PreviousScreen | Dashboard | Debug | Logs => true,
-        NextView | PreviousView | ToggleBoostUnits | CycleFps | ResetStatistics | CycleBrightness => {
-            page == Page::Dashboard
-        }
+        NextView | PreviousView | ToggleBoostUnits | CycleFps | ResetStatistics | CycleBrightness
+        | AcknowledgeWarnings => page == Page::Dashboard,
         ToggleBacklight | BrightnessUp | BrightnessDown => page == Page::Debug,
         ScrollOlder | ScrollNewer | LogsLive => page == Page::Logs,
     };
@@ -192,7 +191,7 @@ fn assert_action_result(
     let mut accepted = compatible;
     if compatible {
         match action {
-            None => accepted = false,
+            None | AcknowledgeWarnings => accepted = false,
             NextScreen | PreviousScreen | Dashboard | Debug | Logs => {
                 expected.page = match action {
                     NextScreen => {
@@ -918,4 +917,16 @@ fn observations_in_current_millisecond_bucket_are_accepted_including_recovery() 
     assert_eq!(effect.ignored, 0);
     assert_eq!(s.backlight().compare(), 10000);
     assert_eq!(s.view_id(), 9);
+}
+
+#[test]
+fn interim_v4_acknowledge_is_ignored_and_never_resets_statistics() {
+    let c = config();
+    let mut s = ControlSession::new(&c, FpsMode::Off, false);
+    let effect = apply_action(&mut s, &c, ControlAction::AcknowledgeWarnings, 1);
+    assert_eq!(effect.ignored, 1);
+    assert!(!effect.reset_requested);
+    assert!(effect.observations.is_none());
+    s.statistics_acknowledged(2);
+    assert!(s.popup().is_none());
 }

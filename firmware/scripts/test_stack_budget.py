@@ -52,6 +52,44 @@ class StackBudget(unittest.TestCase):
         return ({n: (int(a, 16) | 1, 4, 0) for a, _, n in rows},
                 {int(a, 16): int(size) for a, size, _ in rows})
 
+    def test_v4_visitors_led_history_and_serializer_children_are_counted(self):
+        functions, sizes = self.slot_fixture()
+        old = next(n for n in functions if '12next_elementA' in n)
+        address, _, _ = functions.pop(old)
+        functions['dashboard_config_15decode_in_place4nextA_13ChannelSource'] = (address, 4, 0)
+        sizes[address & ~1] = 760
+        additions = {
+            '12next_element_15AdvancedDisplay': 384,
+            '12next_element_13PeakSelection': 16,
+            '12next_element_8Priority': 16,
+            '12next_elementb': 8,
+            '15decode_in_place4nextAtj8_': 56,
+            '15decode_in_place4nextb': 8,
+            '15decode_in_place4next_11LedSettings': 80,
+            '12next_element_10LedPattern': 32,
+            '15serialize_fieldAtj8_': 40,
+            '15serialize_field_11LedSettings': 16,
+            '15serialize_field_10LedPattern': 40,
+            '15serialize_fieldb': 8,
+            '15serialize_field_7Readout': 8,
+            '15serialize_field_9Secondary': 8,
+            '15serialize_field_13PeakSelection': 8,
+        }
+        for i, (name, size) in enumerate(additions.items()):
+            address = 0x30000000 + 4 * i
+            functions['dashboard_config_' + name] = (address | 1, 4, 0)
+            sizes[address] = size
+        # Existing loader768 + v4 source array760 + element72 + scalar16.
+        self.assertEqual(configuration_frames(functions, sizes), 1616)
+        child = next(a & ~1 for n, (a, _, _) in functions.items() if '15AdvancedDisplay' in n)
+        sizes[child] = 2000
+        self.assertEqual(configuration_frames(functions, sizes), 3100)
+        # A newly emitted primitive remains a checked child, not an exemption.
+        missing = dict(sizes)
+        del missing[child]
+        with self.assertRaisesRegex(AssertionError, 'missing config frame metadata'):
+            configuration_frames(functions, missing)
+
     def test_runtime_generic_snapshot_is_not_a_boot_config_child(self):
         functions, sizes = self.slot_fixture()
         # Exact new runtime symbol, whose generic config pointee appears in its name.

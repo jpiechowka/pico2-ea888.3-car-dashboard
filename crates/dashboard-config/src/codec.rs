@@ -46,7 +46,7 @@ pub(crate) fn inspect_envelope(
         return Err(ConfigError::Header);
     }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != VERSION && !(allow_legacy && matches!(version, 1 | 2)) {
+    if version != VERSION && !(allow_legacy && matches!(version, 1..=3)) {
         return Err(ConfigError::Version);
     }
     let len = usize::from(u16::from_le_bytes([bytes[6], bytes[7]]));
@@ -65,7 +65,16 @@ fn decode_payload(
     payload: &[u8],
 ) -> Result<ValidatedConfig, ConfigError> {
     #[cfg(feature = "json")]
-    if matches!(_version, 1 | 2) {
+    if matches!(_version, 1..=3) {
+        if _version == 3 {
+            let (config, rest) = postcard::take_from_bytes::<crate::legacy_v3::LegacyConfigV3>(payload)
+                .map_err(|_| ConfigError::Payload)?;
+            if !rest.is_empty() {
+                return Err(ConfigError::Payload);
+            }
+            compare_canonical(&config, payload)?;
+            return config.upgrade();
+        }
         if _version == 2 {
             let (config, rest) = postcard::take_from_bytes::<crate::legacy::LegacyConfigV2>(payload)
                 .map_err(|_| ConfigError::Payload)?;
@@ -192,27 +201,37 @@ pub fn from_json_bytes(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
         version: u16,
     }
     let version: Version = serde_json::from_slice(bytes).map_err(json_error)?;
-    if version.version == 1 {
-        return serde_json::from_slice::<crate::legacy::LegacyConfig>(bytes)
-            .map_err(json_error)?
-            .upgrade();
+    // Keep mutually exclusive owned migration documents in separate frames.
+    // In unoptimized Windows builds, constructing every historical type here
+    // reserves their temporaries simultaneously and can overflow main's stack.
+    match version.version {
+        1 => read_json(bytes, crate::legacy::LegacyConfig::upgrade),
+        2 => read_json(bytes, crate::legacy::LegacyConfigV2::upgrade),
+        3 => read_json(bytes, crate::legacy_v3::LegacyConfigV3::upgrade),
+        VERSION => read_json(bytes, |config| validate(config).map_err(ConfigError::Validation)),
+        _ => Err(ConfigError::Version),
     }
-    if version.version == 2 {
-        return serde_json::from_slice::<crate::legacy::LegacyConfigV2>(bytes)
-            .map_err(json_error)?
-            .upgrade();
-    }
-    if version.version != VERSION {
-        return Err(ConfigError::Version);
-    }
-    let config: Config = serde_json::from_slice(bytes).map_err(json_error)?;
-    validate(config).map_err(ConfigError::Validation)
+}
+
+#[cfg(feature = "json")]
+#[inline(never)]
+fn read_json<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    upgrade: impl FnOnce(T) -> Result<ValidatedConfig, ConfigError>,
+) -> Result<ValidatedConfig, ConfigError> {
+    let config = serde_json::from_slice(bytes).map_err(|e| {
+        ConfigError::Json {
+            line: e.line(),
+            column: e.column(),
+        }
+    })?;
+    upgrade(config)
 }
 
 #[cfg(feature = "json")]
 pub fn to_json(config: &ValidatedConfig) -> Result<alloc::string::String, ConfigError> {
     // The wrapper prevents serde_json's NaN/Infinity -> null serialization.
-    let text = serde_json::to_string_pretty(config.config()).map_err(|e| {
+    let text = serde_json::to_string(config.config()).map_err(|e| {
         ConfigError::Json {
             line: e.line(),
             column: e.column(),

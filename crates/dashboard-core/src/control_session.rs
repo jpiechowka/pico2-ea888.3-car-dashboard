@@ -164,6 +164,8 @@ impl ControlSession {
             return true;
         }
         match action {
+            // Unreleased v4 schema: Task 8 supplies the warning command route.
+            ControlAction::AcknowledgeWarnings => return false,
             ControlAction::NextView | ControlAction::PreviousView => {
                 if !self.views.rotate(
                     config,

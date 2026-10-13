@@ -99,6 +99,7 @@ impl RuleEngineState {
         let source = self.sources[widget.channel.index()]?;
         let warning = &widget.warning;
         let limit = match warning.mode {
+            LimitMode::OutsideWindow | LimitMode::InsideWindow => return None,
             LimitMode::High => {
                 Limit::High {
                     on: warning.trigger,

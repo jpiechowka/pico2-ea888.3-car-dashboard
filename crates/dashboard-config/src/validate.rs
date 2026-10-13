@@ -35,6 +35,25 @@ pub enum Field {
     Label,
     Decimals,
     Afr,
+    Readout,
+    Secondary,
+    Smoothing,
+    PeakHold,
+    Reference,
+    BandCount,
+    BandLabel(u8),
+    BandMinimum(u8),
+    BandMaximum(u8),
+    BandOrder(u8),
+    BandColor(u8),
+    HistorySeconds(Channel),
+    WarningTriggerHigh,
+    WarningClearHigh,
+    WarningSnooze,
+    WarningAcknowledge,
+    LedBrightness(bool),
+    LedPeriod(bool),
+    LedOnPercent(bool),
     GraphRange,
     GaugeRange,
     Color(ColorRole),
@@ -106,8 +125,9 @@ pub struct ValidatedConfig {
     cache_status: CacheIdentityStatus,
 }
 
+// Admitted by the traced v4 whole-artifact memory and stack gates.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 10_240);
+const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 14_588);
 
 impl PartialEq for ValidatedConfig {
     fn eq(
@@ -194,6 +214,22 @@ pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
         };
         error(code, Field::Controls(cause))
     })?;
+    for channel in Channel::ALL {
+        if !(10..=900).contains(&config.history_seconds[channel.index()]) {
+            return Err(error(ErrorCode::Bounds, Field::HistorySeconds(channel)));
+        }
+    }
+    for (warning, pattern) in [(false, config.led.normal), (true, config.led.warning)] {
+        if pattern.brightness_percent > 100 {
+            return Err(error(ErrorCode::Bounds, Field::LedBrightness(warning)));
+        }
+        if !(200..=10_000).contains(&pattern.period_ms) {
+            return Err(error(ErrorCode::Bounds, Field::LedPeriod(warning)));
+        }
+        if !(10..=90).contains(&pattern.on_percent) {
+            return Err(error(ErrorCode::Bounds, Field::LedOnPercent(warning)));
+        }
+    }
     if config.views.is_empty() {
         return Err(error(ErrorCode::Empty, Field::Views));
     }
@@ -265,7 +301,71 @@ pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
         {
             return Err(at(ErrorCode::Bounds, Field::GraphRange));
         }
+        let advanced = &widget.advanced;
+        if !advanced.readout.compatible(widget.channel) {
+            return Err(at(ErrorCode::Incompatible, Field::Readout));
+        }
+        if display.afr != advanced.readout.includes_afr() {
+            return Err(at(ErrorCode::Incompatible, Field::Afr));
+        }
+        if widget.channel != Channel::Boost && advanced.secondary != Secondary::None {
+            return Err(at(ErrorCode::Incompatible, Field::Secondary));
+        }
+        if advanced.smoothing_ms != 0 && !(50..=5_000).contains(&advanced.smoothing_ms) {
+            return Err(at(ErrorCode::Bounds, Field::Smoothing));
+        }
+        if !(100..=60_000).contains(&advanced.peak_hold_ms) {
+            return Err(at(ErrorCode::Bounds, Field::PeakHold));
+        }
+        if !advanced.reference.is_finite()
+            || (advanced.reference_mode == ReferenceMode::Manual && !in_range(advanced.reference, low, high))
+        {
+            return Err(at(ErrorCode::Bounds, Field::Reference));
+        }
+        for (index, band) in advanced.bands().iter().enumerate() {
+            let index = index as u8;
+            if !in_range(band.min, low, high) {
+                return Err(at(ErrorCode::Bounds, Field::BandMinimum(index)));
+            }
+            if !in_range(band.max, low, high) || band.min >= band.max {
+                return Err(at(ErrorCode::Bounds, Field::BandMaximum(index)));
+            }
+            if index > 0 && advanced.bands()[usize::from(index) - 1].max > band.min {
+                return Err(at(ErrorCode::Overlap, Field::BandOrder(index)));
+            }
+            if !band.color.contrasts(widget.colors.track) {
+                return Err(at(ErrorCode::Contrast, Field::BandColor(index)));
+            }
+        }
         let warning = &widget.warning;
+        let extra = warning.advanced;
+        if extra.snooze_s != 0 && !(5..=900).contains(&extra.snooze_s) {
+            return Err(at(ErrorCode::Bounds, Field::WarningSnooze));
+        }
+        if warning.enabled
+            && (extra.latch || extra.snooze_s != 0)
+            && !config.controls.screens[ControlPage::Dashboard.index()]
+                .buttons
+                .iter()
+                .any(|b| [b.tap, b.hold].contains(&ControlAction::AcknowledgeWarnings))
+        {
+            return Err(at(ErrorCode::Reference, Field::WarningAcknowledge));
+        }
+        let window = matches!(warning.mode, LimitMode::OutsideWindow | LimitMode::InsideWindow);
+        if if window {
+            !in_range(extra.trigger_high, low, high)
+        } else {
+            extra.trigger_high.to_bits() != 0
+        } {
+            return Err(at(ErrorCode::Bounds, Field::WarningTriggerHigh));
+        }
+        if if window {
+            !in_range(extra.clear_high, low, high)
+        } else {
+            extra.clear_high.to_bits() != 0
+        } {
+            return Err(at(ErrorCode::Bounds, Field::WarningClearHigh));
+        }
         if (widget.channel == Channel::Lambda) != (warning.mode == LimitMode::LambdaDeviation) {
             return Err(at(ErrorCode::Incompatible, Field::WarningMode));
         }
@@ -283,6 +383,16 @@ pub(crate) fn validate_ref(config: &Config) -> Result<f32, ValidationError> {
         let ordered = match warning.mode {
             LimitMode::High | LimitMode::LambdaDeviation => warning.clear < warning.trigger,
             LimitMode::Low => warning.clear > warning.trigger,
+            LimitMode::OutsideWindow => {
+                warning.trigger < warning.clear
+                    && warning.clear <= extra.clear_high
+                    && extra.clear_high < extra.trigger_high
+            }
+            LimitMode::InsideWindow => {
+                warning.clear < warning.trigger
+                    && warning.trigger <= extra.trigger_high
+                    && extra.trigger_high < extra.clear_high
+            }
         };
         if !ordered {
             return Err(at(ErrorCode::Hysteresis, Field::WarningClear));

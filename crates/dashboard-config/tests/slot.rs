@@ -86,6 +86,17 @@ fn maximum() -> Config {
                 .unwrap();
         }
     }
+    c.history_seconds = [900; 8];
+    c.reduced_motion = true;
+    c.led.normal.kind = LedPatternKind::Breathe;
+    c.led.backlight_off = true;
+    c.widgets[0].advanced.smoothing_ms = 5000;
+    c.widgets[0].advanced.peak_hold_ms = 60000;
+    c.widgets[0]
+        .advanced
+        .set_bands(&[Band::new(-1.0, 0.0, Color(65535), "LOW").unwrap()])
+        .unwrap();
+    c.widgets[0].warning.advanced.priority = Priority::Critical;
     c.boot_view = 8;
     c
 }
@@ -246,6 +257,7 @@ fn slot_always_rejects_legacy_envelopes_and_current_envelope_legacy_payloads() {
     for bytes in [
         include_bytes!("fixtures/v1-default.eav").as_slice(),
         include_bytes!("fixtures/v2-default.eav").as_slice(),
+        include_bytes!("fixtures/v3-default.eav").as_slice(),
     ] {
         let loaded = slot.load_at_boot(bytes);
         assert_eq!(loaded.fault, Some(ConfigError::Version));

@@ -82,10 +82,11 @@ pub enum ControlAction {
     ScrollOlder,
     ScrollNewer,
     LogsLive,
+    AcknowledgeWarnings,
 }
 impl ControlAction {
     /// Stable explicit catalogue; never derive serialization from a menu index.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::None,
         Self::NextScreen,
         Self::PreviousScreen,
@@ -104,6 +105,7 @@ impl ControlAction {
         Self::ScrollOlder,
         Self::ScrollNewer,
         Self::LogsLive,
+        Self::AcknowledgeWarnings,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -126,6 +128,7 @@ impl ControlAction {
             Self::ScrollOlder => "Older logs",
             Self::ScrollNewer => "Newer logs",
             Self::LogsLive => "Return to live logs",
+            Self::AcknowledgeWarnings => "Acknowledge warnings",
         }
     }
 
@@ -139,6 +142,7 @@ impl ControlAction {
             | Self::PreviousView
             | Self::ToggleBoostUnits
             | Self::CycleFps
+            | Self::AcknowledgeWarnings
             | Self::ResetStatistics
             | Self::CycleBrightness => matches!(page, ControlPage::Dashboard),
             Self::ToggleBacklight | Self::BrightnessUp | Self::BrightnessDown => matches!(page, ControlPage::Debug),

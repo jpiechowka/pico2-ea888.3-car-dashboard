@@ -3,9 +3,11 @@
 #[cfg(feature = "json")]
 extern crate alloc;
 
+mod advanced;
 mod appearance;
 mod cache_identity;
 mod catalog;
+mod led;
 pub use cache_identity::{CacheIdentityStatus, ConfigCacheIdentity};
 mod codec;
 pub mod controls;
@@ -14,14 +16,18 @@ mod defaults;
 mod fuel;
 #[cfg(feature = "json")]
 mod legacy;
+#[cfg(feature = "json")]
+mod legacy_v3;
 mod model;
 mod validate;
 
+pub use advanced::*;
 pub use appearance::*;
 pub use catalog::*;
 pub use codec::*;
 pub use controls::*;
 pub use defaults::{default_config, default_widget};
+pub use led::*;
 pub use model::*;
 pub use validate::*;
 
@@ -32,8 +38,9 @@ pub struct BootConfig {
     pub fault: Option<ConfigError>,
 }
 
+// Admitted by the traced v4 whole-artifact memory and stack gates.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<BootConfig>() <= 10_240);
+const _: () = assert!(core::mem::size_of::<BootConfig>() <= 14_600);
 
 #[inline(never)]
 pub fn load_at_boot(bytes: &[u8]) -> BootConfig {

@@ -21,7 +21,13 @@ fn flag(
     set: fn(&mut DisplayOptions, bool),
 ) -> impl IntoView {
     view! { <Toggle ui label value=Signal::derive(move || ui.widget(id).is_some_and(|w|get(&w.display)))
-    on_change=Callback::new(move |(token,value)| ui.update_widget(token,id,|w|set(&mut w.display,value)))/> }
+    on_change=Callback::new(move |(token,value)| ui.update_widget(token,id,|w| {
+        let previous_afr=w.display.afr;
+        set(&mut w.display,value);
+        if w.display.afr!=previous_afr {
+            w.advanced.readout=if w.display.afr {Readout::LambdaAndAfr}else{Readout::Lambda};
+        }
+    }))/> }
 }
 
 #[component]
@@ -94,7 +100,7 @@ fn WidgetInspector(
             <Choice ui label="Applies to" value=Signal::derive(move ||ui.widget(id).map(|w|if w.warning.applicability==Applicability::DemoOnly{"demo"}else{"vehicle"}.to_string()).unwrap_or_default()) options=choices(&[("demo","Demo only"),("vehicle","Vehicle and demo")])
                 on_change=Callback::new(move |(token,value):(FieldToken,String)|ui.update_widget(token,id,|w|w.warning.applicability=if value=="demo"{Applicability::DemoOnly}else{Applicability::VehicleAndDemo}))/>
             <p class="hint">"Demo limits are examples. Vehicle thresholds are your own configuration; source and operating-context guards remain enforced."</p>
-            <Choice ui label="Rule type" value=Signal::derive(move ||ui.widget(id).map(|w|match w.warning.mode {LimitMode::High=>"high",LimitMode::Low=>"low",LimitMode::LambdaDeviation=>"lambda"}.to_string()).unwrap_or_default())
+            <Choice ui label="Rule type" value=Signal::derive(move ||ui.widget(id).map(|w|match w.warning.mode {LimitMode::High=>"high",LimitMode::Low=>"low",LimitMode::LambdaDeviation=>"lambda",LimitMode::OutsideWindow=>"outside",LimitMode::InsideWindow=>"inside"}.to_string()).unwrap_or_default())
                 options=if channel==Channel::Lambda {choices(&[("lambda","Deviation from target lambda")])} else {choices(&[("high","High value"),("low","Low value")])}
                 on_change=Callback::new(move |(token,value):(FieldToken,String)| {
                     let mode=match value.as_str(){"low"=>LimitMode::Low,"high"=>LimitMode::High,_=>return};

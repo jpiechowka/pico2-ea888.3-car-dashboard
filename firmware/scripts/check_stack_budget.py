@@ -105,14 +105,31 @@ def configuration_frames(functions, sizes):
     text = branch(dec('11StringInner'), utf8)
     color = dec('5ColorE')
     warning_colors = dec('13WarningColors')
-    warning = branch(dec('15WarningSettings'), text, color)
+    v4 = any('15AdvancedDisplay' in n for n in functions)
+    warning_children = [text, color]
+    if v4:
+        warning_children.extend([dec('8Priority'), dec('12next_elementb')])
+    warning = branch(dec('15WarningSettings'), *warning_children)
     widget_colors = branch(dec('12WidgetColors'), color, warning_colors)
-    widget = branch(dec('6WidgetE'), utf8, warning, widget_colors, dec('10GraphRange'), dec('5Gauge'))
+    widget_children = [utf8, warning, widget_colors, dec('10GraphRange'), dec('5Gauge')]
+    if v4:
+        widget_children.append(branch(dec('15AdvancedDisplay'), utf8, dec('13PeakSelection')))
+    widget = branch(dec('6WidgetE'), *widget_children)
     source = branch(select('dashboard_config', '12next_elementNt', '13ChannelSource'), color)
-    sources = branch(select('dashboard_config', '12next_elementA', '13ChannelSource'), source)
+    # LLVM outlines the v4 array in ConfigSeed::next instead of SeqAccess.
+    # Both reviewed entry points are accepted; a missing/ambiguous one fails.
+    array_token = '15decode_in_place4nextA' if v4 else '12next_elementA'
+    sources = branch(select('dashboard_config', array_token, '13ChannelSource'), source)
     controls = branch(select('dashboard_config', '15decode_in_place4next', '10ControlMap'),
                       branch(dec('14ScreenBindings'), dec('13ControlAction')))
     fields = [sources, controls]
+    if v4:
+        fields.extend([
+            select('dashboard_config', '15decode_in_place4nextAtj8_'),
+            branch(select('dashboard_config', '15decode_in_place4nextb'), dec('12next_elementb')),
+            branch(select('dashboard_config', '15decode_in_place4next', '11LedSettings'),
+                   dec('10LedPattern'), dec('12next_elementb')),
+        ])
     for token in ('19WarningPresentation', '4Fuel', '13WarningColors'):
         fields.append(select('dashboard_config', '15decode_in_place4next', token))
     # ConfigSeed and VecSeed may each emit deserialize and visit_seq frames.
@@ -121,11 +138,18 @@ def configuration_frames(functions, sizes):
                    branch(outlined('VecSeed', '6Widget'), widget)])
     seed = branch(outlined('ConfigSeed'), *fields)
     header = outlined('16inspect_envelope') | outlined('9crc_parts')
-    serial_widget = branch(ser('6Widget'), ser('5ColorE'), ser('13WarningColors'))
+    serial_widget_children = [ser('5ColorE'), ser('13WarningColors')]
+    if v4:
+        serial_widget_children.extend([utf8, ser('7Readout'), ser('9Secondary'), ser('13PeakSelection')])
+    serial_widget = branch(ser('6Widget'), *serial_widget_children)
     serial_fuel = branch(ser('4Fuel'), ser('serialize_fieldf'))
     serial_controls = branch(ser('10ControlMap'), ser('13ControlAction'))
-    canonical = branch(canonical, serial_widget, serial_fuel, serial_controls,
-                       ser('13ChannelSource'), ser('19WarningPresentation'), ser('13WarningColors'))
+    serial_children = [serial_widget, serial_fuel, serial_controls,
+                       ser('13ChannelSource'), ser('19WarningPresentation'), ser('13WarningColors')]
+    if v4:
+        serial_children.extend([ser('serialize_fieldAtj8_'),
+                                branch(ser('11LedSettings'), ser('10LedPattern'), ser('serialize_fieldb'))])
+    canonical = branch(canonical, *serial_children)
     validation = branch(validate, outlined('8controls17validate_controls'),
                         outlined('8validate10text_valid'),
                         *[select('dashboard_config', token) for token in (
@@ -141,7 +165,10 @@ def configuration_frames(functions, sizes):
     # panic/entry allowance. Still require metadata and retain its observed
     # maximum single frame (80 B); changes require re-review of that allowance.
     debug = outlined('5Debug3fmt')
-    require(all(sizes[a] <= 80 for a in debug), 'config panic formatting frame changed; review allowance')
+    # V4 Field diagnostics enlarge ValidationError Debug to112 B. Its reviewed
+    # nested formatting path still fits the unchanged1024 B panic allowance.
+    require(all(sizes[a] <= (112 if v4 else 80) for a in debug),
+            'config panic formatting frame changed; review allowance')
     # These three equality implementations serve dashboard cache comparisons,
     # not the boot tree. Access equality above IS a validation child. Do not
     # broadly exempt PartialEq, whole modules or names containing "validate".

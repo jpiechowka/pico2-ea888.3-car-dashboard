@@ -109,6 +109,12 @@ fn every_catalogue_action_runs_through_gestures_and_shared_session() {
         } else {
             match action {
                 ControlAction::None => assert_eq!(sim.session().page(), page),
+                // Unreleased Task3 behavior; Task8 installs the command route.
+                ControlAction::AcknowledgeWarnings => {
+                    assert!(!sim.reset_pending());
+                    assert!(sim.session().popup().is_none());
+                    assert_eq!(sim.session().page(), page);
+                }
                 ControlAction::NextView | ControlAction::PreviousView => assert_ne!(sim.session().view_id(), old_view),
                 ControlAction::ToggleBoostUnits => assert!(sim.session().boost_psi()),
                 ControlAction::CycleFps => assert_eq!(sim.session().fps(), FpsMode::Instant),

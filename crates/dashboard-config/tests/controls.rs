@@ -63,6 +63,7 @@ fn compatibility_is_the_independent_approved_table() {
         (ToggleBoostUnits, [true, false, false]),
         (CycleFps, [true, false, false]),
         (ResetStatistics, [true, false, false]),
+        (AcknowledgeWarnings, [true, false, false]),
         (CycleBrightness, [true, false, false]),
         (ToggleBacklight, [false, true, false]),
         (BrightnessUp, [false, true, false]),

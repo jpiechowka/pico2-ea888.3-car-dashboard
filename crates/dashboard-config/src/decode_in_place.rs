@@ -19,6 +19,9 @@ const FIELDS: &[&str] = &[
     "fuel",
     "warning_colors",
     "controls",
+    "history_seconds",
+    "reduced_motion",
+    "led",
 ];
 
 pub(crate) struct ConfigSeed<'a>(pub(crate) &'a mut Config);
@@ -60,6 +63,9 @@ impl<'de> Visitor<'de> for ConfigSeed<'_> {
         self.0.fuel = next(&mut seq, "fuel")?;
         self.0.warning_colors = next(&mut seq, "warning_colors")?;
         self.0.controls = next(&mut seq, "controls")?;
+        self.0.history_seconds = next(&mut seq, "history_seconds")?;
+        self.0.reduced_motion = next(&mut seq, "reduced_motion")?;
+        self.0.led = next(&mut seq, "led")?;
         Ok(())
     }
 }

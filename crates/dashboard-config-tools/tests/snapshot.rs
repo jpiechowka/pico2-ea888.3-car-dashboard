@@ -112,6 +112,39 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
     };
     assert!(run(&["default", "editable.json"]).status.success());
     assert!(run(&["compile", "editable.json", "runtime.eav"]).status.success());
+    for (name, fixture) in [
+        (
+            "v1.json",
+            include_bytes!("../../dashboard-config/tests/fixtures/v1-default.json").as_slice(),
+        ),
+        (
+            "v2.json",
+            include_bytes!("../../dashboard-config/tests/fixtures/v2-default.json").as_slice(),
+        ),
+        (
+            "v3.json",
+            include_bytes!("../../dashboard-config/tests/fixtures/v3-default.json").as_slice(),
+        ),
+        (
+            "v3.eav",
+            include_bytes!("../../dashboard-config/tests/fixtures/v3-default.eav").as_slice(),
+        ),
+    ] {
+        std::fs::write(temp.0.join(name), fixture).unwrap();
+        let output = run(&["compile", name, "migrated.eav"]);
+        assert!(
+            output.status.success(),
+            "{name}: {:?} {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            decode(&std::fs::read(temp.0.join("migrated.eav")).unwrap())
+                .unwrap()
+                .config(),
+            &default_config()
+        );
+    }
     let bytes = std::fs::read(temp.0.join("runtime.eav")).unwrap();
     assert_eq!(decode(&bytes).unwrap().config(), &default_config());
     assert!(run(&["inspect", "runtime.eav"]).status.success());
@@ -120,4 +153,29 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
     assert_eq!(std::fs::read(temp.0.join("runtime.eav")).unwrap(), bytes);
     assert!(!run(&["compile", "missing.json", "runtime.eav"]).status.success());
     assert!(!run(&["unexpected"]).status.success());
+}
+
+#[test]
+fn v3_input_and_complete_v4_globals_use_ordinary_prepare_and_compile() {
+    let temp = Temp::new();
+    let file = temp.0.join("v3.eav");
+    std::fs::write(
+        &file,
+        include_bytes!("../../dashboard-config/tests/fixtures/v3-default.eav"),
+    )
+    .unwrap();
+    let legacy = prepare(Some(file.as_os_str()), &temp.0).unwrap();
+    assert_eq!(decode(legacy.bytes()).unwrap().config(), &default_config());
+    let mut c = default_config();
+    c.reduced_motion = true;
+    c.history_seconds = [900; 8];
+    c.led.normal.kind = LedPatternKind::Breathe;
+    c.widgets[0].advanced.smoothing_ms = 5000;
+    let expected = validate(c).unwrap();
+    let bytes = compile(&expected).unwrap();
+    let file = temp.0.join("v4.eav");
+    std::fs::write(&file, &bytes).unwrap();
+    let prepared = prepare(Some(file.as_os_str()), &temp.0).unwrap();
+    assert_eq!(prepared.bytes(), bytes);
+    assert_eq!(decode(prepared.bytes()).unwrap(), expected);
 }

@@ -139,7 +139,7 @@ fn strict_json_is_shared_and_never_discards_fields() {
         json.replacen("{", "{\"version\":1,", 1),
         format!("{json}{{}}"),
         json.replace("\"Overview\"", "\"\\u0000\""),
-        json.replace("\"decimals\": 2", "\"decimals\": 1.5"),
+        json.replace("\"decimals\":2", "\"decimals\":1.5"),
     ] {
         assert!(from_json_bytes(bad.as_bytes()).is_err(), "accepted invalid JSON");
     }
@@ -156,7 +156,7 @@ fn json_decimal_fields_round_directly_to_the_stored_f32() {
         ..Blend::illustrative()
     });
     let template = to_json(&validate(config).unwrap()).unwrap();
-    assert!(template.contains("\"percent\": 0.0"));
+    assert!(template.contains("\"percent\":0.0"));
     // The first three decimals straddle the exact midpoint between 1.0 and
     // its next f32. The fourth lies below the next midpoint, which ties up.
     for (text, expected_bits) in [
@@ -168,7 +168,7 @@ fn json_decimal_fields_round_directly_to_the_stored_f32() {
         ("-0.0", 0x8000_0000),
         ("12.75", 0x414C_0000),
     ] {
-        let json = template.replacen("\"percent\": 0.0", &format!("\"percent\": {text}"), 1);
+        let json = template.replacen("\"percent\":0.0", &format!("\"percent\":{text}"), 1);
         let accepted = from_json_bytes(json.as_bytes()).unwrap();
         let Fuel::EthanolBlend(blend) = accepted.config().fuel else {
             unreachable!()
@@ -192,8 +192,8 @@ fn json_decimal_rounding_cannot_turn_an_equal_graph_range_into_a_valid_one() {
         max: f32::from_bits(0x3F80_0001),
     };
     let template = to_json(&validate(config).unwrap()).unwrap();
-    assert!(template.contains("\"min\": 0.0"));
-    let json = template.replacen("\"min\": 0.0", "\"min\": 1.0000000596046448", 1);
+    assert!(template.contains("\"min\":0.0"));
+    let json = template.replacen("\"min\":0.0", "\"min\":1.0000000596046448", 1);
     assert!(matches!(
         from_json_bytes(json.as_bytes()),
         Err(ConfigError::Validation(ValidationError {

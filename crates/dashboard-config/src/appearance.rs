@@ -1,14 +1,33 @@
-//! Compact presentation types. All ranges use the channel's canonical units.
+/// Shared style/span truth. Channel compatibility is independently validated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WidgetCapabilities {
+    pub secondary: bool,
+    pub history: bool,
+    pub markers: bool,
+    pub bands: bool,
+    pub band_labels: bool,
+    pub statistics: bool,
+}
 use serde::{Deserialize, Serialize};
 
 use crate::Channel;
 
 impl crate::Widget {
-    pub fn supports_statistics(&self) -> bool {
-        self.gauge.kind.is_numeric() || self.placement.span == crate::Span::TwoByTwo
+    pub fn capabilities(&self) -> WidgetCapabilities {
+        let numeric = self.gauge.kind.is_numeric();
+        WidgetCapabilities {
+            secondary: numeric || self.placement.span != crate::Span::OneByOne,
+            history: numeric,
+            markers: !numeric,
+            bands: !numeric,
+            band_labels: !numeric && self.placement.span == crate::Span::TwoByTwo,
+            statistics: numeric || self.placement.span == crate::Span::TwoByTwo,
+        }
     }
 
-    pub fn shows_graph(&self) -> bool { self.gauge.kind.is_numeric() && self.display.graph }
+    pub fn supports_statistics(&self) -> bool { self.capabilities().statistics }
+
+    pub fn shows_graph(&self) -> bool { self.capabilities().history && self.display.graph }
 
     pub fn shows_trend(&self) -> bool { self.gauge.kind.is_numeric() && self.display.trend }
 

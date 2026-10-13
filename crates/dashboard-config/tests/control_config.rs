@@ -187,25 +187,17 @@ fn v2_import_preserves_custom_widget_values_and_colours() {
     let c = from_json_bytes(&serde_json::to_vec(&v).unwrap()).unwrap();
     assert_eq!(c.config().controls, ControlMap::default());
     let mut upgraded: serde_json::Value = serde_json::from_str(&to_json(&c).unwrap()).unwrap();
-    upgraded.as_object_mut().unwrap().remove("controls");
+    for key in ["controls", "history_seconds", "reduced_motion", "led"] {
+        upgraded.as_object_mut().unwrap().remove(key);
+    }
+    for widget in upgraded["widgets"].as_array_mut().unwrap() {
+        widget.as_object_mut().unwrap().remove("advanced");
+        for key in ["trigger_high", "clear_high", "snooze_s", "priority", "latch"] {
+            widget["warning"].as_object_mut().unwrap().remove(key);
+        }
+    }
     upgraded["version"] = 2.into();
     assert_eq!(upgraded, v);
-    // Build the historical field order from the reviewed current document:
-    // controls is the sole appended v3 field, serialized separately for its length.
-    let mut historical = c.config().clone();
-    historical.version = 2;
-    let mut buffer = [0; MAX_FILE_BYTES];
-    let mut payload = postcard::to_slice(&historical, &mut buffer).unwrap().to_vec();
-    let mut buffer = [0; 64];
-    let controls = postcard::to_slice(&historical.controls, &mut buffer).unwrap();
-    assert!(payload.ends_with(controls));
-    payload.truncate(payload.len() - controls.len());
-    let mut binary = b"EAV1".to_vec();
-    binary.extend_from_slice(&2_u16.to_le_bytes());
-    binary.extend_from_slice(&(payload.len() as u16).to_le_bytes());
-    let mut checked = binary.clone();
-    checked.extend_from_slice(&payload);
-    binary.extend_from_slice(&crc32(&checked).to_le_bytes());
-    binary.extend_from_slice(&payload);
-    assert_eq!(decode(&binary).unwrap(), c);
+    // Historical binary is checked against frozen schemas in legacy_v3 tests;
+    // never manufacture it by stripping fields from an evolving current Widget.
 }

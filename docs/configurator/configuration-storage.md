@@ -4,15 +4,15 @@ The shared configuration library offers `ConfigSlot` for loading one configurati
 
 The slot's initialized placeholder is private. Loading checks file size, magic, envelope version, exact length and checksum before parsing. The Postcard seed assigns fields individually and fills the bounded view and widget collections one element at a time. Complete input consumption, streaming comparison with canonical serialization and the shared semantic validator are required before a reference escapes. A failed load replaces every field with the reviewed default and publishes the original fault alongside it. The slot exposes no storage getter, mutable validated reference or unchecked conversion.
 
-`ConfigSlot` accepts only current version 3 EAV files, including in host builds with the JSON feature enabled. Owned `decode`, `load_at_boot`, `validate` and `default_config` remain available. Host JSON import and owned binary import continue to upgrade the frozen version 1 and 2 formats. JSON uses derived serde; the explicit seed is private and supports the Postcard sequence representation only.
+`ConfigSlot` accepts only current version 4 EAV files, including in host builds with the JSON feature enabled. Owned `decode`, `load_at_boot`, `validate` and `default_config` remain available. Host JSON import and owned binary import continue to upgrade the frozen version 1, 2 and 3 formats. JSON uses strict Serde, including bounded v4 band and flat warning adapters; the explicit seed is private and supports the Postcard sequence representation only.
 
-The wire version and serialized defaults remain unchanged. Capacity remains eight views and sixty-four widgets, with a 16 KiB EAV limit, 128 KiB JSON limit and existing 10,240-byte ARM object guards. The slot path uses no heap, configuration-sized decode temporary or configuration-sized canonicality buffer. Its defaults and semantic validation are shared with the owned APIs.
+The unreleased v4 schema updates wire/default fixtures while capacity remains eight views and sixty-four widgets, with a 16 KiB EAV limit and 128 KiB JSON limit. Measured ARM guards are Config14,576, ValidatedConfig14,588 and BootConfig/ConfigSlot14,600 bytes; they were admitted against unchanged whole-artifact headroom and stack reserves. The slot path uses no heap, configuration-sized decode temporary or configuration-sized canonicality buffer. Its defaults and semantic validation are shared with the owned APIs.
 
 Creating a local slot still puts its storage on the caller's stack. Firmware uses one `ConstStaticCell<ConfigSlot>` initialized with `ConfigSlot::new()`. Core0 takes it once, loads the embedded bytes, then publishes `&'static BootConfig` before Core1 starts. The thin startup task spawns the dashboard task and returns before its large runtime frame is polled. That lifetime boundary must remain intact.
 
-## Target admission, 13 October 2026
+## Historical v3 target admission, 13 October 2026
 
-The current version 3 configuration passed software admission on both standard traced 280 MHz / 70 MHz builds, with default simple outline and parallel rendering. The selected eight-view / sixty-four-widget input was `firmware/target/gauge-audit/maximum-v2.eav`; the build compiler migrated it to current version 3. These measurements do not admit future widget-field growth.
+The then-current version 3 configuration passed software admission on both standard traced 280 MHz / 70 MHz builds, with default simple outline and parallel rendering. The selected eight-view / sixty-four-widget input was `firmware/target/gauge-audit/maximum-v2.eav`; the build compiler migrated it to current version 3. These measurements do not admit future widget-field growth.
 
 From the repository root, the exact capture commands were:
 
@@ -67,3 +67,42 @@ The compiler-frame configuration maximum is `768 + 524 = 1,292` bytes. Boot admi
 The 8 KiB Core0 reserve, 4 KiB Core1 reserve and 32 KiB Core1 stack remain unchanged. Both artifacts pass memory/flash layout, exact flash-helper checks and the revised stack gate. Fourteen stack regression tests pass normally and with Python `-O`; capture/policy tests, both configuration feature suites, host contracts, both traced firmware Clippy commands with `-D warnings`, and all four workspace formatter checks pass. The gate's validation-helper checks were tightened after capture, and both immutable ELFs were rechecked with unchanged admissions; the archives retain their original capture-time Python sources. Clippy still reports pre-existing dependency notices: deprecated `cortex_m_rt::pre_init` in vendored embassy-rp and future incompatibility E0365 in proc-macro-error2 2.0.1. They are outside this change and do not fail the pinned checks.
 
 Device stack high-water, simultaneous interrupt/exception use, physical display/SPI timing and vehicle behavior remain unverified. No target code was run and no device was flashed during this admission. Future advanced fields must retain all established capacities and undergo a separate measured admission before changing object guards or storage representation.
+
+## Unreleased v4 target admission, 13 October 2026
+
+Normal `Build-Dashboard.ps1 -Profile 280-70` captures `v4-schema1-demo280-traced`
+and `v4-schema3-vehicle280-traced` admit the complete v4 schema using the same
+14,007-byte synthetic maximum input, SHA-256
+`c4b7d75f87fa0388a78e5316394c8f4a61321c0bf8a9ebb2771377eb2eee2d02`.
+All 228 manifest source hashes match each frozen source archive. The temporary
+size-measurement cfg is absent from these normal builds and the source.
+
+| Software resource | Demo | Vehicle |
+| --- | ---: | ---: |
+| Static RAM | 444,744 B | 454,728 B |
+| Core0 headroom | 79,544 B | 69,560 B |
+| Boot admission | 2,816 B | 2,816 B |
+| Core1 construction admission | 7,136 B | 26,448 B |
+| Core1 runtime admission | 15,504 B | 12,632 B |
+| Dashboard admission | 27,288 B | 28,320 B |
+
+Demo ELF SHA-256 is
+`2c9048abab9303e517bc87cca48d977186d789599b24f104cddbd2df0552976f`;
+Vehicle is `7ecbced406e3de55ca21fce035bcb96303f620eed3c6cc954390e704c5ac0961`.
+Minimum headroom remains 65,536 B, Core0 reserve 8,192 B and Core1 reserve
+4,096 B. Vehicle retains 4,024 B above minimum headroom. Both artifacts pass
+memory, named stack, exact flash helper and mutation checks. No target code
+was executed; these figures are software admission, not hardware high-water.
+
+Both configurations use a 904-byte loader. The largest configuration child is
+source-array 760 + source 72 + color 16 = 848 B; widget 408 + advanced 384 +
+UTF-8 36 = 828 B is smaller. The boot bound is therefore
+32 + 8 + 904 + 848 + 1,024 = 2,816 B. Warning, history and LED children,
+canonical serializers, borrowed validation and fallback are included at their
+reviewed branch positions. Debug diagnostics now have an observed 112-byte
+maximum single frame and fit the unchanged 1,024-byte formatting/entry
+allowance; unknown configuration helpers continue to fail closed. Exact
+M33 disassembly includes floating-point register saves.
+
+The complete v4 data contract is admitted here. Advanced runtime adapters and
+final integrated admission remain unfinished and this series is unreleased.

@@ -704,11 +704,11 @@ fn malformed_oversize_duplicate_unknown_and_trailing_imports_are_atomic() {
     let mut editor = empty();
     let good = Editor::default().export_json().unwrap();
     let bad_inputs = [
-        good.replacen("\"version\": 3", "\"version\": 3, \"version\": 3", 1),
-        good.replacen("\"version\": 3", "\"version\": 3, \"unknown\": 1", 1),
+        good.replacen("\"version\":4", "\"version\":4, \"version\":4", 1),
+        good.replacen("\"version\":4", "\"version\":4, \"unknown\":1", 1),
         format!("{good} null"),
         good.replacen("14.7", "null", 1)
-            .replacen("\"trigger\": 2.5", "\"trigger\": null", 1),
+            .replacen("\"trigger\":2.5", "\"trigger\":null", 1),
         " ".repeat(MAX_JSON_BYTES + 1),
     ];
     let before = editor.preview().clone();
@@ -1054,6 +1054,11 @@ fn every_display_option_fuel_variant_warning_mode_and_span_round_trips() {
             Applicability::VehicleAndDemo
         };
         widget.warning.message = "Configured lambda".try_into().unwrap();
+        widget.advanced.readout = if widget.display.afr {
+            Readout::LambdaAndAfr
+        } else {
+            Readout::Lambda
+        };
         editor.apply(Edit::UpdateWidget(widget)).unwrap();
         editor
             .apply(Edit::SetWarningPresentation(WarningPresentation {
@@ -1374,7 +1379,7 @@ fn decimal_raw_json_and_saved_inputs_preserve_the_same_device_value() {
     let mut initial = Editor::new(config.clone()).unwrap();
     let json_template = initial.export_json().unwrap();
     let saved_template = initial.begin_save().unwrap().json().to_owned();
-    assert!(json_template.contains("\"percent\": 0.0"));
+    assert!(json_template.contains("\"percent\":0.0"));
     assert!(saved_template.contains("\"percent\":0.0"));
     for (text, expected_bits) in [
         ("1.0000000596046448", 0x3F80_0001),
@@ -1396,7 +1401,7 @@ fn decimal_raw_json_and_saved_inputs_preserve_the_same_device_value() {
         assert_eq!(blend.percent.to_bits(), expected_bits, "raw decimal {text}");
         let binary = typed.export_binary().unwrap();
 
-        let json = json_template.replacen("\"percent\": 0.0", &format!("\"percent\": {text}"), 1);
+        let json = json_template.replacen("\"percent\":0.0", &format!("\"percent\":{text}"), 1);
         let mut imported = Editor::new(config.clone()).unwrap();
         let request = imported.begin_import().unwrap();
         imported
@@ -1444,8 +1449,8 @@ fn decimal_raw_and_json_graph_bounds_reject_the_same_equal_endpoints() {
     let before = imported.export_binary().unwrap();
     let revision = imported.revision();
     let template = imported.export_json().unwrap();
-    assert!(template.contains("\"min\": 0.0"));
-    let json = template.replacen("\"min\": 0.0", "\"min\": 1.0000000596046448", 1);
+    assert!(template.contains("\"min\":0.0"));
+    let json = template.replacen("\"min\":0.0", "\"min\":1.0000000596046448", 1);
     let request = imported.begin_import().unwrap();
     assert_eq!(
         imported.complete_import(request, ImportFormat::Json, json.as_bytes()),
@@ -1584,4 +1589,55 @@ fn saved_v2_migrates_controls_and_preserves_gauge_colours_and_selection() {
     assert_eq!(editor.preview().config().widgets[0].colors, WidgetColors::default());
     let exported = editor.export_binary().unwrap();
     assert_eq!(decode(&exported).unwrap().config(), editor.preview().config());
+}
+
+#[test]
+fn v4_full_schema_editor_save_export_and_restore_use_normal_apis() {
+    let mut c = default_config();
+    c.history_seconds = [900; 8];
+    c.reduced_motion = true;
+    c.led.normal.kind = LedPatternKind::Off;
+    c.led.on_debug = true;
+    c.led.backlight_off = true;
+    c.widgets[0].advanced.readout = Readout::Psi;
+    c.widgets[0].advanced.secondary = Secondary::Kpa;
+    c.widgets[0].advanced.smoothing_ms = 750;
+    c.widgets[0].advanced.peak_mode = PeakSelection::Minimum;
+    c.widgets[0].advanced.reference_mode = ReferenceMode::Manual;
+    c.widgets[0].advanced.reference = 1.25;
+    c.widgets[0]
+        .advanced
+        .set_bands(&[
+            Band::new(-1.0, 0.0, Color(65535), "LOW").unwrap(),
+            Band::new(0.0, 2.0, Color(65535), "MID").unwrap(),
+            Band::new(2.0, 3.0, Color(65535), "HIGH").unwrap(),
+        ])
+        .unwrap();
+    c.widgets[0].warning.mode = LimitMode::OutsideWindow;
+    c.widgets[0].warning.trigger = -1.0;
+    c.widgets[0].warning.clear = 0.0;
+    c.widgets[0].warning.advanced.trigger_high = 3.0;
+    c.widgets[0].warning.advanced.clear_high = 2.0;
+    c.widgets[3].warning.advanced.latch = true;
+    c.widgets[3].warning.advanced.snooze_s = 900;
+    c.widgets[3].warning.advanced.priority = Priority::Critical;
+    c.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    let mut editor = Editor::new(c.clone()).unwrap();
+    let json = editor.export_json().unwrap();
+    assert!(!json.contains('\n'));
+    assert_eq!(from_json_bytes(json.as_bytes()).unwrap().config(), &c);
+    let binary = editor.export_binary().unwrap();
+    assert_eq!(decode(&binary).unwrap().config(), &c);
+    let request = editor.begin_save().unwrap();
+    assert!(request.json().len() <= MAX_SAVED_BYTES);
+    let restored = Editor::from_saved_state(request.json().as_bytes()).unwrap();
+    assert_eq!(restored.preview().config(), &c);
+    let legacy = serde_json::json!({"editor_version":1,"selected_view":1,"selected_widget":1,"config":serde_json::from_slice::<serde_json::Value>(include_bytes!("../../crates/dashboard-config/tests/fixtures/v3-default.json")).unwrap()});
+    assert_eq!(
+        Editor::from_saved_state(&serde_json::to_vec(&legacy).unwrap())
+            .unwrap()
+            .preview()
+            .config(),
+        &default_config()
+    );
 }
