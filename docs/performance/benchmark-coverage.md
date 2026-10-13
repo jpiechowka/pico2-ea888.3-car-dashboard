@@ -1,8 +1,11 @@
 # Fixed host workload coverage
 
-The current host suite contains 75 Criterion cases on the production pure Rust
+The current host suite contains 139 Criterion cases on the production pure Rust
 modules. The fixture sources are in `host/benches/dashboard_perf.rs`,
-`scene_replay/` and `coverage/`. The latter two are also compiled by host tests.
+`scene_replay/`, `coverage/`, `config_perf.rs`, `view_perf.rs` and `rule_perf.rs`.
+The first two helper directories are also compiled by host tests. The count is
+the unique registered `Testing ... / Success` cases from a complete benchmark
+smoke run, including loop-generated cases, rather than textual macro calls.
 Each case uses 30 samples, one second of warmup and two seconds of measurement.
 The [capture policy](benchmark-policy.md) requires frozen source, compiler and
 runner identity for comparisons.
@@ -24,6 +27,10 @@ RP2350 cycles, DMA overlap or physical FPS.
 | Model to image | Eight-frame Demo acquisition and 17-step slow/bursty RX12/Session replays, each with paired full and retained paths; state, age, quality, peaks and pixels checked |
 | Ownership and observability | UART ring copy, session/vehicle service, input mailbox, diagnostic distributions, frame windows, bounded logging and settings/maintenance models |
 | Device kernels | Four bounded kernels also built for the opt-in target benchmark; host results use the same finite work and checksum, with no claimed host-to-device conversion |
+| Configuration (13 cases) | Default and advanced maximum validation, encode, owned decode, slot decode and late payload fallback; separate early bad-CRC and oversize rejection |
+| Configured views (34 cases) | Default/wide full and retained paths plus all six styles, prepared once per frame through production presentation, including default smoothing Off |
+| Advanced bounded work (13 cases) | 0/8/64 warnings, 64 independent peaks sharing one channel, one-day history gap, eight smoothed three-band Circular/Horizontal gauges with both identical and changed pixels, static/reconstructed graphs, complete 64-warning cycles in both paging modes |
+| Rule/LED work (4 cases) | Maximum ingestion, snapshot and single warning-page scan, plus admitted LED policy evaluation |
 
 Both outline configurations pass correctness and benchmark smoke checks.
 Published timing captures state their exact feature flags; do not infer the
@@ -39,6 +46,15 @@ also checks 33 color/geometry combinations against an independent coordinate
 oracle on a nonzero background. See the [follow-up measurements](follow-up-host-results-2026-10-11.md)
 for the rejected experiments and timing limits; older captures retain their
 original workload identity.
+
+The advanced maximum configuration enables 64 independent widgets across eight
+views, all six styles, 192 bands, independent smoothing/peak times, advanced
+warning options, all channel history windows and D2 LED globals. Older captures
+whose `maximum` fixture expanded only strings/source/fuel fields retain that
+older meaning. Full-cycle paging visits all 64 identities (64 CycleOne pages or
+22 ListThree pages); it is distinct from the single-page scan case. See the
+[advanced admission record](advanced-options-admission.md) for fixture caps,
+matched timings, changed-work comparisons and target resource limits.
 
 ## Fill work counts
 

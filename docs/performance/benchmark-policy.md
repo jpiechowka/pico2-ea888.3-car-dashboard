@@ -18,9 +18,12 @@ machine identity. The identifier is not an automatic load, thermal or power
 policy check. Keep those conditions stable and inspect distributions. Shared
 GitHub runners run correctness and benchmark smoke checks, with no timing gate.
 
-Capture policy 2 rejects compiler, wrapper, target, profile and rustflags
-environment overrides and effective Cargo configuration overrides. Cargo uses
-the exact rustup compiler recorded by path and `-Vv`. The dated toolchain,
+Capture policy 2 rejects direct compiler overrides (`RUSTC`), compiler wrappers,
+target, profile and rustflags environment overrides, and effective Cargo
+configuration overrides. `RUSTUP_TOOLCHAIN` is an allowed rustup selector: its
+value is recorded and must match between captures. Cargo uses the exact resolved
+rustup compiler recorded by path and `-Vv`; the wrapper pins `RUSTC` internally
+after rejecting caller overrides. The dated toolchain,
 manifests, lockfiles, Rust implementation, all benchmark files and capture
 scripts are archived before execution and checked again afterward. A failed
 run retains its inputs but does not produce accepted completion metadata.
