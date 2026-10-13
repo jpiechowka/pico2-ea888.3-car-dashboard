@@ -579,3 +579,16 @@ fn invalid_typed_snapshot_and_empty_view_have_no_editor_effects() {
     e.apply(Edit::ApplyAppearance(request)).unwrap();
     assert_eq!(state(&e), before);
 }
+
+#[test]
+fn failed_explicit_reload_marks_storage_failed_without_losing_memory_records() {
+    let e = selected();
+    let mut store = PresetStore::restore(Ok(None));
+    store.add("Mine", changed(&e)).unwrap();
+    let request = store.begin_save().unwrap();
+    store.finish_save(&request, Ok(())).unwrap();
+    let before = store.export().unwrap();
+    assert!(store.reload(Err(StorageFailure::Denied)).is_err());
+    assert_eq!(store.status(), PresetStatus::Failed(StorageFailure::Denied));
+    assert_eq!(store.export().unwrap(), before);
+}

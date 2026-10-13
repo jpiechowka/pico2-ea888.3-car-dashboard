@@ -315,6 +315,7 @@ pub enum PresetError {
     DuplicateName,
     Capacity,
     Snapshot(EditorError),
+    Storage(StorageFailure),
     Conflict,
     Stale,
     Exhausted,
@@ -330,6 +331,10 @@ impl PresetError {
             Self::DuplicateName => "That exact preset name already exists; use explicit Replace",
             Self::Capacity => "At most 16 named presets can be stored",
             Self::Snapshot(_) => "Preset colors or precision are invalid",
+            Self::Storage(StorageFailure::Quota) => {
+                "Preset storage is full; memory presets remain usable. Export a backup"
+            }
+            Self::Storage(_) => "Preset storage is unavailable; memory presets remain usable. Export a backup",
             Self::Conflict => "Stored presets changed; export, reload or explicitly replace them",
             Self::Stale => "Presets changed; refresh this action",
             Self::Exhausted => "Preset identity exhausted; export and reopen Studio",
@@ -567,7 +572,13 @@ impl PresetStore {
         &mut self,
         observation: Result<Option<String>, StorageFailure>,
     ) -> Result<(), PresetError> {
-        let current = observation.map_err(|_| PresetError::Conflict)?;
+        let current = match observation {
+            Ok(current) => current,
+            Err(failure) => {
+                self.observe(Err(failure));
+                return Err(PresetError::Storage(failure));
+            }
+        };
         let records = match &current {
             Some(text) => decode(text)?,
             None => heapless::Vec::new(),
