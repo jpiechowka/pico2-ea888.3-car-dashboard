@@ -4,6 +4,7 @@ use dashboard_core::popup::Popup;
 use dashboard_core::samples::{Quality, SensorId};
 use dashboard_core::warning_state::WarningFeedback;
 
+use crate::appearance_presets::{PresetError, PresetStore};
 use crate::config::ControlPage;
 use crate::editor::{AcceptedConfigKey, Editor, EditorError, Revision, StorageFailure};
 use crate::events::*;
@@ -129,6 +130,62 @@ pub enum StorageIssue {
     Corrupt,
     Conflict,
     Exhausted,
+}
+
+/// The checked outcome of this save attempt, independent of an earlier UI conflict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DraftSaveAttempt {
+    Conflict,
+    Completed(Result<(), StorageFailure>),
+}
+impl DraftSaveAttempt {
+    pub fn is_conflict(self) -> bool { matches!(self, Self::Conflict) }
+
+    pub fn acknowledgment(self) -> Result<(), StorageFailure> {
+        match self {
+            Self::Conflict => Err(StorageFailure::Denied),
+            Self::Completed(result) => result,
+        }
+    }
+
+    /// Conflict is reported by the existing conflict hook exactly once.
+    pub fn storage_result(self) -> Option<Result<(), StorageIssue>> {
+        match self {
+            Self::Conflict => None,
+            Self::Completed(result) => Some(result.map_err(StorageIssue::Failure)),
+        }
+    }
+}
+
+/// Called inside the draft lock, after token currentness has been checked.
+pub fn attempt_draft_save(
+    replace: bool,
+    current: Result<Option<String>, StorageFailure>,
+    saved: &Option<String>,
+    write: impl FnOnce() -> Result<(), StorageFailure>,
+) -> DraftSaveAttempt {
+    match current {
+        Err(failure) => DraftSaveAttempt::Completed(Err(failure)),
+        Ok(current) if !replace && current != *saved => DraftSaveAttempt::Conflict,
+        Ok(_) => DraftSaveAttempt::Completed(write()),
+    }
+}
+
+/// Reload consumes the actual observation and reports this read's result only.
+/// A prior failed write remains independent in AdapterState.
+pub fn reload_preset_attempt(
+    store: &mut PresetStore,
+    observation: Result<Option<String>, StorageFailure>,
+) -> (Result<(), PresetError>, Result<(), StorageIssue>) {
+    let result = store.reload(observation);
+    let read = result.map_err(|error| {
+        match error {
+            PresetError::Storage(failure) => StorageIssue::Failure(failure),
+            PresetError::Exhausted => StorageIssue::Exhausted,
+            _ => StorageIssue::Corrupt,
+        }
+    });
+    (result, read)
 }
 #[derive(Clone, Copy)]
 pub enum RenderLane {

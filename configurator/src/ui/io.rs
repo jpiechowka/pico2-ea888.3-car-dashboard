@@ -1,4 +1,12 @@
-use dashboard_configurator::event_adapters::{ImportFailure, TransferFailure, import_outcome, transfer_failure};
+use dashboard_configurator::event_adapters::{
+    DraftSaveAttempt,
+    ImportFailure,
+    TransferFailure,
+    attempt_draft_save,
+    import_outcome,
+    reload_preset_attempt,
+    transfer_failure,
+};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
@@ -113,9 +121,13 @@ pub(super) fn presets_changed(ui: Ui) {
 }
 pub(super) fn reload_presets(ui: Ui) {
     let observation = preset_observation();
-    let mut result = Ok(());
-    ui.presets.update(|store| result = store.reload(observation));
-    report_preset_status(ui, true);
+    let mut attempt = None;
+    ui.presets
+        .update(|store| attempt = Some(reload_preset_attempt(store, observation)));
+    let Some((result, read)) = attempt else {
+        return;
+    };
+    ui.storage_read_outcome(StorageArea::Presets, read);
     if let Err(error) = result {
         ui.notice.set(error.message().into());
     }
@@ -437,22 +449,30 @@ pub fn save(
         {
             return;
         }
-        let result = storage().and_then(|s| {
-            let current = s.get_item(STORAGE_KEY).map_err(storage_error)?;
-            if !replace && current != ui.saved_bytes.get_untracked() {
-                conflict(ui, false);
-                return Err(StorageFailure::Denied);
+        let attempt = match storage() {
+            Ok(s) => {
+                attempt_draft_save(
+                    replace,
+                    s.get_item(STORAGE_KEY).map_err(storage_error),
+                    &ui.saved_bytes.get_untracked(),
+                    || s.set_item(STORAGE_KEY, request.json()).map_err(storage_error),
+                )
             }
-            s.set_item(STORAGE_KEY, request.json()).map_err(storage_error)?;
-            ui.saved_bytes.set(Some(request.json().to_string()));
+            Err(failure) => DraftSaveAttempt::Completed(Err(failure)),
+        };
+        if attempt.is_conflict() {
+            conflict(ui, false);
+        } else {
             ui.conflict.set(false);
-            Ok(())
-        });
+            if attempt.acknowledgment().is_ok() {
+                ui.saved_bytes.set(Some(request.json().to_string()));
+            }
+        }
         ui.editor.update(|e| {
-            let _ = e.acknowledge_save(token, result);
+            let _ = e.acknowledge_save(token, attempt.acknowledgment());
         });
-        if !ui.conflict.get_untracked() {
-            ui.storage_outcome(StorageArea::Draft, result.map_err(StorageIssue::Failure));
+        if let Some(result) = attempt.storage_result() {
+            ui.storage_outcome(StorageArea::Draft, result);
             if result.is_ok() {
                 ui.storage_read_outcome(StorageArea::Draft, Ok(()));
             }

@@ -609,3 +609,136 @@ fn successful_storage_read_cannot_claim_recovery_of_failed_write() {
     assert!(adapter.storage_read(StorageArea::Draft, Ok(())).is_none());
     assert!(adapter.storage(StorageArea::Draft, Ok(())).is_some());
 }
+
+#[test]
+fn draft_conflict_replacement_reports_actual_failure_then_one_recovery() {
+    use dashboard_configurator::editor::{Editor, SaveStatus, StorageFailure};
+    for failure in [
+        StorageFailure::Quota,
+        StorageFailure::Denied,
+        StorageFailure::Unavailable,
+    ] {
+        let mut editor = Editor::default();
+        let mut adapter = AdapterState::default();
+        let mut events = EventStore::default();
+        let mut console = CapturedConsole::default();
+        let previous = Some("previous draft".to_owned());
+        let current = Some("another tab's draft".to_owned());
+        let request = editor.begin_save().unwrap();
+        let conflict = attempt_draft_save(false, Ok(current.clone()), &previous, || {
+            panic!("conflicting draft must not be written")
+        });
+        assert!(conflict.is_conflict());
+        assert!(conflict.storage_result().is_none()); // conflict has its own once-only hook
+        editor
+            .acknowledge_save(request.token(), conflict.acknowledgment())
+            .unwrap_err();
+        let notice = adapter
+            .storage(StorageArea::Draft, Err(StorageIssue::Conflict))
+            .unwrap();
+        emit(&mut events, &mut console, true, notice.input(0, None)).unwrap();
+
+        let request = editor.begin_save().unwrap();
+        let observation = if failure == StorageFailure::Unavailable {
+            Err(failure)
+        } else {
+            Ok(current.clone())
+        };
+        let failed = attempt_draft_save(true, observation, &previous, || {
+            assert_ne!(failure, StorageFailure::Unavailable, "failed read must not write");
+            Err(failure)
+        });
+        assert!(!failed.is_conflict()); // the old conflict is not this operation's outcome
+        editor
+            .acknowledge_save(request.token(), failed.acknowledgment())
+            .unwrap_err();
+        assert_eq!(editor.save_status(), SaveStatus::Failed(failure));
+        let notice = adapter
+            .storage(StorageArea::Draft, failed.storage_result().unwrap())
+            .unwrap();
+        assert_eq!(notice.code, "storage.failed");
+        emit(&mut events, &mut console, true, notice.input(1, None)).unwrap();
+        assert_eq!(events.snapshot(&EventFilter::new("recovered")).matching, 0);
+        assert_eq!(console.0.len(), 2);
+
+        let request = editor.begin_save().unwrap();
+        let saved = attempt_draft_save(true, Ok(current), &previous, || Ok(()));
+        editor
+            .acknowledge_save(request.token(), saved.acknowledgment())
+            .unwrap();
+        assert_eq!(editor.save_status(), SaveStatus::Saved);
+        let notice = adapter
+            .storage(StorageArea::Draft, saved.storage_result().unwrap())
+            .unwrap();
+        assert_eq!(notice.code, "storage.recovered");
+        emit(&mut events, &mut console, true, notice.input(2, None)).unwrap();
+        assert!(
+            adapter
+                .storage(StorageArea::Draft, saved.storage_result().unwrap())
+                .is_none()
+        );
+        let snapshot = events.snapshot(&EventFilter::default());
+        assert_eq!(snapshot.records().len(), 3);
+        assert!(snapshot.records().iter().all(|e| e.count.value == 1));
+        assert_eq!(events.snapshot(&EventFilter::new("recovered")).matching, 1);
+    }
+}
+
+#[test]
+fn preset_reload_reports_read_failure_and_recovery_without_recovering_failed_write() {
+    use dashboard_configurator::appearance_presets::{PresetError, PresetStatus, PresetStore};
+    use dashboard_configurator::editor::StorageFailure;
+    let saved = Some(r#"{"version":1,"records":[]}"#.to_owned());
+    for failure in [
+        StorageFailure::Denied,
+        StorageFailure::Quota,
+        StorageFailure::Unavailable,
+    ] {
+        let mut presets = PresetStore::restore(Ok(saved.clone()));
+        assert_eq!(presets.status(), PresetStatus::Saved);
+        let mut adapter = AdapterState::default();
+        let mut events = EventStore::default();
+        let mut console = CapturedConsole::default();
+
+        // A real failed write remains a separate recovery obligation.
+        let write = presets.begin_save().unwrap();
+        presets.finish_save(&write, Err(StorageFailure::Quota)).unwrap();
+        assert_eq!(presets.status(), PresetStatus::Failed(StorageFailure::Quota));
+        let notice = adapter
+            .storage(StorageArea::Presets, Err(StorageIssue::Failure(StorageFailure::Quota)))
+            .unwrap();
+        emit(&mut events, &mut console, true, notice.input(0, None)).unwrap();
+
+        let (result, read) = reload_preset_attempt(&mut presets, Err(failure));
+        assert_eq!(result, Err(PresetError::Storage(failure)));
+        assert_eq!(presets.status(), PresetStatus::Failed(failure));
+        assert!(matches!(presets.begin_save(), Err(PresetError::Conflict)));
+        let notice = adapter.storage_read(StorageArea::Presets, read).unwrap();
+        assert_eq!(notice.code, "storage.failed");
+        assert!(notice.message.starts_with("Read:"));
+        emit(&mut events, &mut console, true, notice.input(1, None)).unwrap();
+
+        let (result, read) = reload_preset_attempt(&mut presets, Ok(saved.clone()));
+        assert_eq!(result, Ok(()));
+        assert_eq!(presets.status(), PresetStatus::Saved);
+        let notice = adapter.storage_read(StorageArea::Presets, read).unwrap();
+        assert_eq!(notice.code, "storage.recovered");
+        assert!(notice.message.starts_with("Read:"));
+        emit(&mut events, &mut console, true, notice.input(2, None)).unwrap();
+        let (result, read) = reload_preset_attempt(&mut presets, Ok(saved.clone()));
+        assert_eq!(result, Ok(()));
+        assert!(adapter.storage_read(StorageArea::Presets, read).is_none());
+        assert_eq!(events.snapshot(&EventFilter::new("recovered")).matching, 1);
+        assert_eq!(console.0.len(), 2);
+
+        let write = presets.begin_save().unwrap();
+        presets.finish_save(&write, Ok(())).unwrap();
+        let notice = adapter.storage(StorageArea::Presets, Ok(())).unwrap();
+        assert!(notice.message.starts_with("Write:"));
+        emit(&mut events, &mut console, true, notice.input(3, None)).unwrap();
+        assert!(adapter.storage(StorageArea::Presets, Ok(())).is_none());
+        let snapshot = events.snapshot(&EventFilter::default());
+        assert_eq!(snapshot.records().len(), 4);
+        assert!(snapshot.records().iter().all(|e| e.count.value == 1));
+    }
+}
