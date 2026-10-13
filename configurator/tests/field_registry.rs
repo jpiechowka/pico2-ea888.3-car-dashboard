@@ -334,3 +334,186 @@ fn capabilities_and_resolution_follow_real_style_span_and_candidate_lineage() {
         RegistryError::Editor(EditorError::StaleToken)
     );
 }
+
+#[test]
+fn persistent_field_ids_follow_current_view_and_widget_positions_without_rebinding_objects() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let original = editor.preview().config().views[0].id;
+    editor
+        .apply(Edit::DuplicateView {
+            id: original,
+            name: "Copy".into(),
+        })
+        .unwrap();
+    let copy = editor.selection().view;
+    let view_binding = FieldId::Raw(RawField::ViewName(copy));
+    assert_eq!(
+        view_binding.resolve(&editor).unwrap(),
+        Registry::dom_id(FieldKey::ViewName, TargetOwner::View(1))
+    );
+    let old_target = Registry::target(&editor, FieldKey::ViewName, TargetOwner::View(1)).unwrap();
+    editor.apply(Edit::ReorderView { id: copy, index: 0 }).unwrap();
+    assert_eq!(editor.selection().view, copy);
+    assert_eq!(
+        view_binding.resolve(&editor).unwrap(),
+        Registry::resolve(
+            &editor,
+            Registry::target(&editor, FieldKey::ViewName, TargetOwner::View(0)).unwrap()
+        )
+        .unwrap()
+        .dom_id
+    );
+    assert_eq!(
+        Registry::resolve(&editor, old_target).unwrap_err(),
+        RegistryError::Editor(EditorError::StaleToken)
+    );
+    editor.apply(Edit::ReorderView { id: copy, index: 1 }).unwrap();
+    editor.apply(Edit::DeleteView(original)).unwrap();
+    assert_eq!(
+        view_binding.resolve(&editor).unwrap(),
+        Registry::dom_id(FieldKey::ViewName, TargetOwner::View(0))
+    );
+
+    let mut editor = Editor::new(default_config()).unwrap();
+    let id = editor.preview().config().widgets[1].id;
+    let preceding = editor.preview().config().widgets[0].id;
+    let channel = editor.preview().config().widgets[1].channel;
+    let view = editor.preview().config().widgets[1].view;
+    editor.select(Selection { view, widget: Some(id) }).unwrap();
+    let bindings = [
+        FieldId::Raw(RawField::Widget(id, WidgetField::Label)),
+        FieldId::Widget {
+            id,
+            key: FieldKey::Readout,
+        },
+        FieldId::Widget {
+            id,
+            key: FieldKey::WarningEnabled,
+        },
+        FieldId::Raw(RawField::Widget(id, WidgetField::SmoothingMilliseconds)),
+    ];
+    let before = bindings.map(|binding| binding.resolve(&editor).unwrap());
+    let preset = bindings[3].preset(&editor).unwrap();
+    editor.apply(Edit::ReorderWidget { id, index: 0 }).unwrap();
+    for (binding, old) in bindings.into_iter().zip(before) {
+        let current = binding.resolve(&editor).unwrap();
+        assert_ne!(current, old);
+        assert!(current.starts_with("studio-field-w-0-"));
+    }
+    assert_ne!(bindings[3].preset(&editor).unwrap(), preset);
+    editor.apply(Edit::ReorderWidget { id, index: 1 }).unwrap();
+    editor.apply(Edit::DeleteWidget(preceding)).unwrap();
+    for binding in bindings {
+        assert!(binding.resolve(&editor).unwrap().starts_with("studio-field-w-0-"));
+    }
+    assert_eq!(editor.selection(), Selection { view, widget: Some(id) });
+    assert_eq!(editor.preview().config().widgets[0].channel, channel);
+}
+
+#[test]
+fn inspecting_current_and_other_view_rules_leaves_all_canvas_objects_available() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let original = editor.selection().view;
+    editor
+        .apply(Edit::DuplicateView {
+            id: original,
+            name: "Other".into(),
+        })
+        .unwrap();
+    editor
+        .select(Selection {
+            view: original,
+            widget: None,
+        })
+        .unwrap();
+    let current = editor
+        .editing_config()
+        .widgets
+        .iter()
+        .filter(|w| w.view == original)
+        .cloned()
+        .collect::<Vec<_>>();
+    let other_index = editor
+        .editing_config()
+        .widgets
+        .iter()
+        .position(|w| w.view != original)
+        .unwrap();
+    for index in [1, other_index] {
+        let target = Registry::target(&editor, FieldKey::WarningEnabled, TargetOwner::Widget(index)).unwrap();
+        let stamp = editor.stamp();
+        let selection = editor.selection();
+        assert!(Registry::resolve(&editor, target).is_ok());
+        for widget in &current {
+            assert_eq!(Registry::layout_widget(&editor, widget.id), Some(widget.clone()));
+        }
+        assert_eq!(editor.stamp(), stamp);
+        assert_eq!(editor.selection(), selection);
+    }
+    // Normal hit/context actions still use the real current layout and reducer.
+    editor
+        .select(Selection {
+            view: original,
+            widget: Some(current[0].id),
+        })
+        .unwrap();
+    let menu = dashboard_configurator::widget_actions::WidgetMenu::open(&mut editor, current[1].id, None).unwrap();
+    assert_eq!(menu.target(), current[1].id);
+    assert_eq!(editor.selection().widget, Some(current[1].id));
+    assert!(matches!(
+        editor.apply(Edit::ResizeWidget {
+            id: current[0].id,
+            span: Span::TwoByOne,
+        }),
+        Err(EditorError::Validation(ValidationError {
+            code: ErrorCode::Overlap,
+            ..
+        }))
+    ));
+    assert_ne!(
+        Registry::layout_widget(&editor, current[0].id).unwrap().placement,
+        current[0].placement
+    );
+    assert_eq!(editor.preview().config().widgets[0].placement, current[0].placement);
+    assert_eq!(
+        Registry::layout_widget(&editor, current[0].id),
+        editor
+            .editing_config()
+            .widgets
+            .iter()
+            .find(|w| w.id == current[0].id)
+            .cloned()
+    );
+}
+
+#[test]
+fn numeric_gauge_scale_fields_explain_absent_controls_and_retained_repair_still_works() {
+    let mut editor = Editor::new(default_config()).unwrap();
+    let id = editor.preview().config().widgets[0].id;
+    let view = editor.preview().config().widgets[0].view;
+    let minimum = editor.preview().config().widgets[0].gauge.min.to_string();
+    editor.select(Selection { view, widget: Some(id) }).unwrap();
+    for key in [FieldKey::GaugeMinimum, FieldKey::GaugeMaximum, FieldKey::GaugeExpand] {
+        let capability = Registry::widget_capability(key, &editor.preview().config().widgets[0]);
+        assert!(!capability.is_active(), "{key:?} has no normal Numeric control");
+        assert!(capability.reason().unwrap().contains("Numeric"));
+    }
+    let field = RawField::Widget(id, WidgetField::GaugeMinimum);
+    editor.set_raw(editor.field_token(), field, "bad".into()).unwrap();
+    assert!(editor.widget_fields_need_repair(
+        id,
+        &[WidgetField::GaugeMinimum, WidgetField::GaugeMaximum],
+        Field::GaugeRange
+    ));
+    let retained = editor.raw_inspection_target(0).unwrap();
+    editor.set_inspected_raw(retained, minimum).unwrap();
+    assert!(!editor.has_invalid_draft());
+    assert_eq!(editor.selection(), Selection { view, widget: Some(id) });
+    let mut widget = editor.preview().config().widgets[0].clone();
+    for kind in GaugeKind::ALL.into_iter().filter(|kind| !kind.is_numeric()) {
+        widget.gauge.kind = kind;
+        for key in [FieldKey::GaugeMinimum, FieldKey::GaugeMaximum, FieldKey::GaugeExpand] {
+            assert!(Registry::widget_capability(key, &widget).is_active());
+        }
+    }
+}

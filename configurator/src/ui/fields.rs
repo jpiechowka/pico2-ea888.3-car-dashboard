@@ -323,7 +323,7 @@ pub fn TextField(
     #[prop(optional)] accessible_label: Option<String>,
     #[prop(optional)] disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
-    let id = if id.is_empty() { ui.raw_dom(field) } else { id };
+    let id = move || if id.is_empty() { ui.raw_dom(field) } else { id.clone() };
     let text = RwSignal::new(ui.editor.with_untracked(|e| raw_value(e, field)));
     let focused = RwSignal::new(false);
     let binding = RwSignal::new(ui.editor.with_untracked(|e| raw_binding(ui, e, field)));
@@ -375,11 +375,20 @@ pub fn Choice(
     #[prop(default = false)] layout: bool,
     #[prop(default = false)] repair_invalid_draft: bool,
     #[prop(default = String::new())] id: String,
+    #[prop(optional)] dynamic_id: Option<Signal<String>>,
     #[prop(optional)] accessible_label: Option<String>,
     #[prop(optional)] disabled: Option<Signal<bool>>,
     #[prop(optional)] disabled_values: Option<Signal<Vec<String>>>,
 ) -> impl IntoView {
-    let id = if id.is_empty() { ui.control_id(label) } else { id };
+    let id = move || {
+        dynamic_id.map(|id| id.get()).unwrap_or_else(|| {
+            if id.is_empty() {
+                ui.control_id(label)
+            } else {
+                id.clone()
+            }
+        })
+    };
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {
@@ -406,7 +415,13 @@ pub fn Toggle(
     #[prop(default = String::new())] id: String,
     #[prop(optional)] disabled: Option<Signal<bool>>,
 ) -> impl IntoView {
-    let id = if id.is_empty() { ui.control_id(label) } else { id };
+    let id = move || {
+        if id.is_empty() {
+            ui.control_id(label)
+        } else {
+            id.clone()
+        }
+    };
     let binding = RwSignal::new(ui.editor.with_untracked(Editor::field_token));
     Effect::new(move |_| binding.set(ui.editor.with(Editor::field_token)));
     view! {

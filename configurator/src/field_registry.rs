@@ -221,7 +221,68 @@ pub struct ResolvedField {
     pub inspection: ResolvedInspection,
 }
 pub struct Registry;
+
+/// Persistent control properties resolve their current DOM position on each
+/// render. This is a display binding, never edit or inspection authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldId {
+    Raw(RawField),
+    Widget { id: u16, key: FieldKey },
+}
+impl FieldId {
+    pub fn resolve(
+        self,
+        editor: &Editor,
+    ) -> Result<String, RegistryError> {
+        let (key, owner) = match self {
+            Self::Raw(field) => {
+                (
+                    Registry::raw_key(field),
+                    Registry::raw_owner(editor, field).ok_or(RegistryError::Unavailable)?,
+                )
+            }
+            Self::Widget { id, key } => {
+                if Registry::descriptor(key).scope != Scope::Widget {
+                    return Err(RegistryError::Unavailable);
+                }
+                (
+                    key,
+                    Registry::raw_owner(editor, RawField::Widget(id, WidgetField::Label))
+                        .ok_or(RegistryError::Unavailable)?,
+                )
+            }
+        };
+        if let TargetOwner::Band(index, band) = owner
+            && Registry::candidate_widget(editor, index)
+                .is_none_or(|widget| widget.advanced.bands().get(band as usize).is_none())
+        {
+            return Err(RegistryError::Unavailable);
+        }
+        Ok(Registry::dom_id(key, owner))
+    }
+
+    pub fn preset(
+        self,
+        editor: &Editor,
+    ) -> Result<String, RegistryError> {
+        self.resolve(editor).map(|id| format!("{id}-preset"))
+    }
+}
 impl Registry {
+    /// Canvas layout/hits use the ordinary editing layout, independently of
+    /// any read-only inspected object. Reducers still check mutation authority.
+    pub fn layout_widget(
+        editor: &Editor,
+        id: u16,
+    ) -> Option<Widget> {
+        editor
+            .editing_config()
+            .widgets
+            .iter()
+            .find(|widget| widget.id == id)
+            .cloned()
+    }
+
     /// Synchronous read-only candidate access. A Config is data, never validation proof.
     pub fn with_candidate<R>(
         editor: &Editor,
@@ -613,6 +674,7 @@ impl Registry {
         use FieldKey::*;
         let c = w.capabilities();
         let active = match key {
+            GaugeMinimum | GaugeMaximum | GaugeExpand => !w.gauge.kind.is_numeric(),
             Graph | GraphMode | Trend => c.history,
             GraphMinimum | GraphMaximum => c.history && matches!(w.display.graph_range, GraphRange::Fixed { .. }),
             Average | Extrema => c.statistics,
@@ -627,6 +689,8 @@ impl Registry {
         };
         if active {
             Capability::Active
+        } else if matches!(key, GaugeMinimum | GaugeMaximum | GaugeExpand) {
+            Capability::Inactive("Numeric style does not draw a gauge scale; retained invalid values remain repairable")
         } else {
             Capability::Inactive(
                 "Stored setting is inactive for this channel, style or size; retained invalid values remain repairable",

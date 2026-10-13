@@ -252,7 +252,7 @@ pub fn SimulationControls(ui: Ui) -> impl IntoView {
         <p role="status">{move ||simulation_notice.get()}</p>
         <output id="control-simulator-state" aria-live="polite">{move ||sim.with(ControlSimulator::summary)}</output>
         <output aria-label="RGB indicator duty">{move ||sim.with(|s|{let d=s.led_duty();format!("LED light duty · R {} · G {} · B {} / 10000",d.red,d.green,d.blue)})}</output>
-        <p class="hint">"Persistent timing simulation · real configured dwell · explicit sample, fault, stale and frame-completion steps. Appearance stress values above are separate."</p>
+        <p class="hint">"Persistent timing simulation · real configured dwell · explicit sample, fault, stale and frame-completion steps. Stress values in Appearance mode are separate."</p>
         <label class="field"><span>"Fault / history channel"</span><select aria-label="Simulation channel" on:change=move |event|{
             if let Ok(i)=event_target_value(&event).parse::<usize>() && let Some(c)=Channel::ALL.get(i){channel.set(*c);}
         }>{Channel::ALL.into_iter().map(|c|view!{<option value=c.index().to_string()>{c.label()}</option>}).collect_view()}</select></label>

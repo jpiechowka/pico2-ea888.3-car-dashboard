@@ -82,7 +82,6 @@ fn WidgetChoice(
     });
     view! { <Choice ui label value options repair_invalid_draft=true
         disabled_values=Signal::derive(move ||if matches!(setting,Setting::Readout) && !ui.invalid() && ui.widget(id).is_some_and(|w|!w.capabilities().secondary) {vec!["LambdaAndAfr".into()]}else{Vec::new()})
-        id=ui.control_id(label)
         disabled=Signal::derive(move || !ui.invalid() && ui.widget(id).is_some_and(|w| match setting {
             Setting::Secondary=>!w.capabilities().secondary,
             Setting::Peak | Setting::Reference=>!w.capabilities().markers,
@@ -108,7 +107,7 @@ fn Preset(
     let known = options.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
     let mut options = options;
     options.push(("custom".into(), "Custom (edit below)".into()));
-    view! { <Choice ui label id=format!("{}-preset",ui.raw_dom(field)) repair_invalid_draft=true options value=Signal::derive(move ||{
+    view! { <Choice ui label dynamic_id=Signal::derive(move || ui.editor.with(|e| FieldId::Raw(field).preset(e).unwrap_or_else(|_|format!("{}-preset",fields::field_id(field))))) repair_invalid_draft=true options value=Signal::derive(move ||{
         let raw=ui.editor.with(|e|fields::raw_value(e,field));
         if known.contains(&raw) {raw}else{"custom".into()}
     }) on_change=Callback::new(move |(token,value):(FieldToken,String)|{

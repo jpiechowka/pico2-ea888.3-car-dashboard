@@ -11,7 +11,7 @@ mod workspaces;
 
 use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
-use dashboard_configurator::field_registry::{FieldKey, FieldTarget, Registry, TargetOwner};
+use dashboard_configurator::field_registry::{FieldId, FieldKey, FieldTarget, Registry, TargetOwner};
 use dashboard_configurator::workspace::{GroupId, Workspace, WorkspaceState};
 use fields::{Choice, ColorField, TextField, Toggle, choices, error_text};
 use inspector::{FuelSettings, Inspector, SourceSettings, WarningSettingsPanel};
@@ -113,10 +113,10 @@ impl Ui {
         self,
         field: RawField,
     ) -> String {
-        self.editor.with_untracked(|e| {
-            Registry::raw_owner(e, field)
-                .map(|owner| Registry::dom_id(Registry::raw_key(field), owner))
-                .unwrap_or_else(|| fields::field_id(field))
+        self.editor.with(|e| {
+            FieldId::Raw(field)
+                .resolve(e)
+                .unwrap_or_else(|_| fields::field_id(field))
         })
     }
 
@@ -130,13 +130,16 @@ impl Ui {
         let scope = Registry::descriptor(key).scope;
         let owner = match scope {
             dashboard_configurator::field_registry::Scope::Widget => {
-                self.inspected_widget().and_then(|(id, _)| {
-                    self.editor
-                        .with_untracked(|e| Registry::raw_owner(e, RawField::Widget(id, WidgetField::Label)))
-                })
+                return self
+                    .inspected_widget()
+                    .map(|(id, _)| {
+                        self.editor
+                            .with(|e| FieldId::Widget { id, key }.resolve(e).unwrap_or_default())
+                    })
+                    .unwrap_or_default();
             }
             dashboard_configurator::field_registry::Scope::Channel => {
-                Some(TargetOwner::Channel(self.source_channel.get_untracked()))
+                Some(TargetOwner::Channel(self.source_channel.get()))
             }
             dashboard_configurator::field_registry::Scope::Root => Some(TargetOwner::Root),
             _ => None,
@@ -250,6 +253,13 @@ impl Ui {
         if success && let Some(target) = inspection {
             self.refresh_inspection(target);
         }
+    }
+
+    fn canvas_widget(
+        self,
+        id: u16,
+    ) -> Option<Widget> {
+        self.editor.with(|e| Registry::layout_widget(e, id))
     }
 
     fn widget(

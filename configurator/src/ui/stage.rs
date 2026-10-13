@@ -43,7 +43,7 @@ fn start(
     let (span, offset) = match target {
         PointerTarget::Library(_) => (Span::OneByOne, GrabOffset::center(Span::OneByOne)),
         PointerTarget::Widget(id) => {
-            let Some(widget) = ui.widget(id) else {
+            let Some(widget) = ui.canvas_widget(id) else {
                 return;
             };
             let Some(rect) = content_rect(ui) else {
@@ -80,6 +80,9 @@ fn start(
     });
     match accepted {
         Some(token) => {
+            if matches!(target, PointerTarget::Widget(_)) {
+                ui.inspection.set(None);
+            }
             if let Some(button) = element.dyn_ref::<web_sys::HtmlElement>() {
                 let _ = button.focus();
             }
@@ -393,20 +396,20 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views) ||ui.dock.mode.get()!=PreviewMode::Appearance>
                     <For each=move ||ui.editor.with(|e|e.editing_config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{
                         <button id=format!("widget-{id}") class="widget-hit" disabled=move ||ui.layout_locked() class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
-                            style=move ||ui.widget(id).map_or("display:none".into(),|w|style(w.placement))
-                            aria-label=move ||ui.widget(id).map_or(String::new(),|w|format!("Select {} widget",w.label))
+                            style=move ||ui.canvas_widget(id).map_or("display:none".into(),|w|style(w.placement))
+                            aria-label=move ||ui.canvas_widget(id).map_or(String::new(),|w|format!("Select {} widget",w.label))
                             title="Drag to move. Right-click or Shift+F10 for actions. Arrow keys move one cell. Delete removes."
                             aria-haspopup="menu" aria-expanded=move ||ui.menu.with(|menu|menu.as_ref().is_some_and(|m|m.actions.target()==id)).to_string()
-                            on:contextmenu=move |e|widget_menu::open_pointer(ui,id,e)
+                            on:contextmenu=move |e|{ui.inspection.set(None);widget_menu::open_pointer(ui,id,e)}
                             on:pointerdown=move |e|start(ui,e,PointerTarget::Widget(id))
-                            on:click=move |event|{if event.detail()==0 {ui.run(move |e|e.select(Selection{view:e.selection().view,widget:Some(id)}));}}
+                            on:click=move |event|{if event.detail()==0 && ui.run(move |e|e.select(Selection{view:e.selection().view,widget:Some(id)})) {ui.inspection.set(None);}}
                             on:keydown=move |e|{
-                                if e.key()=="ContextMenu" || (e.key()=="F10" && e.shift_key()) { e.prevent_default(); e.stop_propagation(); widget_menu::open_keyboard(ui,id); return; }
+                                if e.key()=="ContextMenu" || (e.key()=="F10" && e.shift_key()) { e.prevent_default(); e.stop_propagation(); ui.inspection.set(None); widget_menu::open_keyboard(ui,id); return; }
                                 if e.key()=="Delete"{e.prevent_default();ui.apply(Edit::DeleteWidget(id));return;}
                                 use dashboard_configurator::widget_actions::Direction;
                                 let direction=match e.key().as_str(){"ArrowLeft"=>Direction::Left,"ArrowRight"=>Direction::Right,"ArrowUp"=>Direction::Up,"ArrowDown"=>Direction::Down,_=>return};
                                 e.prevent_default();
-                                if let Some(placement)=ui.widget(id).and_then(|w|direction.placement(w.placement)){ui.apply(Edit::PlaceWidget{id,placement});}
+                                if let Some(placement)=ui.canvas_widget(id).and_then(|w|direction.placement(w.placement)){ui.apply(Edit::PlaceWidget{id,placement});}
                             }><span class="selection-corner"></span></button>
                     }/>
                     <div class="drop-guide" class:invalid=move ||ui.drag.get().is_some_and(|d|!d.valid)
