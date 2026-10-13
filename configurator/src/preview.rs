@@ -144,6 +144,9 @@ impl Preview {
         if simulation.session().page() != dashboard_config::ControlPage::Dashboard {
             return Err(PreviewError::UnsupportedPage(simulation.session().page()));
         }
+        if !simulation.can_accept_rendered(token) {
+            return Err(PreviewError::PendingFrame);
+        }
         self.render_simulation(simulation)?;
         if !simulation.accept_rendered(token) {
             return Err(PreviewError::PendingFrame);
@@ -407,7 +410,10 @@ impl Preview {
                 widget.colors,
                 &band_colors,
             );
-            let rect = widget.placement.rect().expect("isolated widget has valid geometry");
+            let rect = config.config().widgets[0]
+                .placement
+                .rect()
+                .expect("isolated widget has valid geometry");
             let label = Rectangle::new(
                 Point::new(i32::from(rect.x) + 2, i32::from(rect.y) + 2),
                 Size::new(u32::from(rect.width) - 4, 12),
@@ -547,14 +553,15 @@ mod cache_tests {
             .unwrap();
         assert_eq!(preview.cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);
 
-        // Invalid geometry cannot publish even an isolated configuration, so it
-        // cannot manufacture issuer exhaustion from rejected draft data.
+        // Outside-grid geometry now publishes an explicitly bounded validated
+        // diagnostic projection, never the rejected configuration itself.
         for widget in &mut draft.config.widgets {
             widget.placement.column = u8::MAX;
         }
         preview
-            .render_diagnostic_with_status(&accepted, &draft, view, PreviewOptions::default(), |_| {
-                panic!("invalid widget must not reach publication status projection")
+            .render_diagnostic_with_status(&accepted, &draft, view, PreviewOptions::default(), |safe| {
+                assert!(safe.config().widgets[0].placement.rect().is_some());
+                CacheIdentityStatus::Tracked
             })
             .unwrap();
         assert_eq!(preview.cache_exhaustion_status(), CacheExhaustionStatus::EMPTY);

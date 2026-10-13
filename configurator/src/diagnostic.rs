@@ -105,7 +105,7 @@ impl Draft {
                     widget.placement.span.columns(),
                     widget.placement.span.rows(),
                     if widget.placement.rect().is_none() {
-                        " (outside screen; cannot render)"
+                        " (outside screen; diagnostic position clamped to the grid)"
                     } else {
                         ""
                     }
@@ -184,10 +184,11 @@ pub(crate) fn isolated_widget(
     accepted: &ValidatedConfig,
     widget: &Widget,
 ) -> Option<ValidatedConfig> {
-    widget.placement.rect()?;
     let mut config = accepted.config().clone();
     config.widgets.clear();
     let mut safe = widget.clone();
+    safe.placement.column = safe.placement.column.min(4 - safe.placement.span.columns());
+    safe.placement.row = safe.placement.row.min(2 - safe.placement.span.rows());
     safe.label = "INVALID".try_into().ok()?;
     safe.display.decimals = safe.display.decimals.min(3);
     safe.display.afr &= safe.channel == Channel::Lambda;

@@ -93,12 +93,21 @@ impl PresentedLed {
         token: FrameToken,
         state: impl Into<PresentedScene>,
     ) -> bool {
-        if self.pending.is_some() || token.sequence <= self.last_submitted {
+        if !self.can_submit(token) {
             return false;
         }
         self.last_submitted = token.sequence;
         self.pending = Some((token, state.into()));
         true
+    }
+
+    /// A read-only transport gate lets browser rendering preserve its last
+    /// submitted buffers when submission is already known to be impossible.
+    pub const fn can_submit(
+        &self,
+        token: FrameToken,
+    ) -> bool {
+        self.pending.is_none() && token.sequence > self.last_submitted
     }
 
     pub fn complete(

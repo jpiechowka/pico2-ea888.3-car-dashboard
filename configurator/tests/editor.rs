@@ -2,6 +2,164 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 
 #[test]
+fn raw_band_targets_must_exist_before_accepting_the_keystroke() {
+    let mut e = Editor::default();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    let rev = e.revision();
+    assert_eq!(
+        e.set_raw(
+            e.field_token(),
+            RawField::Widget(1, WidgetField::BandMinimum(3)),
+            "1".into()
+        ),
+        Err(EditorError::FieldUnavailable)
+    );
+    assert_eq!(e.revision(), rev);
+    assert!(e.raw_fields().is_empty());
+}
+
+#[test]
+fn advanced_raw_fields_globals_and_band_removal_preserve_atomic_history() {
+    let mut e = Editor::default();
+    e.select(Selection {
+        view: 1,
+        widget: Some(1),
+    })
+    .unwrap();
+    let mut w = e.preview().config().widgets[0].clone();
+    w.advanced
+        .set_bands(&[
+            Band::new(0., 1., w.colors.gauge, "ONE").unwrap(),
+            Band::new(1., 2., w.colors.gauge, "TWO").unwrap(),
+        ])
+        .unwrap();
+    e.apply(Edit::UpdateWidget(w)).unwrap();
+    let before = e.preview().clone();
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::BandMinimum(0)),
+        "bad".into(),
+    )
+    .unwrap();
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::BandLabel(1)),
+        "EDIT".into(),
+    )
+    .unwrap();
+    e.apply(Edit::RemoveBand { id: 1, index: 0 }).unwrap();
+    assert_eq!(e.preview().config().widgets[0].advanced.bands()[0].label(), "EDIT");
+    assert!(!e.has_invalid_draft());
+    e.undo().unwrap();
+    assert_eq!(e.preview(), &before);
+    e.redo().unwrap();
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::SmoothingMilliseconds),
+        "1".into(),
+    )
+    .unwrap();
+    assert!(e.has_invalid_draft());
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::SmoothingMilliseconds),
+        "750".into(),
+    )
+    .unwrap();
+    e.set_raw(
+        e.field_token(),
+        RawField::Widget(1, WidgetField::PeakHoldMilliseconds),
+        "1000".into(),
+    )
+    .unwrap();
+    let trigger = e.preview().config().widgets[0].warning.trigger;
+    let mut w = e.preview().config().widgets[0].clone();
+    w.advanced.readout = Readout::Psi;
+    e.apply(Edit::UpdateWidget(w)).unwrap();
+    assert_eq!(e.preview().config().widgets[0].warning.trigger, trigger);
+    e.apply(Edit::SetHistory {
+        channel: Channel::Boost,
+        seconds: 30,
+    })
+    .unwrap();
+    e.apply(Edit::SetReducedMotion(true)).unwrap();
+    let stale = e.begin_save().unwrap();
+    let import = e.begin_import().unwrap();
+    e.set_raw(
+        e.field_token(),
+        RawField::Led {
+            warning: false,
+            field: LedField::Brightness,
+        },
+        "0".into(),
+    )
+    .unwrap();
+    assert!(!e.save_is_current(stale.token()));
+    assert_eq!(
+        e.complete_import(import, ImportFormat::Json, b"{}"),
+        Err(EditorError::StaleToken)
+    );
+    e.set_raw(
+        e.field_token(),
+        RawField::Led {
+            warning: true,
+            field: LedField::Period,
+        },
+        "199".into(),
+    )
+    .unwrap();
+    assert!(e.has_invalid_draft());
+    let mut led = e.editing_config().led;
+    led.warning.kind = LedPatternKind::Off;
+    assert!(e.apply(Edit::SetLed(led)).is_err(), "Off cannot hide invalid timing");
+    e.set_raw(
+        e.field_token(),
+        RawField::Led {
+            warning: true,
+            field: LedField::Period,
+        },
+        "400".into(),
+    )
+    .unwrap();
+    assert_eq!(e.preview().config().led.warning.kind, LedPatternKind::Off);
+}
+
+#[test]
+fn fourth_band_rejection_does_not_mutate_widget_or_editor_and_duplicates_copy_settings() {
+    let mut e = Editor::default();
+    let mut w = e.preview().config().widgets[0].clone();
+    w.advanced.smoothing_ms = 250;
+    let bands = [
+        Band::new(0., 1., w.colors.gauge, "ONE").unwrap(),
+        Band::new(1., 2., w.colors.gauge, "TWO").unwrap(),
+        Band::new(2., 3., w.colors.gauge, "THREE").unwrap(),
+    ];
+    w.advanced.set_bands(&bands).unwrap();
+    let unchanged = w.advanced;
+    let four = [bands[0], bands[1], bands[2], bands[2]];
+    assert_eq!(w.advanced.set_bands(&four).unwrap_err().field, Field::BandCount);
+    assert_eq!(w.advanced, unchanged);
+    e.apply(Edit::UpdateWidget(w)).unwrap();
+    e.apply(Edit::DuplicateView {
+        id: 1,
+        name: "COPY".into(),
+    })
+    .unwrap();
+    let config = e.preview().config();
+    let copy = config
+        .widgets
+        .iter()
+        .find(|w| w.view == e.selection().view && w.channel == Channel::Boost)
+        .unwrap();
+    assert_ne!(copy.id, 1);
+    assert_eq!(copy.advanced, unchanged);
+}
+
+#[test]
 fn advanced_window_mode_presets_switch_and_undo_as_one_operation() {
     let mut e = Editor::default();
     let original = e.preview().clone();

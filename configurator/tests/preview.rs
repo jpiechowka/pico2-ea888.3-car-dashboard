@@ -53,7 +53,12 @@ fn dense_gauge_markers_and_legends_reach_the_browser_with_shared_framebuffer_par
         assert_exact_shared_scene(&preview, &config, 1, options);
         for color in [0x07E0_u16, 0x07FF, 0xF81F] {
             assert_eq!(
-                preview.rgb565().chunks_exact(2).any(|p| p == color.to_be_bytes()),
+                preview
+                    .rgb565()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .any(|p| *p == color.to_be_bytes()),
                 !kind.is_numeric()
             );
         }
@@ -62,7 +67,7 @@ fn dense_gauge_markers_and_legends_reach_the_browser_with_shared_framebuffer_par
             let mut file =
                 std::fs::File::create(std::path::PathBuf::from(dir).join(format!("dense-{kind:?}.ppm"))).unwrap();
             file.write_all(b"P6\n320 240\n255\n").unwrap();
-            for pixel in preview.rgb565().chunks_exact(2) {
+            for pixel in preview.rgb565().as_chunks::<2>().0 {
                 file.write_all(&Color(u16::from_be_bytes([pixel[0], pixel[1]])).rgb888())
                     .unwrap();
             }

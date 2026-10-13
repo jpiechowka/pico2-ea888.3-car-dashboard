@@ -459,14 +459,18 @@ fn deadline_interruption_and_dropped_preparation_never_change_completed_identity
     }
     preview.render_simulation_submitted(&mut sim, token(2)).unwrap();
     assert_eq!(preview.warning_page().unwrap().rules, 1);
+    let submitted_rgb = preview.rgb565().to_vec();
+    let submitted_rgba = preview.rgba().to_vec();
     assert_eq!(sim.completed_warning(), old);
-    // The next selection resumes the retained cursor, but pending transport drops it.
+    // A pending transfer cannot overwrite either browser buffer.
     sim.advance_to(start + 1002, None);
     assert_eq!(
         preview.render_simulation_submitted(&mut sim, token(3)).unwrap_err(),
         PreviewError::PendingFrame
     );
-    assert_eq!(preview.warning_page().unwrap().rules, 2);
+    assert_eq!(preview.warning_page().unwrap().rules, 1);
+    assert_eq!(preview.rgb565(), submitted_rgb);
+    assert_eq!(preview.rgba(), submitted_rgba);
     assert_eq!(sim.completed_warning(), old);
     assert!(!sim.complete_frame(token(3)));
     assert!(sim.complete_frame(token(2)));

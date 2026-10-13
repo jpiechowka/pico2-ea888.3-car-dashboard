@@ -1167,6 +1167,14 @@ fn check_raw_target(
             if selection.widget != Some(id) || selection.view != widget.view {
                 return Err(EditorError::SelectionMismatch);
             }
+            if let WidgetField::BandMinimum(i)
+            | WidgetField::BandMaximum(i)
+            | WidgetField::BandLabel(i)
+            | WidgetField::BandColor(i) = field
+                && usize::from(i) >= widget.advanced.bands().len()
+            {
+                return Err(EditorError::FieldUnavailable);
+            }
             if matches!(field, WidgetField::GraphMinimum | WidgetField::GraphMaximum)
                 && !matches!(widget.display.graph_range, GraphRange::Fixed { .. })
             {

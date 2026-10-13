@@ -166,6 +166,13 @@ impl ControlSimulator {
         true
     }
 
+    pub(crate) fn can_accept_rendered(
+        &self,
+        token: dashboard_core::display::pipeline::FrameToken,
+    ) -> bool {
+        self.simulation.presented.can_submit(token)
+    }
+
     pub fn complete_frame(
         &mut self,
         token: dashboard_core::display::pipeline::FrameToken,

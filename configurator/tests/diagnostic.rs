@@ -44,6 +44,73 @@ fn selected() -> Editor {
 }
 
 #[test]
+fn invalid_band_contrast_bounds_and_overlap_keep_exact_raw_colour_and_failed_render_keeps_both_buffers() {
+    let mut config = default_config();
+    config.widgets.truncate(1);
+    config.widgets[0].gauge.kind = GaugeKind::Horizontal;
+    let mut e = Editor::new(config).unwrap();
+    let before = e.preview().clone();
+    for bounds in [[(0., 1.), (1., 2.)], [(999., 1000.), (0., 1.)], [(0., 2.), (1., 3.)]] {
+        let mut w = e.preview().config().widgets[0].clone();
+        w.advanced
+            .set_bands(&bounds.map(|(a, b)| Band::new(a, b, Color(0x001F), "BLUE").unwrap()))
+            .unwrap();
+        assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+        let draft = e.diagnostic().unwrap();
+        let mut p = Preview::new();
+        p.render_diagnostic(e.preview(), &draft, 1, PreviewOptions::default())
+            .unwrap();
+        assert!(
+            p.rgb565()[320 * 26 * 2..]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .any(|pixel| *pixel == 0x001Fu16.to_be_bytes()),
+            "raw blue band vanished"
+        );
+        let rgb = p.rgb565().to_vec();
+        let rgba = p.rgba().to_vec();
+        let error = p.render_diagnostic(
+            e.preview(),
+            &draft,
+            1,
+            PreviewOptions {
+                values: Some([f32::NAN; 8]),
+                ..Default::default()
+            },
+        );
+        assert!(error.is_err());
+        assert_eq!(p.rgb565(), rgb);
+        assert_eq!(p.rgba(), rgba);
+        assert_eq!(e.preview(), &before);
+        e.discard_raw().unwrap();
+    }
+}
+
+#[test]
+fn rejected_out_of_grid_size_is_inspectable_at_a_bounded_projected_position() {
+    let mut config = default_config();
+    config.widgets.truncate(1);
+    let mut e = Editor::new(config).unwrap();
+    let before = e.preview().clone();
+    let mut w = e.editing_config().widgets[0].clone();
+    w.placement.column = 3;
+    w.placement.span = Span::TwoByOne;
+    w.gauge.kind = GaugeKind::Dial;
+    assert!(e.apply(Edit::UpdateWidget(w)).is_err());
+    let mut p = Preview::new();
+    let draft = e.diagnostic().unwrap();
+    p.render_diagnostic(e.preview(), &draft, 1, PreviewOptions::default())
+        .unwrap();
+    // Rejected 2x1 at column4 projects to columns3/4, retaining its chosen style.
+    assert!((160..320).any(|x| {
+        let at = (80 * 320 + x) * 2;
+        p.rgb565()[at..at + 2] != [0, 0]
+    }));
+    assert_eq!(e.preview(), &before);
+}
+
+#[test]
 fn raw_overflow_and_unrenderable_numbers_remain_visible_and_never_serialize() {
     let mut editor = selected();
     let accepted = editor.export_binary().unwrap();
