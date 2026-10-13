@@ -258,3 +258,98 @@ fn historical_imports_receive_default_controls_in_the_editor() {
         assert_eq!(editor.editing_config().controls, map);
     }
 }
+#[test]
+fn callback_lifecycle_retires_hidden_cleanup_and_source_changed_work() {
+    use dashboard_configurator::simulator::CallbackGate;
+    let mut gate = CallbackGate::new();
+    let sim = dashboard_configurator::simulator::ControlSimulator::new(
+        dashboard_configurator::config::validate(dashboard_configurator::config::default_config()).unwrap(),
+    );
+    let other = dashboard_configurator::simulator::ControlSimulator::new(
+        dashboard_configurator::config::validate(dashboard_configurator::config::default_config()).unwrap(),
+    );
+    let token = gate.capture(sim.source_key()).unwrap();
+    assert!(gate.is_current(token, sim.source_key()));
+    assert!(!gate.is_current(token, other.source_key()));
+    gate.retire();
+    assert!(!gate.is_current(token, sim.source_key()));
+    let resumed = gate.capture(sim.source_key()).unwrap();
+    assert!(gate.is_current(resumed, sim.source_key()));
+    assert!(gate.capture(None).is_none());
+}
+
+#[test]
+fn callback_admission_rejects_changed_editor_before_reactive_source_sync() {
+    use dashboard_configurator::editor::{Edit, Editor};
+    use dashboard_configurator::simulator::{CallbackGate, ControlSimulator};
+    let mut editor = Editor::default();
+    let sim = ControlSimulator::new(editor.preview().clone());
+    let gate = CallbackGate::new();
+    let token = gate
+        .capture_for_editor(sim.source_key(), editor.accepted_config_key())
+        .unwrap();
+    assert!(gate.is_current_for_editor(token, sim.source_key(), editor.accepted_config_key()));
+    // The actual Editor changed; the reactive source observer has not run yet.
+    editor.apply(Edit::SetReducedMotion(true)).unwrap();
+    assert!(!gate.is_current_for_editor(token, sim.source_key(), editor.accepted_config_key()));
+}
+
+#[test]
+fn rejected_visible_utf8_text_cannot_dispatch_previous_channel_or_reset_value() {
+    use dashboard_configurator::config::*;
+    use dashboard_configurator::simulator::{BoundedText, ControlSimulator};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let mut channel = BoundedText::<64>::default();
+    assert!(channel.observe("2"));
+    sim.custom_input(Channel::Boost, channel.admitted().unwrap());
+    let before = sim.snapshot();
+    assert!(!channel.observe(&"é".repeat(64)));
+    assert!(channel.is_blocked());
+    assert!(channel.admitted().is_none());
+    if let Some(text) = channel.admitted() {
+        sim.custom_input(Channel::Boost, text);
+    }
+    assert_eq!(sim.snapshot(), before);
+    assert!(channel.text().len() <= 64);
+    assert!(channel.observe("3"));
+    sim.custom_input(Channel::Boost, channel.admitted().unwrap());
+    assert_eq!(
+        sim.snapshot().sensor(dashboard_core::samples::SensorId::Boost).value(),
+        Some(3.)
+    );
+    sim.tap(ButtonId::B);
+    let token = sim.pending_reset_token().unwrap();
+    let mut ack = BoundedText::<20>::default();
+    assert!(ack.observe(&token.to_string()));
+    assert!(!ack.observe(&"é".repeat(20)));
+    if let Some(text) = ack.admitted() {
+        sim.acknowledge_reset_token(text.parse().unwrap());
+    }
+    assert_eq!(sim.pending_reset_token(), Some(token));
+    assert_eq!(sim.snapshot().reset_generation, 0);
+    assert!(ack.observe(&token.to_string()));
+    assert!(sim.acknowledge_reset_token(ack.admitted().unwrap().parse().unwrap()));
+}
+
+#[test]
+fn scenario_active_elapsed_clock_does_not_count_callbacks_or_hidden_interval() {
+    use dashboard_configurator::config::*;
+    use dashboard_configurator::simulator::{ControlSimulator, Scenario};
+    use dashboard_configurator::timing::Playback;
+    for interval in [1, 14, 25, 50, 1000] {
+        let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+        sim.set_scenario(Scenario::Normal).unwrap();
+        let start = sim.now_ms();
+        let mut clock = Playback::new(start);
+        clock.start(10.);
+        for at in (11..3010).step_by(interval) {
+            sim.scenario_step(clock.sample(at as f64)).unwrap();
+        }
+        sim.scenario_step(clock.pause(3010.)).unwrap();
+        assert_eq!(sim.now_ms(), start + 3000);
+        assert_eq!(clock.sample(999999.), start + 3000);
+        clock.start(1_000_000.);
+        sim.scenario_step(clock.sample(1_000_050.)).unwrap();
+        assert_eq!(sim.now_ms(), start + 3050);
+    }
+}

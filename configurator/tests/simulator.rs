@@ -2,6 +2,317 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::simulator::ControlSimulator;
 
 #[test]
+fn scenarios_use_real_gate_without_refreshing_unselected_channels() {
+    use dashboard_configurator::simulator::{InputOutcome, Scenario, SimulationInput};
+    use dashboard_core::samples::{SampleError, SensorId};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    for scenario in Scenario::ALL {
+        sim.set_scenario(scenario).unwrap();
+        let start = sim.now_ms();
+        sim.scenario_step(start + 50).unwrap();
+        assert_eq!(sim.projection().scenario, scenario);
+        assert_eq!(sim.snapshot().mode, dashboard_core::samples::DataMode::Demo);
+    }
+    sim.set_scenario(Scenario::Missing).unwrap();
+    let start = sim.now_ms();
+    assert_eq!(
+        sim.inject(SimulationInput::Channel {
+            channel: Channel::Water,
+            value: 95.,
+            at_ms: start + 1
+        }),
+        InputOutcome::Accepted
+    );
+    assert_eq!(sim.snapshot().sensor(SensorId::Oil).value(), None);
+    let good = sim.snapshot().sensor(SensorId::Water).value();
+    assert_eq!(
+        sim.inject(SimulationInput::Channel {
+            channel: Channel::Water,
+            value: f32::NAN,
+            at_ms: start + 2
+        }),
+        InputOutcome::Rejected(SampleError::InvalidValue)
+    );
+    assert_eq!(sim.snapshot().sensor(SensorId::Water).value(), good);
+    assert_eq!(
+        sim.inject(SimulationInput::Channel {
+            channel: Channel::Water,
+            value: 99.,
+            at_ms: start
+        }),
+        InputOutcome::Rejected(SampleError::OutOfOrder)
+    );
+    assert_eq!(
+        sim.inject(SimulationInput::Channel {
+            channel: Channel::Boost,
+            value: 11.,
+            at_ms: start + 3
+        }),
+        InputOutcome::Accepted
+    );
+    assert_eq!(sim.custom_input(Channel::Boost, "11"), InputOutcome::TestingRange);
+    assert_eq!(sim.diagnostic_input(Channel::Boost, "11"), InputOutcome::Accepted);
+    assert_eq!(
+        sim.diagnostic_input(Channel::Boost, "Infinity"),
+        InputOutcome::Rejected(SampleError::InvalidValue)
+    );
+    assert_eq!(sim.custom_input(Channel::Boost, "NaN"), InputOutcome::NotFinite);
+}
+
+#[test]
+fn held_input_cancel_never_synthesizes_tap_hold_or_accepted_candidate_ack() {
+    use dashboard_core::input_model::EncoderBatch;
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let start = sim.now_ms();
+    sim.physical_at([true, false, false, false], EncoderBatch::default(), start + 1);
+    sim.physical_at([true, false, false, false], EncoderBatch::default(), start + 51);
+    sim.cancel_inputs();
+    sim.physical_at([false; 4], EncoderBatch::default(), start + 5000);
+    assert!(!sim.session().boost_psi());
+    let mut map = ControlMap::default();
+    map.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+    map.screens[0].buttons[1].tap = ControlAction::ResetStatistics;
+    sim.inspect_invalid(map);
+    sim.tap(ButtonId::A);
+    sim.tap(ButtonId::B);
+    assert_eq!(sim.inspection_outcome(), Some("Inspection only; reset not dispatched"));
+    assert!(!sim.reset_pending());
+    assert!(sim.pending_warning_command().is_none());
+}
+
+#[test]
+fn reset_ack_requires_exact_latest_token_and_only_resets_once() {
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    sim.tap(ButtonId::B);
+    let token = sim.pending_reset_token().unwrap();
+    assert!(!sim.acknowledge_reset_token(token + 1));
+    assert!(sim.reset_pending());
+    assert!(sim.acknowledge_reset_token(token));
+    assert!(!sim.acknowledge_reset_token(token));
+    assert_eq!(sim.snapshot().reset_generation, token);
+}
+
+#[test]
+fn source_restart_does_not_recycle_old_reset_acknowledgment_tokens() {
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    sim.tap(ButtonId::B);
+    let old = sim.pending_reset_token().unwrap();
+    sim.restart(sim.config().clone());
+    sim.tap(ButtonId::B);
+    let current = sim.pending_reset_token().unwrap();
+    assert!(current > old);
+    assert!(!sim.acknowledge_reset_token(old));
+    assert_eq!(sim.snapshot().reset_generation, 0);
+    assert!(sim.acknowledge_reset_token(current));
+    assert_eq!(sim.snapshot().reset_generation, current);
+}
+
+#[test]
+fn strict_browser_transport_requires_pixels_even_before_first_submission_and_after_restart() {
+    use dashboard_configurator::preview::Preview;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    sim.require_frame_completion();
+    for restart in [false, true] {
+        if restart {
+            sim.restart(sim.config().clone());
+        }
+        sim.hold(ButtonId::X);
+        sim.hold(ButtonId::X);
+        sim.advance(2500);
+        assert!(sim.session().backlight().compare() > 0);
+        let mut p = Preview::new();
+        let feedback = FrameToken {
+            buffer: BufferId::A,
+            sequence: 1,
+        };
+        p.render_simulation_submitted(&mut sim, feedback).unwrap();
+        assert!(sim.complete_frame(feedback));
+        sim.advance(2500);
+        assert!(sim.session().backlight().compare() > 0);
+        let clear = FrameToken {
+            buffer: BufferId::A,
+            sequence: 2,
+        };
+        p.render_simulation_submitted(&mut sim, clear).unwrap();
+        assert!(sim.complete_frame(clear));
+        assert_eq!(sim.session().backlight().compare(), 0);
+        p.render_simulation(&sim).unwrap();
+        assert!(p.rgb565().iter().all(|byte| *byte == 0));
+    }
+}
+
+#[test]
+fn warning_scenario_crosses_configured_threshold_with_real_dwell_and_context_limits() {
+    use dashboard_configurator::simulator::{Scenario, WarningFixture};
+    use dashboard_core::alarms::{RuleIndex, Status};
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0].warning.enabled = true;
+    raw.widgets[0].warning.trigger = 4.;
+    raw.widgets[0].warning.clear = 3.;
+    raw.widgets[0].warning.on_ms = 500;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    sim.set_scenario(Scenario::Warnings).unwrap();
+    let start = sim.now_ms();
+    for elapsed in [0, 250] {
+        sim.scenario_step(start + elapsed).unwrap();
+    }
+    assert_eq!(
+        sim.snapshot().rule_status_at(RuleIndex::new(0).unwrap(), sim.now_ms()),
+        Status::Pending
+    );
+    sim.scenario_step(start + 500).unwrap();
+    assert_eq!(
+        sim.snapshot().rule_status_at(RuleIndex::new(0).unwrap(), sim.now_ms()),
+        Status::Active
+    );
+    assert_eq!(
+        sim.snapshot()
+            .sensor(dashboard_core::samples::SensorId::Boost)
+            .maximum(),
+        Some(10.)
+    );
+    let mut raw = default_config();
+    raw.widgets.clear();
+    let mut widget = default_widget(
+        Channel::Battery,
+        1,
+        1,
+        Placement {
+            column: 0,
+            row: 0,
+            span: Span::OneByOne,
+        },
+    );
+    widget.warning.enabled = true;
+    raw.widgets.push(widget).unwrap();
+    let mut contextual = ControlSimulator::new(validate(raw).unwrap());
+    contextual.set_scenario(Scenario::Warnings).unwrap();
+    assert!(matches!(contextual.warning_fixture(0), WarningFixture::Unavailable(_)));
+    for delta in [0, 250, 500, 750] {
+        contextual.scenario_step(start + delta).unwrap();
+    }
+    assert_eq!(
+        contextual
+            .snapshot()
+            .rule_status_at(RuleIndex::new(0).unwrap(), contextual.now_ms()),
+        Status::Unavailable
+    );
+}
+
+#[test]
+fn missing_stale_fault_and_rejected_samples_keep_factual_gaps_and_raw_extrema() {
+    use dashboard_configurator::simulator::{InputOutcome, Scenario, SimulationInput};
+    use dashboard_core::samples::{Quality, SampleError, SensorId};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    sim.set_scenario(Scenario::Missing).unwrap();
+    let start = sim.now_ms();
+    sim.scenario_step(start + 10000).unwrap();
+    assert_eq!(sim.snapshot().sensor(SensorId::Water).history().count(), 0);
+    sim.set_scenario(Scenario::Stale).unwrap();
+    sim.scenario_step(start + 1).unwrap();
+    let good = sim.snapshot().sensor(SensorId::Water).value();
+    sim.scenario_step(start + 10000).unwrap();
+    assert_eq!(sim.snapshot().value_at(SensorId::Water, sim.now_ms()), None);
+    assert_eq!(sim.snapshot().sensor(SensorId::Water).value(), good);
+    assert!(sim.snapshot().sensor(SensorId::Water).history().count() < 60);
+    sim.set_scenario(Scenario::SourceFault).unwrap();
+    sim.scenario_step(start + 1).unwrap();
+    sim.scenario_step(start + 51).unwrap();
+    assert_eq!(
+        sim.snapshot().quality(SensorId::Water, sim.now_ms()),
+        Quality::TransportError
+    );
+    for (offset, value) in [(52, f32::NEG_INFINITY), (53, 1_000_001.)] {
+        let before = sim.snapshot().sensor(SensorId::Water).maximum();
+        assert_eq!(
+            sim.inject(SimulationInput::Channel {
+                channel: Channel::Water,
+                value,
+                at_ms: start + offset
+            }),
+            InputOutcome::Rejected(SampleError::InvalidValue)
+        );
+        assert_eq!(sim.snapshot().sensor(SensorId::Water).maximum(), before);
+        assert_eq!(
+            sim.snapshot().quality(SensorId::Water, sim.now_ms()),
+            Quality::InvalidPayload
+        );
+    }
+}
+
+#[test]
+fn physical_simultaneous_cancel_and_y_recovery_use_actual_elapsed_boundary() {
+    use dashboard_core::input_model::EncoderBatch;
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    sim.tap(ButtonId::Y);
+    let start = sim.now_ms();
+    let y = [false, false, false, true];
+    sim.physical_at(y, EncoderBatch::default(), start + 1);
+    sim.physical_at(y, EncoderBatch::default(), start + 51);
+    sim.physical_at(y, EncoderBatch::default(), start + 2000);
+    assert_eq!(sim.session().page(), ControlPage::Debug);
+    sim.physical_at(y, EncoderBatch::default(), start + 2001);
+    assert_eq!(sim.session().page(), ControlPage::Dashboard);
+    sim.cancel_inputs();
+    let start = sim.now_ms();
+    let simultaneous = [true, true, false, false];
+    sim.physical_at(simultaneous, EncoderBatch::default(), start + 1);
+    sim.physical_at(simultaneous, EncoderBatch::default(), start + 51);
+    sim.cancel_inputs();
+    sim.physical_at([false; 4], EncoderBatch::default(), start + 5000);
+    assert!(!sim.reset_pending());
+    assert!(!sim.session().boost_psi());
+}
+
+#[test]
+fn candidate_navigation_does_not_mutate_accepted_session_or_statistics() {
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let start = sim.now_ms();
+    sim.advance_to(start, Some([1., 90., 95., 80., 30., 700., 13.8, 1.]));
+    let before = sim.snapshot();
+    let mut map = ControlMap::default();
+    map.screens[0].buttons[0].tap = ControlAction::Logs;
+    sim.inspect_invalid(map);
+    sim.tap(ButtonId::A);
+    assert_eq!(sim.session().page(), ControlPage::Dashboard);
+    assert_eq!(sim.snapshot(), before);
+    assert!(!sim.reset_pending());
+    sim.resume_accepted_bindings();
+    assert_eq!(sim.session().page(), ControlPage::Dashboard);
+    assert_eq!(sim.snapshot(), before);
+}
+
+#[test]
+fn diagnostic_pages_submit_their_shared_pixels_and_complete_once() {
+    use dashboard_configurator::preview::Preview;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let mut preview = Preview::new();
+    sim.tap(ButtonId::Y);
+    assert_eq!(sim.session().page(), ControlPage::Debug);
+    let debug = FrameToken {
+        buffer: BufferId::A,
+        sequence: 1,
+    };
+    preview.render_simulation_submitted(&mut sim, debug).unwrap();
+    let debug_pixels = preview.rgb565().to_vec();
+    assert!(sim.complete_frame(debug));
+    assert!(!sim.complete_frame(debug));
+    sim.tap(ButtonId::Y);
+    assert_eq!(sim.session().page(), ControlPage::Logs);
+    let logs = FrameToken {
+        buffer: BufferId::A,
+        sequence: 2,
+    };
+    preview.render_simulation_submitted(&mut sim, logs).unwrap();
+    assert_ne!(preview.rgb565(), debug_pixels);
+    assert!(sim.complete_frame(logs));
+    assert_eq!(sim.completed_warning().rules, 0);
+}
+
+#[test]
 fn gestures_navigate_preserve_choices_and_recover_from_off() {
     let config = validate(default_config()).unwrap();
     let mut sim = ControlSimulator::new(config.clone());
@@ -44,9 +355,9 @@ fn invalid_maps_use_accepted_layout_and_cannot_disable_recovery() {
     sim.inspect_invalid(map);
     assert!(sim.invalid());
     sim.tap(ButtonId::A);
-    assert_eq!(sim.session().page(), ControlPage::Logs);
+    assert_eq!(sim.display_session().page(), ControlPage::Logs);
     sim.rotate(-1);
-    assert!(sim.session().log_anchor().is_some());
+    assert!(sim.display_session().log_anchor().is_some());
     sim.recover();
     assert_eq!(sim.session().page(), ControlPage::Dashboard);
 }
@@ -84,7 +395,9 @@ fn every_catalogue_action_runs_through_gestures_and_shared_session() {
         } else {
             ControlPage::Logs
         };
-        let mut sim = ControlSimulator::new(editor.preview().clone());
+        let mut raw = editor.preview().config().clone();
+        raw.controls.screens[page.index()].buttons[0].tap = action;
+        let mut sim = ControlSimulator::new(validate(raw).unwrap());
         if page != ControlPage::Dashboard {
             sim.tap(ButtonId::Y);
         }
@@ -100,9 +413,6 @@ fn every_catalogue_action_runs_through_gestures_and_shared_session() {
         let brightness = sim.session().backlight().compare();
         let old_anchor = sim.session().log_anchor();
         let old_view = sim.session().view_id();
-        let mut map = editor.preview().config().controls;
-        map.screens[page.index()].buttons[0].tap = action;
-        sim.inspect_invalid(map);
         sim.tap(ButtonId::A);
         if let Some(destination) = action.destination(page) {
             assert_eq!(sim.session().page(), destination, "{action:?}");
@@ -358,59 +668,33 @@ fn rendered_transport_off_waits_for_feedback_and_clear_completions() {
 }
 
 #[test]
-fn diagnostic_pages_cannot_submit_dashboard_preview_pixels() {
-    use dashboard_configurator::preview::{Preview, PreviewError};
+fn diagnostic_pages_submit_real_shared_rasters_instead_of_dashboard_pixels() {
+    use dashboard_configurator::preview::Preview;
     use dashboard_core::display::pipeline::{BufferId, FrameToken};
     let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
     let mut preview = Preview::new();
-    let token = FrameToken {
-        buffer: BufferId::A,
-        sequence: 1,
-    };
-    preview.render_simulation_submitted(&mut sim, token).unwrap();
-    sim.complete_frame(token);
-    let pixels = preview.rgb565().to_vec();
-    let shown = sim.completed_warning();
-    sim.tap(ButtonId::Y);
-    assert_eq!(
-        preview
-            .render_simulation_submitted(
-                &mut sim,
-                FrameToken {
-                    buffer: BufferId::B,
-                    sequence: 2
-                }
-            )
-            .unwrap_err(),
-        PreviewError::UnsupportedPage(ControlPage::Debug)
-    );
-    assert_eq!(preview.rgb565(), pixels);
-    assert_eq!(sim.completed_warning(), shown);
-    assert!(!sim.complete_frame(FrameToken {
-        buffer: BufferId::B,
-        sequence: 2
-    }));
-    sim.tap(ButtonId::Y);
-    assert_eq!(
-        preview
-            .render_simulation_submitted(
-                &mut sim,
-                FrameToken {
-                    buffer: BufferId::B,
-                    sequence: 3
-                }
-            )
-            .unwrap_err(),
-        PreviewError::UnsupportedPage(ControlPage::Logs)
-    );
-    assert_eq!(preview.rgb565(), pixels);
-    assert_eq!(sim.completed_warning(), shown);
-    assert!(!sim.complete_frame(FrameToken {
-        buffer: BufferId::B,
-        sequence: 3
-    }));
+    let mut previous = Vec::new();
+    for (sequence, page) in [
+        (1, ControlPage::Dashboard),
+        (2, ControlPage::Debug),
+        (3, ControlPage::Logs),
+    ] {
+        assert_eq!(sim.session().page(), page);
+        let token = FrameToken {
+            buffer: BufferId::A,
+            sequence,
+        };
+        preview.render_simulation_submitted(&mut sim, token).unwrap();
+        assert!(preview.rgb565() != previous);
+        assert!(!sim.complete_frame(FrameToken {
+            buffer: BufferId::B,
+            sequence
+        }));
+        assert!(sim.complete_frame(token));
+        previous = preview.rgb565().to_vec();
+        sim.tap(ButtonId::Y);
+    }
 }
-
 #[test]
 fn deadline_interruption_and_dropped_preparation_never_change_completed_identity() {
     use dashboard_configurator::preview::{Preview, PreviewError};

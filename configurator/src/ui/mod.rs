@@ -7,6 +7,7 @@ mod inspector;
 mod io;
 mod led;
 mod metrics;
+mod simulation;
 mod stage;
 mod widget_menu;
 mod workspaces;
@@ -569,8 +570,8 @@ pub fn Studio() -> impl IntoView {
     });
     view! {
         <div class="studio" on:pointermove=move |e| stage::drag_move(ui, e)
-            on:pointerup=move |e| stage::drag_end(ui,e) on:pointercancel=move |e| stage::cancel_event(ui,e)
-            on:lostpointercapture=move |e| stage::cancel_event(ui,e)
+            on:pointerup=move |e| stage::drag_end(ui,e) on:pointercancel=move |e| {stage::cancel_event(ui,e);simulation::cancel(ui);}
+            on:lostpointercapture=move |e| {stage::cancel_event(ui,e);simulation::cancel(ui);}
             on:keydown=move |e| { if e.key() == "Escape" { stage::cancel(ui); widget_menu::close(ui, true); } }>
             <header class="masthead">
                 <a class="brand" href="./" aria-label="EA888 View Studio"><b>"EA"<span>"888"</span></b><div>"VIEW STUDIO"<small>"PICO 2 / DNUC"</small></div></a>
@@ -620,7 +621,7 @@ pub fn Studio() -> impl IntoView {
                 <section class="workspace-panel settings-panel" id="studio-panel-build-flash" role="tabpanel" aria-labelledby="studio-tab-build-flash" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::BuildFlash)><workspaces::BuildFlashEmpty ui/></section>
                 <section class="preview-dock" aria-label="Persistent display preview">
                     <workspaces::InspectionDetail ui/>
-                    <div class="preview-mode"><button id="studio-mode-appearance" class:active=move ||ui.dock.mode.get()==PreviewMode::Appearance on:click=move |_|{stage::cancel(ui);ui.dock.mode.set(PreviewMode::Appearance);}>"Appearance"</button><button id="studio-mode-simulation" class:active=move ||ui.dock.mode.get()==PreviewMode::Simulation on:click=move |_|{stage::cancel(ui);ui.dock.mode.set(PreviewMode::Simulation);workspaces::open(ui,Workspace::Diagnostics,GroupId::Simulation);}>"Simulation"</button></div>
+                    <div class="preview-mode"><button id="studio-mode-appearance" class:active=move ||ui.dock.mode.get()==PreviewMode::Appearance on:click=move |_|{stage::cancel(ui);simulation::cancel(ui);ui.dock.mode.set(PreviewMode::Appearance);}>"Appearance"</button><button id="studio-mode-simulation" class:active=move ||ui.dock.mode.get()==PreviewMode::Simulation on:click=move |_|{stage::cancel(ui);simulation::cancel(ui);ui.dock.mode.set(PreviewMode::Simulation);workspaces::open(ui,Workspace::Diagnostics,GroupId::Simulation);}>"Simulation"</button></div>
                     <div hidden=move ||ui.dock.mode.get()!=PreviewMode::Appearance>
                     <div class="preview-toolbar"><span><i class="status-light"></i>"SYNTHETIC PREVIEW"</span><div>
                         <button class:active=move || ui.psi.get() on:click=move |_| {ui.input_started();ui.psi.update(|v| *v = !*v);}>{move || if ui.psi.get() { "PSI / bar" } else { "bar / PSI" }}</button>

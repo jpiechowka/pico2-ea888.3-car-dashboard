@@ -79,3 +79,4 @@
 .appearance-color-summary dt { font-size: 11px; overflow-wrap: anywhere; }
 .appearance-color-summary dd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; margin: 3px 0 0; }
 .appearance-swatch { display: inline-block; flex: 0 0 14px; width: 14px; height: 14px; border: 1px solid var(--muted); border-radius: 2px; }
+.simulation-inputs{display:grid;gap:14px;min-width:0}.simulation-channel{display:grid;gap:8px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:6px}.simulation-channel .field{margin:0;min-width:0}.simulation-channel input{min-width:0;width:100%}.simulation-channel small{overflow-wrap:anywhere;line-height:1.6;color:var(--muted)}.control-simulator{min-width:0}.control-simulator button{max-width:100%;white-space:normal;overflow-wrap:anywhere}.control-simulator .field{min-width:0}.control-simulator select{min-width:0;max-width:100%}

@@ -1,6 +1,6 @@
 use dashboard_configurator::geometry::{self, ContentRect, DragGesture, GrabOffset};
 use dashboard_configurator::preview::{Preview, PreviewOptions};
-use leptos::leptos_dom::helpers::request_animation_frame;
+use leptos::leptos_dom::helpers::request_animation_frame_with_handle;
 use wasm_bindgen::Clamped;
 
 use super::*;
@@ -324,15 +324,28 @@ fn style(placement: Placement) -> String {
 #[component]
 pub fn Canvas(ui: Ui) -> impl IntoView {
     let preview = RwSignal::new(Preview::default());
-    let queued = RwSignal::new(false);
+    let queued = ui.dock.appearance_queued;
     let revision = Memo::new(move |_| ui.editor.with(Editor::revision));
+    let source = Memo::new(move |_| {
+        ui.dock
+            .sim
+            .with(dashboard_configurator::simulator::ControlSimulator::source_key)
+    });
     Effect::new(move |_| {
         revision.get();
+        source.get();
+        ui.dock.inspection_stamp.get();
         ui.psi.get();
         ui.warnings.get();
         ui.sample_ms.get();
         ui.sample_set.get();
         ui.dock.mode.get();
+        if ui.dock.mode.get_untracked() == PreviewMode::Simulation && ui.invalid() {
+            ui.dock.sim.with(|s| {
+                s.display_session().page();
+                s.display_now_ms();
+            });
+        }
         if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.invalid() {
             return;
         }
@@ -341,10 +354,18 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
             return;
         }
         queued.set(true);
-        request_animation_frame(move || {
+        let Some(callback) = super::simulation::capture_callback(ui) else {
+            queued.set(false);
+            return;
+        };
+        match request_animation_frame_with_handle(move || {
+            if !super::simulation::current_callback(ui, callback) {
+                return;
+            }
             if queued.try_set(false).is_some() {
                 return;
             }
+            let _ = ui.dock.appearance_raf.try_set(None);
             let Some(canvas) = ui.canvas.get_untracked() else {
                 return;
             };
@@ -365,11 +386,19 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 preview.update(|p| {
                     result = (|| {
                         let draft = e.diagnostic();
-                        let pixels = match draft.as_ref() {
-                            Some(draft) => p.render_diagnostic(e.preview(), draft, e.selection().view, options),
-                            None => p.render(e.preview(), e.selection().view, options),
+                        if ui.dock.mode.get_untracked() == PreviewMode::Simulation && ui.invalid() {
+                            ui.dock
+                                .sim
+                                .with_untracked(|sim| p.render_inspection(sim, draft.as_ref()).map(|_| ()))
+                        } else {
+                            match draft.as_ref() {
+                                Some(draft) => p.render_diagnostic(e.preview(), draft, e.selection().view, options),
+                                None => p.render(e.preview(), e.selection().view, options),
+                            }
+                            .map(|_| ())
                         }
                         .map_err(RenderIssue::Preview)?;
+                        let pixels = p.rgba();
                         let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(Clamped(pixels), 320, 240)
                             .map_err(|_| RenderIssue::CanvasAllocation)?;
                         let context = canvas
@@ -414,14 +443,20 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 // to present the canvas, not just Rust rendering duration.
                 metrics::schedule_record(ui, trace_permit, start, submitted, render, (widgets, views), warnings);
             }
-        });
+        }) {
+            Ok(handle) => ui.dock.appearance_raf.set(Some(handle)),
+            Err(_) => {
+                queued.set(false);
+                ui.render_issue(RenderLane::Appearance, Err(RenderIssue::Generic));
+            }
+        }
     });
     view! {
         <div class="invalid-preview-heading" hidden=move || !ui.invalid() && !ui.dock.invalid_pixels.get() role="status"><strong>"INVALID PREVIEW"</strong><span>{move ||if ui.invalid(){"Rejected draft · save and export blocked"}else{"Last inspection pixels · restore timing pixels in Diagnostics"}}</span></div>
-        <p class="hint">{move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"Invalid appearance inspection · accepted timing candidate retained separately"}else if ui.dock.pixels_key.get()!=Some(ui.editor.with(Editor::accepted_config_key)){"Last frame · configuration changed · submit a current frame in Diagnostics"}else if ui.dock.displayed.get()==PreviewMode::Simulation {"Timing simulation · Dashboard pixels only"}else if ui.dock.mode.get()==PreviewMode::Simulation {"Last appearance frame · submit or restore timing pixels in Diagnostics"}else{"Appearance preview · generated history"}}</p>
+        <p class="hint">{move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW · candidate only; accepted acquisition and pending pixels retained"}else if ui.dock.pixels_key.get()!=Some(ui.editor.with(Editor::accepted_config_key)){"Last frame · configuration changed · submit a current frame in Diagnostics"}else if ui.dock.displayed.get()==PreviewMode::Simulation {"Synthetic Dashboard / Debug / Logs · browser completion is not physical scanout"}else if ui.dock.mode.get()==PreviewMode::Simulation {"Last appearance frame · submit or restore timing pixels in Diagnostics"}else{"Appearance preview · generated history"}}</p>
         <div class="display-stage" class:invalid-preview=move ||ui.invalid() ||ui.dock.invalid_pixels.get()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
-                <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent Dashboard timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>
+                <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent all-screen synthetic timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>
                 <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Last frame only. Change the test values or reload to retry."</p></div>
                 <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views) ||ui.dock.mode.get()!=PreviewMode::Appearance>
                     <For each=move ||ui.editor.with(|e|e.editing_config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{

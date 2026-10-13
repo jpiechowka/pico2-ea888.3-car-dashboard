@@ -74,6 +74,7 @@ pub enum PreviewError {
     BufferLength,
     PendingFrame,
     UnsupportedPage(dashboard_config::ControlPage),
+    InspectionOnly,
 }
 
 /// Appearance reconstructs synthetic history; Simulation borrows the live owner.
@@ -97,6 +98,10 @@ pub struct Preview {
     options: Option<PreviewOptions>,
     rendered_at: Option<u64>,
     prepared_status: CacheExhaustionStatus,
+    pending: Option<(
+        dashboard_core::display::pipeline::FrameToken,
+        crate::simulator::SourceSessionKey,
+    )>,
 }
 
 impl Default for Preview {
@@ -118,6 +123,7 @@ impl Preview {
             options: None,
             rendered_at: None,
             prepared_status: CacheExhaustionStatus::EMPTY,
+            pending: None,
         }
     }
 
@@ -130,6 +136,9 @@ impl Preview {
         data: &dashboard_core::debug_view::DebugData<'_>,
         map: &dashboard_config::ControlMap,
     ) -> &[u8] {
+        if self.pending.is_some() {
+            return &self.rgba;
+        }
         dashboard_core::debug_view::DebugPage::new(data, map).draw(&mut St7789Renderer::new(&mut self.framebuffer));
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
         &self.rgba
@@ -153,8 +162,13 @@ impl Preview {
         simulation: &mut crate::simulator::ControlSimulator,
         token: dashboard_core::display::pipeline::FrameToken,
     ) -> Result<&[u8], PreviewError> {
-        if simulation.session().page() != dashboard_config::ControlPage::Dashboard {
-            return Err(PreviewError::UnsupportedPage(simulation.session().page()));
+        self.synchronize_source(simulation);
+        let source_key = simulation.source_key().ok_or(PreviewError::TimeOverflow)?;
+        if simulation.invalid() {
+            return Err(PreviewError::InspectionOnly);
+        }
+        if self.pending.is_some() {
+            return Err(PreviewError::PendingFrame);
         }
         if !simulation.can_accept_rendered(token) {
             return Err(PreviewError::PendingFrame);
@@ -163,22 +177,81 @@ impl Preview {
         if !simulation.accept_rendered(token) {
             return Err(PreviewError::PendingFrame);
         }
+        self.pending = Some((token, source_key));
         Ok(&self.rgba)
     }
 
-    /// Readonly dashboard appearance of the prepared state, without advancing acquisition.
-    /// This does not render or accept Debug/Logs pixels. Submission rejects those pages.
+    /// Read-only shared Dashboard/Debug/Logs projection, without advancing acquisition.
+    /// A submitted candidate protects its exact bytes until completion/source replacement.
     pub fn render_simulation(
         &mut self,
         simulation: &crate::simulator::ControlSimulator,
     ) -> Result<&[u8], PreviewError> {
+        self.synchronize_source(simulation);
+        if self.pending.is_some() {
+            return Err(PreviewError::PendingFrame);
+        }
+        self.render_projection(simulation, false)
+    }
+
+    fn synchronize_source(
+        &mut self,
+        simulation: &crate::simulator::ControlSimulator,
+    ) {
+        if self.pending.is_some_and(|(token, epoch)| {
+            simulation.source_key() != Some(epoch) || simulation.completed_frame() == Some(token)
+        }) {
+            self.pending = None;
+            if simulation.completed_frame().is_none() {
+                self.presentation.reset();
+            }
+        }
+    }
+
+    pub fn pending_frame(&self) -> Option<dashboard_core::display::pipeline::FrameToken> {
+        self.pending.map(|(t, _)| t)
+    }
+
+    /// Retained pixels are a capability of this token and source, never current scratch.
+    pub fn pending_pixels(
+        &self,
+        simulation: &crate::simulator::ControlSimulator,
+        token: dashboard_core::display::pipeline::FrameToken,
+    ) -> Option<&[u8]> {
+        (self.pending == simulation.source_key().map(|epoch| (token, epoch))).then_some(self.rgba.as_slice())
+    }
+
+    pub fn finish_pending(
+        &mut self,
+        token: dashboard_core::display::pipeline::FrameToken,
+    ) -> bool {
+        if self.pending_frame() != Some(token) {
+            return false;
+        }
+        self.pending = None;
+        true
+    }
+
+    fn render_projection(
+        &mut self,
+        simulation: &crate::simulator::ControlSimulator,
+        inspection: bool,
+    ) -> Result<&[u8], PreviewError> {
         let config = simulation.config();
-        let session = simulation.session();
+        let session = if inspection {
+            simulation.display_session()
+        } else {
+            simulation.session()
+        };
         let view = session.view_id();
         let layout = Layout::new(config, view, false).ok_or(PreviewError::UnknownView(view))?;
         let snapshot = simulation.snapshot();
-        let now = simulation.now_ms();
-        let warning = simulation.warning_page();
+        let now = if inspection {
+            simulation.display_now_ms()
+        } else {
+            simulation.now_ms()
+        };
+        let warning = if inspection { None } else { simulation.warning_page() };
         let epoch = simulation.presentation_epoch();
         if self.mode != PreviewMode::Simulation
             || epoch.is_none()
@@ -203,9 +276,39 @@ impl Preview {
             fps_instant: 0.0,
             fps_average: 0.0,
             backgrounds: [BLACK; 8],
-            overlay: simulation.presented_scene().overlay,
+            overlay: if inspection {
+                Overlay::configured_for_page(session.page(), session.overlay(config), None)
+            } else {
+                simulation.presented_scene().overlay
+            },
         };
-        scene.draw_full(&mut St7789Renderer::new(&mut self.framebuffer));
+        let mut display = St7789Renderer::new(&mut self.framebuffer);
+        match session.page() {
+            dashboard_config::ControlPage::Dashboard => scene.draw_full(&mut display),
+            dashboard_config::ControlPage::Debug => {
+                let data = dashboard_core::debug_view::DebugData {
+                    source_status: Some("SYNTHETIC DEMO"),
+                    config_fault: Some(inspection),
+                    brightness: Some(session.backlight().brightness()),
+                    settings_status: Some(if inspection {
+                        "INSPECTION ONLY"
+                    } else {
+                        "ACCEPTED CONFIG"
+                    }),
+                    ..Default::default()
+                };
+                dashboard_core::debug_view::DebugPage::new(&data, simulation.display_map()).draw(&mut display);
+            }
+            dashboard_config::ControlPage::Logs => {
+                let page = simulation.log_page();
+                page.draw_full(&mut display);
+                page.draw_hint(&mut display, simulation.display_map());
+            }
+        }
+        if session.backlight().compare() == 0 {
+            use embedded_graphics::prelude::DrawTarget;
+            display.clear(BLACK).ok();
+        }
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
         self.mode = PreviewMode::Simulation;
         self.prepared_status = simulation.cache_exhaustion_status();
@@ -227,6 +330,9 @@ impl Preview {
         view: u8,
         options: PreviewOptions,
     ) -> Result<&[u8], PreviewError> {
+        if self.pending.is_some() {
+            return Err(PreviewError::PendingFrame);
+        }
         let layout = Layout::new(config, view, false).ok_or(PreviewError::UnknownView(view))?;
         let now = options
             .sample_ms
@@ -365,6 +471,34 @@ impl Preview {
         self.render_diagnostic_with_status(accepted, draft, view, options, ValidatedConfig::cache_identity_status)
     }
 
+    /// Separate scratch presentation of a candidate, reading accepted acquisition only.
+    pub fn render_inspection(
+        &mut self,
+        simulation: &crate::simulator::ControlSimulator,
+        draft: Option<&crate::diagnostic::Draft>,
+    ) -> Result<&[u8], PreviewError> {
+        if self.pending.is_some() {
+            return Err(PreviewError::PendingFrame);
+        }
+        if simulation.display_session().page() != dashboard_config::ControlPage::Dashboard || draft.is_none() {
+            return self.render_projection(simulation, true);
+        }
+        let view = simulation.display_session().view_id();
+        let options = PreviewOptions {
+            sample_ms: simulation.display_now_ms(),
+            boost_psi: simulation.display_session().boost_psi(),
+            ..Default::default()
+        };
+        self.render_diagnostic_source(
+            simulation.config(),
+            draft.unwrap(),
+            view,
+            options,
+            ValidatedConfig::cache_identity_status,
+            Some(simulation),
+        )
+    }
+
     // Keep status projection at the producer boundary; tests can exercise an
     // exhausted publication without constructing or modifying identity proofs.
     fn render_diagnostic_with_status(
@@ -372,8 +506,20 @@ impl Preview {
         accepted: &ValidatedConfig,
         draft: &crate::diagnostic::Draft,
         view: u8,
+        options: PreviewOptions,
+        status: impl FnMut(&ValidatedConfig) -> dashboard_config::CacheIdentityStatus,
+    ) -> Result<&[u8], PreviewError> {
+        self.render_diagnostic_source(accepted, draft, view, options, status, None)
+    }
+
+    fn render_diagnostic_source(
+        &mut self,
+        accepted: &ValidatedConfig,
+        draft: &crate::diagnostic::Draft,
+        view: u8,
         mut options: PreviewOptions,
         mut status: impl FnMut(&ValidatedConfig) -> dashboard_config::CacheIdentityStatus,
+        live: Option<&crate::simulator::ControlSimulator>,
     ) -> Result<&[u8], PreviewError> {
         use dashboard_core::colors::WHITE;
         use embedded_graphics::mono_font::MonoTextStyle;
@@ -383,7 +529,11 @@ impl Preview {
         use embedded_graphics::text::Text;
 
         options.warnings = false;
-        self.render(accepted, view, options)?;
+        if let Some(simulation) = live {
+            self.render_projection(simulation, true)?;
+        } else {
+            self.render(accepted, view, options)?;
+        }
         let snapshot = self.snapshot.as_ref().expect("successful render has a snapshot");
         let now = self.rendered_at.expect("successful render has a timestamp");
         let mut display = St7789Renderer::new(&mut self.framebuffer);
@@ -391,7 +541,7 @@ impl Preview {
             .into_styled(PrimitiveStyle::with_fill(BLACK))
             .draw(&mut display)
             .ok();
-        for widget in draft.config.widgets.iter().filter(|w| w.view == view) {
+        for widget in draft.config.widgets.iter().take(64).filter(|w| w.view == view) {
             let Some(config) = crate::diagnostic::isolated_widget(accepted, widget) else {
                 continue;
             };

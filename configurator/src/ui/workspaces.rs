@@ -24,13 +24,31 @@ pub struct PreviewDockState {
     pub pixels_key: RwSignal<Option<AcceptedConfigKey>>,
     pub notice: RwSignal<String>,
     pub channel: RwSignal<Channel>,
+    pub running: RwSignal<bool>,
+    pub held: RwSignal<[bool; 4]>,
+    pub release_until: RwSignal<Option<u64>>,
+    pub inputs: RwSignal<[dashboard_configurator::simulator::BoundedText<64>; 8]>,
+    pub ack_text: RwSignal<dashboard_configurator::simulator::BoundedText<20>>,
+    pub callbacks: StoredValue<dashboard_configurator::simulator::CallbackGate>,
+    pub playback_clock: StoredValue<
+        Option<(
+            dashboard_configurator::timing::Playback,
+            dashboard_configurator::simulator::SourceSessionKey,
+        )>,
+    >,
+    pub completion_raf: RwSignal<Option<leptos::leptos_dom::helpers::AnimationFrameRequestHandle>>,
+    pub appearance_raf: RwSignal<Option<leptos::leptos_dom::helpers::AnimationFrameRequestHandle>>,
+    pub appearance_queued: RwSignal<bool>,
+    pub inspection_stamp: RwSignal<Option<EditorStamp>>,
     accepted_key: StoredValue<AcceptedConfigKey>,
     reported_key: StoredValue<AcceptedConfigKey>,
 }
 impl PreviewDockState {
     pub fn new(editor: &Editor) -> Self {
+        let mut simulator = ControlSimulator::new(editor.preview().clone());
+        simulator.require_frame_completion();
         Self {
-            sim: RwSignal::new_local(ControlSimulator::new(editor.preview().clone())),
+            sim: RwSignal::new_local(simulator),
             timing: RwSignal::new_local(dashboard_configurator::preview::Preview::new()),
             sequence: RwSignal::new(0),
             pending: RwSignal::new(None),
@@ -41,6 +59,19 @@ impl PreviewDockState {
             pixels_key: RwSignal::new(None),
             notice: RwSignal::new("Ready · accepted configuration".into()),
             channel: RwSignal::new(Channel::Boost),
+            running: RwSignal::new(false),
+            held: RwSignal::new([false; 4]),
+            release_until: RwSignal::new(None),
+            inputs: RwSignal::new(std::array::from_fn(|_| {
+                dashboard_configurator::simulator::BoundedText::default()
+            })),
+            ack_text: RwSignal::new(dashboard_configurator::simulator::BoundedText::default()),
+            callbacks: StoredValue::new(dashboard_configurator::simulator::CallbackGate::new()),
+            playback_clock: StoredValue::new(None),
+            completion_raf: RwSignal::new(None),
+            inspection_stamp: RwSignal::new(None),
+            appearance_raf: RwSignal::new(None),
+            appearance_queued: RwSignal::new(false),
             accepted_key: StoredValue::new(editor.accepted_config_key()),
             reported_key: StoredValue::new(editor.accepted_config_key()),
         }
@@ -51,16 +82,43 @@ impl PreviewDockState {
         self,
         _ui: Ui,
         editor: &Editor,
-    ) {
+    ) -> bool {
         let key = editor.accepted_config_key();
-        if self.accepted_key.get_value() != key {
-            self.sim.update(|s| s.restart(editor.preview().clone()));
-            self.accepted_key.set_value(key);
-            self.pending.set(None);
-            self.consumed.set(false);
-            self.notice
-                .set("Simulation restarted · accepted configuration changed; render a current frame".into());
+        let Some(accepted_key) = self.accepted_key.try_get_value() else {
+            return false;
+        };
+        if self.sim.try_with_untracked(|_| ()).is_none() || self.inspection_stamp.try_get_untracked().is_none() {
+            return false;
         }
+        if accepted_key != key {
+            super::simulation::cancel(_ui);
+            let _ = self.sim.try_update(|s| s.restart(editor.preview().clone()));
+            let _ = self.accepted_key.try_set_value(key);
+            let _ = self.pending.try_set(None);
+            let _ = self.consumed.try_set(false);
+            let _ = self
+                .notice
+                .try_set("Simulation restarted · accepted configuration changed; render a current frame".into());
+        }
+        if editor.has_invalid_draft() {
+            if self.inspection_stamp.get_untracked() != Some(editor.stamp()) {
+                super::simulation::cancel(_ui);
+                let map = editor
+                    .diagnostic()
+                    .map_or(editor.editing_config().controls, |d| d.config.controls);
+                let _ = self.sim.try_update(|s| s.inspect_invalid(map));
+                let _ = self.inspection_stamp.try_set(Some(editor.stamp()));
+            }
+        } else if self.inspection_stamp.get_untracked().is_some() || self.sim.with_untracked(ControlSimulator::invalid)
+        {
+            super::simulation::cancel(_ui);
+            let _ = self.sim.try_update(ControlSimulator::resume_accepted_bindings);
+            let _ = self.inspection_stamp.try_set(None);
+            let _ = self
+                .notice
+                .try_set("Accepted bindings restored · simulation retained".into());
+        }
+        true
     }
 
     /// Report at an explicit committed action, not each raw-input restart.
@@ -89,18 +147,9 @@ impl PreviewDockState {
         Effect::new(move |_| {
             ui.editor.with(|e| {
                 self.synchronize(ui, e);
-                if e.has_invalid_draft() {
-                    let map = e
-                        .diagnostic()
-                        .map_or(e.editing_config().controls, |d| d.config.controls);
-                    self.sim.update(|s| s.inspect_invalid(map));
-                } else if self.sim.with_untracked(ControlSimulator::invalid) {
-                    self.sim.update(ControlSimulator::resume_accepted_bindings);
-                    self.notice
-                        .set("Accepted bindings restored · simulation retained".into());
-                }
             });
         });
+        super::simulation::install(ui);
     }
 }
 

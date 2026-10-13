@@ -742,3 +742,40 @@ fn preset_reload_reports_read_failure_and_recovery_without_recovering_failed_wri
         assert!(snapshot.records().iter().all(|e| e.count.value == 1));
     }
 }
+#[test]
+fn synthetic_input_and_inspection_outcomes_are_bounded_quiet_and_distinct_from_dispatch() {
+    use dashboard_configurator::config::*;
+    use dashboard_configurator::event_adapters::{SimulationObservation, simulation_changes};
+    use dashboard_configurator::simulator::{ControlSimulator, SimulationInput};
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let before = SimulationObservation::capture(&sim);
+    sim.custom_input(Channel::Boost, "1.5");
+    let after = SimulationObservation::capture(&sim);
+    assert!(
+        simulation_changes(&before, &after)
+            .iter()
+            .any(|n| n.code == "simulation.input")
+    );
+    let before = SimulationObservation::capture(&sim);
+    sim.custom_input(Channel::Boost, "1.6");
+    assert!(simulation_changes(&before, &SimulationObservation::capture(&sim)).is_empty());
+    let before = SimulationObservation::capture(&sim);
+    sim.inject(SimulationInput::Channel {
+        channel: Channel::Boost,
+        value: f32::NAN,
+        at_ms: sim.now_ms() + 1,
+    });
+    assert!(
+        simulation_changes(&before, &SimulationObservation::capture(&sim))
+            .iter()
+            .any(|n| n.code == "simulation.input")
+    );
+    sim.inspect_invalid(sim.config().config().controls);
+    let before = SimulationObservation::capture(&sim);
+    sim.acknowledge_warnings();
+    let notices = simulation_changes(&before, &SimulationObservation::capture(&sim));
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].code, "simulation.inspection");
+    assert!(notices[0].message.contains("not dispatched"));
+    assert!(sim.pending_warning_command().is_none());
+}

@@ -9,6 +9,153 @@ use dashboard_core::render::FpsMode;
 use dashboard_core::samples::{DataMode, Quality, SensorId, Source};
 use dashboard_core::vehicle_status::VehicleStatus;
 
+#[test]
+fn canvas_failures_retry_exact_pending_bytes_and_never_complete_new_scratch() {
+    use dashboard_configurator::event_adapters::{RenderIssue, complete_simulation_pixels, consume_simulation_pixels};
+    use dashboard_configurator::simulator::ControlSimulator;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut sim = ControlSimulator::new(fixture());
+    let mut p = Preview::new();
+    let token = FrameToken {
+        buffer: BufferId::A,
+        sequence: 1,
+    };
+    p.render_simulation_submitted(&mut sim, token).unwrap();
+    let retained = p.rgba().to_vec();
+    let old = sim.completed_warning();
+    for failure in [
+        RenderIssue::CanvasAllocation,
+        RenderIssue::CanvasContext,
+        RenderIssue::CanvasDraw,
+    ] {
+        assert_eq!(
+            consume_simulation_pixels(&sim, &p, token, |pixels| {
+                assert!(pixels == retained);
+                Err(failure)
+            }),
+            Err(failure)
+        );
+        assert_eq!(sim.completed_warning(), old);
+    }
+    sim.advance_to(sim.now_ms() + 250, Some([3., 150., 150., 150., 80., 1000., 10., 1.4]));
+    assert_eq!(p.render_simulation(&sim).err(), Some(PreviewError::PendingFrame));
+    assert_eq!(
+        p.render_appearance(sim.config(), 1, PreviewOptions::default()).err(),
+        Some(PreviewError::PendingFrame)
+    );
+    complete_simulation_pixels(&mut sim, &mut p, token, |pixels| {
+        assert!(pixels == retained);
+        Ok(())
+    })
+    .unwrap();
+    assert!(complete_simulation_pixels(&mut sim, &mut p, token, |_| Ok(())).is_err());
+    let next = FrameToken {
+        buffer: BufferId::A,
+        sequence: 2,
+    };
+    p.render_simulation_submitted(&mut sim, next).unwrap();
+    sim.restart(fixture());
+    let mut called = false;
+    assert!(
+        consume_simulation_pixels(&sim, &p, next, |_| {
+            called = true;
+            Ok(())
+        })
+        .is_err()
+    );
+    assert!(!called);
+}
+
+#[test]
+fn same_content_new_simulator_cannot_consume_previous_owners_pending_pixels() {
+    use dashboard_configurator::event_adapters::consume_simulation_pixels;
+    use dashboard_configurator::simulator::ControlSimulator;
+    use dashboard_core::display::pipeline::{BufferId, FrameToken};
+    let mut old = ControlSimulator::new(fixture());
+    let mut preview = Preview::new();
+    let token = FrameToken {
+        buffer: BufferId::A,
+        sequence: 1,
+    };
+    preview.render_simulation_submitted(&mut old, token).unwrap();
+    let replacement = ControlSimulator::new(fixture());
+    let mut called = false;
+    assert!(
+        consume_simulation_pixels(&replacement, &preview, token, |_| {
+            called = true;
+            Ok(())
+        })
+        .is_err()
+    );
+    assert!(!called);
+}
+
+#[test]
+fn scenario_minmax_retains_raw_extrema_while_elapsed_display_is_smoothed() {
+    use dashboard_configurator::simulator::{ControlSimulator, Scenario, SimulationInput};
+    let mut raw = default_config();
+    raw.widgets.truncate(1);
+    raw.widgets[0].warning.enabled = false;
+    raw.widgets[0].advanced.smoothing_ms = 5000;
+    let mut sim = ControlSimulator::new(validate(raw).unwrap());
+    sim.set_scenario(Scenario::MinMax).unwrap();
+    let start = sim.now_ms();
+    let mut p = Preview::new();
+    sim.scenario_step(start).unwrap();
+    p.render_simulation(&sim).unwrap();
+    sim.inject(SimulationInput::Channel {
+        channel: Channel::Boost,
+        value: 10.,
+        at_ms: start + 250,
+    });
+    p.render_simulation(&sim).unwrap();
+    let snap = sim.snapshot();
+    assert_eq!(snap.sensor(SensorId::Boost).minimum(), Some(-1.));
+    assert_eq!(snap.sensor(SensorId::Boost).maximum(), Some(10.));
+    let mut fresh = Preview::new();
+    fresh.render_simulation(&sim).unwrap();
+    assert!(
+        p.rgb565() != fresh.rgb565(),
+        "retained elapsed smoothing must differ from a fresh raw display"
+    );
+}
+
+#[test]
+fn all_page_round_trips_equal_fresh_full_raster_and_inspection_reads_live_samples() {
+    use dashboard_configurator::editor::{Editor, RawField};
+    use dashboard_configurator::simulator::ControlSimulator;
+    let mut sim = ControlSimulator::new(fixture());
+    sim.advance_to(sim.now_ms() + 1, Some([2., 90., 95., 80., 30., 700., 13.8, 1.]));
+    let snapshot = sim.snapshot();
+    let mut reused = Preview::new();
+    for _ in 0..6 {
+        reused.render_simulation(&sim).unwrap();
+        let mut full = Preview::new();
+        full.render_simulation(&sim).unwrap();
+        assert!(reused.rgb565() == full.rgb565());
+        sim.tap(ButtonId::Y);
+    }
+    let mut editor = Editor::default();
+    editor
+        .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "bad".into())
+        .unwrap();
+    sim.inspect_invalid(editor.preview().config().controls);
+    let accepted = sim.snapshot();
+    let mut scratch = Preview::new();
+    scratch.render_inspection(&sim, editor.diagnostic().as_ref()).unwrap();
+    assert_eq!(
+        scratch.snapshot().unwrap().sensor(SensorId::Boost).value(),
+        snapshot.sensor(SensorId::Boost).value()
+    );
+    assert_eq!(sim.snapshot(), accepted);
+    assert!(scratch.warning_page().is_none());
+    sim.resume_accepted_bindings();
+    reused.render_simulation(&sim).unwrap();
+    let mut full = Preview::new();
+    full.render_simulation(&sim).unwrap();
+    assert!(reused.rgb565() == full.rgb565());
+}
+
 fn fixture() -> ValidatedConfig { validate(default_config()).unwrap() }
 
 #[test]

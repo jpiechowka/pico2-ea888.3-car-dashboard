@@ -434,15 +434,48 @@ pub fn complete_simulation_frame(
     }
 }
 
+/// Invoke the actual canvas consumer only for this source's exact retained candidate.
+pub fn consume_simulation_pixels(
+    sim: &ControlSimulator,
+    preview: &crate::preview::Preview,
+    token: dashboard_core::display::pipeline::FrameToken,
+    consume: impl FnOnce(&[u8]) -> Result<(), RenderIssue>,
+) -> Result<(), RenderIssue> {
+    if sim.invalid() {
+        return Err(RenderIssue::Preview(crate::preview::PreviewError::InspectionOnly));
+    }
+    let pixels = preview
+        .pending_pixels(sim, token)
+        .ok_or(RenderIssue::Preview(crate::preview::PreviewError::PendingFrame))?;
+    consume(pixels)
+}
+
+/// Restoration must succeed before completion; failure retains old metadata and bytes.
+pub fn complete_simulation_pixels(
+    sim: &mut ControlSimulator,
+    preview: &mut crate::preview::Preview,
+    token: dashboard_core::display::pipeline::FrameToken,
+    consume: impl FnOnce(&[u8]) -> Result<(), RenderIssue>,
+) -> Result<(), RenderIssue> {
+    consume_simulation_pixels(sim, preview, token, consume)?;
+    complete_simulation_frame(sim, token)
+        .map_err(|_| RenderIssue::Preview(crate::preview::PreviewError::PendingFrame))?;
+    preview.finish_pending(token);
+    Ok(())
+}
+
 pub struct SimulationObservation {
     page: ControlPage,
     view: u8,
     brightness: Brightness,
     fps: dashboard_core::render::FpsMode,
     psi: bool,
-    reset: bool,
+    reset: Option<u64>,
     warning: Option<WarningFeedback>,
     quality: [Quality; 8],
+    inputs: [Option<crate::simulator::InputOutcome>; 8],
+    inspection: Option<&'static str>,
+    control_outcome: Option<&'static str>,
 }
 impl SimulationObservation {
     pub fn capture(sim: &ControlSimulator) -> Self {
@@ -454,12 +487,15 @@ impl SimulationObservation {
             brightness: session.backlight().brightness(),
             fps: session.fps(),
             psi: session.boost_psi(),
-            reset: sim.reset_pending(),
+            reset: sim.pending_reset_token(),
             warning: match session.popup() {
                 Some(Popup::Warnings(_, feedback)) => Some(feedback),
                 _ => None,
             },
             quality: SensorId::ALL.map(|id| snapshot.quality(id, sim.now_ms())),
+            inputs: sim.input_outcomes(),
+            inspection: sim.inspection_outcome(),
+            control_outcome: sim.control_outcome(),
         }
     }
 }
@@ -491,13 +527,13 @@ pub fn simulation_changes(
     if before.reset != after.reset {
         changes.push(Notice::info(
             Category::Simulation,
-            if after.reset {
+            if after.reset.is_some() {
                 "simulation.reset_requested"
             } else {
                 "simulation.reset_ack"
             },
             None,
-            if after.reset {
+            if after.reset.is_some() {
                 "Statistics reset requested"
             } else {
                 "Statistics reset acknowledged"
@@ -536,6 +572,36 @@ pub fn simulation_changes(
                 message: format!("{} → {}", before.quality[i].label(), after.quality[i].label()),
             });
         }
+        if before.inputs[i] != after.inputs[i]
+            && let Some(outcome) = after.inputs[i]
+        {
+            changes.push(Notice::info(
+                Category::Simulation,
+                "simulation.input",
+                Some(id.label()),
+                outcome.label(),
+            ));
+        }
+    }
+    if before.inspection != after.inspection
+        && let Some(outcome) = after.inspection
+    {
+        changes.push(Notice::info(
+            Category::Simulation,
+            "simulation.inspection",
+            None,
+            outcome,
+        ));
+    }
+    if before.control_outcome != after.control_outcome
+        && let Some(outcome) = after.control_outcome
+    {
+        changes.push(Notice::info(
+            Category::Simulation,
+            "simulation.control_rejected",
+            None,
+            outcome,
+        ));
     }
     changes
 }
