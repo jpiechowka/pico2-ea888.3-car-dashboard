@@ -16,9 +16,31 @@ pub(crate) struct Inputs<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Limit {
-    High { on: f32, off: f32 },
-    Low { on: f32, off: f32 },
-    LambdaDeviation { on: f32, off: f32, min_load: f32 },
+    High {
+        on: f32,
+        off: f32,
+    },
+    Low {
+        on: f32,
+        off: f32,
+    },
+    OutsideWindow {
+        low_on: f32,
+        low_off: f32,
+        high_on: f32,
+        high_off: f32,
+    },
+    InsideWindow {
+        low_on: f32,
+        low_off: f32,
+        high_on: f32,
+        high_off: f32,
+    },
+    LambdaDeviation {
+        on: f32,
+        off: f32,
+        min_load: f32,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolicyError {
@@ -60,6 +82,30 @@ impl Rule {
         let valid = match limit {
             Limit::High { on, off } => on.is_finite() && off.is_finite() && on > off && sensor != SensorId::Lambda,
             Limit::Low { on, off } => on.is_finite() && off.is_finite() && on < off && sensor != SensorId::Lambda,
+            Limit::OutsideWindow {
+                low_on,
+                low_off,
+                high_on,
+                high_off,
+            } => {
+                [low_on, low_off, high_on, high_off].iter().all(|v| v.is_finite())
+                    && low_on < low_off
+                    && low_off <= high_off
+                    && high_off < high_on
+                    && sensor != SensorId::Lambda
+            }
+            Limit::InsideWindow {
+                low_on,
+                low_off,
+                high_on,
+                high_off,
+            } => {
+                [low_on, low_off, high_on, high_off].iter().all(|v| v.is_finite())
+                    && low_off < low_on
+                    && low_on <= high_on
+                    && high_on < high_off
+                    && sensor != SensorId::Lambda
+            }
             Limit::LambdaDeviation { on, off, min_load } => {
                 on.is_finite()
                     && off.is_finite()
@@ -204,13 +250,17 @@ struct State {
     at: u64,
     context_at: u64,
     since: u64,
-    flags: u8,
+    flags: u16,
 }
-const SEEN: u8 = 1;
-const CONTEXT: u8 = 2;
-const ACTIVE: u8 = 4;
-const PENDING: u8 = 8;
-const VALID: u8 = 16;
+const SEEN: u16 = 1;
+const CONTEXT: u16 = 2;
+const ACTIVE: u16 = 4;
+const PENDING: u16 = 8;
+const VALID: u16 = 16;
+const LATCHED: u16 = 32;
+const ACKNOWLEDGED: u16 = 64;
+const CLEARED: u16 = 128;
+const PENDING_CLEAR: u16 = 256;
 impl State {
     fn seen(&self) -> Option<(u64, u64)> { (self.flags & SEEN != 0).then_some((self.sequence, self.at)) }
 
@@ -240,7 +290,7 @@ impl State {
         }
     }
 
-    fn invalidate(&mut self) { self.flags &= !(ACTIVE | PENDING | VALID); }
+    fn invalidate(&mut self) { self.flags &= !(ACTIVE | PENDING | VALID | PENDING_CLEAR); }
 
     fn status(&self) -> Status {
         if self.flags & VALID == 0 {
@@ -320,17 +370,54 @@ impl State {
         let (trigger, clear) = match rule.limit {
             Limit::High { on, off } | Limit::LambdaDeviation { on, off, .. } => (value >= on, value <= off),
             Limit::Low { on, off } => (value <= on, value >= off),
+            Limit::OutsideWindow {
+                low_on,
+                low_off,
+                high_on,
+                high_off,
+            } => {
+                (
+                    value <= low_on || value >= high_on,
+                    value >= low_off && value <= high_off,
+                )
+            }
+            Limit::InsideWindow {
+                low_on,
+                low_off,
+                high_on,
+                high_off,
+            } => {
+                (
+                    value >= low_on && value <= high_on,
+                    value <= low_off || value >= high_off,
+                )
+            }
         };
         let active = self.flags & ACTIVE != 0;
-        if if active { clear } else { trigger } {
-            if self.flags & PENDING == 0 {
+        // An uncleared episode may qualify an off dwell after raw freshness was
+        // lost. This uses the same admitted samples and pending timestamp, without
+        // manufacturing raw Active or skipping the next on dwell.
+        let clearing = active || (self.flags & (LATCHED | CLEARED) == LATCHED && clear);
+        if if clearing { clear } else { trigger } {
+            if self.flags & PENDING == 0 || (self.flags & PENDING_CLEAR != 0) != clearing {
                 self.since = condition_at;
                 self.flags |= PENDING;
+                if clearing {
+                    self.flags |= PENDING_CLEAR;
+                } else {
+                    self.flags &= !PENDING_CLEAR;
+                }
             }
             let supported_until = at.min(context_at.unwrap_or(at));
-            if supported_until.saturating_sub(self.since) >= if active { rule.off_ms } else { rule.on_ms } {
-                self.flags ^= ACTIVE;
-                self.flags &= !PENDING;
+            if supported_until.saturating_sub(self.since) >= if clearing { rule.off_ms } else { rule.on_ms } {
+                if clearing {
+                    self.flags &= !ACTIVE;
+                    self.flags |= CLEARED;
+                } else {
+                    self.flags |= ACTIVE;
+                    self.flags &= !CLEARED;
+                }
+                self.flags &= !(PENDING | PENDING_CLEAR);
             }
         } else {
             self.flags &= !PENDING;

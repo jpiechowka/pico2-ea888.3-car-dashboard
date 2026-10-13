@@ -147,3 +147,26 @@ fn all_disabled_or_candidate_configuration_emits_no_diagnostic_queries() {
         assert!(session.poll(now).unwrap().is_none());
     }
 }
+
+#[test]
+fn session_warning_command_result_and_run_survive_communication_epoch() {
+    use dashboard_host_validation::warning_state::WarningCommand;
+    let c = validate(default_config()).unwrap();
+    let mut session = Session::configured(0x7E8, 1, &c).unwrap();
+    let run = session.snapshot().warning_run_id().unwrap();
+    let result = session.apply_warning_command(
+        WarningCommand {
+            request_id: 1,
+            run_id: run,
+            observed_event_serial: 0,
+            rules: u64::MAX,
+        },
+        0,
+    );
+    assert_eq!(result.accepted, 0);
+    assert_eq!(result.rejected, u64::MAX);
+    assert_eq!(session.snapshot().warning_command_result(), result);
+    session.transport_fault(1).unwrap();
+    session.change_epoch(2, 2).unwrap();
+    assert_eq!(session.snapshot().warning_run_id(), Some(run));
+}

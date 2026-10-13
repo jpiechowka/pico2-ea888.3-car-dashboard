@@ -17,9 +17,11 @@ use crate::alarms::{
     demo_rules,
 };
 use crate::cache_diagnostics::{CacheExhaustionCause, CacheExhaustionStatus};
+use crate::peak_hold::{PeakHolds, PeakSnapshot};
 pub use crate::samples::SensorId;
 use crate::samples::{DataMode, Quality, Sample, SampleError, SampleMeta, Source};
 use crate::sensor_state::{PeakMode, SensorSnapshot, SensorState};
+use crate::warning_state::{CommandResult, WarningCommand, WarningEligibility};
 
 #[cfg(not(target_has_atomic = "32"))]
 compile_error!("graph cache identities require 32-bit atomics");
@@ -93,6 +95,7 @@ pub struct DashboardSnapshot {
     cache_exhaustion: CacheExhaustionStatus,
     origin: Option<NonZeroU32>,
     publication: u64,
+    peaks: PeakSnapshot,
 }
 
 impl DashboardSnapshot {
@@ -108,6 +111,7 @@ impl DashboardSnapshot {
         cache_exhaustion: CacheExhaustionStatus::EMPTY,
         origin: None,
         publication: 0,
+        peaks: PeakSnapshot::EMPTY,
     };
 
     /// Transport equality includes diagnostic-only transitions without advancing
@@ -123,6 +127,32 @@ impl DashboardSnapshot {
     /// Independent of measurement sequence and reset generation. None means
     /// exhaustion: publish/accept conservatively forever, without ID reuse.
     pub fn publication_revision(&self) -> Option<u64> { core::num::NonZeroU64::new(self.publication).map(|r| r.get()) }
+
+    pub fn warning_run_id(&self) -> Option<u64> { self.origin.map(|v| u64::from(v.get())) }
+
+    /// MAX is terminal identity exhaustion; acknowledgment is disabled.
+    pub const fn warning_event_serial(&self) -> u64 { self.rule_alerts.event_serial }
+
+    pub const fn warning_command_result(&self) -> CommandResult { self.rule_alerts.result }
+
+    pub fn warning_eligibility(
+        &self,
+        index: RuleIndex,
+        now: u64,
+    ) -> WarningEligibility {
+        self.rule_alerts.eligibility(index, self, now)
+    }
+
+    pub fn peak_at(
+        &self,
+        index: RuleIndex,
+        now: u64,
+    ) -> Option<f32> {
+        self.value_at(self.rule_alerts.channel(index), now)?;
+        self.peaks.value(index)
+    }
+
+    pub const fn peaks(&self) -> &PeakSnapshot { &self.peaks }
 
     pub const fn cache_exhaustion_status(&self) -> CacheExhaustionStatus { self.cache_exhaustion }
 
@@ -219,6 +249,7 @@ impl PartialEq for DashboardSnapshot {
             && self.rule_alerts == other.rule_alerts
             && self.freshness == other.freshness
             && self.cache_exhaustion == other.cache_exhaustion
+            && self.peaks == other.peaks
     }
 }
 
@@ -272,6 +303,8 @@ struct AcquisitionState {
     freshness: [u16; SENSOR_COUNT],
     origin: Option<NonZeroU32>,
     publication: u64,
+    peaks: PeakHolds,
+    last_ms: u64,
 }
 
 impl AcquisitionState {
@@ -302,6 +335,18 @@ impl AcquisitionState {
         now: u64,
     ) {
         let mut changed = false;
+        if now < self.last_ms {
+            changed |= self.peaks.snapshot().valid_mask() != 0;
+            self.peaks.clear();
+        }
+        self.last_ms = self.last_ms.max(now);
+        if let Some(config) = config {
+            let fresh = core::array::from_fn(|i| {
+                self.metadata[i].quality_with_freshness(SensorId::ALL[i], now, u64::from(self.freshness[i]))
+                    == Quality::Valid
+            });
+            changed |= self.peaks.expire(config, fresh, now);
+        }
         for i in 0..SENSOR_COUNT {
             let sensor = &self.sensors[i];
             let before = (
@@ -325,6 +370,13 @@ impl AcquisitionState {
             self.publish_change();
         }
         self.update_alarms(config, now);
+        if let Alarms::Configured(engine) = &mut self.alarms {
+            let before = engine.snapshot();
+            engine.expire(now);
+            if before != engine.snapshot() {
+                self.publish_change();
+            }
+        }
     }
 
     // Build the final policy directly. Creating a legacy owner and replacing
@@ -361,6 +413,8 @@ impl AcquisitionState {
             freshness,
             origin,
             publication: 1,
+            peaks: PeakHolds::EMPTY,
+            last_ms: 0,
         }
     }
 
@@ -423,6 +477,24 @@ impl AcquisitionState {
         self.sequence = next;
         self.publish_change();
         self.contexts[index] = context;
+        if let Some(config) = config {
+            if previous
+                .received_at_ms
+                .is_some_and(|at| sample.received_at_ms.saturating_sub(at) > u64::from(self.freshness[index]))
+            {
+                self.peaks.clear_channel(config, sensor);
+            }
+            if valid
+                && now_ms >= self.last_ms
+                && self.metadata[index].quality_with_freshness(sensor, now_ms, u64::from(self.freshness[index]))
+                    == Quality::Valid
+            {
+                self.peaks.sample(config, sensor, value, sample.received_at_ms);
+            } else {
+                self.peaks.clear_channel(config, sensor);
+            }
+        }
+        self.last_ms = self.last_ms.max(now_ms);
         self.update_alarms(config, now_ms);
         if valid { Ok(()) } else { Err(SampleError::InvalidValue) }
     }
@@ -448,6 +520,10 @@ impl AcquisitionState {
         self.publish_change();
         self.sensors[sensor as usize].invalidate_history(at_ms);
         self.contexts[sensor as usize] = None;
+        if let Some(config) = config {
+            self.peaks.clear_channel(config, sensor);
+        }
+        self.last_ms = self.last_ms.max(at_ms);
         self.update_alarms(config, at_ms);
         true
     }
@@ -478,6 +554,19 @@ impl AcquisitionState {
             let mode = PEAK_MODES[i];
             if captured_ms >= self.metadata[i].status_at_ms && state.ingest(value, captured_ms, mode) {
                 accepted = true;
+                if let Some(config) = config {
+                    if self.metadata[i]
+                        .received_at_ms
+                        .is_some_and(|at| captured_ms.saturating_sub(at) > u64::from(self.freshness[i]))
+                    {
+                        self.peaks.clear_channel(config, SensorId::ALL[i]);
+                    }
+                    if captured_ms >= self.last_ms {
+                        self.peaks.sample(config, SensorId::ALL[i], value, captured_ms);
+                    } else {
+                        self.peaks.clear_channel(config, SensorId::ALL[i]);
+                    }
+                }
                 self.metadata[i] = SampleMeta {
                     received_at_ms: Some(captured_ms),
                     status_at_ms: captured_ms,
@@ -488,6 +577,7 @@ impl AcquisitionState {
             }
         }
         if accepted {
+            self.last_ms = self.last_ms.max(captured_ms);
             self.sequence = next_sequence;
             self.publish_change();
             self.contexts = demo_contexts_for(self.mode, &self.metadata);
@@ -507,6 +597,7 @@ impl AcquisitionState {
         for state in &mut self.sensors {
             state.reset_statistics();
         }
+        self.peaks.clear();
         self.reset_generation = generation;
         self.publish_change();
         true
@@ -523,6 +614,9 @@ impl AcquisitionState {
             status = status.union(CacheExhaustionStatus::from_cause(
                 CacheExhaustionCause::AcquisitionIssuer,
             ));
+        }
+        if let Alarms::Configured(engine) = &self.alarms {
+            status = status.union(engine.exhaustion_status());
         }
         for (index, sensor) in self.sensors.iter().enumerate() {
             if sensor.graph_revision().is_none() {
@@ -561,6 +655,7 @@ impl AcquisitionState {
             cache_exhaustion: self.cache_exhaustion_status(config),
             origin: self.origin,
             publication: self.publication,
+            peaks: self.peaks.snapshot(),
         }
     }
 
@@ -813,6 +908,29 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         );
     }
 
+    /// Call after admitting all iteration inputs, then tick timed expiries and publish.
+    pub fn apply_warning_command(
+        &mut self,
+        command: WarningCommand,
+        now_ms: u64,
+    ) -> CommandResult {
+        let config = self.configuration.as_ref().map(ConfigurationHandle::configuration);
+        self.state.update_alarms(config, now_ms);
+        let run = self.state.origin.map(|v| u64::from(v.get()));
+        let (result, changed) = match (&mut self.state.alarms, config) {
+            (Alarms::Configured(engine), Some(config)) => {
+                let before = engine.snapshot();
+                let result = engine.apply_command(config, command, run, now_ms);
+                (result, before != engine.snapshot())
+            }
+            _ => (CommandResult::rejected(command), false),
+        };
+        if changed {
+            self.state.publish_change();
+        }
+        result
+    }
+
     pub fn reset_statistics(
         &mut self,
         generation: u64,
@@ -999,6 +1117,83 @@ mod cache_tests {
         assert_eq!(
             seen.observe(model.snapshot().cache_exhaustion_status()).causes().next(),
             Some(CacheExhaustionCause::GraphRevision(dashboard_config::Channel::Egt))
+        );
+    }
+}
+
+#[cfg(test)]
+mod warning_tests {
+    use super::*;
+    fn config() -> ValidatedConfig {
+        let mut c = dashboard_config::default_config();
+        c.widgets.truncate(1);
+        let w = &mut c.widgets[0].warning;
+        w.enabled = true;
+        w.trigger = 2.;
+        w.clear = 1.;
+        w.on_ms = 100;
+        w.advanced.latch = true;
+        c.controls.screens[0].buttons[0].tap = dashboard_config::ControlAction::AcknowledgeWarnings;
+        dashboard_config::validate(c).unwrap()
+    }
+    #[test]
+    fn exhausted_run_keeps_warning_visibility_and_rejects_commands() {
+        let c = config();
+        let mut m = AcquisitionModel::demo_configured(&c);
+        m.state.origin = None;
+        for at in [0, 100] {
+            m.ingest_batch([3., 90., 95., 80., 30., 700., 13.8, 1.], at);
+        }
+        assert_eq!(m.snapshot().warning_run_id(), None);
+        assert_eq!(
+            m.apply_warning_command(
+                WarningCommand {
+                    request_id: 1,
+                    run_id: 0,
+                    observed_event_serial: 1,
+                    rules: 1
+                },
+                100
+            )
+            .rejected,
+            1
+        );
+        let e = m.snapshot().warning_eligibility(RuleIndex::new(0).unwrap(), 100);
+        assert!(e.visible());
+        assert!(!e.acknowledged);
+    }
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn owned_alias_uses_the_same_command_and_episode_implementation() {
+        let c = config();
+        let mut borrowed = AcquisitionModel::demo_configured(&c);
+        let mut owned = OwnedAcquisitionModel::demo_configured(alloc::boxed::Box::new(config()));
+        for at in [0, 100] {
+            let values = [3., 90., 95., 80., 30., 700., 13.8, 1.];
+            borrowed.ingest_batch(values, at);
+            owned.ingest_batch(values, at);
+        }
+        let b = borrowed.snapshot();
+        let o = owned.snapshot();
+        let command = WarningCommand {
+            request_id: 1,
+            run_id: b.warning_run_id().unwrap(),
+            observed_event_serial: 1,
+            rules: 1,
+        };
+        assert_eq!(
+            borrowed.apply_warning_command(command, 100),
+            owned.apply_warning_command(
+                WarningCommand {
+                    run_id: o.warning_run_id().unwrap(),
+                    ..command
+                },
+                100
+            )
+        );
+        assert_eq!(
+            borrowed.snapshot().warning_eligibility(RuleIndex::new(0).unwrap(), 100),
+            owned.snapshot().warning_eligibility(RuleIndex::new(0).unwrap(), 100)
         );
     }
 }

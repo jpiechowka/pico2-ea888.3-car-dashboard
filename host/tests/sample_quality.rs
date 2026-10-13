@@ -214,3 +214,30 @@ fn every_channel_has_a_bounded_deadline_and_unrelated_can_ids_are_rejected() {
         );
     }
 }
+
+#[test]
+fn configured_raw_peaks_reject_replays_and_clear_on_invalid_payload() {
+    use dashboard_host_validation::alarms::RuleIndex;
+    use dashboard_host_validation::view_config::*;
+    let mut c = default_config();
+    let position = c.widgets.iter().position(|w| w.channel == Channel::Water).unwrap();
+    c.widgets[position].advanced.peak_mode = PeakSelection::Maximum;
+    c.widgets[position].advanced.peak_hold_ms = 200;
+    let c = validate(c).unwrap();
+    let mut m = AcquisitionModel::configured(&c, 0x7E8);
+    let index = RuleIndex::new(position).unwrap();
+    m.ingest_sample(coolant(120., 1, 100), 100).unwrap();
+    assert_eq!(m.snapshot().peak_at(index, 100), Some(120.));
+    assert_eq!(
+        m.ingest_sample(coolant(130., 1, 200), 200),
+        Err(SampleError::OutOfOrder)
+    );
+    m.tick(300);
+    assert_eq!(m.snapshot().peak_at(index, 300), None);
+    m.ingest_sample(coolant(110., 2, 310), 310).unwrap();
+    assert_eq!(
+        m.ingest_sample(coolant(f32::NAN, 3, 320), 320),
+        Err(SampleError::InvalidValue)
+    );
+    assert_eq!(m.snapshot().peak_at(index, 320), None);
+}

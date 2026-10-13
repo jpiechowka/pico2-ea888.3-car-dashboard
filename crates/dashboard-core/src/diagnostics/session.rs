@@ -200,6 +200,14 @@ impl<'a> Session<'a> {
 
     pub const fn requires_new_epoch(&self) -> bool { self.client.requires_new_epoch() }
 
+    pub fn apply_warning_command(
+        &mut self,
+        command: crate::warning_state::WarningCommand,
+        now: u64,
+    ) -> crate::warning_state::CommandResult {
+        self.model.apply_warning_command(command, now)
+    }
+
     pub fn reset_statistics(
         &mut self,
         generation: u64,

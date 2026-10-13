@@ -6,6 +6,8 @@ pub enum CacheExhaustionCause {
     ConfigIssuer,
     AcquisitionIssuer,
     GraphRevision(Channel),
+    WarningEventSerial,
+    WarningRequestId,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -20,6 +22,8 @@ impl CacheExhaustionStatus {
                 CacheExhaustionCause::ConfigIssuer => 0,
                 CacheExhaustionCause::AcquisitionIssuer => 1,
                 CacheExhaustionCause::GraphRevision(channel) => 2 + channel.index(),
+                CacheExhaustionCause::WarningEventSerial => 10,
+                CacheExhaustionCause::WarningRequestId => 11,
             },
         )
     }
@@ -39,10 +43,12 @@ impl CacheExhaustionStatus {
     }
 
     pub fn causes(self) -> impl Iterator<Item = CacheExhaustionCause> {
-        (0..10).filter(move |bit| self.0 & (1 << bit) != 0).map(|bit| {
+        (0..12).filter(move |bit| self.0 & (1 << bit) != 0).map(|bit| {
             match bit {
                 0 => CacheExhaustionCause::ConfigIssuer,
                 1 => CacheExhaustionCause::AcquisitionIssuer,
+                10 => CacheExhaustionCause::WarningEventSerial,
+                11 => CacheExhaustionCause::WarningRequestId,
                 _ => CacheExhaustionCause::GraphRevision(Channel::ALL[bit - 2]),
             }
         })
@@ -72,6 +78,8 @@ impl core::fmt::Display for CacheExhaustionCause {
         match self {
             Self::ConfigIssuer => f.write_str("Cache config IDs exhausted"),
             Self::AcquisitionIssuer => f.write_str("Cache origin IDs exhausted"),
+            Self::WarningEventSerial => f.write_str("Warning event IDs exhausted; acknowledgment disabled"),
+            Self::WarningRequestId => f.write_str("Warning request IDs exhausted"),
             Self::GraphRevision(channel) => write!(f, "Cache graph {} exhausted", channel.label()),
         }
     }

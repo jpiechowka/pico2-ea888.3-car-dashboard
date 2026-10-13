@@ -206,6 +206,14 @@ impl<'a, P: Port> Vehicle<'a, P> {
 
     pub fn telemetry(&self) -> super::session::Telemetry { self.session.telemetry() }
 
+    pub fn apply_warning_command(
+        &mut self,
+        command: crate::warning_state::WarningCommand,
+        now: u64,
+    ) -> crate::warning_state::CommandResult {
+        self.session.apply_warning_command(command, now)
+    }
+
     pub fn reset_statistics(
         &mut self,
         generation: u64,

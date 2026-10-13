@@ -192,8 +192,8 @@ fn concurrent_watch_publication_is_coherent_and_eventually_latest() {
 #[test]
 fn publication_copy_and_single_owner_storage_have_fixed_bounds() {
     assert!(
-        // Historical bounded snapshot plus at most 640 B for 64 widget rules.
-        core::mem::size_of::<DashboardSnapshot>() <= 3200 + 640,
+        // Traced Task5 ARM snapshot4144 B, rounded guard4160 B.
+        core::mem::size_of::<DashboardSnapshot>() <= 4160,
         "snapshot {} B",
         core::mem::size_of::<DashboardSnapshot>()
     );

@@ -63,8 +63,8 @@ fn rule63_is_independent_from_channel0_and_disabled_duplicate() {
     assert_eq!(snapshot.rule_status_at(index(63), 499), Status::Unavailable);
     assert!(RuleIndex::new(64).is_none());
     assert!(RuleIndex::new(usize::MAX).is_none());
-    assert!(core::mem::size_of::<RuleEngine<'_>>() <= 4096);
-    assert!(core::mem::size_of::<RuleAlerts>() <= 640);
+    assert!(core::mem::size_of::<RuleEngine<'_>>() <= 4376);
+    assert!(core::mem::size_of::<RuleAlerts>() <= 680);
 }
 
 #[test]
@@ -199,25 +199,35 @@ fn time_only_ticks_invalidate_expired_dwell_without_sampling_or_rebinding() {
 }
 
 #[test]
-fn interim_v4_window_modes_are_unavailable_and_never_alias_high_or_low() {
+fn v4_windows_use_inclusive_endpoints_and_measurement_dwell() {
     for mode in [LimitMode::InsideWindow, LimitMode::OutsideWindow] {
         let mut c = default_config();
         c.widgets.truncate(1);
         let w = &mut c.widgets[0].warning;
         w.enabled = true;
         w.mode = mode;
-        w.on_ms = 1;
-        w.off_ms = 1;
+        w.on_ms = 100;
+        w.off_ms = 100;
         (w.trigger, w.clear, w.advanced.trigger_high, w.advanced.clear_high) = if mode == LimitMode::OutsideWindow {
             (0.0, 1.0, 3.0, 2.0)
         } else {
             (1.0, 0.0, 2.0, 3.0)
         };
+        let trigger = w.trigger;
+        let clear = w.clear;
         let c = validate(c).unwrap();
         let mut model = AcquisitionModel::demo_configured(&c);
-        for (at, value) in [(0, -0.5), (100, 1.5), (200, 3.5), (300, 1.5)] {
-            sample(&mut model, value, at);
-            assert_eq!(model.snapshot().rule_status_at(index(0), at), Status::Unavailable);
+        sample(&mut model, trigger, 0);
+        assert_eq!(model.snapshot().rule_status_at(index(0), 0), Status::Pending);
+        for at in 1..100 {
+            model.tick(at);
         }
+        assert_eq!(model.snapshot().rule_status_at(index(0), 99), Status::Pending);
+        sample(&mut model, trigger, 100);
+        assert_eq!(model.snapshot().rule_status_at(index(0), 100), Status::Active);
+        sample(&mut model, clear, 200);
+        assert_eq!(model.snapshot().rule_status_at(index(0), 200), Status::Active);
+        sample(&mut model, clear, 300);
+        assert_eq!(model.snapshot().rule_status_at(index(0), 300), Status::Normal);
     }
 }
