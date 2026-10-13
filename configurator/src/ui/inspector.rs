@@ -23,11 +23,19 @@ fn choose_appearance(
     }
 }
 
+fn cancel_appearance(ui: Ui) {
+    let mut result = Ok(());
+    ui.appearance.update(|session| result = session.cancel());
+    if let Err(error) = result {
+        ui.notice.set(error.message().into());
+    }
+}
+
 #[component]
 fn AppearancePanel(ui: Ui) -> impl IntoView {
     let name = RwSignal::new(String::new());
     view! {
-        <details class="appearance-tools" open=true><summary>"Copy appearance and presets"</summary>
+        <details class="appearance-tools"><summary>"Copy appearance and presets"</summary>
             <p class="hint">"Colors, gauge style, decimal precision and supported visibility only. Ranges, units, bands and warning rules stay as configured."</p>
             <label class="field"><span>"Appearance source"</span>
                 <select prop:value=move ||ui.appearance.with(|s|match s.source(){AppearanceSource::Selected=>"selected",AppearanceSource::Copied=>"copied",AppearanceSource::Preset(_)=>"preset"})
@@ -69,8 +77,8 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
                     <p class="hint">"Gauges omit history and trend; compact gauges also omit average and extrema. Unsupported visibility stays unchanged. Every stored band must contrast with the new track; a conflict rejects the whole operation."</p>
                     <div class="appearance-actions"><button class="primary" disabled=!can_apply on:click=move |_| {
                         if !ui.appearance.with_untracked(|s|s.is_current(offer)&&s.request()==Some(request)){ui.notice.set("Appearance source changed; preview again".into());return;}
-                        if ui.run(|editor|editor.apply(Edit::ApplyAppearance(request))) {let _=ui.appearance.try_update(|s|{let _=s.cancel();});}
-                    }>"Apply appearance"</button><button on:click=move |_|{let _=ui.appearance.try_update(|s|{let _=s.cancel();});}>"Cancel preview"</button></div>
+                        if ui.run(|editor|editor.apply(Edit::ApplyAppearance(request))) {cancel_appearance(ui);}
+                    }>"Apply appearance"</button><button on:click=move |_|cancel_appearance(ui)>"Cancel preview"</button></div>
                 </section>}
             })}
             <h3>"Named appearance presets"</h3>
@@ -81,7 +89,7 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
             {move || {
                 let stamp=ui.editor.with(Editor::stamp);let offer=command_palette::offer(ui,stamp);
                 view!{<button disabled=offer.snapshot().is_none() on:click=move |_|{
-                    if !ui.appearance.with_untracked(|s|s.is_current(offer)) || ui.editor.with_untracked(Editor::stamp)!=stamp {ui.notice.set("Appearance changed; choose it again".into());return;}
+                    if !ui.appearance.with_untracked(|s|s.is_current(offer)) || ui.editor.with_untracked(Editor::stamp)!=stamp || command_palette::offer(ui,stamp)!=offer {ui.notice.set("Appearance changed; choose it again".into());return;}
                     let Some(snapshot)=offer.snapshot() else{return;};let mut result=Ok(());ui.presets.update(|store|result=store.add(&name.get_untracked(),snapshot));preset_result(ui,result);
                 }>"Add named preset in memory"</button>}
             }}
@@ -89,10 +97,12 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
                 let version=store.version();
                 store.records().iter().enumerate().map(|(index,record)| {
                     let label=record.name().to_owned();let snapshot=record.snapshot;
+                    let stamp=ui.editor.with(Editor::stamp);let offer=command_palette::offer(ui,stamp);
                     view!{<li><span>{label}</span><div class="appearance-actions">
                         <button on:click=move |_|{if ui.presets.with_untracked(|s|s.record(version,index).is_ok()){choose_appearance(ui,AppearanceSource::Preset(snapshot),None);}else{ui.notice.set(PresetError::Stale.message().into());}}>"Use snapshot"</button>
                         <button on:click=move |_|{
-                            let stamp=ui.editor.with_untracked(Editor::stamp);let offer=command_palette::offer(ui,stamp);let Some(snapshot)=offer.snapshot() else{ui.notice.set("Choose a usable source first".into());return;};
+                            if !ui.appearance.with_untracked(|s|s.is_current(offer))||ui.editor.with_untracked(Editor::stamp)!=stamp||command_palette::offer(ui,stamp)!=offer{ui.notice.set("Appearance changed; choose it again".into());return;}
+                            let Some(snapshot)=offer.snapshot() else{ui.notice.set("Choose a usable source first".into());return;};
                             let mut result=Ok(());ui.presets.update(|s|result=s.replace(version,index,snapshot));preset_result(ui,result);
                         }>"Replace with source"</button>
                         <button on:click=move |_|{let mut result=Ok(());ui.presets.update(|s|result=s.remove(version,index));preset_result(ui,result);}>"Delete"</button>

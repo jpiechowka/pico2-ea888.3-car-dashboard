@@ -176,9 +176,18 @@ fn schedule_appearance(
         {
             return;
         }
-        if let Some(node) = element("studio-appearance-preview").filter(usable) {
-            focus(&node);
-            node.scroll_into_view();
+        if let Some(node) = element("studio-appearance-preview") {
+            let mut parent = node.parent_element();
+            while let Some(ancestor) = parent {
+                if ancestor.tag_name() == "DETAILS" {
+                    let _ = ancestor.set_attribute("open", "");
+                }
+                parent = ancestor.parent_element();
+            }
+            if usable(&node) {
+                focus(&node);
+                node.scroll_into_view();
+            }
         }
     }) {
         Ok(frame) => ui.focus.update(|state| state.frame = Some(frame)),

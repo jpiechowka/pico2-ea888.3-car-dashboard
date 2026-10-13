@@ -1344,7 +1344,12 @@ impl Editor {
         request: AppearanceRequest,
     ) -> Result<AppearancePreview, EditorError> {
         let (config, mut preview) = self.appearance_candidate(request)?;
-        preview.error = validate(config).err().map(EditorError::Validation);
+        // Read-only preview never issues a Config cache identity or a proof.
+        // The same authoritative visitor is used by validate at actual Apply.
+        let _ = visit_validation(&config, |issue| {
+            preview.error = Some(EditorError::Validation(issue.error));
+            core::ops::ControlFlow::Break(())
+        });
         Ok(preview)
     }
 
@@ -2175,6 +2180,49 @@ fn fresh_widget(config: &Config) -> Result<u16, EditorError> {
 #[cfg(test)]
 mod transaction_tests {
     use super::*;
+
+    #[test]
+    fn appearance_issuance_exhaustion_preserves_existing_save_and_all_state() {
+        let mut editor = Editor::default();
+        editor
+            .select(Selection {
+                view: 1,
+                widget: Some(1),
+            })
+            .unwrap();
+        let save = editor.begin_save().unwrap();
+        let mut snapshot = editor.selected_appearance(editor.stamp()).unwrap();
+        snapshot.decimals = 3;
+        let request = editor
+            .appearance_request(AppearanceScope::AllWidgets, snapshot, editor.stamp())
+            .unwrap();
+        editor.request = u64::MAX;
+        let before = (
+            editor.stamp(),
+            editor.accepted_config_key(),
+            editor.history_len(),
+            editor.selection(),
+        );
+        let config = serde_json::to_string(editor.preview().config()).unwrap();
+        assert_eq!(
+            editor.apply(Edit::ApplyAppearance(request)),
+            Err(EditorError::CounterExhausted)
+        );
+        assert_eq!(
+            (
+                editor.stamp(),
+                editor.accepted_config_key(),
+                editor.history_len(),
+                editor.selection()
+            ),
+            before
+        );
+        assert_eq!(serde_json::to_string(editor.preview().config()).unwrap(), config);
+        assert!(!editor.has_invalid_draft());
+        assert!(editor.save_is_current(save.token()));
+        editor.acknowledge_save(save.token(), Ok(())).unwrap();
+        assert_eq!(editor.save_status(), SaveStatus::Saved);
+    }
 
     #[test]
     fn located_object_exhaustion_never_publishes_raw_or_history() {

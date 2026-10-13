@@ -468,6 +468,9 @@ impl PresetStore {
         version: PresetVersion,
         index: usize,
     ) -> Result<&PresetRecord, PresetError> {
+        if self.version.owner == 0 {
+            return Err(PresetError::Exhausted);
+        }
         if version != self.version {
             return Err(PresetError::Stale);
         }
@@ -663,4 +666,41 @@ impl PresetStore {
     }
 
     pub fn cancel(&mut self) { self.active = None; }
+}
+
+#[cfg(test)]
+mod exhaustion_tests {
+    use super::*;
+    fn snapshot() -> AppearanceSnapshot { AppearanceSnapshot::from_widget(&default_config().widgets[0]) }
+    #[test]
+    fn exhausted_unissued_owner_cannot_resolve_a_record_from_another_unissued_owner() {
+        let mut store = PresetStore::restore(Ok(None));
+        store.add("Existing", snapshot()).unwrap();
+        store.version.owner = 0;
+        assert_eq!(store.record(store.version(), 0), Err(PresetError::Exhausted));
+    }
+    #[test]
+    fn preset_revision_request_and_source_exhaustion_never_wrap_or_publish() {
+        let mut store = PresetStore::restore(Ok(None));
+        store.add("Existing", snapshot()).unwrap();
+        store.version.revision = u64::MAX;
+        let before = store.export().unwrap();
+        assert_eq!(store.add("New", snapshot()), Err(PresetError::Exhausted));
+        assert_eq!(store.export().unwrap(), before);
+        store.request = u64::MAX;
+        assert!(matches!(store.begin_save(), Err(PresetError::Exhausted)));
+        assert_eq!(store.active, None);
+        assert_eq!(store.status(), PresetStatus::Dirty);
+        let mut session = AppearanceSession {
+            revision: u64::MAX,
+            ..AppearanceSession::default()
+        };
+        assert_eq!(
+            session.choose(AppearanceSource::Copied, None),
+            Err(PresetError::Exhausted)
+        );
+        assert_eq!(session.source(), AppearanceSource::Selected);
+        assert_eq!(session.copy(snapshot()), Err(PresetError::Exhausted));
+        assert_eq!(session.copied, None);
+    }
 }

@@ -451,3 +451,126 @@ fn explicit_source_choices_retire_old_offers_and_confirmations() {
         .unwrap();
     assert!(session.offer(&no_selection, no_selection.stamp()).snapshot().is_some());
 }
+
+#[test]
+fn exact_wire_limit_duplicate_fields_and_full_record_capacity_are_atomic() {
+    let e = selected();
+    let snapshot = changed(&e);
+    let mut store = PresetStore::restore(Ok(None));
+    store.add(&"x".repeat(32), snapshot).unwrap();
+    store.add(" A ", snapshot).unwrap();
+    assert_eq!(store.records()[1].name(), " A ");
+    let text = store.export().unwrap();
+    let before = store.version();
+    let padded = format!("{text}{}", " ".repeat(MAX_PRESET_BYTES - text.len()));
+    assert_eq!(padded.len(), MAX_PRESET_BYTES);
+    store.import(&padded).unwrap();
+    assert_ne!(store.version(), before);
+    let before = store.export().unwrap();
+    let invalids = [
+        format!("{padded} "),
+        text.replacen("\"version\":1", "\"version\":1,\"version\":1", 1),
+        text.replacen("\"records\":", "\"extra\":0,\"records\":", 1),
+        text.replacen("\"name\":", "\"id\":1,\"name\":", 1),
+        text.replacen("\"decimals\":3", "\"decimals\":3,\"decimals\":2", 1),
+        text.replace("Numeric", "UnknownStyle"),
+        text.replace("\"decimals\":3", "\"decimals\":4"),
+        text.replace("#FFFFFF", "#000000"),
+    ];
+    for invalid in invalids {
+        assert!(store.import(&invalid).is_err());
+        assert_eq!(store.export().unwrap(), before);
+    }
+    let record = serde_json::to_value(&store.records()[0]).unwrap();
+    let records = (0..17)
+        .map(|i| {
+            let mut r = record.clone();
+            r["name"] = format!("Name{i}").into();
+            r
+        })
+        .collect::<Vec<_>>();
+    let text = serde_json::json!({"version":1,"records":records}).to_string();
+    assert!(store.import(&text).is_err());
+    assert_eq!(store.export().unwrap(), before);
+    let duplicate = serde_json::json!({"version":1,"records":[record.clone(),record]}).to_string();
+    assert_eq!(store.import(&duplicate), Err(PresetError::DuplicateName));
+    assert_eq!(store.export().unwrap(), before);
+}
+
+#[test]
+fn parsed_valid_and_invalid_json_and_retired_inspection_epochs_reject_appearance() {
+    let mut e = selected();
+    let snapshot = changed(&e);
+    let request = e
+        .appearance_request(AppearanceScope::AllWidgets, snapshot, e.stamp())
+        .unwrap();
+    let handle = e.open_json().unwrap();
+    let json_request = e
+        .appearance_request(AppearanceScope::AllWidgets, snapshot, e.stamp())
+        .unwrap();
+    let token = e.set_json_text(handle, e.export_json().unwrap()).unwrap();
+    e.finish_json_parse(token).unwrap();
+    let stamp = e.stamp();
+    let history = e.history_len();
+    let key = e.accepted_config_key();
+    assert_eq!(e.apply(Edit::ApplyAppearance(request)), Err(EditorError::JsonPending));
+    assert_eq!(
+        e.appearance_request(AppearanceScope::Selected, snapshot, stamp),
+        Err(EditorError::JsonPending)
+    );
+    let token = e.set_json_text(handle, "{ bad JSON".into()).unwrap();
+    e.finish_json_parse(token).unwrap();
+    assert_eq!(e.apply(Edit::ApplyAppearance(request)), Err(EditorError::JsonPending));
+    assert_eq!(e.json_draft().unwrap().text(), "{ bad JSON");
+    assert_eq!(
+        (e.stamp(), e.history_len(), e.accepted_config_key()),
+        (stamp, history, key)
+    );
+    e.discard_json().unwrap();
+    // A target minted in this JSON inspection lifetime stays retired after Discard.
+    assert_eq!(
+        e.apply(Edit::ApplyAppearance(json_request)),
+        Err(EditorError::StaleToken)
+    );
+    let request = e
+        .appearance_request(AppearanceScope::Selected, snapshot, e.stamp())
+        .unwrap();
+    e.select(Selection {
+        view: 1,
+        widget: Some(2),
+    })
+    .unwrap();
+    let before = state(&e);
+    assert!(e.apply(Edit::ApplyAppearance(request)).is_err());
+    assert_eq!(state(&e), before);
+}
+
+#[test]
+fn invalid_typed_snapshot_and_empty_view_have_no_editor_effects() {
+    let mut e = selected();
+    let before = state(&e);
+    let mut snapshot = changed(&e);
+    snapshot.decimals = 4;
+    assert!(
+        e.appearance_request(AppearanceScope::AllWidgets, snapshot, e.stamp())
+            .is_err()
+    );
+    assert_eq!(state(&e), before);
+    snapshot = changed(&e);
+    snapshot.colors.label = snapshot.colors.background;
+    assert!(
+        e.appearance_request(AppearanceScope::Selected, snapshot, e.stamp())
+            .is_err()
+    );
+    assert_eq!(state(&e), before);
+    e.apply(Edit::AddView { name: "Empty".into() }).unwrap();
+    let request = e
+        .appearance_request(AppearanceScope::ThisView, changed(&selected()), e.stamp())
+        .unwrap();
+    let preview = e.appearance_preview(request).unwrap();
+    assert_eq!(preview.target_count, 0);
+    assert!(!preview.changed);
+    let before = state(&e);
+    e.apply(Edit::ApplyAppearance(request)).unwrap();
+    assert_eq!(state(&e), before);
+}
