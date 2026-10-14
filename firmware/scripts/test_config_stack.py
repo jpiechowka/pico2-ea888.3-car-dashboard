@@ -230,8 +230,8 @@ class NumericSupport(unittest.TestCase):
 
 
 class ControlBodies(unittest.TestCase):
-    def fixture(self,mode,code_shift=0,data_shift=0):
-        spec=[v for v in json.loads((Path(__file__).parent/'fixtures/config-control.json').read_text()) if v['mode']==mode]
+    def fixture(self,mode,code_shift=0,data_shift=0,fixture_file='config-control.json'):
+        spec=[v for v in json.loads((Path(__file__).parent/'fixtures'/fixture_file).read_text()) if v['mode']==mode]
         if code_shift or data_shift:
             locations={a:a+data_shift for item in spec for a,b in item['objects']}
             locations.update({f['address']:f['address']+code_shift for item in spec for f in item['extra_functions']})
@@ -347,6 +347,81 @@ class ControlBodies(unittest.TestCase):
                 if fault=='pointers':f=leaf
             with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
                 config_control.control_body(objects,f['aliases'][0]['name'],records)
+
+
+class PayloadBodies(unittest.TestCase):
+    def fixture(self,mode,code_shift=0,data_shift=0):
+        return ControlBodies.fixture(self,mode,code_shift,data_shift,'config-payload.json')
+
+    def test_all_current_payload_clones_require_their_exact_raw_receiver_and_shape(self):
+        import config_payload
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode)
+            for item in spec:
+                f=item['function'];outline=item['key'].rsplit(':',2)[0] if item['key'].startswith('@outline:') else None
+                proof=config_payload.payload_body(objects,f['aliases'][0]['name'],records,outline)
+                self.assertEqual(proof['shape'],item['shape'])
+                self.assertTrue(proof['requires_value_source_and_live_sink'])
+
+    def test_option_niche_reference_cells_struct2_and_outline_abi_mutations_reject(self):
+        import config_payload
+        for mode,role,offset,mnemonic,operands in [
+                ('speed2','<core::option::Option<u16> as core::fmt::Debug>::fmt',0x10,'adds','r0, #0x1'),
+                ('sizez','<&core::option::Option<dashboard_config::model::Channel> as core::fmt::Debug>::fmt',4,'cmp','r2, #0x7'),
+                ('sizez','<core::option::Option<u8> as core::fmt::Debug>::fmt',0x18,'pop','{r5, r6, r7, pc}'),
+                ('sizes','<core::str::error::Utf8Error as core::fmt::Debug>::fmt',0x3c,'strd','r0, r5, [sp]'),
+                ('sizes','<core::fmt::Formatter>::debug_struct_field2_finish',0x34,'ldr','r3, [r7, #0xc]'),
+                ('sizez','OUTLINED_FUNCTION_13',8,'mov','r1, r5'),
+                ('sizez','OUTLINED_FUNCTION_20',0,'str','r0, [sp, #0x4]'),
+                ('sizez','OUTLINED_FUNCTION_255',6,'bx','lr')]:
+            objects,records,spec=self.fixture(mode);item=next(v for v in spec if v['function']['role']==role);f=item['function']
+            at=f['address']+offset;old=records[at];records[at]=Instruction(at,old.raw,mnemonic,operands)
+            outline=item['key'].rsplit(':',2)[0] if item['key'].startswith('@outline:') else None
+            with self.subTest(mode=mode,role=role),self.assertRaises(AssertionError):
+                config_payload.payload_body(objects,f['aliases'][0]['name'],records,outline)
+
+    def test_payload_code_pools_tables_and_callbacks_relocate_independently(self):
+        import config_payload
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode,0x1800,0x21000)
+            for item in spec:
+                f=item['function'];outline=item['key'].rsplit(':',2)[0] if item['key'].startswith('@outline:') else None
+                proof=config_payload.payload_body(objects,f['aliases'][0]['name'],records,outline)
+                self.assertEqual(proof['shape'],item['shape'])
+
+    def test_payload_exact_enum_tables_same_layout_reference_callbacks_and_context_reject(self):
+        import config_payload
+        for mode in ('speed2','sizes','sizez'):
+            for fault in ('enum_length','enum_pointer','debug_slot','pool_or_raw_context','partial'):
+                objects,records,spec=self.fixture(mode)
+                family='<dashboard_config::validate::ErrorCode as core::fmt::Debug>::fmt' if fault.startswith('enum_') else '<core::option::Option<u8> as core::fmt::Debug>::fmt'
+                item=next(v for v in spec if v['function']['role']==family);f=item['function'];data=bytearray(objects.elf.data)
+                if fault=='partial':del records[f['address']]
+                elif fault=='pool_or_raw_context':
+                    if mode=='sizez':
+                        address=f['literals'][0]['pool'];section=objects.elf.sections[0];data[section[4]+address-section[3]]^=1
+                    else:
+                        name=f['aliases'][0]['name'];entry=objects.elf.functions.pop(name)
+                        objects.elf.functions[name+'Cs123_4fake']=entry;f['aliases'][0]['name']=name+'Cs123_4fake'
+                else:
+                    if fault=='debug_slot':
+                        # A real, same-layout reference callback of the wrong
+                        # numeric type must not satisfy Option<u8>.
+                        table=next(p for p in f['literals'] if p['first256'].startswith('000000000400000004000000'))
+                        other=next(v['function'] for v in spec if v['function']['role']=='<core::option::Option<u16> as core::fmt::Debug>::fmt')
+                        wrong=next(p for p in other['literals'] if p['first256'].startswith('000000000400000004000000'))
+                        address=table['value']+12;section=objects.elf.sections[1]
+                        pointer=int.from_bytes(bytes.fromhex(wrong['first256'])[12:16],'little')
+                        struct.pack_into('<I',data,section[4]+address-section[3],pointer)
+                    else:
+                        p=next(p for p in f['literals'] if p['first256'].startswith('07050909')) if fault=='enum_length' else next(p for p in f['literals'] if not p['first256'].startswith('07050909'))
+                        address=p['value'];section=objects.elf.sections[1]
+                        at=section[4]+address-section[3]
+                        if fault=='enum_length':data[at]^=1
+                        else:data[at:at+4]=data[at+4:at+8]
+                objects.elf.data=bytes(data)
+                with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
+                    config_payload.payload_body(objects,f['aliases'][0]['name'],records)
 
 
 class PanicBodies(unittest.TestCase):
