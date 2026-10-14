@@ -339,7 +339,8 @@ def enum_dispatch(objects, name, instructions):
     if width == 1:
         require(objects.read_only(table + count, 1) == b'\0', 'typed enum table alignment differs')
     return {'role': role, 'function': start, 'table': table, 'entries': entries,
-            'prefix_bytes': len(prefix)}
+            'prefix_bytes': len(prefix), 'epilogue':
+            ('classic' if prefix == ENUM_PREFIXES['field'][0] else 'scratch') if role == 'field' else None}
 
 
 FIELD_PAYLOADS = {'Controls': ('control_error_ref', 0), 'HistorySeconds': ('channel_ref', 1),
@@ -396,7 +397,7 @@ def _field_outline(objects, target, outlines):
     raise AssertionError('unreviewed Field zero-growth outline body')
 
 
-def _field_case(objects, records, entry, case, outlines=None):
+def _field_case(objects, records, entry, case, outlines=None, epilogue='classic'):
     """Closed Field operand-materialization vocabulary; no general executor.
 
     Input is a typed, byte-checked case entry from enum_dispatch. Registers carry
@@ -405,7 +406,8 @@ def _field_case(objects, records, entry, case, outlines=None):
     This does not prove the subsequently selected tuple/sink bridge body.
     """
     values = {'r0': ('field', 0), 'r1': ('formatter', 0)}
-    cells = {}; sp = 0; visited = set(); binding = None; address = entry; outline_calls = []
+    require(epilogue in ('classic', 'scratch'), 'unreviewed Field prologue/epilogue family')
+    cells = {}; sp = 0; visited = set(); binding = None; address = entry; outline_calls = []; history = []
 
     def get(register):
         if register == 'sp': return ('stack', sp)
@@ -430,13 +432,14 @@ def _field_case(objects, records, entry, case, outlines=None):
         record = records[address]; visited.add(address)
         mnemonic = record.mnemonic.removesuffix('.w')
         operands = record.operands.split('@', 1)[0].strip()
+        history.append((mnemonic, operands))
         destination, _, source = operands.partition(','); source = source.strip()
         next_address = address + len(record.raw)
         if mnemonic in ('movw', 'movt', 'mov', 'movs', 'ldr', 'ldrd'):
-            require(re.fullmatch(r'r(?:[0-9]|1[0-2])|lr', destination),
+            require(re.fullmatch(r'r[0-3]|r12|lr', destination),
                     'Field materialization writes implicit control/stack state')
         if mnemonic in ('add', 'adds'):
-            require(re.fullmatch(r'r(?:[0-9]|1[0-2])|lr|sp', destination),
+            require(re.fullmatch(r'r[0-3]|r12|lr|sp', destination),
                     'Field address arithmetic writes implicit control state')
         if mnemonic in ('movw', 'movt', 'mov', 'movs'):
             if source.startswith('#'):
@@ -461,7 +464,8 @@ def _field_case(objects, records, entry, case, outlines=None):
             else: values[destination] = result
         elif mnemonic == 'str':
             base, offset = memory(source)
-            require(base == 'sp', 'Field store leaves known argument cells')
+            require(base == 'sp' and sp == 0 and offset in (0, 4) and case in FIELD_PAYLOADS,
+                    'Field store leaves its owned argument cells')
             cells[sp + offset] = get(destination)
         elif mnemonic == 'ldr':
             base, offset = memory(source)
@@ -473,7 +477,7 @@ def _field_case(objects, records, entry, case, outlines=None):
                 values[destination] = ('write_str', 0)
         elif mnemonic == 'ldrd':
             second, _, operand = source.partition(', ')
-            require(re.fullmatch(r'r(?:[0-9]|1[0-2])|lr', second),
+            require(re.fullmatch(r'r[0-3]|r12|lr', second),
                     'Field paired load writes implicit control/stack state')
             base, offset = memory(operand)
             require(get(base) == ('formatter', 0) and offset == 0,
@@ -485,6 +489,7 @@ def _field_case(objects, records, entry, case, outlines=None):
             next_address = int(target[1], 16)
         elif mnemonic == 'bl':
             require(sp == 0, 'Field call moved incoming SP away from its argument cells')
+            values.pop('lr', None)  # Every real BL replaces LR, including outlines.
             target = re.match(r'0x([0-9a-f]+)(?:\s|$)', operands)
             require(target is not None, 'unresolved Field callback bridge')
             target = int(target[1], 16)
@@ -493,7 +498,7 @@ def _field_case(objects, records, entry, case, outlines=None):
                 effect, length = _field_outline(objects, target, outlines)
                 require(get('r1') == ('formatter', 0), 'Field outline lost Formatter origin')
                 if effect == 'vtable_transport':
-                    require(isinstance(get('r0'), int) and isinstance(get('r2'), int),
+                    require(case in FIELD_PAYLOADS and isinstance(get('r0'), int) and isinstance(get('r2'), int),
                             'Field outline lost current vtable/name producers')
                     cells[sp] = get('r0'); values['r0'] = get('r1'); values['r1'] = get('r2')
                 else:
@@ -533,13 +538,22 @@ def _field_case(objects, records, entry, case, outlines=None):
             require(registers in (['r7', 'pc'], ['r7', 'lr'], ['r5', 'r6', 'r7', 'lr'],
                                   ['r2', 'r3', 'r7', 'pc']),
                     'unreviewed Field return ABI')
+            before_sp = sp
             sp += len(registers) * 4
             for register in registers: values.pop(register, None)
             if 'pc' in registers:
+                expected = (epilogue == 'classic' and registers == ['r7', 'pc'] and before_sp == 8
+                            and history[-2] == ('add', 'sp, #0x8')) or (
+                            epilogue == 'scratch' and registers == ['r2', 'r3', 'r7', 'pc'] and before_sp == 0)
+                require(expected, 'Field tuple lacks its reviewed restoring epilogue')
                 require(sp == 16 and binding is not None, 'Field tuple return lacks balanced binding')
                 binding['outlines'] = outline_calls
                 return binding, visited
         elif mnemonic == 'bx':
+            # Both current families discard eight local/scratch bytes, then
+            # restore R7 and the original saved LR before the sink tail.
+            expected = history[-3:-1] == [('add', 'sp, #0x8'), ('pop', '{r7, lr}')]
+            require(expected and operands == 'r3', 'Field sink lacks its reviewed restoring tail epilogue')
             require(get(operands) == ('write_str', 0) and case not in FIELD_PAYLOADS
                     and sp == 16 and get('r0') == ('sink_data', 0), 'unbound Field sink tail')
             pointer, length = get('r1'), get('r2')
@@ -560,7 +574,7 @@ def field_case_bindings(objects, name, instructions, outlines=None):
     covered = {a for a in records if a < dispatch['table']}
     bindings = []
     for case, entry in zip(FIELD_CASES, dispatch['entries'], strict=True):
-        binding, visited = _field_case(objects, records, entry, case, outlines)
+        binding, visited = _field_case(objects, records, entry, case, outlines, dispatch['epilogue'])
         covered |= visited; bindings.append(binding)
     require(all(a in covered or i.raw == b'\x00\xbf' and i.mnemonic == 'nop'
                 for a, i in records.items()), 'unreviewed Field body outside typed cases')

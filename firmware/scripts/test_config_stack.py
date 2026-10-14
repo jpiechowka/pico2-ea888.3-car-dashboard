@@ -401,7 +401,7 @@ class FieldSuffix(unittest.TestCase):
         specs=[(i.mnemonic,i.operands) for i in records.values()]
         specs[-2:]=[('pop','{r2, r3, r7, pc}')]
         records={entry+4*i:Instruction(entry+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
-        binding,_=config_stack._field_case(objects,records,entry,'Controls',outlines)
+        binding,_=config_stack._field_case(objects,records,entry,'Controls',outlines,epilogue='scratch')
         self.assertEqual(binding['callback'],base+96)
 
     def test_outline_cannot_use_argument_cells_after_call_phase_sp_moves(self):
@@ -412,6 +412,32 @@ class FieldSuffix(unittest.TestCase):
         records={entry+4*i:Instruction(entry+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
         with self.assertRaises(AssertionError):
             config_stack._field_case(objects,records,entry,'Controls',outlines)
+
+    def sink_outline_fixture(self):
+        objects,base,_,outlines=self.outline_fixture();data=bytearray(objects.elf.data)
+        data[32:39]=b'Version';data[120:128]=bytes.fromhex('d1e90001 cb68 7047');objects.elf.data=bytes(data)
+        outlines[base+120]=[Instruction(base+120,bytes.fromhex('d1e90001'),'ldrd','r0, r1, [r1]'),
+                            Instruction(base+124,bytes.fromhex('cb68'),'ldr','r3, [r1, #0xc]'),
+                            Instruction(base+126,bytes.fromhex('7047'),'bx','lr')]
+        specs=[('mov','r2, r1'),('ldrd','r0, r1, [r1]'),('ldr','lr, [r1, #0xc]'),
+               ('mov','r1, r2'),('bl','0x10000078'),('movw','r1, #0x20'),
+               ('movt','r1, #0x1000'),('movs','r2, #0x7')]
+        return objects,base,specs,outlines
+
+    def test_sink_tail_requires_observed_restore_instead_of_only_balanced_sp(self):
+        for tail in ('r3','lr'):
+            objects,base,specs,outlines=self.sink_outline_fixture();specs += [('add','sp, #0x10'),('bx',tail)]
+            records={base+0x200+4*i:Instruction(base+0x200+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+            with self.subTest(tail=tail),self.assertRaises(AssertionError):
+                config_stack._field_case(objects,records,base+0x200,'Version',outlines)
+
+    def test_real_outline_bl_overwrites_lr_even_when_later_epilogue_restores_it(self):
+        objects,base,specs,outlines=self.sink_outline_fixture()
+        specs.insert(5,('mov','r3, lr'))
+        specs += [('add','sp, #0x8'),('pop','{r7, lr}'),('bx','r3')]
+        records={base+0x200+4*i:Instruction(base+0x200+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        with self.assertRaises(AssertionError):
+            config_stack._field_case(objects,records,base+0x200,'Version',outlines)
 
     def test_outline_nonzero_frame_wrong_slot_missing_bytes_and_unknown_body_reject(self):
         for fault in ('frame','slot','missing','body'):
