@@ -62,6 +62,8 @@ def _intersects(space,start,end,other):
 
 
 def require_disjoint(storages):
+    # Keep one-shot facts for both validation and every pairwise comparison.
+    storages=tuple(storages)
     require(all(isinstance(v,Storage) for v in storages),'untyped allocation')
     identities=set()
     for i,storage in enumerate(storages):
@@ -73,6 +75,7 @@ def require_disjoint(storages):
 
 def require_writes(available,writes,protected):
     """Check declared child writes against exact borrowed output intervals."""
+    available=tuple(available);protected=tuple(protected)
     require(all(isinstance(v,View) for v in available) and all(isinstance(v,Storage) for v in protected),
             'untyped output or protected storage')
     for view,offset,extent in writes:

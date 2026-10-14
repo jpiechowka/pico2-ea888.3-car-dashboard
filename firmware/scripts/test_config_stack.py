@@ -973,6 +973,36 @@ class IssuerRegions(unittest.TestCase):
 
 
 class OrdinaryContexts(unittest.TestCase):
+    def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self):
+        from config_regions import Storage,require_disjoint
+        saved=Storage('stack:boot','saved_r8',284,4,4,'validation',False)
+        overlap=Storage('stack:boot','output',280,12,2,'validation',True)
+        duplicate=Storage('stack:boot','saved_r8',288,4,4,'validation',False)
+        adjacent=Storage('stack:boot','output',288,12,2,'validation',True)
+        for container in (tuple,list,iter,lambda values:(v for v in values)):
+            for other in (overlap,duplicate):
+                with self.subTest(container=container,other=other),self.assertRaises(AssertionError):
+                    require_disjoint(container((saved,other)))
+            require_disjoint(container((saved,adjacent)))
+
+    def test_one_shot_protection_remains_live_for_every_declared_write(self):
+        from config_regions import Storage,borrow,require_writes
+        saved=Storage('stack:boot','saved_r8',284,4,4,'validation',False)
+        owner=Storage('stack:boot','output',280,12,2,'validation',True)
+        view=borrow(owner,0,12,'validation',writable=True)
+        for container in (tuple,list,iter,lambda values:(v for v in values)):
+            for writes in (((view,0,12),),((view,0,4),(view,4,4))):
+                with self.subTest(container=container,writes=writes),self.assertRaises(AssertionError):
+                    require_writes((view,),iter(writes),container((saved,)))
+
+    def test_one_shot_available_views_are_reused_for_all_writes(self):
+        from config_regions import Storage,borrow,require_writes
+        owner=Storage('stack:boot','output',280,12,2,'validation',True)
+        view=borrow(owner,0,12,'validation',writable=True)
+        saved=Storage('stack:boot','saved_r8',292,4,4,'validation',False)
+        for container in (tuple,list,iter,lambda values:(v for v in values)):
+            require_writes(container((view,)),iter(((view,0,4),(view,8,4))),container((saved,)))
+
     def test_checked_borrows_and_helper_writes_keep_exact_parent_ownership(self):
         from config_regions import Storage,borrow,require_writes
         local=Storage('stack:boot','scratch',0,184,4,'validation',True)
