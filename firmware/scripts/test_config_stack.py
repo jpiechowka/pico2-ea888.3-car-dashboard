@@ -764,6 +764,47 @@ class EntryBodies(unittest.TestCase):
             records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],op[1] if len(op)>1 else '')
         return objects,records,item
 
+    def coherent_initializer_mix(self,phase):
+        import config_entry
+        objects,records,item=self.fixture('speed2');other,other_records,other_item=self.fixture('sizez')
+        old=next(v for v in item['instances'] if config_entry.PHASES[v['shape']]==phase)
+        new=next(v for v in other_item['instances'] if config_entry.PHASES[v['shape']]==phase)
+        self.assertEqual(old['role'],new['role']);self.assertEqual((old['frame'],new['frame']),(8,8))
+        donor=config_entry.entry_body(other,new['name'],other_records)
+        contract=config_entry.ENTRY_GRAMMARS[donor['shape']]
+        blob=bytearray(other.read_only(new['entry'],new['extent']))
+        # Only the Dashboard donor has a PC pool. Rebind its exact Config
+        # object to this ELF; preserve every instruction and its relative pool.
+        for offset,width,value in contract['data']:
+            if not value.startswith('@object'):continue
+            ordinal=int(value[7:]);descriptor=contract['objects'][ordinal]
+            self.assertEqual(descriptor['kind'],'entry_static');self.assertEqual(width,4)
+            self.assertEqual(struct.unpack_from('<I',blob,offset)[0],donor['objects'][ordinal])
+            target=next(v[1] for v in objects.elf.symbol_entries if config_entry.static_role(v[0])==descriptor['role'])
+            struct.pack_into('<I',blob,offset,target)
+        start=old['entry'];pointer,_,index=objects.elf.functions[old['name']];section=objects.elf.sections[index]
+        data=bytearray(objects.elf.data);offset=section[4]+start-section[3];data[offset:offset+len(blob)]=blob;objects.elf.data=bytes(data)
+        objects.elf.functions[old['name']]=(pointer,new['extent'],index)
+        objects.elf.symbol_entries=[(n,v,new['extent'],info,ix) if n==old['name'] else (n,v,z,info,ix)
+                                    for n,v,z,info,ix in objects.elf.symbol_entries]
+        objects.elf.mapping_symbols=[v for v in objects.elf.mapping_symbols if not (v[2]==index and start<=v[1]<start+old['extent'])]
+        objects.elf.mapping_symbols.extend(('$'+kind,start+a,index) for a,b,kind in contract['mapping'])
+        for at in list(records):
+            if start<=at<start+old['extent']:del records[at]
+        for at,row in other_records.items():
+            if new['entry']<=at<new['entry']+new['extent']:
+                target=start+at-new['entry'];records[target]=Instruction(target,row.raw,row.mnemonic,row.operands)
+        # Prove the mutation reaches composition: its complete foreign body,
+        # current bytes, mappings, typed objects and metadata are still valid.
+        self.assertEqual(config_entry.entry_body(objects,old['name'],records)['shape'],new['shape'])
+        return objects,records
+
+    def test_coherent_approved_boot_and_dashboard_initializer_abi_mixes_reject(self):
+        import config_entry
+        for phase in ('boot_initializer','dashboard_initializer'):
+            objects,records=self.coherent_initializer_mix(phase)
+            with self.subTest(phase=phase),self.assertRaises(AssertionError):config_entry.boot_entry(objects,records)
+
     def test_complete_boot_bodies_bind_all_queue_callback_and_retirement_instructions(self):
         import config_entry
         count=0

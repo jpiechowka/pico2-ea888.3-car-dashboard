@@ -26,8 +26,24 @@ PHASES={key:phase for phase,keys in {
     'boot_poll':('speed2_4','sizes_4','sizez_4'),
     'main':('speed2_5',),'queue_push':('sizez_6',),'raw_poll':('sizez_7',),
     'raw_spawn':('sizez_8',),'callback_install':('sizez_9',),
-    'configuration_initialize':('speed2_6','sizes_6','sizez_10')}.items() for key in keys}
+    'configuration_initialize':('speed2_6','sizez_10')}.items() for key in keys}
 INITIALIZE='_RNvNtCs_5pico211view_config10initialize'
+
+# Full raw roles can have different compiler-specialized incoming ABIs. A
+# recognized child body must match its actual caller's reviewed composition.
+# Main is shared by all three; Speed2/SizeS also share the once-body grammar.
+COMPATIBLE_PHASES={
+    'speed2_2':dict(main='speed2_5',cortex_main='speed2_3',run='speed2_2',
+        boot_initializer='speed2_0',boot_poll='speed2_4',dashboard_initializer='speed2_1',
+        configuration_initialize='speed2_6'),
+    'sizes_2':dict(main='speed2_5',cortex_main='sizes_3',run='sizes_2',
+        boot_initializer='sizes_0',boot_poll='sizes_4',dashboard_initializer='sizes_1',
+        configuration_initialize='speed2_6'),
+    'sizez_2':dict(main='speed2_5',cortex_main='sizez_3',run='sizez_2',
+        boot_initializer='sizez_0',boot_poll='sizez_4',dashboard_initializer='sizez_1',
+        configuration_initialize='sizez_10',queue_push='sizez_6',raw_poll='sizez_7',
+        raw_spawn='sizez_8',callback_install='sizez_9'),
+}
 
 
 def static_role(name):
@@ -119,10 +135,10 @@ def boot_entry(objects,instructions):
     mains=[(n,e) for n,e in objects.elf.functions.items() if canonical_symbol(n)=='main']
     require(len(mains)==1,'missing or ambiguous main entry')
     visit(mains[0][1][0]&~1,'main')
-    required={'main','cortex_main','run','boot_poll','boot_initializer','dashboard_initializer','configuration_initialize'}
+    expected=COMPATIBLE_PHASES.get(proofs['run']['shape'])
+    require(expected is not None and {phase:p['shape'] for phase,p in proofs.items()}==expected,
+            'incomplete or ABI-incompatible entry phase composition')
     sizez=proofs['run']['shape']=='sizez_2'
-    if sizez:required|={'raw_poll','raw_spawn','queue_push','callback_install'}
-    require(set(proofs)==required,'incomplete or mixed entry phase closure')
     consumer=proofs['raw_poll' if sizez else 'run']
     require(len(consumer['indirect_sites'])==1,'entry callback consumption is missing or ambiguous')
     offset,operation,register=consumer['indirect_sites'][0]
