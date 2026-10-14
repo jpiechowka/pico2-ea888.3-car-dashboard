@@ -56,11 +56,9 @@ Erase and program use the same preservation contract.
 The exact-byte gate is intentionally conservative: compiler or code changes
 require renewed disassembly review. Complete `.data` SRAM bounds, startup copy
 and LOAD source checks apply to these routines as well as core1's handler.
-Seventeen corrupted ELF fixtures reject wrong location, size, bytes, missing
+Corrupted ELF fixtures reject wrong location, size, bytes, missing
 inner, IRQ vector, branch and startup-copy metadata. This is not a general
 machine-code verifier or evidence of successful physical erase/program.
-
-## Remaining physical checks
 
 ### Task2 alternate optimization correction, 14 October 2026
 
@@ -73,9 +71,31 @@ remains rejected.
 
 The local source now spells out all six pad captures, writes and comparisons
 with constant indices. Register order, RFMT/RCMD precheck, timing/direct masks,
-barriers, fail-stop and ROM/boot2 sequence are preserved. Source review and fresh
-whole-body dependency review for Speed3, Speed2, SizeS and SizeZ are pending.
-No new digest tuple or hardware qualification follows from this source edit.
+barriers, fail-stop and ROM/boot2 sequence are preserved. Independent source and
+complete current-body dependency review at `e6ca58f` covered all four modes
+with nightly-2026-10-12. Each protected inner is self-contained except for its
+prepared ROM/boot2 table calls. Its literal pools and failure paths remain in
+SRAM through final pad readbacks and barriers. Speed3/2 bodies are unchanged;
+SizeS/Z have new reviewed JEDEC/write bodies.
+
+The gate admits only complete ordered wrapper/FIFO/JEDEC/write tuples, including
+literal bytes. Sizes and wrapper-to-FIFO deltas are:
+
+| Optimization | Ordered body sizes (bytes) | Delta | JEDEC SHA256 | Write SHA256 |
+| --- | --- | ---: | --- | --- |
+| Speed3 | 10 / 168 / 1184 / 328 | 12 | a45a5800403e13de2cafd0c6d27e232397784cf812cb81edd53327e0ee69a24e | 767c70efd1162ef93b11f51b87f9f54eb8b7797de4aaf1fa7ab05c630468f5f2 |
+| Speed2 | 10 / 142 / 1128 / 328 | 12 | a01fc3e709be03acf07ef2fa79420b3b95bc630821bbab3637017ee3bf5e91e3 | 767c70efd1162ef93b11f51b87f9f54eb8b7797de4aaf1fa7ab05c630468f5f2 |
+| SizeS | 10 / 144 / 418 / 332 | 10 | 73bcf3be90b64e83c7f799b38a54596ea4c7c2343f69972170e99e7506b5974e | 282497a7f4ebfd76a157aebfb89e8d185427e7da3c6fc50fe571417be3726154 |
+| SizeZ | 10 / 128 / 372 / 284 | 12 | c1b97f0e26290b74f1b1242210e2fcfd7f1f5a668a58aac9039d77c663e4c80e | e00b89c23781166351889251a58c734911fe52a0082c7b8a3b303c0dc851b4e2 |
+
+The old SizeZ tuple stays rejected. Fixtures cover every body, SizeZ literals,
+mixed tuples, helper identity/placement, startup copy, full initialized LOAD
+backing, vector and settings bounds. Shared byte-identical bodies cannot reveal
+which mode produced them; an exact admitted tuple is accepted. These are linked
+code checks. Full capture/configuration gates and physical qualification remain
+separate.
+
+## Remaining physical checks
 
 On 11 October the updated `nightly-2026-10-11` compiler
 (`6f5da406b56c2db6607202b63daee73aa8c61297`, LLVM 23.1.3) reproduced every
