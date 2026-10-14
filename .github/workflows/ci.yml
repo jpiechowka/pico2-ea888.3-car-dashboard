@@ -55,6 +55,13 @@ jobs:
           cargo clippy --locked -p dashboard-config --all-targets --features json -- -D warnings
           cargo check --locked -p dashboard-config --target thumbv8m.main-none-eabihf
           cargo check --locked -p dashboard-config --features json --target wasm32-unknown-unknown
+      - name: Shared clock profile contracts
+        run: |
+          cargo test --locked -p dashboard-build-profiles
+          cargo test --locked -p dashboard-build-profiles --features serde
+          cargo clippy --locked -p dashboard-build-profiles --all-targets --all-features -- -D warnings
+          cargo check --locked -p dashboard-build-profiles --target thumbv8m.main-none-eabihf
+          cargo check --locked -p dashboard-build-profiles --features serde --target wasm32-unknown-unknown
       - name: Configuration build and file contracts
         run: |
           cargo test --locked -p dashboard-config-tools
