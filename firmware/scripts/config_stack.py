@@ -359,7 +359,44 @@ FIELD_CASES = tuple('Controls Version CatalogueVersion Views ViewId ViewName Boo
                    'FuelReference'.split())
 
 
-def _field_case(objects, records, entry, case):
+def _field_outline(objects, target, outlines):
+    """Complete zero-growth Field adapters; ordinals are not acceptance keys."""
+    aliases = [(n, e) for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
+    require(aliases and all(re.fullmatch(r'OUTLINED_FUNCTION_[0-9]+', n) for n, _ in aliases),
+            'unreviewed Field outline origin')
+    pointer, extent, index = aliases[0][1]
+    require(pointer & 1 and all(e == (pointer, extent, index) for _, e in aliases) and
+            objects.sizes.get(target) == 0 and 0 <= index < len(objects.elf.sections),
+            'Field outline aliases/frame/Thumb differ')
+    section = objects.elf.sections[index]
+    require(section[1] == 1 and section[2] & 6 == 6 and not section[2] & 1 and
+            section[3] <= target < target + extent <= section[3] + section[5],
+            'Field outline is outside its declared RO executable section')
+    require(outlines is not None and target in outlines, 'missing current Field outline body')
+    records = sorted(outlines[target], key=lambda i: i.address)
+    raw = objects.read_only(target, extent)
+    require(mapping_ranges(objects.elf, aliases[0][0]) == [(target, target + extent, 't')],
+            'Field outline contains unreviewed mapping')
+    address = target
+    for record in records:
+        require(record.address == address and len(record.raw) in (2, 4) and
+                record.raw == raw[address - target:address - target + len(record.raw)],
+                'Field outline lacks complete current-byte coverage')
+        address += len(record.raw)
+    require(address == target + extent, 'incomplete Field outline extent')
+    rows = [(len(i.raw), i.mnemonic.removesuffix('.w'), i.operands) for i in records]
+    sink = [(4, 'ldrd', 'r0, r1, [r1]'), (2, 'ldr', 'r3, [r1, #0xc]'), (2, 'bx', 'lr')]
+    transport = [(2, 'str', 'r0, [sp]'), (2, 'mov', 'r0, r1'),
+                 (2, 'mov', 'r1, r2'), (2, 'bx', 'lr')]
+    if rows == transport: return 'vtable_transport', None
+    if rows == sink: return 'sink_extract', None
+    for length in (6, 15):
+        if rows == [sink[0], (2, 'movs', 'r2, #0x' + format(length, 'x')), *sink[1:]]:
+            return 'sink_extract', length
+    raise AssertionError('unreviewed Field zero-growth outline body')
+
+
+def _field_case(objects, records, entry, case, outlines=None):
     """Closed Field operand-materialization vocabulary; no general executor.
 
     Input is a typed, byte-checked case entry from enum_dispatch. Registers carry
@@ -368,7 +405,7 @@ def _field_case(objects, records, entry, case):
     This does not prove the subsequently selected tuple/sink bridge body.
     """
     values = {'r0': ('field', 0), 'r1': ('formatter', 0)}
-    cells = {}; sp = 0; visited = set(); binding = None; address = entry
+    cells = {}; sp = 0; visited = set(); binding = None; address = entry; outline_calls = []
 
     def get(register):
         if register == 'sp': return ('stack', sp)
@@ -447,9 +484,25 @@ def _field_case(objects, records, entry, case):
             require(target is not None, 'unresolved Field shared-suffix branch')
             next_address = int(target[1], 16)
         elif mnemonic == 'bl':
+            require(sp == 0, 'Field call moved incoming SP away from its argument cells')
             target = re.match(r'0x([0-9a-f]+)(?:\s|$)', operands)
             require(target is not None, 'unresolved Field callback bridge')
             target = int(target[1], 16)
+            if any(n.startswith('OUTLINED_FUNCTION_') and e[0] & ~1 == target
+                   for n, e in objects.elf.functions.items()):
+                effect, length = _field_outline(objects, target, outlines)
+                require(get('r1') == ('formatter', 0), 'Field outline lost Formatter origin')
+                if effect == 'vtable_transport':
+                    require(isinstance(get('r0'), int) and isinstance(get('r2'), int),
+                            'Field outline lost current vtable/name producers')
+                    cells[sp] = get('r0'); values['r0'] = get('r1'); values['r1'] = get('r2')
+                else:
+                    values['r0'] = ('sink_data', 0); values['r1'] = ('sink_vtable', 0)
+                    values['r3'] = ('write_str', 0)
+                    if length is not None: values['r2'] = length
+                outline_calls.append({'target': target, 'effect': effect, 'frame': 0, 'site': address})
+                address = next_address
+                continue
             aliases = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
             require(aliases and all(canonical_symbol(n) == TUPLE1_ROLE for n in aliases)
                     and target in objects.sizes, 'unreviewed Field tuple bridge')
@@ -477,11 +530,14 @@ def _field_case(objects, records, entry, case):
             registers = re.fullmatch(r'\{([^{}]+)\}', operands)
             require(registers is not None, 'unreviewed Field return list')
             registers = registers[1].split(', ')
-            require(registers in (['r7', 'pc'], ['r7', 'lr'], ['r5', 'r6', 'r7', 'lr']),
+            require(registers in (['r7', 'pc'], ['r7', 'lr'], ['r5', 'r6', 'r7', 'lr'],
+                                  ['r2', 'r3', 'r7', 'pc']),
                     'unreviewed Field return ABI')
             sp += len(registers) * 4
+            for register in registers: values.pop(register, None)
             if 'pc' in registers:
                 require(sp == 16 and binding is not None, 'Field tuple return lacks balanced binding')
+                binding['outlines'] = outline_calls
                 return binding, visited
         elif mnemonic == 'bx':
             require(get(operands) == ('write_str', 0) and case not in FIELD_PAYLOADS
@@ -489,13 +545,14 @@ def _field_case(objects, records, entry, case):
             pointer, length = get('r1'), get('r2')
             require(isinstance(pointer, int) and isinstance(length, int) and
                     objects.read_only(pointer, length) == case.encode(), 'Field unit name differs')
-            return {'case': case, 'role': 'live_write_str', 'site': address}, visited
+            return {'case': case, 'role': 'live_write_str', 'site': address,
+                    'outlines': outline_calls}, visited
         else: raise AssertionError('unreviewed instruction in Field materialization: ' + mnemonic)
         address = next_address
     raise AssertionError('Field producer/suffix bound exceeded')
 
 
-def field_case_bindings(objects, name, instructions):
+def field_case_bindings(objects, name, instructions, outlines=None):
     dispatch = enum_dispatch(objects, name, instructions)
     require(dispatch['role'] == 'field' and len(FIELD_CASES) == len(dispatch['entries']),
             'wrong typed Field case family')
@@ -503,7 +560,7 @@ def field_case_bindings(objects, name, instructions):
     covered = {a for a in records if a < dispatch['table']}
     bindings = []
     for case, entry in zip(FIELD_CASES, dispatch['entries'], strict=True):
-        binding, visited = _field_case(objects, records, entry, case)
+        binding, visited = _field_case(objects, records, entry, case, outlines)
         covered |= visited; bindings.append(binding)
     require(all(a in covered or i.raw == b'\x00\xbf' and i.mnemonic == 'nop'
                 for a, i in records.items()), 'unreviewed Field body outside typed cases')

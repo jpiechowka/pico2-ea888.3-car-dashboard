@@ -357,5 +357,74 @@ class FieldSuffix(unittest.TestCase):
             with self.subTest(fault=fault),self.assertRaises(AssertionError):
                 config_stack._field_case(objects,records,base+0x200,'Controls')
 
+    def outline_fixture(self):
+        objects,base,_=self.fixture();elf=objects.elf
+        elf.functions['OUTLINED_FUNCTION_123']=(base+121,8,1);objects.sizes[base+120]=0
+        data=bytearray(elf.data);data[120:128]=bytes.fromhex('0090 0846 1146 7047');elf.data=bytes(data)
+        elf.mapping_symbols=[('$t',base+96,1)]
+        specs=[('str','r0, [sp, #0x4]'),('movw','r0, #0x0'),('movt','r0, #0x1000'),
+               ('movw','r2, #0x20'),('movt','r2, #0x1000'),('add','r3, sp, #0x4'),
+               ('bl','0x10000078'),('movs','r2, #0x8'),('bl','0x10000070'),
+               ('add','sp, #0x8'),('pop','{r7, pc}')]
+        records={base+0x200+4*i:Instruction(base+0x200+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        outline=[Instruction(base+120,bytes.fromhex('0090'),'str','r0, [sp]'),
+                 Instruction(base+122,bytes.fromhex('0846'),'mov','r0, r1'),
+                 Instruction(base+124,bytes.fromhex('1146'),'mov','r1, r2'),
+                 Instruction(base+126,bytes.fromhex('7047'),'bx','lr')]
+        return objects,base,records,{base+120:outline}
+
+    def test_changed_incoming_sp_cannot_reuse_old_tuple_argument_cells(self):
+        objects,base,records=self.fixture();entry=base+0x200
+        specs=[(i.mnemonic,i.operands) for i in records.values()]
+        specs[9],specs[10]=specs[10],specs[9]
+        records={entry+4*i:Instruction(entry+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        with self.assertRaises(AssertionError):config_stack._field_case(objects,records,entry,'Controls')
+
+    def test_popped_register_cannot_retain_live_sink_callback_identity(self):
+        objects,base,_=self.fixture();data=bytearray(objects.elf.data);data[32:39]=b'Version';objects.elf.data=bytes(data)
+        specs=[('ldrd','r0, r1, [r1]'),('ldr','r3, [r1, #0xc]'),('movw','r1, #0x20'),
+               ('movt','r1, #0x1000'),('movs','r2, #0x7'),('mov','r7, r3'),
+               ('add','sp, #0x8'),('pop','{r7, lr}'),('bx','r7')]
+        records={base+0x200+4*i:Instruction(base+0x200+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        with self.assertRaises(AssertionError):config_stack._field_case(objects,records,base+0x200,'Version')
+
+    def test_zero_frame_outline_transports_current_vtable_without_ordinal_authority(self):
+        objects,base,records,outlines=self.outline_fixture()
+        binding,_=config_stack._field_case(objects,records,base+0x200,'Controls',outlines)
+        self.assertEqual(binding['callback'],base+96)
+        objects.elf.functions['OUTLINED_FUNCTION_987']=objects.elf.functions.pop('OUTLINED_FUNCTION_123')
+        binding,_=config_stack._field_case(objects,records,base+0x200,'Controls',outlines)
+        self.assertEqual(binding['callback'],base+96)
+
+    def test_sizez_scratch_pop_returns_without_restoring_stale_argument_registers(self):
+        objects,base,records,outlines=self.outline_fixture();entry=base+0x200
+        specs=[(i.mnemonic,i.operands) for i in records.values()]
+        specs[-2:]=[('pop','{r2, r3, r7, pc}')]
+        records={entry+4*i:Instruction(entry+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        binding,_=config_stack._field_case(objects,records,entry,'Controls',outlines)
+        self.assertEqual(binding['callback'],base+96)
+
+    def test_outline_cannot_use_argument_cells_after_call_phase_sp_moves(self):
+        objects,base,records,outlines=self.outline_fixture();entry=base+0x200
+        specs=[(i.mnemonic,i.operands) for i in records.values()]
+        specs.insert(6,('add','sp, #0x8'))
+        specs.pop(-2)
+        records={entry+4*i:Instruction(entry+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        with self.assertRaises(AssertionError):
+            config_stack._field_case(objects,records,entry,'Controls',outlines)
+
+    def test_outline_nonzero_frame_wrong_slot_missing_bytes_and_unknown_body_reject(self):
+        for fault in ('frame','slot','missing','body'):
+            objects,base,records,outlines=self.outline_fixture()
+            if fault=='frame':objects.sizes[base+120]=8
+            elif fault=='missing':outlines[base+120].pop()
+            else:
+                data=bytearray(objects.elf.data)
+                if fault=='slot':data[120:122]=bytes.fromhex('0190');outlines[base+120][0]=Instruction(base+120,bytes.fromhex('0190'),'str','r0, [sp, #4]')
+                else:data[120:122]=bytes.fromhex('10b4');outlines[base+120][0]=Instruction(base+120,bytes.fromhex('10b4'),'push','{r4}')
+                objects.elf.data=bytes(data)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_stack._field_case(objects,records,base+0x200,'Controls',outlines)
+
 
 if __name__=='__main__':unittest.main()
