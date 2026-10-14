@@ -111,13 +111,16 @@ pub(crate) fn fill_default_config(config: &mut Config) {
     config.catalogue_version = CATALOGUE_VERSION;
     config.boot_view = 1;
     config.views.clear();
-    config
+    if config
         .views
         .push(View {
             id: 1,
             name: "Overview".try_into().expect("bounded built-in view"),
         })
-        .expect("built-in view count");
+        .is_err()
+    {
+        panic!("built-in view count");
+    }
     config.widgets.clear();
     for (slot, channel) in [
         Channel::Boost,
@@ -132,7 +135,7 @@ pub(crate) fn fill_default_config(config: &mut Config) {
     .into_iter()
     .enumerate()
     {
-        config
+        if config
             .widgets
             .push(default_widget(
                 channel,
@@ -144,7 +147,10 @@ pub(crate) fn fill_default_config(config: &mut Config) {
                     span: Span::OneByOne,
                 },
             ))
-            .expect("built-in widget count");
+            .is_err()
+        {
+            panic!("built-in widget count");
+        }
     }
     use DefinitionId::*;
     let ids = [

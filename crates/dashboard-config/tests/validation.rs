@@ -1,5 +1,39 @@
 use dashboard_config::*;
 
+#[test]
+fn reviewed_default_has_one_overview_and_eight_fixed_channel_cells() {
+    let config = default_config();
+    assert_eq!(config.views.len(), 1);
+    assert_eq!((config.views[0].id, config.views[0].name.as_str()), (1, "Overview"));
+    assert_eq!(config.widgets.len(), 8);
+    let expected = [
+        (1, Channel::Boost, 0, 0),
+        (2, Channel::Lambda, 1, 0),
+        (3, Channel::Battery, 2, 0),
+        (4, Channel::Water, 3, 0),
+        (5, Channel::Oil, 0, 1),
+        (6, Channel::Dsg, 1, 1),
+        (7, Channel::Iat, 2, 1),
+        (8, Channel::Egt, 3, 1),
+    ];
+    for (widget, (id, channel, column, row)) in config.widgets.iter().zip(expected) {
+        assert_eq!((widget.id, widget.view, widget.channel), (id, 1, channel));
+        assert_eq!(
+            widget.placement,
+            Placement {
+                column,
+                row,
+                span: Span::OneByOne
+            }
+        );
+    }
+    let mut output = [0; 16384];
+    assert_eq!(
+        encode(&validate(config).unwrap(), &mut output).unwrap(),
+        include_bytes!("../../../configs/default.eav")
+    );
+}
+
 fn check(
     mut config: Config,
     field: Field,
