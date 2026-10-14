@@ -10,6 +10,9 @@ from config_stack import canonical_symbol,typed_function
 from validation import require
 
 LOCATION_ROLES = {
+    'postcard_serialize_u16': ('postcard-1.1.3/src/varint.rs',47,28),
+    'postcard_varint_usize': ('postcard-1.1.3/src/varint.rs',31,28),
+    'postcard_varint_u32_small': ('postcard-1.1.3/src/varint.rs',63,28),
     'logger_acquire': ('defmt-rtt-1.3.0/src/lib.rs',173,13),
     'logger_release': ('defmt-rtt-1.3.0/src/lib.rs',226,13),
     'defmt_default_panic': ('defmt-1.1.1/src/lib.rs',385,5),

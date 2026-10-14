@@ -972,6 +972,71 @@ class IssuerRegions(unittest.TestCase):
         with self.assertRaises(AssertionError):config_upstream.issuer_region(objects,item['issuer']['name'],records)
 
 
+class OrdinaryHelperBodies(unittest.TestCase):
+    def fixture(self,code_shift=0,data_shift=0):
+        objects,item=LoggerObjects.fixture(self,'sizez',code_shift,data_shift,fixture_file='config-small-helpers.json')
+        objects.elf.mapping_symbols=[(n,a+code_shift,i) for n,a,i in item['mapping_symbols']]
+        for instance in item['instances']:instance['address']+=code_shift
+        data=bytearray(objects.elf.data)
+        for role,offset in (('serialize_u16',84),('varint_usize',68),('varint_u32_small',40)):
+            instance=next(v for v in item['instances'] if v['role']==role);at=instance['address']+offset
+            section=objects.elf.sections[objects.elf.functions[instance['name']][2]];index=section[4]+at-section[3]
+            struct.pack_into('<I',data,index,struct.unpack_from('<I',data,index)[0]+data_shift)
+        objects.elf.data=bytes(data)
+        records={}
+        for row in item['records']:
+            operation=row['text'].split(None,1);at=row['address']+code_shift;operands=operation[1] if len(operation)>1 else ''
+            if config_stack.transfer_family(operation[0].removesuffix('.w')) in ('b','bl','cbz','cbnz'):
+                operands=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operands)
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),operation[0],operands)
+        return objects,records,item
+
+    def test_all_complete_helpers_and_parent_owned_outlines_bind_exact_bodies(self):
+        import config_helpers
+        objects,records,item=self.fixture()
+        self.assertEqual(len(item['instances']),21)
+        for instance in item['instances']:
+            role=instance['typed_role'];outline=role if role.startswith('@outline:') else None
+            proof=config_helpers.helper_body(objects,instance['name'],records,outline)
+            self.assertEqual((proof['extent'],proof['frame']),(instance['extent'],instance['frame']))
+            self.assertTrue(proof['requires_source_inputs_owned_effects_and_child_closure'])
+
+    def test_code_child_roles_and_source_location_objects_relocate_independently(self):
+        import config_helpers
+        objects,records,item=self.fixture(0x2800,0x19000)
+        for instance in item['instances']:
+            role=instance['typed_role'];outline=role if role.startswith('@outline:') else None
+            proof=config_helpers.helper_body(objects,instance['name'],records,outline)
+            self.assertEqual(proof['function'],instance['address'])
+
+    def test_selector_loop_store_flags_and_save_restoration_mutations_reject(self):
+        import config_helpers
+        cases=(('slice_pop',0,'ldr','r2, [r0]'),('varint_usize',18,'cmp','r1, #0x4'),
+               ('take_varint_u32',56,'cmp','r1, #0x10'),('map_compare_status_flags',4,'movs','r0, #0x2'),
+               ('restore_high12_low20',0,'pop.w','{r8, r9, r10}'),('seq_decrement_tail_pop',2,'str','r1, [r0]'))
+        for role,offset,operation,operands in cases:
+            objects,records,item=self.fixture();instance=next(v for v in item['instances'] if v['role']==role);at=instance['address']+offset
+            row=records[at];records[at]=Instruction(at,row.raw,operation,operands)
+            outline=instance['typed_role'] if instance['typed_role'].startswith('@outline:') else None
+            with self.subTest(role=role),self.assertRaises(AssertionError):
+                config_helpers.helper_body(objects,instance['name'],records,outline)
+
+    def test_location_roles_and_current_child_frames_cannot_be_swapped(self):
+        import config_helpers
+        for fault in ('location','frame'):
+            objects,records,item=self.fixture();instance=next(v for v in item['instances'] if v['role']=='serialize_u16')
+            if fault=='frame':objects.sizes[next(v['address'] for v in item['instances'] if v['role']=='compare_extend')]+=8
+            else:
+                at=instance['address']+84;section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=at<at+4<=s[3]+s[5])
+                data=bytearray(objects.elf.data);offset=section[4]+at-section[3]
+                other=next(v for v in item['instances'] if v['role']=='varint_usize')['address']+68
+                child_section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=other<other+4<=s[3]+s[5])
+                data[offset:offset+4]=data[child_section[4]+other-child_section[3]:child_section[4]+other-child_section[3]+4]
+                objects.elf.data=bytes(data)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_helpers.helper_body(objects,instance['name'],records)
+
+
 class OrdinaryContexts(unittest.TestCase):
     def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self):
         from config_regions import Storage,require_disjoint
