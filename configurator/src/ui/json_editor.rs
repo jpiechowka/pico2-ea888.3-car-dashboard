@@ -261,6 +261,7 @@ fn diff_view(report: DiffReport) -> impl IntoView {
 #[component]
 pub(super) fn JsonEditor(ui: Ui) -> impl IntoView {
     let state = ui.json;
+    let wrap_lines = RwSignal::new(true);
     let key = Memo::new(move |_| projection(ui));
     let last_phase = StoredValue::new(None::<JsonPhase>);
     Effect::new(move |_| {
@@ -320,7 +321,8 @@ pub(super) fn JsonEditor(ui: Ui) -> impl IntoView {
                 <h3>"Configuration JSON"</h3>
                 <p id="studio-json-state" role="status">{move ||label(ui)}</p>
                 <label for="studio-json-text">"Current version JSON · 128 KiB UTF-8 maximum"</label>
-                <textarea id="studio-json-text" node_ref=state.area rows="16" spellcheck="false" autocomplete="off" aria-describedby="studio-json-state studio-json-errors" readonly=move ||ui.editor.with(|e|e.json_draft().is_none_or(|draft|draft.is_read_only()))
+                <label class="json-wrap-option"><input type="checkbox" prop:checked=move ||wrap_lines.get() on:change=move |event|wrap_lines.set(event_target_checked(&event))/>"Wrap long lines for reading"</label>
+                <textarea id="studio-json-text" node_ref=state.area class:wrap-lines=move ||wrap_lines.get() rows="16" spellcheck="false" autocomplete="off" aria-describedby="studio-json-state studio-json-errors" readonly=move ||ui.editor.with(|e|e.json_draft().is_none_or(|draft|draft.is_read_only()))
                     on:beforeinput=move |_|state.remember() on:select=move |_|state.remember() on:input=move |_|input(ui)></textarea>
                 <p id="studio-json-errors" class="control-error" role="status">{move ||ui.editor.with(|e|match e.json_draft().map(|d|d.state()){Some(JsonState::SyntaxError{message,..})=>message.clone(),Some(JsonState::Candidate{report,..}) if !report.issues.is_empty()=>format!("{} semantic issues shown · {} omitted. Repair or Discard before applying.",report.issues.len(),report.omitted),_=>String::new()})}</p>
                 <p class="control-error" role="alert" hidden=move ||state.error.get().is_empty()>{move ||state.error.get()}</p>

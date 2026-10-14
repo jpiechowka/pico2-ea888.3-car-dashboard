@@ -12,7 +12,9 @@ fn diagnostic_screens_clear_both_prior_histories_and_logs_hints_preserve_counter
     use dashboard_host_validation::logging::{Level, LogStore};
     use dashboard_host_validation::logging_view::LogPage;
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-    let map = dashboard_config::ControlMap::default();
+    let mut map = dashboard_config::ControlMap::default();
+    map.screens[dashboard_config::ControlPage::Debug.index()].buttons[dashboard_config::ButtonId::A.index()].hold =
+        dashboard_config::ControlAction::Logs;
     let logs = LogStore::<NoopRawMutex>::new();
     logs.push(Level::Fault, 1, format_args!("separate latest fault"));
     for n in 0..150 {
@@ -52,33 +54,40 @@ fn diagnostic_screens_clear_both_prior_histories_and_logs_hints_preserve_counter
         config_fault_label: Some("long configuration error label"),
         ..Default::default()
     };
-    for frame in &mut histories {
-        dashboard.draw_full(&mut St7789Renderer::new(&mut frame.0));
-        DebugPage::new(&long, &map).draw(&mut St7789Renderer::new(&mut frame.0));
-        let short = DebugData {
-            source_status: Some(""),
-            config_fault: Some(false),
-            ..Default::default()
-        };
-        for line in [DebugLine::SourceStatus, DebugLine::ConfigFault] {
-            DebugPage::new(&short, &map).draw_line(&mut St7789Renderer::new(&mut frame.0), line);
+    for brightness in [Brightness::Full, Brightness::Dim, Brightness::Off] {
+        for frame in &mut histories {
+            dashboard.draw_full(&mut St7789Renderer::new(&mut frame.0));
+            let long = DebugData {
+                brightness: Some(brightness),
+                ..long
+            };
+            DebugPage::new(&long, &map).draw(&mut St7789Renderer::new(&mut frame.0));
+            let short = DebugData {
+                source_status: Some(""),
+                config_fault: Some(false),
+                brightness: Some(brightness),
+                ..Default::default()
+            };
+            for line in [DebugLine::SourceStatus, DebugLine::ConfigFault] {
+                DebugPage::new(&short, &map).draw_line(&mut St7789Renderer::new(&mut frame.0), line);
+            }
+            let mut clean = AlignedFrame::boxed();
+            DebugPage::new(&short, &map).draw(&mut St7789Renderer::new(&mut clean.0));
+            assert!(frame.0 == clean.0);
+            page.draw_header(&mut St7789Renderer::new(&mut frame.0));
+            for row in 0..=12 {
+                logs.push(Level::Info, 200, format_args!("producer changes between operations"));
+                page.draw_row(&mut St7789Renderer::new(&mut frame.0), row);
+            }
+            page.draw_hint(&mut St7789Renderer::new(&mut frame.0), &map);
+            page.draw_footer(&mut St7789Renderer::new(&mut frame.0));
+            assert!(frame.0 == reference.0);
+            dashboard.draw_full(&mut St7789Renderer::new(&mut frame.0));
+            assert!(
+                frame.0 == dashboard_reference.0,
+                "diagnostic glyphs cannot survive the return to Dashboard"
+            );
         }
-        let mut clean = AlignedFrame::boxed();
-        DebugPage::new(&short, &map).draw(&mut St7789Renderer::new(&mut clean.0));
-        assert!(frame.0 == clean.0);
-        page.draw_header(&mut St7789Renderer::new(&mut frame.0));
-        for row in 0..=12 {
-            logs.push(Level::Info, 200, format_args!("producer changes between operations"));
-            page.draw_row(&mut St7789Renderer::new(&mut frame.0), row);
-        }
-        page.draw_hint(&mut St7789Renderer::new(&mut frame.0), &map);
-        page.draw_footer(&mut St7789Renderer::new(&mut frame.0));
-        assert!(frame.0 == reference.0);
-        dashboard.draw_full(&mut St7789Renderer::new(&mut frame.0));
-        assert!(
-            frame.0 == dashboard_reference.0,
-            "diagnostic glyphs cannot survive the return to Dashboard"
-        );
     }
 }
 

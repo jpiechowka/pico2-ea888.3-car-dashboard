@@ -571,11 +571,7 @@ pub fn CommandPalette(ui: Ui) -> impl IntoView {
                             let omitted=page.omitted;
                             let rows=page.results.into_iter().map(|target| {
                                 let descriptor=Registry::descriptor(target.key());
-                                let context=Registry::with_candidate(editor,|c|match target.owner(){
-                                    TargetOwner::Widget(i)|TargetOwner::Band(i,_)=>format!("Widget [{i}] {} · view {}",c.widgets[i].label,c.widgets[i].view),
-                                    TargetOwner::View(i)=>format!("View [{i}] {}",c.views[i].name),TargetOwner::Channel(c)=>c.label().into(),
-                                    other=>format!("{other:?}"),
-                                });
+                                let context=Registry::search_context(editor,target).unwrap_or_else(|_|"Field changed".into());
                                 let reason=Registry::resolve(editor,target).ok().and_then(|r|r.capability.reason()).unwrap_or("Inspect setting");
                                 view!{<button class="command-result" disabled=move ||ui.editor.with(|e|Command::Find(target).availability(e,stamp).is_some())
                                     on:click=move |_|{palette.close(ui);execute(ui,Command::Find(target),stamp,offer(ui,stamp));}>

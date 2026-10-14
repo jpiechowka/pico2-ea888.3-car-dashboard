@@ -3,6 +3,20 @@ use dashboard_configurator::config::*;
 use dashboard_configurator::editor::*;
 use dashboard_configurator::workspace::{Command, CommandEffect, WorkspaceState, dispatch_with_appearance};
 
+#[test]
+fn lock_promise_reports_failure_only_if_write_callback_has_not_completed() {
+    let mut store = PresetStore::restore(Ok(None));
+    let request = store.begin_save().unwrap();
+    assert!(store.finish_save(&request, Err(StorageFailure::Quota)).is_ok());
+    assert!(!store.reject_lock(&request));
+    assert_eq!(store.status(), PresetStatus::Failed(StorageFailure::Quota));
+
+    let request = store.begin_save().unwrap();
+    assert!(store.reject_lock(&request));
+    assert_eq!(store.status(), PresetStatus::Failed(StorageFailure::Unavailable));
+    assert!(!store.reject_lock(&request));
+}
+
 fn selected() -> Editor {
     let mut e = Editor::default();
     e.select(Selection {

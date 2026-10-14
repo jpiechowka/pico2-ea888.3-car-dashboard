@@ -763,6 +763,16 @@ impl PresetStore {
         Ok(())
     }
 
+    /// A rejected Web Locks promise owns the outcome only until its write
+    /// callback has resolved the same request. A later promise rejection must
+    /// not report the callback's outcome a second time.
+    pub fn reject_lock(
+        &mut self,
+        request: &PresetSaveRequest,
+    ) -> bool {
+        self.finish_save(request, Err(StorageFailure::Unavailable)).is_ok()
+    }
+
     pub fn cancel(&mut self) { self.active = None; }
 }
 

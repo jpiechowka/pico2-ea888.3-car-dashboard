@@ -103,6 +103,32 @@ pub struct ResolvedInspection {
     pub json_path: Option<String>,
 }
 
+impl ResolvedInspection {
+    pub fn display_location(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(path) = self.json_path.as_deref().filter(|path| !path.is_empty()) {
+            parts.push(format!("JSON path {path}"));
+        }
+        if let Some(index) = self.view_index {
+            parts.push(format!("view index {index}"));
+        }
+        if let Some(index) = self.widget_index {
+            parts.push(format!("widget index {index}"));
+        }
+        if let Some(index) = self.channel_index {
+            parts.push(format!("channel index {index}"));
+        }
+        if let Some(index) = self.raw_index {
+            parts.push(format!("raw input {index}"));
+        }
+        if parts.is_empty() {
+            "Configuration".into()
+        } else {
+            parts.join(" · ")
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
     pub view: u8,

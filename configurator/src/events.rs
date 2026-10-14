@@ -20,6 +20,22 @@ pub enum Category {
     Device,
 }
 
+impl Category {
+    /// Human UI text; Serialize retains the stable diagnostic tags above.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Editor => "Editor",
+            Self::Validation => "Validation",
+            Self::Storage => "Storage",
+            Self::ImportExport => "Import / export",
+            Self::Simulation => "Simulation",
+            Self::Rendering => "Rendering",
+            Self::HostTools => "Host tools",
+            Self::Device => "Device",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Severity {
     Trace,

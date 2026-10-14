@@ -380,7 +380,7 @@ impl Ui {
         if let Some(event) = validation {
             self.event(event);
         }
-        if selection_changed {
+        if selection_changed || (changed && !self.editor.with_untracked(Editor::has_invalid_draft)) {
             self.inspection.set(None);
             self.error_inspection.set(None);
             command_palette::cancel_focus(self);
@@ -655,7 +655,7 @@ pub fn Studio() -> impl IntoView {
                     <Group ui group=GroupId::Measurements><resources::Resources ui/></Group>
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-build-flash" role="tabpanel" aria-labelledby="studio-tab-build-flash" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::BuildFlash)><workspaces::BuildFlashEmpty ui/></section>
-                <section class="preview-dock" aria-label="Persistent display preview">
+                <section class="preview-dock" id="studio-preview-dock" aria-label="Persistent display preview">
                     <workspaces::InspectionDetail ui/>
                     <div class="preview-mode"><button id="studio-mode-appearance" class:active=move ||ui.dock.mode.get()==PreviewMode::Appearance on:click=move |_|{stage::cancel(ui);simulation::cancel(ui);ui.dock.mode.set(PreviewMode::Appearance);}>"Appearance"</button><button id="studio-mode-simulation" class:active=move ||ui.dock.mode.get()==PreviewMode::Simulation on:click=move |_|{stage::cancel(ui);simulation::cancel(ui);ui.dock.mode.set(PreviewMode::Simulation);workspaces::open(ui,Workspace::Diagnostics,GroupId::Simulation);}>"Simulation"</button></div>
                     <div hidden=move ||ui.dock.mode.get()!=PreviewMode::Appearance>
@@ -676,7 +676,7 @@ pub fn Studio() -> impl IntoView {
                     </label>
                     </div>
                     <stage::Canvas ui/>
-                    <div class="canvas-caption"><span>"Drag to place · right-click for actions · arrows to move · Esc to cancel"</span><span>{move || format!("Preview render {:.1} ms",ui.render_ms.get())}</span></div>
+                    <div class="canvas-caption"><span>{move ||if ui.dock.mode.get()==PreviewMode::Appearance && ui.workspace.with(|s|s.active()==Workspace::Views){"Drag to place · right-click for actions · arrows to move · Esc to cancel"}else{"Synthetic device display · controls in Diagnostics"}}</span><span>{move ||if ui.dock.mode.get()==PreviewMode::Appearance{format!("Appearance preview render {:.1} ms",ui.render_ms.get())}else{"Synthetic frame · no physical timing measurement".into()}}</span></div>
                 </section>
                 <Inspector ui/>
             </div>

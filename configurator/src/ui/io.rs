@@ -295,15 +295,19 @@ pub(super) fn save_presets(
             Err(error) => Err(error),
         };
         if result.is_err() {
+            let mut rejected = false;
             let _ = ui.presets.try_update(|store| {
-                let _ = store.finish_save(&request, Err(StorageFailure::Unavailable));
+                rejected = store.reject_lock(&request);
             });
-            let _ = ui.notice.try_set(
-                "Preset saving needs Web Locks and storage permission. Memory presets remain usable; export a backup."
-                    .into(),
-            );
+            if rejected {
+                let _ = ui.notice.try_set(
+                    "Preset saving needs Web Locks and storage permission. Memory presets remain usable; export a \
+                     backup."
+                        .into(),
+                );
+                report_preset_status(ui, false);
+            }
         }
-        report_preset_status(ui, false);
         let _ = ui.preset_lock_busy.try_set(false);
         let _ = ui.preset_abort.try_update_value(|slot| *slot = None);
         drop(callback);

@@ -504,6 +504,7 @@ fn alarm_policy(c: &mut Criterion) {
 }
 
 fn logging(c: &mut Criterion) {
+    use dashboard_config::ControlMap;
     use dashboard_host_validation::logging::{Level, LogStore};
     use dashboard_host_validation::logging_view::LogPage;
     let store = LogStore::<CriticalSectionRawMutex>::new();
@@ -535,6 +536,88 @@ fn logging(c: &mut Criterion) {
             black_box(&frame.0);
         });
     });
+    let map = ControlMap::default();
+    c.bench_function("logging/full_page_hinted", |b| {
+        b.iter(|| {
+            page.draw_full(&mut St7789Renderer::new(&mut frame.0));
+            page.draw_hint(&mut St7789Renderer::new(&mut frame.0), black_box(&map));
+            black_box(&frame.0);
+        });
+    });
+}
+
+fn shared_debug(c: &mut Criterion) {
+    use dashboard_config::ControlMap;
+    use dashboard_host_validation::backlight::Brightness;
+    use dashboard_host_validation::debug_view::{DebugData, DebugPage};
+
+    let map = ControlMap::default();
+    let ordinary = DebugData {
+        reset_cause: Some("POR"),
+        source_status: Some("SYNTHETIC"),
+        config_fault: Some(false),
+        current_fps: Some(30.0),
+        average_fps: Some(29.7),
+        frame_count: Some(12_000),
+        brightness: Some(Brightness::Full),
+        settings_status: Some("SAVED"),
+        buffer_swaps: Some(12_000),
+        buffer_waits: Some(1),
+        requested_cpu_hz: Some(280_000_000),
+        configured_cpu_hz: Some(280_000_000),
+        requested_spi_hz: Some(70_000_000),
+        configured_spi_hz: Some(70_000_000),
+        framebuffer_count: Some(2),
+        framebuffer_bytes: Some(153_600),
+        ..Default::default()
+    };
+    let maximal = DebugData {
+        reset_cause: Some("LONG RESET CAUSE THAT MUST BE CLIPPED"),
+        source_status: Some("LONG SOURCE STATUS THAT MUST BE CLIPPED"),
+        config_fault: Some(true),
+        config_fault_label: Some("LONG CONFIGURATION FAULT LABEL"),
+        current_fps: Some(f32::MAX),
+        average_fps: Some(f32::MAX),
+        frame_count: Some(u32::MAX),
+        brightness: Some(Brightness::Off),
+        settings_status: Some("LONG SETTINGS STATUS"),
+        buffer_swaps: Some(u32::MAX),
+        buffer_waits: Some(u32::MAX),
+        render_buffer_idx: Some(usize::MAX),
+        flush_buffer_idx: Some(usize::MAX),
+        core0_stack_used_kb: Some(u32::MAX),
+        core0_stack_total_kb: Some(u32::MAX),
+        core1_stack_used_kb: Some(u32::MAX),
+        core1_stack_total_kb: Some(u32::MAX),
+        static_ram_kb: Some(u32::MAX),
+        ram_total_kb: Some(u32::MAX),
+        cpu0_util_percent: Some(u32::MAX),
+        cpu1_util_percent: Some(u32::MAX),
+        frame_cycles: Some(u32::MAX),
+        requested_cpu_hz: Some(u32::MAX),
+        configured_cpu_hz: Some(u32::MAX),
+        requested_spi_hz: Some(u32::MAX),
+        configured_spi_hz: Some(u32::MAX),
+        requested_voltage_mv: Some(u32::MAX),
+        vreg_setting_mv: Some(u32::MAX),
+        framebuffer_count: Some(u32::MAX),
+        framebuffer_bytes: Some(u32::MAX),
+        ..Default::default()
+    };
+    let cases = [
+        ("ordinary", ordinary),
+        ("unavailable", DebugData::default()),
+        ("max_width", maximal),
+    ];
+    let mut frame = AlignedFrame::boxed();
+    for (label, data) in &cases {
+        c.bench_function(&format!("debug/full_{label}"), |b| {
+            b.iter(|| {
+                DebugPage::new(black_box(data), black_box(&map)).draw(&mut St7789Renderer::new(&mut frame.0));
+                black_box(&frame.0);
+            });
+        });
+    }
 }
 
 fn settings_journal(c: &mut Criterion) {
@@ -632,7 +715,7 @@ criterion_group! {
         .sample_size(30)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, settings_journal, maintenance, input_mailbox, frame_window, target_kernels, mixed_scene_replay, coverage::benchmarks, config_perf::benchmarks, view_perf::benchmarks, rule_perf::benchmarks
+    targets = framebuffer, widgets_and_history, acquisition, damage_planning, dashboard_scene, protocol, diagnostic_client, vehicle_session, vehicle_service, uart_ring, alarm_policy, logging, shared_debug, settings_journal, maintenance, input_mailbox, frame_window, target_kernels, mixed_scene_replay, coverage::benchmarks, config_perf::benchmarks, view_perf::benchmarks, rule_perf::benchmarks
 }
 criterion_main!(dashboard_perf);
 

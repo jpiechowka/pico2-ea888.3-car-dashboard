@@ -1,6 +1,15 @@
 use dashboard_configurator::event_adapters::*;
 use dashboard_configurator::events::*;
 
+#[test]
+fn event_categories_have_readable_labels_without_changing_wire_tags() {
+    assert_eq!(Category::ImportExport.label(), "Import / export");
+    assert_eq!(Category::HostTools.label(), "Host tools");
+    assert_eq!(Category::Editor.label(), "Editor");
+    let encoded = serde_json::to_string(&Category::ImportExport).unwrap();
+    assert_eq!(encoded, "\"ImportExport\"");
+}
+
 fn input(
     message: &str,
     severity: Severity,

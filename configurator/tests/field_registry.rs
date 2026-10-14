@@ -5,6 +5,21 @@ use dashboard_configurator::editor::*;
 use dashboard_configurator::field_registry::*;
 
 #[test]
+fn led_search_context_and_inspection_location_use_human_labels_and_real_indices() {
+    assert_eq!(TargetOwner::Led(false).display_label(), "Normal operation");
+    assert_eq!(TargetOwner::Led(true).display_label(), "Warning");
+    let editor = Editor::new(default_config()).unwrap();
+    let target = Registry::target(&editor, FieldKey::LedPattern, TargetOwner::Led(true)).unwrap();
+    assert_eq!(Registry::search_context(&editor, target).unwrap(), "Warning");
+    let widget = Registry::target(&editor, FieldKey::WarningEnabled, TargetOwner::Widget(0)).unwrap();
+    let resolved = Registry::resolve(&editor, widget).unwrap();
+    let detail = resolved.inspection.display_location();
+    assert!(detail.contains("widget index 0"), "{detail}");
+    assert!(detail.contains("JSON path /widgets/0"), "{detail}");
+    assert!(!detail.contains("Some(") && !detail.contains("None"), "{detail}");
+}
+
+#[test]
 fn query_overflow_preserves_previous_unicode_query_and_stale_result_rejects() {
     let mut query = SearchQuery::default();
     query.set("lambda").unwrap();

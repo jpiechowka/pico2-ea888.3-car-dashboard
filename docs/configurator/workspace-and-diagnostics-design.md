@@ -1,6 +1,6 @@
 # Studio workspace and diagnostics
 
-This is the implementation contract for approved decisions D8, D9 and D10. It extends the current Rust/Leptos editor after the shared controls and advanced widget runtime. It describes planned behavior, not completed functionality.
+This is the implementation contract for approved decisions D8, D9 and D10. It extends the Rust/Leptos editor after the shared controls and advanced widget runtime. The Workspace, appearance, diagnostics, simulator and JSON editing paths described below are implemented and have native and browser integration evidence. Build & Flash is still a reserved workspace: helper connection, matching target measurements and Flash dispatch depend on the later Helper work. The imperative language below retains the behavioral contract; the verification section distinguishes executed checks from remaining qualification.
 
 ## Navigation and visual direction
 
@@ -14,11 +14,11 @@ The primary navigation has five workspaces:
 | Device | Per-screen buttons and encoder, protected recovery, normal/warning RGB behavior, reduced motion |
 | Data & warnings | Channel sources, polling/freshness, channel history, fuel/AFR basis, combined warnings and a rule summary |
 | Diagnostics | All-screen simulator, event log, performance trace, JSON editor/diff, configuration and source inspector |
-| Build & Flash | Host prerequisites, profiles, exact build options, device selection, stage status and logs |
+| Build & Flash | Reserved for the later native helper integration; no device readiness, target measurement or Flash dispatch is claimed yet |
 
 Workspace navigation never clears a draft, resets the simulator, changes the selected firmware view or accepts an edit. Store the active workspace and expanded groups as browser preferences separate from the exported firmware configuration. A missing or invalid preference falls back to Views. Moving between firmware screens inside the simulator preserves that simulator's current view and controls.
 
-The Views layout keeps its library / canvas / inspector relationship. Device and Data use a wider settings area with a compact persistent preview; Diagnostics and Build & Flash use the width for tables and logs. At narrow widths each becomes a single reading column. Every pane has `min-width: 0`, explicit scrolling for long data, and controls that remain reachable at 320 CSS pixels. Avoid a second full-size animated canvas or duplicate simulation owners.
+The Views layout keeps its library / canvas / inspector relationship. Device and Data use a wider settings area with a compact persistent preview; Diagnostics and Build & Flash use the width for tables and logs. At widths over 1100 CSS pixels the non-Views preview stays beside the controls with bounded scrolling. At narrower widths it follows the settings in one reading column; collapsed simulation channel groups and a sticky link in the controls provide a way to reach the live preview. Returning from that preview to the controls still requires page scrolling. Every pane has `min-width: 0`, explicit scrolling for long data, and controls that remain reachable at 320 CSS pixels. Keep one full-size canvas and one simulation owner.
 
 Group widget settings by Layout, Readout, Gauge, History & statistics, Warnings and Appearance. Show commonly changed fields immediately; advanced groups expand on demand. Disabled controls explain their channel, size or style restriction. A hidden group must open when a validation link targets one of its fields. Retain the overlap context menu and keyboard movement.
 
@@ -29,6 +29,8 @@ Use semantic tab controls with an active tab stop, arrow/Home/End navigation and
 A single registry describes each editable field: stable key, workspace/group, label, aliases, applicability, DOM target and optional widget/channel identity. The inspector, search and error navigator consume this registry. Labels such as boost, AFR, lambda, PSI, smoothing, stale and warning should find their related fields. Limit search input to 128 UTF-8 bytes and show at most 40 results with an explicit remaining count.
 
 The command palette opens with Ctrl/Cmd+K or its visible button. It includes workspace navigation, find setting, duplicate selected widget/view, copy/apply appearance, undo/redo, open JSON, export and simulator recovery. Mutation commands use the same reducer and validation gates as their visible buttons. Availability is recalculated before dispatch; stale selections cannot target replacement widgets. A command cannot execute an arbitrary URL, shell command or expression. Flash remains an explicit action in its workspace with a selected device and current artifact.
+
+Search and inspection present resolved human labels rather than internal owner/debug syntax. LED contexts read Normal operation and Warning; event categories read Import / export and Host tools. Inspection shows a JSON path or known view/widget/channel index when available, without inventing an absent location. Changed accepted edits clear stale inspection detail; invalid raw inspection remains available for repair.
 
 Use a bounded native dialog with a visible close button, Escape, focus containment and focus restoration. [WAI dialog guidance](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) supplies the keyboard/focus contract. Ignore global editing shortcuts while composing text or inside an input, textarea, select or editable region. Ctrl/Cmd+Z in the JSON textarea edits its text; it must not undo the accepted dashboard. Keep browser reload, address bar and other standard browser commands intact.
 
@@ -43,6 +45,8 @@ An appearance preset contains widget colors, gauge style, decimal precision, and
 Copy Appearance stores a typed snapshot in memory. Apply to selected / this view / all widgets is one atomic reducer edit and one undo entry. A small preview lists the target count and incompatible fields. Apply only common supported fields; list omissions before committing. The operation never changes a warning threshold or disables a warning. Colors for the combined warning popup remain a separate global control.
 
 A user can name and save appearance presets in a separate versioned browser record: at most 16 presets, 32 visible ASCII characters per name, 32 KiB total storage. Imported or stale preset records pass the same color/style validators. Browser storage failure leaves the in-memory preset usable and offers export; a failed save never displays Saved. No preset can bypass current configuration validation or carry executable content.
+
+The Web Locks promise and its storage callback can resolve in either order. A rejected lock reports a save failure only while that request is still current; a later rejection does not duplicate the callback's already reported outcome. This ordering has a native regression test; forced browser permission or promise-order failures were not injected during integration QA.
 
 ## Diagnostics and console logging
 
@@ -76,9 +80,11 @@ Add named synthetic scenarios: Normal demo, Warnings, Channel minima/maxima, Wid
 
 Completion simulation is explicit. Normal mode submits a frame and reports its completion before applying presented-state effects. Dropped/delayed completion leaves the previously completed state authoritative: no premature LED switch or backlight Off. Show current and pending frame identity in Diagnostics. Off remains a black display with accessible recovery controls outside the canvas. A simulator completion is not evidence that a real panel displayed those pixels.
 
+The preview caption identifies synthetic pixels and frame completion separately from the Appearance preview's render time. It does not display the Appearance timing as physical scanout or simulator FPS.
+
 ## JSON editing, diff and resources
 
-Use a Rust-controlled textarea with a monospace font, line/column diagnostics and an explicit Apply action. Do not add a JavaScript code editor. Limit input to 128 KiB before parsing, preserve serde's recursion bound and cap any diagnostic or diff expansion. Keep the original input visible on failure; oversized pastes are rejected with the previous text intact.
+Use a Rust-controlled textarea with a monospace font, line/column diagnostics and an explicit Apply action. A local Wrap long lines option changes textarea presentation only; the text, native caret/undo and parsing remain the same. Do not add a JavaScript code editor. Limit input to 128 KiB before parsing, preserve serde's recursion bound and cap any diagnostic or diff expansion. Keep the original input visible on failure; oversized pastes are rejected with the previous text intact.
 
 Opening JSON starts a draft tied to the current editor identity and revision. Typing does not modify accepted state or undo history. After a short bounded debounce, a structurally parseable candidate feeds automatic diagnostic preview; invalid semantic candidates are clearly marked INVALID PREVIEW. Syntactically invalid JSON shows its exact line/column and the last accepted display with an INVALID JSON notice. Never display an older successful candidate as though it represents the current invalid text.
 
@@ -99,3 +105,11 @@ Native tests cover candidate/accepted/JSON transitions, stale callbacks, invalid
 Browser checks exercise keyboard focus, modal/shortcut interactions, hidden panels, overlap repair, inline JSON failure and recovery, console output/rate limiting, export/clipboard/storage failures, reduced motion, hidden-tab time and desktop/narrow layouts. Use the existing production Trunk build and preserve screenshots/traces as ignored evidence. Recheck the standard traced Demo and Vehicle target builds after extracting shared Debug rendering; stack/resource gates and cooperative-yield behavior still apply.
 
 The final audit traces edit -> validation -> preview -> export -> embedded load -> input/acquisition -> rendering -> completion -> LED/backlight, including all page transitions. The independent implementation plans name the exact tasks and tests before each stage starts.
+
+### Workspace integration evidence and limits, 2026-10-14
+
+- All default root, Configurator and Host suites passed: 118 + 323 + 477 tests, with zero failures or ignored tests. Strict native and WASM Clippy, WASM type check and formatting passed. The retained-frame fixture compares complete 320×240 RGB565 buffers on both dirty histories through Dashboard -> Debug -> Logs -> Dashboard, including Full/Dim/Off, changed text and a remapped hint.
+- The actual Studio launcher built an isolated release. In the available IAB browser, 1440/768/320 CSS pixel layouts had one intrinsic 320×240 canvas and no page horizontal overflow. Workspace switching kept simulator state. The completed-frame, dropped-completion, fault, delayed reset and protected Y recovery paths were observed. JSON wrap, valid pending/invalid repair/Discard, tab focus/activation, resolved search/inspection labels, event filtering, copy and JSONL download were exercised. The 768/320 preview is reachable in vertical flow, with page scrolling needed to return to controls.
+- A four-case, 30-sample-per-case host Criterion capture provides initial shared Debug and hinted Logs renderer baselines. They are host timings, not measured gains or physical FPS. The prior traced Demo/Vehicle firmware artifacts were reused only after declared inputs, compiler and artifact identities matched; no new ARM build or physical measurement was made. The Vehicle predecessor had 65,968 B static headroom, 432 B above its 65,536 B floor.
+- Browser tooling did not expose 200% zoom, Chrome/Firefox or native app control. Forced storage quota/security/corruption, Web Locks ordering, canvas allocation/consumer/timer faults, hidden/disposal/IME and atomic mid-drag pointer cancellation were not browser-injected. Native/source checks do not turn those into browser passes. Reduced-motion and the complete warning/latch/snooze matrix were not repeated as a full browser matrix in this integration gate.
+- Build & Flash remains reserved until the Helper implementation supplies a selected authoritative artifact and device workflow. Hardware display, GPIO/PWM, scanout, voltage, ECU behavior, electrical safety and soak qualification remain unverified.

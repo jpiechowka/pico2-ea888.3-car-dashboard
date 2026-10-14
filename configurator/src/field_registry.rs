@@ -146,6 +146,20 @@ pub enum TargetOwner {
     Encoder(ControlPage),
 }
 impl TargetOwner {
+    pub fn display_label(self) -> String {
+        match self {
+            Self::Root => "Global settings".into(),
+            Self::View(i) => format!("View [{i}]"),
+            Self::Widget(i) => format!("Widget [{i}]"),
+            Self::Channel(c) => c.label().into(),
+            Self::Band(i, band) => format!("Widget [{i}] · band {}", usize::from(band) + 1),
+            Self::Led(false) => "Normal operation".into(),
+            Self::Led(true) => "Warning".into(),
+            Self::Button(page, button) => format!("{} · {} button", page.label(), button.label()),
+            Self::Encoder(page) => format!("{} · encoder", page.label()),
+        }
+    }
+
     fn inspection(self) -> InspectionOwner {
         match self {
             Self::View(index) => InspectionOwner::View { index },
@@ -653,6 +667,22 @@ impl Registry {
             });
             error.map_or(Ok(SearchResults { results, omitted }), Err)
         })
+    }
+
+    pub fn search_context(
+        editor: &Editor,
+        target: FieldTarget,
+    ) -> Result<String, RegistryError> {
+        Self::resolve(editor, target)?;
+        Ok(editor.with_inspection_config(|c| {
+            match target.owner {
+                TargetOwner::Widget(i) | TargetOwner::Band(i, _) => {
+                    format!("Widget [{i}] {} · view {}", c.widgets[i].label, c.widgets[i].view)
+                }
+                TargetOwner::View(i) => format!("View [{i}] {}", c.views[i].name),
+                other => other.display_label(),
+            }
+        }))
     }
 
     pub fn resolve(

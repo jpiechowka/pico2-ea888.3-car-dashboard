@@ -83,7 +83,7 @@ fn AppearancePanel(ui: Ui) -> impl IntoView {
                 };
                 view!{<section id="studio-appearance-preview" class="appearance-preview" tabindex="-1" aria-label="Appearance preview">
                     <h3>{format!("Appearance preview: {}",request.scope().label())}</h3>
-                    <p>{format!("{} · {} decimal places · history {} · average {} · extrema {} · trend {}",snapshot.gauge_style.label(),snapshot.decimals,snapshot.graph,snapshot.average,snapshot.extrema,snapshot.trend)}</p>
+                    <p>{format!("{} · {} decimal places · history {} · average {} · extrema {} · trend {}",snapshot.gauge_style.label(),snapshot.decimals,if snapshot.graph{"On"}else{"Off"},if snapshot.average{"On"}else{"Off"},if snapshot.extrema{"On"}else{"Off"},if snapshot.trend{"On"}else{"Off"})}</p>
                     <h4>"Frozen colors represented by RGB565"</h4>
                     <dl class="appearance-color-summary">{ColorRole::ALL.into_iter().map(move |role|{
                         let hex=role.get(&snapshot.colors).hex().to_string();

@@ -203,7 +203,7 @@ pub fn EventLog(ui: Ui) -> impl IntoView {
                     {SEVERITIES.into_iter().enumerate().map(|(index,severity)|view!{<option value=index.to_string()>{format!("{severity:?}")}</option>}).collect_view()}
                 </select></label>
                 <label class="field"><span>"Category"</span><select on:change=move |event|category.set(event_target_value(&event).parse().unwrap_or(0))><option value="0">"All categories"</option>
-                    {CATEGORIES.into_iter().enumerate().map(|(index,category)|view!{<option value=(index+1).to_string()>{format!("{category:?}")}</option>}).collect_view()}
+                    {CATEGORIES.into_iter().enumerate().map(|(index,category)|view!{<option value=(index+1).to_string()>{category.label()}</option>}).collect_view()}
                 </select></label>
                 <label class="field"><span>"Search retained events"</span><input type="search" maxlength="128" prop:value=move ||query.get() on:input=move |event|{
                     let input=event_target::<web_sys::HtmlInputElement>(&event);if let Some(text)=io::bounded_input(&input,128){query.set(text);}else{input.set_value(&query.get_untracked());}
@@ -235,7 +235,7 @@ pub fn EventLog(ui: Ui) -> impl IntoView {
                     let snapshot=store.snapshot(&filter(&query.get(),minimum.get(),category.get()));let report=pause.get().report(store);
                     snapshot.records().iter().filter(|event|!report.paused || report.anchor.is_some_and(|anchor|event.seq.get()<=anchor.get())).cloned().collect::<Vec<_>>()
                 }) key=|event|event.seq.get() children=move |event|{let seq=event.seq;view!{
-                    <article class="event-row"><header><strong>{format!("#{} {:?} {:?}",event.seq.get(),event.severity,event.category)}</strong><span>{move ||ui.events.with(|store|store.get(seq).map(|event|format!("{} ms · {} ×",event.last_elapsed_ms,count(event.count))).unwrap_or_default())}</span></header>
+                    <article class="event-row"><header><strong>{format!("#{} {:?} {}",event.seq.get(),event.severity,event.category.label())}</strong><span>{move ||ui.events.with(|store|store.get(seq).map(|event|format!("{} ms · {} ×",event.last_elapsed_ms,count(event.count))).unwrap_or_default())}</span></header>
                         <code>{event.code.get()}</code><b>{event.subject.unwrap_or_default()}</b><p>{event.message}</p>
                         <small>{if event.message_truncated || event.subject_truncated {"Text truncated at its UTF-8 byte limit"}else{""}}</small>
                     </article>
