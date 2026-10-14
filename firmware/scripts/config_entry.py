@@ -9,7 +9,7 @@ import re
 from config_entry_contracts import ENTRY_GRAMMARS,ENTRY_ROLES
 from config_finite import _complete_body
 from config_logger import _object_symbol,_initialized
-from config_roots import _window_object
+from config_roots import _window_object,root_adapter
 from config_stack import canonical_symbol,typed_function
 from validation import require
 
@@ -25,7 +25,8 @@ PHASES={key:phase for phase,keys in {
     'cortex_main':('speed2_3','sizes_3','sizez_3'),
     'boot_poll':('speed2_4','sizes_4','sizez_4'),
     'main':('speed2_5',),'queue_push':('sizez_6',),'raw_poll':('sizez_7',),
-    'raw_spawn':('sizez_8',),'callback_install':('sizez_9',)}.items() for key in keys}
+    'raw_spawn':('sizez_8',),'callback_install':('sizez_9',),
+    'configuration_initialize':('speed2_6','sizes_6','sizez_10')}.items() for key in keys}
 INITIALIZE='_RNvNtCs_5pico211view_config10initialize'
 
 
@@ -63,7 +64,7 @@ def entry_body(objects,name,instructions,outline_role=None,_ancestry=()):
     require(role in ENTRY_ROLES,'unreviewed exact entry role');results=[]
     for shape in ENTRY_ROLES[role]:
         try:
-            proof=_complete_body(objects,name,instructions,role,shape,ENTRY_GRAMMARS[shape],entry_object,entry_body,_ancestry)
+            proof=_complete_body(objects,name,instructions,role,shape,ENTRY_GRAMMARS[shape],entry_object,_entry_outline,_ancestry)
         except AssertionError:continue
         proof.update(requires_first_batch_source_and_task_ownership=True,
                      requires_parent_alias_lifetime_and_diagnostic_closure=True,
@@ -71,6 +72,11 @@ def entry_body(objects,name,instructions,outline_role=None,_ancestry=()):
         results.append(proof)
     require(len(results)==1,'missing, changed or ambiguous complete entry shape')
     return results[0]
+
+
+def _entry_outline(objects,name,instructions,role,ancestry):
+    if role=='@outline:initialize_clrex_panic':return root_adapter(objects,name,instructions,role,ancestry)
+    return entry_body(objects,name,instructions,role,ancestry)
 
 
 def boot_entry(objects,instructions):
@@ -113,7 +119,7 @@ def boot_entry(objects,instructions):
     mains=[(n,e) for n,e in objects.elf.functions.items() if canonical_symbol(n)=='main']
     require(len(mains)==1,'missing or ambiguous main entry')
     visit(mains[0][1][0]&~1,'main')
-    required={'main','cortex_main','run','boot_poll','boot_initializer','dashboard_initializer'}
+    required={'main','cortex_main','run','boot_poll','boot_initializer','dashboard_initializer','configuration_initialize'}
     sizez=proofs['run']['shape']=='sizez_2'
     if sizez:required|={'raw_poll','raw_spawn','queue_push','callback_install'}
     require(set(proofs)==required,'incomplete or mixed entry phase closure')
@@ -127,7 +133,7 @@ def boot_entry(objects,instructions):
     later=[(boot['objects'][i],v) for i,v in enumerate(contract['objects']) if v['kind']=='entry_callback']
     require(len(later)==2 and later[1][1]['role']=='_RNvNtCs_16embassy_executor3raw11poll_exited',
             'Dashboard/retirement callback interface differs')
-    initialize=[v for v in external if v[0]=='boot_poll' and v[3]==INITIALIZE]
+    initialize=[v for v in proofs['boot_poll']['ordinary_edges'] if v[3]==INITIALIZE]
     require(len(initialize)==1 and initialize[0][4]==8,'missing synchronous configuration initialization boundary')
     chain=[proofs[p] for p in ('main','cortex_main','run')+ (('raw_poll',) if sizez else ())]
     return dict(entry_frame=sum(p['frame'] for p in chain),entry_chain=tuple((p['function'],p['frame']) for p in chain),

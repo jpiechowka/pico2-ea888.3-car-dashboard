@@ -775,7 +775,7 @@ class EntryBodies(unittest.TestCase):
                 self.assertEqual((proof['extent'],proof['frame']),(instance['extent'],instance['frame']))
                 self.assertTrue(proof['requires_first_batch_source_and_task_ownership'])
                 count+=1
-        self.assertEqual(count,22)
+        self.assertEqual(count,25)
 
     def test_entry_callback_pool_field_and_queue_instructions_cannot_change(self):
         import config_entry
@@ -852,6 +852,34 @@ class EntryBodies(unittest.TestCase):
                     (r.mnemonic=='ldr' and '#0x24' in r.operands if fault=='changed_callback_load' else r.mnemonic.startswith(('strex','stlex'))))
                 records[row.address]=Instruction(row.address,row.raw,row.mnemonic,
                     row.operands.replace('#0x24','#0x20') if fault=='changed_callback_load' else 'r3, r5, [r4]')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_entry.boot_entry(objects,records)
+
+    def test_initialize_once_boundary_must_be_complete_before_its_loader_edge_is_used(self):
+        import config_entry
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,item=self.fixture(mode)
+            name=next(n for n in objects.elf.functions if config_stack.canonical_symbol(n)==config_entry.INITIALIZE)
+            proof=config_entry.entry_body(objects,name,records)
+            self.assertEqual(proof['frame'],8)
+            self.assertTrue(any('load_at_boot' in edge[3] for edge in proof['ordinary_edges']))
+            context=config_entry.boot_entry(objects,records)
+            self.assertEqual(context['phases']['configuration_initialize']['function'],proof['function'])
+
+    def test_initialize_once_atomic_tag_and_clrex_child_cannot_be_skipped_or_changed(self):
+        import config_entry
+        for fault in ('atomic_acquire','atomic_store','tagged_length','clrex_child'):
+            objects,records,item=self.fixture('sizez')
+            name=next(n for n in objects.elf.functions if config_stack.canonical_symbol(n)==config_entry.INITIALIZE)
+            start,extent,_=objects.elf.functions[name];start&=~1
+            if fault=='clrex_child':
+                child=next(n for n in objects.elf.functions if n=='OUTLINED_FUNCTION_81');at=objects.elf.functions[child][0]&~1
+                row=records[at];records[at]=Instruction(at,row.raw,'dmb','sy')
+            else:
+                row=next(r for a,r in sorted(records.items()) if start<=a<start+extent and
+                    (r.mnemonic=='ldaexb' if fault=='atomic_acquire' else r.mnemonic=='strexb' if fault=='atomic_store'
+                     else r.mnemonic=='movs' and r.operands=='r1, #0x77'))
+                records[row.address]=Instruction(row.address,row.raw,'ldrexb' if fault=='atomic_acquire' else row.mnemonic,
+                    'r3, r1, [r0]' if fault=='atomic_store' else 'r1, #0x76' if fault=='tagged_length' else row.operands)
             with self.subTest(fault=fault),self.assertRaises(AssertionError):config_entry.boot_entry(objects,records)
 
 

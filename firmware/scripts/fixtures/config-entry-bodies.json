@@ -525,13 +525,68 @@
       ],
       [
         5,
+        268756096,
+        "91b8041076000000bc0000000d000000"
+      ],
+      [
+        5,
+        268744849,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c7374617469635f63656c6c2d322e312e315c7372635c6c69622e7273"
+      ],
+      [
+        5,
         268782530,
         "66697273742d6572726f722076697369746f722073746f707320617420657665727920696e76616c6964206669656c64"
       ],
       [
         5,
+        268782580,
+        "97a604104d0000008e01000018000000"
+      ],
+      [
+        5,
+        268740247,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c76616c69646174652e7273"
+      ],
+      [
+        5,
+        268779548,
+        "97a604104d000000e201000018000000"
+      ],
+      [
+        5,
+        268779580,
+        "97a604104d000000020200001a000000"
+      ],
+      [
+        5,
+        268779816,
+        "5fa704104d000000c200000031000000"
+      ],
+      [
+        5,
+        268740447,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c616476616e6365642e7273"
+      ],
+      [
+        5,
+        268779564,
+        "97a604104d0000001002000010000000"
+      ],
+      [
+        5,
+        268780080,
+        "5fa704104d000000660000002f000000"
+      ],
+      [
+        5,
         268780040,
         "626f756e6465642041534349492062616e64206c6162656c"
+      ],
+      [
+        5,
+        268780064,
+        "5fa704104d0000006600000050000000"
       ],
       [
         5,
@@ -545,6 +600,16 @@
       ],
       [
         5,
+        268779800,
+        "1faf0410490000003d0000003f000000"
+      ],
+      [
+        5,
+        268742431,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c736c6f742e7273"
+      ],
+      [
+        5,
         268779736,
         "000000000c000000020000002d830310"
       ],
@@ -552,6 +617,16 @@
         5,
         268796108,
         "69737375657220737461727473206174206f6e65"
+      ],
+      [
+        5,
+        268779784,
+        "f7a20410530000001d00000043000000"
+      ],
+      [
+        5,
+        268739319,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c63616368655f6964656e746974792e7273"
       ],
       [
         3,
@@ -582,6 +657,11 @@
         3,
         268631344,
         "80b56f46f2f70afa"
+      ],
+      [
+        3,
+        268613220,
+        "80b56f4640f24c60c2f2000043f6081108440121d0e8cf2f3ab9c0e8421f002af8d1bde8804012f08bba4ef244404ef28042c1f20400c1f204027721bff32f8f04f0a2fb"
       ],
       [
         6,
@@ -7076,6 +7156,13 @@
         8,
         18,
         3
+      ],
+      [
+        "_RNvMNtNtCs8L38xtN5vCA_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot",
+        268688293,
+        5436,
+        2,
+        3
       ]
     ],
     "functions": {
@@ -7273,6 +7360,11 @@
         268631345,
         8,
         3
+      ],
+      "_RNvMNtNtCs8L38xtN5vCA_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot": [
+        268688293,
+        5436,
+        3
       ]
     },
     "sizes": {
@@ -7302,7 +7394,8 @@
       "268637770": 8,
       "268576600": 16,
       "268613288": 8,
-      "268631344": 8
+      "268631344": 8,
+      "268688292": 1288
     },
     "elf_sha256": "db82c13fc9f8f06379ae2487306950964d7a09d0c8063c916919988a5ed3231a",
     "instances": [
@@ -7353,6 +7446,14 @@
         "extent": 8,
         "frame": 8,
         "shape": "speed2_5"
+      },
+      {
+        "name": "_RNvNtCs9msDVjjVdtv_5pico211view_config10initialize",
+        "role": "_RNvNtCs_5pico211view_config10initialize",
+        "entry": 268613220,
+        "extent": 68,
+        "frame": 8,
+        "shape": "speed2_6"
       }
     ],
     "records": [
@@ -9161,6 +9262,153 @@
         "bytes": "f2f70afa",
         "text": "bl\t0x1002214c <pico2::__cortex_m_rt_main> @ imm = #-0xdbec",
         "listing": "1002fd34: f7f2 fa0a    \tbl\t0x1002214c <pico2::__cortex_m_rt_main> @ imm = #-0xdbec"
+      },
+      {
+        "address": 268613220,
+        "offset": 0,
+        "bytes": "80b5",
+        "text": "push\t{r7, lr}",
+        "listing": "1002b664: b580         \tpush\t{r7, lr}"
+      },
+      {
+        "address": 268613222,
+        "offset": 2,
+        "bytes": "6f46",
+        "text": "mov\tr7, sp",
+        "listing": "1002b666: 466f         \tmov\tr7, sp"
+      },
+      {
+        "address": 268613224,
+        "offset": 4,
+        "bytes": "40f24c60",
+        "text": "movw\tr0, #0x64c",
+        "listing": "1002b668: f240 604c    \tmovw\tr0, #0x64c"
+      },
+      {
+        "address": 268613228,
+        "offset": 8,
+        "bytes": "c2f20000",
+        "text": "movt\tr0, #0x2000",
+        "listing": "1002b66c: f2c2 0000    \tmovt\tr0, #0x2000"
+      },
+      {
+        "address": 268613232,
+        "offset": 12,
+        "bytes": "43f60811",
+        "text": "movw\tr1, #0x3908",
+        "listing": "1002b670: f643 1108    \tmovw\tr1, #0x3908"
+      },
+      {
+        "address": 268613236,
+        "offset": 16,
+        "bytes": "0844",
+        "text": "add\tr0, r1",
+        "listing": "1002b674: 4408         \tadd\tr0, r1"
+      },
+      {
+        "address": 268613238,
+        "offset": 18,
+        "bytes": "0121",
+        "text": "movs\tr1, #0x1",
+        "listing": "1002b676: 2101         \tmovs\tr1, #0x1"
+      },
+      {
+        "address": 268613240,
+        "offset": 20,
+        "bytes": "d0e8cf2f",
+        "text": "ldaexb\tr2, [r0]",
+        "listing": "1002b678: e8d0 2fcf    \tldaexb\tr2, [r0]"
+      },
+      {
+        "address": 268613244,
+        "offset": 24,
+        "bytes": "3ab9",
+        "text": "cbnz\tr2, 0x1002b68e <pico2::view_config::initialize+0x2a> @ imm = #0xe",
+        "listing": "1002b67c: b93a         \tcbnz\tr2, 0x1002b68e <pico2::view_config::initialize+0x2a> @ imm = #0xe"
+      },
+      {
+        "address": 268613246,
+        "offset": 26,
+        "bytes": "c0e8421f",
+        "text": "strexb\tr2, r1, [r0]",
+        "listing": "1002b67e: e8c0 1f42    \tstrexb\tr2, r1, [r0]"
+      },
+      {
+        "address": 268613250,
+        "offset": 30,
+        "bytes": "002a",
+        "text": "cmp\tr2, #0x0",
+        "listing": "1002b682: 2a00         \tcmp\tr2, #0x0"
+      },
+      {
+        "address": 268613252,
+        "offset": 32,
+        "bytes": "f8d1",
+        "text": "bne\t0x1002b678 <pico2::view_config::initialize+0x14> @ imm = #-0x10",
+        "listing": "1002b684: d1f8         \tbne\t0x1002b678 <pico2::view_config::initialize+0x14> @ imm = #-0x10"
+      },
+      {
+        "address": 268613254,
+        "offset": 34,
+        "bytes": "bde88040",
+        "text": "pop.w\t{r7, lr}",
+        "listing": "1002b686: e8bd 4080    \tpop.w\t{r7, lr}"
+      },
+      {
+        "address": 268613258,
+        "offset": 38,
+        "bytes": "12f08bba",
+        "text": "b.w\t0x1003dba4 <<dashboard_config::validate::slot::ConfigSlot>::load_at_boot> @ imm = #0x12516",
+        "listing": "1002b68a: f012 ba8b    \tb.w\t0x1003dba4 <<dashboard_config::validate::slot::ConfigSlot>::load_at_boot> @ imm = #0x12516"
+      },
+      {
+        "address": 268613262,
+        "offset": 42,
+        "bytes": "4ef24440",
+        "text": "movw\tr0, #0xe444",
+        "listing": "1002b68e: f24e 4044    \tmovw\tr0, #0xe444"
+      },
+      {
+        "address": 268613266,
+        "offset": 46,
+        "bytes": "4ef28042",
+        "text": "movw\tr2, #0xe480",
+        "listing": "1002b692: f24e 4280    \tmovw\tr2, #0xe480"
+      },
+      {
+        "address": 268613270,
+        "offset": 50,
+        "bytes": "c1f20400",
+        "text": "movt\tr0, #0x1004",
+        "listing": "1002b696: f2c1 0004    \tmovt\tr0, #0x1004"
+      },
+      {
+        "address": 268613274,
+        "offset": 54,
+        "bytes": "c1f20402",
+        "text": "movt\tr2, #0x1004",
+        "listing": "1002b69a: f2c1 0204    \tmovt\tr2, #0x1004"
+      },
+      {
+        "address": 268613278,
+        "offset": 58,
+        "bytes": "7721",
+        "text": "movs\tr1, #0x77",
+        "listing": "1002b69e: 2177         \tmovs\tr1, #0x77"
+      },
+      {
+        "address": 268613280,
+        "offset": 60,
+        "bytes": "bff32f8f",
+        "text": "clrex",
+        "listing": "1002b6a0: f3bf 8f2f    \tclrex"
+      },
+      {
+        "address": 268613284,
+        "offset": 64,
+        "bytes": "04f0a2fb",
+        "text": "bl\t0x1002fdec <core::panicking::panic_fmt> @ imm = #0x4744",
+        "listing": "1002b6a4: f004 fba2    \tbl\t0x1002fdec <core::panicking::panic_fmt> @ imm = #0x4744"
       }
     ],
     "mapping_symbols": [
@@ -9192,6 +9440,11 @@
       [
         "$t",
         268631344,
+        3
+      ],
+      [
+        "$t",
+        268613220,
         3
       ]
     ]
@@ -9722,8 +9975,28 @@
       ],
       [
         5,
+        268698504,
+        "b45b031076000000bc0000000d000000"
+      ],
+      [
+        5,
+        268655540,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c7374617469635f63656c6c2d322e312e315c7372635c6c69622e7273"
+      ],
+      [
+        5,
         268718536,
         "626f756e6465642041534349492062616e64206c6162656c"
+      ],
+      [
+        5,
+        268718560,
+        "be4903104d0000006600000050000000"
+      ],
+      [
+        5,
+        268650942,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c616476616e6365642e7273"
       ],
       [
         5,
@@ -9732,13 +10005,63 @@
       ],
       [
         5,
+        268718520,
+        "be4903104d000000660000002f000000"
+      ],
+      [
+        5,
+        268718312,
+        "be4903104d000000c200000031000000"
+      ],
+      [
+        5,
         268721064,
         "66697273742d6572726f722076697369746f722073746f707320617420657665727920696e76616c6964206669656c64"
       ],
       [
         5,
+        268721112,
+        "d54803104d0000008e01000018000000"
+      ],
+      [
+        5,
+        268650709,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c76616c69646174652e7273"
+      ],
+      [
+        5,
+        268718060,
+        "d54803104d000000e201000018000000"
+      ],
+      [
+        5,
+        268718012,
+        "d54803104d000000020200001a000000"
+      ],
+      [
+        5,
+        268718044,
+        "d54803104d000000520200001d000000"
+      ],
+      [
+        5,
+        268718028,
+        "d54803104d0000001002000010000000"
+      ],
+      [
+        5,
         268718232,
         "72657669657765642064656661756c7420636f6e66696775726174696f6e"
+      ],
+      [
+        5,
+        268718296,
+        "16520310490000003d0000003f000000"
+      ],
+      [
+        5,
+        268653078,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c736c6f742e7273"
       ],
       [
         5,
@@ -9752,8 +10075,28 @@
       ],
       [
         5,
+        268718216,
+        "16450310530000001d00000043000000"
+      ],
+      [
+        5,
+        268649750,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c63616368655f6964656e746974792e7273"
+      ],
+      [
+        5,
         268721024,
         "6275696c742d696e2077696467657420636f756e74"
+      ],
+      [
+        5,
+        268721048,
+        "c24203104d000000980000000d000000"
+      ],
+      [
+        5,
+        268649154,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c64656661756c74732e7273"
       ],
       [
         3,
@@ -9784,6 +10127,11 @@
         3,
         268555418,
         "80b56f46f7f772f9"
+      ],
+      [
+        3,
+        268542692,
+        "80b56f4640f28830c2f2000043f6081108440121d0e8cf2f3ab9c0e8421f002af8d1bde880400ef0c1ba40f24c3040f28832c1f20400c1f204027721bff32f8f03f02cf9"
       ],
       [
         6,
@@ -16586,6 +16934,13 @@
         8,
         18,
         3
+      ],
+      [
+        "_RNvMNtNtCsfZiO9kfYn6A_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot",
+        268601489,
+        3468,
+        2,
+        3
       ]
     ],
     "functions": {
@@ -16783,6 +17138,11 @@
         268555419,
         8,
         3
+      ],
+      "_RNvMNtNtCsfZiO9kfYn6A_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot": [
+        268601489,
+        3468,
+        3
       ]
     },
     "sizes": {
@@ -16812,7 +17172,8 @@
       "268560522": 8,
       "268528614": 16,
       "268542760": 8,
-      "268555418": 8
+      "268555418": 8,
+      "268601488": 696
     },
     "elf_sha256": "856d628b9e1b32752a03facf96a8f1a6d02b8e8f0fcc91eabe799774d84cfcce",
     "instances": [
@@ -16863,6 +17224,14 @@
         "extent": 8,
         "frame": 8,
         "shape": "speed2_5"
+      },
+      {
+        "name": "_RNvNtCs56BK6YlgGrQ_5pico211view_config10initialize",
+        "role": "_RNvNtCs_5pico211view_config10initialize",
+        "entry": 268542692,
+        "extent": 68,
+        "frame": 8,
+        "shape": "speed2_6"
       }
     ],
     "records": [
@@ -18104,6 +18473,153 @@
         "bytes": "f7f772f9",
         "text": "bl\t0x10014786 <pico2::__cortex_m_rt_main> @ imm = #-0x8d1c",
         "listing": "1001d49e: f7f7 f972    \tbl\t0x10014786 <pico2::__cortex_m_rt_main> @ imm = #-0x8d1c"
+      },
+      {
+        "address": 268542692,
+        "offset": 0,
+        "bytes": "80b5",
+        "text": "push\t{r7, lr}",
+        "listing": "1001a2e4: b580         \tpush\t{r7, lr}"
+      },
+      {
+        "address": 268542694,
+        "offset": 2,
+        "bytes": "6f46",
+        "text": "mov\tr7, sp",
+        "listing": "1001a2e6: 466f         \tmov\tr7, sp"
+      },
+      {
+        "address": 268542696,
+        "offset": 4,
+        "bytes": "40f28830",
+        "text": "movw\tr0, #0x388",
+        "listing": "1001a2e8: f240 3088    \tmovw\tr0, #0x388"
+      },
+      {
+        "address": 268542700,
+        "offset": 8,
+        "bytes": "c2f20000",
+        "text": "movt\tr0, #0x2000",
+        "listing": "1001a2ec: f2c2 0000    \tmovt\tr0, #0x2000"
+      },
+      {
+        "address": 268542704,
+        "offset": 12,
+        "bytes": "43f60811",
+        "text": "movw\tr1, #0x3908",
+        "listing": "1001a2f0: f643 1108    \tmovw\tr1, #0x3908"
+      },
+      {
+        "address": 268542708,
+        "offset": 16,
+        "bytes": "0844",
+        "text": "add\tr0, r1",
+        "listing": "1001a2f4: 4408         \tadd\tr0, r1"
+      },
+      {
+        "address": 268542710,
+        "offset": 18,
+        "bytes": "0121",
+        "text": "movs\tr1, #0x1",
+        "listing": "1001a2f6: 2101         \tmovs\tr1, #0x1"
+      },
+      {
+        "address": 268542712,
+        "offset": 20,
+        "bytes": "d0e8cf2f",
+        "text": "ldaexb\tr2, [r0]",
+        "listing": "1001a2f8: e8d0 2fcf    \tldaexb\tr2, [r0]"
+      },
+      {
+        "address": 268542716,
+        "offset": 24,
+        "bytes": "3ab9",
+        "text": "cbnz\tr2, 0x1001a30e <pico2::view_config::initialize+0x2a> @ imm = #0xe",
+        "listing": "1001a2fc: b93a         \tcbnz\tr2, 0x1001a30e <pico2::view_config::initialize+0x2a> @ imm = #0xe"
+      },
+      {
+        "address": 268542718,
+        "offset": 26,
+        "bytes": "c0e8421f",
+        "text": "strexb\tr2, r1, [r0]",
+        "listing": "1001a2fe: e8c0 1f42    \tstrexb\tr2, r1, [r0]"
+      },
+      {
+        "address": 268542722,
+        "offset": 30,
+        "bytes": "002a",
+        "text": "cmp\tr2, #0x0",
+        "listing": "1001a302: 2a00         \tcmp\tr2, #0x0"
+      },
+      {
+        "address": 268542724,
+        "offset": 32,
+        "bytes": "f8d1",
+        "text": "bne\t0x1001a2f8 <pico2::view_config::initialize+0x14> @ imm = #-0x10",
+        "listing": "1001a304: d1f8         \tbne\t0x1001a2f8 <pico2::view_config::initialize+0x14> @ imm = #-0x10"
+      },
+      {
+        "address": 268542726,
+        "offset": 34,
+        "bytes": "bde88040",
+        "text": "pop.w\t{r7, lr}",
+        "listing": "1001a306: e8bd 4080    \tpop.w\t{r7, lr}"
+      },
+      {
+        "address": 268542730,
+        "offset": 38,
+        "bytes": "0ef0c1ba",
+        "text": "b.w\t0x10028890 <<dashboard_config::validate::slot::ConfigSlot>::load_at_boot> @ imm = #0xe582",
+        "listing": "1001a30a: f00e bac1    \tb.w\t0x10028890 <<dashboard_config::validate::slot::ConfigSlot>::load_at_boot> @ imm = #0xe582"
+      },
+      {
+        "address": 268542734,
+        "offset": 42,
+        "bytes": "40f24c30",
+        "text": "movw\tr0, #0x34c",
+        "listing": "1001a30e: f240 304c    \tmovw\tr0, #0x34c"
+      },
+      {
+        "address": 268542738,
+        "offset": 46,
+        "bytes": "40f28832",
+        "text": "movw\tr2, #0x388",
+        "listing": "1001a312: f240 3288    \tmovw\tr2, #0x388"
+      },
+      {
+        "address": 268542742,
+        "offset": 50,
+        "bytes": "c1f20400",
+        "text": "movt\tr0, #0x1004",
+        "listing": "1001a316: f2c1 0004    \tmovt\tr0, #0x1004"
+      },
+      {
+        "address": 268542746,
+        "offset": 54,
+        "bytes": "c1f20402",
+        "text": "movt\tr2, #0x1004",
+        "listing": "1001a31a: f2c1 0204    \tmovt\tr2, #0x1004"
+      },
+      {
+        "address": 268542750,
+        "offset": 58,
+        "bytes": "7721",
+        "text": "movs\tr1, #0x77",
+        "listing": "1001a31e: 2177         \tmovs\tr1, #0x77"
+      },
+      {
+        "address": 268542752,
+        "offset": 60,
+        "bytes": "bff32f8f",
+        "text": "clrex",
+        "listing": "1001a320: f3bf 8f2f    \tclrex"
+      },
+      {
+        "address": 268542756,
+        "offset": 64,
+        "bytes": "03f02cf9",
+        "text": "bl\t0x1001d580 <core::panicking::panic_fmt> @ imm = #0x3258",
+        "listing": "1001a324: f003 f92c    \tbl\t0x1001d580 <core::panicking::panic_fmt> @ imm = #0x3258"
       }
     ],
     "mapping_symbols": [
@@ -18135,6 +18651,11 @@
       [
         "$t",
         268555418,
+        3
+      ],
+      [
+        "$t",
+        268542692,
         3
       ]
     ]
@@ -18705,8 +19226,33 @@
       ],
       [
         5,
+        268625488,
+        "70ba021076000000bc0000000d000000"
+      ],
+      [
+        5,
+        268614256,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c7374617469635f63656c6c2d322e312e315c7372635c6c69622e7273"
+      ],
+      [
+        5,
+        268651556,
+        "b8a602104d000000c200000031000000"
+      ],
+      [
+        5,
+        268609208,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c616476616e6365642e7273"
+      ],
+      [
+        5,
         268651780,
         "626f756e6465642041534349492062616e64206c6162656c"
+      ],
+      [
+        5,
+        268651804,
+        "b8a602104d0000006600000050000000"
       ],
       [
         5,
@@ -18715,13 +19261,58 @@
       ],
       [
         5,
+        268651764,
+        "b8a602104d000000660000002f000000"
+      ],
+      [
+        5,
         268654424,
         "66697273742d6572726f722076697369746f722073746f707320617420657665727920696e76616c6964206669656c64"
       ],
       [
         5,
+        268654472,
+        "f0a502104d0000008e01000018000000"
+      ],
+      [
+        5,
+        268609008,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c76616c69646174652e7273"
+      ],
+      [
+        5,
+        268651280,
+        "f0a502104d000000e201000018000000"
+      ],
+      [
+        5,
+        268651192,
+        "f0a502104d000000020200001a000000"
+      ],
+      [
+        5,
+        268651264,
+        "f0a502104d0000005302000014000000"
+      ],
+      [
+        5,
+        268651208,
+        "f0a502104d0000001002000010000000"
+      ],
+      [
+        5,
         268654344,
         "626f756e646564206275696c742d696e2076696577"
+      ],
+      [
+        5,
+        268654368,
+        "529f02104d0000007600000029000000"
+      ],
+      [
+        5,
+        268607314,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c64656661756c74732e7273"
       ],
       [
         5,
@@ -18735,6 +19326,16 @@
       ],
       [
         5,
+        268651540,
+        "43af0210490000003d0000003f000000"
+      ],
+      [
+        5,
+        268611395,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c736c6f742e7273"
+      ],
+      [
+        5,
         268651508,
         "000000000c000000020000002de20110"
       ],
@@ -18745,8 +19346,23 @@
       ],
       [
         5,
+        268651444,
+        "0da10210530000001d00000043000000"
+      ],
+      [
+        5,
+        268607757,
+        "443a5c4769744875625c7069636f322d65613838382e332d6361722d64617368626f6172645c6372617465735c64617368626f6172642d636f6e6669675c7372635c63616368655f6964656e746974792e7273"
+      ],
+      [
+        5,
         268654254,
         "626f756e646564206275696c742d696e206c6162656c"
+      ],
+      [
+        5,
+        268654276,
+        "529f02104d000000190000002b000000"
       ],
       [
         5,
@@ -18755,8 +19371,18 @@
       ],
       [
         5,
+        268654316,
+        "529f02104d0000003400000031000000"
+      ],
+      [
+        5,
         268654384,
         "6275696c742d696e2077696467657420636f756e74"
+      ],
+      [
+        5,
+        268654408,
+        "529f02104d000000980000000d000000"
       ],
       [
         3,
@@ -18807,6 +19433,16 @@
         3,
         268603752,
         "686205f128007047"
+      ],
+      [
+        3,
+        268516520,
+        "80b56f460a4943f6081008440121d0e8cf2f3ab9c0e8421f002af8d1bde880400cf0ccb80348044a772114f007fd00bf1c03002014e6021050e60210"
+      ],
+      [
+        3,
+        268601060,
+        "bff32f8fedf72ebd"
       ],
       [
         6,
@@ -20387,6 +21023,20 @@
         48,
         2,
         3
+      ],
+      [
+        "_RNvMNtNtCshxbT6mSCLYQ_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot",
+        268566117,
+        4216,
+        2,
+        3
+      ],
+      [
+        "OUTLINED_FUNCTION_81",
+        268601061,
+        8,
+        2,
+        3
       ]
     ],
     "functions": {
@@ -20644,6 +21294,16 @@
         268595177,
         48,
         3
+      ],
+      "_RNvMNtNtCshxbT6mSCLYQ_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot": [
+        268566117,
+        4216,
+        3
+      ],
+      "OUTLINED_FUNCTION_81": [
+        268601061,
+        8,
+        3
       ]
     },
     "sizes": {
@@ -20686,7 +21346,9 @@
       "268501236": 16,
       "268516512": 8,
       "268525668": 8,
-      "268595176": 8
+      "268595176": 8,
+      "268566116": 456,
+      "268601060": 0
     },
     "elf_sha256": "55070b3fefd8092588abfe4d7e47515b1aa8cb55b034c07e2e9835dd41a31520",
     "instances": [
@@ -20769,6 +21431,14 @@
         "extent": 8,
         "frame": 0,
         "shape": "sizez_9"
+      },
+      {
+        "name": "_RNvNtCsdG82raX1K7S_5pico211view_config10initialize",
+        "role": "_RNvNtCs_5pico211view_config10initialize",
+        "entry": 268516520,
+        "extent": 60,
+        "frame": 8,
+        "shape": "sizez_10"
       }
     ],
     "records": [
@@ -21947,6 +22617,146 @@
         "bytes": "7047",
         "text": "bx\tlr",
         "listing": "1002916e: 4770         \tbx\tlr"
+      },
+      {
+        "address": 268516520,
+        "offset": 0,
+        "bytes": "80b5",
+        "text": "push\t{r7, lr}",
+        "listing": "10013ca8: b580         \tpush\t{r7, lr}"
+      },
+      {
+        "address": 268516522,
+        "offset": 2,
+        "bytes": "6f46",
+        "text": "mov\tr7, sp",
+        "listing": "10013caa: 466f         \tmov\tr7, sp"
+      },
+      {
+        "address": 268516524,
+        "offset": 4,
+        "bytes": "0a49",
+        "text": "ldr\tr1, [pc, #0x28]         @ 0x10013cd8 <pico2::view_config::initialize+0x30>",
+        "listing": "10013cac: 490a         \tldr\tr1, [pc, #0x28]         @ 0x10013cd8 <pico2::view_config::initialize+0x30>"
+      },
+      {
+        "address": 268516526,
+        "offset": 6,
+        "bytes": "43f60810",
+        "text": "movw\tr0, #0x3908",
+        "listing": "10013cae: f643 1008    \tmovw\tr0, #0x3908"
+      },
+      {
+        "address": 268516530,
+        "offset": 10,
+        "bytes": "0844",
+        "text": "add\tr0, r1",
+        "listing": "10013cb2: 4408         \tadd\tr0, r1"
+      },
+      {
+        "address": 268516532,
+        "offset": 12,
+        "bytes": "0121",
+        "text": "movs\tr1, #0x1",
+        "listing": "10013cb4: 2101         \tmovs\tr1, #0x1"
+      },
+      {
+        "address": 268516534,
+        "offset": 14,
+        "bytes": "d0e8cf2f",
+        "text": "ldaexb\tr2, [r0]",
+        "listing": "10013cb6: e8d0 2fcf    \tldaexb\tr2, [r0]"
+      },
+      {
+        "address": 268516538,
+        "offset": 18,
+        "bytes": "3ab9",
+        "text": "cbnz\tr2, 0x10013ccc <pico2::view_config::initialize+0x24> @ imm = #0xe",
+        "listing": "10013cba: b93a         \tcbnz\tr2, 0x10013ccc <pico2::view_config::initialize+0x24> @ imm = #0xe"
+      },
+      {
+        "address": 268516540,
+        "offset": 20,
+        "bytes": "c0e8421f",
+        "text": "strexb\tr2, r1, [r0]",
+        "listing": "10013cbc: e8c0 1f42    \tstrexb\tr2, r1, [r0]"
+      },
+      {
+        "address": 268516544,
+        "offset": 24,
+        "bytes": "002a",
+        "text": "cmp\tr2, #0x0",
+        "listing": "10013cc0: 2a00         \tcmp\tr2, #0x0"
+      },
+      {
+        "address": 268516546,
+        "offset": 26,
+        "bytes": "f8d1",
+        "text": "bne\t0x10013cb6 <pico2::view_config::initialize+0xe> @ imm = #-0x10",
+        "listing": "10013cc2: d1f8         \tbne\t0x10013cb6 <pico2::view_config::initialize+0xe> @ imm = #-0x10"
+      },
+      {
+        "address": 268516548,
+        "offset": 28,
+        "bytes": "bde88040",
+        "text": "pop.w\t{r7, lr}",
+        "listing": "10013cc4: e8bd 4080    \tpop.w\t{r7, lr}"
+      },
+      {
+        "address": 268516552,
+        "offset": 32,
+        "bytes": "0cf0ccb8",
+        "text": "b.w\t0x1001fe64 <<dashboard_config::validate::slot::ConfigSlot>::load_at_boot> @ imm = #0xc198",
+        "listing": "10013cc8: f00c b8cc    \tb.w\t0x1001fe64 <<dashboard_config::validate::slot::ConfigSlot>::load_at_boot> @ imm = #0xc198"
+      },
+      {
+        "address": 268516556,
+        "offset": 36,
+        "bytes": "0348",
+        "text": "ldr\tr0, [pc, #0xc]          @ 0x10013cdc <pico2::view_config::initialize+0x34>",
+        "listing": "10013ccc: 4803         \tldr\tr0, [pc, #0xc]          @ 0x10013cdc <pico2::view_config::initialize+0x34>"
+      },
+      {
+        "address": 268516558,
+        "offset": 38,
+        "bytes": "044a",
+        "text": "ldr\tr2, [pc, #0x10]         @ 0x10013ce0 <pico2::view_config::initialize+0x38>",
+        "listing": "10013cce: 4a04         \tldr\tr2, [pc, #0x10]         @ 0x10013ce0 <pico2::view_config::initialize+0x38>"
+      },
+      {
+        "address": 268516560,
+        "offset": 40,
+        "bytes": "7721",
+        "text": "movs\tr1, #0x77",
+        "listing": "10013cd0: 2177         \tmovs\tr1, #0x77"
+      },
+      {
+        "address": 268516562,
+        "offset": 42,
+        "bytes": "14f007fd",
+        "text": "bl\t0x100286e4 <OUTLINED_FUNCTION_81> @ imm = #0x14a0e",
+        "listing": "10013cd2: f014 fd07    \tbl\t0x100286e4 <OUTLINED_FUNCTION_81> @ imm = #0x14a0e"
+      },
+      {
+        "address": 268516566,
+        "offset": 46,
+        "bytes": "00bf",
+        "text": "nop",
+        "listing": "10013cd6: bf00         \tnop"
+      },
+      {
+        "address": 268601060,
+        "offset": 0,
+        "bytes": "bff32f8f",
+        "text": "clrex",
+        "listing": "100286e4: f3bf 8f2f    \tclrex"
+      },
+      {
+        "address": 268601064,
+        "offset": 4,
+        "bytes": "edf72ebd",
+        "text": "b.w\t0x10016148 <core::panicking::panic_fmt> @ imm = #-0x125a4",
+        "listing": "100286e8: f7ed bd2e    \tb.w\t0x10016148 <core::panicking::panic_fmt> @ imm = #-0x125a4"
       }
     ],
     "mapping_symbols": [
@@ -22013,6 +22823,21 @@
       [
         "$t",
         268603752,
+        3
+      ],
+      [
+        "$t",
+        268516520,
+        3
+      ],
+      [
+        "$d",
+        268516568,
+        3
+      ],
+      [
+        "$t",
+        268601060,
         3
       ]
     ]
