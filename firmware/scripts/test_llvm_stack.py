@@ -110,7 +110,11 @@ class Decoder(unittest.TestCase):
         # Exercise the real owned child. Only the failing platform setup is
         # injected; leaving setup outside cleanup makes these assertions fail.
         original=subprocess.Popen
-        for platform,owner,attribute in [('nt',ctypes,'WinDLL'),('posix',os,'set_blocking')]:
+        platforms=[('posix',os,'set_blocking')]
+        # WinDLL/msvcrt is native Windows setup; Linux verifies its own POSIX
+        # setup owner without pretending that Windows imports are available.
+        if os.name=='nt':platforms.insert(0,('nt',ctypes,'WinDLL'))
+        for platform,owner,attribute in platforms:
             children=[]
             def spawn(*args,**kwargs):
                 child=original(*args,**kwargs)
