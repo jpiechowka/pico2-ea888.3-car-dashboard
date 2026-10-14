@@ -78,5 +78,3 @@ def _complete_body(objects,name,instructions,role,shape,contract,object_consumer
     return dict(shape=shape,role=role,function=start,extent=extent,frame=frame,objects=values,callbacks=tuple(callbacks),
                 ordinary_edges=tuple(edges),indirect_sites=tuple(indirect),
                 requires_parent_outline_abi=role if role.startswith('@outline:') else None)
-
-
