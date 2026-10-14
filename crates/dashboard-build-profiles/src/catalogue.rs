@@ -106,7 +106,7 @@ const PROFILES: [Profile; 8] = [
         requested_cpu_hz: 150_000_000,
         requested_spi_hz: 15_000_000,
         voltage: Voltage::V1_10,
-        requires_expert: true,
+        requires_expert: false,
         kind: ProfileKind::TimingReference,
         observation: None,
         panel_timing_warning: false,

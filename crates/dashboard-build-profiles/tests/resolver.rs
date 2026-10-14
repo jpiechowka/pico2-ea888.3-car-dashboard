@@ -139,7 +139,6 @@ fn catalogue_has_exact_ids_and_compatibility_metadata() {
         );
         assert!(!profile.label.is_empty());
         assert_eq!(profile.panel_timing_warning, profile.id != ProfileId::Timing150Spi15);
-        assert_eq!(profile.requires_expert, profile.id != ProfileId::Stock);
     }
     assert_eq!(profiles[0].feature, "cpu150-spi62-1v10");
     assert!(profiles[0].aliases.contains(&"stock"));
@@ -158,6 +157,25 @@ fn catalogue_has_exact_ids_and_compatibility_metadata() {
     assert_eq!(profiles[6].kind, ProfileKind::LegacyFailed);
     assert_eq!(profiles[6].observation, Some(UserObservation::Failed));
     assert_eq!(profiles[7].feature, "cpu300-spi75-1v30");
+}
+
+#[test]
+fn named_expert_policy_matches_accepted_workspace_contract() {
+    let expected = [
+        (ProfileId::Stock, false),
+        (ProfileId::Cpu132Spi66, true),
+        (ProfileId::Cpu140Spi70, true),
+        (ProfileId::Timing150Spi15, false),
+        (ProfileId::Cpu250Spi62, true),
+        (ProfileId::Cpu280Spi70, true),
+        (ProfileId::Legacy290Spi72, true),
+        (ProfileId::Cpu300Spi75, true),
+    ];
+    assert_eq!(catalogue().len(), expected.len());
+    for (profile, (id, requires_expert)) in catalogue().iter().zip(expected) {
+        assert_eq!(profile.id, id);
+        assert_eq!(profile.requires_expert, requires_expert, "{id:?}");
+    }
 }
 
 #[test]
