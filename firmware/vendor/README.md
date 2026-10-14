@@ -124,6 +124,15 @@ BOOTRAM setup copied to aligned stack storage before XIP changes. See
 [core0 flash review](../../docs/hardware/flash-core0.md) for the inspected bytes
 and source cross-checks.
 
+Task2's 14 October source correction uses six explicit constant pad indices for
+capture, restoration writes and readbacks. SizeZ had emitted a flash iterator
+call after application timing was restored but before pad restoration/readbacks
+completed. The corrected source preserves register order, masks, barriers and
+fail-stop behavior. All four optimization modes require fresh complete SRAM
+instruction review before their coherent byte tuples can be admitted. The
+earlier SizeZ artifact remains rejected; this source correction is not physical
+flash qualification. Original archive hashes and upstream revision are retained.
+
 This is the application's single-CS, normal QSPI, 3.3 V Pico 2 contract. The
 caller must reject CS1/PSRAM/custom mappings, quiesce its owners, provide SRAM
 program data and retain a running watchdog. HAL pause/resume/DMA/ROM waits still

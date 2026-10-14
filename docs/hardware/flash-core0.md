@@ -62,6 +62,21 @@ machine-code verifier or evidence of successful physical erase/program.
 
 ## Remaining physical checks
 
+### Task2 alternate optimization correction, 14 October 2026
+
+The historical table above describes the reviewed Speed3 artifact. A fresh
+SizeZ inspection found a normal flash iterator call after copied boot2 returned
+and application timing was installed, while saved pads and their readbacks were
+still incomplete. It was outside the direct-mode transaction, and the
+intermediate timing/pad combination had not been validated. That artifact
+remains rejected.
+
+The local source now spells out all six pad captures, writes and comparisons
+with constant indices. Register order, RFMT/RCMD precheck, timing/direct masks,
+barriers, fail-stop and ROM/boot2 sequence are preserved. Source review and fresh
+whole-body dependency review for Speed3, Speed2, SizeS and SizeZ are pending.
+No new digest tuple or hardware qualification follows from this source edit.
+
 On 11 October the updated `nightly-2026-10-11` compiler
 (`6f5da406b56c2db6607202b63daee73aa8c61297`, LLVM 23.1.3) reproduced every
 reviewed SRAM body byte, address and size. The frozen Longan+TE ELF SHA256 is

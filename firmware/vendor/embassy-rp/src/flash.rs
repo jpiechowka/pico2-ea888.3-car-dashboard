@@ -737,7 +737,16 @@ mod ram_helpers {
                 rfmt: pac::QMI.mem(0).rfmt().read(),
                 rcmd: pac::QMI.mem(0).rcmd().read(),
                 direct: pac::qmi::regs::DirectCsr(pac::QMI.direct_csr().read().0 & 0xffc0_0000),
-                pads: core::array::from_fn(|i| pac::PADS_QSPI.gpio(i).read()),
+                // Keep all six accesses explicit. Every supported optimization
+                // still requires a current-byte RAM dependency review.
+                pads: [
+                    pac::PADS_QSPI.gpio(0).read(),
+                    pac::PADS_QSPI.gpio(1).read(),
+                    pac::PADS_QSPI.gpio(2).read(),
+                    pac::PADS_QSPI.gpio(3).read(),
+                    pac::PADS_QSPI.gpio(4).read(),
+                    pac::PADS_QSPI.gpio(5).read(),
+                ],
             }
         }
 
@@ -751,9 +760,12 @@ mod ram_helpers {
             pac::QMI.mem(0).timing().write_value(self.timing);
             // EN, ASSERT_CS and AUTO_CS must remain clear, including when EN=0.
             pac::QMI.direct_csr().write_value(self.direct);
-            for (i, pad) in self.pads.into_iter().enumerate() {
-                pac::PADS_QSPI.gpio(i).write_value(pad);
-            }
+            pac::PADS_QSPI.gpio(0).write_value(self.pads[0]);
+            pac::PADS_QSPI.gpio(1).write_value(self.pads[1]);
+            pac::PADS_QSPI.gpio(2).write_value(self.pads[2]);
+            pac::PADS_QSPI.gpio(3).write_value(self.pads[3]);
+            pac::PADS_QSPI.gpio(4).write_value(self.pads[4]);
+            pac::PADS_QSPI.gpio(5).write_value(self.pads[5]);
             cortex_m::asm::dsb();
             let direct = pac::QMI.direct_csr().read();
             if pac::QMI.mem(0).timing().read() != self.timing
@@ -762,8 +774,14 @@ mod ram_helpers {
             {
                 fail_stop();
             }
-            for (i, pad) in self.pads.into_iter().enumerate() {
-                if pac::PADS_QSPI.gpio(i).read() != pad { fail_stop(); }
+            if pac::PADS_QSPI.gpio(0).read() != self.pads[0]
+                || pac::PADS_QSPI.gpio(1).read() != self.pads[1]
+                || pac::PADS_QSPI.gpio(2).read() != self.pads[2]
+                || pac::PADS_QSPI.gpio(3).read() != self.pads[3]
+                || pac::PADS_QSPI.gpio(4).read() != self.pads[4]
+                || pac::PADS_QSPI.gpio(5).read() != self.pads[5]
+            {
+                fail_stop();
             }
             cortex_m::asm::dsb();
             cortex_m::asm::isb();
