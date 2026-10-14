@@ -138,5 +138,23 @@ class BoundaryProducers(unittest.TestCase):
                 value,_=config_stack.constant_before(block,0x1000006a,'r3',config_stack.DiagnosticObjects(elf,sizes))
                 config_stack.DiagnosticObjects(elf,sizes).debug_vtable(value,'validation_error')
 
+    def test_implicit_pc_ingress_outside_producer_slice_rejects(self):
+        for mnemonic,operands in [('mov','pc, r4'),('ldr','pc, [r4]'),
+                                  ('ldm','r4!, {r0, pc}')]:
+            elf,base,sizes=self.fixture();data=bytearray(elf.data)
+            struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+            block=[Instruction(0x10000050,bytes(4),mnemonic,operands),*self.block()]
+            with self.subTest(mnemonic=mnemonic),self.assertRaises(AssertionError):
+                value,_=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+                config_stack.DiagnosticObjects(elf,sizes).debug_vtable(value,'validation_error')
+
+    def test_caller_abi_return_forms_do_not_create_ingress(self):
+        for mnemonic,operands in [('bx','lr'),('pop','{r4, pc}'),('ldmia','sp!, {r4, pc}')]:
+            elf,base,sizes=self.fixture();data=bytearray(elf.data)
+            struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+            block=[*self.block(),Instruction(0x1000006c,bytes(4),mnemonic,operands)]
+            value,_=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+            self.assertEqual(value,base)
+
 
 if __name__=='__main__':unittest.main()

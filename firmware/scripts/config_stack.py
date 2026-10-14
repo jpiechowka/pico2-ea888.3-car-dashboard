@@ -173,9 +173,27 @@ def constant_before(instructions, consumer, register, objects):
     first = min(evidence)
     # Check the entire supplied caller extent. Stopping at the nearest producer
     # cannot establish that another predecessor did not jump past it.
+    # The closed caller ABI permits BX LR, POP {..., PC}, and LDMIA SP!,
+    # {..., PC} as returns. They terminate a path; they are not arbitrary ingress
+    # targets. Full callback closure must separately prove ordinary call edges.
+    conditions = r'(?:eq|ne|hs|lo|hi|ls|ge|lt|gt|le|cs|cc|mi|pl|vs|vc)?'
     for record in records:
         mnemonic = record.mnemonic.removesuffix('.w')
         operands = record.operands.split('@', 1)[0].strip()
+        destination, _, source = operands.partition(',')
+        destination = destination.strip()
+        pop = re.fullmatch('pop' + conditions, mnemonic) is not None
+        ldm = re.fullmatch(r'ldm(?:ia|ib|da|db)?' + conditions, mnemonic) is not None
+        list_pc = (pop or ldm) and re.search(r'\bpc\b', operands) is not None
+        return_list = r'\{(?:r(?:[0-9]|1[0-2])\s*,\s*)*pc\}'
+        return_form = (pop and re.fullmatch(return_list, operands)
+                       or mnemonic == 'ldmia' and destination == 'sp!'
+                       and re.fullmatch(return_list, source.strip()))
+        require(not (destination == 'pc' or list_pc) or return_form,
+                'constant producer has unresolved implicit PC ingress')
+        require(not mnemonic.startswith(('rfe', 'eret')) and mnemonic not in
+                ('svc', 'hvc', 'smc', 'bkpt', 'udf', 'trap'),
+                'constant producer has unresolved exception ingress')
         require(mnemonic not in ('tbb', 'tbh', 'blx') and not (mnemonic == 'bx' and operands != 'lr'),
                 'constant producer has unresolved caller ingress')
         if mnemonic in transfers and mnemonic not in ('bx', 'blx'):
