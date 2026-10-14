@@ -229,6 +229,126 @@ class NumericSupport(unittest.TestCase):
                     self.assertEqual(len(result['default_sites']),2)
 
 
+class ControlBodies(unittest.TestCase):
+    def fixture(self,mode,code_shift=0,data_shift=0):
+        spec=[v for v in json.loads((Path(__file__).parent/'fixtures/config-control.json').read_text()) if v['mode']==mode]
+        if code_shift or data_shift:
+            locations={a:a+data_shift for item in spec for a,b in item['objects']}
+            locations.update({f['address']:f['address']+code_shift for item in spec for f in item['extra_functions']})
+            locations.update({item['function']['address']:item['function']['address']+code_shift for item in spec})
+            locations.update({a|1:v|1 for a,v in list(locations.items()) if a in {f['address'] for item in spec for f in item['extra_functions']}})
+            for item in spec:
+                f=item['function'];start=f['address'];body=bytearray.fromhex(item['body_hex']);by_site={r['address']:r for r in f['instructions']}
+                for p in f['literals']:
+                    value=locations[p['value']]
+                    if p['kind']=='pc_literal':struct.pack_into('<I',body,p['pool']-start,value)
+                    else:
+                        for site,half in ((p['low'],value&65535),(p['high'],value>>16)):
+                            row=by_site[site];raw=bytes.fromhex(row['bytes']);first,second=struct.unpack('<HH',raw)
+                            raw=struct.pack('<HH',(first&~0x040f)|((half>>12)&15)|((half>>1)&0x400),
+                                            (second&~0x70ff)|((half&0x700)<<4)|(half&255))
+                            row['bytes']=raw.hex();row['text']=row['text'].split(None,1)[0]+' '+p['register']+', #'+hex(half)
+                            body[site-start:site-start+len(raw)]=raw
+                for row in f['instructions']:
+                    mnemonic=row['text'].split(None,1)[0]
+                    if re.fullmatch(r'(?:b(?:l|eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?|cbz|cbnz)(?:\.w)?',mnemonic):
+                        row['text']=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),row['text'],count=1)
+                    row['address']+=code_shift
+                f['address']+=code_shift;f['intervals']=[(a+code_shift,b+code_shift,k) for a,b,k in f['intervals']]
+                for alias in f['aliases']:alias['address']+=code_shift
+                item['body_hex']=body.hex();relocated=[]
+                for address,encoded in item['objects']:
+                    raw=bytes.fromhex(encoded)
+                    if len(raw)%4==0:
+                        words=list(struct.unpack('<'+'I'*(len(raw)//4),raw))
+                        begin=3 if len(words) in (4,6) and words[:3] in ([0,1,1],[0,4,4],[0,12,4]) else 0
+                        if all(v in locations for v in words[begin:]):
+                            raw=struct.pack('<'+'I'*len(words),*words[:begin],*(locations[v] for v in words[begin:]))
+                    relocated.append((address+data_shift,raw.hex()))
+                item['objects']=relocated
+                for child in item['extra_functions']:
+                    child['address']+=code_shift
+                    for alias in child['aliases']:alias['address']+=code_shift
+        segments=[];functions={};sizes={};mappings=[];records={}
+        for item in spec:
+            f=item['function'];start=f['address'];segments.append((start,bytes.fromhex(item['body_hex'])))
+            for alias in f['aliases']:functions[alias['name']]=(alias['address'],alias['size'],0)
+            sizes[start]=f['frame'];mappings.extend(('$'+kind,a,0) for a,b,kind in f['intervals'])
+            for row in f['instructions']:
+                parts=row['text'].split(None,1);at=row['address']
+                records[at]=Instruction(at,bytes.fromhex(row['bytes']),parts[0],parts[1] if len(parts)>1 else '')
+        for item in spec:
+            segments.extend((a,bytes.fromhex(b)) for a,b in item['objects'])
+            for f in item['extra_functions']:
+                for alias in f['aliases']:functions[alias['name']]=(alias['address'],alias['size'],0)
+                sizes[f['address']]=f['frame']
+                if not any(a<=f['address']<a+len(b) for a,b in segments):segments.append((f['address'],bytes(f['extent'])))
+        lo=min(a for a,b in segments);ro=min(a for item in spec for a,b in item['objects']);hi=max(a+len(b) for a,b in segments)
+        data=bytearray(hi-lo)
+        for a,b in segments:data[a-lo:a-lo+len(b)]=b
+        elf=SimpleNamespace(data=bytes(data),functions=functions,mapping_symbols=mappings,
+            sections=[(0,1,6,lo,0,ro-lo,0,0,2,0),(0,1,2,ro,ro-lo,hi-ro,0,0,4,0)])
+        return config_stack.DiagnosticObjects(elf,sizes),records,spec
+
+    def test_complete_control_body_shapes_and_all_seven_source_cases(self):
+        import config_control
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode)
+            for item in spec:
+                f=item['function'];outline=item['key'].split(':')[0] if item['key'].startswith('@') else None
+                proof=config_control.control_body(objects,f['aliases'][0]['name'],records,outline)
+                self.assertEqual((proof['extent'],proof['frame']),(f['size'],f['frame']))
+                if '12ControlError' in proof['role']:
+                    self.assertEqual(proof['source_tags'],(0,1,2,3,5,6,7,8))
+                    self.assertEqual(len(proof['cases']),7)
+
+    def test_control_reference_cells_shared_predecessors_result_and_outline_abi_mutations_reject(self):
+        import config_control
+        for mode,offset,mnemonic,operands in [('speed2',0x5e,'adds','r3, r2, #0x2'),
+                ('speed2',0xfe,'str','r4, [sp, #0x4]'),('speed2',0x100,'b','0x10038c6c'),
+                ('sizes',0x3c,'str','r0, [sp, #0x14]'),('sizes',0xa2,'mov','r0, r5'),
+                ('sizez',0x6c,'str','r0, [sp, #0x10]'),('sizez',0xbc,'ldrb','r0, [r5, #0x2]'),
+                ('sizez',0x98,'bpl','0x1001e83a')]:
+            objects,records,spec=self.fixture(mode);item=next(v for v in spec if '12ControlError' in v['key'])
+            f=item['function'];at=f['address']+offset;old=records[at]
+            records[at]=Instruction(at,old.raw,mnemonic,operands)
+            with self.subTest(mode=mode,offset=offset),self.assertRaises(AssertionError):
+                config_control.control_body(objects,f['aliases'][0]['name'],records)
+
+    def test_control_complete_objects_and_cases_relocate_independently(self):
+        import config_control
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode,0x1800,0x21000)
+            for item in spec:
+                f=item['function'];outline=item['key'].split(':')[0] if item['key'].startswith('@') else None
+                proof=config_control.control_body(objects,f['aliases'][0]['name'],records,outline)
+                self.assertEqual(proof['function'],f['address'])
+
+    def test_control_readonly_tables_tbb_pool_and_zero_frame_tails_reject(self):
+        import config_control
+        for mode,fault in [('speed2','vtable'),('sizes','lengths'),('sizez','pointers'),('sizes','tbb'),
+                           ('sizez','pool'),('sizez','outline_return'),('sizez','outline_sink')]:
+            objects,records,spec=self.fixture(mode);item=next(v for v in spec if '12ControlError' in v['key']);f=item['function']
+            data=bytearray(objects.elf.data)
+            if fault in ('outline_return','outline_sink'):
+                name='@restore_control' if fault=='outline_return' else '@control_sink2'
+                outline=next(v for v in spec if v['key'].startswith(name))['function']
+                at=outline['instructions'][-1]['address'];old=records[at];records[at]=Instruction(at,old.raw,'bx','lr')
+            else:
+                if fault=='vtable':address=next(p['value'] for p in f['literals'] if p['first256'].startswith('000000000100000001000000'))+4
+                elif fault=='lengths':address=next(p['value'] for p in f['literals'] if p['first256'].startswith('090504'))+2
+                elif fault=='pointers':
+                    leaf=next(v for v in spec if '11ControlPageNtNt' in v['key'])['function']
+                    address=leaf['literals'][1]['value']
+                elif fault=='tbb':address=f['data'][0]['start']
+                else:address=next(p['pool'] for p in f['literals'] if p['kind']=='pc_literal')
+                section=next(s for s in objects.elf.sections if s[3]<=address<s[3]+s[5])
+                data[section[4]+address-section[3]]^=1;objects.elf.data=bytes(data)
+                if fault=='pointers':f=leaf
+            with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
+                config_control.control_body(objects,f['aliases'][0]['name'],records)
+
+
 class PanicBodies(unittest.TestCase):
     def fixture(self,mode,code_shift=0,data_shift=0,guard_shift=0):
         spec=next(r for r in json.loads((Path(__file__).parent/'fixtures/config-panic.json').read_text()) if r['mode']==mode)
