@@ -5,7 +5,8 @@ pub const PWM_TARGET_HZ: u32 = 1_000;
 const PERIOD_CLOCKS: u64 = (PWM_TOP as u64 + 1) * PWM_TARGET_HZ as u64;
 
 /// Select an integer PWM divider from the configured system clock.
-/// The supported 150/250/280/290/300 MHz profiles all yield exactly 1 kHz.
+/// Aim near 1 kHz. Resolved132 MHz yields1015 Hz, and legacy290.4 MHz1001 Hz
+/// in the integer diagnostic; this does not measure physical PWM output.
 pub fn pwm_divider(clk_sys_hz: u32) -> Option<u8> {
     let rounded = (u64::from(clk_sys_hz) + PERIOD_CLOCKS / 2) / PERIOD_CLOCKS;
     u8::try_from(rounded).ok().filter(|divider| *divider != 0)

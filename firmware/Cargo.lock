@@ -279,6 +279,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashboard-build-profiles"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "dashboard-config"
 version = "0.1.0"
 dependencies = [
@@ -292,7 +299,11 @@ dependencies = [
 name = "dashboard-config-tools"
 version = "0.1.0"
 dependencies = [
+ "dashboard-build-profiles",
  "dashboard-config",
+ "dashboard-helper-protocol",
+ "serde",
+ "serde_json",
  "sha2-const-stable",
 ]
 
@@ -309,11 +320,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashboard-helper-protocol"
+version = "0.1.0"
+dependencies = [
+ "dashboard-build-profiles",
+ "dashboard-config",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dashboard-pico2"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
+ "dashboard-build-profiles",
  "dashboard-config-tools",
  "dashboard-core",
  "defmt",

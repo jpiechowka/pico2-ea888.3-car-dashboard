@@ -20,6 +20,10 @@ demo = []
 longan-rx12 = ["dep:embedded-io-async"]
 # Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
 # All profiles use simple-outline by default for best FPS
+cpu150-spi62-1v10 = []
+cpu132-spi66-1v10 = []
+cpu140-spi70-1v10 = []
+cpu150-spi15-1v10 = []
 cpu250-spi62-1v10 = []  # 250 MHz @ 1.10V - experimental 62.5 MHz SPI; panel timing unverified
 cpu280-spi70-1v30 = []  # 280 MHz @ 1.30V - 70 MHz SPI (280/4, beyond datasheet)
 cpu290-spi72-1v30 = []  # 290 MHz @ 1.30V - 72.5 MHz SPI (290/4)
@@ -59,3 +63,4 @@ static_cell = "2.1.1"
 
 [build-dependencies]
 dashboard-config-tools = { path = "../../crates/dashboard-config-tools" }
+dashboard-build-profiles = { path = "../../crates/dashboard-build-profiles" }

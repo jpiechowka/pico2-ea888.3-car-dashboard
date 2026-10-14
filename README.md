@@ -165,7 +165,8 @@ feedback takes priority over dashboard warnings; warnings resume blinking after
 feedback expires and stay off Debug/Logs. The RGB LED blinks red with the last
 completed warning frame, suppressing green during both warning phases. Otherwise
 the LED stays green; blue remains off. Green means no visible warning, not
-verified vehicle health. GP20 PWM stays at 1 kHz. Brightness is
+verified vehicle health. GP20 PWM aims near 1 kHz from the actual configured clock
+(132 MHz gives an integer 1015 Hz diagnostic; legacy 290.4 MHz gives 1001 Hz). Brightness is
 runtime-only; unit and FPS choices remain persistent. See
 [backlight and indicator controls](docs/hardware/backlight-controls.md).
 
@@ -191,11 +192,16 @@ sequence anchors. See [logging contracts](docs/performance/logging.md).
 ## Experimental clock profiles
 
 Stock configuration is 150 MHz CPU and 37.5 MHz SPI. Optional mutually exclusive
-profiles request 250/62.5, 280/70, 290/72.5 and 300/75 MHz CPU/SPI. Their feature
+profiles also include 132/66, 140/70 and 150/15 MHz, with their `cpu132-spi66-1v10`,
+`cpu140-spi70-1v10`, `cpu150-spi15-1v10` features. Explicit Stock is
+`cpu150-spi62-1v10`; absence of a clock selector still means Stock.
+Existing profiles request 250/62.5, 280/70, 290/72.5 and 300/75 MHz CPU/SPI. Their feature
 names are `cpu250-spi62-1v10`, `cpu280-spi70-1v30`, `cpu290-spi72-1v30` and
 `cpu300-spi75-1v30`. These are experimental build settings; compilation proves
 neither electrical margins nor reliable display operation. SPI limits depend
-on `clk_peri`, divisors and the actual panel. See
+on `clk_peri`, divisors and the actual panel. Legacy290's actual 290.4/48.4 MHz
+and user-reported failure remain distinct from exact custom 290/72.5 MHz.
+See [the shared catalogue and build options](docs/configurator/building.md) and
 [clock reporting](docs/performance/clock-reporting.md).
 
 ## Layout

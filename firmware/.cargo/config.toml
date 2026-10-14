@@ -20,6 +20,16 @@ pico2-run = "run -p dashboard-pico2 --release"
 pico2-fast = "build -p dashboard-pico2 --release --features simple-outline"
 pico2-fast-run = "run -p dashboard-pico2 --release --features simple-outline"
 
+# Explicit stock and timing candidates; panel timing remains unqualified.
+pico2-150-62-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu150-spi62-1v10"
+pico2-150-62-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu150-spi62-1v10"
+pico2-132-66-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu132-spi66-1v10"
+pico2-132-66-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu132-spi66-1v10"
+pico2-140-70-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu140-spi70-1v10"
+pico2-140-70-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu140-spi70-1v10"
+pico2-150-15-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu150-spi15-1v10"
+pico2-150-15-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu150-spi15-1v10"
+
 # Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
 # All use simple-outline for best FPS
 
@@ -31,7 +41,7 @@ pico2-250-62-1v10-run = "run -p dashboard-pico2 --release --features simple-outl
 pico2-280-70-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu280-spi70-1v30"
 pico2-280-70-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu280-spi70-1v30"
 
-# 290 MHz @ 1.30V (72.5 MHz SPI)
+# Legacy: requested290/72.5 MHz, actual290.4/48.4 MHz; user-reported failure.
 pico2-290-72-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu290-spi72-1v30"
 pico2-290-72-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu290-spi72-1v30"
 

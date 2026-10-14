@@ -41,11 +41,40 @@ compilation. This is change detection, not an isolated source-tree build; avoid
 concurrent source edits. It also runs the
 linked RAM, cumulative stack-frame, flash helper and corrupted-artifact checks.
 
-Available profiles are `stock` (default) and `280-70`. `-Mode Vehicle` selects the
-existing **unqualified** adapter path. Optional `-SerialDisplay` and `-FullOutline`
-retain their existing diagnostic meanings. The script builds and verifies files;
+Profiles come from the shared Rust catalogue: `stock` (default), `132-66`,
+`140-70`, `150-15`, `250-62.5`, `280-70`, `290-72.5` and `300-75`.
+Stock requests 150/62.5 MHz and resolves 150/37.5 MHz; legacy `290-72.5` requests
+290/72.5 MHz and resolves 290.4/48.4 MHz, retaining the user's failed observation.
+The established explicit `-Profile 280-70` invocation retains its Expert intent.
+All other experimental profiles and custom clocks require `-Expert`; Stock and
+the 150-15 timing reference do not. This is build admission, not electrical qualification.
+`-CpuHz`, `-SpiHz`, `-VselMv` accept an all-present strict decimal tuple and
+conflict with an explicitly supplied Profile. For example:
+
+```powershell
+.\firmware\scripts\Build-Dashboard.ps1 -Name low-clock-01 -CpuHz 50000000 -SpiHz 25000000 -VselMv 1100 -Expert -Optimization 2
+```
+
+`-Optimization` accepts 3/2/s/z. Traces default true; `-FrameTrace $false` and
+`-TeTrace $false` really omit their features. `-FullFrame`, `-SerialDisplay` and
+`-FullOutline` select the existing display paths. Commands explicitly suppress
+Cargo defaults and pass the complete shared effective feature set.
+`-Mode Vehicle` selects the existing **unqualified** adapter path. The script builds and verifies files;
 it does not flash or reboot a device. The older scripts under ignored `target`
 directories remain frozen records of earlier builds.
+
+Capture adds `build-options.json`, `clock_profile.rs`, `clock_profile.json` and
+Cargo message evidence. It matches the firmware package's generated output to
+the exact requested/resolved clocks, actual optimization, complete features and
+source/config/compiler identity; absent or mismatched generation fails admission.
+The original `capture_target_bench.py --features ...` route remains available;
+experimental/custom selections there require the explicit local `--expert`
+switch. `target-bench` is a separate finite capture mode, outside ordinary
+BuildOptions. Ambient custom-clock and compiler/profile overrides are rejected.
+Raw requests omitting both demo and longan-rx12 retain the old unavailable
+acquisition path, recorded as `legacy_unavailable_backend=true`; the capture
+never silently adds vehicle transport. Typed Vehicle requests always include
+longan-rx12 and cannot use that compatibility adapter.
 
 280/70 is the user's observed working overclock on this device. It is outside
 the manufacturer's stock operating specification. Do not use 290/72.5 on this

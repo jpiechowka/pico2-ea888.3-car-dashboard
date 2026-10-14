@@ -9,13 +9,8 @@ static CPU_FREQ_HZ: AtomicU32 = AtomicU32::new(150_000_000);
 static MAX_SANE_CYCLES: AtomicU32 = AtomicU32::new(300_000_000);
 
 pub fn init(freq_hz: u32) {
-    let clamped_freq = freq_hz.clamp(100_000_000, 500_000_000);
-    CPU_FREQ_HZ.store(clamped_freq, Ordering::Relaxed);
-
-    // Allow up to 2 seconds worth of cycles as the sanity bound.
-    // This ensures overclock frequencies (250-300 MHz) don't get
-    // their legitimate measurements clamped to zero.
-    let max_cycles = (clamped_freq as u64 * 2).min(u32::MAX as u64) as u32;
+    let max_cycles = dashboard_core::cpu_math::sanity_cycles(freq_hz).expect("configured CPU clock must be nonzero");
+    CPU_FREQ_HZ.store(freq_hz, Ordering::Relaxed);
     MAX_SANE_CYCLES.store(max_cycles, Ordering::Relaxed);
 
     unsafe {
@@ -68,19 +63,5 @@ pub fn calc_util_percent(
     cycles_used: u32,
     elapsed_us: u32,
 ) -> u32 {
-    if elapsed_us == 0 || cycles_used == 0 {
-        return 0;
-    }
-
-    let freq = CPU_FREQ_HZ.load(Ordering::Relaxed) as u64;
-
-    let cycles_expected = (freq * elapsed_us as u64) / 1_000_000;
-
-    if cycles_expected == 0 {
-        return 0;
-    }
-
-    let util = (cycles_used as u64 * 1000) / cycles_expected;
-
-    util.min(1000) as u32
+    dashboard_core::cpu_math::utilization(CPU_FREQ_HZ.load(Ordering::Relaxed), cycles_used, elapsed_us)
 }

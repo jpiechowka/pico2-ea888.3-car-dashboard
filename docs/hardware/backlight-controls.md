@@ -42,7 +42,9 @@ bounded debounced input batches.
    the configured normal pattern. GP20 retains its separate slice2 owner.
 2. The [AP2502 datasheet](https://www.diodes.com/datasheet/download/AP2502.pdf),
    pages 2 and 5, specifies PWM up to 150 kHz, minimum high 1 us and low 100 ns.
-   The retained 1 kHz configuration supplies 500 us high/low at Dim.
+   The integer divider aims near 1 kHz:132 MHz/div13 gives approximately 1015.385 Hz,
+   140 MHz/div14 gives 1000 Hz, and legacy 290.4 MHz/div29 gives approximately 1001.379 Hz.
+   At exactly 1 kHz the source configuration supplies 500 us high/low at Dim.
 3. [RP2350 datasheet](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf)
    section 12.5.2 defines noninverted output as CC greater than the counter.
    TOP=9999 therefore uses CC=10000 for Full, 5000 for Dim and 0 for Off.
@@ -57,9 +59,10 @@ For RGB, `new_output_ab`/`new_output_a` configure inversion and zero compares
 before selecting PWM on the pads. The adapter retains owners and uses separate
 A/B compares; Off never disables a slice or invokes Drop. RGB TOP9999/divider1
 uses the actual system clock divided by10000 (280MHz implies28kHz), distinct
-from GP20's1kHz and the selected animation period. The published [PWM source](https://docs.rs/embassy-rp/0.10.0/src/embassy_rp/pwm.rs.html)
+from GP20's near 1 kHz and the selected animation period. The published [PWM source](https://docs.rs/embassy-rp/0.10.0/src/embassy_rp/pwm.rs.html)
 and [GPIO source](https://docs.rs/embassy-rp/0.10.0/src/embassy_rp/gpio.rs.html)
-provide upstream reference. No dependency or clock profile was changed here.
+provide upstream reference. PWM duty and ownership are preserved; clock selections
+come from the shared catalogue/resolver.
 
 ## Indicator and physical limits
 

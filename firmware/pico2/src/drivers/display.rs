@@ -3,29 +3,7 @@ use embassy_rp::spi::Config as SpiConfig;
 pub fn display_spi_config() -> SpiConfig {
     let mut config = SpiConfig::default();
 
-    #[cfg(feature = "cpu300-spi75-1v30")]
-    {
-        config.frequency = 75_000_000;
-    }
-    #[cfg(all(feature = "cpu290-spi72-1v30", not(feature = "cpu300-spi75-1v30")))]
-    {
-        config.frequency = 72_500_000;
-    }
-    #[cfg(all(
-        feature = "cpu280-spi70-1v30",
-        not(any(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30"))
-    ))]
-    {
-        config.frequency = 70_000_000;
-    }
-    #[cfg(not(any(
-        feature = "cpu280-spi70-1v30",
-        feature = "cpu290-spi72-1v30",
-        feature = "cpu300-spi75-1v30"
-    )))]
-    {
-        config.frequency = 62_500_000;
-    }
+    config.frequency = dashboard_pico2::clock_profile::REQUESTED_SPI_HZ;
 
     config
 }

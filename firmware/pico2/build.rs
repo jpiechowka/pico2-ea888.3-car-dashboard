@@ -3,6 +3,39 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn main() {
+    use dashboard_config_tools::clocks::{CUSTOM_KEYS, generate, selection};
+    for key in CUSTOM_KEYS {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+    for profile in dashboard_build_profiles::catalogue() {
+        println!(
+            "cargo:rerun-if-env-changed=CARGO_FEATURE_{}",
+            profile.feature.to_ascii_uppercase().replace('-', "_")
+        );
+    }
+    let mut features: Vec<_> = std::env::vars_os()
+        .filter_map(|(key, _)| {
+            key.to_str()?
+                .strip_prefix("CARGO_FEATURE_")
+                .map(|s| s.to_ascii_lowercase().replace('_', "-"))
+        })
+        .collect();
+    features.sort();
+    let selected = selection(&features, &CUSTOM_KEYS.map(std::env::var_os))
+        .unwrap_or_else(|error| panic!("Cannot select dashboard clock: {error}"));
+    let (source, metadata) = generate(selected, &std::env::var("OPT_LEVEL").unwrap(), features)
+        .unwrap_or_else(|error| panic!("Cannot generate dashboard clock: {error}"));
+    let generated_out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::write(generated_out.join("clock_profile.rs"), &source).expect("write generated clock constants");
+    std::fs::write(generated_out.join("clock_profile.json"), &metadata).expect("write generated clock metadata");
+    println!(
+        "cargo:rustc-env=DASHBOARD_CLOCK_SOURCE_SHA256={}",
+        dashboard_config_tools::sha256_hex(&source)
+    );
+    println!(
+        "cargo:rustc-env=DASHBOARD_CLOCK_METADATA_SHA256={}",
+        dashboard_config_tools::sha256_hex(&metadata)
+    );
     println!("cargo:rerun-if-env-changed=DASHBOARD_CONFIG");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let config = dashboard_config_tools::prepare(std::env::var_os("DASHBOARD_CONFIG").as_deref(), &manifest)

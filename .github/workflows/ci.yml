@@ -95,6 +95,13 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
 
+      - name: Windows dashboard wrapper contracts
+        working-directory: .
+        shell: pwsh
+        run: |
+          cargo fetch --locked
+          ./firmware/scripts/Test-BuildDashboard.ps1
+
   configurator:
     name: Configurator state and WebAssembly
     runs-on: ubuntu-latest
@@ -144,6 +151,8 @@ jobs:
       - name: Target artifact capture contracts
         run: |
           python3 scripts/test_target_capture.py
+          cargo fetch --locked --manifest-path ../Cargo.toml
+          python3 scripts/test_clock_profiles.py
           python3 scripts/test_stack_budget.py
           python3 -O scripts/test_stack_budget.py
           python3 -O scripts/test_validation_policy.py
@@ -213,6 +222,15 @@ jobs:
         include:
           - profile: stock
             features: ""
+            extra_args: ""
+          - profile: cpu132-spi66-1v10
+            features: cpu132-spi66-1v10
+            extra_args: ""
+          - profile: cpu140-spi70-1v10
+            features: cpu140-spi70-1v10
+            extra_args: ""
+          - profile: cpu150-spi15-1v10
+            features: cpu150-spi15-1v10
             extra_args: ""
           - profile: cpu250-spi62-1v10
             features: cpu250-spi62-1v10

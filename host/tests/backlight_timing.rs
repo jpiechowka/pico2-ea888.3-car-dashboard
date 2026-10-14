@@ -1,17 +1,20 @@
 use dashboard_host_validation::config::backlight::{PWM_TOP, brightness_compare, pwm_divider, pwm_frequency_hz};
 
 #[test]
-fn supported_clock_profiles_keep_backlight_at_one_kilohertz() {
-    for (clock_hz, expected_divider) in [
-        (150_000_000, 15),
-        (250_000_000, 25),
-        (280_000_000, 28),
-        (290_000_000, 29),
-        (300_000_000, 30),
+fn actual_clock_profiles_preserve_divider_policy_and_truthful_frequency() {
+    for (clock_hz, expected_divider, expected_hz) in [
+        (132_000_000, 13, 1015),
+        (140_000_000, 14, 1000),
+        (150_000_000, 15, 1000),
+        (250_000_000, 25, 1000),
+        (280_000_000, 28, 1000),
+        (290_000_000, 29, 1000),
+        (290_400_000, 29, 1001),
+        (300_000_000, 30, 1000),
     ] {
         let divider = pwm_divider(clock_hz).expect("supported clock");
         assert_eq!(divider, expected_divider);
-        assert_eq!(pwm_frequency_hz(clock_hz, divider), 1_000);
+        assert_eq!(pwm_frequency_hz(clock_hz, divider), expected_hz);
     }
 }
 
@@ -30,7 +33,16 @@ fn backlight_is_truly_off_and_remains_monotonic() {
 
 #[test]
 fn supported_pwm_pulses_meet_driver_minimum_on_time() {
-    for clock_hz in [150_000_000, 250_000_000, 280_000_000, 290_000_000, 300_000_000] {
+    for clock_hz in [
+        132_000_000,
+        140_000_000,
+        150_000_000,
+        250_000_000,
+        280_000_000,
+        290_000_000,
+        290_400_000,
+        300_000_000,
+    ] {
         let divider = pwm_divider(clock_hz).unwrap();
         let frequency_hz = pwm_frequency_hz(clock_hz, divider);
         assert!(frequency_hz <= 150_000);

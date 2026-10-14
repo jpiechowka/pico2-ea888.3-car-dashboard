@@ -77,26 +77,6 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
 
-#[cfg(any(
-    all(
-        feature = "cpu250-spi62-1v10",
-        any(
-            feature = "cpu280-spi70-1v30",
-            feature = "cpu290-spi72-1v30",
-            feature = "cpu300-spi75-1v30"
-        )
-    ),
-    all(
-        feature = "cpu280-spi70-1v30",
-        any(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30")
-    ),
-    all(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30")
-))]
-compile_error!(
-    "Only one overclock feature can be enabled at a time. Choose one of: cpu250-spi62-1v10, cpu280-spi70-1v30, \
-     cpu290-spi72-1v30, cpu300-spi75-1v30"
-);
-
 fn apply_backlight(
     pwm: &mut Pwm<'_>,
     config: &mut PwmConfig,
@@ -129,63 +109,6 @@ fn vreg_setting_mv() -> Option<u32> {
     embassy_rp::clocks::core_voltage()
         .ok()
         .map(|voltage| 550 + u32::from(voltage as u8) * 50)
-}
-
-const fn requested_voltage_mv() -> u32 {
-    #[cfg(any(
-        feature = "cpu280-spi70-1v30",
-        feature = "cpu290-spi72-1v30",
-        feature = "cpu300-spi75-1v30"
-    ))]
-    {
-        1300
-    }
-    #[cfg(not(any(
-        feature = "cpu280-spi70-1v30",
-        feature = "cpu290-spi72-1v30",
-        feature = "cpu300-spi75-1v30"
-    )))]
-    {
-        1100
-    }
-}
-
-const fn requested_cpu_mhz() -> u32 {
-    #[cfg(feature = "cpu300-spi75-1v30")]
-    {
-        300
-    }
-    #[cfg(all(feature = "cpu290-spi72-1v30", not(feature = "cpu300-spi75-1v30")))]
-    {
-        290
-    }
-    #[cfg(all(
-        feature = "cpu280-spi70-1v30",
-        not(any(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30"))
-    ))]
-    {
-        280
-    }
-    #[cfg(all(
-        feature = "cpu250-spi62-1v10",
-        not(any(
-            feature = "cpu280-spi70-1v30",
-            feature = "cpu290-spi72-1v30",
-            feature = "cpu300-spi75-1v30"
-        ))
-    ))]
-    {
-        250
-    }
-    #[cfg(not(any(
-        feature = "cpu250-spi62-1v10",
-        feature = "cpu280-spi70-1v30",
-        feature = "cpu290-spi72-1v30",
-        feature = "cpu300-spi75-1v30"
-    )))]
-    {
-        150
-    }
 }
 
 fn data_mode() -> dashboard_pico2::samples::DataMode {
@@ -246,52 +169,16 @@ async fn dashboard_task(
     log_info!("OBD-II Dashboard starting");
 
     let p = {
-        #[cfg(any(
-            feature = "cpu250-spi62-1v10",
-            feature = "cpu280-spi70-1v30",
-            feature = "cpu290-spi72-1v30",
-            feature = "cpu300-spi75-1v30"
-        ))]
-        use embassy_rp::clocks::{ClockConfig, CoreVoltage};
-        use embassy_rp::config::Config;
-
-        #[allow(unused_mut)]
-        let mut config = Config::default();
-
-        #[cfg(feature = "cpu300-spi75-1v30")]
-        {
-            config.clocks = ClockConfig::system_freq(300_000_000).expect("Invalid overclock frequency");
-            config.clocks.core_voltage = CoreVoltage::V1_30;
-            log_info!("OC: 300MHz @ 1.30V SPI 75MHz");
-        }
-        #[cfg(all(feature = "cpu290-spi72-1v30", not(feature = "cpu300-spi75-1v30")))]
-        {
-            config.clocks = ClockConfig::system_freq(290_000_000).expect("Invalid overclock frequency");
-            config.clocks.core_voltage = CoreVoltage::V1_30;
-            log_info!("OC: 290MHz @ 1.30V SPI 72MHz");
-        }
-        #[cfg(all(
-            feature = "cpu280-spi70-1v30",
-            not(any(feature = "cpu290-spi72-1v30", feature = "cpu300-spi75-1v30"))
-        ))]
-        {
-            config.clocks = ClockConfig::system_freq(280_000_000).expect("Invalid overclock frequency");
-            config.clocks.core_voltage = CoreVoltage::V1_30;
-            log_info!("OC: 280MHz @ 1.30V SPI 70MHz");
-        }
-        #[cfg(all(
-            feature = "cpu250-spi62-1v10",
-            not(any(
-                feature = "cpu280-spi70-1v30",
-                feature = "cpu290-spi72-1v30",
-                feature = "cpu300-spi75-1v30"
-            ))
-        ))]
-        {
-            config.clocks = ClockConfig::system_freq(250_000_000).expect("Invalid overclock frequency");
-            config.clocks.core_voltage = CoreVoltage::V1_10;
-            log_info!("OC: 250MHz @ 1.10V SPI 62MHz");
-        }
+        let mut config = embassy_rp::config::Config::default();
+        config.clocks = dashboard_pico2::clock_profile::clock_config();
+        log_info!(
+            "Clock request CPU {} Hz/SPI {} Hz; resolved CPU {} Hz/SPI {} Hz; VSEL {} mV",
+            dashboard_pico2::clock_profile::REQUESTED_CPU_HZ,
+            dashboard_pico2::clock_profile::REQUESTED_SPI_HZ,
+            dashboard_pico2::clock_profile::ACTUAL_CPU_HZ,
+            dashboard_pico2::clock_profile::ACTUAL_SPI_HZ,
+            dashboard_pico2::clock_profile::VOLTAGE_MV
+        );
 
         embassy_rp::init(config)
     };
@@ -738,13 +625,11 @@ async fn dashboard_task(
                         cpu0_util_percent,
                         cpu1_util_percent,
                         frame_cycles: frame_cycles_used,
-                        requested_cpu_hz: requested_cpu_mhz()
-                            .checked_mul(1_000_000)
-                            .expect("requested CPU Hz overflow"),
+                        requested_cpu_hz: dashboard_pico2::clock_profile::REQUESTED_CPU_HZ,
                         configured_cpu_hz: cpu_freq_hz,
                         requested_spi_hz,
                         configured_spi_hz: actual_spi_hz,
-                        requested_voltage_mv: requested_voltage_mv(),
+                        requested_voltage_mv: dashboard_pico2::clock_profile::VOLTAGE_MV,
                         vreg_setting_mv: vreg_setting_mv(),
                     },
                     controls,

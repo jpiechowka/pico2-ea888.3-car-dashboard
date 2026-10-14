@@ -8,6 +8,51 @@ import capture_target_bench as capture
 
 
 class CaptureTests(unittest.TestCase):
+    def test_custom_environment_presence_is_rejected_even_when_empty(self):
+        for key in ['DASHBOARD_CPU_HZ','DASHBOARD_SPI_HZ','DASHBOARD_VSEL_MV']:
+            with self.assertRaises(ValueError):
+                capture.check_clock_environment({key:''})
+
+    def test_generated_clock_is_bound_to_firmware_package_and_exact_attempt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build=Path(folder)/'build';out=build/'out';out.mkdir(parents=True)
+            source=b'''// Generated from dashboard-build-profiles; do not edit.
+pub const REQUESTED_CPU_HZ: u32 = 150000000;
+pub const ACTUAL_CPU_HZ: u32 = 150000000;
+pub const REQUESTED_SPI_HZ: u32 = 62500000;
+pub const ACTUAL_SPI_HZ: u32 = 37500000;
+pub const VOLTAGE_MV: u32 = 1100;
+pub const CORE_VOLTAGE: CoreVoltage = CoreVoltage::V1_10;
+pub const PLL: PllConfig = PllConfig { refdiv: 1, fbdiv: 125, post_div1: 5, post_div2: 2 };
+pub const CPSDVSR: u8 = 2;
+pub const SCR: u8 = 1;
+pub const LEGACY_ROUNDING: bool = false;
+'''
+            clock=dict(requested_cpu_hz=150000000,actual_cpu_hz=150000000,requested_spi_hz=62500000,actual_spi_hz=37500000,
+                       voltage='v1_10',pll=dict(refdiv=1,fbdiv=125,postdiv1=5,postdiv2=2),cpsdvsr=2,scr=1,legacy_rounding=False,
+                       spi_neighbors=dict(below_or_equal=dict(request_hz=37500000,actual_hz=37500000,cpsdvsr=2,scr=1),above=dict(request_hz=75000000,actual_hz=75000000,cpsdvsr=2,scr=0)))
+            options=dict(normalized=dict(requested=dict(clock={'named':'stock'}),clock=clock),features=['demo'],optimization='3',voltage_mv=1100)
+            metadata=dict(schema_version=1,selection={'named':'stock'},clock=clock,optimization='3',features=['demo'])
+            (out/'clock_profile.rs').write_bytes(source)
+            encoded=json.dumps(metadata).encode();(out/'clock_profile.json').write_bytes(encoded)
+            record=dict(reason='build-script-executed',package_id='firmware-id',out_dir=str(out),env=[['DASHBOARD_CLOCK_SOURCE_SHA256',capture.hashlib.sha256(source).hexdigest()],['DASHBOARD_CLOCK_METADATA_SHA256',capture.hashlib.sha256(encoded).hexdigest()]])
+            line=json.dumps(record)
+            evidence=capture.generated_clock(line,build,'firmware-id',options)
+            self.assertEqual(evidence['source'],source)
+            for stream, package, attempt in [('', 'firmware-id', options),(line+'\n'+line,'firmware-id',options),(line,'other',options),(line,'firmware-id',dict(options,optimization='s'))]:
+                with self.assertRaises(ValueError): capture.generated_clock(stream,build,package,attempt)
+            with self.assertRaises(ValueError): capture.generated_clock(line,build/'outside','firmware-id',options)
+            (out/'clock_profile.rs').write_bytes(b'mismatched')
+            with self.assertRaises(ValueError): capture.generated_clock(line,build,'firmware-id',options)
+            wrong=source.replace(b'fbdiv: 125',b'fbdiv: 124')
+            (out/'clock_profile.rs').write_bytes(wrong)
+            record['env'][0][1]=capture.hashlib.sha256(wrong).hexdigest()
+            with self.assertRaises(ValueError): capture.generated_clock(json.dumps(record),build,'firmware-id',options)
+
+    def test_new_clock_and_protocol_producers_are_capture_inputs(self):
+        data=capture.inputs()
+        for path in ['Cargo.lock','firmware/Cargo.lock','firmware/pico2/build.rs','firmware/pico2/src/clock_profile.rs','crates/dashboard-build-profiles/src/resolve.rs','crates/dashboard-helper-protocol/src/options.rs','crates/dashboard-config-tools/src/clocks.rs']:
+            self.assertEqual(data[path],(capture.REPO/path).read_bytes())
     def test_only_matching_build_snapshot_is_archived(self):
         with tempfile.TemporaryDirectory() as folder:
             build = Path(folder) / 'build'
