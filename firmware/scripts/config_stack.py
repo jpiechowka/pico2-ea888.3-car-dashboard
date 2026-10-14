@@ -1,6 +1,7 @@
 """Finite alternate configuration roles; machine closure is required separately."""
 import re
 import struct
+import json
 from validation import require
 from llvm_stack import mapping_ranges
 from config_format_contracts import FORMAT_GRAMMARS
@@ -71,6 +72,13 @@ PAYLOAD_LAYOUTS = {
                                'bool_ref', 'u8_ref', 'u16_ref')},
 }
 FIXED_LITERALS = {'view_count': b'built-in view count', 'widget_count': b'built-in widget count'}
+PANIC_GUARD_ROLE = '_RNvNvNtCs_11panic_probe3imp5panic8PANICKED.0'
+DEFMT_IDENTITIES = {
+    'header_id': dict(package='panic-probe',tag='defmt_error',data='{}',
+                      disambiguator='3281125884690968605',crate_name='panic_probe'),
+    'display_encoding_id': dict(package='defmt',tag='defmt_prim',data='{=__internal_Display}',
+                               disambiguator='14158116662542268607',crate_name='defmt'),
+}
 # Pinned core::fmt Arguments templates: C0 is one default placeholder; a
 # following byte is the next literal length, not an argument index.
 DEFAULT_TEMPLATES = {
@@ -102,6 +110,38 @@ class DiagnosticObjects:
         data = self.elf.data[offset:offset + length]
         require(len(data) == length, 'truncated diagnostic object')
         return data
+
+    def panic_guard(self,address):
+        # Object ordinal .0 is part of this identity, not a function clone.
+        entries=[e for e in self.elf.symbol_entries
+                 if re.sub(r'Cs[A-Za-z0-9]+_','Cs_',e[0])==PANIC_GUARD_ROLE]
+        require(len(entries)==1,'missing or ambiguous PANICKED object')
+        _,value,size,info,index=entries[0]
+        require(value==address and size==1 and info==1 and 0<=index<len(self.elf.sections),
+                'PANICKED object address/size/local type differs')
+        section=self.elf.sections[index]
+        require(section[1]==8 and section[2]&7==3 and section[3]<=address<address+1<=section[3]+section[5],
+                'PANICKED object is not its allocated writable zero-initialized byte')
+        return address
+
+    def defmt_id(self,value,role):
+        require(role in DEFMT_IDENTITIES and isinstance(value,int) and 0<=value<=0xffff,
+                'unreviewed or oversized defmt symbol ID')
+        entries=[]
+        for entry in self.elf.symbol_entries:
+            if not entry[0].startswith('{'):continue
+            try:identity=json.loads(entry[0])
+            except (ValueError,TypeError):continue
+            if identity==DEFMT_IDENTITIES[role]:entries.append(entry)
+        require(len(entries)==1,'missing or ambiguous exact defmt interned identity')
+        _,address,size,info,index=entries[0]
+        require(address==value and size==1 and info==17 and 0<=index<len(self.elf.sections),
+                'defmt interned symbol ID/size/global type differs')
+        section=self.elf.sections[index]
+        require(section==self.elf.named.get('.defmt') and section[1]==1 and not section[2]&7 and
+                section[3]<=value<value+1<=section[3]+section[5] and
+                section[4]+section[5]<=len(self.elf.data),'defmt ID is not backed by its nonallocated metadata section')
+        return value
 
     def debug_vtable(self, address, role):
         layouts = ERROR_LAYOUTS | PAYLOAD_LAYOUTS

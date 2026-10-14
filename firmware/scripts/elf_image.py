@@ -25,6 +25,9 @@ class ElfImage:
         names = table(self.sections[names_index])
         self.named = {string(names, s[0]): s for s in self.sections}
         self.symbols = {}
+        # Typed consumers bind every candidate, including conflicting same-name
+        # entries. Keep the existing value lookup/function interfaces intact.
+        self.symbol_entries = []
         self.functions = {}
         # Mapping symbols deliberately repeat their short names. A dictionary
         # loses code/data transitions needed by the pinned decoder adapter.
@@ -37,6 +40,7 @@ class ElfImage:
             for offset in range(section[4], section[4] + section[5], 16):
                 name, value, size, info, _, index = struct.unpack_from("<IIIBBH", data, offset)
                 name = string(strings, name)
+                self.symbol_entries.append((name, value, size, info, index))
                 self.symbols[name] = value
                 if name in ('$t', '$d', '$a') or name.startswith(('$t.', '$d.', '$a.')):
                     require(info==0 and size==0, 'mapping symbol must be local NOTYPE with zero size')

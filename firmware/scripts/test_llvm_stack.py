@@ -30,6 +30,18 @@ class Decoder(unittest.TestCase):
         self.assertEqual(mapping_ranges(elf, 'probe'), [(0x10000000,0x10000020,'t')])
         self.assertEqual(mapping_ranges(elf, 'tail'), [(0x10000024,0x10000028,'t')])
 
+    def test_raw_symbol_metadata_retains_size_type_section_and_same_name_candidates(self):
+        elf=self.fixture();data=bytearray(elf.data);offset=elf.sections[2][4]
+        # Reuse two real ELF table rows with the same name but different size,
+        # type and address; legacy lookup stays intact, typed consumers see both.
+        struct.pack_into('<IIIBBH',data,offset+16,1,0x10000001,1,1,0,1)
+        struct.pack_into('<IIIBBH',data,offset+32,1,0x10000025,4,17,0,1)
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'symbols.elf';path.write_bytes(data);parsed=ElfImage(path)
+        entries=[e for e in parsed.symbol_entries if e[0]=='probe']
+        self.assertEqual(entries,[('probe',0x10000001,1,1,1),('probe',0x10000025,4,17,1)])
+        self.assertEqual(parsed.symbols['probe'],0x10000025)
+
     def test_nonlocal_typed_and_nonzero_mapping_symbols_reject(self):
         elf=self.fixture()
         offset=elf.sections[2][4]+3*16

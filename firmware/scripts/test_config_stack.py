@@ -305,6 +305,7 @@ class TypedDiagnosticObjects(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack.DiagnosticObjects(elf,sizes).debug_vtable(base,'validation_error')
 
+
     def test_payload_vtable_keeps_reference_type_origin_after_relocation(self):
         for shift in (0,0x1400):
             elf,base,sizes=self.fixture(shift);data=bytearray(elf.data)
@@ -325,6 +326,60 @@ class TypedDiagnosticObjects(unittest.TestCase):
         self.assertEqual(objects.debug_vtable(base,'field'),base+96)
         struct.pack_into('<I',data,4,4);elf.data=bytes(data)
         with self.assertRaises(AssertionError):objects.debug_vtable(base,'field')
+
+
+class PanicSymbolObjects(unittest.TestCase):
+    def fixture(self):
+        guard='_RNvNvNtCs123_11panic_probe3imp5panic8PANICKED.0'
+        identifier='{"package":"panic-probe","tag":"defmt_error","data":"{}","disambiguator":"3281125884690968605","crate_name":"panic_probe"}'
+        bss=(0,8,3,0x20000000,0,32,0,0,1,0)
+        metadata=(0,1,0x200000,0,0,32,0,0,1,0)
+        elf=SimpleNamespace(data=bytes(32),sections=[bss,metadata],named={'.defmt':metadata},
+            symbol_entries=[(guard,0x20000007,1,1,0),(identifier,14,1,17,1)])
+        return config_stack.DiagnosticObjects(elf,{}),guard,identifier
+
+    def test_guard_and_interned_symbol_ids_have_distinct_typed_storage(self):
+        objects,_,_=self.fixture()
+        self.assertEqual(objects.panic_guard(0x20000007),0x20000007)
+        self.assertEqual(objects.defmt_id(14,'header_id'),14)
+
+    def test_guard_size_type_section_identity_and_duplicate_reject(self):
+        for mutation in ('size','type','binding','section','address','outside_section','readonly','name','duplicate','identical_duplicate'):
+            objects,guard,_=self.fixture();entry=list(objects.elf.symbol_entries[0])
+            if mutation=='size':entry[2]=2
+            if mutation=='type':entry[3]=0
+            if mutation=='binding':entry[3]=17
+            if mutation=='section':entry[4]=1
+            if mutation=='address':entry[1]=0x20000020
+            if mutation=='name':entry[0]=guard.replace('PANICKED','OTHER')
+            if mutation=='outside_section':
+                section=list(objects.elf.sections[0]);section[5]=7;objects.elf.sections[0]=tuple(section)
+            if mutation=='readonly':
+                section=list(objects.elf.sections[0]);section[2]=2;objects.elf.sections[0]=tuple(section)
+            objects.elf.symbol_entries[0]=tuple(entry)
+            if mutation=='duplicate':objects.elf.symbol_entries.append((guard,0x20000008,1,1,0))
+            if mutation=='identical_duplicate':objects.elf.symbol_entries.append(tuple(entry))
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):objects.panic_guard(0x20000007)
+
+    def test_interned_id_size_type_section_value_json_and_duplicate_reject(self):
+        for mutation in ('size','type','binding','section','allocated','truncated','value','json','disambiguator','duplicate','identical_duplicate'):
+            objects,_,identifier=self.fixture();entry=list(objects.elf.symbol_entries[1])
+            if mutation=='size':entry[2]=2
+            if mutation=='type':entry[3]=0
+            if mutation=='binding':entry[3]=1
+            if mutation=='section':entry[4]=0
+            if mutation=='value':entry[1]=15
+            if mutation=='json':entry[0]=identifier.replace('defmt_error','defmt_info')
+            if mutation=='disambiguator':entry[0]=identifier.replace('3281125884690968605','3281125884690968606')
+            if mutation=='allocated':
+                section=list(objects.elf.sections[1]);section[2]|=2
+                objects.elf.sections[1]=tuple(section);objects.elf.named['.defmt']=tuple(section)
+            if mutation=='truncated':objects.elf.data=b''
+            objects.elf.symbol_entries[1]=tuple(entry)
+            if mutation=='duplicate':objects.elf.symbol_entries.append((identifier,15,1,17,1))
+            if mutation=='identical_duplicate':objects.elf.symbol_entries.append(tuple(entry))
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):objects.defmt_id(14,'header_id')
+
 
 
 class BoundaryProducers(unittest.TestCase):
