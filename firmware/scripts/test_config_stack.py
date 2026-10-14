@@ -424,6 +424,63 @@ class PayloadBodies(unittest.TestCase):
                     config_payload.payload_body(objects,f['aliases'][0]['name'],records)
 
 
+class RootAdapters(unittest.TestCase):
+    def fixture(self,mode,code_shift=0,data_shift=0):
+        return ControlBodies.fixture(self,mode,code_shift,data_shift,'config-root-adapters.json')
+
+    def test_all_raw_arguments_adapters_preserve_terminal_record_and_location_interfaces(self):
+        import config_roots
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode)
+            for item in spec:
+                f=item['function'];outline=item['key'].rsplit(':',2)[0] if item['key'].startswith('@outline:') else None
+                proof=config_roots.root_adapter(objects,f['aliases'][0]['name'],records,outline)
+                self.assertEqual((proof['extent'],proof['frame']),(f['size'],f['frame']))
+                self.assertTrue(proof['requires_typed_caller_arguments_and_location'])
+
+    def test_root_adapter_raw_records_incoming_location_and_zero_frame_effect_mutations_reject(self):
+        import config_roots
+        for mode,part,offset,mnemonic,operands in [
+                ('speed2','13unwrap_failed',0x10,'ldr.w','lr, [sp, #0x8]'),
+                ('sizes','18panic_bounds_check',4,'strd','r1, r0, [sp]'),
+                ('sizez','16slice_index_fail',8,'blo','0x10016cd4'),
+                ('sizez','OUTLINED_FUNCTION_138',0,'movs','r1, #0x7'),
+                ('sizez','OUTLINED_FUNCTION_81',0,'nop','')]:
+            objects,records,spec=self.fixture(mode);item=next(v for v in spec if part in v['function']['aliases'][0]['name']);f=item['function']
+            at=f['address']+offset;old=records[at];records[at]=Instruction(at,old.raw,mnemonic,operands)
+            outline=item['key'].rsplit(':',2)[0] if item['key'].startswith('@outline:') else None
+            with self.subTest(mode=mode,part=part),self.assertRaises(AssertionError):
+                config_roots.root_adapter(objects,f['aliases'][0]['name'],records,outline)
+
+    def test_root_adapter_code_pool_objects_and_callbacks_relocate_independently(self):
+        import config_roots
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode,0x1800,0x21000)
+            for item in spec:
+                f=item['function'];outline=item['key'].rsplit(':',2)[0] if item['key'].startswith('@outline:') else None
+                proof=config_roots.root_adapter(objects,f['aliases'][0]['name'],records,outline)
+                self.assertEqual(proof['function'],f['address'])
+
+    def test_root_adapter_actual_template_callback_metadata_and_pool_objects_reject(self):
+        import config_roots
+        for mode in ('speed2','sizes','sizez'):
+            for fault in ('template','callback','frame','pool','tagged_literal'):
+                objects,records,spec=self.fixture(mode);part='18panic_bounds_check' if fault=='pool' else 'panic_const_async_fn_resumed' if fault=='tagged_literal' else '13unwrap_failed'
+                item=next(v for v in spec if part in v['function']['aliases'][0]['name']);f=item['function'];data=bytearray(objects.elf.data)
+                if fault in ('frame','callback'):
+                    p=next(p for p in f['literals'] if p['first256']=='');target=p['value']&~1
+                    if fault=='frame':objects.sizes[target]+=8
+                    else:
+                        name=next(n for n,e in objects.elf.functions.items() if e[0]&~1==target);entry=objects.elf.functions.pop(name)
+                        objects.elf.functions[name+'Cs123_4fake']=entry
+                else:
+                    address=next(p['pool'] for p in f['literals'] if p['kind']=='pc_literal') if fault=='pool' else item['objects'][0][0]
+                    section=next(s for s in objects.elf.sections if s[3]<=address<s[3]+s[5]);data[section[4]+address-section[3]]^=1
+                    objects.elf.data=bytes(data)
+                with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
+                    config_roots.root_adapter(objects,f['aliases'][0]['name'],records)
+
+
 class PanicBodies(unittest.TestCase):
     def fixture(self,mode,code_shift=0,data_shift=0,guard_shift=0):
         spec=next(r for r in json.loads((Path(__file__).parent/'fixtures/config-panic.json').read_text()) if r['mode']==mode)
