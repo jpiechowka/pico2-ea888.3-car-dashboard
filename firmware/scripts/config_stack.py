@@ -125,8 +125,10 @@ class DiagnosticObjects:
         return address
 
     def defmt_id(self,value,role):
-        require(role in DEFMT_IDENTITIES and isinstance(value,int) and 0<=value<=0xffff,
-                'unreviewed or oversized defmt symbol ID')
+        # Locked defmt.x.in reserves zero and places these one-byte primitive /
+        # error objects before END < 65534, hence value + 1 <= 65533.
+        require(role in DEFMT_IDENTITIES and isinstance(value,int) and 1<=value<=65532,
+                'unreviewed or reserved defmt symbol ID')
         entries=[]
         for entry in self.elf.symbol_entries:
             if not entry[0].startswith('{'):continue

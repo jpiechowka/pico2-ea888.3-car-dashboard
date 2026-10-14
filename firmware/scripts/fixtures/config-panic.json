@@ -1,0 +1,3607 @@
+[
+  {
+    "mode": "speed2",
+    "functions": [
+      {
+        "shape": "panic_fmt",
+        "address": 268631532,
+        "aliases": [
+          "_RNvNtCs6m2Zc6X1WBq_4core9panicking9panic_fmt"
+        ],
+        "extent": 28,
+        "frame": 32,
+        "mapping": [
+          [
+            0,
+            28,
+            "$t"
+          ]
+        ],
+        "body_hex": "80b56f4686b0cde901010120adf8140001a8039003a8049218f072ff",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r7, lr}",
+            "bytes_hex": "80b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "mov\tr7, sp",
+            "bytes_hex": "6f46"
+          },
+          {
+            "offset": 4,
+            "width": 2,
+            "operation": "sub\tsp, #0x18",
+            "bytes_hex": "86b0"
+          },
+          {
+            "offset": 6,
+            "width": 4,
+            "operation": "strd\tr0, r1, [sp, #4]",
+            "bytes_hex": "cde90101"
+          },
+          {
+            "offset": 10,
+            "width": 2,
+            "operation": "movs\tr0, #0x1",
+            "bytes_hex": "0120"
+          },
+          {
+            "offset": 12,
+            "width": 4,
+            "operation": "strh.w\tr0, [sp, #0x14]",
+            "bytes_hex": "adf81400"
+          },
+          {
+            "offset": 16,
+            "width": 2,
+            "operation": "add\tr0, sp, #0x4",
+            "bytes_hex": "01a8"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0xc]",
+            "bytes_hex": "0390"
+          },
+          {
+            "offset": 20,
+            "width": 2,
+            "operation": "add\tr0, sp, #0xc",
+            "bytes_hex": "03a8"
+          },
+          {
+            "offset": 22,
+            "width": 2,
+            "operation": "str\tr2, [sp, #0x10]",
+            "bytes_hex": "0492"
+          },
+          {
+            "offset": 24,
+            "width": 4,
+            "operation": "bl\t0x10048cec <__rustc::rust_begin_unwind>",
+            "bytes_hex": "18f072ff"
+          }
+        ]
+      },
+      {
+        "shape": "handler_movwide",
+        "address": 268733676,
+        "aliases": [
+          "_RNvCs6YPEVBgX88i_7___rustc17rust_begin_unwind"
+        ],
+        "extent": 148,
+        "frame": 32,
+        "mapping": [
+          [
+            0,
+            148,
+            "$t"
+          ]
+        ],
+        "body_hex": "80b56f4686b04df20c31c2f2060172b60a78aabb01220a70009040f20e00c0f20000fef71dfb40f20300c0f20000adf80c0003a80221fef7f5fc684601904af60c70c1f20500029001a8039047f24d40c1f204004af684414af62d420490c1f20501c1f20402781e03abe7f757f84af69c40c1f205000121fef7d4fcfef704fc4ef62450cef20000016821f48021016000defede",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r7, lr}",
+            "bytes_hex": "80b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "mov\tr7, sp",
+            "bytes_hex": "6f46"
+          },
+          {
+            "offset": 4,
+            "width": 2,
+            "operation": "sub\tsp, #0x18",
+            "bytes_hex": "86b0"
+          },
+          {
+            "offset": 6,
+            "width": 4,
+            "operation": "movw\tr1, #0xd30c",
+            "bytes_hex": "4df20c31"
+          },
+          {
+            "offset": 10,
+            "width": 4,
+            "operation": "movt\tr1, #0x2006",
+            "bytes_hex": "c2f20601"
+          },
+          {
+            "offset": 14,
+            "width": 2,
+            "operation": "cpsid i",
+            "bytes_hex": "72b6"
+          },
+          {
+            "offset": 16,
+            "width": 2,
+            "operation": "ldrb\tr2, [r1]",
+            "bytes_hex": "0a78"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "cbnz\tr2, 0x10048d6c <__rustc::rust_begin_unwind+0x80>",
+            "bytes_hex": "aabb"
+          },
+          {
+            "offset": 20,
+            "width": 2,
+            "operation": "movs\tr2, #0x1",
+            "bytes_hex": "0122"
+          },
+          {
+            "offset": 22,
+            "width": 2,
+            "operation": "strb\tr2, [r1]",
+            "bytes_hex": "0a70"
+          },
+          {
+            "offset": 24,
+            "width": 2,
+            "operation": "str\tr0, [sp]",
+            "bytes_hex": "0090"
+          },
+          {
+            "offset": 26,
+            "width": 4,
+            "operation": "movw\tr0, #0xe",
+            "bytes_hex": "40f20e00"
+          },
+          {
+            "offset": 30,
+            "width": 4,
+            "operation": "movt\tr0, #0x0",
+            "bytes_hex": "c0f20000"
+          },
+          {
+            "offset": 34,
+            "width": 4,
+            "operation": "bl\t0x1004734c <defmt::export::acquire_and_header>",
+            "bytes_hex": "fef71dfb"
+          },
+          {
+            "offset": 38,
+            "width": 4,
+            "operation": "movw\tr0, #0x3",
+            "bytes_hex": "40f20300"
+          },
+          {
+            "offset": 42,
+            "width": 4,
+            "operation": "movt\tr0, #0x0",
+            "bytes_hex": "c0f20000"
+          },
+          {
+            "offset": 46,
+            "width": 4,
+            "operation": "strh.w\tr0, [sp, #0xc]",
+            "bytes_hex": "adf80c00"
+          },
+          {
+            "offset": 50,
+            "width": 2,
+            "operation": "add\tr0, sp, #0xc",
+            "bytes_hex": "03a8"
+          },
+          {
+            "offset": 52,
+            "width": 2,
+            "operation": "movs\tr1, #0x2",
+            "bytes_hex": "0221"
+          },
+          {
+            "offset": 54,
+            "width": 4,
+            "operation": "bl\t0x10047710 <_defmt_write>",
+            "bytes_hex": "fef7f5fc"
+          },
+          {
+            "offset": 58,
+            "width": 2,
+            "operation": "mov\tr0, sp",
+            "bytes_hex": "6846"
+          },
+          {
+            "offset": 60,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x4]",
+            "bytes_hex": "0190"
+          },
+          {
+            "offset": 62,
+            "width": 4,
+            "operation": "movw\tr0, #0xaf0c",
+            "bytes_hex": "4af60c70"
+          },
+          {
+            "offset": 66,
+            "width": 4,
+            "operation": "movt\tr0, #0x1005",
+            "bytes_hex": "c1f20500"
+          },
+          {
+            "offset": 70,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x8]",
+            "bytes_hex": "0290"
+          },
+          {
+            "offset": 72,
+            "width": 2,
+            "operation": "add\tr0, sp, #0x4",
+            "bytes_hex": "01a8"
+          },
+          {
+            "offset": 74,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0xc]",
+            "bytes_hex": "0390"
+          },
+          {
+            "offset": 76,
+            "width": 4,
+            "operation": "movw\tr0, #0x744d",
+            "bytes_hex": "47f24d40"
+          },
+          {
+            "offset": 80,
+            "width": 4,
+            "operation": "movt\tr0, #0x1004",
+            "bytes_hex": "c1f20400"
+          },
+          {
+            "offset": 84,
+            "width": 4,
+            "operation": "movw\tr1, #0xac84",
+            "bytes_hex": "4af68441"
+          },
+          {
+            "offset": 88,
+            "width": 4,
+            "operation": "movw\tr2, #0xac2d",
+            "bytes_hex": "4af62d42"
+          },
+          {
+            "offset": 92,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x10]",
+            "bytes_hex": "0490"
+          },
+          {
+            "offset": 94,
+            "width": 4,
+            "operation": "movt\tr1, #0x1005",
+            "bytes_hex": "c1f20501"
+          },
+          {
+            "offset": 98,
+            "width": 4,
+            "operation": "movt\tr2, #0x1004",
+            "bytes_hex": "c1f20402"
+          },
+          {
+            "offset": 102,
+            "width": 2,
+            "operation": "subs\tr0, r7, #0x1",
+            "bytes_hex": "781e"
+          },
+          {
+            "offset": 104,
+            "width": 2,
+            "operation": "add\tr3, sp, #0xc",
+            "bytes_hex": "03ab"
+          },
+          {
+            "offset": 106,
+            "width": 4,
+            "operation": "bl\t0x1002fe08 <core::fmt::write>",
+            "bytes_hex": "e7f757f8"
+          },
+          {
+            "offset": 110,
+            "width": 4,
+            "operation": "movw\tr0, #0xac9c",
+            "bytes_hex": "4af69c40"
+          },
+          {
+            "offset": 114,
+            "width": 4,
+            "operation": "movt\tr0, #0x1005",
+            "bytes_hex": "c1f20500"
+          },
+          {
+            "offset": 118,
+            "width": 2,
+            "operation": "movs\tr1, #0x1",
+            "bytes_hex": "0121"
+          },
+          {
+            "offset": 120,
+            "width": 4,
+            "operation": "bl\t0x10047710 <_defmt_write>",
+            "bytes_hex": "fef7d4fc"
+          },
+          {
+            "offset": 124,
+            "width": 4,
+            "operation": "bl\t0x10047574 <_defmt_release>",
+            "bytes_hex": "fef704fc"
+          },
+          {
+            "offset": 128,
+            "width": 4,
+            "operation": "movw\tr0, #0xed24",
+            "bytes_hex": "4ef62450"
+          },
+          {
+            "offset": 132,
+            "width": 4,
+            "operation": "movt\tr0, #0xe000",
+            "bytes_hex": "cef20000"
+          },
+          {
+            "offset": 136,
+            "width": 2,
+            "operation": "ldr\tr1, [r0]",
+            "bytes_hex": "0168"
+          },
+          {
+            "offset": 138,
+            "width": 4,
+            "operation": "bic\tr1, r1, #0x40000",
+            "bytes_hex": "21f48021"
+          },
+          {
+            "offset": 142,
+            "width": 2,
+            "operation": "str\tr1, [r0]",
+            "bytes_hex": "0160"
+          },
+          {
+            "offset": 144,
+            "width": 2,
+            "operation": "udf\t#0x0",
+            "bytes_hex": "00de"
+          },
+          {
+            "offset": 146,
+            "width": 2,
+            "operation": "trap",
+            "bytes_hex": "fede"
+          }
+        ]
+      },
+      {
+        "shape": "panicinfo_movwide",
+        "address": 268733824,
+        "aliases": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs71MrARHBpp0_11panic_probe"
+        ],
+        "extent": 148,
+        "frame": 56,
+        "mapping": [
+          [
+            0,
+            148,
+            "$t"
+          ]
+        ],
+        "body_hex": "f0b503af4df8048d88b0d1e9005443f6ee71e668d0f80080c1f2050128460c22b04748bbd8f8040002abd0e90012cde900126a4602924ff6b55200f10801c1f20202cde9032141f249410c30c1f203014bf2f672cde905100791c1f2040228462146e7f711f838b943f6fa71c1f2050128460222b04720b1012008b05df8048bf0bdd8f800002146d0e900232846e6f7fbfff2e7",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r4, r5, r6, r7, lr}",
+            "bytes_hex": "f0b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "add\tr7, sp, #0xc",
+            "bytes_hex": "03af"
+          },
+          {
+            "offset": 4,
+            "width": 4,
+            "operation": "str\tr8, [sp, #-4]!",
+            "bytes_hex": "4df8048d"
+          },
+          {
+            "offset": 8,
+            "width": 2,
+            "operation": "sub\tsp, #0x20",
+            "bytes_hex": "88b0"
+          },
+          {
+            "offset": 10,
+            "width": 4,
+            "operation": "ldrd\tr5, r4, [r1]",
+            "bytes_hex": "d1e90054"
+          },
+          {
+            "offset": 14,
+            "width": 4,
+            "operation": "movw\tr1, #0x3fee",
+            "bytes_hex": "43f6ee71"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "ldr\tr6, [r4, #0xc]",
+            "bytes_hex": "e668"
+          },
+          {
+            "offset": 20,
+            "width": 4,
+            "operation": "ldr.w\tr8, [r0]",
+            "bytes_hex": "d0f80080"
+          },
+          {
+            "offset": 24,
+            "width": 4,
+            "operation": "movt\tr1, #0x1005",
+            "bytes_hex": "c1f20501"
+          },
+          {
+            "offset": 28,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 30,
+            "width": 2,
+            "operation": "movs\tr2, #0xc",
+            "bytes_hex": "0c22"
+          },
+          {
+            "offset": 32,
+            "width": 2,
+            "operation": "blx\tr6",
+            "bytes_hex": "b047"
+          },
+          {
+            "offset": 34,
+            "width": 2,
+            "operation": "cbnz\tr0, 0x10048df8 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x78>",
+            "bytes_hex": "48bb"
+          },
+          {
+            "offset": 36,
+            "width": 4,
+            "operation": "ldr.w\tr0, [r8, #0x4]",
+            "bytes_hex": "d8f80400"
+          },
+          {
+            "offset": 40,
+            "width": 2,
+            "operation": "add\tr3, sp, #0x8",
+            "bytes_hex": "02ab"
+          },
+          {
+            "offset": 42,
+            "width": 4,
+            "operation": "ldrd\tr1, r2, [r0]",
+            "bytes_hex": "d0e90012"
+          },
+          {
+            "offset": 46,
+            "width": 4,
+            "operation": "strd\tr1, r2, [sp]",
+            "bytes_hex": "cde90012"
+          },
+          {
+            "offset": 50,
+            "width": 2,
+            "operation": "mov\tr2, sp",
+            "bytes_hex": "6a46"
+          },
+          {
+            "offset": 52,
+            "width": 2,
+            "operation": "str\tr2, [sp, #0x8]",
+            "bytes_hex": "0292"
+          },
+          {
+            "offset": 54,
+            "width": 4,
+            "operation": "movw\tr2, #0xfdb5",
+            "bytes_hex": "4ff6b552"
+          },
+          {
+            "offset": 58,
+            "width": 4,
+            "operation": "add.w\tr1, r0, #0x8",
+            "bytes_hex": "00f10801"
+          },
+          {
+            "offset": 62,
+            "width": 4,
+            "operation": "movt\tr2, #0x1002",
+            "bytes_hex": "c1f20202"
+          },
+          {
+            "offset": 66,
+            "width": 4,
+            "operation": "strd\tr2, r1, [sp, #12]",
+            "bytes_hex": "cde90321"
+          },
+          {
+            "offset": 70,
+            "width": 4,
+            "operation": "movw\tr1, #0x1449",
+            "bytes_hex": "41f24941"
+          },
+          {
+            "offset": 74,
+            "width": 2,
+            "operation": "adds\tr0, #0xc",
+            "bytes_hex": "0c30"
+          },
+          {
+            "offset": 76,
+            "width": 4,
+            "operation": "movt\tr1, #0x1003",
+            "bytes_hex": "c1f20301"
+          },
+          {
+            "offset": 80,
+            "width": 4,
+            "operation": "movw\tr2, #0xb7f6",
+            "bytes_hex": "4bf2f672"
+          },
+          {
+            "offset": 84,
+            "width": 4,
+            "operation": "strd\tr1, r0, [sp, #20]",
+            "bytes_hex": "cde90510"
+          },
+          {
+            "offset": 88,
+            "width": 2,
+            "operation": "str\tr1, [sp, #0x1c]",
+            "bytes_hex": "0791"
+          },
+          {
+            "offset": 90,
+            "width": 4,
+            "operation": "movt\tr2, #0x1004",
+            "bytes_hex": "c1f20402"
+          },
+          {
+            "offset": 94,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 96,
+            "width": 2,
+            "operation": "mov\tr1, r4",
+            "bytes_hex": "2146"
+          },
+          {
+            "offset": 98,
+            "width": 4,
+            "operation": "bl\t0x1002fe08 <core::fmt::write>",
+            "bytes_hex": "e7f711f8"
+          },
+          {
+            "offset": 102,
+            "width": 2,
+            "operation": "cbnz\tr0, 0x10048df8 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x78>",
+            "bytes_hex": "38b9"
+          },
+          {
+            "offset": 104,
+            "width": 4,
+            "operation": "movw\tr1, #0x3ffa",
+            "bytes_hex": "43f6fa71"
+          },
+          {
+            "offset": 108,
+            "width": 4,
+            "operation": "movt\tr1, #0x1005",
+            "bytes_hex": "c1f20501"
+          },
+          {
+            "offset": 112,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 114,
+            "width": 2,
+            "operation": "movs\tr2, #0x2",
+            "bytes_hex": "0222"
+          },
+          {
+            "offset": 116,
+            "width": 2,
+            "operation": "blx\tr6",
+            "bytes_hex": "b047"
+          },
+          {
+            "offset": 118,
+            "width": 2,
+            "operation": "cbz\tr0, 0x10048e02 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x82>",
+            "bytes_hex": "20b1"
+          },
+          {
+            "offset": 120,
+            "width": 2,
+            "operation": "movs\tr0, #0x1",
+            "bytes_hex": "0120"
+          },
+          {
+            "offset": 122,
+            "width": 2,
+            "operation": "add\tsp, #0x20",
+            "bytes_hex": "08b0"
+          },
+          {
+            "offset": 124,
+            "width": 4,
+            "operation": "ldr\tr8, [sp], #4",
+            "bytes_hex": "5df8048b"
+          },
+          {
+            "offset": 128,
+            "width": 2,
+            "operation": "pop\t{r4, r5, r6, r7, pc}",
+            "bytes_hex": "f0bd"
+          },
+          {
+            "offset": 130,
+            "width": 4,
+            "operation": "ldr.w\tr0, [r8]",
+            "bytes_hex": "d8f80000"
+          },
+          {
+            "offset": 134,
+            "width": 2,
+            "operation": "mov\tr1, r4",
+            "bytes_hex": "2146"
+          },
+          {
+            "offset": 136,
+            "width": 4,
+            "operation": "ldrd\tr2, r3, [r0]",
+            "bytes_hex": "d0e90023"
+          },
+          {
+            "offset": 140,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 142,
+            "width": 4,
+            "operation": "bl\t0x1002fe08 <core::fmt::write>",
+            "bytes_hex": "e6f7fbff"
+          },
+          {
+            "offset": 146,
+            "width": 2,
+            "operation": "b\t0x10048dfa <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x7a>",
+            "bytes_hex": "f2e7"
+          }
+        ]
+      }
+    ],
+    "extra_functions": [
+      {
+        "raw_roles": [
+          "_RNvCs6YPEVBgX88i_7___rustc17rust_begin_unwind"
+        ],
+        "roles": [
+          "_RNvCs_7___rustc17rust_begin_unwind"
+        ],
+        "extent": 148,
+        "frame": 32,
+        "address": "0x10048cec"
+      },
+      {
+        "raw_roles": [
+          "_RNvNtCs67cez4QvGWc_5defmt6export18acquire_and_header"
+        ],
+        "roles": [
+          "_RNvNtCs_5defmt6export18acquire_and_header"
+        ],
+        "extent": 34,
+        "frame": 24,
+        "address": "0x1004734c"
+      },
+      {
+        "raw_roles": [
+          "_defmt_write"
+        ],
+        "roles": [
+          "_defmt_write"
+        ],
+        "extent": 612,
+        "frame": 48,
+        "address": "0x10047710"
+      },
+      {
+        "raw_roles": [
+          "_RNvNtCs6m2Zc6X1WBq_4core3fmt5write"
+        ],
+        "roles": [
+          "_RNvNtCs_4core3fmt5write"
+        ],
+        "extent": 262,
+        "frame": 56,
+        "address": "0x1002fe08"
+      },
+      {
+        "raw_roles": [
+          "_defmt_release"
+        ],
+        "roles": [
+          "_defmt_release"
+        ],
+        "extent": 412,
+        "frame": 40,
+        "address": "0x10047574"
+      },
+      {
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs71MrARHBpp0_11panic_probe"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs_11panic_probe"
+        ],
+        "extent": 148,
+        "frame": 56,
+        "address": "0x10048d80"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x1004744d",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x4c",
+            "high_offset": "0x50",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs67cez4QvGWc_5defmt"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs_5defmt"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x1004744c"
+      },
+      {
+        "raw_roles": [
+          "_RNvXs3_NtCs67cez4QvGWc_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str"
+        ],
+        "roles": [
+          "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x10047398"
+      },
+      {
+        "raw_roles": [
+          "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_"
+        ],
+        "roles": [
+          "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+        ],
+        "extent": 140,
+        "frame": 16,
+        "address": "0x100473a8"
+      },
+      {
+        "raw_roles": [
+          "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_"
+        ],
+        "roles": [
+          "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+        ],
+        "extent": 24,
+        "frame": 8,
+        "address": "0x10047434"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x1002fdb5",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x36",
+            "high_offset": "0x3e",
+            "register": "r2"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "extent": 20,
+        "frame": 8,
+        "address": "0x1002fdb4"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x10031449",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x46",
+            "high_offset": "0x4c",
+            "register": "r1"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "roles": [
+          "_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "extent": 230,
+        "frame": 64,
+        "address": "0x10031448"
+      }
+    ],
+    "objects": {
+      "panicked": {
+        "kind": "writable_guard_byte",
+        "value": "0x2006d30c",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x6",
+            "high_offset": "0xa",
+            "register": "r1"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_role": "_RNvNvNtCs71MrARHBpp0_11panic_probe3imp5panic8PANICKED.0",
+        "role": "_RNvNvNtCs_11panic_probe3imp5panic8PANICKED.0",
+        "initial_value": 0,
+        "elf_section_type": "SHT_NOBITS"
+      },
+      "header_id": {
+        "kind": "defmt_interned_symbol_value",
+        "value": "0xe",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x1a",
+            "high_offset": "0x1e",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_symbol": "{\"package\":\"panic-probe\",\"tag\":\"defmt_error\",\"data\":\"{}\",\"disambiguator\":\"3281125884690968605\",\"crate_name\":\"panic_probe\"}",
+        "symbol_json": {
+          "package": "panic-probe",
+          "tag": "defmt_error",
+          "data": "{}",
+          "disambiguator": "3281125884690968605",
+          "crate_name": "panic_probe"
+        },
+        "elf_section_index": 12,
+        "value_bits": 16,
+        "not_memory_pointer": true
+      },
+      "display_encoding_id": {
+        "kind": "defmt_interned_symbol_value",
+        "value": "0x3",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x26",
+            "high_offset": "0x2a",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_symbol": "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=__internal_Display}\",\"disambiguator\":\"14158116662542268607\",\"crate_name\":\"defmt\"}",
+        "symbol_json": {
+          "package": "defmt",
+          "tag": "defmt_prim",
+          "data": "{=__internal_Display}",
+          "disambiguator": "14158116662542268607",
+          "crate_name": "defmt"
+        },
+        "elf_section_index": 12,
+        "value_bits": 16,
+        "not_memory_pointer": true
+      },
+      "panicinfo_vtable": {
+        "kind": "panicinfo_display_vtable",
+        "value": "0x1005af0c",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x3e",
+            "high_offset": "0x42",
+            "register": "r0"
+          }
+        ],
+        "extent": 16,
+        "alignment": 4,
+        "layout_words": [
+          0,
+          4,
+          4
+        ],
+        "slots": {
+          "12": {
+            "raw_roles": [
+              "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs71MrARHBpp0_11panic_probe"
+            ],
+            "roles": [
+              "_RNvXs1i_NtCs_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs_11panic_probe"
+            ],
+            "extent": 148,
+            "frame": 56,
+            "address": "0x10048d80"
+          }
+        }
+      },
+      "dyn_display_callback": {
+        "kind": "thumb_callback",
+        "value": "0x1004744d",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x4c",
+            "high_offset": "0x50",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs67cez4QvGWc_5defmt"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs_5defmt"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x1004744c"
+      },
+      "sink_vtable": {
+        "kind": "write_vtable",
+        "value": "0x1005ac84",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x54",
+            "high_offset": "0x5e",
+            "register": "r1"
+          }
+        ],
+        "extent": 24,
+        "alignment": 4,
+        "layout_words": [
+          0,
+          0,
+          1
+        ],
+        "slots": {
+          "12": {
+            "raw_roles": [
+              "_RNvXs3_NtCs67cez4QvGWc_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str"
+            ],
+            "roles": [
+              "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+            ],
+            "extent": 16,
+            "frame": 8,
+            "address": "0x10047398"
+          },
+          "16": {
+            "raw_roles": [
+              "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_"
+            ],
+            "roles": [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+            ],
+            "extent": 140,
+            "frame": 16,
+            "address": "0x100473a8"
+          },
+          "20": {
+            "raw_roles": [
+              "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_"
+            ],
+            "roles": [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+            ],
+            "extent": 24,
+            "frame": 8,
+            "address": "0x10047434"
+          }
+        }
+      },
+      "outer_template": {
+        "kind": "default_arguments_template",
+        "value": "0x1004ac2d",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x58",
+            "high_offset": "0x62",
+            "register": "r2"
+          }
+        ],
+        "extent": 2,
+        "alignment": 1,
+        "bytes_hex": "c000"
+      },
+      "trailer": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x1005ac9c",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x6e",
+            "high_offset": "0x72",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "bytes_hex": "ff"
+      },
+      "shcsr": {
+        "kind": "fixed_mmio_address",
+        "value": "0xe000ed24",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x80",
+            "high_offset": "0x84",
+            "register": "r0"
+          }
+        ],
+        "extent": 4,
+        "alignment": 4,
+        "relocatable": false,
+        "clear_mask": "0x40000"
+      },
+      "prefix": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x10053fee",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0xe",
+            "high_offset": "0x18",
+            "register": "r1"
+          }
+        ],
+        "extent": 12,
+        "alignment": 1,
+        "bytes_hex": "70616e69636b656420617420"
+      },
+      "str_callback": {
+        "kind": "thumb_callback",
+        "value": "0x1002fdb5",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x36",
+            "high_offset": "0x3e",
+            "register": "r2"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "extent": 20,
+        "frame": 8,
+        "address": "0x1002fdb4"
+      },
+      "u32_callback": {
+        "kind": "thumb_callback",
+        "value": "0x10031449",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x46",
+            "high_offset": "0x4c",
+            "register": "r1"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "roles": [
+          "_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "extent": 230,
+        "frame": 64,
+        "address": "0x10031448"
+      },
+      "location_template": {
+        "kind": "default_arguments_template",
+        "value": "0x1004b7f6",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x50",
+            "high_offset": "0x5a",
+            "register": "r2"
+          }
+        ],
+        "extent": 8,
+        "alignment": 1,
+        "bytes_hex": "c0013ac0013ac000"
+      },
+      "separator": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x10053ffa",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x68",
+            "high_offset": "0x6c",
+            "register": "r1"
+          }
+        ],
+        "extent": 2,
+        "alignment": 1,
+        "bytes_hex": "3a0a"
+      }
+    }
+  },
+  {
+    "mode": "sizes",
+    "functions": [
+      {
+        "shape": "panic_fmt",
+        "address": 268555648,
+        "aliases": [
+          "_RNvNtCs6m2Zc6X1WBq_4core9panicking9panic_fmt"
+        ],
+        "extent": 28,
+        "frame": 32,
+        "mapping": [
+          [
+            0,
+            28,
+            "$t"
+          ]
+        ],
+        "body_hex": "80b56f4686b0cde901010120adf8140001a8039003a8049215f039ff",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r7, lr}",
+            "bytes_hex": "80b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "mov\tr7, sp",
+            "bytes_hex": "6f46"
+          },
+          {
+            "offset": 4,
+            "width": 2,
+            "operation": "sub\tsp, #0x18",
+            "bytes_hex": "86b0"
+          },
+          {
+            "offset": 6,
+            "width": 4,
+            "operation": "strd\tr0, r1, [sp, #4]",
+            "bytes_hex": "cde90101"
+          },
+          {
+            "offset": 10,
+            "width": 2,
+            "operation": "movs\tr0, #0x1",
+            "bytes_hex": "0120"
+          },
+          {
+            "offset": 12,
+            "width": 4,
+            "operation": "strh.w\tr0, [sp, #0x14]",
+            "bytes_hex": "adf81400"
+          },
+          {
+            "offset": 16,
+            "width": 2,
+            "operation": "add\tr0, sp, #0x4",
+            "bytes_hex": "01a8"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0xc]",
+            "bytes_hex": "0390"
+          },
+          {
+            "offset": 20,
+            "width": 2,
+            "operation": "add\tr0, sp, #0xc",
+            "bytes_hex": "03a8"
+          },
+          {
+            "offset": 22,
+            "width": 2,
+            "operation": "str\tr2, [sp, #0x10]",
+            "bytes_hex": "0492"
+          },
+          {
+            "offset": 24,
+            "width": 4,
+            "operation": "bl\t0x1003340e <__rustc::rust_begin_unwind>",
+            "bytes_hex": "15f039ff"
+          }
+        ]
+      },
+      {
+        "shape": "panicinfo_movwide",
+        "address": 268645242,
+        "aliases": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCsjstzMhn1ykO_11panic_probe"
+        ],
+        "extent": 148,
+        "frame": 56,
+        "mapping": [
+          [
+            0,
+            148,
+            "$t"
+          ]
+        ],
+        "body_hex": "f0b503af4df8048d88b0d1e9005444f68e71e668d0f80080c1f2040128460c22b04748bbd8f8040002abd0e90012cde900126a4602924df2495200f10801c1f20102cde903214ef2b1510c30c1f2010145f63732cde905100791c1f2030228462146eaf7def838b944f69a71c1f2040128460222b04720b1012008b05df8048bf0bdd8f800002146d0e900232846eaf7c8f8f2e7",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r4, r5, r6, r7, lr}",
+            "bytes_hex": "f0b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "add\tr7, sp, #0xc",
+            "bytes_hex": "03af"
+          },
+          {
+            "offset": 4,
+            "width": 4,
+            "operation": "str\tr8, [sp, #-4]!",
+            "bytes_hex": "4df8048d"
+          },
+          {
+            "offset": 8,
+            "width": 2,
+            "operation": "sub\tsp, #0x20",
+            "bytes_hex": "88b0"
+          },
+          {
+            "offset": 10,
+            "width": 4,
+            "operation": "ldrd\tr5, r4, [r1]",
+            "bytes_hex": "d1e90054"
+          },
+          {
+            "offset": 14,
+            "width": 4,
+            "operation": "movw\tr1, #0x4f8e",
+            "bytes_hex": "44f68e71"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "ldr\tr6, [r4, #0xc]",
+            "bytes_hex": "e668"
+          },
+          {
+            "offset": 20,
+            "width": 4,
+            "operation": "ldr.w\tr8, [r0]",
+            "bytes_hex": "d0f80080"
+          },
+          {
+            "offset": 24,
+            "width": 4,
+            "operation": "movt\tr1, #0x1004",
+            "bytes_hex": "c1f20401"
+          },
+          {
+            "offset": 28,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 30,
+            "width": 2,
+            "operation": "movs\tr2, #0xc",
+            "bytes_hex": "0c22"
+          },
+          {
+            "offset": 32,
+            "width": 2,
+            "operation": "blx\tr6",
+            "bytes_hex": "b047"
+          },
+          {
+            "offset": 34,
+            "width": 2,
+            "operation": "cbnz\tr0, 0x100333f2 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x78>",
+            "bytes_hex": "48bb"
+          },
+          {
+            "offset": 36,
+            "width": 4,
+            "operation": "ldr.w\tr0, [r8, #0x4]",
+            "bytes_hex": "d8f80400"
+          },
+          {
+            "offset": 40,
+            "width": 2,
+            "operation": "add\tr3, sp, #0x8",
+            "bytes_hex": "02ab"
+          },
+          {
+            "offset": 42,
+            "width": 4,
+            "operation": "ldrd\tr1, r2, [r0]",
+            "bytes_hex": "d0e90012"
+          },
+          {
+            "offset": 46,
+            "width": 4,
+            "operation": "strd\tr1, r2, [sp]",
+            "bytes_hex": "cde90012"
+          },
+          {
+            "offset": 50,
+            "width": 2,
+            "operation": "mov\tr2, sp",
+            "bytes_hex": "6a46"
+          },
+          {
+            "offset": 52,
+            "width": 2,
+            "operation": "str\tr2, [sp, #0x8]",
+            "bytes_hex": "0292"
+          },
+          {
+            "offset": 54,
+            "width": 4,
+            "operation": "movw\tr2, #0xd549",
+            "bytes_hex": "4df24952"
+          },
+          {
+            "offset": 58,
+            "width": 4,
+            "operation": "add.w\tr1, r0, #0x8",
+            "bytes_hex": "00f10801"
+          },
+          {
+            "offset": 62,
+            "width": 4,
+            "operation": "movt\tr2, #0x1001",
+            "bytes_hex": "c1f20102"
+          },
+          {
+            "offset": 66,
+            "width": 4,
+            "operation": "strd\tr2, r1, [sp, #12]",
+            "bytes_hex": "cde90321"
+          },
+          {
+            "offset": 70,
+            "width": 4,
+            "operation": "movw\tr1, #0xe5b1",
+            "bytes_hex": "4ef2b151"
+          },
+          {
+            "offset": 74,
+            "width": 2,
+            "operation": "adds\tr0, #0xc",
+            "bytes_hex": "0c30"
+          },
+          {
+            "offset": 76,
+            "width": 4,
+            "operation": "movt\tr1, #0x1001",
+            "bytes_hex": "c1f20101"
+          },
+          {
+            "offset": 80,
+            "width": 4,
+            "operation": "movw\tr2, #0x5b37",
+            "bytes_hex": "45f63732"
+          },
+          {
+            "offset": 84,
+            "width": 4,
+            "operation": "strd\tr1, r0, [sp, #20]",
+            "bytes_hex": "cde90510"
+          },
+          {
+            "offset": 88,
+            "width": 2,
+            "operation": "str\tr1, [sp, #0x1c]",
+            "bytes_hex": "0791"
+          },
+          {
+            "offset": 90,
+            "width": 4,
+            "operation": "movt\tr2, #0x1003",
+            "bytes_hex": "c1f20302"
+          },
+          {
+            "offset": 94,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 96,
+            "width": 2,
+            "operation": "mov\tr1, r4",
+            "bytes_hex": "2146"
+          },
+          {
+            "offset": 98,
+            "width": 4,
+            "operation": "bl\t0x1001d59c <core::fmt::write>",
+            "bytes_hex": "eaf7def8"
+          },
+          {
+            "offset": 102,
+            "width": 2,
+            "operation": "cbnz\tr0, 0x100333f2 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x78>",
+            "bytes_hex": "38b9"
+          },
+          {
+            "offset": 104,
+            "width": 4,
+            "operation": "movw\tr1, #0x4f9a",
+            "bytes_hex": "44f69a71"
+          },
+          {
+            "offset": 108,
+            "width": 4,
+            "operation": "movt\tr1, #0x1004",
+            "bytes_hex": "c1f20401"
+          },
+          {
+            "offset": 112,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 114,
+            "width": 2,
+            "operation": "movs\tr2, #0x2",
+            "bytes_hex": "0222"
+          },
+          {
+            "offset": 116,
+            "width": 2,
+            "operation": "blx\tr6",
+            "bytes_hex": "b047"
+          },
+          {
+            "offset": 118,
+            "width": 2,
+            "operation": "cbz\tr0, 0x100333fc <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x82>",
+            "bytes_hex": "20b1"
+          },
+          {
+            "offset": 120,
+            "width": 2,
+            "operation": "movs\tr0, #0x1",
+            "bytes_hex": "0120"
+          },
+          {
+            "offset": 122,
+            "width": 2,
+            "operation": "add\tsp, #0x20",
+            "bytes_hex": "08b0"
+          },
+          {
+            "offset": 124,
+            "width": 4,
+            "operation": "ldr\tr8, [sp], #4",
+            "bytes_hex": "5df8048b"
+          },
+          {
+            "offset": 128,
+            "width": 2,
+            "operation": "pop\t{r4, r5, r6, r7, pc}",
+            "bytes_hex": "f0bd"
+          },
+          {
+            "offset": 130,
+            "width": 4,
+            "operation": "ldr.w\tr0, [r8]",
+            "bytes_hex": "d8f80000"
+          },
+          {
+            "offset": 134,
+            "width": 2,
+            "operation": "mov\tr1, r4",
+            "bytes_hex": "2146"
+          },
+          {
+            "offset": 136,
+            "width": 4,
+            "operation": "ldrd\tr2, r3, [r0]",
+            "bytes_hex": "d0e90023"
+          },
+          {
+            "offset": 140,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 142,
+            "width": 4,
+            "operation": "bl\t0x1001d59c <core::fmt::write>",
+            "bytes_hex": "eaf7c8f8"
+          },
+          {
+            "offset": 146,
+            "width": 2,
+            "operation": "b\t0x100333f4 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x7a>",
+            "bytes_hex": "f2e7"
+          }
+        ]
+      },
+      {
+        "shape": "handler_movwide",
+        "address": 268645390,
+        "aliases": [
+          "_RNvCs6YPEVBgX88i_7___rustc17rust_begin_unwind"
+        ],
+        "extent": 148,
+        "frame": 32,
+        "mapping": [
+          [
+            0,
+            148,
+            "$t"
+          ]
+        ],
+        "body_hex": "80b56f4686b043f2a071c2f2060172b60a78aabb01220a70009040f20f00c0f20000fef7b7fa40f20200c0f20000adf80c0003a80221fef762fc684601904cf2ec30c1f20400029001a8039041f69f20c1f203004cf2741144f6e4620490c1f20401c1f20302781e03abeaf790f84cf27010c1f204000121fef741fcfef778fb4ef62450cef20000016821f48021016000defede",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r7, lr}",
+            "bytes_hex": "80b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "mov\tr7, sp",
+            "bytes_hex": "6f46"
+          },
+          {
+            "offset": 4,
+            "width": 2,
+            "operation": "sub\tsp, #0x18",
+            "bytes_hex": "86b0"
+          },
+          {
+            "offset": 6,
+            "width": 4,
+            "operation": "movw\tr1, #0x37a0",
+            "bytes_hex": "43f2a071"
+          },
+          {
+            "offset": 10,
+            "width": 4,
+            "operation": "movt\tr1, #0x2006",
+            "bytes_hex": "c2f20601"
+          },
+          {
+            "offset": 14,
+            "width": 2,
+            "operation": "cpsid i",
+            "bytes_hex": "72b6"
+          },
+          {
+            "offset": 16,
+            "width": 2,
+            "operation": "ldrb\tr2, [r1]",
+            "bytes_hex": "0a78"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "cbnz\tr2, 0x1003348e <__rustc::rust_begin_unwind+0x80>",
+            "bytes_hex": "aabb"
+          },
+          {
+            "offset": 20,
+            "width": 2,
+            "operation": "movs\tr2, #0x1",
+            "bytes_hex": "0122"
+          },
+          {
+            "offset": 22,
+            "width": 2,
+            "operation": "strb\tr2, [r1]",
+            "bytes_hex": "0a70"
+          },
+          {
+            "offset": 24,
+            "width": 2,
+            "operation": "str\tr0, [sp]",
+            "bytes_hex": "0090"
+          },
+          {
+            "offset": 26,
+            "width": 4,
+            "operation": "movw\tr0, #0xf",
+            "bytes_hex": "40f20f00"
+          },
+          {
+            "offset": 30,
+            "width": 4,
+            "operation": "movt\tr0, #0x0",
+            "bytes_hex": "c0f20000"
+          },
+          {
+            "offset": 34,
+            "width": 4,
+            "operation": "bl\t0x100319a2 <defmt::export::acquire_and_header>",
+            "bytes_hex": "fef7b7fa"
+          },
+          {
+            "offset": 38,
+            "width": 4,
+            "operation": "movw\tr0, #0x2",
+            "bytes_hex": "40f20200"
+          },
+          {
+            "offset": 42,
+            "width": 4,
+            "operation": "movt\tr0, #0x0",
+            "bytes_hex": "c0f20000"
+          },
+          {
+            "offset": 46,
+            "width": 4,
+            "operation": "strh.w\tr0, [sp, #0xc]",
+            "bytes_hex": "adf80c00"
+          },
+          {
+            "offset": 50,
+            "width": 2,
+            "operation": "add\tr0, sp, #0xc",
+            "bytes_hex": "03a8"
+          },
+          {
+            "offset": 52,
+            "width": 2,
+            "operation": "movs\tr1, #0x2",
+            "bytes_hex": "0221"
+          },
+          {
+            "offset": 54,
+            "width": 4,
+            "operation": "bl\t0x10031d0c <_defmt_write>",
+            "bytes_hex": "fef762fc"
+          },
+          {
+            "offset": 58,
+            "width": 2,
+            "operation": "mov\tr0, sp",
+            "bytes_hex": "6846"
+          },
+          {
+            "offset": 60,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x4]",
+            "bytes_hex": "0190"
+          },
+          {
+            "offset": 62,
+            "width": 4,
+            "operation": "movw\tr0, #0xc3ec",
+            "bytes_hex": "4cf2ec30"
+          },
+          {
+            "offset": 66,
+            "width": 4,
+            "operation": "movt\tr0, #0x1004",
+            "bytes_hex": "c1f20400"
+          },
+          {
+            "offset": 70,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x8]",
+            "bytes_hex": "0290"
+          },
+          {
+            "offset": 72,
+            "width": 2,
+            "operation": "add\tr0, sp, #0x4",
+            "bytes_hex": "01a8"
+          },
+          {
+            "offset": 74,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0xc]",
+            "bytes_hex": "0390"
+          },
+          {
+            "offset": 76,
+            "width": 4,
+            "operation": "movw\tr0, #0x1a9f",
+            "bytes_hex": "41f69f20"
+          },
+          {
+            "offset": 80,
+            "width": 4,
+            "operation": "movt\tr0, #0x1003",
+            "bytes_hex": "c1f20300"
+          },
+          {
+            "offset": 84,
+            "width": 4,
+            "operation": "movw\tr1, #0xc174",
+            "bytes_hex": "4cf27411"
+          },
+          {
+            "offset": 88,
+            "width": 4,
+            "operation": "movw\tr2, #0x4ee4",
+            "bytes_hex": "44f6e462"
+          },
+          {
+            "offset": 92,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x10]",
+            "bytes_hex": "0490"
+          },
+          {
+            "offset": 94,
+            "width": 4,
+            "operation": "movt\tr1, #0x1004",
+            "bytes_hex": "c1f20401"
+          },
+          {
+            "offset": 98,
+            "width": 4,
+            "operation": "movt\tr2, #0x1003",
+            "bytes_hex": "c1f20302"
+          },
+          {
+            "offset": 102,
+            "width": 2,
+            "operation": "subs\tr0, r7, #0x1",
+            "bytes_hex": "781e"
+          },
+          {
+            "offset": 104,
+            "width": 2,
+            "operation": "add\tr3, sp, #0xc",
+            "bytes_hex": "03ab"
+          },
+          {
+            "offset": 106,
+            "width": 4,
+            "operation": "bl\t0x1001d59c <core::fmt::write>",
+            "bytes_hex": "eaf790f8"
+          },
+          {
+            "offset": 110,
+            "width": 4,
+            "operation": "movw\tr0, #0xc170",
+            "bytes_hex": "4cf27010"
+          },
+          {
+            "offset": 114,
+            "width": 4,
+            "operation": "movt\tr0, #0x1004",
+            "bytes_hex": "c1f20400"
+          },
+          {
+            "offset": 118,
+            "width": 2,
+            "operation": "movs\tr1, #0x1",
+            "bytes_hex": "0121"
+          },
+          {
+            "offset": 120,
+            "width": 4,
+            "operation": "bl\t0x10031d0c <_defmt_write>",
+            "bytes_hex": "fef741fc"
+          },
+          {
+            "offset": 124,
+            "width": 4,
+            "operation": "bl\t0x10031b7e <_defmt_release>",
+            "bytes_hex": "fef778fb"
+          },
+          {
+            "offset": 128,
+            "width": 4,
+            "operation": "movw\tr0, #0xed24",
+            "bytes_hex": "4ef62450"
+          },
+          {
+            "offset": 132,
+            "width": 4,
+            "operation": "movt\tr0, #0xe000",
+            "bytes_hex": "cef20000"
+          },
+          {
+            "offset": 136,
+            "width": 2,
+            "operation": "ldr\tr1, [r0]",
+            "bytes_hex": "0168"
+          },
+          {
+            "offset": 138,
+            "width": 4,
+            "operation": "bic\tr1, r1, #0x40000",
+            "bytes_hex": "21f48021"
+          },
+          {
+            "offset": 142,
+            "width": 2,
+            "operation": "str\tr1, [r0]",
+            "bytes_hex": "0160"
+          },
+          {
+            "offset": 144,
+            "width": 2,
+            "operation": "udf\t#0x0",
+            "bytes_hex": "00de"
+          },
+          {
+            "offset": 146,
+            "width": 2,
+            "operation": "trap",
+            "bytes_hex": "fede"
+          }
+        ]
+      }
+    ],
+    "extra_functions": [
+      {
+        "raw_roles": [
+          "_RNvCs6YPEVBgX88i_7___rustc17rust_begin_unwind"
+        ],
+        "roles": [
+          "_RNvCs_7___rustc17rust_begin_unwind"
+        ],
+        "extent": 148,
+        "frame": 32,
+        "address": "0x1003340e"
+      },
+      {
+        "raw_roles": [
+          "_RNvNtCs6m2Zc6X1WBq_4core3fmt5write"
+        ],
+        "roles": [
+          "_RNvNtCs_4core3fmt5write"
+        ],
+        "extent": 262,
+        "frame": 56,
+        "address": "0x1001d59c"
+      },
+      {
+        "raw_roles": [
+          "_RNvNtCs9wYuybjb7iG_5defmt6export18acquire_and_header"
+        ],
+        "roles": [
+          "_RNvNtCs_5defmt6export18acquire_and_header"
+        ],
+        "extent": 34,
+        "frame": 24,
+        "address": "0x100319a2"
+      },
+      {
+        "raw_roles": [
+          "_defmt_write"
+        ],
+        "roles": [
+          "_defmt_write"
+        ],
+        "extent": 594,
+        "frame": 48,
+        "address": "0x10031d0c"
+      },
+      {
+        "raw_roles": [
+          "_defmt_release"
+        ],
+        "roles": [
+          "_defmt_release"
+        ],
+        "extent": 398,
+        "frame": 40,
+        "address": "0x10031b7e"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x1001d549",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x36",
+            "high_offset": "0x3e",
+            "register": "r2"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "extent": 20,
+        "frame": 8,
+        "address": "0x1001d548"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x1001e5b1",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x46",
+            "high_offset": "0x4c",
+            "register": "r1"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "roles": [
+          "_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "extent": 230,
+        "frame": 64,
+        "address": "0x1001e5b0"
+      },
+      {
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCsjstzMhn1ykO_11panic_probe"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs_11panic_probe"
+        ],
+        "extent": 148,
+        "frame": 56,
+        "address": "0x1003337a"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x10031a9f",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x4c",
+            "high_offset": "0x50",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs9wYuybjb7iG_5defmt"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs_5defmt"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x10031a9e"
+      },
+      {
+        "raw_roles": [
+          "_RNvXs3_NtCs9wYuybjb7iG_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str"
+        ],
+        "roles": [
+          "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x10031a02"
+      },
+      {
+        "raw_roles": [
+          "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_"
+        ],
+        "roles": [
+          "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+        ],
+        "extent": 140,
+        "frame": 16,
+        "address": "0x10031a12"
+      },
+      {
+        "raw_roles": [
+          "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_"
+        ],
+        "roles": [
+          "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+        ],
+        "extent": 24,
+        "frame": 8,
+        "address": "0x100319ea"
+      }
+    ],
+    "objects": {
+      "prefix": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x10044f8e",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0xe",
+            "high_offset": "0x18",
+            "register": "r1"
+          }
+        ],
+        "extent": 12,
+        "alignment": 1,
+        "bytes_hex": "70616e69636b656420617420"
+      },
+      "str_callback": {
+        "kind": "thumb_callback",
+        "value": "0x1001d549",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x36",
+            "high_offset": "0x3e",
+            "register": "r2"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "extent": 20,
+        "frame": 8,
+        "address": "0x1001d548"
+      },
+      "u32_callback": {
+        "kind": "thumb_callback",
+        "value": "0x1001e5b1",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x46",
+            "high_offset": "0x4c",
+            "register": "r1"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "roles": [
+          "_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "extent": 230,
+        "frame": 64,
+        "address": "0x1001e5b0"
+      },
+      "location_template": {
+        "kind": "default_arguments_template",
+        "value": "0x10035b37",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x50",
+            "high_offset": "0x5a",
+            "register": "r2"
+          }
+        ],
+        "extent": 8,
+        "alignment": 1,
+        "bytes_hex": "c0013ac0013ac000"
+      },
+      "separator": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x10044f9a",
+        "producers": [
+          {
+            "function": "panicinfo_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x68",
+            "high_offset": "0x6c",
+            "register": "r1"
+          }
+        ],
+        "extent": 2,
+        "alignment": 1,
+        "bytes_hex": "3a0a"
+      },
+      "panicked": {
+        "kind": "writable_guard_byte",
+        "value": "0x200637a0",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x6",
+            "high_offset": "0xa",
+            "register": "r1"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_role": "_RNvNvNtCsjstzMhn1ykO_11panic_probe3imp5panic8PANICKED.0",
+        "role": "_RNvNvNtCs_11panic_probe3imp5panic8PANICKED.0",
+        "initial_value": 0,
+        "elf_section_type": "SHT_NOBITS"
+      },
+      "header_id": {
+        "kind": "defmt_interned_symbol_value",
+        "value": "0xf",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x1a",
+            "high_offset": "0x1e",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_symbol": "{\"package\":\"panic-probe\",\"tag\":\"defmt_error\",\"data\":\"{}\",\"disambiguator\":\"3281125884690968605\",\"crate_name\":\"panic_probe\"}",
+        "symbol_json": {
+          "package": "panic-probe",
+          "tag": "defmt_error",
+          "data": "{}",
+          "disambiguator": "3281125884690968605",
+          "crate_name": "panic_probe"
+        },
+        "elf_section_index": 12,
+        "value_bits": 16,
+        "not_memory_pointer": true
+      },
+      "display_encoding_id": {
+        "kind": "defmt_interned_symbol_value",
+        "value": "0x2",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x26",
+            "high_offset": "0x2a",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_symbol": "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=__internal_Display}\",\"disambiguator\":\"14158116662542268607\",\"crate_name\":\"defmt\"}",
+        "symbol_json": {
+          "package": "defmt",
+          "tag": "defmt_prim",
+          "data": "{=__internal_Display}",
+          "disambiguator": "14158116662542268607",
+          "crate_name": "defmt"
+        },
+        "elf_section_index": 12,
+        "value_bits": 16,
+        "not_memory_pointer": true
+      },
+      "panicinfo_vtable": {
+        "kind": "panicinfo_display_vtable",
+        "value": "0x1004c3ec",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x3e",
+            "high_offset": "0x42",
+            "register": "r0"
+          }
+        ],
+        "extent": 16,
+        "alignment": 4,
+        "layout_words": [
+          0,
+          4,
+          4
+        ],
+        "slots": {
+          "12": {
+            "raw_roles": [
+              "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCsjstzMhn1ykO_11panic_probe"
+            ],
+            "roles": [
+              "_RNvXs1i_NtCs_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs_11panic_probe"
+            ],
+            "extent": 148,
+            "frame": 56,
+            "address": "0x1003337a"
+          }
+        }
+      },
+      "dyn_display_callback": {
+        "kind": "thumb_callback",
+        "value": "0x10031a9f",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x4c",
+            "high_offset": "0x50",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs9wYuybjb7iG_5defmt"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs_5defmt"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x10031a9e"
+      },
+      "sink_vtable": {
+        "kind": "write_vtable",
+        "value": "0x1004c174",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x54",
+            "high_offset": "0x5e",
+            "register": "r1"
+          }
+        ],
+        "extent": 24,
+        "alignment": 4,
+        "layout_words": [
+          0,
+          0,
+          1
+        ],
+        "slots": {
+          "12": {
+            "raw_roles": [
+              "_RNvXs3_NtCs9wYuybjb7iG_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str"
+            ],
+            "roles": [
+              "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+            ],
+            "extent": 16,
+            "frame": 8,
+            "address": "0x10031a02"
+          },
+          "16": {
+            "raw_roles": [
+              "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_"
+            ],
+            "roles": [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+            ],
+            "extent": 140,
+            "frame": 16,
+            "address": "0x10031a12"
+          },
+          "20": {
+            "raw_roles": [
+              "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_"
+            ],
+            "roles": [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+            ],
+            "extent": 24,
+            "frame": 8,
+            "address": "0x100319ea"
+          }
+        }
+      },
+      "outer_template": {
+        "kind": "default_arguments_template",
+        "value": "0x10034ee4",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x58",
+            "high_offset": "0x62",
+            "register": "r2"
+          }
+        ],
+        "extent": 2,
+        "alignment": 1,
+        "bytes_hex": "c000"
+      },
+      "trailer": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x1004c170",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x6e",
+            "high_offset": "0x72",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "bytes_hex": "ff"
+      },
+      "shcsr": {
+        "kind": "fixed_mmio_address",
+        "value": "0xe000ed24",
+        "producers": [
+          {
+            "function": "handler_movwide",
+            "kind": "movwide_pair",
+            "low_offset": "0x80",
+            "high_offset": "0x84",
+            "register": "r0"
+          }
+        ],
+        "extent": 4,
+        "alignment": 4,
+        "relocatable": false,
+        "clear_mask": "0x40000"
+      }
+    }
+  },
+  {
+    "mode": "sizez",
+    "functions": [
+      {
+        "shape": "panic_fmt",
+        "address": 268525896,
+        "aliases": [
+          "_RNvNtCs6m2Zc6X1WBq_4core9panicking9panic_fmt"
+        ],
+        "extent": 28,
+        "frame": 32,
+        "mapping": [
+          [
+            0,
+            28,
+            "$t"
+          ]
+        ],
+        "body_hex": "80b56f4686b0cde901010120adf8140001a8039003a8049211f09eff",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r7, lr}",
+            "bytes_hex": "80b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "mov\tr7, sp",
+            "bytes_hex": "6f46"
+          },
+          {
+            "offset": 4,
+            "width": 2,
+            "operation": "sub\tsp, #0x18",
+            "bytes_hex": "86b0"
+          },
+          {
+            "offset": 6,
+            "width": 4,
+            "operation": "strd\tr0, r1, [sp, #4]",
+            "bytes_hex": "cde90101"
+          },
+          {
+            "offset": 10,
+            "width": 2,
+            "operation": "movs\tr0, #0x1",
+            "bytes_hex": "0120"
+          },
+          {
+            "offset": 12,
+            "width": 4,
+            "operation": "strh.w\tr0, [sp, #0x14]",
+            "bytes_hex": "adf81400"
+          },
+          {
+            "offset": 16,
+            "width": 2,
+            "operation": "add\tr0, sp, #0x4",
+            "bytes_hex": "01a8"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0xc]",
+            "bytes_hex": "0390"
+          },
+          {
+            "offset": 20,
+            "width": 2,
+            "operation": "add\tr0, sp, #0xc",
+            "bytes_hex": "03a8"
+          },
+          {
+            "offset": 22,
+            "width": 2,
+            "operation": "str\tr2, [sp, #0x10]",
+            "bytes_hex": "0492"
+          },
+          {
+            "offset": 24,
+            "width": 4,
+            "operation": "bl\t0x100280a0 <__rustc::rust_begin_unwind>",
+            "bytes_hex": "11f09eff"
+          }
+        ]
+      },
+      {
+        "shape": "panicinfo_literal",
+        "address": 268599320,
+        "aliases": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs10Sv9BTgJIR_11panic_probe"
+        ],
+        "extent": 136,
+        "frame": 56,
+        "mapping": [
+          [
+            0,
+            116,
+            "$t"
+          ],
+          [
+            116,
+            136,
+            "$d"
+          ]
+        ],
+        "body_hex": "f0b503af4df8048d88b0d1e900541949d0f800800c22e6682846b047e8b9d8f8040002abd0e90012cde9001200f10c020830114904901148cde90512104a079121460390684602902846eef77ff820b90c4928460222b04718b1012008b000f06bbcd8f800002146d0e900232846eef76df8f3e7804a03100d72011011610110d5b902108c4a0310",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r4, r5, r6, r7, lr}",
+            "bytes_hex": "f0b5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "add\tr7, sp, #0xc",
+            "bytes_hex": "03af"
+          },
+          {
+            "offset": 4,
+            "width": 4,
+            "operation": "str\tr8, [sp, #-4]!",
+            "bytes_hex": "4df8048d"
+          },
+          {
+            "offset": 8,
+            "width": 2,
+            "operation": "sub\tsp, #0x20",
+            "bytes_hex": "88b0"
+          },
+          {
+            "offset": 10,
+            "width": 4,
+            "operation": "ldrd\tr5, r4, [r1]",
+            "bytes_hex": "d1e90054"
+          },
+          {
+            "offset": 14,
+            "width": 2,
+            "operation": "ldr\tr1, [pc, #0x64]",
+            "bytes_hex": "1949"
+          },
+          {
+            "offset": 16,
+            "width": 4,
+            "operation": "ldr.w\tr8, [r0]",
+            "bytes_hex": "d0f80080"
+          },
+          {
+            "offset": 20,
+            "width": 2,
+            "operation": "movs\tr2, #0xc",
+            "bytes_hex": "0c22"
+          },
+          {
+            "offset": 22,
+            "width": 2,
+            "operation": "ldr\tr6, [r4, #0xc]",
+            "bytes_hex": "e668"
+          },
+          {
+            "offset": 24,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 26,
+            "width": 2,
+            "operation": "blx\tr6",
+            "bytes_hex": "b047"
+          },
+          {
+            "offset": 28,
+            "width": 2,
+            "operation": "cbnz\tr0, 0x10028072 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x5a>",
+            "bytes_hex": "e8b9"
+          },
+          {
+            "offset": 30,
+            "width": 4,
+            "operation": "ldr.w\tr0, [r8, #0x4]",
+            "bytes_hex": "d8f80400"
+          },
+          {
+            "offset": 34,
+            "width": 2,
+            "operation": "add\tr3, sp, #0x8",
+            "bytes_hex": "02ab"
+          },
+          {
+            "offset": 36,
+            "width": 4,
+            "operation": "ldrd\tr1, r2, [r0]",
+            "bytes_hex": "d0e90012"
+          },
+          {
+            "offset": 40,
+            "width": 4,
+            "operation": "strd\tr1, r2, [sp]",
+            "bytes_hex": "cde90012"
+          },
+          {
+            "offset": 44,
+            "width": 4,
+            "operation": "add.w\tr2, r0, #0xc",
+            "bytes_hex": "00f10c02"
+          },
+          {
+            "offset": 48,
+            "width": 2,
+            "operation": "adds\tr0, #0x8",
+            "bytes_hex": "0830"
+          },
+          {
+            "offset": 50,
+            "width": 2,
+            "operation": "ldr\tr1, [pc, #0x44]",
+            "bytes_hex": "1149"
+          },
+          {
+            "offset": 52,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x10]",
+            "bytes_hex": "0490"
+          },
+          {
+            "offset": 54,
+            "width": 2,
+            "operation": "ldr\tr0, [pc, #0x44]",
+            "bytes_hex": "1148"
+          },
+          {
+            "offset": 56,
+            "width": 4,
+            "operation": "strd\tr1, r2, [sp, #20]",
+            "bytes_hex": "cde90512"
+          },
+          {
+            "offset": 60,
+            "width": 2,
+            "operation": "ldr\tr2, [pc, #0x40]",
+            "bytes_hex": "104a"
+          },
+          {
+            "offset": 62,
+            "width": 2,
+            "operation": "str\tr1, [sp, #0x1c]",
+            "bytes_hex": "0791"
+          },
+          {
+            "offset": 64,
+            "width": 2,
+            "operation": "mov\tr1, r4",
+            "bytes_hex": "2146"
+          },
+          {
+            "offset": 66,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0xc]",
+            "bytes_hex": "0390"
+          },
+          {
+            "offset": 68,
+            "width": 2,
+            "operation": "mov\tr0, sp",
+            "bytes_hex": "6846"
+          },
+          {
+            "offset": 70,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x8]",
+            "bytes_hex": "0290"
+          },
+          {
+            "offset": 72,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 74,
+            "width": 4,
+            "operation": "bl\t0x10016164 <core::fmt::write>",
+            "bytes_hex": "eef77ff8"
+          },
+          {
+            "offset": 78,
+            "width": 2,
+            "operation": "cbnz\tr0, 0x10028072 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x5a>",
+            "bytes_hex": "20b9"
+          },
+          {
+            "offset": 80,
+            "width": 2,
+            "operation": "ldr\tr1, [pc, #0x30]",
+            "bytes_hex": "0c49"
+          },
+          {
+            "offset": 82,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 84,
+            "width": 2,
+            "operation": "movs\tr2, #0x2",
+            "bytes_hex": "0222"
+          },
+          {
+            "offset": 86,
+            "width": 2,
+            "operation": "blx\tr6",
+            "bytes_hex": "b047"
+          },
+          {
+            "offset": 88,
+            "width": 2,
+            "operation": "cbz\tr0, 0x1002807a <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x62>",
+            "bytes_hex": "18b1"
+          },
+          {
+            "offset": 90,
+            "width": 2,
+            "operation": "movs\tr0, #0x1",
+            "bytes_hex": "0120"
+          },
+          {
+            "offset": 92,
+            "width": 2,
+            "operation": "add\tsp, #0x20",
+            "bytes_hex": "08b0"
+          },
+          {
+            "offset": 94,
+            "width": 4,
+            "operation": "b.w\t0x10028950 <OUTLINED_FUNCTION_139>",
+            "bytes_hex": "00f06bbc"
+          },
+          {
+            "offset": 98,
+            "width": 4,
+            "operation": "ldr.w\tr0, [r8]",
+            "bytes_hex": "d8f80000"
+          },
+          {
+            "offset": 102,
+            "width": 2,
+            "operation": "mov\tr1, r4",
+            "bytes_hex": "2146"
+          },
+          {
+            "offset": 104,
+            "width": 4,
+            "operation": "ldrd\tr2, r3, [r0]",
+            "bytes_hex": "d0e90023"
+          },
+          {
+            "offset": 108,
+            "width": 2,
+            "operation": "mov\tr0, r5",
+            "bytes_hex": "2846"
+          },
+          {
+            "offset": 110,
+            "width": 4,
+            "operation": "bl\t0x10016164 <core::fmt::write>",
+            "bytes_hex": "eef76df8"
+          },
+          {
+            "offset": 114,
+            "width": 2,
+            "operation": "b\t0x10028074 <<&core::panic::panic_info::PanicInfo as core::fmt::Display>::fmt+0x5c>",
+            "bytes_hex": "f3e7"
+          }
+        ]
+      },
+      {
+        "shape": "handler_literal",
+        "address": 268599456,
+        "aliases": [
+          "_RNvCs6YPEVBgX88i_7___rustc17rust_begin_unwind"
+        ],
+        "extent": 116,
+        "frame": 32,
+        "mapping": [
+          [
+            0,
+            84,
+            "$t"
+          ],
+          [
+            84,
+            116,
+            "$d"
+          ]
+        ],
+        "body_hex": "feb506af134972b60a78dab901220a7000901148fef738fe1048fef717fe1048114903aa0290684601900e48049001a80390781efef74cfe0c480121fef736fffef706ff0a48016821f48021016000defede00bff8ce06200e00000003000000f8c10310196e021051ac0210f8be031024ed00e0",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 2,
+            "operation": "push\t{r1, r2, r3, r4, r5, r6, r7, lr}",
+            "bytes_hex": "feb5"
+          },
+          {
+            "offset": 2,
+            "width": 2,
+            "operation": "add\tr7, sp, #0x18",
+            "bytes_hex": "06af"
+          },
+          {
+            "offset": 4,
+            "width": 2,
+            "operation": "ldr\tr1, [pc, #0x4c]",
+            "bytes_hex": "1349"
+          },
+          {
+            "offset": 6,
+            "width": 2,
+            "operation": "cpsid i",
+            "bytes_hex": "72b6"
+          },
+          {
+            "offset": 8,
+            "width": 2,
+            "operation": "ldrb\tr2, [r1]",
+            "bytes_hex": "0a78"
+          },
+          {
+            "offset": 10,
+            "width": 2,
+            "operation": "cbnz\tr2, 0x100280e4 <__rustc::rust_begin_unwind+0x44>",
+            "bytes_hex": "dab9"
+          },
+          {
+            "offset": 12,
+            "width": 2,
+            "operation": "movs\tr2, #0x1",
+            "bytes_hex": "0122"
+          },
+          {
+            "offset": 14,
+            "width": 2,
+            "operation": "strb\tr2, [r1]",
+            "bytes_hex": "0a70"
+          },
+          {
+            "offset": 16,
+            "width": 2,
+            "operation": "str\tr0, [sp]",
+            "bytes_hex": "0090"
+          },
+          {
+            "offset": 18,
+            "width": 2,
+            "operation": "ldr\tr0, [pc, #0x44]",
+            "bytes_hex": "1148"
+          },
+          {
+            "offset": 20,
+            "width": 4,
+            "operation": "bl\t0x10026d28 <defmt::export::acquire_and_header>",
+            "bytes_hex": "fef738fe"
+          },
+          {
+            "offset": 24,
+            "width": 2,
+            "operation": "ldr\tr0, [pc, #0x40]",
+            "bytes_hex": "1048"
+          },
+          {
+            "offset": 26,
+            "width": 4,
+            "operation": "bl\t0x10026cec <defmt::export::istr>",
+            "bytes_hex": "fef717fe"
+          },
+          {
+            "offset": 30,
+            "width": 2,
+            "operation": "ldr\tr0, [pc, #0x40]",
+            "bytes_hex": "1048"
+          },
+          {
+            "offset": 32,
+            "width": 2,
+            "operation": "ldr\tr1, [pc, #0x44]",
+            "bytes_hex": "1149"
+          },
+          {
+            "offset": 34,
+            "width": 2,
+            "operation": "add\tr2, sp, #0xc",
+            "bytes_hex": "03aa"
+          },
+          {
+            "offset": 36,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x8]",
+            "bytes_hex": "0290"
+          },
+          {
+            "offset": 38,
+            "width": 2,
+            "operation": "mov\tr0, sp",
+            "bytes_hex": "6846"
+          },
+          {
+            "offset": 40,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x4]",
+            "bytes_hex": "0190"
+          },
+          {
+            "offset": 42,
+            "width": 2,
+            "operation": "ldr\tr0, [pc, #0x38]",
+            "bytes_hex": "0e48"
+          },
+          {
+            "offset": 44,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0x10]",
+            "bytes_hex": "0490"
+          },
+          {
+            "offset": 46,
+            "width": 2,
+            "operation": "add\tr0, sp, #0x4",
+            "bytes_hex": "01a8"
+          },
+          {
+            "offset": 48,
+            "width": 2,
+            "operation": "str\tr0, [sp, #0xc]",
+            "bytes_hex": "0390"
+          },
+          {
+            "offset": 50,
+            "width": 2,
+            "operation": "subs\tr0, r7, #0x1",
+            "bytes_hex": "781e"
+          },
+          {
+            "offset": 52,
+            "width": 4,
+            "operation": "bl\t0x10026d70 <<defmt::export::FmtWrite as core::fmt::Write>::write_fmt>",
+            "bytes_hex": "fef74cfe"
+          },
+          {
+            "offset": 56,
+            "width": 2,
+            "operation": "ldr\tr0, [pc, #0x30]",
+            "bytes_hex": "0c48"
+          },
+          {
+            "offset": 58,
+            "width": 2,
+            "operation": "movs\tr1, #0x1",
+            "bytes_hex": "0121"
+          },
+          {
+            "offset": 60,
+            "width": 4,
+            "operation": "bl\t0x10026f4c <_defmt_write>",
+            "bytes_hex": "fef736ff"
+          },
+          {
+            "offset": 64,
+            "width": 4,
+            "operation": "bl\t0x10026ef0 <_defmt_release>",
+            "bytes_hex": "fef706ff"
+          },
+          {
+            "offset": 68,
+            "width": 2,
+            "operation": "ldr\tr0, [pc, #0x28]",
+            "bytes_hex": "0a48"
+          },
+          {
+            "offset": 70,
+            "width": 2,
+            "operation": "ldr\tr1, [r0]",
+            "bytes_hex": "0168"
+          },
+          {
+            "offset": 72,
+            "width": 4,
+            "operation": "bic\tr1, r1, #0x40000",
+            "bytes_hex": "21f48021"
+          },
+          {
+            "offset": 76,
+            "width": 2,
+            "operation": "str\tr1, [r0]",
+            "bytes_hex": "0160"
+          },
+          {
+            "offset": 78,
+            "width": 2,
+            "operation": "udf\t#0x0",
+            "bytes_hex": "00de"
+          },
+          {
+            "offset": 80,
+            "width": 2,
+            "operation": "trap",
+            "bytes_hex": "fede"
+          },
+          {
+            "offset": 82,
+            "width": 2,
+            "operation": "nop",
+            "bytes_hex": "00bf"
+          }
+        ]
+      },
+      {
+        "shape": "panicinfo_epilogue",
+        "address": 268601680,
+        "aliases": [
+          "OUTLINED_FUNCTION_139"
+        ],
+        "extent": 6,
+        "frame": 0,
+        "mapping": [
+          [
+            0,
+            6,
+            "$t"
+          ]
+        ],
+        "body_hex": "5df8048bf0bd",
+        "instructions": [
+          {
+            "offset": 0,
+            "width": 4,
+            "operation": "ldr\tr8, [sp], #4",
+            "bytes_hex": "5df8048b"
+          },
+          {
+            "offset": 4,
+            "width": 2,
+            "operation": "pop\t{r4, r5, r6, r7, pc}",
+            "bytes_hex": "f0bd"
+          }
+        ]
+      }
+    ],
+    "extra_functions": [
+      {
+        "raw_roles": [
+          "_RNvCs6YPEVBgX88i_7___rustc17rust_begin_unwind"
+        ],
+        "roles": [
+          "_RNvCs_7___rustc17rust_begin_unwind"
+        ],
+        "extent": 116,
+        "frame": 32,
+        "address": "0x100280a0"
+      },
+      {
+        "raw_roles": [
+          "_RNvNtCs6m2Zc6X1WBq_4core3fmt5write"
+        ],
+        "roles": [
+          "_RNvNtCs_4core3fmt5write"
+        ],
+        "extent": 262,
+        "frame": 56,
+        "address": "0x10016164"
+      },
+      {
+        "raw_roles": [
+          "OUTLINED_FUNCTION_139"
+        ],
+        "roles": [
+          "OUTLINED_FUNCTION_139"
+        ],
+        "extent": 6,
+        "frame": 0,
+        "address": "0x10028950"
+      },
+      {
+        "raw_roles": [
+          "_RNvNtCsaFtIK0bfMPA_5defmt6export18acquire_and_header"
+        ],
+        "roles": [
+          "_RNvNtCs_5defmt6export18acquire_and_header"
+        ],
+        "extent": 24,
+        "frame": 16,
+        "address": "0x10026d28"
+      },
+      {
+        "raw_roles": [
+          "_RNvNtCsaFtIK0bfMPA_5defmt6export4istr"
+        ],
+        "roles": [
+          "_RNvNtCs_5defmt6export4istr"
+        ],
+        "extent": 18,
+        "frame": 16,
+        "address": "0x10026cec"
+      },
+      {
+        "raw_roles": [
+          "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_"
+        ],
+        "roles": [
+          "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+        ],
+        "extent": 24,
+        "frame": 8,
+        "address": "0x10026d70"
+      },
+      {
+        "raw_roles": [
+          "_defmt_write"
+        ],
+        "roles": [
+          "_defmt_write"
+        ],
+        "extent": 156,
+        "frame": 40,
+        "address": "0x10026f4c"
+      },
+      {
+        "raw_roles": [
+          "_defmt_release"
+        ],
+        "roles": [
+          "_defmt_release"
+        ],
+        "extent": 92,
+        "frame": 16,
+        "address": "0x10026ef0"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x1001720d",
+        "producers": [
+          {
+            "function": "panicinfo_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x32",
+            "pool_offset": "0x78",
+            "register": "r1"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "roles": [
+          "_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "extent": 230,
+        "frame": 64,
+        "address": "0x1001720c"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x10016111",
+        "producers": [
+          {
+            "function": "panicinfo_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x36",
+            "pool_offset": "0x7c",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "extent": 20,
+        "frame": 8,
+        "address": "0x10016110"
+      },
+      {
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs10Sv9BTgJIR_11panic_probe"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs_11panic_probe"
+        ],
+        "extent": 136,
+        "frame": 56,
+        "address": "0x10028018"
+      },
+      {
+        "kind": "thumb_callback",
+        "value": "0x10026e19",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x2a",
+            "pool_offset": "0x64",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCsaFtIK0bfMPA_5defmt"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs_5defmt"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x10026e18"
+      },
+      {
+        "raw_roles": [
+          "_RNvXs3_NtCsaFtIK0bfMPA_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str"
+        ],
+        "roles": [
+          "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x10026d88"
+      },
+      {
+        "raw_roles": [
+          "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_"
+        ],
+        "roles": [
+          "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+        ],
+        "extent": 128,
+        "frame": 24,
+        "address": "0x10026d98"
+      }
+    ],
+    "objects": {
+      "prefix": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x10034a80",
+        "producers": [
+          {
+            "function": "panicinfo_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0xe",
+            "pool_offset": "0x74",
+            "register": "r1"
+          }
+        ],
+        "extent": 12,
+        "alignment": 1,
+        "bytes_hex": "70616e69636b656420617420"
+      },
+      "u32_callback": {
+        "kind": "thumb_callback",
+        "value": "0x1001720d",
+        "producers": [
+          {
+            "function": "panicinfo_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x32",
+            "pool_offset": "0x78",
+            "register": "r1"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "roles": [
+          "_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt"
+        ],
+        "extent": 230,
+        "frame": 64,
+        "address": "0x1001720c"
+      },
+      "str_callback": {
+        "kind": "thumb_callback",
+        "value": "0x10016111",
+        "producers": [
+          {
+            "function": "panicinfo_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x36",
+            "pool_offset": "0x7c",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtReNtB6_7Display3fmtB8_"
+        ],
+        "extent": 20,
+        "frame": 8,
+        "address": "0x10016110"
+      },
+      "location_template": {
+        "kind": "default_arguments_template",
+        "value": "0x1002b9d5",
+        "producers": [
+          {
+            "function": "panicinfo_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x3c",
+            "pool_offset": "0x80",
+            "register": "r2"
+          }
+        ],
+        "extent": 8,
+        "alignment": 1,
+        "bytes_hex": "c0013ac0013ac000"
+      },
+      "separator": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x10034a8c",
+        "producers": [
+          {
+            "function": "panicinfo_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x50",
+            "pool_offset": "0x84",
+            "register": "r1"
+          }
+        ],
+        "extent": 2,
+        "alignment": 1,
+        "bytes_hex": "3a0a"
+      },
+      "panicked": {
+        "kind": "writable_guard_byte",
+        "value": "0x2006cef8",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x4",
+            "pool_offset": "0x54",
+            "register": "r1"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_role": "_RNvNvNtCs10Sv9BTgJIR_11panic_probe3imp5panic8PANICKED.0",
+        "role": "_RNvNvNtCs_11panic_probe3imp5panic8PANICKED.0",
+        "initial_value": 0,
+        "elf_section_type": "SHT_NOBITS"
+      },
+      "header_id": {
+        "kind": "defmt_interned_symbol_value",
+        "value": "0xe",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x12",
+            "pool_offset": "0x58",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_symbol": "{\"package\":\"panic-probe\",\"tag\":\"defmt_error\",\"data\":\"{}\",\"disambiguator\":\"3281125884690968605\",\"crate_name\":\"panic_probe\"}",
+        "symbol_json": {
+          "package": "panic-probe",
+          "tag": "defmt_error",
+          "data": "{}",
+          "disambiguator": "3281125884690968605",
+          "crate_name": "panic_probe"
+        },
+        "elf_section_index": 12,
+        "value_bits": 16,
+        "not_memory_pointer": true
+      },
+      "display_encoding_id": {
+        "kind": "defmt_interned_symbol_value",
+        "value": "0x3",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x18",
+            "pool_offset": "0x5c",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "raw_symbol": "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=__internal_Display}\",\"disambiguator\":\"14158116662542268607\",\"crate_name\":\"defmt\"}",
+        "symbol_json": {
+          "package": "defmt",
+          "tag": "defmt_prim",
+          "data": "{=__internal_Display}",
+          "disambiguator": "14158116662542268607",
+          "crate_name": "defmt"
+        },
+        "elf_section_index": 12,
+        "value_bits": 16,
+        "not_memory_pointer": true
+      },
+      "panicinfo_vtable": {
+        "kind": "panicinfo_display_vtable",
+        "value": "0x1003c1f8",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x1e",
+            "pool_offset": "0x60",
+            "register": "r0"
+          }
+        ],
+        "extent": 16,
+        "alignment": 4,
+        "layout_words": [
+          0,
+          4,
+          4
+        ],
+        "slots": {
+          "12": {
+            "raw_roles": [
+              "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs10Sv9BTgJIR_11panic_probe"
+            ],
+            "roles": [
+              "_RNvXs1i_NtCs_4core3fmtRNtNtNtB8_5panic10panic_info9PanicInfoNtB6_7Display3fmtCs_11panic_probe"
+            ],
+            "extent": 136,
+            "frame": 56,
+            "address": "0x10028018"
+          }
+        }
+      },
+      "outer_template": {
+        "kind": "default_arguments_template",
+        "value": "0x1002ac51",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x20",
+            "pool_offset": "0x68",
+            "register": "r1"
+          }
+        ],
+        "extent": 2,
+        "alignment": 1,
+        "bytes_hex": "c000"
+      },
+      "dyn_display_callback": {
+        "kind": "thumb_callback",
+        "value": "0x10026e19",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x2a",
+            "pool_offset": "0x64",
+            "register": "r0"
+          }
+        ],
+        "alignment": 2,
+        "raw_roles": [
+          "_RNvXs1i_NtCs6m2Zc6X1WBq_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCsaFtIK0bfMPA_5defmt"
+        ],
+        "roles": [
+          "_RNvXs1i_NtCs_4core3fmtRDNtB6_7DisplayEL_Bx_3fmtCs_5defmt"
+        ],
+        "extent": 16,
+        "frame": 8,
+        "address": "0x10026e18"
+      },
+      "trailer": {
+        "kind": "readonly_exact_bytes",
+        "value": "0x1003bef8",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x38",
+            "pool_offset": "0x6c",
+            "register": "r0"
+          }
+        ],
+        "extent": 1,
+        "alignment": 1,
+        "bytes_hex": "ff"
+      },
+      "shcsr": {
+        "kind": "fixed_mmio_address",
+        "value": "0xe000ed24",
+        "producers": [
+          {
+            "function": "handler_literal",
+            "kind": "pc_literal",
+            "instruction_offset": "0x44",
+            "pool_offset": "0x70",
+            "register": "r0"
+          }
+        ],
+        "extent": 4,
+        "alignment": 4,
+        "relocatable": false,
+        "clear_mask": "0x40000"
+      },
+      "sink_vtable": {
+        "kind": "write_vtable",
+        "value": "0x1003befc",
+        "producers": [],
+        "extent": 24,
+        "alignment": 4,
+        "layout_words": [
+          0,
+          0,
+          1
+        ],
+        "slots": {
+          "12": {
+            "raw_roles": [
+              "_RNvXs3_NtCsaFtIK0bfMPA_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str"
+            ],
+            "roles": [
+              "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+            ],
+            "extent": 16,
+            "frame": 8,
+            "address": "0x10026d88"
+          },
+          "16": {
+            "raw_roles": [
+              "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_"
+            ],
+            "roles": [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+            ],
+            "extent": 128,
+            "frame": 24,
+            "address": "0x10026d98"
+          },
+          "20": {
+            "raw_roles": [
+              "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_"
+            ],
+            "roles": [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+            ],
+            "extent": 24,
+            "frame": 8,
+            "address": "0x10026d70"
+          }
+        },
+        "required_downstream_binding": "FmtWrite.write_fmt constant Write table producer; separate contract required"
+      }
+    }
+  }
+]

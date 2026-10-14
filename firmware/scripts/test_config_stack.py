@@ -229,6 +229,162 @@ class NumericSupport(unittest.TestCase):
                     self.assertEqual(len(result['default_sites']),2)
 
 
+class PanicBodies(unittest.TestCase):
+    def fixture(self,mode,code_shift=0,data_shift=0,guard_shift=0):
+        spec=next(r for r in json.loads((Path(__file__).parent/'fixtures/config-panic.json').read_text()) if r['mode']==mode)
+        if code_shift or data_shift or guard_shift:
+            relocation={}
+            for obj in spec['objects'].values():
+                old=int(obj['value'],16)
+                delta=code_shift if obj['kind']=='thumb_callback' else guard_shift if obj['kind']=='writable_guard_byte' else data_shift if ('bytes_hex' in obj or 'layout_words' in obj) else 0
+                relocation[old]=old+delta;obj['value']=hex(old+delta)
+                if 'address' in obj:obj['address']=hex(int(obj['address'],16)+code_shift)
+                for target in obj.get('slots',{}).values():target['address']=hex(int(target['address'],16)+code_shift)
+            for f in spec['functions']:
+                body=bytearray.fromhex(f['body_hex']);lows={}
+                for row in f['instructions']:
+                    parts=row['operation'].split(None,1);mnemonic=parts[0];operands=parts[1] if len(parts)>1 else ''
+                    pair=re.fullmatch(r'(r[0-9]+), #(0x[0-9a-f]+|[0-9]+)',operands)
+                    if mnemonic=='movw' and pair:lows[pair[1]]=(row,int(pair[2],0))
+                    elif mnemonic=='movt' and pair and pair[1] in lows:
+                        lower,low=lows.pop(pair[1]);old=low|(int(pair[2],0)<<16)
+                        if old in relocation:
+                            for current,value in ((lower,relocation[old]&65535),(row,relocation[old]>>16)):
+                                raw=bytes.fromhex(current['bytes_hex']);first,second=struct.unpack('<HH',raw)
+                                raw=struct.pack('<HH',(first&~0x040f)|((value>>12)&15)|((value>>1)&0x400),
+                                                (second&~0x70ff)|((value&0x700)<<4)|(value&255))
+                                current['bytes_hex']=raw.hex();current['operation']=current['operation'].split(None,1)[0]+' '+pair[1]+', #'+hex(value)
+                                body[current['offset']:current['offset']+len(raw)]=raw
+                    if re.fullmatch(r'(?:b(?:l|eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?|cbz|cbnz)(?:\.w)?',mnemonic) and '0x' in operands:
+                        row['operation']=mnemonic+' '+re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operands,count=1)
+                for lo,hi,kind in f['mapping']:
+                    if kind!='$d':continue
+                    for offset in range(lo,hi,4):
+                        old=struct.unpack_from('<I',body,offset)[0]
+                        struct.pack_into('<I',body,offset,relocation.get(old,old))
+                f['body_hex']=body.hex();f['address']+=code_shift
+            for f in spec['extra_functions']:f['address']=hex(int(f['address'],16)+code_shift)
+        segments=[];functions={};sizes={};mappings=[];records={}
+        for f in spec['functions']:
+            start=f['address'];segments.append((start,bytes.fromhex(f['body_hex'])))
+            for name in f['aliases']:functions[name]=(start|1,f['extent'],0)
+            sizes[start]=f['frame']
+            mappings.extend((kind,start+lo,0) for lo,hi,kind in f['mapping'])
+            for row in f['instructions']:
+                parts=row['operation'].split(None,1)
+                at=start+row['offset'];records[at]=Instruction(at,bytes.fromhex(row['bytes_hex']),parts[0],parts[1] if len(parts)>1 else '')
+        for f in spec['extra_functions']:
+            start=int(f['address'],16)
+            for name in f['raw_roles']:functions[name]=(start|1,f['extent'],0)
+            sizes[start]=f['frame']
+            if not any(a<=start<a+len(b) for a,b in segments):segments.append((start,bytes(f['extent'])))
+        symbols=[];guard=None
+        for key,obj in spec['objects'].items():
+            value=int(obj['value'],16)
+            if obj['kind']=='writable_guard_byte':guard=value;symbols.append((obj['raw_role'],value,1,1,2))
+            elif obj['kind']=='defmt_interned_symbol_value':symbols.append((obj['raw_symbol'],value,1,17,3))
+            elif 'bytes_hex' in obj:segments.append((value,bytes.fromhex(obj['bytes_hex'])))
+            elif 'layout_words' in obj:
+                pointers=[int(v['address'],16)|1 for slot,v in sorted(obj['slots'].items(),key=lambda p:int(p[0]))]
+                segments.append((value,struct.pack('<'+'I'*(3+len(pointers)),*obj['layout_words'],*pointers)))
+        code_lo=min(a for a,b in segments)
+        ro=min(int(o['value'],16) for o in spec['objects'].values() if 'bytes_hex' in o or 'layout_words' in o)
+        hi=max(a+len(b) for a,b in segments);blob=bytearray(hi-code_lo)
+        for a,b in segments:blob[a-code_lo:a-code_lo+len(b)]=b
+        meta=(0,1,0x200000,0,len(blob),64,0,0,1,0);blob+=bytes(64)
+        elf=SimpleNamespace(data=bytes(blob),functions=functions,mapping_symbols=mappings,symbol_entries=symbols,
+            sections=[(0,1,6,code_lo,0,ro-code_lo,0,0,2,0),(0,1,2,ro,ro-code_lo,hi-ro,0,0,4,0),
+                      (0,8,3,guard,0,1,0,0,1,0),meta],named={'.defmt':meta})
+        return config_stack.DiagnosticObjects(elf,sizes),records,spec
+
+    def test_complete_panic_shapes_objects_and_guarded_reentry_all_modes(self):
+        import config_panic
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode)
+            for f in spec['functions']:
+                proof=config_panic.panic_body(objects,f['aliases'][0],records)
+                self.assertEqual(proof['shape'],f['shape'])
+                if f['shape'].startswith('handler'):
+                    self.assertEqual(proof['guarded_reentry_frames'],(32,32))
+
+    def test_independent_panic_code_readonly_guard_relocation_preserves_ids(self):
+        import config_panic
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode,0x1000,0x21000,0x100)
+            for f in spec['functions']:
+                proof=config_panic.panic_body(objects,f['aliases'][0],records)
+                self.assertEqual(proof['function'],f['address'])
+                if f['shape'].startswith('handler'):
+                    self.assertEqual(proof['objects']['header_id'],14 if mode!='sizes' else 15)
+
+    def test_guard_order_callback_cells_and_restoring_epilogue_mutations_reject(self):
+        import config_panic
+        for shape,offset,mnemonic,operands in [('handler_movwide',0x16,'strb','r2, [r0]'),
+                ('handler_movwide',0x12,'cbnz','r2, 0x10048d0e'),
+                ('handler_literal',0x2c,'str','r0, [sp, #0xc]'),
+                ('panicinfo_literal',0x5c,'add','sp, #0x24'),
+                ('panicinfo_epilogue',0x4,'bx','lr')]:
+            mode='speed2' if shape=='handler_movwide' else 'sizez';objects,records,spec=self.fixture(mode)
+            f=next(f for f in spec['functions'] if f['shape']==shape);at=f['address']+offset
+            old=records[at];records[at]=Instruction(at,old.raw,mnemonic,operands)
+            with self.subTest(shape=shape,offset=offset),self.assertRaises(AssertionError):
+                config_panic.panic_body(objects,f['aliases'][0],records)
+
+    def test_panic_tables_literals_terminal_address_and_current_callback_metadata_reject(self):
+        import config_panic
+        for mode in ('speed2','sizes','sizez'):
+            for fault in ('table_header','table_slot','callback_frame','template','prefix','shcsr','guard_alias'):
+                objects,records,spec=self.fixture(mode)
+                shape='handler_literal' if mode=='sizez' else 'handler_movwide'
+                f=next(f for f in spec['functions'] if f['shape']==shape)
+                data=bytearray(objects.elf.data)
+                key='sink_vtable' if fault.startswith('table_') or fault=='callback_frame' else ('outer_template' if fault=='template' else 'prefix')
+                obj=spec['objects'].get(key)
+                if fault=='guard_alias':objects.elf.symbol_entries.append(objects.elf.symbol_entries[0])
+                elif fault=='shcsr':
+                    with self.assertRaises(AssertionError):config_panic.panic_object(objects,0xe000ed28,'shcsr')
+                    continue
+                elif fault=='callback_frame':objects.sizes[int(obj['slots']['12']['address'],16)]=0
+                else:
+                    address=int(obj['value'],16)
+                    section=next(s for s in objects.elf.sections if s[1]==1 and s[3]<=address<s[3]+s[5])
+                    at=section[4]+address-section[3]
+                    if fault=='table_header':struct.pack_into('<I',data,at+8,4)
+                    elif fault=='table_slot':data[at+12:at+16]=data[at+16:at+20]
+                    else:data[at]^=1
+                    objects.elf.data=bytes(data)
+                # Prefix belongs to PanicInfo rather than the outer handler.
+                if fault=='prefix':f=next(f for f in spec['functions'] if f['shape'].startswith('panicinfo_') and f['shape']!='panicinfo_epilogue')
+                # SizeZ's sink table is produced by the child write_fmt, not
+                # this handler body; assert that independent object obligation.
+                if mode=='sizez' and fault in ('table_header','table_slot','callback_frame'):
+                    with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
+                        config_panic.panic_object(objects,int(obj['value'],16),'sink_vtable')
+                else:
+                    with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
+                        config_panic.panic_body(objects,f['aliases'][0],records)
+
+    def test_sizez_literal_pool_binding_and_full_body_coverage_reject(self):
+        import config_panic
+        for fault in ('pool','mapping','partial','raw','epilogue_frame'):
+            objects,records,spec=self.fixture('sizez')
+            f=next(f for f in spec['functions'] if f['shape']=='handler_literal')
+            if fault=='pool':
+                data=bytearray(objects.elf.data);start=f['address']
+                struct.pack_into('<I',data,start+0x54-objects.elf.sections[0][3],0xe000ed28)
+                objects.elf.data=bytes(data)
+            elif fault=='mapping':objects.elf.mapping_symbols=[m for m in objects.elf.mapping_symbols if m[1]!=f['address']+0x54]
+            elif fault=='partial':del records[f['address']]
+            elif fault=='raw':
+                row=records[f['address']];records[row.address]=Instruction(row.address,bytes(len(row.raw)),row.mnemonic,row.operands)
+            else:
+                f=next(f for f in spec['functions'] if f['shape']=='panicinfo_literal')
+                outline=next(f for f in spec['functions'] if f['shape']=='panicinfo_epilogue')
+                objects.sizes[outline['address']]=8
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_panic.panic_body(objects,f['aliases'][0],records)
+
+
 class DiagnosticRoots(unittest.TestCase):
     def test_returned_widget_view_and_unknown_debug_roots_reject(self):
         self.assertEqual(error_root_role(VALIDATION),'validation_error')
@@ -342,6 +498,29 @@ class PanicSymbolObjects(unittest.TestCase):
         objects,_,_=self.fixture()
         self.assertEqual(objects.panic_guard(0x20000007),0x20000007)
         self.assertEqual(objects.defmt_id(14,'header_id'),14)
+
+    def test_defmt_pre_end_object_ids_reject_reserved_domain_with_coherent_metadata(self):
+        for role in ('header_id','display_encoding_id'):
+            for value in (0,65533,65534,65535):
+                objects,_,_=self.fixture()
+                name=json.dumps(config_stack.DEFMT_IDENTITIES[role])
+                metadata=(0,1,0x200000,0,0,65536,0,0,1,0)
+                objects.elf.sections[1]=metadata;objects.elf.named['.defmt']=metadata
+                objects.elf.data=bytes(65536)
+                objects.elf.symbol_entries[1]=(name,value,1,17,1)
+                with self.subTest(role=role,value=value),self.assertRaises(AssertionError):
+                    objects.defmt_id(value,role)
+
+    def test_defmt_pre_end_object_id_boundaries_accept(self):
+        for role in ('header_id','display_encoding_id'):
+            for value in (1,65532):
+                objects,_,_=self.fixture()
+                name=json.dumps(config_stack.DEFMT_IDENTITIES[role])
+                metadata=(0,1,0x200000,0,0,65533,0,0,1,0)
+                objects.elf.sections[1]=metadata;objects.elf.named['.defmt']=metadata
+                objects.elf.data=bytes(65533)
+                objects.elf.symbol_entries[1]=(name,value,1,17,1)
+                with self.subTest(role=role,value=value):self.assertEqual(objects.defmt_id(value,role),value)
 
     def test_guard_size_type_section_identity_and_duplicate_reject(self):
         for mutation in ('size','type','binding','section','address','outside_section','readonly','name','duplicate','identical_duplicate'):
