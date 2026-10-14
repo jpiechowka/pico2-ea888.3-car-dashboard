@@ -9,7 +9,7 @@ import re
 from config_finite import _complete_body
 from config_helper_contracts import HELPER_GRAMMARS,HELPER_ROLES,HELPER_SEMANTIC_ROLES
 from config_logger import _logger_function
-from config_roots import root_location
+from config_roots import root_location,root_adapter
 from config_regions import Region,Transfer,Storage,borrow,require_disjoint,require_writes,audit_coverage,_control
 from config_stack import canonical_symbol,transfer_family
 from validation import require
@@ -21,6 +21,8 @@ FRAME_LAYOUTS={
     'take_varint_u32':(32,0,None),'seq_u8':(8,0,None),'seq_u16':(8,0,None),'seq_bool':(8,0,None),
     'serialize_u16':(24,8,(4,3)),'serialize_u8':(16,8,(7,1)),'varint_usize':(24,8,(0,5)),
     'varint_u32_small':(24,8,(3,5)),'serialize_f32':(16,8,(4,4)),'seq_f32':(24,8,(0,8)),
+    'range_to_inclusive_index_mut':(16,0,None),'array5_index_mut':(8,0,None),
+    'deserialize_u16':(24,0,None),'deserialize_seed_f32':(8,0,None),
 }
 
 
@@ -58,14 +60,15 @@ def helper_body(objects,name,instructions,outline_role=None,_ancestry=()):
                  requires_source_inputs_owned_effects_and_child_closure=True,
                  requires_parent_frame_and_abi=semantic if outline_role else None,
                  requires_u32_domain_maximum=127 if semantic=='varint_u32_small' else None,
-                 requires_hard_float_s0=semantic=='serialize_f32')
+                 requires_hard_float_s0=semantic=='serialize_f32',
+                 requires_unaligned_single_ldr_policy=semantic=='deserialize_seed_f32')
     return proof
 
 
 def helper_coverage(objects,name,instructions,context,outline_role=None):
     """Reconcile complete matched helper inventories, retaining O5 obligations."""
     proof=helper_body(objects,name,instructions,outline_role);start=proof['function']
-    contract=HELPER_GRAMMARS[proof['semantic_role']];rows=[];padding=[];edges=[]
+    contract=HELPER_GRAMMARS[proof['semantic_role']];rows=[];padding=[];edges=[];nonreturn_boundaries=[]
     children={start+offset:(operation,target,role,frame) for offset,operation,target,role,frame in proof['ordinary_edges']}
     for offset,width,operation in contract['instructions']:
         at=start+offset;row=instructions[at]
@@ -77,7 +80,13 @@ def helper_coverage(objects,name,instructions,context,outline_role=None):
             edges.append(Transfer(at,row.mnemonic,'conditional_return' if conditional else 'return',None,'complete helper restore/return'))
         elif at in children:
             _,target,role,_=children[at]
-            edges.append(Transfer(at,row.mnemonic,'call' if family=='bl' else 'tail',target,'complete helper typed child',role))
+            kind='call' if family=='bl' else 'tail'
+            if proof['semantic_role']=='range_to_inclusive_index_mut' and offset==22:
+                require(family=='bl' and role=='_RNvNtNtCs_4core5slice5index16slice_index_fail','range nonreturn boundary differs')
+                names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target]
+                require(len(names)==1,'ambiguous range nonreturn adapter')
+                nonreturn_boundaries.append(root_adapter(objects,names[0],instructions));kind='nonreturn'
+            edges.append(Transfer(at,row.mnemonic,kind,target,'complete helper typed child',role))
         else:
             target=re.search(r'0x([0-9a-f]+)(?:\s|$)',operands)
             require(target is not None and family in ('b','cbz','cbnz'),'unreviewed helper transfer inventory')
@@ -95,7 +104,7 @@ def helper_coverage(objects,name,instructions,context,outline_role=None):
         child=helper_body(objects,names[0],instructions,role)
         return child['extent'],child['frame'],names[0]
     coverage=audit_coverage(objects,name,instructions,context,regions,_function_consumer=target_consumer)
-    proof.update(coverage=coverage)
+    proof.update(coverage=coverage,nonreturn_boundaries=tuple(nonreturn_boundaries))
     return proof
 
 

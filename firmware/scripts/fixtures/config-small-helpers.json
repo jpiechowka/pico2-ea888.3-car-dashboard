@@ -475,6 +475,51 @@
         3,
         268603768,
         "0446486800287047"
+      ],
+      [
+        3,
+        268548866,
+        "d1e900239b1a042b0ad3131d0b603ab180b56f46116841600021bde8804002e004214170012101707047"
+      ],
+      [
+        3,
+        268550970,
+        "d0b502af044690423fbf621c08461146d0bd00202146faf7c8fc"
+      ],
+      [
+        3,
+        268550996,
+        "80b56f4613460246084611460522bde88040fff7e8bf"
+      ],
+      [
+        3,
+        268601304,
+        "5df804bbf0bd"
+      ],
+      [
+        3,
+        268548132,
+        "f0b503af4df804bd044600254ff0ff36022e14d0204600f025f8c00712d1013601f07f00c6ebc60292b29040054348b20028edd4022e09d1c8b2032806d940f2015006e0c8b20002013000e02804c10703d000f47f40013002e04ff6ff7188430cf0a8bf"
+      ],
+      [
+        3,
+        268528868,
+        "80b56f4686b0904210d9cde9000247f20d2001a9c1f201000590cde90301684602904bf24020c1f2020024e0914212d8884210d9cde9000147f20d2001a9c1f201000590cde90301684602904af69640c1f202000fe047f20d20cde90012c1f2010001a905900390684602904bf246100491c1f2020002a91a46fff7f3f9"
+      ],
+      [
+        5,
+        268612160,
+        "1272616e676520737461727420696e64657820c022206f7574206f662072616e676520666f7220736c696365206f66206c656e67746820c000"
+      ],
+      [
+        5,
+        268610710,
+        "16736c69636520696e6465782073746172747320617420c00d2062757420656e647320617420c000"
+      ],
+      [
+        5,
+        268611910,
+        "1072616e676520656e6420696e64657820c022206f7574206f662072616e676520666f7220736c696365206f66206c656e67746820c000"
       ]
     ],
     "symbol_entries": [
@@ -659,6 +704,34 @@
         100,
         2,
         3
+      ],
+      [
+        "OUTLINED_FUNCTION_99",
+        268601305,
+        6,
+        2,
+        3
+      ],
+      [
+        "_RNvNtNtCs6m2Zc6X1WBq_4core5slice5index16slice_index_fail",
+        268528869,
+        126,
+        2,
+        3
+      ],
+      [
+        "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt",
+        268530189,
+        230,
+        2,
+        3
+      ],
+      [
+        "_RNvNtCs6m2Zc6X1WBq_4core9panicking9panic_fmt",
+        268525897,
+        28,
+        2,
+        3
       ]
     ],
     "functions": {
@@ -791,6 +864,26 @@
         268548133,
         100,
         3
+      ],
+      "OUTLINED_FUNCTION_99": [
+        268601305,
+        6,
+        3
+      ],
+      "_RNvNtNtCs6m2Zc6X1WBq_4core5slice5index16slice_index_fail": [
+        268528869,
+        126,
+        3
+      ],
+      "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt": [
+        268530189,
+        230,
+        3
+      ],
+      "_RNvNtCs6m2Zc6X1WBq_4core9panicking9panic_fmt": [
+        268525897,
+        28,
+        3
       ]
     },
     "sizes": {
@@ -818,7 +911,11 @@
       "268550970": 16,
       "268550996": 8,
       "268548866": 8,
-      "268548132": 24
+      "268548132": 24,
+      "268601304": 0,
+      "268528868": 32,
+      "268530188": 64,
+      "268525896": 32
     },
     "elf_sha256": "55070b3fefd8092588abfe4d7e47515b1aa8cb55b034c07e2e9835dd41a31520",
     "instances": [
@@ -989,6 +1086,46 @@
         "address": 268603768,
         "extent": 8,
         "frame": 0
+      },
+      {
+        "role": "deserialize_seed_f32",
+        "typed_role": "_RINvXs3_NtCs_10serde_core2deINtNtCs_4core6marker11PhantomDatafENtB6_15DeserializeSeed11deserializeQINtNtNtCs_8postcard2de12deserializer12DeserializerNtNtB20_7flavors5SliceEECs_16dashboard_config",
+        "name": "_RINvXs3_NtCsaZE6Mx8XMRU_10serde_core2deINtNtCs6m2Zc6X1WBq_4core6marker11PhantomDatafENtB6_15DeserializeSeed11deserializeQINtNtNtCsi4xenv6KiXo_8postcard2de12deserializer12DeserializerNtNtB20_7flavors5SliceEECshxbT6mSCLYQ_16dashboard_config",
+        "address": 268548866,
+        "extent": 42,
+        "frame": 8
+      },
+      {
+        "role": "range_to_inclusive_index_mut",
+        "typed_role": "_RNvXsa_NtNtCs_4core5slice5indexINtNtNtB9_3ops5range16RangeToInclusivejEINtB5_10SliceIndexShE9index_mutCs_16dashboard_config",
+        "name": "_RNvXsa_NtNtCs6m2Zc6X1WBq_4core5slice5indexINtNtNtB9_3ops5range16RangeToInclusivejEINtB5_10SliceIndexShE9index_mutCshxbT6mSCLYQ_16dashboard_config",
+        "address": 268550970,
+        "extent": 26,
+        "frame": 16
+      },
+      {
+        "role": "array5_index_mut",
+        "typed_role": "_RNvXse_NtCs_4core5arrayAhj5_INtNtNtB7_3ops5index8IndexMutINtNtBG_5range16RangeToInclusivejEE9index_mutCs_16dashboard_config",
+        "name": "_RNvXse_NtCs6m2Zc6X1WBq_4core5arrayAhj5_INtNtNtB7_3ops5index8IndexMutINtNtBG_5range16RangeToInclusivejEE9index_mutCshxbT6mSCLYQ_16dashboard_config",
+        "address": 268550996,
+        "extent": 22,
+        "frame": 8
+      },
+      {
+        "role": "restore_r11_low20",
+        "typed_role": "@outline:ordinary_restore_r11_low20",
+        "name": "OUTLINED_FUNCTION_99",
+        "address": 268601304,
+        "extent": 6,
+        "frame": 0
+      },
+      {
+        "role": "deserialize_u16",
+        "typed_role": "_RINvXsN_NtNtCs_10serde_core2de5implstNtB8_11Deserialize11deserializeQINtNtNtCs_8postcard2de12deserializer12DeserializerNtNtB1l_7flavors5SliceEECs_16dashboard_config",
+        "name": "_RINvXsN_NtNtCsaZE6Mx8XMRU_10serde_core2de5implstNtB8_11Deserialize11deserializeQINtNtNtCsi4xenv6KiXo_8postcard2de12deserializer12DeserializerNtNtB1l_7flavors5SliceEECshxbT6mSCLYQ_16dashboard_config",
+        "address": 268548132,
+        "extent": 100,
+        "frame": 24
       }
     ],
     "records": [
@@ -2516,6 +2653,646 @@
         "address": 268603774,
         "bytes": "7047",
         "text": "bx lr"
+      },
+      {
+        "address": 268548866,
+        "bytes": "d1e90023",
+        "text": "ldrd r2, r3, [r1]"
+      },
+      {
+        "address": 268548870,
+        "bytes": "9b1a",
+        "text": "subs r3, r3, r2"
+      },
+      {
+        "address": 268548872,
+        "bytes": "042b",
+        "text": "cmp r3, #0x4"
+      },
+      {
+        "address": 268548874,
+        "bytes": "0ad3",
+        "text": "blo 0x1001bb22 <<core::marker::PhantomData<f32> as serde_core::de::DeserializeSeed>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x20>"
+      },
+      {
+        "address": 268548876,
+        "bytes": "131d",
+        "text": "adds r3, r2, #0x4"
+      },
+      {
+        "address": 268548878,
+        "bytes": "0b60",
+        "text": "str r3, [r1]"
+      },
+      {
+        "address": 268548880,
+        "bytes": "3ab1",
+        "text": "cbz r2, 0x1001bb22 <<core::marker::PhantomData<f32> as serde_core::de::DeserializeSeed>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x20>"
+      },
+      {
+        "address": 268548882,
+        "bytes": "80b5",
+        "text": "push {r7, lr}"
+      },
+      {
+        "address": 268548884,
+        "bytes": "6f46",
+        "text": "mov r7, sp"
+      },
+      {
+        "address": 268548886,
+        "bytes": "1168",
+        "text": "ldr r1, [r2]"
+      },
+      {
+        "address": 268548888,
+        "bytes": "4160",
+        "text": "str r1, [r0, #0x4]"
+      },
+      {
+        "address": 268548890,
+        "bytes": "0021",
+        "text": "movs r1, #0x0"
+      },
+      {
+        "address": 268548892,
+        "bytes": "bde88040",
+        "text": "pop.w {r7, lr}"
+      },
+      {
+        "address": 268548896,
+        "bytes": "02e0",
+        "text": "b 0x1001bb28 <<core::marker::PhantomData<f32> as serde_core::de::DeserializeSeed>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x26>"
+      },
+      {
+        "address": 268548898,
+        "bytes": "0421",
+        "text": "movs r1, #0x4"
+      },
+      {
+        "address": 268548900,
+        "bytes": "4170",
+        "text": "strb r1, [r0, #0x1]"
+      },
+      {
+        "address": 268548902,
+        "bytes": "0121",
+        "text": "movs r1, #0x1"
+      },
+      {
+        "address": 268548904,
+        "bytes": "0170",
+        "text": "strb r1, [r0]"
+      },
+      {
+        "address": 268548906,
+        "bytes": "7047",
+        "text": "bx lr"
+      },
+      {
+        "address": 268550970,
+        "bytes": "d0b5",
+        "text": "push {r4, r6, r7, lr}"
+      },
+      {
+        "address": 268550972,
+        "bytes": "02af",
+        "text": "add r7, sp, #0x8"
+      },
+      {
+        "address": 268550974,
+        "bytes": "0446",
+        "text": "mov r4, r0"
+      },
+      {
+        "address": 268550976,
+        "bytes": "9042",
+        "text": "cmp r0, r2"
+      },
+      {
+        "address": 268550978,
+        "bytes": "3fbf",
+        "text": "itttt lo"
+      },
+      {
+        "address": 268550980,
+        "bytes": "621c",
+        "text": "addlo r2, r4, #0x1"
+      },
+      {
+        "address": 268550982,
+        "bytes": "0846",
+        "text": "movlo r0, r1"
+      },
+      {
+        "address": 268550984,
+        "bytes": "1146",
+        "text": "movlo r1, r2"
+      },
+      {
+        "address": 268550986,
+        "bytes": "d0bd",
+        "text": "poplo {r4, r6, r7, pc}"
+      },
+      {
+        "address": 268550988,
+        "bytes": "0020",
+        "text": "movs r0, #0x0"
+      },
+      {
+        "address": 268550990,
+        "bytes": "2146",
+        "text": "mov r1, r4"
+      },
+      {
+        "address": 268550992,
+        "bytes": "faf7c8fc",
+        "text": "bl 0x10016ce4 <core::slice::index::slice_index_fail>"
+      },
+      {
+        "address": 268550996,
+        "bytes": "80b5",
+        "text": "push {r7, lr}"
+      },
+      {
+        "address": 268550998,
+        "bytes": "6f46",
+        "text": "mov r7, sp"
+      },
+      {
+        "address": 268551000,
+        "bytes": "1346",
+        "text": "mov r3, r2"
+      },
+      {
+        "address": 268551002,
+        "bytes": "0246",
+        "text": "mov r2, r0"
+      },
+      {
+        "address": 268551004,
+        "bytes": "0846",
+        "text": "mov r0, r1"
+      },
+      {
+        "address": 268551006,
+        "bytes": "1146",
+        "text": "mov r1, r2"
+      },
+      {
+        "address": 268551008,
+        "bytes": "0522",
+        "text": "movs r2, #0x5"
+      },
+      {
+        "address": 268551010,
+        "bytes": "bde88040",
+        "text": "pop.w {r7, lr}"
+      },
+      {
+        "address": 268551014,
+        "bytes": "fff7e8bf",
+        "text": "b.w 0x1001c33a <<core::ops::range::RangeToInclusive<usize> as core::slice::index::SliceIndex<[u8]>>::index_mut>"
+      },
+      {
+        "address": 268601304,
+        "bytes": "5df804bb",
+        "text": "ldr r11, [sp], #4"
+      },
+      {
+        "address": 268601308,
+        "bytes": "f0bd",
+        "text": "pop {r4, r5, r6, r7, pc}"
+      },
+      {
+        "address": 268548132,
+        "bytes": "f0b5",
+        "text": "push {r4, r5, r6, r7, lr}"
+      },
+      {
+        "address": 268548134,
+        "bytes": "03af",
+        "text": "add r7, sp, #0xc"
+      },
+      {
+        "address": 268548136,
+        "bytes": "4df804bd",
+        "text": "str r11, [sp, #-4]!"
+      },
+      {
+        "address": 268548140,
+        "bytes": "0446",
+        "text": "mov r4, r0"
+      },
+      {
+        "address": 268548142,
+        "bytes": "0025",
+        "text": "movs r5, #0x0"
+      },
+      {
+        "address": 268548144,
+        "bytes": "4ff0ff36",
+        "text": "mov.w r6, #0xffffffff"
+      },
+      {
+        "address": 268548148,
+        "bytes": "022e",
+        "text": "cmp r6, #0x2"
+      },
+      {
+        "address": 268548150,
+        "bytes": "14d0",
+        "text": "beq 0x1001b862 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x3e>"
+      },
+      {
+        "address": 268548152,
+        "bytes": "2046",
+        "text": "mov r0, r4"
+      },
+      {
+        "address": 268548154,
+        "bytes": "00f025f8",
+        "text": "bl 0x1001b888 <<postcard::de::flavors::Slice as postcard::de::flavors::Flavor>::pop>"
+      },
+      {
+        "address": 268548158,
+        "bytes": "c007",
+        "text": "lsls r0, r0, #0x1f"
+      },
+      {
+        "address": 268548160,
+        "bytes": "12d1",
+        "text": "bne 0x1001b868 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x44>"
+      },
+      {
+        "address": 268548162,
+        "bytes": "0136",
+        "text": "adds r6, #0x1"
+      },
+      {
+        "address": 268548164,
+        "bytes": "01f07f00",
+        "text": "and r0, r1, #0x7f"
+      },
+      {
+        "address": 268548168,
+        "bytes": "c6ebc602",
+        "text": "rsb r2, r6, r6, lsl #3"
+      },
+      {
+        "address": 268548172,
+        "bytes": "92b2",
+        "text": "uxth r2, r2"
+      },
+      {
+        "address": 268548174,
+        "bytes": "9040",
+        "text": "lsls r0, r2"
+      },
+      {
+        "address": 268548176,
+        "bytes": "0543",
+        "text": "orrs r5, r0"
+      },
+      {
+        "address": 268548178,
+        "bytes": "48b2",
+        "text": "sxtb r0, r1"
+      },
+      {
+        "address": 268548180,
+        "bytes": "0028",
+        "text": "cmp r0, #0x0"
+      },
+      {
+        "address": 268548182,
+        "bytes": "edd4",
+        "text": "bmi 0x1001b834 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x10>"
+      },
+      {
+        "address": 268548184,
+        "bytes": "022e",
+        "text": "cmp r6, #0x2"
+      },
+      {
+        "address": 268548186,
+        "bytes": "09d1",
+        "text": "bne 0x1001b870 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x4c>"
+      },
+      {
+        "address": 268548188,
+        "bytes": "c8b2",
+        "text": "uxtb r0, r1"
+      },
+      {
+        "address": 268548190,
+        "bytes": "0328",
+        "text": "cmp r0, #0x3"
+      },
+      {
+        "address": 268548192,
+        "bytes": "06d9",
+        "text": "bls 0x1001b870 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x4c>"
+      },
+      {
+        "address": 268548194,
+        "bytes": "40f20150",
+        "text": "movw r0, #0x501"
+      },
+      {
+        "address": 268548198,
+        "bytes": "06e0",
+        "text": "b 0x1001b876 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x52>"
+      },
+      {
+        "address": 268548200,
+        "bytes": "c8b2",
+        "text": "uxtb r0, r1"
+      },
+      {
+        "address": 268548202,
+        "bytes": "0002",
+        "text": "lsls r0, r0, #0x8"
+      },
+      {
+        "address": 268548204,
+        "bytes": "0130",
+        "text": "adds r0, #0x1"
+      },
+      {
+        "address": 268548206,
+        "bytes": "00e0",
+        "text": "b 0x1001b872 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x4e>"
+      },
+      {
+        "address": 268548208,
+        "bytes": "2804",
+        "text": "lsls r0, r5, #0x10"
+      },
+      {
+        "address": 268548210,
+        "bytes": "c107",
+        "text": "lsls r1, r0, #0x1f"
+      },
+      {
+        "address": 268548212,
+        "bytes": "03d0",
+        "text": "beq 0x1001b87e <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x5a>"
+      },
+      {
+        "address": 268548214,
+        "bytes": "00f47f40",
+        "text": "and r0, r0, #0xff00"
+      },
+      {
+        "address": 268548218,
+        "bytes": "0130",
+        "text": "adds r0, #0x1"
+      },
+      {
+        "address": 268548220,
+        "bytes": "02e0",
+        "text": "b 0x1001b884 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>+0x60>"
+      },
+      {
+        "address": 268548222,
+        "bytes": "4ff6ff71",
+        "text": "movw r1, #0xffff"
+      },
+      {
+        "address": 268548226,
+        "bytes": "8843",
+        "text": "bics r0, r1"
+      },
+      {
+        "address": 268548228,
+        "bytes": "0cf0a8bf",
+        "text": "b.w 0x100287d8 <OUTLINED_FUNCTION_99>"
+      },
+      {
+        "address": 268528868,
+        "bytes": "80b5",
+        "text": "push {r7, lr}"
+      },
+      {
+        "address": 268528870,
+        "bytes": "6f46",
+        "text": "mov r7, sp"
+      },
+      {
+        "address": 268528872,
+        "bytes": "86b0",
+        "text": "sub sp, #0x18"
+      },
+      {
+        "address": 268528874,
+        "bytes": "9042",
+        "text": "cmp r0, r2"
+      },
+      {
+        "address": 268528876,
+        "bytes": "10d9",
+        "text": "bls 0x10016d10 <core::slice::index::slice_index_fail+0x2c>"
+      },
+      {
+        "address": 268528878,
+        "bytes": "cde90002",
+        "text": "strd r0, r2, [sp]"
+      },
+      {
+        "address": 268528882,
+        "bytes": "47f20d20",
+        "text": "movw r0, #0x720d"
+      },
+      {
+        "address": 268528886,
+        "bytes": "01a9",
+        "text": "add r1, sp, #0x4"
+      },
+      {
+        "address": 268528888,
+        "bytes": "c1f20100",
+        "text": "movt r0, #0x1001"
+      },
+      {
+        "address": 268528892,
+        "bytes": "0590",
+        "text": "str r0, [sp, #0x14]"
+      },
+      {
+        "address": 268528894,
+        "bytes": "cde90301",
+        "text": "strd r0, r1, [sp, #12]"
+      },
+      {
+        "address": 268528898,
+        "bytes": "6846",
+        "text": "mov r0, sp"
+      },
+      {
+        "address": 268528900,
+        "bytes": "0290",
+        "text": "str r0, [sp, #0x8]"
+      },
+      {
+        "address": 268528902,
+        "bytes": "4bf24020",
+        "text": "movw r0, #0xb240"
+      },
+      {
+        "address": 268528906,
+        "bytes": "c1f20200",
+        "text": "movt r0, #0x1002"
+      },
+      {
+        "address": 268528910,
+        "bytes": "24e0",
+        "text": "b 0x10016d5a <core::slice::index::slice_index_fail+0x76>"
+      },
+      {
+        "address": 268528912,
+        "bytes": "9142",
+        "text": "cmp r1, r2"
+      },
+      {
+        "address": 268528914,
+        "bytes": "12d8",
+        "text": "bhi 0x10016d3a <core::slice::index::slice_index_fail+0x56>"
+      },
+      {
+        "address": 268528916,
+        "bytes": "8842",
+        "text": "cmp r0, r1"
+      },
+      {
+        "address": 268528918,
+        "bytes": "10d9",
+        "text": "bls 0x10016d3a <core::slice::index::slice_index_fail+0x56>"
+      },
+      {
+        "address": 268528920,
+        "bytes": "cde90001",
+        "text": "strd r0, r1, [sp]"
+      },
+      {
+        "address": 268528924,
+        "bytes": "47f20d20",
+        "text": "movw r0, #0x720d"
+      },
+      {
+        "address": 268528928,
+        "bytes": "01a9",
+        "text": "add r1, sp, #0x4"
+      },
+      {
+        "address": 268528930,
+        "bytes": "c1f20100",
+        "text": "movt r0, #0x1001"
+      },
+      {
+        "address": 268528934,
+        "bytes": "0590",
+        "text": "str r0, [sp, #0x14]"
+      },
+      {
+        "address": 268528936,
+        "bytes": "cde90301",
+        "text": "strd r0, r1, [sp, #12]"
+      },
+      {
+        "address": 268528940,
+        "bytes": "6846",
+        "text": "mov r0, sp"
+      },
+      {
+        "address": 268528942,
+        "bytes": "0290",
+        "text": "str r0, [sp, #0x8]"
+      },
+      {
+        "address": 268528944,
+        "bytes": "4af69640",
+        "text": "movw r0, #0xac96"
+      },
+      {
+        "address": 268528948,
+        "bytes": "c1f20200",
+        "text": "movt r0, #0x1002"
+      },
+      {
+        "address": 268528952,
+        "bytes": "0fe0",
+        "text": "b 0x10016d5a <core::slice::index::slice_index_fail+0x76>"
+      },
+      {
+        "address": 268528954,
+        "bytes": "47f20d20",
+        "text": "movw r0, #0x720d"
+      },
+      {
+        "address": 268528958,
+        "bytes": "cde90012",
+        "text": "strd r1, r2, [sp]"
+      },
+      {
+        "address": 268528962,
+        "bytes": "c1f20100",
+        "text": "movt r0, #0x1001"
+      },
+      {
+        "address": 268528966,
+        "bytes": "01a9",
+        "text": "add r1, sp, #0x4"
+      },
+      {
+        "address": 268528968,
+        "bytes": "0590",
+        "text": "str r0, [sp, #0x14]"
+      },
+      {
+        "address": 268528970,
+        "bytes": "0390",
+        "text": "str r0, [sp, #0xc]"
+      },
+      {
+        "address": 268528972,
+        "bytes": "6846",
+        "text": "mov r0, sp"
+      },
+      {
+        "address": 268528974,
+        "bytes": "0290",
+        "text": "str r0, [sp, #0x8]"
+      },
+      {
+        "address": 268528976,
+        "bytes": "4bf24610",
+        "text": "movw r0, #0xb146"
+      },
+      {
+        "address": 268528980,
+        "bytes": "0491",
+        "text": "str r1, [sp, #0x10]"
+      },
+      {
+        "address": 268528982,
+        "bytes": "c1f20200",
+        "text": "movt r0, #0x1002"
+      },
+      {
+        "address": 268528986,
+        "bytes": "02a9",
+        "text": "add r1, sp, #0x8"
+      },
+      {
+        "address": 268528988,
+        "bytes": "1a46",
+        "text": "mov r2, r3"
+      },
+      {
+        "address": 268528990,
+        "bytes": "fff7f3f9",
+        "text": "bl 0x10016148 <core::panicking::panic_fmt>"
       }
     ],
     "mapping_symbols": [
@@ -2638,7 +3415,75 @@
         "$t",
         268603768,
         3
+      ],
+      [
+        "$t",
+        268548866,
+        3
+      ],
+      [
+        "$t",
+        268550970,
+        3
+      ],
+      [
+        "$t",
+        268550996,
+        3
+      ],
+      [
+        "$t",
+        268601304,
+        3
+      ],
+      [
+        "$t",
+        268548132,
+        3
+      ],
+      [
+        "$t",
+        268528868,
+        3
       ]
+    ],
+    "mov_objects": [
+      {
+        "low": 268528882,
+        "high": 268528888,
+        "value": 268530189,
+        "target_section": 3
+      },
+      {
+        "low": 268528902,
+        "high": 268528906,
+        "value": 268612160,
+        "target_section": 5
+      },
+      {
+        "low": 268528924,
+        "high": 268528930,
+        "value": 268530189,
+        "target_section": 3
+      },
+      {
+        "low": 268528944,
+        "high": 268528948,
+        "value": 268610710,
+        "target_section": 5
+      },
+      {
+        "low": 268528954,
+        "high": 268528962,
+        "value": 268530189,
+        "target_section": 3
+      },
+      {
+        "low": 268528976,
+        "high": 268528982,
+        "value": 268611910,
+        "target_section": 5
+      }
     ]
   }
 ]

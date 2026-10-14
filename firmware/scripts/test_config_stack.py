@@ -973,6 +973,44 @@ class IssuerRegions(unittest.TestCase):
 
 
 class OrdinaryHelperBodies(unittest.TestCase):
+    def test_child_threshold_save_and_nonreturn_adapter_changes_reject(self):
+        import config_helpers
+        cases=(('range_to_inclusive_index_mut',8,'itttt','hi'),('array5_index_mut',12,'movs','r2, #0x4'),
+               ('deserialize_u16',58,'cmp','r0, #0x4'),('restore_r11_low20',0,'ldr','r8, [sp], #4'),
+               ('deserialize_seed_f32',20,'ldrd','r1, r3, [r2]'))
+        for role,offset,operation,operands in cases:
+            objects,records,item=self.fixture();instance=next(v for v in item['instances'] if v['role']==role)
+            at=instance['address']+offset;row=records[at];records[at]=Instruction(at,row.raw,operation,operands)
+            outline=instance['typed_role'] if instance['typed_role'].startswith('@outline:') else None
+            with self.subTest(role=role),self.assertRaises(AssertionError):
+                config_helpers.helper_body(objects,instance['name'],records,outline)
+        objects,records,item=self.fixture();instance=next(v for v in item['instances'] if v['role']=='range_to_inclusive_index_mut')
+        boundary=next(n for n in objects.elf.functions if config_stack.canonical_symbol(n)=='_RNvNtNtCs_4core5slice5index16slice_index_fail')
+        at=objects.elf.functions[boundary][0]&~1;row=records[at];records[at]=Instruction(at,row.raw,'mov','r7, sp')
+        # The parent and target metadata still match. Nonreturn inventory must
+        # also consume the complete current raw-Arguments adapter body.
+        config_helpers.helper_body(objects,instance['name'],records)
+        with self.assertRaises(AssertionError):
+            config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'range','source-bound error edge'))
+
+    def test_new_child_inventories_relocate_with_their_nonreturn_adapter(self):
+        import config_helpers
+        objects,records,item=self.fixture(0x2800,0x19000)
+        for instance in item['instances']:
+            if instance['role'] not in ('range_to_inclusive_index_mut','array5_index_mut','deserialize_u16','deserialize_seed_f32'):continue
+            proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'child','relocated input'))
+            self.assertEqual(proof['function'],instance['address'])
+
+    def test_four_new_child_bodies_keep_f32_policy_and_pending_restore_requirements(self):
+        import config_helpers
+        objects,records,item=self.fixture()
+        for role in ('deserialize_seed_f32','range_to_inclusive_index_mut','array5_index_mut','deserialize_u16','restore_r11_low20'):
+            instance=next(v for v in item['instances'] if v['role']==role);outline=instance['typed_role'] if instance['typed_role'].startswith('@outline:') else None
+            with self.subTest(role=role):
+                proof=config_helpers.helper_body(objects,instance['name'],records,outline)
+                self.assertEqual(proof['requires_unaligned_single_ldr_policy'],role=='deserialize_seed_f32')
+                self.assertTrue(proof['requires_source_inputs_owned_effects_and_child_closure'])
+
     def test_ordinary_identity_cannot_be_supplied_as_outline_override(self):
         import config_helpers
         for consumer in (config_helpers.helper_body,config_helpers.helper_coverage):
@@ -1045,12 +1083,24 @@ class OrdinaryHelperBodies(unittest.TestCase):
             if config_stack.transfer_family(operation[0].removesuffix('.w')) in ('b','bl','cbz','cbnz'):
                 operands=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operands)
             records[at]=Instruction(at,bytes.fromhex(row['bytes']),operation[0],operands)
+        data=bytearray(objects.elf.data)
+        for pair in item.get('mov_objects',()):
+            shift=code_shift if objects.elf.sections[pair['target_section']][2]&4 else data_shift
+            value=pair['value']+shift
+            for site,half in ((pair['low'],value&65535),(pair['high'],value>>16)):
+                at=site+code_shift;row=records[at];first,second=struct.unpack('<HH',row.raw)
+                raw=struct.pack('<HH',(first&~0x040f)|((half>>12)&15)|((half>>1)&0x400),
+                                (second&~0x70ff)|((half&0x700)<<4)|(half&255))
+                records[at]=Instruction(at,raw,row.mnemonic,row.operands.split(',')[0]+', #'+hex(half))
+                section=next(s for s in objects.elf.sections if s[2]&4 and s[3]<=at<at+4<=s[3]+s[5])
+                index=section[4]+at-section[3];data[index:index+4]=raw
+        objects.elf.data=bytes(data)
         return objects,records,item
 
     def test_all_complete_helpers_and_parent_owned_outlines_bind_exact_bodies(self):
         import config_helpers
         objects,records,item=self.fixture()
-        self.assertEqual(len(item['instances']),21)
+        self.assertEqual(len(item['instances']),26)
         for instance in item['instances']:
             role=instance['typed_role'];outline=role if role.startswith('@outline:') else None
             proof=config_helpers.helper_body(objects,instance['name'],records,outline)
