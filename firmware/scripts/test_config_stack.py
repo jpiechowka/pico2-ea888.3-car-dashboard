@@ -973,6 +973,27 @@ class IssuerRegions(unittest.TestCase):
 
 
 class OrdinaryHelperBodies(unittest.TestCase):
+    def test_ordinary_identity_cannot_be_supplied_as_outline_override(self):
+        import config_helpers
+        for consumer in (config_helpers.helper_body,config_helpers.helper_coverage):
+            objects,records,item=self.fixture();instance=next(v for v in item['instances'] if v['role']=='serialize_u8')
+            ordinary=instance['name'];anonymous='OUTLINED_FUNCTION_999999'
+            objects.elf.functions[anonymous]=objects.elf.functions.pop(ordinary)
+            objects.elf.symbol_entries=[(anonymous if v[0]==ordinary else v[0],*v[1:]) for v in objects.elf.symbol_entries]
+            with self.assertRaises(AssertionError):config_helpers.helper_body(objects,anonymous,records)
+            with self.subTest(consumer=consumer.__name__),self.assertRaises(AssertionError):
+                if consumer is config_helpers.helper_body:
+                    consumer(objects,anonymous,records,instance['typed_role'])
+                else:
+                    consumer(objects,anonymous,records,(instance['address'],'helper','anonymous context'),instance['typed_role'])
+
+    def test_invalid_outline_override_values_do_not_mean_no_override(self):
+        import config_helpers
+        for invalid in ('',0,False,[],{},1):
+            objects,records,item=self.fixture();instance=next(v for v in item['instances'] if v['role']=='serialize_u8')
+            with self.subTest(value=invalid),self.assertRaises(AssertionError):
+                config_helpers.helper_body(objects,instance['name'],records,invalid)
+
     def test_bound_helper_frames_keep_exact_scratch_and_save_cells(self):
         import config_helpers
         from config_regions import Storage,require_writes

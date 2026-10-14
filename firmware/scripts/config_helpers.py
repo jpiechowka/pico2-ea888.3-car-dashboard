@@ -42,8 +42,11 @@ def _helper_object(objects,address,descriptor):
 def helper_body(objects,name,instructions,outline_role=None,_ancestry=()):
     require(name in objects.elf.functions,'missing small helper body')
     start=objects.elf.functions[name][0]&~1;require(start not in _ancestry,'small helper outline cycle')
-    role=outline_role or canonical_symbol(name)
-    require(not outline_role or re.fullmatch(r'OUTLINED_FUNCTION_[0-9]+',name),'small helper outline origin differs')
+    role=canonical_symbol(name)
+    if outline_role is not None:
+        require(isinstance(outline_role,str) and outline_role.startswith('@outline:') and outline_role in HELPER_ROLES and
+                re.fullmatch(r'OUTLINED_FUNCTION_[0-9]+',name),'unreviewed small helper outline role/origin')
+        role=outline_role
     require(role in HELPER_ROLES,'unreviewed exact small helper receiver/outline')
     semantic=HELPER_ROLES[role]
     proof=_complete_body(objects,name,instructions,role,semantic,HELPER_GRAMMARS[semantic],
