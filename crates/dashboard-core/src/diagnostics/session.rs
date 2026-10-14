@@ -127,13 +127,21 @@ impl PreparedSession {
         self,
         config: Option<&ValidatedConfig>,
     ) -> Session<'_> {
-        let ecu = self.client.response_id();
+        let mut session = self.construction_base(config);
+        session.initialize_measurements();
+        session
+    }
+
+    // A valid construction value; the enclosing Session or Vehicle immediately
+    // finishes its already-bound model before returning a public ready owner.
+    pub(super) fn construction_base(
+        self,
+        config: Option<&ValidatedConfig>,
+    ) -> Session<'_> {
         Session {
             client: self.client,
             capabilities: self.capabilities,
-            model: config.map_or_else(AcquisitionModel::new, |config| {
-                AcquisitionModel::configured(config, ecu)
-            }),
+            model: AcquisitionModel::session_base(config),
             slots: [Slot::default(); 7],
             cursor: 0,
             next_query: 0,
@@ -141,11 +149,13 @@ impl PreparedSession {
             counters: Counters::default(),
             channels: [Counters::default(); 7],
             timing: None,
-            reply_ms: [const { Histogram::new() }; 7],
+            reply_ms: const { [const { Histogram::new() }; 7] },
         }
     }
 }
 impl<'a> Session<'a> {
+    pub(super) fn initialize_measurements(&mut self) { self.model.initialize_for_session(self.client.response_id()); }
+
     pub fn new(
         ecu: u16,
         epoch: u64,

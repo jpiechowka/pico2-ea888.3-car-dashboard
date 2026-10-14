@@ -147,45 +147,39 @@ pub struct Vehicle<'a, P> {
     rx_partial_since: Option<u64>,
     last_ms: u64,
 }
-impl<'a, P: Port> Vehicle<'a, P> {
-    pub fn new(
-        port: P,
-        profile: Profile,
-        now: u64,
-    ) -> Result<Self, SessionError> {
-        Self::new_inner(port, profile, now, None)
-    }
 
-    pub fn configured(
-        port: P,
-        profile: Profile,
-        now: u64,
-        config: &'a dashboard_config::ValidatedConfig,
-    ) -> Result<Self, SessionError> {
-        Self::new_inner(port, profile, now, Some(config))
-    }
-
-    pub fn configuration(&self) -> Option<&dashboard_config::ValidatedConfig> { self.session.configuration() }
-
-    fn new_inner(
-        port: P,
-        profile: Profile,
-        now: u64,
-        config: Option<&'a dashboard_config::ValidatedConfig>,
-    ) -> Result<Self, SessionError> {
-        // Reserve epoch1 for the initial unqualified state. The first complete
-        // handshake advances past it; capabilities and tokens are never reused.
-        let mut rx = Rx12::new();
-        rx.fault();
-        let session = PreparedSession::new(profile.responder, 1)?;
-        Ok(Self {
-            port,
-            profile,
-            bootstrap: Bootstrap::new(now),
-            rx,
+/// A validated construction input bound to its port, configuration and timestamp.
+/// It exposes no live-owner operations. Firmware assembles immediately; delaying
+/// assembly preserves the supplied construction timestamp rather than refreshing it.
+/// Fields cannot be forged or rebound.
+/// ```compile_fail
+/// use dashboard_core::diagnostics::service::PreparedVehicle;
+/// fn rebind<P>(prepared: &mut PreparedVehicle<'_, P>) { prepared.config = None; }
+/// ```
+pub struct PreparedVehicle<'a, P> {
+    port: P,
+    profile: Profile,
+    now: u64,
+    rx: Rx12,
+    session: PreparedSession,
+    config: Option<&'a dashboard_config::ValidatedConfig>,
+}
+impl<'a, P: Port> PreparedVehicle<'a, P> {
+    /// Consume the validated inputs and return the whole owner into its caller's
+    /// return destination. Linked caller-plus-callee frames still gate admission.
+    #[inline(never)]
+    pub fn assemble(self) -> Vehicle<'a, P> {
+        let mut vehicle = Vehicle {
+            port: self.port,
+            profile: self.profile,
+            bootstrap: Bootstrap::new(self.now),
+            rx: self.rx,
             tx: Pump::new(),
-            session: session.assemble(config),
-            owner: OwnerState::Recover { since: now, wait: 0 },
+            session: self.session.construction_base(self.config),
+            owner: OwnerState::Recover {
+                since: self.now,
+                wait: 0,
+            },
             raw: Deque::new(),
             raw_records: 0,
             raw_overwrites: 0,
@@ -195,7 +189,59 @@ impl<'a, P: Port> Vehicle<'a, P> {
             failures: 0,
             online_since: None,
             rx_partial_since: None,
-            last_ms: now,
+            last_ms: self.now,
+        };
+        vehicle.session.initialize_measurements();
+        vehicle
+    }
+}
+impl<'a, P: Port> Vehicle<'a, P> {
+    pub fn new(
+        port: P,
+        profile: Profile,
+        now: u64,
+    ) -> Result<Self, SessionError> {
+        Ok(Self::prepare_inner(port, profile, now, None)?.assemble())
+    }
+
+    pub fn configured(
+        port: P,
+        profile: Profile,
+        now: u64,
+        config: &'a dashboard_config::ValidatedConfig,
+    ) -> Result<Self, SessionError> {
+        Ok(Self::prepare_configured(port, profile, now, config)?.assemble())
+    }
+
+    pub fn prepare_configured(
+        port: P,
+        profile: Profile,
+        now: u64,
+        config: &'a dashboard_config::ValidatedConfig,
+    ) -> Result<PreparedVehicle<'a, P>, SessionError> {
+        Self::prepare_inner(port, profile, now, Some(config))
+    }
+
+    pub fn configuration(&self) -> Option<&dashboard_config::ValidatedConfig> { self.session.configuration() }
+
+    fn prepare_inner(
+        port: P,
+        profile: Profile,
+        now: u64,
+        config: Option<&'a dashboard_config::ValidatedConfig>,
+    ) -> Result<PreparedVehicle<'a, P>, SessionError> {
+        // Reserve epoch1 for the initial unqualified state. The first complete
+        // handshake advances past it; capabilities and tokens are never reused.
+        let mut rx = Rx12::new();
+        rx.fault();
+        let session = PreparedSession::new(profile.responder, 1)?;
+        Ok(PreparedVehicle {
+            port,
+            profile,
+            now,
+            rx,
+            session,
+            config,
         })
     }
 

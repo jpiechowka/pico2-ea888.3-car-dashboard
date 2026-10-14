@@ -48,6 +48,16 @@ const DEFAULT_FRESHNESS: [u16; SENSOR_COUNT] = {
     }
     caps
 };
+const SENSOR_BASE: [SensorState; SENSOR_COUNT] = [
+    SensorState::new(),
+    SensorState::new(),
+    SensorState::new(),
+    SensorState::new(),
+    SensorState::new(),
+    SensorState::with_trend_threshold(5.0),
+    SensorState::with_trend_threshold(0.05),
+    SensorState::with_trend_threshold(0.1),
+];
 
 #[derive(Default)]
 pub struct ResetRequests {
@@ -307,6 +317,29 @@ struct AcquisitionState {
 }
 
 impl AcquisitionState {
+    const CONFIGURED_BASE: Self = Self::base(Alarms::Configured(RuleEngineState::EMPTY));
+    const LEGACY_BASE: Self = Self::base(Alarms::Legacy(AlarmEngine::DISABLED));
+
+    // Valid flash-backed construction storage. No origin or dynamic policy work
+    // occurs until the enclosing owner has installed its immutable handle.
+    const fn base(alarms: Alarms) -> Self {
+        Self {
+            sensors: SENSOR_BASE,
+            metadata: [SampleMeta::UNKNOWN; SENSOR_COUNT],
+            mode: DataMode::Vehicle,
+            sequence: 0,
+            reset_generation: 0,
+            alarms,
+            contexts: [None; SENSOR_COUNT],
+            expected_sources: [None; SENSOR_COUNT],
+            freshness: DEFAULT_FRESHNESS,
+            origin: None,
+            publication: 1,
+            peaks: PeakHolds::EMPTY,
+            last_ms: 0,
+        }
+    }
+
     fn publish_change(&mut self) {
         // Zero is sticky exhaustion; every subsequent snapshot is untracked.
         if self.publication != 0 {
@@ -388,20 +421,7 @@ impl AcquisitionState {
     ) -> Self {
         let origin = ORIGIN_ISSUER.issue().ok();
         Self {
-            // A flash template avoids separate runtime scratch arrays for each
-            // sampling ring when this large owner is constructed on core 1.
-            sensors: const {
-                [
-                    SensorState::new(),
-                    SensorState::new(),
-                    SensorState::new(),
-                    SensorState::new(),
-                    SensorState::new(),
-                    SensorState::with_trend_threshold(5.0),
-                    SensorState::with_trend_threshold(0.05),
-                    SensorState::with_trend_threshold(0.1),
-                ]
-            },
+            sensors: SENSOR_BASE,
             metadata: [SampleMeta::UNKNOWN; SENSOR_COUNT],
             mode,
             sequence: 0,
@@ -755,6 +775,16 @@ impl ConfigurationHandle for alloc::boxed::Box<ValidatedConfig> {
 /// }
 /// ```
 /// No operation accepts a replacement configuration.
+/// Construction phases are not application APIs.
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionModel;
+/// let _ = AcquisitionModel::session_base(None);
+/// ```
+/// ```compile_fail
+/// use dashboard_core::acquisition::AcquisitionModel;
+/// let mut owner = AcquisitionModel::new();
+/// owner.initialize_for_session(0x7e8);
+/// ```
 /// ```compile_fail
 /// use dashboard_core::acquisition::AcquisitionModel;
 /// let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
@@ -779,7 +809,11 @@ impl Default for AcquisitionModel<'_> {
     fn default() -> Self { Self::new() }
 }
 impl<'cfg> AcquisitionModel<'cfg> {
-    pub fn new() -> Self { Self::legacy(DataMode::Vehicle, [None; 8]) }
+    pub fn new() -> Self {
+        let mut owner = Self::session_base(None);
+        owner.initialize_for_session(0);
+        owner
+    }
 
     pub fn demo() -> Self { Self::legacy(DataMode::Demo, demo_rules()) }
 
@@ -802,15 +836,48 @@ impl<'cfg> AcquisitionModel<'cfg> {
         config: &'cfg ValidatedConfig,
         ecu: u16,
     ) -> Self {
-        let sources = SensorId::ALL.map(|id| {
+        let mut owner = Self::session_base(Some(config));
+        owner.initialize_for_session(ecu);
+        owner
+    }
+
+    // Diagnostics construction only; neither base nor finishing is a public
+    // acquisition operation. None remains valid issuer exhaustion after finish.
+    pub(crate) fn session_base(config: Option<&'cfg ValidatedConfig>) -> Self {
+        Self {
+            configuration: config,
+            state: if config.is_some() {
+                AcquisitionState::CONFIGURED_BASE
+            } else {
+                AcquisitionState::LEGACY_BASE
+            },
+        }
+    }
+
+    pub(crate) fn initialize_for_session(
+        &mut self,
+        ecu: u16,
+    ) {
+        if let Some(config) = self.configuration {
+            let sources = Self::configured_sources(config, ecu);
+            self.initialize_bound_policy(DataMode::Vehicle, sources);
+        } else {
+            self.state.origin = ORIGIN_ISSUER.issue().ok();
+        }
+    }
+
+    fn configured_sources(
+        config: &ValidatedConfig,
+        ecu: u16,
+    ) -> [Option<Source>; SENSOR_COUNT] {
+        SensorId::ALL.map(|id| {
             ecu.checked_sub(8).and_then(|request| {
                 match resolve_source(config, id.channel(), request, ecu) {
                     SourceResolution::Obd { pid, .. } => Some(Source::Obd { ecu, pid }),
                     _ => None,
                 }
             })
-        });
-        Self::with_configuration(config, DataMode::Vehicle, sources)
+        })
     }
 }
 impl<C: ConfigurationHandle> AcquisitionOwner<C> {
@@ -819,19 +886,34 @@ impl<C: ConfigurationHandle> AcquisitionOwner<C> {
         mode: DataMode,
         sources: [Option<Source>; SENSOR_COUNT],
     ) -> Self {
-        let config = configuration.configuration();
-        let mut state = AcquisitionState::with_policy(
-            mode,
-            sources,
-            config.config().sources.map(|source| source.freshness_ms),
-            Alarms::Configured(RuleEngineState::new(config, mode, sources)),
-        );
-        for (sensor, seconds) in state.sensors.iter_mut().zip(config.config().history_seconds) {
-            sensor.set_history_duration(seconds);
-        }
-        Self {
+        let mut owner = Self {
             configuration: Some(configuration),
-            state,
+            state: AcquisitionState::CONFIGURED_BASE,
+        };
+        owner.initialize_bound_policy(mode, sources);
+        owner
+    }
+
+    fn initialize_bound_policy(
+        &mut self,
+        mode: DataMode,
+        sources: [Option<Source>; SENSOR_COUNT],
+    ) {
+        let config = self
+            .configuration
+            .as_ref()
+            .expect("configured policy has immutable handle")
+            .configuration();
+        self.state.mode = mode;
+        self.state.expected_sources = sources;
+        self.state.freshness = config.config().sources.map(|source| source.freshness_ms);
+        let Alarms::Configured(engine) = &mut self.state.alarms else {
+            unreachable!("configured construction base")
+        };
+        engine.initialize_bound_policy(config, mode, sources);
+        self.state.origin = ORIGIN_ISSUER.issue().ok();
+        for (sensor, seconds) in self.state.sensors.iter_mut().zip(config.config().history_seconds) {
+            sensor.set_history_duration(seconds);
         }
     }
 
@@ -968,6 +1050,72 @@ mod cache_tests {
     use crate::display::{FrameBuffer, St7789Renderer};
     use crate::render::FpsMode;
     use crate::vehicle_status::VehicleStatus;
+
+    #[test]
+    fn constructor_initial_fields_preserve_history_policy_and_empty_runtime_state() {
+        let mut raw = dashboard_config::default_config();
+        raw.history_seconds[dashboard_config::Channel::Lambda.index()] = 10;
+        raw.widgets[0].warning.enabled = true;
+        raw.widgets[0].warning.applicability = dashboard_config::Applicability::DemoOnly;
+        let config = dashboard_config::validate(raw).unwrap();
+        let configured = AcquisitionModel::configured(&config, 0x7E8);
+        let demo = AcquisitionModel::demo_configured(&config);
+        let legacy = AcquisitionModel::new();
+        for owner in [&configured, &demo, &legacy] {
+            let state = &owner.state;
+            assert_eq!(state.metadata, [SampleMeta::UNKNOWN; 8]);
+            assert_eq!(
+                (state.sequence, state.reset_generation, state.publication, state.last_ms),
+                (0, 0, 1, 0)
+            );
+            assert!(state.contexts.iter().all(Option::is_none));
+            assert!(state.origin.is_some());
+            for id in SensorId::ALL {
+                let sensor = &state.sensors[id as usize];
+                let changed = owner.configuration.is_some() && id == SensorId::Lambda;
+                assert_eq!(sensor.graph_revision(), Some(u32::from(changed)));
+                assert_eq!(
+                    sensor.snapshot().history().duration_seconds(),
+                    if changed { 10 } else { 120 }
+                );
+            }
+        }
+        assert_eq!(legacy.state.freshness, DEFAULT_FRESHNESS);
+        assert_eq!(legacy.state.expected_sources, [None; 8]);
+        assert_eq!(configured.state.mode, DataMode::Vehicle);
+        assert_eq!(demo.state.mode, DataMode::Demo);
+        assert_eq!(
+            configured.state.freshness,
+            config.config().sources.map(|s| s.freshness_ms)
+        );
+        assert_eq!(demo.state.expected_sources, [Some(Source::Demo); 8]);
+        assert_eq!(
+            configured.state.expected_sources,
+            [
+                None,
+                Some(Source::Obd { ecu: 0x7E8, pid: 0x5C }),
+                Some(Source::Obd { ecu: 0x7E8, pid: 0x05 }),
+                None,
+                Some(Source::Obd { ecu: 0x7E8, pid: 0x0F }),
+                None,
+                Some(Source::Obd { ecu: 0x7E8, pid: 0x42 }),
+                None
+            ]
+        );
+        let rule = RuleIndex::new(0).unwrap();
+        let Alarms::Configured(vehicle_rules) = &configured.state.alarms else {
+            panic!("configured variant")
+        };
+        let Alarms::Configured(demo_rules) = &demo.state.alarms else {
+            panic!("configured variant")
+        };
+        assert!(!vehicle_rules.enabled());
+        assert!(demo_rules.enabled());
+        assert_eq!(vehicle_rules.snapshot().channel(rule), SensorId::Boost);
+        assert_eq!(demo_rules.snapshot().channel(rule), SensorId::Boost);
+        assert_eq!(configured.snapshot().warning_command_result(), CommandResult::EMPTY);
+        assert_eq!(demo.snapshot().warning_event_serial(), 0);
+    }
 
     #[test]
     fn publication_exhaustion_disables_deduplication_without_freezing_state() {

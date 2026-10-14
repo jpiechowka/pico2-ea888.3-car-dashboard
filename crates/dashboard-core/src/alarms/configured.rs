@@ -91,11 +91,21 @@ impl RuleAlerts {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct EpisodeState {
     raw: State,
     activation_serial: u64,
     snooze_until_ms: u64,
+}
+impl Default for EpisodeState {
+    fn default() -> Self { Self::EMPTY }
+}
+impl EpisodeState {
+    const EMPTY: Self = Self {
+        raw: State::EMPTY,
+        activation_serial: 0,
+        snooze_until_ms: 0,
+    };
 }
 
 pub(crate) struct RuleEngineState {
@@ -108,35 +118,49 @@ pub(crate) struct RuleEngineState {
     last_result: CommandResult,
 }
 impl RuleEngineState {
+    pub(crate) const EMPTY: Self = Self {
+        states: [EpisodeState::EMPTY; MAX_WIDGETS],
+        alerts: RuleAlerts::DISABLED,
+        sources: [None; 8],
+        enabled: 0,
+        last_ms: 0,
+        last_command: WarningCommand {
+            request_id: 0,
+            run_id: 0,
+            observed_event_serial: 0,
+            rules: 0,
+        },
+        last_result: CommandResult::EMPTY,
+    };
+
     pub(crate) fn new(
         config: &ValidatedConfig,
         mode: DataMode,
         sources: [Option<Source>; 8],
     ) -> Self {
-        let mut result = Self {
-            states: [EpisodeState::default(); MAX_WIDGETS],
-            alerts: RuleAlerts::DISABLED,
-            sources,
-            enabled: 0,
-            last_ms: 0,
-            last_command: WarningCommand {
-                request_id: 0,
-                run_id: 0,
-                observed_event_serial: 0,
-                rules: 0,
-            },
-            last_result: CommandResult::EMPTY,
-        };
+        let mut result = Self::EMPTY;
+        result.initialize_bound_policy(config, mode, sources);
+        result
+    }
+
+    // Construction only: mutate the already-present empty engine. The owner
+    // supplies the configuration from its immutable stored handle.
+    pub(crate) fn initialize_bound_policy(
+        &mut self,
+        config: &ValidatedConfig,
+        mode: DataMode,
+        sources: [Option<Source>; 8],
+    ) {
+        self.sources = sources;
         for (i, widget) in config.config().widgets.iter().enumerate() {
-            result.alerts.channels[i / 2] |= (widget.channel.index() as u8) << ((i % 2) * 4);
+            self.alerts.channels[i / 2] |= (widget.channel.index() as u8) << ((i % 2) * 4);
             if widget.warning.enabled
                 && (mode == DataMode::Demo || widget.warning.applicability == Applicability::VehicleAndDemo)
             {
-                result.enabled |= 1 << i;
-                result.alerts.states[i] = Status::Unavailable;
+                self.enabled |= 1 << i;
+                self.alerts.states[i] = Status::Unavailable;
             }
         }
-        result
     }
 
     pub(crate) const fn snapshot(&self) -> RuleAlerts { self.alerts }
@@ -395,6 +419,51 @@ const _: () = assert!(core::mem::size_of::<RuleAlerts>() <= 680);
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn constant_episode_and_rule_storage_match_original_empty_fields() {
+        for episode in [EpisodeState::default(), EpisodeState::EMPTY] {
+            assert_eq!(
+                (
+                    episode.raw.sequence,
+                    episode.raw.at,
+                    episode.raw.context_at,
+                    episode.raw.since,
+                    episode.raw.flags,
+                    episode.activation_serial,
+                    episode.snooze_until_ms
+                ),
+                (0, 0, 0, 0, 0, 0, 0)
+            );
+        }
+        let engine = RuleEngineState::EMPTY;
+        assert_eq!(engine.alerts, RuleAlerts::DISABLED);
+        assert_eq!(engine.sources, [None; 8]);
+        assert_eq!((engine.enabled, engine.last_ms), (0, 0));
+        assert_eq!(
+            (
+                engine.last_command.request_id,
+                engine.last_command.run_id,
+                engine.last_command.observed_event_serial,
+                engine.last_command.rules
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(engine.last_result, CommandResult::EMPTY);
+        for episode in engine.states {
+            assert_eq!(
+                (
+                    episode.raw.sequence,
+                    episode.raw.at,
+                    episode.raw.context_at,
+                    episode.raw.since,
+                    episode.raw.flags,
+                    episode.activation_serial,
+                    episode.snooze_until_ms
+                ),
+                (0, 0, 0, 0, 0, 0, 0)
+            );
+        }
+    }
     #[test]
     fn event_exhaustion_preserves_visible_latch_and_disables_acknowledgment() {
         let mut c = dashboard_config::default_config();

@@ -38,18 +38,19 @@ pub struct Resources {
 }
 
 // Return the unwrapped owner directly into the future's storage. Unwrapping a
-// Result<Vehicle> inside the async body keeps an entire Vehicle-sized temporary
-// in every poll frame. Review the linked caller-plus-constructor stack budget.
+// fallible preparation inside this boundary keeps a Result<Vehicle> carrier out
+// of the async poll. Review every linked caller-plus-constructor frame.
 #[cfg(feature = "longan-rx12")]
 #[inline(never)]
 fn configured_vehicle(resources: Resources) -> Vehicle<'static, crate::drivers::longan::HardwarePort> {
-    Vehicle::configured(
+    Vehicle::prepare_configured(
         crate::drivers::longan::HardwarePort::new(resources.uart),
         dashboard_pico2::config::vehicle::PROFILE,
         Instant::now().as_millis(),
         resources.configuration,
     )
     .expect("invalid vehicle profile")
+    .assemble()
 }
 
 // Isolate one-time construction from the frame used by every resumed poll.

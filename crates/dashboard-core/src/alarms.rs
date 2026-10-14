@@ -244,13 +244,16 @@ impl Alerts {
 
 // A compact state per rule: four timestamps/counters plus flag bits. No
 // sentinel timestamp is reserved, so u64::MAX remains representable.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct State {
     sequence: u64,
     at: u64,
     context_at: u64,
     since: u64,
     flags: u16,
+}
+impl Default for State {
+    fn default() -> Self { Self::EMPTY }
 }
 const SEEN: u16 = 1;
 const CONTEXT: u16 = 2;
@@ -261,7 +264,16 @@ const LATCHED: u16 = 32;
 const ACKNOWLEDGED: u16 = 64;
 const CLEARED: u16 = 128;
 const PENDING_CLEAR: u16 = 256;
+
 impl State {
+    const EMPTY: Self = Self {
+        sequence: 0,
+        at: 0,
+        context_at: 0,
+        since: 0,
+        flags: 0,
+    };
+
     fn seen(&self) -> Option<(u64, u64)> { (self.flags & SEEN != 0).then_some((self.sequence, self.at)) }
 
     fn record(
@@ -436,6 +448,14 @@ pub struct AlarmEngine {
     enabled: bool,
 }
 impl AlarmEngine {
+    pub(crate) const DISABLED: Self = Self {
+        rules: [None; 8],
+        states: [State::EMPTY; 8],
+        alerts: Alerts::DISABLED,
+        last_ms: 0,
+        enabled: false,
+    };
+
     pub fn new(rules: [Option<Rule>; 8]) -> Result<Self, PolicyError> {
         for (i, rule) in rules.iter().enumerate() {
             if rule.is_some_and(|r| r.sensor as usize != i) {
@@ -622,4 +642,32 @@ pub(crate) fn demo_contexts_for(
             egt_location: EgtLocation::MeasuredManifold,
         })
     })
+}
+
+#[cfg(test)]
+mod construction_tests {
+    use super::*;
+    #[test]
+    fn constant_state_and_disabled_engine_match_original_default_fields() {
+        let original = State::default();
+        for state in [original, State::EMPTY] {
+            assert_eq!(
+                (state.sequence, state.at, state.context_at, state.since, state.flags),
+                (0, 0, 0, 0, 0)
+            );
+        }
+        let original = AlarmEngine::new([None; 8]).unwrap();
+        for engine in [original, AlarmEngine::DISABLED] {
+            assert!(engine.rules.iter().all(Option::is_none));
+            assert_eq!(engine.alerts, Alerts::DISABLED);
+            assert_eq!(engine.last_ms, 0);
+            assert!(!engine.enabled);
+            for state in engine.states {
+                assert_eq!(
+                    (state.sequence, state.at, state.context_at, state.since, state.flags),
+                    (0, 0, 0, 0, 0)
+                );
+            }
+        }
+    }
 }

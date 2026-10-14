@@ -322,6 +322,26 @@ class PublicationFrames(unittest.TestCase):
 
 
 class OwnerPublicationFrames(unittest.TestCase):
+    def test_borrowed_initialization_and_constant_base_frames_require_metadata(self):
+        from check_stack_budget import constructor_frames
+        functions = {
+            'dashboard_core_AcquisitionOwner_session_base': (0x101, 4, 0),
+            'dashboard_core_AcquisitionOwner_initialize_for_session': (0x201, 4, 0),
+            'dashboard_core_AcquisitionOwner_configured_sources': (0x301, 4, 0),
+            'dashboard_core_AcquisitionOwner_initialize_bound_policy': (0x401, 4, 0),
+            'dashboard_core_RuleEngineState_initialize_bound_policy': (0x501, 4, 0),
+            'dashboard_core_PreparedSession_construction_base': (0x601, 4, 0),
+            'dashboard_core_Session_initialize_measurements': (0x701, 4, 0),
+            'dashboard_core_AcquisitionState_4base': (0x801, 4, 0),
+        }
+        sizes = {address & ~1: 32 for address, _, _ in functions.values()}
+        self.assertEqual(constructor_frames(functions, sizes), 256)
+        for address in sizes:
+            reduced = dict(sizes)
+            del reduced[address]
+            with self.subTest(missing=address), self.assertRaisesRegex(AssertionError, 'constructor frame metadata'):
+                constructor_frames(functions, reduced)
+
     def test_demo_and_unavailable_constructor_boundary_is_counted_and_requires_metadata(self):
         from check_stack_budget import constructor_frames
         functions = {'pico2_tasks_acquisition_configured_model': (0x101, 4, 0)}
@@ -335,6 +355,17 @@ class OwnerPublicationFrames(unittest.TestCase):
         self.assertEqual(constructor_frames(functions, {0x100: 17000}), 17000)
         with self.assertRaisesRegex(AssertionError, 'missing constructor frame metadata'):
             constructor_frames(functions, {})
+
+    def test_whole_vehicle_preparation_and_assembly_are_counted(self):
+        from check_stack_budget import constructor_frames
+        functions = {'dashboard_core_diagnostics_service_PreparedVehicle_8assemble': (0x101, 4, 0),
+                     'dashboard_core_diagnostics_service_Vehicle_13prepare_inner': (0x201, 4, 0)}
+        self.assertEqual(constructor_frames(functions, {0x100: 20000, 0x200: 400}), 20400)
+        for address in [0x100, 0x200]:
+            reduced = {0x100: 20000, 0x200: 400}
+            del reduced[address]
+            with self.assertRaisesRegex(AssertionError, 'missing constructor frame metadata'):
+                constructor_frames(functions, reduced)
 
     def fixture(self):
         functions = {
