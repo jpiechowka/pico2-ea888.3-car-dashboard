@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/dashboard-core", "crates/dashboard-config", "crates/dashboard-config-tools", "crates/dashboard-build-profiles"]
-exclude = ["firmware", "host", "configurator"]
+members = ["crates/dashboard-core", "crates/dashboard-config", "crates/dashboard-config-tools", "crates/dashboard-build-profiles", "crates/dashboard-helper-protocol"]
+exclude = ["firmware", "host", "configurator", "studio-helper"]
 
 [profile.release]
 codegen-units = 1

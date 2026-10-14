@@ -81,6 +81,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashboard-helper-protocol"
+version = "0.1.0"
+dependencies = [
+ "dashboard-build-profiles",
+ "dashboard-config",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "embassy-sync"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

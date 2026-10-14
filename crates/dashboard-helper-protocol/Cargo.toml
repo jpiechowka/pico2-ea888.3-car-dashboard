@@ -1,0 +1,11 @@
+[package]
+name = "dashboard-helper-protocol"
+version = "0.1.0"
+edition = "2024"
+description = "Bounded pure Studio helper wire and option contracts"
+
+[dependencies]
+dashboard-build-profiles = { path = "../dashboard-build-profiles", features = ["serde"] }
+dashboard-config = { path = "../dashboard-config" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
