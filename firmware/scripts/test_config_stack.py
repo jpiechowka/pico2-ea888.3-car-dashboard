@@ -16,14 +16,17 @@ U8 = '_RNvXs1g_NtCs123_4core3fmtRhNtB6_5Debug3fmtCs456_14dashboard_core'
 
 
 class CompleteFormatBridges(unittest.TestCase):
-    def fixture(self, code_shift=0, data_shift=0):
+    def fixture(self, code_shift=0, data_shift=0, fixture_file='config-format.json', mode=None):
         # Literal reviewed raw input bodies; expected grammars live only in the
         # production consumer. No firmware is built/executed by this fixture.
-        fixture=json.loads((Path(__file__).parent/'fixtures/config-format.json').read_text())
+        fixture=json.loads((Path(__file__).parent/'fixtures'/fixture_file).read_text())
+        if mode:fixture=[f for f in fixture if f.get('mode')==mode]
         functions={};sizes={};records={};segments=[]
         for f in fixture:
-            start=f['address'];body=bytearray(f['size']);rows=[]
-            producers={site:p for p in f['address_producers'] for site in (p['low_site'],p['high_site'])}
+            start=f['address'];body=bytearray.fromhex(f['body_hex']) if 'body_hex' in f else bytearray(f['size']);rows=[]
+            for p in f['address_producers']:
+                if 'pool' in p:struct.pack_into('<I',body,p['pool']-start,p['address']+data_shift)
+            producers={site:p for p in f['address_producers'] if 'low_site' in p for site in (p['low_site'],p['high_site'])}
             for line in f['lines']:
                 match=re.match(r'([0-9a-f]+):\s+((?:(?:[0-9a-f]{4})\s+)+)(\S+)\s*(.*)',line)
                 address=int(match[1],16);raw=b''.join(int(x,16).to_bytes(2,'little') for x in match[2].split())
@@ -46,15 +49,30 @@ class CompleteFormatBridges(unittest.TestCase):
                 object_bytes=bytes.fromhex(p['first24_hex'])
                 if 'vtable_words' in p:
                     words=p['vtable_words'];object_bytes=struct.pack('<6I',*words[:3],*(w+code_shift for w in words[3:]))
+                elif p.get('targets'):
+                    words=struct.unpack('<4I',object_bytes)
+                    object_bytes=struct.pack('<4I',*words[:3],words[3]+code_shift)
                 segments.append((p['address']+data_shift,object_bytes))
                 for target in p.get('targets',[]):
                     for a in target['aliases']:functions[a['name']]=(a['address']+code_shift,a['size'],0)
                     sizes[(target['pointer']&~1)+code_shift]=target['frame']
+                    for a in target['aliases']:segments.append(((a['address']&~1)+code_shift,bytes(a['size'])))
+            for edge in f['ordinary_edges']:
+                for a in edge['aliases']:
+                    functions[a['name']]=(a['address']+code_shift,a['size'],0)
+                    sizes[(a['address']&~1)+code_shift]=edge['frame']
+                    # Only ownership is consumed here; callee body closure is
+                    # separately checked by the complete bridge contract.
+                    if not any(at<=((a['address']&~1)+code_shift)<at+len(b) for at,b in segments):
+                        segments.append(((a['address']&~1)+code_shift,bytes(a['size'])))
         lo=min(a for a,_ in segments);ro=min(p['address']+data_shift for f in fixture for p in f['address_producers'])
         hi=max(a+len(b) for a,b in segments);data=bytearray(hi-lo)
         for a,b in segments:data[a-lo:a-lo+len(b)]=b
+        mappings=[('$t',lo,0)]
+        for f in fixture:
+            mappings.extend(('$'+kind,a+code_shift,0) for a,b,kind in f.get('mapping',[]))
         elf=SimpleNamespace(data=bytes(data),sections=[(0,1,6,lo,0,ro-lo,0,0,2,0),
-                (0,1,2,ro,ro-lo,hi-ro,0,0,4,0)],functions=functions,mapping_symbols=[('$t',lo,0)])
+                (0,1,2,ro,ro-lo,hi-ro,0,0,4,0)],functions=functions,mapping_symbols=mappings)
         return config_stack.DiagnosticObjects(elf,sizes),records,fixture
 
     def test_independent_code_and_data_relocation_crosses_movw_half_boundary(self):
@@ -115,6 +133,51 @@ class CompleteFormatBridges(unittest.TestCase):
         f=fixture[0]
         with self.assertRaises(AssertionError):
             config_stack.format_bridge(objects,f['aliases'][0]['name'],records[f['address']][:-1])
+
+
+class ValidationBuilder(unittest.TestCase):
+    fixture=CompleteFormatBridges.fixture
+
+    def test_complete_five_source_fields_and_reference_cell_all_modes(self):
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,fixture=self.fixture(fixture_file='config-validation.json',mode=mode);f=fixture[0]
+            result=config_stack.validation_builder(objects,f['aliases'][0]['name'],records[f['address']])
+            self.assertEqual(result['fields'],(('code',7,'error_code'),('field',8,'field'),
+                            ('view',4,'option_u8'),('widget',0,'option_u16'),('channel',6,'option_channel_ref')))
+            self.assertEqual(result['channel_reference_cell'],0x34)
+
+    def test_builder_labels_typed_callbacks_and_pool_relocate_independently(self):
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,fixture=self.fixture(0x800,0x21000,'config-validation.json',mode);f=fixture[0]
+            result=config_stack.validation_builder(objects,f['aliases'][0]['name'],records[f['address']+0x800])
+            self.assertEqual(len(result['callbacks']),5)
+
+    def test_same_layout_reference_callback_and_pool_pointer_substitution_reject(self):
+        for mode in ('speed2','sizez'):
+            objects,records,fixture=self.fixture(fixture_file='config-validation.json',mode=mode);f=fixture[0]
+            p=next(p for p in f['address_producers'] if p['origin_role']=='option_channel_ref')
+            a=p['targets'][0]['aliases'][0]
+            del objects.elf.functions[a['name']]
+            objects.elf.functions[CONTROL]=(a['address'],a['size'],0)
+            with self.subTest(mode=mode),self.assertRaises(AssertionError):
+                config_stack.validation_builder(objects,f['aliases'][0]['name'],records[f['address']])
+        objects,records,fixture=self.fixture(fixture_file='config-validation.json',mode='sizez');f=fixture[0]
+        first=f['address_producers'][0];wrong=next(p for p in f['address_producers'] if p['origin_role']=='widget')
+        data=bytearray(objects.elf.data);section=objects.elf.sections[0]
+        struct.pack_into('<I',data,first['pool']-section[3],wrong['address']);objects.elf.data=bytes(data)
+        with self.assertRaises(AssertionError):
+            config_stack.validation_builder(objects,f['aliases'][0]['name'],records[f['address']])
+
+    def test_builder_swapped_cells_changed_origin_and_popped_owner_reject(self):
+        for mode,offset,mnemonic,operands in [('speed2',0x38,'adds','r3, r0, #0x8'),
+                ('speed2',0x62,'strd','r1, r5, [sp, #16]'),('speed2',0x88,'mov','r0, r0'),
+                ('sizez',0x2a,'adds','r1, r0, #0x6'),('sizez',0x44,'str','r1, [sp, #0x4]'),
+                ('sizez',0x4c,'add','sp, #0x34')]:
+            objects,records,fixture=self.fixture(fixture_file='config-validation.json',mode=mode);f=fixture[0]
+            rows=list(records[f['address']]);index=next(i for i,r in enumerate(rows) if r.address==f['address']+offset)
+            old=rows[index];rows[index]=Instruction(old.address,old.raw,mnemonic,operands)
+            with self.subTest(mode=mode,offset=offset),self.assertRaises(AssertionError):
+                config_stack.validation_builder(objects,f['aliases'][0]['name'],rows)
 
 
 class DiagnosticRoots(unittest.TestCase):

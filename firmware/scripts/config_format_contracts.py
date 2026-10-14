@@ -1,7 +1,15 @@
-"""Complete finite core bridges reviewed in task-2-format-bridges-report.md.
+"""Complete finite core bridges for pinned rustc080cc2714/LLVM23.1.3.
 
 Only typed readonly MOVW/MOVT pairs and exact direct target roles relocate.
 This data does not establish caller options, payload or sink closure.
+
+Maintenance: changed bodies fail closed. Review the complete mapped bytes,
+source/ABI, every transfer and current frame before adding a finite variant;
+retain exact register/condition/stack operands and typed object relationships.
+Validate normal/-O mutations, independent code/data relocation and real varied
+configuration links. Do not auto-learn bodies, normalize arbitrary immediates,
+or weaken fixed budgets. Linked software evidence is not device high-water
+proof. Initial full-byte review: task-2-format-bridges-report.md (ignored).
 """
 
 FORMAT_GRAMMARS = {

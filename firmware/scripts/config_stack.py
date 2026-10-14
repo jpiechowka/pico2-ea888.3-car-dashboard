@@ -4,6 +4,7 @@ import struct
 from validation import require
 from llvm_stack import mapping_ranges
 from config_format_contracts import FORMAT_GRAMMARS
+from config_validation_contracts import VALIDATION_BUILDERS
 
 CONDITIONS = r'(?:eq|ne|hs|lo|hi|ls|ge|lt|gt|le|cs|cc|mi|pl|vs|vc)?'
 
@@ -262,6 +263,78 @@ def format_bridge(objects, name, instructions):
                 pad_targets=pad_targets,raw_callbacks=callbacks,sink_sites=sinks,
                 ordinary_sites=ordinary,ordinary_edges=tuple(edges),pretty_sites=pretty,
                 defaults_required=True)
+
+
+def validation_builder(objects, name, instructions):
+    """Bind the complete source-created ValidationError to all five tuples.
+
+    The root consumer must still prove the incoming error's source identity;
+    concrete payload and struct5 body closure are separate checked edges.
+    """
+    require(name in objects.elf.functions and ERROR_ROOTS.get(canonical_symbol(name))=='validation_error',
+            'unreviewed ValidationError builder role')
+    start=objects.elf.functions[name][0]&~1
+    extent,frame,_=typed_function(objects,start,canonical_symbol(name))
+    matches=[c for c in VALIDATION_BUILDERS.values() if c[:2]==(extent,frame)]
+    require(len(matches)==1,'unreviewed ValidationError builder shape')
+    _,_,mapping,producers,grammar=matches[0]
+    require(mapping_ranges(objects.elf,name)==[(start+a,start+b,k) for a,b,k in mapping],
+            'ValidationError builder mapping differs')
+    raw=objects.read_only(start,extent);rows=sorted(instructions,key=lambda r:r.address)
+    require(len(rows)==len(grammar),'ValidationError builder instruction inventory differs')
+    code={a for lo,hi,k in mapping if k=='t' for a in range(lo,hi)};covered=set();pairs={};callee=None
+    for record,line in zip(rows,grammar):
+        offset=int(line.split(' ',1)[0],16);mnemonic,expected=line.split(' ',1)[1].split('\t',1)
+        points=set(range(offset,offset+len(record.raw)))
+        require(record.address==start+offset and len(record.raw) in (2,4) and points<=code and
+                not points&covered and record.raw==raw[offset:offset+len(record.raw)],
+                'ValidationError builder current bytes/coverage differ')
+        covered|=points
+        require(record.mnemonic==mnemonic,'ValidationError builder instruction differs')
+        actual=record.operands.split('@',1)[0].strip()
+        value=re.search(r'@value([0-9]+)\.(low|high)',expected)
+        if value:
+            match=re.fullmatch(r'(r[0-9]+), #(0x[0-9a-f]+|[0-9]+)',actual)
+            require(match is not None and int(match[2],0)<=0xffff,'invalid ValidationError readonly producer')
+            index=int(value[1]);part=value[2]
+            require(index<len(producers) and part not in pairs.setdefault(index,{}),
+                    'ambiguous ValidationError readonly producer')
+            pairs[index][part]=int(match[2],0);actual=match[1]+', '+value[0]
+        elif expected=='@struct5':
+            match=re.match(r'0x([0-9a-f]+)(?:\s|$)',actual)
+            require(match is not None and callee is None,'unresolved/repeated ValidationError struct5 call')
+            callee=int(match[1],16)
+            _,child_frame,_=typed_function(objects,callee,
+                '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field5_finish')
+            require(child_frame==40,'ValidationError struct5 frame differs')
+            actual='@struct5'
+        require(actual==expected,'ValidationError builder operands/source cells differ')
+    require(covered==code and callee is not None,'incomplete ValidationError builder code/edge')
+    callbacks=[];literal_cells=set()
+    for index,(sites,expected) in enumerate(producers):
+        if pairs:
+            require(index in pairs and set(pairs[index])=={'low','high'},'incomplete ValidationError MOVW pair')
+            address=pairs[index]['low']|(pairs[index]['high']<<16)
+        else:
+            consumer,pool=sites
+            record=next(r for r in rows if r.address==start+consumer)
+            match=re.fullmatch(r'r[0-9]+, \[pc, #(0x[0-9a-f]+|[0-9]+)\]',record.operands)
+            require(match is not None and ((record.address+4)&~3)+int(match[1],0)==start+pool,
+                    'ValidationError literal pool producer differs')
+            points=set(range(pool,pool+4));literal_cells|=points
+            require(all(any(k=='d' and lo<=p<hi for lo,hi,k in mapping) for p in points),
+                    'ValidationError literal is not mapped data')
+            address=struct.unpack('<I',objects.read_only(start+pool,4))[0]
+        kind,role=expected
+        if kind=='literal':require(objects.read_only(address,len(role))==role,'ValidationError field name differs')
+        else:callbacks.append((role,objects.debug_vtable(address,role)))
+    data={a for lo,hi,k in mapping if k=='d' for a in range(lo,hi)}
+    require(literal_cells==data,'ValidationError unbound literal pool bytes')
+    require(len(callbacks)==5,'ValidationError missing typed field callback')
+    return dict(function=start,extent=extent,frame=frame,callee=callee,callbacks=tuple(callbacks),
+                fields=(('code',7,'error_code'),('field',8,'field'),('view',4,'option_u8'),
+                        ('widget',0,'option_u16'),('channel',6,'option_channel_ref')),
+                channel_reference_cell=0x34,payload_closure_required=True)
 
 
 def constant_before(instructions, consumer, register, objects):
