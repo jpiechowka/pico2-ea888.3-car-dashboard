@@ -228,12 +228,15 @@ def constructor_frames(functions, sizes):
     # counted, including the extra owner boundary; aliases count once by address.
     matches = {address & ~1 for name, (address, _, _) in functions.items()
                if 'configured_vehicle' in name or 'configured_model' in name
+               or ('OriginIssuer' in name and ('5issue' in name or '_5issue' in name))
+               or (all(token in name for token in ('dashboard_config', '7catalog'))
+                   and any(token in name for token in ('14resolve_source', '10definition')))
                or ('PreparedSession' in name and '8assemble' in name)
                or ('Vehicle' in name and any(token in name for token in ('8assemble', '13prepare_inner')))
                or (any(token in name for token in ('AcquisitionModel', 'AcquisitionOwner',
                                                    'AcquisitionState', 'Session', 'Vehicle',
                                                    'RuleEngine', 'RuleEngineState'))
-                   and any(token in name for token in ('new_inner', 'with_policy', 'session_base',
+                   and any(token in name for token in ('new_inner', 'with_policy', 'assemble_variant', 'session_base',
                                                        'construction_base', 'initialize_for_session',
                                                        'initialize_bound_policy', 'initialize_measurements', '4base',
                                                        'with_configuration', 'configured', 'legacy', '3new')))}

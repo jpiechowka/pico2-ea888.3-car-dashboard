@@ -169,13 +169,22 @@ impl<'a, P: Port> PreparedVehicle<'a, P> {
     /// return destination. Linked caller-plus-callee frames still gate admission.
     #[inline(never)]
     pub fn assemble(self) -> Vehicle<'a, P> {
+        if self.config.is_some() {
+            self.assemble_variant::<true>()
+        } else {
+            self.assemble_variant::<false>()
+        }
+    }
+
+    #[inline(always)]
+    fn assemble_variant<const CONFIGURED: bool>(self) -> Vehicle<'a, P> {
         let mut vehicle = Vehicle {
             port: self.port,
             profile: self.profile,
             bootstrap: Bootstrap::new(self.now),
             rx: self.rx,
             tx: Pump::new(),
-            session: self.session.construction_base(self.config),
+            session: self.session.construction_base::<CONFIGURED>(self.config),
             owner: OwnerState::Recover {
                 since: self.now,
                 wait: 0,

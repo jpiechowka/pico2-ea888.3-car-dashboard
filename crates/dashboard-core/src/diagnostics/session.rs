@@ -127,21 +127,34 @@ impl PreparedSession {
         self,
         config: Option<&ValidatedConfig>,
     ) -> Session<'_> {
-        let mut session = self.construction_base(config);
+        if config.is_some() {
+            self.assemble_variant::<true>(config)
+        } else {
+            self.assemble_variant::<false>(config)
+        }
+    }
+
+    #[inline(always)]
+    fn assemble_variant<const CONFIGURED: bool>(
+        self,
+        config: Option<&ValidatedConfig>,
+    ) -> Session<'_> {
+        let mut session = self.construction_base::<CONFIGURED>(config);
         session.initialize_measurements();
         session
     }
 
     // A valid construction value; the enclosing Session or Vehicle immediately
     // finishes its already-bound model before returning a public ready owner.
-    pub(super) fn construction_base(
+    #[inline(always)]
+    pub(super) fn construction_base<const CONFIGURED: bool>(
         self,
         config: Option<&ValidatedConfig>,
     ) -> Session<'_> {
         Session {
             client: self.client,
             capabilities: self.capabilities,
-            model: AcquisitionModel::session_base(config),
+            model: AcquisitionModel::session_base::<CONFIGURED>(config),
             slots: [Slot::default(); 7],
             cursor: 0,
             next_query: 0,

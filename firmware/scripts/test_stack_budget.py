@@ -322,6 +322,28 @@ class PublicationFrames(unittest.TestCase):
 
 
 class OwnerPublicationFrames(unittest.TestCase):
+    def test_fixed_variants_and_measured_source_origin_children_are_counted(self):
+        from check_stack_budget import constructor_frames
+        functions = {
+            'dashboard_core_PreparedVehicle_16assemble_variant_const_true': (0x101, 4, 0),
+            'dashboard_core_PreparedVehicle_16assemble_variant_const_false': (0x201, 4, 0),
+            'dashboard_core_PreparedSession_16assemble_variant_const_true': (0x301, 4, 0),
+            'dashboard_core_OriginIssuer_5issue': (0x401, 4, 0),
+            'dashboard_config_7catalog_14resolve_source': (0x501, 4, 0),
+            'dashboard_config_7catalog_10definition': (0x601, 4, 0),
+        }
+        sizes = {0x100: 20000, 0x200: 20000, 0x300: 200, 0x400: 8, 0x500: 72, 0x600: 52}
+        # Both siblings remain in the conservative address sum.
+        self.assertEqual(constructor_frames(functions, sizes), 40332)
+        for address in sizes:
+            reduced = dict(sizes)
+            del reduced[address]
+            with self.subTest(missing=address), self.assertRaisesRegex(AssertionError, 'constructor frame metadata'):
+                constructor_frames(functions, reduced)
+            increased = dict(sizes)
+            increased[address] += 32
+            self.assertEqual(constructor_frames(functions, increased), 40364)
+
     def test_borrowed_initialization_and_constant_base_frames_require_metadata(self):
         from check_stack_budget import constructor_frames
         functions = {

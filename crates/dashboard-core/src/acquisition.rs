@@ -778,7 +778,7 @@ impl ConfigurationHandle for alloc::boxed::Box<ValidatedConfig> {
 /// Construction phases are not application APIs.
 /// ```compile_fail
 /// use dashboard_core::acquisition::AcquisitionModel;
-/// let _ = AcquisitionModel::session_base(None);
+/// let _ = AcquisitionModel::session_base::<false>(None);
 /// ```
 /// ```compile_fail
 /// use dashboard_core::acquisition::AcquisitionModel;
@@ -810,7 +810,7 @@ impl Default for AcquisitionModel<'_> {
 }
 impl<'cfg> AcquisitionModel<'cfg> {
     pub fn new() -> Self {
-        let mut owner = Self::session_base(None);
+        let mut owner = Self::session_base::<false>(None);
         owner.initialize_for_session(0);
         owner
     }
@@ -836,20 +836,27 @@ impl<'cfg> AcquisitionModel<'cfg> {
         config: &'cfg ValidatedConfig,
         ecu: u16,
     ) -> Self {
-        let mut owner = Self::session_base(Some(config));
+        let mut owner = Self::session_base::<true>(Some(config));
         owner.initialize_for_session(ecu);
         owner
     }
 
     // Diagnostics construction only; neither base nor finishing is a public
     // acquisition operation. None remains valid issuer exhaustion after finish.
-    pub(crate) fn session_base(config: Option<&'cfg ValidatedConfig>) -> Self {
+    #[inline(always)]
+    pub(crate) fn session_base<const CONFIGURED: bool>(config: Option<&'cfg ValidatedConfig>) -> Self {
+        assert!(
+            CONFIGURED == config.is_some(),
+            "construction variant matches bound configuration"
+        );
         Self {
             configuration: config,
-            state: if config.is_some() {
-                AcquisitionState::CONFIGURED_BASE
-            } else {
-                AcquisitionState::LEGACY_BASE
+            state: const {
+                if CONFIGURED {
+                    AcquisitionState::CONFIGURED_BASE
+                } else {
+                    AcquisitionState::LEGACY_BASE
+                }
             },
         }
     }
@@ -1050,6 +1057,33 @@ mod cache_tests {
     use crate::display::{FrameBuffer, St7789Renderer};
     use crate::render::FpsMode;
     use crate::vehicle_status::VehicleStatus;
+
+    #[test]
+    fn fixed_construction_variant_matches_only_its_bound_configuration() {
+        let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+        for configured in [false, true] {
+            let result = std::panic::catch_unwind(|| {
+                if configured {
+                    AcquisitionModel::session_base::<true>(None)
+                } else {
+                    AcquisitionModel::session_base::<false>(Some(&config))
+                }
+            });
+            assert!(result.is_err());
+        }
+        let mut legacy = AcquisitionModel::session_base::<false>(None);
+        let mut configured = AcquisitionModel::session_base::<true>(Some(&config));
+        assert!(legacy.state.origin.is_none() && configured.state.origin.is_none());
+        assert!(matches!(legacy.state.alarms, Alarms::Legacy(_)));
+        assert!(matches!(configured.state.alarms, Alarms::Configured(_)));
+        legacy.initialize_for_session(0x7E8);
+        configured.initialize_for_session(0x7E8);
+        assert!(legacy.state.origin.is_some() && configured.state.origin.is_some());
+        assert!(legacy.configuration().is_none());
+        assert!(core::ptr::eq(configured.configuration().unwrap(), &config));
+        assert_eq!(legacy.state.mode, DataMode::Vehicle);
+        assert_eq!(configured.state.mode, DataMode::Vehicle);
+    }
 
     #[test]
     fn constructor_initial_fields_preserve_history_policy_and_empty_runtime_state() {
