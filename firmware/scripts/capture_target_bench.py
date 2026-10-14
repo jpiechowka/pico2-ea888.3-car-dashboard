@@ -15,15 +15,22 @@ import zipfile
 FIRMWARE = Path(__file__).resolve().parents[1]
 REPO = FIRMWARE.parent
 sys.path.insert(0, str(REPO / 'host' / 'scripts'))
-from benchmark_environment import CONFIG_KEYS, compiler
+from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler
 from source_inventory import shared_inputs
 
 CUSTOM_KEYS = ('DASHBOARD_CPU_HZ', 'DASHBOARD_SPI_HZ', 'DASHBOARD_VSEL_MV')
 
 
 def check_clock_environment(environment):
-    if any(key in environment for key in CUSTOM_KEYS):
-        raise ValueError('unset ambient custom-clock overrides; select typed clock inputs explicitly')
+    if any(key in CUSTOM_KEYS or key.startswith(ENV_PREFIXES) for key in environment):
+        raise ValueError('unset ambient compiler/config/custom-clock overrides; select typed inputs explicitly')
+
+
+def run_build(command, environment, destination):
+    build = subprocess.run(command,cwd=FIRMWARE,env=environment,stdout=subprocess.PIPE,text=True,encoding='utf-8')
+    (destination/'cargo-messages.jsonl').write_text(build.stdout,encoding='utf-8')
+    build.check_returncode()
+    return build
 
 
 def fixed_json_tool(arguments, environment):
@@ -315,9 +322,8 @@ def main():
     command=['cargo','build','--locked','-p','dashboard-pico2','--release',
              '--target','thumbv8m.main-none-eabihf','--target-dir',str(destination/'build'),
              '--message-format=json','--features',','.join(options['features']),'--no-default-features']
-    build=subprocess.run(command,cwd=FIRMWARE,env=environment,check=True,stdout=subprocess.PIPE,text=True,encoding='utf-8')
+    build=run_build(command, environment, destination)
     elf=emitted_elf(build.stdout)
-    (destination/'cargo-messages.jsonl').write_text(build.stdout,encoding='utf-8')
     clock_evidence = generated_clock(build.stdout, destination/'build', firmware_package(build.stdout), options)
     config_bytes = embedded_config(build.stdout, destination/'build')
     verify_selected_config(destination, environment, config_bytes, config_record)

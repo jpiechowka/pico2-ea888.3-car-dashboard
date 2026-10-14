@@ -3,6 +3,9 @@ import json
 from pathlib import Path
 import unittest
 import tempfile
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 import capture_target_bench as capture
 
@@ -12,6 +15,23 @@ class CaptureTests(unittest.TestCase):
         for key in ['DASHBOARD_CPU_HZ','DASHBOARD_SPI_HZ','DASHBOARD_VSEL_MV']:
             with self.assertRaises(ValueError):
                 capture.check_clock_environment({key:''})
+
+    def test_every_ambient_compiler_override_is_rejected_by_presence(self):
+        from benchmark_environment import ENV_PREFIXES
+        for key in [*ENV_PREFIXES, 'RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','CARGO_PROFILE_RELEASE_OPT_LEVEL']:
+            for value in ['', 'override']:
+                with self.subTest(key=key,value=value), self.assertRaises(ValueError):
+                    capture.check_clock_environment({key:value})
+        capture.check_clock_environment({'PATH':'ordinary PATH','DASHBOARD_CONFIG':'selected.eav'})
+
+    def test_failed_build_keeps_raw_stdout_before_raising(self):
+        with tempfile.TemporaryDirectory() as folder:
+            destination=Path(folder)
+            command=[sys.executable,'-c','import sys; print("{\\"reason\\":\\"build-finished\\",\\"success\\":false}"); sys.exit(7)']
+            with self.assertRaises(subprocess.CalledProcessError) as error:
+                capture.run_build(command,os.environ.copy(),destination)
+            self.assertEqual(error.exception.returncode,7)
+            self.assertEqual(json.loads((destination/'cargo-messages.jsonl').read_text()),{'reason':'build-finished','success':False})
 
     def test_generated_clock_is_bound_to_firmware_package_and_exact_attempt(self):
         with tempfile.TemporaryDirectory() as folder:
