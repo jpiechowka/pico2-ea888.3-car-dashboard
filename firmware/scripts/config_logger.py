@@ -1,4 +1,4 @@
-"""Pinned logger typed objects; runtime ownership/body closure stays explicit.
+"""Complete pinned logger/builtin bodies and typed state objects.
 
 Object suffixes .0 through .4 are physical state fields, never clone labels.
 The immutable Rust NAME deliberately occupies writable ELF .data. Preserve its
@@ -10,7 +10,9 @@ import re
 import struct
 from config_panic import panic_object,PANIC_CALLBACKS
 from config_roots import root_location
-from config_stack import DEFMT_IDENTITIES
+from config_stack import DEFMT_IDENTITIES,canonical_symbol,typed_function,_typed_function_extent,transfer_family
+from config_finite import _complete_body
+from config_logger_contracts import LOGGER_GRAMMARS,LOGGER_ROLES,MANUAL_BUILTINS
 from validation import require
 
 ENCODER='_RNvCs_9defmt_rtt11RTT_ENCODER.'
@@ -18,6 +20,66 @@ LOCK_OWNER='_RNvNtCs_10embassy_rp21critical_section_impl10LOCK_OWNER.0'
 ANCHOR='_RNvNtNtCs_5pico25tasks8recovery15DISPLAY_PENDING.0'
 NAME='_RNvCs_9defmt_rtt4NAME'
 BUFFER='_RNvCs_9defmt_rtt6BUFFER'
+
+TIMESTAMP_ALIASES={'_defmt_timestamp':0,'__defmt_default_timestamp':6,'DefaultPreInit':6}
+PANIC_ALIASES=('_defmt_panic','__defmt_default_panic')
+
+
+def _logger_function(objects,target,role):
+    """Only reviewed zero-size aliases and complete assembly have exceptions."""
+    if role in TIMESTAMP_ALIASES or role=='@logger_timestamp':
+        expected=TIMESTAMP_ALIASES;extent=6;semantic='@logger_timestamp'
+    elif role in PANIC_ALIASES or role=='@logger_default_panic':
+        aliases=[e for n,e in objects.elf.functions.items() if n=='__defmt_default_panic' and e[0]&~1==target]
+        require(len(aliases)==1 and aliases[0][1] in (24,26),'default defmt panic alias differs')
+        extent=aliases[0][1];expected={'_defmt_panic':0,'__defmt_default_panic':extent};semantic='@logger_default_panic'
+    else:
+        if role not in MANUAL_BUILTINS:return typed_function(objects,target,role)
+        extent,name=_typed_function_extent(objects,target,role);expected_extent,frame=MANUAL_BUILTINS[role]
+        definitions=[v for v in objects.elf.symbol_entries if canonical_symbol(v[0])==role]
+        require(definitions==[(name,target|1,extent,2,objects.elf.functions[name][2])],
+                'reviewed builtin definition is missing, conflicting or not local FUNC')
+        require(extent==expected_extent and (target not in objects.sizes or objects.sizes[target]==frame),
+                'reviewed builtin extent/current frame differs')
+        return extent,frame,name
+    entries=[v for v in objects.elf.symbol_entries if v[0] in expected or v[1]&~1==target and v[3]&15==2]
+    require(len(entries)==len(expected) and {v[0] for v in entries}==set(expected),'missing/duplicate/unreviewed logger function alias')
+    index=entries[0][4]
+    require(all(v== (v[0],target|1,expected[v[0]],18,index) for v in entries) and 0<=index<len(objects.elf.sections),
+            'logger alias extent/Thumb/global type/section differs')
+    actual={n:e for n,e in objects.elf.functions.items() if e[0]&~1==target}
+    require(actual=={n:(target|1,size,index) for n,size in expected.items() if size},'logger sized alias view differs')
+    section=objects.elf.sections[index]
+    require(section[1]==1 and section[2]&7==6 and section[3]<=target<target+extent<=section[3]+section[5],
+            'logger alias exceeds declared read-only executable section')
+    objects.read_only(target,extent);require(objects.sizes.get(target)==8,'logger alias current frame differs')
+    return extent,8,semantic
+
+
+def logger_body(objects,name,instructions,outline_role=None,_ancestry=()):
+    """Complete finite bodies; every caller/state/default/guard edge stays open."""
+    require(name in objects.elf.functions,'missing logger body')
+    start=objects.elf.functions[name][0]&~1;require(start not in _ancestry,'logger activation cycle')
+    raw_role=canonical_symbol(name)
+    role=outline_role or ('@logger_timestamp' if raw_role in TIMESTAMP_ALIASES else
+                         '@logger_default_panic' if raw_role in PANIC_ALIASES else raw_role)
+    require(not outline_role or re.fullmatch(r'OUTLINED_FUNCTION_[0-9]+',name),'logger outline origin differs')
+    require(role in LOGGER_ROLES,'unreviewed exact logger/builtin role');results=[]
+    for shape in LOGGER_ROLES[role]:
+        try:
+            proof=_complete_body(objects,name,instructions,role,shape,LOGGER_GRAMMARS[shape],logger_object,logger_body,
+                                 _ancestry,function_consumer=_logger_function)
+        except AssertionError:continue
+        rows=[r for a,r in sorted(instructions.items()) if start<=a<start+proof['extent']]
+        proof.update(transfers=tuple((r.address-start,r.mnemonic,r.operands.split('@',1)[0].strip()) for r in rows
+                         if transfer_family(r.mnemonic.removesuffix('.w')) or re.search(r'\bpc\b',r.operands)),
+                     requires_runtime_ownership_entry_and_guard_closure=True,
+                     requires_typed_inputs_live_sink_and_default_options=True,
+                     manual_frame_requires_complete_builtin=role if role in MANUAL_BUILTINS else None,
+                     reference_only=role=='@logger_default_panic')
+        results.append(proof)
+    require(len(results)==1,'missing, changed or ambiguous complete logger/builtin shape')
+    return results[0]
 
 
 def _object_symbol(objects,address,role,size,section_name):

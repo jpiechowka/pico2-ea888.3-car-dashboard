@@ -565,8 +565,8 @@ class RootWindows(unittest.TestCase):
 
 
 class LoggerObjects(unittest.TestCase):
-    def fixture(self,mode,code_shift=0,data_shift=0,ram_shift=0):
-        item=next(v for v in json.loads((Path(__file__).parent/'fixtures/config-logger-objects.json').read_text()) if v['mode']==mode)
+    def fixture(self,mode,code_shift=0,data_shift=0,ram_shift=0,fixture_file='config-logger-objects.json'):
+        item=next(v for v in json.loads((Path(__file__).parent/'fixtures'/fixture_file).read_text()) if v['mode']==mode)
         sections=[list(v) for v in item['sections']];data=bytearray()
         for s in sections:
             s[4]=len(data)
@@ -680,6 +680,78 @@ class LoggerObjects(unittest.TestCase):
         index=next(i for i,s in enumerate(objects.elf.sections) if s==objects.elf.named['.uninit'])
         section=list(objects.elf.sections[index]);section[5]=0xffffffff;objects.elf.sections[index]=tuple(section);objects.elf.named['.uninit']=tuple(section)
         with self.assertRaises(AssertionError):config_logger.logger_object(objects,obj['value'],obj['type'])
+
+
+class LoggerBodies(unittest.TestCase):
+    OUTLINES={'OUTLINED_FUNCTION_272':'@outline:logger_channel_restore',
+              'OUTLINED_FUNCTION_98':'@outline:logger_byte_to_channel',
+              'OUTLINED_FUNCTION_229':'@outline:logger_write_restore'}
+
+    def fixture(self,mode):
+        objects,item=LoggerObjects.fixture(self,mode,fixture_file='config-logger-bodies.json')
+        objects.elf.mapping_symbols=[tuple(v) for v in item['mapping_symbols']]
+        records={}
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address'];records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],op[1] if len(op)>1 else '')
+        return objects,records,item
+
+    def test_complete_logger_and_builtin_bodies_bind_every_current_instruction(self):
+        import config_logger
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,item=self.fixture(mode)
+            for instance in item['instances']:
+                name=next(a['name'] for a in instance['aliases'] if a['size'])
+                proof=config_logger.logger_body(objects,name,records,self.OUTLINES.get(name))
+                self.assertEqual((proof['extent'],proof['frame']),(instance['extent'],instance['own_frame']))
+                self.assertTrue(proof['requires_runtime_ownership_entry_and_guard_closure'])
+
+    def test_timestamp_alias_contract_cannot_hide_wrong_size_binding_duplicate_or_section(self):
+        import config_logger
+        for fault in ('size','binding','duplicate','elsewhere','section','alias'):
+            objects,records,item=self.fixture('sizez');instance=next(v for v in item['instances'] if v['role']=='_defmt_timestamp')
+            ordinal=next(i for i,v in enumerate(objects.elf.symbol_entries) if v[0]=='_defmt_timestamp');entry=list(objects.elf.symbol_entries[ordinal])
+            if fault=='size':entry[2]=6
+            elif fault=='binding':entry[3]=2
+            elif fault=='duplicate':objects.elf.symbol_entries.append(tuple(entry))
+            elif fault=='elsewhere':
+                other=list(entry);other[1]+=0x100;objects.elf.symbol_entries.append(tuple(other))
+            elif fault=='section':entry[4]=0
+            else:entry[0]='unreviewed_timestamp_alias'
+            objects.elf.symbol_entries[ordinal]=tuple(entry)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_logger.logger_body(objects,'__defmt_default_timestamp',records)
+
+    def test_builtin_frame_fallback_requires_exact_body_extent_and_matching_metadata(self):
+        import config_logger
+        for fault in ('extent','frame','instruction','metadata_duplicate'):
+            objects,records,item=self.fixture('sizez');instance=next(v for v in item['instances'] if v['role']=='compiler_builtins::mem::memcpy')
+            name=instance['aliases'][0]['name'];start=instance['entry']
+            if fault=='extent':
+                value,extent,index=objects.elf.functions[name];objects.elf.functions[name]=(value,extent-2,index)
+            elif fault=='frame':objects.sizes[start]=instance['own_frame']-8
+            elif fault=='metadata_duplicate':
+                entry=list(next(v for v in objects.elf.symbol_entries if v[0]==name));entry[1]+=0x100;entry[2]=0;objects.elf.symbol_entries.append(tuple(entry))
+            else:
+                row=records[start];records[start]=Instruction(start,row.raw,'push','{r7, lr}')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_logger.logger_body(objects,name,records)
+
+    def test_fixed_pc_scalar_mask_and_parent_owned_outline_effects_cannot_change(self):
+        import config_logger
+        for fault in ('scalar_mask','outline_byte_cell','outline_restore'):
+            objects,records,item=self.fixture('sizez')
+            role='<defmt::export::FmtWrite as core::fmt::Write>::write_char' if fault=='scalar_mask' else '_defmt_write'
+            instance=next(v for v in item['instances'] if v['role']==role);name=next(a['name'] for a in instance['aliases'] if a['size'])
+            if fault=='scalar_mask':
+                target=instance['entry']+124;section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=target<s[3]+s[5])
+                data=bytearray(objects.elf.data);data[section[4]+target-section[3]]^=1;objects.elf.data=bytes(data)
+            else:
+                outline=next(v for v in item['instances'] if v['role']==('OUTLINED_FUNCTION_98' if fault=='outline_byte_cell' else 'OUTLINED_FUNCTION_229'))
+                at=outline['entry'];row=records[at]
+                records[at]=Instruction(at,row.raw,'strb' if fault=='outline_byte_cell' else 'pop.w',
+                    'r0, [r7, #-2]' if fault=='outline_byte_cell' else '{r3, r8, r9, r10}')
+                if fault=='outline_byte_cell':name='OUTLINED_FUNCTION_98'
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_logger.logger_body(objects,name,records,self.OUTLINES.get(name))
 
 
 class RootLocations(unittest.TestCase):

@@ -190,6 +190,13 @@ class DiagnosticObjects:
 
 def typed_function(objects, target, role):
     """Current complete function ownership for one exact normalized interface."""
+    extent,name=_typed_function_extent(objects,target,role)
+    require(target in objects.sizes,'missing typed function frame')
+    return extent,objects.sizes[target],name
+
+
+def _typed_function_extent(objects,target,role):
+    """Private extent half; frame-less assembly requires a complete consumer."""
     aliases=[(n,e) for n,e in objects.elf.functions.items() if e[0]&~1==target]
     require(aliases,'missing typed function entry')
     pointer,extent,index=aliases[0][1]
@@ -202,8 +209,7 @@ def typed_function(objects, target, role):
             section[3]<=target<target+extent<=section[3]+section[5],
             'typed function exceeds declared read-only executable section')
     objects.read_only(target,extent)
-    require(target in objects.sizes,'missing typed function frame')
-    return extent,objects.sizes[target],aliases[0][0]
+    return extent,aliases[0][0]
 
 
 PAD_ROLES = (

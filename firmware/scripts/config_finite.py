@@ -6,8 +6,8 @@ from llvm_stack import mapping_ranges
 from validation import require
 
 
-def _complete_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry=()):
-    return _literal_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry)
+def _complete_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry=(),function_consumer=typed_function):
+    return _literal_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry,function_consumer=function_consumer)
 
 
 def _bounded_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,start):
@@ -17,14 +17,14 @@ def _bounded_body(objects,name,instructions,role,shape,contract,object_consumer,
     return proof
 
 
-def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry=(),window=None):
+def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry=(),window=None,function_consumer=typed_function):
     """Literal byte/operand matcher for closed, reviewed internal grammars.
 
     No instruction execution, inferred CFG, runtime learning or public plugin
     selection. Consumers supply fixed typed policies and retain caller proof.
     """
     parent=objects.elf.functions[name][0]&~1
-    parent_extent,frame,_=typed_function(objects,parent,canonical_symbol(name))
+    parent_extent,frame,_=function_consumer(objects,parent,canonical_symbol(name))
     start=parent if window is None else window;extent=contract['extent']
     caller_mapping=mapping_ranges(objects.elf,name)
     if window is None:
@@ -75,12 +75,12 @@ def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,
                 require(names,'missing payload outline')
                 child=outline_consumer(objects,names[0],instructions,target_role,ancestry+(start,));child_frame=child['frame']
                 edge_role=target_role
-            else:edge_role=target_role[6:];_,child_frame,_=typed_function(objects,target,edge_role)
+            else:edge_role=target_role[6:];_,child_frame,_=function_consumer(objects,target,edge_role)
             edges.append((offset,mnemonic,target,edge_role,child_frame));actual=target_role
         elif mnemonic in ('bx','blx') and actual!='lr':indirect.append((offset,mnemonic,actual))
         require(actual==expected,'payload reference/cell/ABI/default/return operands differ')
     require(covered==code,'incomplete payload mapped code')
-    data={a for lo,hi,k in mapping if k=='d' for a in range(lo,hi)};covered=set();values=dict(external_values);pool_objects={}
+    data={a for lo,hi,k in mapping if k=='d' for a in range(lo,hi)};covered=set();values=dict(external_values);pool_objects={};fixed_data=set()
     for offset,width,value in contract.get('data',()):
         points=set(range(start+offset,start+offset+width))
         require(points<=data and not points&covered,'payload mapped data ownership differs');covered|=points
@@ -88,15 +88,18 @@ def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,
             require(width==4 and (start+offset)%4==0,'invalid payload object pool extent')
             ordinal=int(value[7:]);require(ordinal not in values,'duplicate payload pool object')
             values[ordinal]=struct.unpack('<I',objects.read_only(start+offset,4))[0];pool_objects[start+offset]=ordinal
-        else:require(raw[offset:offset+width].hex()==value,'payload fixed mapped bytes differ')
+        else:
+            require(raw[offset:offset+width].hex()==value,'payload fixed mapped bytes differ')
+            fixed_data|=points
     require(covered==data,'unbound payload mapped data bytes')
     pool_reads=set()
     for row in rows:
         actual=row.operands.split('@',1)[0].strip();match=re.fullmatch(r'r[0-9]+, \[pc, #(0x[0-9a-f]+|[0-9]+)\]',actual)
         if match and window is None:
             pool=((row.address+4)&~3)+int(match[1],0)
-            require(row.mnemonic.startswith('ldr') and pool in pool_objects,'unbound payload PC pool consumer')
-            pool_reads.add(pool)
+            require(row.mnemonic.startswith('ldr') and
+                    (pool in pool_objects or set(range(pool,pool+4))<=fixed_data),'unbound payload PC pool consumer')
+            if pool in pool_objects:pool_reads.add(pool)
     require(pool_reads==set(pool_objects),'unconsumed payload object pool')
     for ordinal,pair in producers.items():
         require(set(pair)=={'low','high'} and ordinal not in values,'incomplete/duplicate payload object pair')
