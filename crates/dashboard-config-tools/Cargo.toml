@@ -7,6 +7,10 @@ description = "Validated configuration compiler and build snapshot helper"
 [dependencies]
 dashboard-config = { path = "../dashboard-config", features = ["json"] }
 sha2-const-stable = "=0.1.0"
+dashboard-build-profiles = { path = "../dashboard-build-profiles", features = ["serde"] }
+dashboard-helper-protocol = { path = "../dashboard-helper-protocol" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
 
 [[bin]]
 name = "dashboard-config"

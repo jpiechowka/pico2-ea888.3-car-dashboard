@@ -13,6 +13,55 @@ use dashboard_build_profiles::{
 type PllFields = (u8, u16, u8, u8);
 type SpiFields = (u8, u8);
 type ProfileCase = (ProfileId, u32, u32, Voltage, PllFields, u32, u32, SpiFields);
+#[test]
+fn exact_all_eight_alias_sets_are_globally_unique() {
+    let expected: &[&[&str]] = &[
+        &[
+            "stock",
+            "pico2",
+            "pico2-run",
+            "pico2-fast",
+            "pico2-fast-run",
+            "pico2-150-62-1v10",
+            "pico2-150-62-1v10-run",
+        ],
+        &["132-66", "pico2-132-66-1v10", "pico2-132-66-1v10-run"],
+        &["140-70", "pico2-140-70-1v10", "pico2-140-70-1v10-run"],
+        &["150-15", "pico2-150-15-1v10", "pico2-150-15-1v10-run"],
+        &["250-62.5", "pico2-250-62-1v10", "pico2-250-62-1v10-run"],
+        &["280-70", "pico2-280-70-1v30", "pico2-280-70-1v30-run"],
+        &["290-72.5", "pico2-290-72-1v30", "pico2-290-72-1v30-run"],
+        &["300-75", "pico2-300-75-1v30", "pico2-300-75-1v30-run"],
+    ];
+    let mut all = std::collections::BTreeSet::new();
+    for (p, aliases) in catalogue().iter().zip(expected) {
+        assert_eq!(p.aliases, *aliases, "{:?}", p.id);
+        for alias in p.aliases {
+            assert!(all.insert(*alias), "duplicate {alias}");
+        }
+    }
+    assert_eq!(all.len(), 28);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn every_named_selection_has_an_exact_serde_roundtrip() {
+    for (p, name) in catalogue().iter().zip([
+        "stock",
+        "cpu132_spi66",
+        "cpu140_spi70",
+        "timing150_spi15",
+        "cpu250_spi62",
+        "cpu280_spi70",
+        "legacy290_spi72",
+        "cpu300_spi75",
+    ]) {
+        let expected = format!("{{\"named\":\"{name}\"}}");
+        let selected = ClockSelection::Named(p.id);
+        assert_eq!(serde_json::to_string(&selected).unwrap(), expected);
+        assert_eq!(serde_json::from_str::<ClockSelection>(&expected).unwrap(), selected);
+    }
+}
 const CASES: &[ProfileCase] = &[
     (
         ProfileId::Stock,

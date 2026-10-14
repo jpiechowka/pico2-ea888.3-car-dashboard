@@ -63,7 +63,11 @@ dependencies = [
 name = "dashboard-config-tools"
 version = "0.1.0"
 dependencies = [
+ "dashboard-build-profiles",
  "dashboard-config",
+ "dashboard-helper-protocol",
+ "serde",
+ "serde_json",
  "sha2-const-stable",
 ]
 

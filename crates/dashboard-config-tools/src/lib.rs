@@ -1,4 +1,6 @@
 //! Host-only configuration snapshot helper; never a device dependency.
+pub mod build_options;
+pub mod clocks;
 use std::ffi::OsStr;
 use std::fmt::Write;
 use std::io::Read;

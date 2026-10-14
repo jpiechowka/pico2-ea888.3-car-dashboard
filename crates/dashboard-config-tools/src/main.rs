@@ -6,8 +6,26 @@ use dashboard_config_tools::{compile, import, sha256_hex};
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let usage = "usage: dashboard-config default <output.json|output.eav> | compile <input.json|input.eav> \
-                 <output.eav> | inspect <input.json|input.eav>";
+                 <output.eav> | inspect <input.json|input.eav> | profiles | build-options <fixed options> | \
+                 capture-options <fixed options>";
     match args.as_slice() {
+        [command] if command == "profiles" => {
+            let bytes = dashboard_config_tools::build_options::profiles_json()?;
+            println!("{}", String::from_utf8(bytes).map_err(|e| e.to_string())?);
+        }
+        [command, rest @ ..] if command == "build-options" || command == "capture-options" => {
+            let bytes = if command == "build-options" {
+                let options = dashboard_config_tools::build_options::build_options(rest)?;
+                dashboard_config_tools::build_options::normalized_json(&options)?
+            } else {
+                let options = dashboard_config_tools::build_options::capture_options(rest)?;
+                dashboard_config_tools::build_options::bounded_json(
+                    &options,
+                    dashboard_config_tools::build_options::CAPTURE_LIMIT,
+                )?
+            };
+            println!("{}", String::from_utf8(bytes).map_err(|e| e.to_string())?);
+        }
         [command, output] if command == "default" => {
             let config = validate(default_config()).expect("reviewed default configuration");
             let bytes = if Path::new(output)
