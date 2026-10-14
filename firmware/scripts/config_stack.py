@@ -95,3 +95,75 @@ class DiagnosticObjects:
         actual = self.read_only(address, len(expected))
         require(actual == expected, 'fixed diagnostic literal differs')
         return actual
+
+
+def constant_before(instructions, consumer, register, objects):
+    """Match one bounded straight-line constant producer at a call boundary.
+
+    Input must be the byte-checked caller extent from the resolved adapter.
+    This component does not select that extent or admit a callback/control edge.
+    Branches, calls, unknown definitions and runtime memory producers fail;
+    it is not a register executor or a reaching-definition merge algorithm.
+    """
+    require(re.fullmatch(r'r(?:[0-9]|1[0-2])', register) is not None, 'unsupported constant argument register')
+    records = sorted(instructions, key=lambda i: i.address)
+    require(len({i.address for i in records}) == len(records), 'ambiguous boundary instruction record')
+    sites = [i for i, record in enumerate(records) if record.address == consumer]
+    require(len(sites) == 1 and records[sites[0]].mnemonic in ('bl', 'bl.w'), 'missing direct consuming call')
+    boundary = sites[0]
+    start = max(0, boundary - 64)
+    transfers = {'b', 'bl', 'bx', 'blx', 'beq', 'bne', 'bhs', 'blo', 'bhi', 'bls',
+                 'bge', 'blt', 'bgt', 'ble', 'bcs', 'bcc', 'bmi', 'bpl', 'bvs', 'bvc',
+                 'cbz', 'cbnz', 'tbb', 'tbh'}
+    plain = {'mov', 'movs', 'movw', 'movt', 'ldr', 'ldrb', 'ldrh', 'ldrd',
+             'str', 'strb', 'strh', 'strd', 'stm', 'stmia', 'ldm', 'ldmia',
+             'add', 'adds', 'sub', 'subs', 'cmp', 'cmn', 'tst', 'and', 'ands',
+             'orr', 'orrs', 'eor', 'eors', 'lsl', 'lsls', 'lsr', 'lsrs', 'asr',
+             'asrs', 'mvn', 'mvns', 'uxtb', 'uxth', 'sxtb', 'sxth', 'nop'}
+
+    def producer(before, wanted, nesting):
+        require(nesting <= 8, 'constant argument dependency bound exceeded')
+        next_address = records[before].address
+        for index in range(before - 1, start - 1, -1):
+            record = records[index]
+            require(record.address % 2 == 0 and len(record.raw) in (2, 4)
+                    and record.address + len(record.raw) == next_address,
+                    'noncontiguous constant producer block')
+            next_address = record.address
+            mnemonic = record.mnemonic.removesuffix('.w')
+            operands = record.operands.split('@', 1)[0].strip()
+            require(mnemonic not in transfers and not mnemonic.startswith('it'),
+                    'constant producer crosses unproved control boundary')
+            require(mnemonic in plain, 'unreviewed instruction in constant producer block')
+            destination, _, source = operands.partition(',')
+            destination = destination.strip(); source = source.strip()
+            require(destination != 'pc' and not (mnemonic in ('ldm', 'ldmia') and re.search(r'\bpc\b', source)),
+                    'constant producer crosses implicit control boundary')
+            if destination == wanted:
+                if mnemonic in ('mov', 'movs', 'movw', 'movt'):
+                    if re.fullmatch(r'#(?:0x[0-9a-f]+|[0-9]+)', source):
+                        value = int(source[1:], 0)
+                        require(value <= (0xffff if mnemonic in ('movw', 'movt') else 0xffffffff),
+                                'constant argument immediate differs')
+                        if mnemonic == 'movt':
+                            low, evidence = producer(index, wanted, nesting + 1)
+                            return value << 16 | low & 0xffff, (record.address, *evidence)
+                        return value, (record.address,)
+                    require(mnemonic == 'mov' and re.fullmatch(r'r(?:[0-9]|1[0-2])', source),
+                            'unreviewed constant move producer')
+                    value, evidence = producer(index, source, nesting + 1)
+                    return value, (record.address, *evidence)
+                if mnemonic == 'ldr':
+                    literal = re.fullmatch(r'\[pc(?:, #(-?0x[0-9a-f]+|-?[0-9]+))?\]', source)
+                    require(literal is not None, 'constant argument has runtime memory producer')
+                    offset = int(literal[1], 0) if literal[1] else 0
+                    address = ((record.address + 4) & ~3) + offset
+                    return struct.unpack('<I', objects.read_only(address, 4))[0], (record.address,)
+                require(mnemonic in ('str', 'strb', 'strh', 'strd', 'cmp', 'tst'),
+                        'unreviewed constant argument definition')
+            if re.search(r'\b' + wanted + r'\b', operands):
+                require(mnemonic in ('str', 'strb', 'strh', 'strd', 'cmp', 'tst') and '!' not in operands,
+                        'unreviewed constant argument clobber')
+        raise AssertionError('missing current constant argument producer')
+
+    return producer(boundary, register, 0)

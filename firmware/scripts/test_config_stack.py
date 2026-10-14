@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 import struct
 import config_stack
+from llvm_stack import Instruction
 from config_stack import error_root_role
 
 VALIDATION = '_RNvXsk_NtCshxbT6mSCLYQ_16dashboard_config8validateNtB5_15ValidationErrorNtNtCs6m2Zc6X1WBq_4core3fmt5Debug3fmt'
@@ -84,6 +85,38 @@ class TypedDiagnosticObjects(unittest.TestCase):
         elf.functions[VALIDATION]=(base+97,8,2)
         with self.assertRaises(AssertionError):
             config_stack.DiagnosticObjects(elf,sizes).debug_vtable(base,'validation_error')
+
+
+class BoundaryProducers(unittest.TestCase):
+    fixture = TypedDiagnosticObjects.fixture
+
+    def block(self):
+        return [Instruction(0x10000060,b'\x00\x23','movs','r3, #0x0'),
+                Instruction(0x10000062,b'\x04\x4a','ldr','r2, [pc, #0x10]'),
+                Instruction(0x10000064,b'\x13\x46','mov','r3, r2'),
+                Instruction(0x10000066,b'\x00\xbf','nop',''),
+                Instruction(0x10000068,b'\x00\xf0\x0a\xf8','bl','0x10000080 <advisory>')]
+
+    def test_current_pc_literal_or_movw_movt_identity_is_bound_to_consumer(self):
+        elf,base,sizes=self.fixture();data=bytearray(elf.data)
+        struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+        value,sites=config_stack.constant_before(self.block(),0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+        self.assertEqual(value,base);self.assertEqual(sites,(0x10000064,0x10000062))
+        block=[Instruction(0x10000060,bytes(4),'movw','r3, #0x1234'),
+               Instruction(0x10000064,bytes(4),'movt','r3, #0x1003'),
+               Instruction(0x10000068,b'\x00\xf0\x0a\xf8','bl','0x10000080')]
+        value,sites=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+        self.assertEqual((value,sites),(0x10031234,(0x10000064,0x10000060)))
+
+    def test_intervening_overwrite_branch_unknown_definition_and_unused_literal_fail_binding(self):
+        for mnemonic,operands in [('movs','r3, #0x0'),('eors','r3, r0'),('b','0x10000068'),
+                                  ('ldr','r3, [r1, #0xc]'),('mov','r3, r1'),('svc','#0x0'),('trap','')]:
+            elf,base,sizes=self.fixture();data=bytearray(elf.data)
+            struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+            block=self.block();block[3]=Instruction(0x10000066,b'\x00\x00',mnemonic,operands)
+            with self.subTest(mnemonic=mnemonic,operands=operands),self.assertRaises(AssertionError):
+                value,_=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+                config_stack.DiagnosticObjects(elf,sizes).debug_vtable(value,'validation_error')
 
 
 if __name__=='__main__':unittest.main()
