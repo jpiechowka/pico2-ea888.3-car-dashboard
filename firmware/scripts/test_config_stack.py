@@ -118,5 +118,25 @@ class BoundaryProducers(unittest.TestCase):
                 value,_=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
                 config_stack.DiagnosticObjects(elf,sizes).debug_vtable(value,'validation_error')
 
+    def test_branch_ingress_cannot_bypass_the_selected_producer(self):
+        elf,base,sizes=self.fixture();data=bytearray(elf.data)
+        struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+        block=[Instruction(0x10000050,b'\x0a\xe0','b','0x10000068'),*self.block()]
+        with self.assertRaises(AssertionError):
+            value,_=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+            config_stack.DiagnosticObjects(elf,sizes).debug_vtable(value,'validation_error')
+
+    def test_postindexed_store_base_writeback_clobbers_current_argument(self):
+        for mnemonic in ('str','strd'):
+            elf,base,sizes=self.fixture();data=bytearray(elf.data)
+            struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+            block=self.block()[:-2]
+            operand='r0, [r3], #4' if mnemonic=='str' else 'r0, r1, [r3], #8'
+            block += [Instruction(0x10000066,bytes(4),mnemonic,operand),
+                      Instruction(0x1000006a,b'\x00\xf0\x00\xf8','bl','0x10000080')]
+            with self.subTest(mnemonic=mnemonic),self.assertRaises(AssertionError):
+                value,_=config_stack.constant_before(block,0x1000006a,'r3',config_stack.DiagnosticObjects(elf,sizes))
+                config_stack.DiagnosticObjects(elf,sizes).debug_vtable(value,'validation_error')
+
 
 if __name__=='__main__':unittest.main()

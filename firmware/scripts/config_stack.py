@@ -139,6 +139,9 @@ def constant_before(instructions, consumer, register, objects):
             destination = destination.strip(); source = source.strip()
             require(destination != 'pc' and not (mnemonic in ('ldm', 'ldmia') and re.search(r'\bpc\b', source)),
                     'constant producer crosses implicit control boundary')
+            require(not (re.search(r'\[' + wanted + r'(?:\s*,|\s*\])', operands)
+                         and re.search(r'\]\s*,', operands)),
+                    'constant argument base has post-index writeback')
             if destination == wanted:
                 if mnemonic in ('mov', 'movs', 'movw', 'movt'):
                     if re.fullmatch(r'#(?:0x[0-9a-f]+|[0-9]+)', source):
@@ -166,4 +169,20 @@ def constant_before(instructions, consumer, register, objects):
                         'unreviewed constant argument clobber')
         raise AssertionError('missing current constant argument producer')
 
-    return producer(boundary, register, 0)
+    value, evidence = producer(boundary, register, 0)
+    first = min(evidence)
+    # Check the entire supplied caller extent. Stopping at the nearest producer
+    # cannot establish that another predecessor did not jump past it.
+    for record in records:
+        mnemonic = record.mnemonic.removesuffix('.w')
+        operands = record.operands.split('@', 1)[0].strip()
+        require(mnemonic not in ('tbb', 'tbh', 'blx') and not (mnemonic == 'bx' and operands != 'lr'),
+                'constant producer has unresolved caller ingress')
+        if mnemonic in transfers and mnemonic not in ('bx', 'blx'):
+            target_text = operands.split(',')[-1].strip() if mnemonic in ('cbz', 'cbnz') else operands
+            target = re.match(r'(0x[0-9a-f]+)(?:\s|$)', target_text)
+            require(target is not None, 'constant producer has unresolved direct ingress')
+            target = int(target[1], 16)
+            require(not (first < target <= consumer and not first <= record.address < consumer),
+                    'alternate ingress bypasses current argument producer')
+    return value, evidence
