@@ -1010,6 +1010,9 @@ class OrdinaryHelperBodies(unittest.TestCase):
                 proof=config_helpers.helper_body(objects,instance['name'],records,outline)
                 self.assertEqual(proof['requires_unaligned_single_ldr_policy'],role=='deserialize_seed_f32')
                 self.assertTrue(proof['requires_source_inputs_owned_effects_and_child_closure'])
+                if role=='restore_r11_low20':
+                    self.assertEqual(proof['requires_parent_frame_and_abi'],'restore_r11_low20')
+                    self.assertEqual(proof['requires_parent_outline_abi'],'@outline:ordinary_restore_r11_low20')
 
     def test_ordinary_identity_cannot_be_supplied_as_outline_override(self):
         import config_helpers
@@ -1214,6 +1217,97 @@ class OrdinaryIndexEffects(unittest.TestCase):
         at=(objects.elf.functions[child][0]&~1)+8;row=records[at];records[at]=Instruction(at,row.raw,'itttt','hi')
         with self.assertRaises(AssertionError):
             config_helpers.index_prefix(*values,location_role='postcard_varint_usize')
+
+
+class ConditionalStackPolicy(unittest.TestCase):
+    def fixture(self):
+        from config_regions import Storage,borrow
+        base=0x10000000;raw=bytes(12)+bytes(range(32))
+        elf=SimpleNamespace(data=raw,sections=[(0,1,2,base,0,len(raw),0,0,1,0)])
+        objects=config_stack.DiagnosticObjects(elf,{})
+        owner=Storage('address','embedded_eav',base,len(raw),1,'boot_configuration',False)
+        view=borrow(owner,12,32,'boot_configuration')
+        context=dict(target='thumbv8m.main-none-eabihf',core=0,security='secure',boot_context='fresh_normal_core0_image_def')
+        return objects,view,context
+
+    def test_reviewed_policy_is_external_and_accepts_all_four_cursor_residues(self):
+        import config_platform
+        objects,view,context=self.fixture()
+        policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+        self.assertEqual(policy.status,'assumed_external')
+        self.assertFalse(policy.hardware_qualified)
+        for residue in range(4):self.assertIs(policy.for_f32_load(view.start+residue),policy)
+        for cursor in (view.start-1,view.start+view.extent-3):
+            with self.assertRaises(AssertionError):policy.for_f32_load(cursor)
+
+    def test_absent_unresolved_mismatched_or_contradictory_policy_rejects(self):
+        import config_platform
+        objects,view,context=self.fixture()
+        expected=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+        with self.assertRaises(AssertionError):config_platform.read_policy(None,expected)
+        for key,value in (('status','unresolved'),('status','established'),('security','nonsecure'),
+                          ('target','thumbv6m-none-eabi'),('input_end',view.start+view.extent-1),('hardware_qualified',True),
+                          ('schema',True),('core',False),('core',1),('scope','unversioned'),('scope_sha256','0'*64),
+                          ('assumptions',[]),('input_role','arbitrary_input'),('boot_context','debugger_pc_sp')):
+            record=expected.to_record();record[key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(AssertionError):config_platform.read_policy(record,expected)
+        for key,value in (('security','nonsecure'),('target','thumbv6m-none-eabi'),('boot_context','debugger_pc_sp')):
+            current=dict(context);current[key]=value
+            with self.subTest(context=key),self.assertRaises(AssertionError):
+                config_platform.reviewed_eav_policy(objects,view,current,contradictory_effects=())
+        with self.assertRaises(AssertionError):
+            config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=('secure_ccr_unalign_trp_enabled',))
+        for effects in (None,[],('unknown_register_effect',)):
+            with self.subTest(effects=effects),self.assertRaises(AssertionError):
+                config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=effects)
+        with self.assertRaises(AssertionError):
+            config_platform.reviewed_eav_policy(objects,view,None,contradictory_effects=())
+
+    def test_policy_cannot_hide_writable_or_partial_input_ownership(self):
+        import config_platform
+        from config_regions import Storage,borrow
+        for fault in ('section','owner','view','partial','identity'):
+            objects,view,context=self.fixture()
+            if fault=='section':
+                section=list(objects.elf.sections[0]);section[2]|=1;objects.elf.sections[0]=tuple(section)
+            else:
+                owner=Storage('address','other_input' if fault=='identity' else 'embedded_eav',view.storage.start,
+                              view.storage.extent,1,'boot_configuration',fault in ('owner','view'))
+                view=borrow(owner,12,28 if fault=='partial' else 32,'boot_configuration',writable=fault=='view')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+
+    def test_policy_propagates_nested_and_serialized_results_without_qualifying_hardware(self):
+        import config_platform
+        objects,view,context=self.fixture();policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+        nested=config_platform.compose_policy(policy,(policy,config_platform.compose_policy(policy,(policy,))))
+        result=config_platform.qualified_stack_result(dict(boot=4096,constructor=12000,runtime=13000,dashboard=18000),65536,nested)
+        encoded=json.loads(json.dumps(result));read=config_platform.read_stack_result(encoded,policy,65536)
+        self.assertEqual(read['status'],'CONDITIONAL_STACK_PASS')
+        self.assertEqual(read['platform_policy'],'assumed_external')
+        self.assertIs(read['hardware_qualified'],False)
+        with self.assertRaises(AssertionError):config_platform.read_stack_result(encoded,policy,65536.0)
+        for child in (None,{}):
+            with self.assertRaises(AssertionError):config_platform.compose_policy(policy,(policy,child))
+
+    def test_consumer_rejects_lost_qualifiers_or_changed_identity_and_keeps_budget_gate(self):
+        import config_platform
+        objects,view,context=self.fixture();policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+        bounds=dict(boot=4096,constructor=12000,runtime=13000,dashboard=18000)
+        result=config_platform.qualified_stack_result(bounds,65536,policy)
+        for fault in ('status','platform_policy','hardware_qualified','policies','headroom'):
+            record=json.loads(json.dumps(result))
+            if fault=='status':record[fault]='PASS'
+            elif fault=='hardware_qualified':record[fault]=True
+            elif fault=='policies':record[fault]=[]
+            elif fault=='headroom':record[fault]+=8
+            else:record.pop(fault)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_platform.read_stack_result(record,policy,65536)
+        altered=bytearray(objects.elf.data);altered[-1]^=1;objects.elf.data=bytes(altered)
+        changed=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+        with self.assertRaises(AssertionError):config_platform.read_stack_result(result,changed,65536)
+        with self.assertRaises(AssertionError):
+            config_platform.qualified_stack_result(dict(bounds,constructor=32768),65536,policy)
 
 
 class OrdinaryContexts(unittest.TestCase):
