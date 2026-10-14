@@ -40,6 +40,7 @@ pub mod geometry;
 pub mod json_diff;
 pub mod json_draft;
 pub mod preview;
+pub mod resources;
 mod simulation;
 pub mod simulator;
 pub mod timing;

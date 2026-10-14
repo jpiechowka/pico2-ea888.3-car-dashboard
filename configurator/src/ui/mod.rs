@@ -8,6 +8,7 @@ mod io;
 mod json_editor;
 mod led;
 mod metrics;
+mod resources;
 mod simulation;
 mod stage;
 mod widget_menu;
@@ -29,6 +30,7 @@ use dashboard_configurator::event_adapters::{
 };
 use dashboard_configurator::events::{Category, EventStore};
 use dashboard_configurator::field_registry::{FieldId, FieldKey, FieldTarget, Registry, TargetOwner};
+use dashboard_configurator::resources::{ResourceCache, ResourceReport};
 use dashboard_configurator::workspace::{GroupId, Workspace, WorkspaceState};
 use fields::{Choice, ColorField, TextField, Toggle, choices, error_text};
 use inspector::{FuelSettings, Inspector, SourceSettings, WarningSettingsPanel};
@@ -43,6 +45,7 @@ pub struct Ui {
     mount_started: f64,
     cache_seen: RwSignal<dashboard_core::cache_diagnostics::CacheExhaustionSeen>,
     editor: RwSignal<Editor>,
+    resources: StoredValue<ResourceCache>,
     json: json_editor::State,
     notice: RwSignal<String>,
     events: RwSignal<EventStore>,
@@ -81,6 +84,15 @@ pub struct Ui {
 fn now() -> f64 { web_sys::window().and_then(|w| w.performance()).map_or(0.0, |p| p.now()) }
 
 impl Ui {
+    fn resource_report(self) -> Result<ResourceReport, EditorError> {
+        self.editor.with(|editor| {
+            let mut report = None;
+            self.resources
+                .update_value(|cache| report = Some(cache.inspect(editor)));
+            report.expect("resource cache callback ran")
+        })
+    }
+
     fn event(
         self,
         notice: Notice,
@@ -526,6 +538,7 @@ pub fn Studio() -> impl IntoView {
         cache_seen: RwSignal::new(dashboard_core::cache_diagnostics::CacheExhaustionSeen::new()),
         mount_started,
         editor: RwSignal::new(editor),
+        resources: StoredValue::new(ResourceCache::default()),
         json: json_editor::State::new(),
         events: RwSignal::new(EventStore::default()),
         event_adapters: StoredValue::new(AdapterState::default()),
@@ -625,6 +638,7 @@ pub fn Studio() -> impl IntoView {
                 <section class="workspace-panel settings-panel" id="studio-panel-device" role="tabpanel" aria-labelledby="studio-tab-device" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Device)>
                     <Group ui group=GroupId::Bindings><controls::DeviceControls ui/></Group>
                     <Group ui group=GroupId::Indicator><led::LedPanel ui/></Group>
+                    <div class="resource-navigation"><p>"Review the accepted configuration and captured build evidence in Diagnostics."</p><button on:click=move |_|workspaces::activate(ui,Workspace::BuildFlash)>"Open Build & Flash"</button></div>
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-data-warnings" role="tabpanel" aria-labelledby="studio-tab-data-warnings" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::DataWarnings)>
                     <h1>"Data & warnings"</h1>
@@ -638,6 +652,7 @@ pub fn Studio() -> impl IntoView {
                     <event_log::EventLog ui/>
                     <Group ui group=GroupId::Simulation><controls::SimulationControls ui/></Group>
                     <Group ui group=GroupId::Files><io::Files ui/></Group>
+                    <Group ui group=GroupId::Measurements><resources::Resources ui/></Group>
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-build-flash" role="tabpanel" aria-labelledby="studio-tab-build-flash" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::BuildFlash)><workspaces::BuildFlashEmpty ui/></section>
                 <section class="preview-dock" aria-label="Persistent display preview">
@@ -667,7 +682,10 @@ pub fn Studio() -> impl IntoView {
             </div>
             <footer class="statusbar"><div><span class="dot" class:error=move || ui.inspection_active()></span><span>{move || ui.save_label()}</span><span>{move ||json_editor::label(ui)}</span>
                 <button disabled=move || ui.snapshot_blocked() on:click=move |_| io::save(ui,true)>"Save here"</button></div>
-                <span>{move || ui.editor.with(|e| {let size=e.export_binary().map(|v|format!("runtime config {} B",v.len())).unwrap_or_else(|_|"export blocked until edits are resolved".into());format!("{} widgets · {size}",e.preview().config().widgets.len())})}</span>
+                <span>{move || match ui.resource_report() {
+                    Ok(report) => resources::footer(&report),
+                    Err(_) => "configuration resources unavailable".into(),
+                }}</span>
             </footer>
             <div class="notice" role="status" hidden=move || ui.notice.get().is_empty()><span>{move || ui.notice.get()}</span><button aria-label="Dismiss notice" on:click=move |_| ui.notice.set(String::new())>"×"</button></div>
             <widget_menu::Popup ui/>

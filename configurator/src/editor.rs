@@ -911,6 +911,26 @@ impl Editor {
     pub fn begin_save(&mut self) -> Result<SaveRequest, EditorError> {
         self.ensure_snapshot_ready()?;
         let request = self.next_request()?;
+        let json = self.serialize_saved_envelope()?;
+        self.request = request;
+        let token = SaveToken {
+            owner: self.owner,
+            request,
+            revision: self.revision,
+        };
+        self.save = Some(token);
+        self.save_failure = None;
+        Ok(SaveRequest { token, json })
+    }
+
+    /// Exact browser-storage bytes without issuing a request or changing save
+    /// status. Resource inspection uses this only after the same admission gate.
+    pub fn saved_envelope_json(&self) -> Result<String, EditorError> {
+        self.ensure_snapshot_ready()?;
+        self.serialize_saved_envelope()
+    }
+
+    fn serialize_saved_envelope(&self) -> Result<String, EditorError> {
         let envelope = SavedEnvelope {
             editor_version: SAVED_STATE_VERSION,
             selected_view: self.selection().view,
@@ -921,15 +941,7 @@ impl Editor {
         if json.len() > MAX_SAVED_BYTES {
             return Err(EditorError::Codec(ConfigError::Length));
         }
-        self.request = request;
-        let token = SaveToken {
-            owner: self.owner,
-            request,
-            revision: self.revision,
-        };
-        self.save = Some(token);
-        self.save_failure = None;
-        Ok(SaveRequest { token, json })
+        Ok(json)
     }
 
     /// `Ok(())` means these bytes were actually written. If an older write
@@ -2188,6 +2200,22 @@ fn fresh_widget(config: &Config) -> Result<u16, EditorError> {
 #[cfg(test)]
 mod transaction_tests {
     use super::*;
+
+    #[test]
+    fn resource_cache_rechecks_identity_exhaustion_with_an_unchanged_stamp() {
+        use crate::resources::{ResourceAvailability, ResourceCache};
+
+        let mut editor = Editor::default();
+        let mut cache = ResourceCache::default();
+        let original = cache.inspect(&editor).unwrap().accepted.unwrap();
+        editor.request = u64::MAX;
+        assert_eq!(editor.stamp(), original.stamp);
+        assert_eq!(
+            cache.inspect(&editor).unwrap().availability,
+            ResourceAvailability::LastAccepted(ActionBlock::IdentityExhausted)
+        );
+        assert_eq!(editor.saved_envelope_json(), Err(EditorError::CounterExhausted));
+    }
 
     #[test]
     fn appearance_issuance_exhaustion_preserves_existing_save_and_all_state() {
