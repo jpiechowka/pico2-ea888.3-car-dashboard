@@ -32,10 +32,19 @@ def _object_symbol(objects,address,role,size,section_name):
     section=objects.elf.sections[index]
     require(section==objects.elf.named.get(section_name) and section[1]==(1 if section_name=='.data' else 8) and
             section[2]&7==(7 if section_name=='.data' else 3) and
+            0<=section[3]<section[3]+section[5]<=0x100000000 and
             section[3]<=address<address+size<=section[3]+section[5],
             'logger object declared allocation/section differs')
-    backing=[i for i,s in enumerate(objects.elf.sections) if s[2]&2 and s[3]<=address<address+size<=s[3]+s[5]]
+    backing=[]
+    for i,other in enumerate(objects.elf.sections):
+        if not other[2]&2 or not other[5] or not (other[3]<address+size and address<other[3]+other[5]):continue
+        require(0<=other[3]<other[3]+other[5]<=0x100000000,'intersecting logger allocation exceeds 32-bit extent')
+        backing.append(i)
     require(backing==[index],'logger object allocation is not uniquely owned')
+    for other in objects.elf.symbol_entries:
+        if other==entries[0] or other[3]&15!=1 or not other[2] or not 0<=other[4]<len(objects.elf.sections):continue
+        if objects.elf.sections[other[4]][2]&2:
+            require(not (other[1]<address+size and address<other[1]+other[2]),'distinct allocated OBJECT intersects logger storage')
     return section
 
 

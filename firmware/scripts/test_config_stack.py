@@ -649,6 +649,39 @@ class LoggerObjects(unittest.TestCase):
         with self.assertRaises(AssertionError):config_logger.logger_object(objects,obj['value'],obj['type'])
 
 
+    def test_distinct_logger_state_objects_cannot_alias_one_physical_byte(self):
+        import config_logger
+        for role in (config_logger.LOCK_OWNER,config_logger.ENCODER+'1'):
+            objects,item=self.fixture('speed2')
+            moved=next(v for v in item['objects'] if v['type'].get('roles')==[role])
+            encoder=next(v for v in item['objects'] if v['type'].get('roles')==[config_logger.ENCODER+'0'])
+            index=next(i for i,v in enumerate(objects.elf.symbol_entries) if re.sub(r'Cs[A-Za-z0-9]+_','Cs_',v[0])==role)
+            entry=list(objects.elf.symbol_entries[index]);entry[1]=encoder['value'];objects.elf.symbol_entries[index]=tuple(entry)
+            with self.subTest(role=role),self.assertRaises(AssertionError):
+                config_logger.logger_object(objects,encoder['value'],moved['type'])
+
+    def test_logger_object_rejects_partial_allocated_section_overlap(self):
+        import config_logger
+        for delta in (-32,128,1000):
+            objects,item=self.fixture('sizez');obj=next(v for v in item['objects'] if v['type']['kind']=='rtt_header')
+            address=obj['resolved']['buffer']['address'];objects.elf.sections.append((0,8,3,address+delta,0,64,0,0,1,0))
+            with self.subTest(delta=delta),self.assertRaises(AssertionError):config_logger.logger_object(objects,obj['value'],obj['type'])
+
+    def test_allocated_section_adjacency_remains_valid(self):
+        import config_logger
+        for delta in (-64,1024):
+            objects,item=self.fixture('sizez');obj=next(v for v in item['objects'] if v['type']['kind']=='rtt_header')
+            address=obj['resolved']['buffer']['address'];objects.elf.sections.append((0,8,3,address+delta,0,64,0,0,1,0))
+            config_logger.logger_object(objects,obj['value'],obj['type'])
+
+    def test_logger_owning_section_extent_cannot_wrap_even_if_object_fits(self):
+        import config_logger
+        objects,item=self.fixture('sizez');obj=next(v for v in item['objects'] if v['type']['kind']=='rtt_header')
+        index=next(i for i,s in enumerate(objects.elf.sections) if s==objects.elf.named['.uninit'])
+        section=list(objects.elf.sections[index]);section[5]=0xffffffff;objects.elf.sections[index]=tuple(section);objects.elf.named['.uninit']=tuple(section)
+        with self.assertRaises(AssertionError):config_logger.logger_object(objects,obj['value'],obj['type'])
+
+
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
         value=path.encode('utf-8');base=0x10000000
