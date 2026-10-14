@@ -1,0 +1,3787 @@
+[
+  {
+    "mode": "speed2",
+    "role": "<usize as core::fmt::Debug>::fmt",
+    "address": 268625984,
+    "size": 278,
+    "frame": 40,
+    "aliases": [
+      {
+        "name": "_RNvXsZ_NtNtCs6m2Zc6X1WBq_4core3fmt3numjNtB7_5Debug3fmt",
+        "address": 268625985,
+        "size": 278,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af4df804bd84b08a68930108d4520136d404b05df804bbbde8f04002f0f3bd03684bf65c4e082009220df1080cc1f2040e03f00f041ef804601d090ceb020404f8026c4cd005f00f051ef805601d0a04f8036c47d005f00f051ef805601d0b04f8046c42d005f00f051ef805501b0ca0f10400a2f1040204f8055cd9d137e003684bf6cc3e082009220df1080cc1f2040e03f00f041ef804601d090ceb020404f8026c1cd005f00f051ef805601d0a04f8036c17d005f00f051ef805601d0b04f8046c12d005f00f051ef805501b0ca0f10400a2f1040204f8055cd9d107e0901e013a04e00238023a01e00338033ac2f1090643f6ec72c1f205020ceb0003084611460222009601f04bfe04b05df804bbf0bd",
+    "mapping": [
+      [
+        268625984,
+        268626262,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1002e840: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1002e842: af03         \tadd\tr7, sp, #0xc",
+      "1002e844: f84d bd04    \tstr\tr11, [sp, #-4]!",
+      "1002e848: b084         \tsub\tsp, #0x10",
+      "1002e84a: 688a         \tldr\tr2, [r1, #0x8]",
+      "1002e84c: 0193         \tlsls\tr3, r2, #0x6",
+      "1002e84e: d408         \tbmi\t0x1002e862 <<usize as core::fmt::Debug>::fmt+0x22> @ imm = #0x10",
+      "1002e850: 0152         \tlsls\tr2, r2, #0x5",
+      "1002e852: d436         \tbmi\t0x1002e8c2 <<usize as core::fmt::Debug>::fmt+0x82> @ imm = #0x6c",
+      "1002e854: b004         \tadd\tsp, #0x10",
+      "1002e856: f85d bb04    \tldr\tr11, [sp], #4",
+      "1002e85a: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "1002e85e: f002 bdf3    \tb.w\t0x10031448 <<u32 as core::fmt::Display>::fmt> @ imm = #0x2be6",
+      "1002e862: 6803         \tldr\tr3, [r0]",
+      "1002e864: f64b 4e5c    \tmovw\tlr, #0xbc5c",
+      "1002e868: 2008         \tmovs\tr0, #0x8",
+      "1002e86a: 2209         \tmovs\tr2, #0x9",
+      "1002e86c: f10d 0c08    \tadd.w\tr12, sp, #0x8",
+      "1002e870: f2c1 0e04    \tmovt\tlr, #0x1004",
+      "1002e874: f003 040f    \tand\tr4, r3, #0xf",
+      "1002e878: f81e 6004    \tldrb.w\tr6, [lr, r4]",
+      "1002e87c: 091d         \tlsrs\tr5, r3, #0x4",
+      "1002e87e: eb0c 0402    \tadd.w\tr4, r12, r2",
+      "1002e882: f804 6c02    \tstrb\tr6, [r4, #-2]",
+      "1002e886: d04c         \tbeq\t0x1002e922 <<usize as core::fmt::Debug>::fmt+0xe2> @ imm = #0x98",
+      "1002e888: f005 050f    \tand\tr5, r5, #0xf",
+      "1002e88c: f81e 6005    \tldrb.w\tr6, [lr, r5]",
+      "1002e890: 0a1d         \tlsrs\tr5, r3, #0x8",
+      "1002e892: f804 6c03    \tstrb\tr6, [r4, #-3]",
+      "1002e896: d047         \tbeq\t0x1002e928 <<usize as core::fmt::Debug>::fmt+0xe8> @ imm = #0x8e",
+      "1002e898: f005 050f    \tand\tr5, r5, #0xf",
+      "1002e89c: f81e 6005    \tldrb.w\tr6, [lr, r5]",
+      "1002e8a0: 0b1d         \tlsrs\tr5, r3, #0xc",
+      "1002e8a2: f804 6c04    \tstrb\tr6, [r4, #-4]",
+      "1002e8a6: d042         \tbeq\t0x1002e92e <<usize as core::fmt::Debug>::fmt+0xee> @ imm = #0x84",
+      "1002e8a8: f005 050f    \tand\tr5, r5, #0xf",
+      "1002e8ac: f81e 5005    \tldrb.w\tr5, [lr, r5]",
+      "1002e8b0: 0c1b         \tlsrs\tr3, r3, #0x10",
+      "1002e8b2: f1a0 0004    \tsub.w\tr0, r0, #0x4",
+      "1002e8b6: f1a2 0204    \tsub.w\tr2, r2, #0x4",
+      "1002e8ba: f804 5c05    \tstrb\tr5, [r4, #-5]",
+      "1002e8be: d1d9         \tbne\t0x1002e874 <<usize as core::fmt::Debug>::fmt+0x34> @ imm = #-0x4e",
+      "1002e8c0: e037         \tb\t0x1002e932 <<usize as core::fmt::Debug>::fmt+0xf2> @ imm = #0x6e",
+      "1002e8c2: 6803         \tldr\tr3, [r0]",
+      "1002e8c4: f64b 3ecc    \tmovw\tlr, #0xbbcc",
+      "1002e8c8: 2008         \tmovs\tr0, #0x8",
+      "1002e8ca: 2209         \tmovs\tr2, #0x9",
+      "1002e8cc: f10d 0c08    \tadd.w\tr12, sp, #0x8",
+      "1002e8d0: f2c1 0e04    \tmovt\tlr, #0x1004",
+      "1002e8d4: f003 040f    \tand\tr4, r3, #0xf",
+      "1002e8d8: f81e 6004    \tldrb.w\tr6, [lr, r4]",
+      "1002e8dc: 091d         \tlsrs\tr5, r3, #0x4",
+      "1002e8de: eb0c 0402    \tadd.w\tr4, r12, r2",
+      "1002e8e2: f804 6c02    \tstrb\tr6, [r4, #-2]",
+      "1002e8e6: d01c         \tbeq\t0x1002e922 <<usize as core::fmt::Debug>::fmt+0xe2> @ imm = #0x38",
+      "1002e8e8: f005 050f    \tand\tr5, r5, #0xf",
+      "1002e8ec: f81e 6005    \tldrb.w\tr6, [lr, r5]",
+      "1002e8f0: 0a1d         \tlsrs\tr5, r3, #0x8",
+      "1002e8f2: f804 6c03    \tstrb\tr6, [r4, #-3]",
+      "1002e8f6: d017         \tbeq\t0x1002e928 <<usize as core::fmt::Debug>::fmt+0xe8> @ imm = #0x2e",
+      "1002e8f8: f005 050f    \tand\tr5, r5, #0xf",
+      "1002e8fc: f81e 6005    \tldrb.w\tr6, [lr, r5]",
+      "1002e900: 0b1d         \tlsrs\tr5, r3, #0xc",
+      "1002e902: f804 6c04    \tstrb\tr6, [r4, #-4]",
+      "1002e906: d012         \tbeq\t0x1002e92e <<usize as core::fmt::Debug>::fmt+0xee> @ imm = #0x24",
+      "1002e908: f005 050f    \tand\tr5, r5, #0xf",
+      "1002e90c: f81e 5005    \tldrb.w\tr5, [lr, r5]",
+      "1002e910: 0c1b         \tlsrs\tr3, r3, #0x10",
+      "1002e912: f1a0 0004    \tsub.w\tr0, r0, #0x4",
+      "1002e916: f1a2 0204    \tsub.w\tr2, r2, #0x4",
+      "1002e91a: f804 5c05    \tstrb\tr5, [r4, #-5]",
+      "1002e91e: d1d9         \tbne\t0x1002e8d4 <<usize as core::fmt::Debug>::fmt+0x94> @ imm = #-0x4e",
+      "1002e920: e007         \tb\t0x1002e932 <<usize as core::fmt::Debug>::fmt+0xf2> @ imm = #0xe",
+      "1002e922: 1e90         \tsubs\tr0, r2, #0x2",
+      "1002e924: 3a01         \tsubs\tr2, #0x1",
+      "1002e926: e004         \tb\t0x1002e932 <<usize as core::fmt::Debug>::fmt+0xf2> @ imm = #0x8",
+      "1002e928: 3802         \tsubs\tr0, #0x2",
+      "1002e92a: 3a02         \tsubs\tr2, #0x2",
+      "1002e92c: e001         \tb\t0x1002e932 <<usize as core::fmt::Debug>::fmt+0xf2> @ imm = #0x2",
+      "1002e92e: 3803         \tsubs\tr0, #0x3",
+      "1002e930: 3a03         \tsubs\tr2, #0x3",
+      "1002e932: f1c2 0609    \trsb.w\tr6, r2, #0x9",
+      "1002e936: f643 72ec    \tmovw\tr2, #0x3fec",
+      "1002e93a: f2c1 0205    \tmovt\tr2, #0x1005",
+      "1002e93e: eb0c 0300    \tadd.w\tr3, r12, r0",
+      "1002e942: 4608         \tmov\tr0, r1",
+      "1002e944: 4611         \tmov\tr1, r2",
+      "1002e946: 2202         \tmovs\tr2, #0x2",
+      "1002e948: 9600         \tstr\tr6, [sp]",
+      "1002e94a: f001 fe4b    \tbl\t0x100305e4 <<core::fmt::Formatter>::pad_integral> @ imm = #0x1c96",
+      "1002e94e: b004         \tadd\tsp, #0x10",
+      "1002e950: f85d bb04    \tldr\tr11, [sp], #4",
+      "1002e954: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268626020,
+        "high_site": 268626032,
+        "register": "lr",
+        "address": 268745820,
+        "first24_hex": "30313233343536373839616263646566",
+        "origin_role": "lower_hex_digits"
+      },
+      {
+        "low_site": 268626116,
+        "high_site": 268626128,
+        "register": "lr",
+        "address": 268745676,
+        "first24_hex": "30313233343536373839414243444546",
+        "origin_role": "upper_hex_digits"
+      },
+      {
+        "low_site": 268626230,
+        "high_site": 268626234,
+        "register": "r2",
+        "address": 268779500,
+        "first24_hex": "3078",
+        "origin_role": "hex_prefix"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268626014,
+        "aliases": [
+          {
+            "name": "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt",
+            "address": 268637257,
+            "size": 230,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      },
+      {
+        "site": 268626250,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268633573,
+            "size": 412,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<core::fmt::Formatter>::pad",
+    "address": 268631824,
+    "size": 452,
+    "frame": 40,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+        "address": 268631825,
+        "size": 452,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f81b0d0f808a0934688461af0c05f00f07c805feaca013dd4bbf1100f5ad2bbf1000f00f0ac800bf0030c5fea9b014ff0000300f0a88001f0030108f1010e6ff00305a3eb810900212c46754495f9036095f9062095f9053016f1410f95f90450c8bf013115f1410fc8bf013113f1410f04f10405c8bf013112f1410f09eb0502c8bf01310432dfd1bcf1000f2ed004f1080379e0c18929b308eb0b034ff0000b45460a4609e0ef2d4ff0030588bf04253544ae1b013ab34416d09d4215d02e4615f9014bb4f1ff3ff3dce5b2e02dead2b51ceee704464046594600f06ff80146204603e04ff0000b0022891a828991420bd2531acaf341716ff35f5a0026dfe801f011020f111e460ce0d0e900015a46cb68414601b0bde8000fbde8f040184799b24e08d0e900544ff000090093b0b21ffa89f1814208d2226928465146904709f101090028f2d014e0e368284641465a46984770b90098801b00261ffa80f8b0b240450dd2226928465146904701360028f5d0012001b0bde8000ff0bd0021b4e70020f7e7002118f9032012f1410fc8bf0131bcf1010fa8d0434493f9012012f1410fc8bf0131bcf1020f9ed093f9022012f1410fc8bf013197e7",
+    "mapping": [
+      [
+        268631824,
+        268632090,
+        "t"
+      ],
+      [
+        268632090,
+        268632094,
+        "d"
+      ],
+      [
+        268632094,
+        268632276,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1002ff10: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1002ff12: af03         \tadd\tr7, sp, #0xc",
+      "1002ff14: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "1002ff18: b081         \tsub\tsp, #0x4",
+      "1002ff1a: f8d0 a008    \tldr.w\tr10, [r0, #0x8]",
+      "1002ff1e: 4693         \tmov\tr11, r2",
+      "1002ff20: 4688         \tmov\tr8, r1",
+      "1002ff22: f01a 5fc0    \ttst.w\tr10, #0x18000000",
+      "1002ff26: f000 807c    \tbeq.w\t0x10030022 <<core::fmt::Formatter>::pad+0x112> @ imm = #0xf8",
+      "1002ff2a: ea5f 01ca    \tlsls.w\tr1, r10, #0x3",
+      "1002ff2e: d43d         \tbmi\t0x1002ffac <<core::fmt::Formatter>::pad+0x9c> @ imm = #0x7a",
+      "1002ff30: f1bb 0f10    \tcmp.w\tr11, #0x10",
+      "1002ff34: d25a         \tbhs\t0x1002ffec <<core::fmt::Formatter>::pad+0xdc> @ imm = #0xb4",
+      "1002ff36: f1bb 0f00    \tcmp.w\tr11, #0x0",
+      "1002ff3a: f000 80ac    \tbeq.w\t0x10030096 <<core::fmt::Formatter>::pad+0x186> @ imm = #0x158",
+      "1002ff3e: f00b 0c03    \tand\tr12, r11, #0x3",
+      "1002ff42: ea5f 019b    \tlsrs.w\tr1, r11, #0x2",
+      "1002ff46: f04f 0300    \tmov.w\tr3, #0x0",
+      "1002ff4a: f000 80a8    \tbeq.w\t0x1003009e <<core::fmt::Formatter>::pad+0x18e> @ imm = #0x150",
+      "1002ff4e: f001 0103    \tand\tr1, r1, #0x3",
+      "1002ff52: f108 0e01    \tadd.w\tlr, r8, #0x1",
+      "1002ff56: f06f 0503    \tmvn\tr5, #0x3",
+      "1002ff5a: eba3 0981    \tsub.w\tr9, r3, r1, lsl #2",
+      "1002ff5e: 2100         \tmovs\tr1, #0x0",
+      "1002ff60: 462c         \tmov\tr4, r5",
+      "1002ff62: 4475         \tadd\tr5, lr",
+      "1002ff64: f995 6003    \tldrsb.w\tr6, [r5, #0x3]",
+      "1002ff68: f995 2006    \tldrsb.w\tr2, [r5, #0x6]",
+      "1002ff6c: f995 3005    \tldrsb.w\tr3, [r5, #0x5]",
+      "1002ff70: f116 0f41    \tcmn.w\tr6, #0x41",
+      "1002ff74: f995 5004    \tldrsb.w\tr5, [r5, #0x4]",
+      "1002ff78: bfc8         \tit\tgt",
+      "1002ff7a: 3101         \taddgt\tr1, #0x1",
+      "1002ff7c: f115 0f41    \tcmn.w\tr5, #0x41",
+      "1002ff80: bfc8         \tit\tgt",
+      "1002ff82: 3101         \taddgt\tr1, #0x1",
+      "1002ff84: f113 0f41    \tcmn.w\tr3, #0x41",
+      "1002ff88: f104 0504    \tadd.w\tr5, r4, #0x4",
+      "1002ff8c: bfc8         \tit\tgt",
+      "1002ff8e: 3101         \taddgt\tr1, #0x1",
+      "1002ff90: f112 0f41    \tcmn.w\tr2, #0x41",
+      "1002ff94: eb09 0205    \tadd.w\tr2, r9, r5",
+      "1002ff98: bfc8         \tit\tgt",
+      "1002ff9a: 3101         \taddgt\tr1, #0x1",
+      "1002ff9c: 3204         \tadds\tr2, #0x4",
+      "1002ff9e: d1df         \tbne\t0x1002ff60 <<core::fmt::Formatter>::pad+0x50> @ imm = #-0x42",
+      "1002ffa0: f1bc 0f00    \tcmp.w\tr12, #0x0",
+      "1002ffa4: d02e         \tbeq\t0x10030004 <<core::fmt::Formatter>::pad+0xf4> @ imm = #0x5c",
+      "1002ffa6: f104 0308    \tadd.w\tr3, r4, #0x8",
+      "1002ffaa: e079         \tb\t0x100300a0 <<core::fmt::Formatter>::pad+0x190> @ imm = #0xf2",
+      "1002ffac: 89c1         \tldrh\tr1, [r0, #0xe]",
+      "1002ffae: b329         \tcbz\tr1, 0x1002fffc <<core::fmt::Formatter>::pad+0xec> @ imm = #0x4a",
+      "1002ffb0: eb08 030b    \tadd.w\tr3, r8, r11",
+      "1002ffb4: f04f 0b00    \tmov.w\tr11, #0x0",
+      "1002ffb8: 4645         \tmov\tr5, r8",
+      "1002ffba: 460a         \tmov\tr2, r1",
+      "1002ffbc: e009         \tb\t0x1002ffd2 <<core::fmt::Formatter>::pad+0xc2> @ imm = #0x12",
+      "1002ffbe: 2def         \tcmp\tr5, #0xef",
+      "1002ffc0: f04f 0503    \tmov.w\tr5, #0x3",
+      "1002ffc4: bf88         \tit\thi",
+      "1002ffc6: 2504         \tmovhi\tr5, #0x4",
+      "1002ffc8: 4435         \tadd\tr5, r6",
+      "1002ffca: 1bae         \tsubs\tr6, r5, r6",
+      "1002ffcc: 3a01         \tsubs\tr2, #0x1",
+      "1002ffce: 44b3         \tadd\tr11, r6",
+      "1002ffd0: d016         \tbeq\t0x10030000 <<core::fmt::Formatter>::pad+0xf0> @ imm = #0x2c",
+      "1002ffd2: 429d         \tcmp\tr5, r3",
+      "1002ffd4: d015         \tbeq\t0x10030002 <<core::fmt::Formatter>::pad+0xf2> @ imm = #0x2a",
+      "1002ffd6: 462e         \tmov\tr6, r5",
+      "1002ffd8: f915 4b01    \tldrsb\tr4, [r5], #1",
+      "1002ffdc: f1b4 3fff    \tcmp.w\tr4, #0xffffffff",
+      "1002ffe0: dcf3         \tbgt\t0x1002ffca <<core::fmt::Formatter>::pad+0xba> @ imm = #-0x1a",
+      "1002ffe2: b2e5         \tuxtb\tr5, r4",
+      "1002ffe4: 2de0         \tcmp\tr5, #0xe0",
+      "1002ffe6: d2ea         \tbhs\t0x1002ffbe <<core::fmt::Formatter>::pad+0xae> @ imm = #-0x2c",
+      "1002ffe8: 1cb5         \tadds\tr5, r6, #0x2",
+      "1002ffea: e7ee         \tb\t0x1002ffca <<core::fmt::Formatter>::pad+0xba> @ imm = #-0x24",
+      "1002ffec: 4604         \tmov\tr4, r0",
+      "1002ffee: 4640         \tmov\tr0, r8",
+      "1002fff0: 4659         \tmov\tr1, r11",
+      "1002fff2: f000 f86f    \tbl\t0x100300d4 <core::str::count::do_count_chars> @ imm = #0xde",
+      "1002fff6: 4601         \tmov\tr1, r0",
+      "1002fff8: 4620         \tmov\tr0, r4",
+      "1002fffa: e003         \tb\t0x10030004 <<core::fmt::Formatter>::pad+0xf4> @ imm = #0x6",
+      "1002fffc: f04f 0b00    \tmov.w\tr11, #0x0",
+      "10030000: 2200         \tmovs\tr2, #0x0",
+      "10030002: 1a89         \tsubs\tr1, r1, r2",
+      "10030004: 8982         \tldrh\tr2, [r0, #0xc]",
+      "10030006: 4291         \tcmp\tr1, r2",
+      "10030008: d20b         \tbhs\t0x10030022 <<core::fmt::Formatter>::pad+0x112> @ imm = #0x16",
+      "1003000a: 1a53         \tsubs\tr3, r2, r1",
+      "1003000c: f3ca 7141    \tubfx\tr1, r10, #0x1d, #0x2",
+      "10030010: f36f 5a5f    \tbfc\tr10, #21, #11",
+      "10030014: 2600         \tmovs\tr6, #0x0",
+      "10030016: e8df f001    \ttbb\t[pc, r1]",
+      "1003001e: 461e         \tmov\tr6, r3",
+      "10030020: e00c         \tb\t0x1003003c <<core::fmt::Formatter>::pad+0x12c> @ imm = #0x18",
+      "10030022: e9d0 0100    \tldrd\tr0, r1, [r0]",
+      "10030026: 465a         \tmov\tr2, r11",
+      "10030028: 68cb         \tldr\tr3, [r1, #0xc]",
+      "1003002a: 4641         \tmov\tr1, r8",
+      "1003002c: b001         \tadd\tsp, #0x4",
+      "1003002e: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "10030032: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "10030036: 4718         \tbx\tr3",
+      "10030038: b299         \tuxth\tr1, r3",
+      "1003003a: 084e         \tlsrs\tr6, r1, #0x1",
+      "1003003c: e9d0 5400    \tldrd\tr5, r4, [r0]",
+      "10030040: f04f 0900    \tmov.w\tr9, #0x0",
+      "10030044: 9300         \tstr\tr3, [sp]",
+      "10030046: b2b0         \tuxth\tr0, r6",
+      "10030048: fa1f f189    \tuxth.w\tr1, r9",
+      "1003004c: 4281         \tcmp\tr1, r0",
+      "1003004e: d208         \tbhs\t0x10030062 <<core::fmt::Formatter>::pad+0x152> @ imm = #0x10",
+      "10030050: 6922         \tldr\tr2, [r4, #0x10]",
+      "10030052: 4628         \tmov\tr0, r5",
+      "10030054: 4651         \tmov\tr1, r10",
+      "10030056: 4790         \tblx\tr2",
+      "10030058: f109 0901    \tadd.w\tr9, r9, #0x1",
+      "1003005c: 2800         \tcmp\tr0, #0x0",
+      "1003005e: d0f2         \tbeq\t0x10030046 <<core::fmt::Formatter>::pad+0x136> @ imm = #-0x1c",
+      "10030060: e014         \tb\t0x1003008c <<core::fmt::Formatter>::pad+0x17c> @ imm = #0x28",
+      "10030062: 68e3         \tldr\tr3, [r4, #0xc]",
+      "10030064: 4628         \tmov\tr0, r5",
+      "10030066: 4641         \tmov\tr1, r8",
+      "10030068: 465a         \tmov\tr2, r11",
+      "1003006a: 4798         \tblx\tr3",
+      "1003006c: b970         \tcbnz\tr0, 0x1003008c <<core::fmt::Formatter>::pad+0x17c> @ imm = #0x1c",
+      "1003006e: 9800         \tldr\tr0, [sp]",
+      "10030070: 1b80         \tsubs\tr0, r0, r6",
+      "10030072: 2600         \tmovs\tr6, #0x0",
+      "10030074: fa1f f880    \tuxth.w\tr8, r0",
+      "10030078: b2b0         \tuxth\tr0, r6",
+      "1003007a: 4540         \tcmp\tr0, r8",
+      "1003007c: d20d         \tbhs\t0x1003009a <<core::fmt::Formatter>::pad+0x18a> @ imm = #0x1a",
+      "1003007e: 6922         \tldr\tr2, [r4, #0x10]",
+      "10030080: 4628         \tmov\tr0, r5",
+      "10030082: 4651         \tmov\tr1, r10",
+      "10030084: 4790         \tblx\tr2",
+      "10030086: 3601         \tadds\tr6, #0x1",
+      "10030088: 2800         \tcmp\tr0, #0x0",
+      "1003008a: d0f5         \tbeq\t0x10030078 <<core::fmt::Formatter>::pad+0x168> @ imm = #-0x16",
+      "1003008c: 2001         \tmovs\tr0, #0x1",
+      "1003008e: b001         \tadd\tsp, #0x4",
+      "10030090: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "10030094: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "10030096: 2100         \tmovs\tr1, #0x0",
+      "10030098: e7b4         \tb\t0x10030004 <<core::fmt::Formatter>::pad+0xf4> @ imm = #-0x98",
+      "1003009a: 2000         \tmovs\tr0, #0x0",
+      "1003009c: e7f7         \tb\t0x1003008e <<core::fmt::Formatter>::pad+0x17e> @ imm = #-0x12",
+      "1003009e: 2100         \tmovs\tr1, #0x0",
+      "100300a0: f918 2003    \tldrsb.w\tr2, [r8, r3]",
+      "100300a4: f112 0f41    \tcmn.w\tr2, #0x41",
+      "100300a8: bfc8         \tit\tgt",
+      "100300aa: 3101         \taddgt\tr1, #0x1",
+      "100300ac: f1bc 0f01    \tcmp.w\tr12, #0x1",
+      "100300b0: d0a8         \tbeq\t0x10030004 <<core::fmt::Formatter>::pad+0xf4> @ imm = #-0xb0",
+      "100300b2: 4443         \tadd\tr3, r8",
+      "100300b4: f993 2001    \tldrsb.w\tr2, [r3, #0x1]",
+      "100300b8: f112 0f41    \tcmn.w\tr2, #0x41",
+      "100300bc: bfc8         \tit\tgt",
+      "100300be: 3101         \taddgt\tr1, #0x1",
+      "100300c0: f1bc 0f02    \tcmp.w\tr12, #0x2",
+      "100300c4: d09e         \tbeq\t0x10030004 <<core::fmt::Formatter>::pad+0xf4> @ imm = #-0xc4",
+      "100300c6: f993 2002    \tldrsb.w\tr2, [r3, #0x2]",
+      "100300ca: f112 0f41    \tcmn.w\tr2, #0x41",
+      "100300ce: bfc8         \tit\tgt",
+      "100300d0: 3101         \taddgt\tr1, #0x1",
+      "100300d2: e797         \tb\t0x10030004 <<core::fmt::Formatter>::pad+0xf4> @ imm = #-0xd2"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268632050,
+        "aliases": [
+          {
+            "name": "_RNvNtNtCs6m2Zc6X1WBq_4core3str5count14do_count_chars",
+            "address": 268632277,
+            "size": 1088,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 48
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<core::fmt::Formatter>::pad_integral",
+    "address": 268633572,
+    "size": 412,
+    "frame": 64,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+        "address": 268633573,
+        "size": 412,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f87b086680c46d7f808a0934616f400114ff02b0908bf4ff0ff390aeb5155310201d4002413e00021bbf1000f0ed094f9002012f1410fc8bf0121bbf1010f05d094f9012012f1410fc8bf01310d44b0f80c80454511d2f101cde905a324d4c6f341710494a8eb050c6ff35f560025dfe801f05402510265464fe01d462346d0e900464a463146cdf800b0204600f082f8002867d1f36820462946524607b0bde8000fbde8f0401847d0e902212346d0e900a602910021c9f6e07103921140049041f000514a4641f03001816050463146cdf800b000f05ef8002843d1a8eb0500002584b2a8b2a04207d2326950463021904701350028f5d034e0dde905215046f368984770bb0498dde90221c0e90212002028e01ffa8cf14d08d0e900484ff0000acdf80cc0a8b21ffa8af1814209d2d8f810202046314690470af1010a0028f1d00fe0cdf800b02046049b41464a4600f020f830b9dde905212046d8f80c30984720b1012007b0bde8000ff0bd0398401b00251ffa80f9a8b24845c8d2d8f810202046314690470135014601200029f2d0e8e7",
+    "mapping": [
+      [
+        268633572,
+        268633694,
+        "t"
+      ],
+      [
+        268633694,
+        268633698,
+        "d"
+      ],
+      [
+        268633698,
+        268633984,
+        "t"
+      ]
+    ],
+    "lines": [
+      "100305e4: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "100305e6: af03         \tadd\tr7, sp, #0xc",
+      "100305e8: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "100305ec: b087         \tsub\tsp, #0x1c",
+      "100305ee: 6886         \tldr\tr6, [r0, #0x8]",
+      "100305f0: 460c         \tmov\tr4, r1",
+      "100305f2: f8d7 a008    \tldr.w\tr10, [r7, #0x8]",
+      "100305f6: 4693         \tmov\tr11, r2",
+      "100305f8: f416 1100    \tands\tr1, r6, #0x200000",
+      "100305fc: f04f 092b    \tmov.w\tr9, #0x2b",
+      "10030600: bf08         \tit\teq",
+      "10030602: f04f 39ff    \tmoveq.w\tr9, #0xffffffff",
+      "10030606: eb0a 5551    \tadd.w\tr5, r10, r1, lsr #21",
+      "1003060a: 0231         \tlsls\tr1, r6, #0x8",
+      "1003060c: d401         \tbmi\t0x10030612 <<core::fmt::Formatter>::pad_integral+0x2e> @ imm = #0x2",
+      "1003060e: 2400         \tmovs\tr4, #0x0",
+      "10030610: e013         \tb\t0x1003063a <<core::fmt::Formatter>::pad_integral+0x56> @ imm = #0x26",
+      "10030612: 2100         \tmovs\tr1, #0x0",
+      "10030614: f1bb 0f00    \tcmp.w\tr11, #0x0",
+      "10030618: d00e         \tbeq\t0x10030638 <<core::fmt::Formatter>::pad_integral+0x54> @ imm = #0x1c",
+      "1003061a: f994 2000    \tldrsb.w\tr2, [r4]",
+      "1003061e: f112 0f41    \tcmn.w\tr2, #0x41",
+      "10030622: bfc8         \tit\tgt",
+      "10030624: 2101         \tmovgt\tr1, #0x1",
+      "10030626: f1bb 0f01    \tcmp.w\tr11, #0x1",
+      "1003062a: d005         \tbeq\t0x10030638 <<core::fmt::Formatter>::pad_integral+0x54> @ imm = #0xa",
+      "1003062c: f994 2001    \tldrsb.w\tr2, [r4, #0x1]",
+      "10030630: f112 0f41    \tcmn.w\tr2, #0x41",
+      "10030634: bfc8         \tit\tgt",
+      "10030636: 3101         \taddgt\tr1, #0x1",
+      "10030638: 440d         \tadd\tr5, r1",
+      "1003063a: f8b0 800c    \tldrh.w\tr8, [r0, #0xc]",
+      "1003063e: 4545         \tcmp\tr5, r8",
+      "10030640: d211         \tbhs\t0x10030666 <<core::fmt::Formatter>::pad_integral+0x82> @ imm = #0x22",
+      "10030642: 01f1         \tlsls\tr1, r6, #0x7",
+      "10030644: e9cd a305    \tstrd\tr10, r3, [sp, #20]",
+      "10030648: d424         \tbmi\t0x10030694 <<core::fmt::Formatter>::pad_integral+0xb0> @ imm = #0x48",
+      "1003064a: f3c6 7141    \tubfx\tr1, r6, #0x1d, #0x2",
+      "1003064e: 9404         \tstr\tr4, [sp, #0x10]",
+      "10030650: eba8 0c05    \tsub.w\tr12, r8, r5",
+      "10030654: f36f 565f    \tbfc\tr6, #21, #11",
+      "10030658: 2500         \tmovs\tr5, #0x0",
+      "1003065a: e8df f001    \ttbb\t[pc, r1]",
+      "10030662: 4665         \tmov\tr5, r12",
+      "10030664: e04f         \tb\t0x10030706 <<core::fmt::Formatter>::pad_integral+0x122> @ imm = #0x9e",
+      "10030666: 461d         \tmov\tr5, r3",
+      "10030668: 4623         \tmov\tr3, r4",
+      "1003066a: e9d0 4600    \tldrd\tr4, r6, [r0]",
+      "1003066e: 464a         \tmov\tr2, r9",
+      "10030670: 4631         \tmov\tr1, r6",
+      "10030672: f8cd b000    \tstr.w\tr11, [sp]",
+      "10030676: 4620         \tmov\tr0, r4",
+      "10030678: f000 f882    \tbl\t0x10030780 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0x104",
+      "1003067c: 2800         \tcmp\tr0, #0x0",
+      "1003067e: d167         \tbne\t0x10030750 <<core::fmt::Formatter>::pad_integral+0x16c> @ imm = #0xce",
+      "10030680: 68f3         \tldr\tr3, [r6, #0xc]",
+      "10030682: 4620         \tmov\tr0, r4",
+      "10030684: 4629         \tmov\tr1, r5",
+      "10030686: 4652         \tmov\tr2, r10",
+      "10030688: b007         \tadd\tsp, #0x1c",
+      "1003068a: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1003068e: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "10030692: 4718         \tbx\tr3",
+      "10030694: e9d0 2102    \tldrd\tr2, r1, [r0, #8]",
+      "10030698: 4623         \tmov\tr3, r4",
+      "1003069a: e9d0 a600    \tldrd\tr10, r6, [r0]",
+      "1003069e: 9102         \tstr\tr1, [sp, #0x8]",
+      "100306a0: 2100         \tmovs\tr1, #0x0",
+      "100306a2: f6c9 71e0    \tmovt\tr1, #0x9fe0",
+      "100306a6: 9203         \tstr\tr2, [sp, #0xc]",
+      "100306a8: 4011         \tands\tr1, r2",
+      "100306aa: 9004         \tstr\tr0, [sp, #0x10]",
+      "100306ac: f041 5100    \torr\tr1, r1, #0x20000000",
+      "100306b0: 464a         \tmov\tr2, r9",
+      "100306b2: f041 0130    \torr\tr1, r1, #0x30",
+      "100306b6: 6081         \tstr\tr1, [r0, #0x8]",
+      "100306b8: 4650         \tmov\tr0, r10",
+      "100306ba: 4631         \tmov\tr1, r6",
+      "100306bc: f8cd b000    \tstr.w\tr11, [sp]",
+      "100306c0: f000 f85e    \tbl\t0x10030780 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0xbc",
+      "100306c4: 2800         \tcmp\tr0, #0x0",
+      "100306c6: d143         \tbne\t0x10030750 <<core::fmt::Formatter>::pad_integral+0x16c> @ imm = #0x86",
+      "100306c8: eba8 0005    \tsub.w\tr0, r8, r5",
+      "100306cc: 2500         \tmovs\tr5, #0x0",
+      "100306ce: b284         \tuxth\tr4, r0",
+      "100306d0: b2a8         \tuxth\tr0, r5",
+      "100306d2: 42a0         \tcmp\tr0, r4",
+      "100306d4: d207         \tbhs\t0x100306e6 <<core::fmt::Formatter>::pad_integral+0x102> @ imm = #0xe",
+      "100306d6: 6932         \tldr\tr2, [r6, #0x10]",
+      "100306d8: 4650         \tmov\tr0, r10",
+      "100306da: 2130         \tmovs\tr1, #0x30",
+      "100306dc: 4790         \tblx\tr2",
+      "100306de: 3501         \tadds\tr5, #0x1",
+      "100306e0: 2800         \tcmp\tr0, #0x0",
+      "100306e2: d0f5         \tbeq\t0x100306d0 <<core::fmt::Formatter>::pad_integral+0xec> @ imm = #-0x16",
+      "100306e4: e034         \tb\t0x10030750 <<core::fmt::Formatter>::pad_integral+0x16c> @ imm = #0x68",
+      "100306e6: e9dd 2105    \tldrd\tr2, r1, [sp, #20]",
+      "100306ea: 4650         \tmov\tr0, r10",
+      "100306ec: 68f3         \tldr\tr3, [r6, #0xc]",
+      "100306ee: 4798         \tblx\tr3",
+      "100306f0: bb70         \tcbnz\tr0, 0x10030750 <<core::fmt::Formatter>::pad_integral+0x16c> @ imm = #0x5c",
+      "100306f2: 9804         \tldr\tr0, [sp, #0x10]",
+      "100306f4: e9dd 2102    \tldrd\tr2, r1, [sp, #8]",
+      "100306f8: e9c0 1202    \tstrd\tr1, r2, [r0, #8]",
+      "100306fc: 2000         \tmovs\tr0, #0x0",
+      "100306fe: e028         \tb\t0x10030752 <<core::fmt::Formatter>::pad_integral+0x16e> @ imm = #0x50",
+      "10030700: fa1f f18c    \tuxth.w\tr1, r12",
+      "10030704: 084d         \tlsrs\tr5, r1, #0x1",
+      "10030706: e9d0 4800    \tldrd\tr4, r8, [r0]",
+      "1003070a: f04f 0a00    \tmov.w\tr10, #0x0",
+      "1003070e: f8cd c00c    \tstr.w\tr12, [sp, #0xc]",
+      "10030712: b2a8         \tuxth\tr0, r5",
+      "10030714: fa1f f18a    \tuxth.w\tr1, r10",
+      "10030718: 4281         \tcmp\tr1, r0",
+      "1003071a: d209         \tbhs\t0x10030730 <<core::fmt::Formatter>::pad_integral+0x14c> @ imm = #0x12",
+      "1003071c: f8d8 2010    \tldr.w\tr2, [r8, #0x10]",
+      "10030720: 4620         \tmov\tr0, r4",
+      "10030722: 4631         \tmov\tr1, r6",
+      "10030724: 4790         \tblx\tr2",
+      "10030726: f10a 0a01    \tadd.w\tr10, r10, #0x1",
+      "1003072a: 2800         \tcmp\tr0, #0x0",
+      "1003072c: d0f1         \tbeq\t0x10030712 <<core::fmt::Formatter>::pad_integral+0x12e> @ imm = #-0x1e",
+      "1003072e: e00f         \tb\t0x10030750 <<core::fmt::Formatter>::pad_integral+0x16c> @ imm = #0x1e",
+      "10030730: f8cd b000    \tstr.w\tr11, [sp]",
+      "10030734: 4620         \tmov\tr0, r4",
+      "10030736: 9b04         \tldr\tr3, [sp, #0x10]",
+      "10030738: 4641         \tmov\tr1, r8",
+      "1003073a: 464a         \tmov\tr2, r9",
+      "1003073c: f000 f820    \tbl\t0x10030780 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0x40",
+      "10030740: b930         \tcbnz\tr0, 0x10030750 <<core::fmt::Formatter>::pad_integral+0x16c> @ imm = #0xc",
+      "10030742: e9dd 2105    \tldrd\tr2, r1, [sp, #20]",
+      "10030746: 4620         \tmov\tr0, r4",
+      "10030748: f8d8 300c    \tldr.w\tr3, [r8, #0xc]",
+      "1003074c: 4798         \tblx\tr3",
+      "1003074e: b120         \tcbz\tr0, 0x1003075a <<core::fmt::Formatter>::pad_integral+0x176> @ imm = #0x8",
+      "10030750: 2001         \tmovs\tr0, #0x1",
+      "10030752: b007         \tadd\tsp, #0x1c",
+      "10030754: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "10030758: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "1003075a: 9803         \tldr\tr0, [sp, #0xc]",
+      "1003075c: 1b40         \tsubs\tr0, r0, r5",
+      "1003075e: 2500         \tmovs\tr5, #0x0",
+      "10030760: fa1f f980    \tuxth.w\tr9, r0",
+      "10030764: b2a8         \tuxth\tr0, r5",
+      "10030766: 4548         \tcmp\tr0, r9",
+      "10030768: d2c8         \tbhs\t0x100306fc <<core::fmt::Formatter>::pad_integral+0x118> @ imm = #-0x70",
+      "1003076a: f8d8 2010    \tldr.w\tr2, [r8, #0x10]",
+      "1003076e: 4620         \tmov\tr0, r4",
+      "10030770: 4631         \tmov\tr1, r6",
+      "10030772: 4790         \tblx\tr2",
+      "10030774: 3501         \tadds\tr5, #0x1",
+      "10030776: 4601         \tmov\tr1, r0",
+      "10030778: 2001         \tmovs\tr0, #0x1",
+      "1003077a: 2900         \tcmp\tr1, #0x0",
+      "1003077c: d0f2         \tbeq\t0x10030764 <<core::fmt::Formatter>::pad_integral+0x180> @ imm = #-0x1c",
+      "1003077e: e7e8         \tb\t0x10030752 <<core::fmt::Formatter>::pad_integral+0x16e> @ imm = #-0x30"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268633720,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268633985,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268633792,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268633985,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268633916,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268633985,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<core::fmt::Formatter>::pad_integral::write_prefix",
+    "address": 268633984,
+    "size": 68,
+    "frame": 24,
+    "aliases": [
+      {
+        "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+        "address": 268633985,
+        "size": 68,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af4df8048dd7f8088006461c460d46501c08d02b6930461146984718b101205df8048bf0bd44b1eb683046214642465df8048bbde8f040184700205df8048bf0bd",
+    "mapping": [
+      [
+        268633984,
+        268634052,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10030780: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "10030782: af03         \tadd\tr7, sp, #0xc",
+      "10030784: f84d 8d04    \tstr\tr8, [sp, #-4]!",
+      "10030788: f8d7 8008    \tldr.w\tr8, [r7, #0x8]",
+      "1003078c: 4606         \tmov\tr6, r0",
+      "1003078e: 461c         \tmov\tr4, r3",
+      "10030790: 460d         \tmov\tr5, r1",
+      "10030792: 1c50         \tadds\tr0, r2, #0x1",
+      "10030794: d008         \tbeq\t0x100307a8 <<core::fmt::Formatter>::pad_integral::write_prefix+0x28> @ imm = #0x10",
+      "10030796: 692b         \tldr\tr3, [r5, #0x10]",
+      "10030798: 4630         \tmov\tr0, r6",
+      "1003079a: 4611         \tmov\tr1, r2",
+      "1003079c: 4798         \tblx\tr3",
+      "1003079e: b118         \tcbz\tr0, 0x100307a8 <<core::fmt::Formatter>::pad_integral::write_prefix+0x28> @ imm = #0x6",
+      "100307a0: 2001         \tmovs\tr0, #0x1",
+      "100307a2: f85d 8b04    \tldr\tr8, [sp], #4",
+      "100307a6: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "100307a8: b144         \tcbz\tr4, 0x100307bc <<core::fmt::Formatter>::pad_integral::write_prefix+0x3c> @ imm = #0x10",
+      "100307aa: 68eb         \tldr\tr3, [r5, #0xc]",
+      "100307ac: 4630         \tmov\tr0, r6",
+      "100307ae: 4621         \tmov\tr1, r4",
+      "100307b0: 4642         \tmov\tr2, r8",
+      "100307b2: f85d 8b04    \tldr\tr8, [sp], #4",
+      "100307b6: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "100307ba: 4718         \tbx\tr3",
+      "100307bc: 2000         \tmovs\tr0, #0x0",
+      "100307be: f85d 8b04    \tldr\tr8, [sp], #4",
+      "100307c2: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [],
+    "ordinary_edges": []
+  },
+  {
+    "mode": "speed2",
+    "role": "<u32 as core::fmt::Display>::fmt",
+    "address": 268637256,
+    "size": 230,
+    "frame": 64,
+    "aliases": [
+      {
+        "name": "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt",
+        "address": 268637257,
+        "size": 230,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f87b0046843f29d400d46c1f20500b4f57a7f38d349f27f68a7f1260e002342f2107941f27b4a4ff0640bc0f298082146039502940a4641f25971cdf2b7110eeb0304a2fb0116043b42454fea563101fb19261ffa86fc4fea9c0505fb0af54fea554505fb1b6630f81550e580b6b230f816602681ded8dde902450a33092906d80a46acb915e00a2321460929f8d98ab241f27b469208023b72436426520c02fb1611a7f1260689b230f81110f15204b132b100eb4200013ba7f126014078c854c3f10a000090a7f126000121034428460022fff75ff807b0bde8000ff0bd",
+    "mapping": [
+      [
+        268637256,
+        268637486,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10031448: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1003144a: af03         \tadd\tr7, sp, #0xc",
+      "1003144c: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "10031450: b087         \tsub\tsp, #0x1c",
+      "10031452: 6804         \tldr\tr4, [r0]",
+      "10031454: f243 409d    \tmovw\tr0, #0x349d",
+      "10031458: 460d         \tmov\tr5, r1",
+      "1003145a: f2c1 0005    \tmovt\tr0, #0x1005",
+      "1003145e: f5b4 7f7a    \tcmp.w\tr4, #0x3e8",
+      "10031462: d338         \tblo\t0x100314d6 <<u32 as core::fmt::Display>::fmt+0x8e> @ imm = #0x70",
+      "10031464: f249 687f    \tmovw\tr8, #0x967f",
+      "10031468: f1a7 0e26    \tsub.w\tlr, r7, #0x26",
+      "1003146c: 2300         \tmovs\tr3, #0x0",
+      "1003146e: f242 7910    \tmovw\tr9, #0x2710",
+      "10031472: f241 4a7b    \tmovw\tr10, #0x147b",
+      "10031476: f04f 0b64    \tmov.w\tr11, #0x64",
+      "1003147a: f2c0 0898    \tmovt\tr8, #0x98",
+      "1003147e: 4621         \tmov\tr1, r4",
+      "10031480: 9503         \tstr\tr5, [sp, #0xc]",
+      "10031482: 9402         \tstr\tr4, [sp, #0x8]",
+      "10031484: 460a         \tmov\tr2, r1",
+      "10031486: f241 7159    \tmovw\tr1, #0x1759",
+      "1003148a: f2cd 11b7    \tmovt\tr1, #0xd1b7",
+      "1003148e: eb0e 0403    \tadd.w\tr4, lr, r3",
+      "10031492: fba2 1601    \tumull\tr1, r6, r2, r1",
+      "10031496: 3b04         \tsubs\tr3, #0x4",
+      "10031498: 4542         \tcmp\tr2, r8",
+      "1003149a: ea4f 3156    \tlsr.w\tr1, r6, #0xd",
+      "1003149e: fb01 2619    \tmls\tr6, r1, r9, r2",
+      "100314a2: fa1f fc86    \tuxth.w\tr12, r6",
+      "100314a6: ea4f 059c    \tlsr.w\tr5, r12, #0x2",
+      "100314aa: fb05 f50a    \tmul\tr5, r5, r10",
+      "100314ae: ea4f 4555    \tlsr.w\tr5, r5, #0x11",
+      "100314b2: fb05 661b    \tmls\tr6, r5, r11, r6",
+      "100314b6: f830 5015    \tldrh.w\tr5, [r0, r5, lsl #1]",
+      "100314ba: 80e5         \tstrh\tr5, [r4, #0x6]",
+      "100314bc: b2b6         \tuxth\tr6, r6",
+      "100314be: f830 6016    \tldrh.w\tr6, [r0, r6, lsl #1]",
+      "100314c2: 8126         \tstrh\tr6, [r4, #0x8]",
+      "100314c4: d8de         \tbhi\t0x10031484 <<u32 as core::fmt::Display>::fmt+0x3c> @ imm = #-0x44",
+      "100314c6: e9dd 4502    \tldrd\tr4, r5, [sp, #8]",
+      "100314ca: 330a         \tadds\tr3, #0xa",
+      "100314cc: 2909         \tcmp\tr1, #0x9",
+      "100314ce: d806         \tbhi\t0x100314de <<u32 as core::fmt::Display>::fmt+0x96> @ imm = #0xc",
+      "100314d0: 460a         \tmov\tr2, r1",
+      "100314d2: b9ac         \tcbnz\tr4, 0x10031500 <<u32 as core::fmt::Display>::fmt+0xb8> @ imm = #0x2a",
+      "100314d4: e015         \tb\t0x10031502 <<u32 as core::fmt::Display>::fmt+0xba> @ imm = #0x2a",
+      "100314d6: 230a         \tmovs\tr3, #0xa",
+      "100314d8: 4621         \tmov\tr1, r4",
+      "100314da: 2909         \tcmp\tr1, #0x9",
+      "100314dc: d9f8         \tbls\t0x100314d0 <<u32 as core::fmt::Display>::fmt+0x88> @ imm = #-0x10",
+      "100314de: b28a         \tuxth\tr2, r1",
+      "100314e0: f241 467b    \tmovw\tr6, #0x147b",
+      "100314e4: 0892         \tlsrs\tr2, r2, #0x2",
+      "100314e6: 3b02         \tsubs\tr3, #0x2",
+      "100314e8: 4372         \tmuls\tr2, r6, r2",
+      "100314ea: 2664         \tmovs\tr6, #0x64",
+      "100314ec: 0c52         \tlsrs\tr2, r2, #0x11",
+      "100314ee: fb02 1116    \tmls\tr1, r2, r6, r1",
+      "100314f2: f1a7 0626    \tsub.w\tr6, r7, #0x26",
+      "100314f6: b289         \tuxth\tr1, r1",
+      "100314f8: f830 1011    \tldrh.w\tr1, [r0, r1, lsl #1]",
+      "100314fc: 52f1         \tstrh\tr1, [r6, r3]",
+      "100314fe: b104         \tcbz\tr4, 0x10031502 <<u32 as core::fmt::Display>::fmt+0xba> @ imm = #0x0",
+      "10031500: b132         \tcbz\tr2, 0x10031510 <<u32 as core::fmt::Display>::fmt+0xc8> @ imm = #0xc",
+      "10031502: eb00 0042    \tadd.w\tr0, r0, r2, lsl #1",
+      "10031506: 3b01         \tsubs\tr3, #0x1",
+      "10031508: f1a7 0126    \tsub.w\tr1, r7, #0x26",
+      "1003150c: 7840         \tldrb\tr0, [r0, #0x1]",
+      "1003150e: 54c8         \tstrb\tr0, [r1, r3]",
+      "10031510: f1c3 000a    \trsb.w\tr0, r3, #0xa",
+      "10031514: 9000         \tstr\tr0, [sp]",
+      "10031516: f1a7 0026    \tsub.w\tr0, r7, #0x26",
+      "1003151a: 2101         \tmovs\tr1, #0x1",
+      "1003151c: 4403         \tadd\tr3, r0",
+      "1003151e: 4628         \tmov\tr0, r5",
+      "10031520: 2200         \tmovs\tr2, #0x0",
+      "10031522: f7ff f85f    \tbl\t0x100305e4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0xf42",
+      "10031526: b007         \tadd\tsp, #0x1c",
+      "10031528: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1003152c: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268637268,
+        "high_site": 268637274,
+        "register": "r0",
+        "address": 268776605,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268637474,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268633573,
+            "size": 412,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<u8 as core::fmt::Display>::fmt",
+    "address": 268649550,
+    "size": 96,
+    "frame": 16,
+    "aliases": [
+      {
+        "name": "_RNvXNtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imphNtB6_7Display3fmt",
+        "address": 268649551,
+        "size": 96,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f4682b0037843f29d4cc1f2050c0a2b0dd329205843020b642002fb1030c0b23cf8100027f8020c01201bb903e003201a4603b13ab102f07f020138fb1e0ceb420252781a5480f003020092fa1e1318084601210022fcf79df802b080bd",
+    "mapping": [
+      [
+        268649550,
+        268649646,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1003444e: b580         \tpush\t{r7, lr}",
+      "10034450: 466f         \tmov\tr7, sp",
+      "10034452: b082         \tsub\tsp, #0x8",
+      "10034454: 7803         \tldrb\tr3, [r0]",
+      "10034456: f243 4c9d    \tmovw\tr12, #0x349d",
+      "1003445a: f2c1 0c05    \tmovt\tr12, #0x1005",
+      "1003445e: 2b0a         \tcmp\tr3, #0xa",
+      "10034460: d30d         \tblo\t0x1003447e <<u8 as core::fmt::Display>::fmt+0x30> @ imm = #0x1a",
+      "10034462: 2029         \tmovs\tr0, #0x29",
+      "10034464: 4358         \tmuls\tr0, r3, r0",
+      "10034466: 0b02         \tlsrs\tr2, r0, #0xc",
+      "10034468: 2064         \tmovs\tr0, #0x64",
+      "1003446a: fb02 3010    \tmls\tr0, r2, r0, r3",
+      "1003446e: b2c0         \tuxtb\tr0, r0",
+      "10034470: f83c 0010    \tldrh.w\tr0, [r12, r0, lsl #1]",
+      "10034474: f827 0c02    \tstrh\tr0, [r7, #-2]",
+      "10034478: 2001         \tmovs\tr0, #0x1",
+      "1003447a: b91b         \tcbnz\tr3, 0x10034484 <<u8 as core::fmt::Display>::fmt+0x36> @ imm = #0x6",
+      "1003447c: e003         \tb\t0x10034486 <<u8 as core::fmt::Display>::fmt+0x38> @ imm = #0x6",
+      "1003447e: 2003         \tmovs\tr0, #0x3",
+      "10034480: 461a         \tmov\tr2, r3",
+      "10034482: b103         \tcbz\tr3, 0x10034486 <<u8 as core::fmt::Display>::fmt+0x38> @ imm = #0x0",
+      "10034484: b13a         \tcbz\tr2, 0x10034496 <<u8 as core::fmt::Display>::fmt+0x48> @ imm = #0xe",
+      "10034486: f002 027f    \tand\tr2, r2, #0x7f",
+      "1003448a: 3801         \tsubs\tr0, #0x1",
+      "1003448c: 1efb         \tsubs\tr3, r7, #0x3",
+      "1003448e: eb0c 0242    \tadd.w\tr2, r12, r2, lsl #1",
+      "10034492: 7852         \tldrb\tr2, [r2, #0x1]",
+      "10034494: 541a         \tstrb\tr2, [r3, r0]",
+      "10034496: f080 0203    \teor\tr2, r0, #0x3",
+      "1003449a: 9200         \tstr\tr2, [sp]",
+      "1003449c: 1efa         \tsubs\tr2, r7, #0x3",
+      "1003449e: 1813         \tadds\tr3, r2, r0",
+      "100344a0: 4608         \tmov\tr0, r1",
+      "100344a2: 2101         \tmovs\tr1, #0x1",
+      "100344a4: 2200         \tmovs\tr2, #0x0",
+      "100344a6: f7fc f89d    \tbl\t0x100305e4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0x3ec6",
+      "100344aa: b002         \tadd\tsp, #0x8",
+      "100344ac: bd80         \tpop\t{r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268649558,
+        "high_site": 268649562,
+        "register": "r12",
+        "address": 268776605,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268649638,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268633573,
+            "size": 412,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<u16 as core::fmt::Display>::fmt",
+    "address": 268658264,
+    "size": 158,
+    "frame": 32,
+    "aliases": [
+      {
+        "name": "_RNvXs3_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imptNtB9_7Display3fmt",
+        "address": 268658265,
+        "size": 158,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "d0b502af84b0028843f29d4c8e46c1f2050cb2f57a7f17d3100940f24731484342f2107141f27b44c00c00fb11218bb29b08634364245b0c03fb14113cf8133027f80c3c01230ae00a2a0fd3900841f27b41484364210323400c00fb112189b23cf8111027f80a1c1ab903e00523104602b138b14000013b80b2a7f10d0160444078c854c3f105000090a7f10d000121034470460022f9f779ff04b0d0bd",
+    "mapping": [
+      [
+        268658264,
+        268658422,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10036658: b5d0         \tpush\t{r4, r6, r7, lr}",
+      "1003665a: af02         \tadd\tr7, sp, #0x8",
+      "1003665c: b084         \tsub\tsp, #0x10",
+      "1003665e: 8802         \tldrh\tr2, [r0]",
+      "10036660: f243 4c9d    \tmovw\tr12, #0x349d",
+      "10036664: 468e         \tmov\tlr, r1",
+      "10036666: f2c1 0c05    \tmovt\tr12, #0x1005",
+      "1003666a: f5b2 7f7a    \tcmp.w\tr2, #0x3e8",
+      "1003666e: d317         \tblo\t0x100366a0 <<u16 as core::fmt::Display>::fmt+0x48> @ imm = #0x2e",
+      "10036670: 0910         \tlsrs\tr0, r2, #0x4",
+      "10036672: f240 3147    \tmovw\tr1, #0x347",
+      "10036676: 4348         \tmuls\tr0, r1, r0",
+      "10036678: f242 7110    \tmovw\tr1, #0x2710",
+      "1003667c: f241 447b    \tmovw\tr4, #0x147b",
+      "10036680: 0cc0         \tlsrs\tr0, r0, #0x13",
+      "10036682: fb00 2111    \tmls\tr1, r0, r1, r2",
+      "10036686: b28b         \tuxth\tr3, r1",
+      "10036688: 089b         \tlsrs\tr3, r3, #0x2",
+      "1003668a: 4363         \tmuls\tr3, r4, r3",
+      "1003668c: 2464         \tmovs\tr4, #0x64",
+      "1003668e: 0c5b         \tlsrs\tr3, r3, #0x11",
+      "10036690: fb03 1114    \tmls\tr1, r3, r4, r1",
+      "10036694: f83c 3013    \tldrh.w\tr3, [r12, r3, lsl #1]",
+      "10036698: f827 3c0c    \tstrh\tr3, [r7, #-12]",
+      "1003669c: 2301         \tmovs\tr3, #0x1",
+      "1003669e: e00a         \tb\t0x100366b6 <<u16 as core::fmt::Display>::fmt+0x5e> @ imm = #0x14",
+      "100366a0: 2a0a         \tcmp\tr2, #0xa",
+      "100366a2: d30f         \tblo\t0x100366c4 <<u16 as core::fmt::Display>::fmt+0x6c> @ imm = #0x1e",
+      "100366a4: 0890         \tlsrs\tr0, r2, #0x2",
+      "100366a6: f241 417b    \tmovw\tr1, #0x147b",
+      "100366aa: 4348         \tmuls\tr0, r1, r0",
+      "100366ac: 2164         \tmovs\tr1, #0x64",
+      "100366ae: 2303         \tmovs\tr3, #0x3",
+      "100366b0: 0c40         \tlsrs\tr0, r0, #0x11",
+      "100366b2: fb00 2111    \tmls\tr1, r0, r1, r2",
+      "100366b6: b289         \tuxth\tr1, r1",
+      "100366b8: f83c 1011    \tldrh.w\tr1, [r12, r1, lsl #1]",
+      "100366bc: f827 1c0a    \tstrh\tr1, [r7, #-10]",
+      "100366c0: b91a         \tcbnz\tr2, 0x100366ca <<u16 as core::fmt::Display>::fmt+0x72> @ imm = #0x6",
+      "100366c2: e003         \tb\t0x100366cc <<u16 as core::fmt::Display>::fmt+0x74> @ imm = #0x6",
+      "100366c4: 2305         \tmovs\tr3, #0x5",
+      "100366c6: 4610         \tmov\tr0, r2",
+      "100366c8: b102         \tcbz\tr2, 0x100366cc <<u16 as core::fmt::Display>::fmt+0x74> @ imm = #0x0",
+      "100366ca: b138         \tcbz\tr0, 0x100366dc <<u16 as core::fmt::Display>::fmt+0x84> @ imm = #0xe",
+      "100366cc: 0040         \tlsls\tr0, r0, #0x1",
+      "100366ce: 3b01         \tsubs\tr3, #0x1",
+      "100366d0: b280         \tuxth\tr0, r0",
+      "100366d2: f1a7 010d    \tsub.w\tr1, r7, #0xd",
+      "100366d6: 4460         \tadd\tr0, r12",
+      "100366d8: 7840         \tldrb\tr0, [r0, #0x1]",
+      "100366da: 54c8         \tstrb\tr0, [r1, r3]",
+      "100366dc: f1c3 0005    \trsb.w\tr0, r3, #0x5",
+      "100366e0: 9000         \tstr\tr0, [sp]",
+      "100366e2: f1a7 000d    \tsub.w\tr0, r7, #0xd",
+      "100366e6: 2101         \tmovs\tr1, #0x1",
+      "100366e8: 4403         \tadd\tr3, r0",
+      "100366ea: 4670         \tmov\tr0, lr",
+      "100366ec: 2200         \tmovs\tr2, #0x0",
+      "100366ee: f7f9 ff79    \tbl\t0x100305e4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0x610e",
+      "100366f2: b004         \tadd\tsp, #0x10",
+      "100366f4: bdd0         \tpop\t{r4, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268658272,
+        "high_site": 268658278,
+        "register": "r12",
+        "address": 268776605,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268658414,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268633573,
+            "size": 412,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<&u16 as core::fmt::Debug>::fmt",
+    "address": 268665992,
+    "size": 234,
+    "frame": 24,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRtNtB6_5Debug3fmtCs8L38xtN5vCA_16dashboard_config",
+        "address": 268665993,
+        "size": 234,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f4684b08a680068930106d4520129d404b0bde88040fef7dab803884bf65c4e03f00f00c1f2040e1ef800001a090df1080c8df80b003cd002f00f001ef800001a0a8df80a0039d002f00f001ef800001a0b8df8090036d01ef8020002ab8df8080023e003884bf6cc3e03f00f00c1f2040e1ef800001a090df10c0c8df80f0017d002f00f001ef800001a0a8df80e0014d002f00f001ef800001a0b8df80d0011d01ef8020003ab8df80c004ff0040c0de00cf103034ff0010c08e00cf102034ff0020c03e00cf101034ff0030c43f6ec72c1f20502084611460222cdf800c0f8f73bf804b080bd",
+    "mapping": [
+      [
+        268665992,
+        268666226,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10038488: b580         \tpush\t{r7, lr}",
+      "1003848a: 466f         \tmov\tr7, sp",
+      "1003848c: b084         \tsub\tsp, #0x10",
+      "1003848e: 688a         \tldr\tr2, [r1, #0x8]",
+      "10038490: 6800         \tldr\tr0, [r0]",
+      "10038492: 0193         \tlsls\tr3, r2, #0x6",
+      "10038494: d406         \tbmi\t0x100384a4 <<&u16 as core::fmt::Debug>::fmt+0x1c> @ imm = #0xc",
+      "10038496: 0152         \tlsls\tr2, r2, #0x5",
+      "10038498: d429         \tbmi\t0x100384ee <<&u16 as core::fmt::Debug>::fmt+0x66> @ imm = #0x52",
+      "1003849a: b004         \tadd\tsp, #0x10",
+      "1003849c: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100384a0: f7fe b8da    \tb.w\t0x10036658 <<u16 as core::fmt::Display>::fmt> @ imm = #-0x1e4c",
+      "100384a4: 8803         \tldrh\tr3, [r0]",
+      "100384a6: f64b 4e5c    \tmovw\tlr, #0xbc5c",
+      "100384aa: f003 000f    \tand\tr0, r3, #0xf",
+      "100384ae: f2c1 0e04    \tmovt\tlr, #0x1004",
+      "100384b2: f81e 0000    \tldrb.w\tr0, [lr, r0]",
+      "100384b6: 091a         \tlsrs\tr2, r3, #0x4",
+      "100384b8: f10d 0c08    \tadd.w\tr12, sp, #0x8",
+      "100384bc: f88d 000b    \tstrb.w\tr0, [sp, #0xb]",
+      "100384c0: d03c         \tbeq\t0x1003853c <<&u16 as core::fmt::Debug>::fmt+0xb4> @ imm = #0x78",
+      "100384c2: f002 000f    \tand\tr0, r2, #0xf",
+      "100384c6: f81e 0000    \tldrb.w\tr0, [lr, r0]",
+      "100384ca: 0a1a         \tlsrs\tr2, r3, #0x8",
+      "100384cc: f88d 000a    \tstrb.w\tr0, [sp, #0xa]",
+      "100384d0: d039         \tbeq\t0x10038546 <<&u16 as core::fmt::Debug>::fmt+0xbe> @ imm = #0x72",
+      "100384d2: f002 000f    \tand\tr0, r2, #0xf",
+      "100384d6: f81e 0000    \tldrb.w\tr0, [lr, r0]",
+      "100384da: 0b1a         \tlsrs\tr2, r3, #0xc",
+      "100384dc: f88d 0009    \tstrb.w\tr0, [sp, #0x9]",
+      "100384e0: d036         \tbeq\t0x10038550 <<&u16 as core::fmt::Debug>::fmt+0xc8> @ imm = #0x6c",
+      "100384e2: f81e 0002    \tldrb.w\tr0, [lr, r2]",
+      "100384e6: ab02         \tadd\tr3, sp, #0x8",
+      "100384e8: f88d 0008    \tstrb.w\tr0, [sp, #0x8]",
+      "100384ec: e023         \tb\t0x10038536 <<&u16 as core::fmt::Debug>::fmt+0xae> @ imm = #0x46",
+      "100384ee: 8803         \tldrh\tr3, [r0]",
+      "100384f0: f64b 3ecc    \tmovw\tlr, #0xbbcc",
+      "100384f4: f003 000f    \tand\tr0, r3, #0xf",
+      "100384f8: f2c1 0e04    \tmovt\tlr, #0x1004",
+      "100384fc: f81e 0000    \tldrb.w\tr0, [lr, r0]",
+      "10038500: 091a         \tlsrs\tr2, r3, #0x4",
+      "10038502: f10d 0c0c    \tadd.w\tr12, sp, #0xc",
+      "10038506: f88d 000f    \tstrb.w\tr0, [sp, #0xf]",
+      "1003850a: d017         \tbeq\t0x1003853c <<&u16 as core::fmt::Debug>::fmt+0xb4> @ imm = #0x2e",
+      "1003850c: f002 000f    \tand\tr0, r2, #0xf",
+      "10038510: f81e 0000    \tldrb.w\tr0, [lr, r0]",
+      "10038514: 0a1a         \tlsrs\tr2, r3, #0x8",
+      "10038516: f88d 000e    \tstrb.w\tr0, [sp, #0xe]",
+      "1003851a: d014         \tbeq\t0x10038546 <<&u16 as core::fmt::Debug>::fmt+0xbe> @ imm = #0x28",
+      "1003851c: f002 000f    \tand\tr0, r2, #0xf",
+      "10038520: f81e 0000    \tldrb.w\tr0, [lr, r0]",
+      "10038524: 0b1a         \tlsrs\tr2, r3, #0xc",
+      "10038526: f88d 000d    \tstrb.w\tr0, [sp, #0xd]",
+      "1003852a: d011         \tbeq\t0x10038550 <<&u16 as core::fmt::Debug>::fmt+0xc8> @ imm = #0x22",
+      "1003852c: f81e 0002    \tldrb.w\tr0, [lr, r2]",
+      "10038530: ab03         \tadd\tr3, sp, #0xc",
+      "10038532: f88d 000c    \tstrb.w\tr0, [sp, #0xc]",
+      "10038536: f04f 0c04    \tmov.w\tr12, #0x4",
+      "1003853a: e00d         \tb\t0x10038558 <<&u16 as core::fmt::Debug>::fmt+0xd0> @ imm = #0x1a",
+      "1003853c: f10c 0303    \tadd.w\tr3, r12, #0x3",
+      "10038540: f04f 0c01    \tmov.w\tr12, #0x1",
+      "10038544: e008         \tb\t0x10038558 <<&u16 as core::fmt::Debug>::fmt+0xd0> @ imm = #0x10",
+      "10038546: f10c 0302    \tadd.w\tr3, r12, #0x2",
+      "1003854a: f04f 0c02    \tmov.w\tr12, #0x2",
+      "1003854e: e003         \tb\t0x10038558 <<&u16 as core::fmt::Debug>::fmt+0xd0> @ imm = #0x6",
+      "10038550: f10c 0301    \tadd.w\tr3, r12, #0x1",
+      "10038554: f04f 0c03    \tmov.w\tr12, #0x3",
+      "10038558: f643 72ec    \tmovw\tr2, #0x3fec",
+      "1003855c: f2c1 0205    \tmovt\tr2, #0x1005",
+      "10038560: 4608         \tmov\tr0, r1",
+      "10038562: 4611         \tmov\tr1, r2",
+      "10038564: 2202         \tmovs\tr2, #0x2",
+      "10038566: f8cd c000    \tstr.w\tr12, [sp]",
+      "1003856a: f7f8 f83b    \tbl\t0x100305e4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0x7f8a",
+      "1003856e: b004         \tadd\tsp, #0x10",
+      "10038570: bd80         \tpop\t{r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268666022,
+        "high_site": 268666030,
+        "register": "lr",
+        "address": 268745820,
+        "first24_hex": "30313233343536373839616263646566",
+        "origin_role": "lower_hex_digits"
+      },
+      {
+        "low_site": 268666096,
+        "high_site": 268666104,
+        "register": "lr",
+        "address": 268745676,
+        "first24_hex": "30313233343536373839414243444546",
+        "origin_role": "upper_hex_digits"
+      },
+      {
+        "low_site": 268666200,
+        "high_site": 268666204,
+        "register": "r2",
+        "address": 268779500,
+        "first24_hex": "3078",
+        "origin_role": "hex_prefix"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268666016,
+        "aliases": [
+          {
+            "name": "_RNvXs3_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imptNtB9_7Display3fmt",
+            "address": 268658265,
+            "size": 158,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 32
+      },
+      {
+        "site": 268666218,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268633573,
+            "size": 412,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<&bool as core::fmt::Debug>::fmt",
+    "address": 268667636,
+    "size": 50,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRbNtB6_5Debug3fmtCs8L38xtN5vCA_16dashboard_config",
+        "address": 268667637,
+        "size": 50,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f46006800780028084608d04bf63831c1f204010422bde88040f7f7feb943f6fc71c1f205010522bde88040f7f7f5b9",
+    "mapping": [
+      [
+        268667636,
+        268667686,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10038af4: b580         \tpush\t{r7, lr}",
+      "10038af6: 466f         \tmov\tr7, sp",
+      "10038af8: 6800         \tldr\tr0, [r0]",
+      "10038afa: 7800         \tldrb\tr0, [r0]",
+      "10038afc: 2800         \tcmp\tr0, #0x0",
+      "10038afe: 4608         \tmov\tr0, r1",
+      "10038b00: d008         \tbeq\t0x10038b14 <<&bool as core::fmt::Debug>::fmt+0x20> @ imm = #0x10",
+      "10038b02: f64b 3138    \tmovw\tr1, #0xbb38",
+      "10038b06: f2c1 0104    \tmovt\tr1, #0x1004",
+      "10038b0a: 2204         \tmovs\tr2, #0x4",
+      "10038b0c: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10038b10: f7f7 b9fe    \tb.w\t0x1002ff10 <<core::fmt::Formatter>::pad> @ imm = #-0x8c04",
+      "10038b14: f643 71fc    \tmovw\tr1, #0x3ffc",
+      "10038b18: f2c1 0105    \tmovt\tr1, #0x1005",
+      "10038b1c: 2205         \tmovs\tr2, #0x5",
+      "10038b1e: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10038b22: f7f7 b9f5    \tb.w\t0x1002ff10 <<core::fmt::Formatter>::pad> @ imm = #-0x8c16"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268667650,
+        "high_site": 268667654,
+        "register": "r1",
+        "address": 268745528,
+        "first24_hex": "74727565",
+        "origin_role": "bool_true"
+      },
+      {
+        "low_site": 268667668,
+        "high_site": 268667672,
+        "register": "r1",
+        "address": 268779516,
+        "first24_hex": "66616c7365",
+        "origin_role": "bool_false"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268667664,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+            "address": 268631825,
+            "size": 452,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 40
+      },
+      {
+        "site": 268667682,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+            "address": 268631825,
+            "size": 452,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 40
+      }
+    ]
+  },
+  {
+    "mode": "speed2",
+    "role": "<&u8 as core::fmt::Debug>::fmt",
+    "address": 268697816,
+    "size": 212,
+    "frame": 24,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRhNtB6_5Debug3fmtCs2lzMwNMxaVi_14dashboard_core",
+        "address": 268697817,
+        "size": 212,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f4684b00a46896800688b0117d4490126d4037843f29d4c0a2bc1f2050c34d3292003fb00f0000b642100fb1131c9b23cf8111027f8041c01214bbb29e001784bf65c4001f00f03c1f20400c35c090907f8063c17d0405cfb1f07f8070c0fe001784bf6cc3001f00f03c1f20400c35c090907f8013c1cd0405cbb1e07f8020c4ff0020c19e0f81f14e00321184603b138b100f07f000ceb4000407801397b1f5854781f81f0030c431810460121002209e0b81e431c4ff0010c43f6ec71c1f2050110460222cdf800c0f0f71efa04b080bd",
+    "mapping": [
+      [
+        268697816,
+        268698028,
+        "t"
+      ]
+    ],
+    "lines": [
+      "100400d8: b580         \tpush\t{r7, lr}",
+      "100400da: 466f         \tmov\tr7, sp",
+      "100400dc: b084         \tsub\tsp, #0x10",
+      "100400de: 460a         \tmov\tr2, r1",
+      "100400e0: 6889         \tldr\tr1, [r1, #0x8]",
+      "100400e2: 6800         \tldr\tr0, [r0]",
+      "100400e4: 018b         \tlsls\tr3, r1, #0x6",
+      "100400e6: d417         \tbmi\t0x10040118 <<&u8 as core::fmt::Debug>::fmt+0x40> @ imm = #0x2e",
+      "100400e8: 0149         \tlsls\tr1, r1, #0x5",
+      "100400ea: d426         \tbmi\t0x1004013a <<&u8 as core::fmt::Debug>::fmt+0x62> @ imm = #0x4c",
+      "100400ec: 7803         \tldrb\tr3, [r0]",
+      "100400ee: f243 4c9d    \tmovw\tr12, #0x349d",
+      "100400f2: 2b0a         \tcmp\tr3, #0xa",
+      "100400f4: f2c1 0c05    \tmovt\tr12, #0x1005",
+      "100400f8: d334         \tblo\t0x10040164 <<&u8 as core::fmt::Debug>::fmt+0x8c> @ imm = #0x68",
+      "100400fa: 2029         \tmovs\tr0, #0x29",
+      "100400fc: fb03 f000    \tmul\tr0, r3, r0",
+      "10040100: 0b00         \tlsrs\tr0, r0, #0xc",
+      "10040102: 2164         \tmovs\tr1, #0x64",
+      "10040104: fb00 3111    \tmls\tr1, r0, r1, r3",
+      "10040108: b2c9         \tuxtb\tr1, r1",
+      "1004010a: f83c 1011    \tldrh.w\tr1, [r12, r1, lsl #1]",
+      "1004010e: f827 1c04    \tstrh\tr1, [r7, #-4]",
+      "10040112: 2101         \tmovs\tr1, #0x1",
+      "10040114: bb4b         \tcbnz\tr3, 0x1004016a <<&u8 as core::fmt::Debug>::fmt+0x92> @ imm = #0x52",
+      "10040116: e029         \tb\t0x1004016c <<&u8 as core::fmt::Debug>::fmt+0x94> @ imm = #0x52",
+      "10040118: 7801         \tldrb\tr1, [r0]",
+      "1004011a: f64b 405c    \tmovw\tr0, #0xbc5c",
+      "1004011e: f001 030f    \tand\tr3, r1, #0xf",
+      "10040122: f2c1 0004    \tmovt\tr0, #0x1004",
+      "10040126: 5cc3         \tldrb\tr3, [r0, r3]",
+      "10040128: 0909         \tlsrs\tr1, r1, #0x4",
+      "1004012a: f807 3c06    \tstrb\tr3, [r7, #-6]",
+      "1004012e: d017         \tbeq\t0x10040160 <<&u8 as core::fmt::Debug>::fmt+0x88> @ imm = #0x2e",
+      "10040130: 5c40         \tldrb\tr0, [r0, r1]",
+      "10040132: 1ffb         \tsubs\tr3, r7, #0x7",
+      "10040134: f807 0c07    \tstrb\tr0, [r7, #-7]",
+      "10040138: e00f         \tb\t0x1004015a <<&u8 as core::fmt::Debug>::fmt+0x82> @ imm = #0x1e",
+      "1004013a: 7801         \tldrb\tr1, [r0]",
+      "1004013c: f64b 30cc    \tmovw\tr0, #0xbbcc",
+      "10040140: f001 030f    \tand\tr3, r1, #0xf",
+      "10040144: f2c1 0004    \tmovt\tr0, #0x1004",
+      "10040148: 5cc3         \tldrb\tr3, [r0, r3]",
+      "1004014a: 0909         \tlsrs\tr1, r1, #0x4",
+      "1004014c: f807 3c01    \tstrb\tr3, [r7, #-1]",
+      "10040150: d01c         \tbeq\t0x1004018c <<&u8 as core::fmt::Debug>::fmt+0xb4> @ imm = #0x38",
+      "10040152: 5c40         \tldrb\tr0, [r0, r1]",
+      "10040154: 1ebb         \tsubs\tr3, r7, #0x2",
+      "10040156: f807 0c02    \tstrb\tr0, [r7, #-2]",
+      "1004015a: f04f 0c02    \tmov.w\tr12, #0x2",
+      "1004015e: e019         \tb\t0x10040194 <<&u8 as core::fmt::Debug>::fmt+0xbc> @ imm = #0x32",
+      "10040160: 1ff8         \tsubs\tr0, r7, #0x7",
+      "10040162: e014         \tb\t0x1004018e <<&u8 as core::fmt::Debug>::fmt+0xb6> @ imm = #0x28",
+      "10040164: 2103         \tmovs\tr1, #0x3",
+      "10040166: 4618         \tmov\tr0, r3",
+      "10040168: b103         \tcbz\tr3, 0x1004016c <<&u8 as core::fmt::Debug>::fmt+0x94> @ imm = #0x0",
+      "1004016a: b138         \tcbz\tr0, 0x1004017c <<&u8 as core::fmt::Debug>::fmt+0xa4> @ imm = #0xe",
+      "1004016c: f000 007f    \tand\tr0, r0, #0x7f",
+      "10040170: eb0c 0040    \tadd.w\tr0, r12, r0, lsl #1",
+      "10040174: 7840         \tldrb\tr0, [r0, #0x1]",
+      "10040176: 3901         \tsubs\tr1, #0x1",
+      "10040178: 1f7b         \tsubs\tr3, r7, #0x5",
+      "1004017a: 5458         \tstrb\tr0, [r3, r1]",
+      "1004017c: 1f78         \tsubs\tr0, r7, #0x5",
+      "1004017e: f081 0c03    \teor\tr12, r1, #0x3",
+      "10040182: 1843         \tadds\tr3, r0, r1",
+      "10040184: 4610         \tmov\tr0, r2",
+      "10040186: 2101         \tmovs\tr1, #0x1",
+      "10040188: 2200         \tmovs\tr2, #0x0",
+      "1004018a: e009         \tb\t0x100401a0 <<&u8 as core::fmt::Debug>::fmt+0xc8> @ imm = #0x12",
+      "1004018c: 1eb8         \tsubs\tr0, r7, #0x2",
+      "1004018e: 1c43         \tadds\tr3, r0, #0x1",
+      "10040190: f04f 0c01    \tmov.w\tr12, #0x1",
+      "10040194: f643 71ec    \tmovw\tr1, #0x3fec",
+      "10040198: f2c1 0105    \tmovt\tr1, #0x1005",
+      "1004019c: 4610         \tmov\tr0, r2",
+      "1004019e: 2202         \tmovs\tr2, #0x2",
+      "100401a0: f8cd c000    \tstr.w\tr12, [sp]",
+      "100401a4: f7f0 fa1e    \tbl\t0x100305e4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0xfbc4",
+      "100401a8: b004         \tadd\tsp, #0x10",
+      "100401aa: bd80         \tpop\t{r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268697838,
+        "high_site": 268697844,
+        "register": "r12",
+        "address": 268776605,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      },
+      {
+        "low_site": 268697882,
+        "high_site": 268697890,
+        "register": "r0",
+        "address": 268745820,
+        "first24_hex": "30313233343536373839616263646566",
+        "origin_role": "lower_hex_digits"
+      },
+      {
+        "low_site": 268697916,
+        "high_site": 268697924,
+        "register": "r0",
+        "address": 268745676,
+        "first24_hex": "30313233343536373839414243444546",
+        "origin_role": "upper_hex_digits"
+      },
+      {
+        "low_site": 268698004,
+        "high_site": 268698008,
+        "register": "r1",
+        "address": 268779500,
+        "first24_hex": "3078",
+        "origin_role": "hex_prefix"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268698020,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268633573,
+            "size": 412,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<usize as core::fmt::Debug>::fmt",
+    "address": 268551496,
+    "size": 38,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXsZ_NtNtCs6m2Zc6X1WBq_4core3fmt3numjNtB7_5Debug3fmt",
+        "address": 268551497,
+        "size": 38,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f468a68930105d4520107d4bde8804002f029b8bde8804002f00fb9bde8804005f075bb",
+    "mapping": [
+      [
+        268551496,
+        268551534,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001c548: b580         \tpush\t{r7, lr}",
+      "1001c54a: 466f         \tmov\tr7, sp",
+      "1001c54c: 688a         \tldr\tr2, [r1, #0x8]",
+      "1001c54e: 0193         \tlsls\tr3, r2, #0x6",
+      "1001c550: d405         \tbmi\t0x1001c55e <<usize as core::fmt::Debug>::fmt+0x16> @ imm = #0xa",
+      "1001c552: 0152         \tlsls\tr2, r2, #0x5",
+      "1001c554: d407         \tbmi\t0x1001c566 <<usize as core::fmt::Debug>::fmt+0x1e> @ imm = #0xe",
+      "1001c556: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1001c55a: f002 b829    \tb.w\t0x1001e5b0 <<u32 as core::fmt::Display>::fmt> @ imm = #0x2052",
+      "1001c55e: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1001c562: f002 b90f    \tb.w\t0x1001e784 <<usize as core::fmt::LowerHex>::fmt> @ imm = #0x221e",
+      "1001c566: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1001c56a: f005 bb75    \tb.w\t0x10021c58 <<usize as core::fmt::UpperHex>::fmt> @ imm = #0x56ea"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268551514,
+        "aliases": [
+          {
+            "name": "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt",
+            "address": 268559793,
+            "size": 230,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      },
+      {
+        "site": 268551522,
+        "aliases": [
+          {
+            "name": "_RNvXs6_NtNtCs6m2Zc6X1WBq_4core3fmt3numjNtB7_8LowerHex3fmt",
+            "address": 268560261,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268551530,
+        "aliases": [
+          {
+            "name": "_RNvXs8_NtNtCs6m2Zc6X1WBq_4core3fmt3numjNtB7_8UpperHex3fmt",
+            "address": 268573785,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<core::fmt::Formatter>::pad",
+    "address": 268555940,
+    "size": 320,
+    "frame": 40,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+        "address": 268555941,
+        "size": 320,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f81b0d0f808a0164688461af0c05f52d05feaca0111d4102e31d2002e00f08880a8f101020021334612f9015f15f1410fc8bf0131013bf7d12de0b0f80ec0bcf1000f24d008eb060300264446624609e0ef294ff0030188bf04216c18611b013a0e4415d09c4214d0254614f9011bb1f1ff3ff3dcc9b2e029ead2ac1ceee704464046314600f058f80146204603e000260022aceb0201828991420cd2531acaf341716ff35f5a4ff0000bdfe801f012020f129b460de0d0e900013246cb68414601b0bde8000fbde8f040184799b24fea510bd0e900544ff0000900931ffa8bf01ffa89f1814208d2226928465146904709f101090028f1d015e0e368284641463246984778b900980026a0eb0b001ffa80f8b0b240450dd2226928465146904701360028f5d0012001b0bde8000ff0bd0021b0e70020f7e7",
+    "mapping": [
+      [
+        268555940,
+        268556122,
+        "t"
+      ],
+      [
+        268556122,
+        268556126,
+        "d"
+      ],
+      [
+        268556126,
+        268556260,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001d6a4: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1001d6a6: af03         \tadd\tr7, sp, #0xc",
+      "1001d6a8: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "1001d6ac: b081         \tsub\tsp, #0x4",
+      "1001d6ae: f8d0 a008    \tldr.w\tr10, [r0, #0x8]",
+      "1001d6b2: 4616         \tmov\tr6, r2",
+      "1001d6b4: 4688         \tmov\tr8, r1",
+      "1001d6b6: f01a 5fc0    \ttst.w\tr10, #0x18000000",
+      "1001d6ba: d052         \tbeq\t0x1001d762 <<core::fmt::Formatter>::pad+0xbe> @ imm = #0xa4",
+      "1001d6bc: ea5f 01ca    \tlsls.w\tr1, r10, #0x3",
+      "1001d6c0: d411         \tbmi\t0x1001d6e6 <<core::fmt::Formatter>::pad+0x42> @ imm = #0x22",
+      "1001d6c2: 2e10         \tcmp\tr6, #0x10",
+      "1001d6c4: d231         \tbhs\t0x1001d72a <<core::fmt::Formatter>::pad+0x86> @ imm = #0x62",
+      "1001d6c6: 2e00         \tcmp\tr6, #0x0",
+      "1001d6c8: f000 8088    \tbeq.w\t0x1001d7dc <<core::fmt::Formatter>::pad+0x138> @ imm = #0x110",
+      "1001d6cc: f1a8 0201    \tsub.w\tr2, r8, #0x1",
+      "1001d6d0: 2100         \tmovs\tr1, #0x0",
+      "1001d6d2: 4633         \tmov\tr3, r6",
+      "1001d6d4: f912 5f01    \tldrsb\tr5, [r2, #1]!",
+      "1001d6d8: f115 0f41    \tcmn.w\tr5, #0x41",
+      "1001d6dc: bfc8         \tit\tgt",
+      "1001d6de: 3101         \taddgt\tr1, #0x1",
+      "1001d6e0: 3b01         \tsubs\tr3, #0x1",
+      "1001d6e2: d1f7         \tbne\t0x1001d6d4 <<core::fmt::Formatter>::pad+0x30> @ imm = #-0x12",
+      "1001d6e4: e02d         \tb\t0x1001d742 <<core::fmt::Formatter>::pad+0x9e> @ imm = #0x5a",
+      "1001d6e6: f8b0 c00e    \tldrh.w\tr12, [r0, #0xe]",
+      "1001d6ea: f1bc 0f00    \tcmp.w\tr12, #0x0",
+      "1001d6ee: d024         \tbeq\t0x1001d73a <<core::fmt::Formatter>::pad+0x96> @ imm = #0x48",
+      "1001d6f0: eb08 0306    \tadd.w\tr3, r8, r6",
+      "1001d6f4: 2600         \tmovs\tr6, #0x0",
+      "1001d6f6: 4644         \tmov\tr4, r8",
+      "1001d6f8: 4662         \tmov\tr2, r12",
+      "1001d6fa: e009         \tb\t0x1001d710 <<core::fmt::Formatter>::pad+0x6c> @ imm = #0x12",
+      "1001d6fc: 29ef         \tcmp\tr1, #0xef",
+      "1001d6fe: f04f 0103    \tmov.w\tr1, #0x3",
+      "1001d702: bf88         \tit\thi",
+      "1001d704: 2104         \tmovhi\tr1, #0x4",
+      "1001d706: 186c         \tadds\tr4, r5, r1",
+      "1001d708: 1b61         \tsubs\tr1, r4, r5",
+      "1001d70a: 3a01         \tsubs\tr2, #0x1",
+      "1001d70c: 440e         \tadd\tr6, r1",
+      "1001d70e: d015         \tbeq\t0x1001d73c <<core::fmt::Formatter>::pad+0x98> @ imm = #0x2a",
+      "1001d710: 429c         \tcmp\tr4, r3",
+      "1001d712: d014         \tbeq\t0x1001d73e <<core::fmt::Formatter>::pad+0x9a> @ imm = #0x28",
+      "1001d714: 4625         \tmov\tr5, r4",
+      "1001d716: f914 1b01    \tldrsb\tr1, [r4], #1",
+      "1001d71a: f1b1 3fff    \tcmp.w\tr1, #0xffffffff",
+      "1001d71e: dcf3         \tbgt\t0x1001d708 <<core::fmt::Formatter>::pad+0x64> @ imm = #-0x1a",
+      "1001d720: b2c9         \tuxtb\tr1, r1",
+      "1001d722: 29e0         \tcmp\tr1, #0xe0",
+      "1001d724: d2ea         \tbhs\t0x1001d6fc <<core::fmt::Formatter>::pad+0x58> @ imm = #-0x2c",
+      "1001d726: 1cac         \tadds\tr4, r5, #0x2",
+      "1001d728: e7ee         \tb\t0x1001d708 <<core::fmt::Formatter>::pad+0x64> @ imm = #-0x24",
+      "1001d72a: 4604         \tmov\tr4, r0",
+      "1001d72c: 4640         \tmov\tr0, r8",
+      "1001d72e: 4631         \tmov\tr1, r6",
+      "1001d730: f000 f858    \tbl\t0x1001d7e4 <core::str::count::do_count_chars> @ imm = #0xb0",
+      "1001d734: 4601         \tmov\tr1, r0",
+      "1001d736: 4620         \tmov\tr0, r4",
+      "1001d738: e003         \tb\t0x1001d742 <<core::fmt::Formatter>::pad+0x9e> @ imm = #0x6",
+      "1001d73a: 2600         \tmovs\tr6, #0x0",
+      "1001d73c: 2200         \tmovs\tr2, #0x0",
+      "1001d73e: ebac 0102    \tsub.w\tr1, r12, r2",
+      "1001d742: 8982         \tldrh\tr2, [r0, #0xc]",
+      "1001d744: 4291         \tcmp\tr1, r2",
+      "1001d746: d20c         \tbhs\t0x1001d762 <<core::fmt::Formatter>::pad+0xbe> @ imm = #0x18",
+      "1001d748: 1a53         \tsubs\tr3, r2, r1",
+      "1001d74a: f3ca 7141    \tubfx\tr1, r10, #0x1d, #0x2",
+      "1001d74e: f36f 5a5f    \tbfc\tr10, #21, #11",
+      "1001d752: f04f 0b00    \tmov.w\tr11, #0x0",
+      "1001d756: e8df f001    \ttbb\t[pc, r1]",
+      "1001d75e: 469b         \tmov\tr11, r3",
+      "1001d760: e00d         \tb\t0x1001d77e <<core::fmt::Formatter>::pad+0xda> @ imm = #0x1a",
+      "1001d762: e9d0 0100    \tldrd\tr0, r1, [r0]",
+      "1001d766: 4632         \tmov\tr2, r6",
+      "1001d768: 68cb         \tldr\tr3, [r1, #0xc]",
+      "1001d76a: 4641         \tmov\tr1, r8",
+      "1001d76c: b001         \tadd\tsp, #0x4",
+      "1001d76e: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1001d772: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "1001d776: 4718         \tbx\tr3",
+      "1001d778: b299         \tuxth\tr1, r3",
+      "1001d77a: ea4f 0b51    \tlsr.w\tr11, r1, #0x1",
+      "1001d77e: e9d0 5400    \tldrd\tr5, r4, [r0]",
+      "1001d782: f04f 0900    \tmov.w\tr9, #0x0",
+      "1001d786: 9300         \tstr\tr3, [sp]",
+      "1001d788: fa1f f08b    \tuxth.w\tr0, r11",
+      "1001d78c: fa1f f189    \tuxth.w\tr1, r9",
+      "1001d790: 4281         \tcmp\tr1, r0",
+      "1001d792: d208         \tbhs\t0x1001d7a6 <<core::fmt::Formatter>::pad+0x102> @ imm = #0x10",
+      "1001d794: 6922         \tldr\tr2, [r4, #0x10]",
+      "1001d796: 4628         \tmov\tr0, r5",
+      "1001d798: 4651         \tmov\tr1, r10",
+      "1001d79a: 4790         \tblx\tr2",
+      "1001d79c: f109 0901    \tadd.w\tr9, r9, #0x1",
+      "1001d7a0: 2800         \tcmp\tr0, #0x0",
+      "1001d7a2: d0f1         \tbeq\t0x1001d788 <<core::fmt::Formatter>::pad+0xe4> @ imm = #-0x1e",
+      "1001d7a4: e015         \tb\t0x1001d7d2 <<core::fmt::Formatter>::pad+0x12e> @ imm = #0x2a",
+      "1001d7a6: 68e3         \tldr\tr3, [r4, #0xc]",
+      "1001d7a8: 4628         \tmov\tr0, r5",
+      "1001d7aa: 4641         \tmov\tr1, r8",
+      "1001d7ac: 4632         \tmov\tr2, r6",
+      "1001d7ae: 4798         \tblx\tr3",
+      "1001d7b0: b978         \tcbnz\tr0, 0x1001d7d2 <<core::fmt::Formatter>::pad+0x12e> @ imm = #0x1e",
+      "1001d7b2: 9800         \tldr\tr0, [sp]",
+      "1001d7b4: 2600         \tmovs\tr6, #0x0",
+      "1001d7b6: eba0 000b    \tsub.w\tr0, r0, r11",
+      "1001d7ba: fa1f f880    \tuxth.w\tr8, r0",
+      "1001d7be: b2b0         \tuxth\tr0, r6",
+      "1001d7c0: 4540         \tcmp\tr0, r8",
+      "1001d7c2: d20d         \tbhs\t0x1001d7e0 <<core::fmt::Formatter>::pad+0x13c> @ imm = #0x1a",
+      "1001d7c4: 6922         \tldr\tr2, [r4, #0x10]",
+      "1001d7c6: 4628         \tmov\tr0, r5",
+      "1001d7c8: 4651         \tmov\tr1, r10",
+      "1001d7ca: 4790         \tblx\tr2",
+      "1001d7cc: 3601         \tadds\tr6, #0x1",
+      "1001d7ce: 2800         \tcmp\tr0, #0x0",
+      "1001d7d0: d0f5         \tbeq\t0x1001d7be <<core::fmt::Formatter>::pad+0x11a> @ imm = #-0x16",
+      "1001d7d2: 2001         \tmovs\tr0, #0x1",
+      "1001d7d4: b001         \tadd\tsp, #0x4",
+      "1001d7d6: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1001d7da: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "1001d7dc: 2100         \tmovs\tr1, #0x0",
+      "1001d7de: e7b0         \tb\t0x1001d742 <<core::fmt::Formatter>::pad+0x9e> @ imm = #-0xa0",
+      "1001d7e0: 2000         \tmovs\tr0, #0x0",
+      "1001d7e2: e7f7         \tb\t0x1001d7d4 <<core::fmt::Formatter>::pad+0x130> @ imm = #-0x12"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268556080,
+        "aliases": [
+          {
+            "name": "_RNvNtNtCs6m2Zc6X1WBq_4core3str5count14do_count_chars",
+            "address": 268556261,
+            "size": 330,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 36
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<core::fmt::Formatter>::pad_integral",
+    "address": 268556796,
+    "size": 396,
+    "frame": 64,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+        "address": 268556797,
+        "size": 396,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f87b086689a461346d7f808c016f400124ff02b0908bf4ff0ff3905930ceb525b320201d400210de053b14a1e002512f9014f14f1410fc8bf0135013bf7d100e00025ab440691b0f80c80c34510d2f101cde903ca23d4c6f34171a8eb0b0b6ff35f560025dfe801f0530250025d464ee0d0e900464a460598314600906546069b204600f07ff8002864d1f368204651462a4607b0bde8000fbde8f04018470021d0e90245c9f6e07102902140d0e900a641f000514a4641f0300181600598314600905046069b00f05df8002842d1a8eb0b000695a146002584b2a8b2a04207d2326950463021904701350028f5d031e0dde903215046f368984758bb02980699c0e90291002026e01ffa8bf14d08d0e900484ff0000aa8b21ffa8af1814209d2d8f810202046314690470af1010a0028f1d00fe00598414600902046069b4a4600f020f830b9dde903212046d8f80c30984720b1012007b0bde8000ff0bdabeb050000251ffa80f9a8b24845cad2d8f810202046314690470135014601200029f2d0e8e7",
+    "mapping": [
+      [
+        268556796,
+        268556908,
+        "t"
+      ],
+      [
+        268556908,
+        268556912,
+        "d"
+      ],
+      [
+        268556912,
+        268557192,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001d9fc: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1001d9fe: af03         \tadd\tr7, sp, #0xc",
+      "1001da00: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "1001da04: b087         \tsub\tsp, #0x1c",
+      "1001da06: 6886         \tldr\tr6, [r0, #0x8]",
+      "1001da08: 469a         \tmov\tr10, r3",
+      "1001da0a: 4613         \tmov\tr3, r2",
+      "1001da0c: f8d7 c008    \tldr.w\tr12, [r7, #0x8]",
+      "1001da10: f416 1200    \tands\tr2, r6, #0x200000",
+      "1001da14: f04f 092b    \tmov.w\tr9, #0x2b",
+      "1001da18: bf08         \tit\teq",
+      "1001da1a: f04f 39ff    \tmoveq.w\tr9, #0xffffffff",
+      "1001da1e: 9305         \tstr\tr3, [sp, #0x14]",
+      "1001da20: eb0c 5b52    \tadd.w\tr11, r12, r2, lsr #21",
+      "1001da24: 0232         \tlsls\tr2, r6, #0x8",
+      "1001da26: d401         \tbmi\t0x1001da2c <<core::fmt::Formatter>::pad_integral+0x30> @ imm = #0x2",
+      "1001da28: 2100         \tmovs\tr1, #0x0",
+      "1001da2a: e00d         \tb\t0x1001da48 <<core::fmt::Formatter>::pad_integral+0x4c> @ imm = #0x1a",
+      "1001da2c: b153         \tcbz\tr3, 0x1001da44 <<core::fmt::Formatter>::pad_integral+0x48> @ imm = #0x14",
+      "1001da2e: 1e4a         \tsubs\tr2, r1, #0x1",
+      "1001da30: 2500         \tmovs\tr5, #0x0",
+      "1001da32: f912 4f01    \tldrsb\tr4, [r2, #1]!",
+      "1001da36: f114 0f41    \tcmn.w\tr4, #0x41",
+      "1001da3a: bfc8         \tit\tgt",
+      "1001da3c: 3501         \taddgt\tr5, #0x1",
+      "1001da3e: 3b01         \tsubs\tr3, #0x1",
+      "1001da40: d1f7         \tbne\t0x1001da32 <<core::fmt::Formatter>::pad_integral+0x36> @ imm = #-0x12",
+      "1001da42: e000         \tb\t0x1001da46 <<core::fmt::Formatter>::pad_integral+0x4a> @ imm = #0x0",
+      "1001da44: 2500         \tmovs\tr5, #0x0",
+      "1001da46: 44ab         \tadd\tr11, r5",
+      "1001da48: 9106         \tstr\tr1, [sp, #0x18]",
+      "1001da4a: f8b0 800c    \tldrh.w\tr8, [r0, #0xc]",
+      "1001da4e: 45c3         \tcmp\tr11, r8",
+      "1001da50: d210         \tbhs\t0x1001da74 <<core::fmt::Formatter>::pad_integral+0x78> @ imm = #0x20",
+      "1001da52: 01f1         \tlsls\tr1, r6, #0x7",
+      "1001da54: e9cd ca03    \tstrd\tr12, r10, [sp, #12]",
+      "1001da58: d423         \tbmi\t0x1001daa2 <<core::fmt::Formatter>::pad_integral+0xa6> @ imm = #0x46",
+      "1001da5a: f3c6 7141    \tubfx\tr1, r6, #0x1d, #0x2",
+      "1001da5e: eba8 0b0b    \tsub.w\tr11, r8, r11",
+      "1001da62: f36f 565f    \tbfc\tr6, #21, #11",
+      "1001da66: 2500         \tmovs\tr5, #0x0",
+      "1001da68: e8df f001    \ttbb\t[pc, r1]",
+      "1001da70: 465d         \tmov\tr5, r11",
+      "1001da72: e04e         \tb\t0x1001db12 <<core::fmt::Formatter>::pad_integral+0x116> @ imm = #0x9c",
+      "1001da74: e9d0 4600    \tldrd\tr4, r6, [r0]",
+      "1001da78: 464a         \tmov\tr2, r9",
+      "1001da7a: 9805         \tldr\tr0, [sp, #0x14]",
+      "1001da7c: 4631         \tmov\tr1, r6",
+      "1001da7e: 9000         \tstr\tr0, [sp]",
+      "1001da80: 4665         \tmov\tr5, r12",
+      "1001da82: 9b06         \tldr\tr3, [sp, #0x18]",
+      "1001da84: 4620         \tmov\tr0, r4",
+      "1001da86: f000 f87f    \tbl\t0x1001db88 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0xfe",
+      "1001da8a: 2800         \tcmp\tr0, #0x0",
+      "1001da8c: d164         \tbne\t0x1001db58 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0xc8",
+      "1001da8e: 68f3         \tldr\tr3, [r6, #0xc]",
+      "1001da90: 4620         \tmov\tr0, r4",
+      "1001da92: 4651         \tmov\tr1, r10",
+      "1001da94: 462a         \tmov\tr2, r5",
+      "1001da96: b007         \tadd\tsp, #0x1c",
+      "1001da98: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1001da9c: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "1001daa0: 4718         \tbx\tr3",
+      "1001daa2: 2100         \tmovs\tr1, #0x0",
+      "1001daa4: e9d0 4502    \tldrd\tr4, r5, [r0, #8]",
+      "1001daa8: f6c9 71e0    \tmovt\tr1, #0x9fe0",
+      "1001daac: 9002         \tstr\tr0, [sp, #0x8]",
+      "1001daae: 4021         \tands\tr1, r4",
+      "1001dab0: e9d0 a600    \tldrd\tr10, r6, [r0]",
+      "1001dab4: f041 5100    \torr\tr1, r1, #0x20000000",
+      "1001dab8: 464a         \tmov\tr2, r9",
+      "1001daba: f041 0130    \torr\tr1, r1, #0x30",
+      "1001dabe: 6081         \tstr\tr1, [r0, #0x8]",
+      "1001dac0: 9805         \tldr\tr0, [sp, #0x14]",
+      "1001dac2: 4631         \tmov\tr1, r6",
+      "1001dac4: 9000         \tstr\tr0, [sp]",
+      "1001dac6: 4650         \tmov\tr0, r10",
+      "1001dac8: 9b06         \tldr\tr3, [sp, #0x18]",
+      "1001daca: f000 f85d    \tbl\t0x1001db88 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0xba",
+      "1001dace: 2800         \tcmp\tr0, #0x0",
+      "1001dad0: d142         \tbne\t0x1001db58 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x84",
+      "1001dad2: eba8 000b    \tsub.w\tr0, r8, r11",
+      "1001dad6: 9506         \tstr\tr5, [sp, #0x18]",
+      "1001dad8: 46a1         \tmov\tr9, r4",
+      "1001dada: 2500         \tmovs\tr5, #0x0",
+      "1001dadc: b284         \tuxth\tr4, r0",
+      "1001dade: b2a8         \tuxth\tr0, r5",
+      "1001dae0: 42a0         \tcmp\tr0, r4",
+      "1001dae2: d207         \tbhs\t0x1001daf4 <<core::fmt::Formatter>::pad_integral+0xf8> @ imm = #0xe",
+      "1001dae4: 6932         \tldr\tr2, [r6, #0x10]",
+      "1001dae6: 4650         \tmov\tr0, r10",
+      "1001dae8: 2130         \tmovs\tr1, #0x30",
+      "1001daea: 4790         \tblx\tr2",
+      "1001daec: 3501         \tadds\tr5, #0x1",
+      "1001daee: 2800         \tcmp\tr0, #0x0",
+      "1001daf0: d0f5         \tbeq\t0x1001dade <<core::fmt::Formatter>::pad_integral+0xe2> @ imm = #-0x16",
+      "1001daf2: e031         \tb\t0x1001db58 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x62",
+      "1001daf4: e9dd 2103    \tldrd\tr2, r1, [sp, #12]",
+      "1001daf8: 4650         \tmov\tr0, r10",
+      "1001dafa: 68f3         \tldr\tr3, [r6, #0xc]",
+      "1001dafc: 4798         \tblx\tr3",
+      "1001dafe: bb58         \tcbnz\tr0, 0x1001db58 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x56",
+      "1001db00: 9802         \tldr\tr0, [sp, #0x8]",
+      "1001db02: 9906         \tldr\tr1, [sp, #0x18]",
+      "1001db04: e9c0 9102    \tstrd\tr9, r1, [r0, #8]",
+      "1001db08: 2000         \tmovs\tr0, #0x0",
+      "1001db0a: e026         \tb\t0x1001db5a <<core::fmt::Formatter>::pad_integral+0x15e> @ imm = #0x4c",
+      "1001db0c: fa1f f18b    \tuxth.w\tr1, r11",
+      "1001db10: 084d         \tlsrs\tr5, r1, #0x1",
+      "1001db12: e9d0 4800    \tldrd\tr4, r8, [r0]",
+      "1001db16: f04f 0a00    \tmov.w\tr10, #0x0",
+      "1001db1a: b2a8         \tuxth\tr0, r5",
+      "1001db1c: fa1f f18a    \tuxth.w\tr1, r10",
+      "1001db20: 4281         \tcmp\tr1, r0",
+      "1001db22: d209         \tbhs\t0x1001db38 <<core::fmt::Formatter>::pad_integral+0x13c> @ imm = #0x12",
+      "1001db24: f8d8 2010    \tldr.w\tr2, [r8, #0x10]",
+      "1001db28: 4620         \tmov\tr0, r4",
+      "1001db2a: 4631         \tmov\tr1, r6",
+      "1001db2c: 4790         \tblx\tr2",
+      "1001db2e: f10a 0a01    \tadd.w\tr10, r10, #0x1",
+      "1001db32: 2800         \tcmp\tr0, #0x0",
+      "1001db34: d0f1         \tbeq\t0x1001db1a <<core::fmt::Formatter>::pad_integral+0x11e> @ imm = #-0x1e",
+      "1001db36: e00f         \tb\t0x1001db58 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x1e",
+      "1001db38: 9805         \tldr\tr0, [sp, #0x14]",
+      "1001db3a: 4641         \tmov\tr1, r8",
+      "1001db3c: 9000         \tstr\tr0, [sp]",
+      "1001db3e: 4620         \tmov\tr0, r4",
+      "1001db40: 9b06         \tldr\tr3, [sp, #0x18]",
+      "1001db42: 464a         \tmov\tr2, r9",
+      "1001db44: f000 f820    \tbl\t0x1001db88 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0x40",
+      "1001db48: b930         \tcbnz\tr0, 0x1001db58 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0xc",
+      "1001db4a: e9dd 2103    \tldrd\tr2, r1, [sp, #12]",
+      "1001db4e: 4620         \tmov\tr0, r4",
+      "1001db50: f8d8 300c    \tldr.w\tr3, [r8, #0xc]",
+      "1001db54: 4798         \tblx\tr3",
+      "1001db56: b120         \tcbz\tr0, 0x1001db62 <<core::fmt::Formatter>::pad_integral+0x166> @ imm = #0x8",
+      "1001db58: 2001         \tmovs\tr0, #0x1",
+      "1001db5a: b007         \tadd\tsp, #0x1c",
+      "1001db5c: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1001db60: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "1001db62: ebab 0005    \tsub.w\tr0, r11, r5",
+      "1001db66: 2500         \tmovs\tr5, #0x0",
+      "1001db68: fa1f f980    \tuxth.w\tr9, r0",
+      "1001db6c: b2a8         \tuxth\tr0, r5",
+      "1001db6e: 4548         \tcmp\tr0, r9",
+      "1001db70: d2ca         \tbhs\t0x1001db08 <<core::fmt::Formatter>::pad_integral+0x10c> @ imm = #-0x6c",
+      "1001db72: f8d8 2010    \tldr.w\tr2, [r8, #0x10]",
+      "1001db76: 4620         \tmov\tr0, r4",
+      "1001db78: 4631         \tmov\tr1, r6",
+      "1001db7a: 4790         \tblx\tr2",
+      "1001db7c: 3501         \tadds\tr5, #0x1",
+      "1001db7e: 4601         \tmov\tr1, r0",
+      "1001db80: 2001         \tmovs\tr0, #0x1",
+      "1001db82: 2900         \tcmp\tr1, #0x0",
+      "1001db84: d0f2         \tbeq\t0x1001db6c <<core::fmt::Formatter>::pad_integral+0x170> @ imm = #-0x1c",
+      "1001db86: e7e8         \tb\t0x1001db5a <<core::fmt::Formatter>::pad_integral+0x15e> @ imm = #-0x30"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268556934,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268557193,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268557002,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268557193,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268557124,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268557193,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<core::fmt::Formatter>::pad_integral::write_prefix",
+    "address": 268557192,
+    "size": 68,
+    "frame": 24,
+    "aliases": [
+      {
+        "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+        "address": 268557193,
+        "size": 68,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af4df8048dd7f8088006461c460d46501c08d02b6930461146984718b101205df8048bf0bd44b1eb683046214642465df8048bbde8f040184700205df8048bf0bd",
+    "mapping": [
+      [
+        268557192,
+        268557260,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001db88: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1001db8a: af03         \tadd\tr7, sp, #0xc",
+      "1001db8c: f84d 8d04    \tstr\tr8, [sp, #-4]!",
+      "1001db90: f8d7 8008    \tldr.w\tr8, [r7, #0x8]",
+      "1001db94: 4606         \tmov\tr6, r0",
+      "1001db96: 461c         \tmov\tr4, r3",
+      "1001db98: 460d         \tmov\tr5, r1",
+      "1001db9a: 1c50         \tadds\tr0, r2, #0x1",
+      "1001db9c: d008         \tbeq\t0x1001dbb0 <<core::fmt::Formatter>::pad_integral::write_prefix+0x28> @ imm = #0x10",
+      "1001db9e: 692b         \tldr\tr3, [r5, #0x10]",
+      "1001dba0: 4630         \tmov\tr0, r6",
+      "1001dba2: 4611         \tmov\tr1, r2",
+      "1001dba4: 4798         \tblx\tr3",
+      "1001dba6: b118         \tcbz\tr0, 0x1001dbb0 <<core::fmt::Formatter>::pad_integral::write_prefix+0x28> @ imm = #0x6",
+      "1001dba8: 2001         \tmovs\tr0, #0x1",
+      "1001dbaa: f85d 8b04    \tldr\tr8, [sp], #4",
+      "1001dbae: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "1001dbb0: b144         \tcbz\tr4, 0x1001dbc4 <<core::fmt::Formatter>::pad_integral::write_prefix+0x3c> @ imm = #0x10",
+      "1001dbb2: 68eb         \tldr\tr3, [r5, #0xc]",
+      "1001dbb4: 4630         \tmov\tr0, r6",
+      "1001dbb6: 4621         \tmov\tr1, r4",
+      "1001dbb8: 4642         \tmov\tr2, r8",
+      "1001dbba: f85d 8b04    \tldr\tr8, [sp], #4",
+      "1001dbbe: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "1001dbc2: 4718         \tbx\tr3",
+      "1001dbc4: 2000         \tmovs\tr0, #0x0",
+      "1001dbc6: f85d 8b04    \tldr\tr8, [sp], #4",
+      "1001dbca: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [],
+    "ordinary_edges": []
+  },
+  {
+    "mode": "sizes",
+    "role": "<u32 as core::fmt::Display>::fmt",
+    "address": 268559792,
+    "size": 230,
+    "frame": 64,
+    "aliases": [
+      {
+        "name": "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt",
+        "address": 268559793,
+        "size": 230,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f87b0046844f23d400d46c1f20400b4f57a7f38d349f27f68a7f1260e002342f2107941f27b4a4ff0640bc0f298082146039502940a4641f25971cdf2b7110eeb0304a2fb0116043b42454fea563101fb19261ffa86fc4fea9c0505fb0af54fea554505fb1b6630f81550e580b6b230f816602681ded8dde902450a33092906d80a46acb915e00a2321460929f8d98ab241f27b469208023b72436426520c02fb1611a7f1260689b230f81110f15204b132b100eb4200013ba7f126014078c854c3f10a000090a7f126000121034428460022fff7b7f907b0bde8000ff0bd",
+    "mapping": [
+      [
+        268559792,
+        268560022,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001e5b0: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1001e5b2: af03         \tadd\tr7, sp, #0xc",
+      "1001e5b4: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "1001e5b8: b087         \tsub\tsp, #0x1c",
+      "1001e5ba: 6804         \tldr\tr4, [r0]",
+      "1001e5bc: f244 403d    \tmovw\tr0, #0x443d",
+      "1001e5c0: 460d         \tmov\tr5, r1",
+      "1001e5c2: f2c1 0004    \tmovt\tr0, #0x1004",
+      "1001e5c6: f5b4 7f7a    \tcmp.w\tr4, #0x3e8",
+      "1001e5ca: d338         \tblo\t0x1001e63e <<u32 as core::fmt::Display>::fmt+0x8e> @ imm = #0x70",
+      "1001e5cc: f249 687f    \tmovw\tr8, #0x967f",
+      "1001e5d0: f1a7 0e26    \tsub.w\tlr, r7, #0x26",
+      "1001e5d4: 2300         \tmovs\tr3, #0x0",
+      "1001e5d6: f242 7910    \tmovw\tr9, #0x2710",
+      "1001e5da: f241 4a7b    \tmovw\tr10, #0x147b",
+      "1001e5de: f04f 0b64    \tmov.w\tr11, #0x64",
+      "1001e5e2: f2c0 0898    \tmovt\tr8, #0x98",
+      "1001e5e6: 4621         \tmov\tr1, r4",
+      "1001e5e8: 9503         \tstr\tr5, [sp, #0xc]",
+      "1001e5ea: 9402         \tstr\tr4, [sp, #0x8]",
+      "1001e5ec: 460a         \tmov\tr2, r1",
+      "1001e5ee: f241 7159    \tmovw\tr1, #0x1759",
+      "1001e5f2: f2cd 11b7    \tmovt\tr1, #0xd1b7",
+      "1001e5f6: eb0e 0403    \tadd.w\tr4, lr, r3",
+      "1001e5fa: fba2 1601    \tumull\tr1, r6, r2, r1",
+      "1001e5fe: 3b04         \tsubs\tr3, #0x4",
+      "1001e600: 4542         \tcmp\tr2, r8",
+      "1001e602: ea4f 3156    \tlsr.w\tr1, r6, #0xd",
+      "1001e606: fb01 2619    \tmls\tr6, r1, r9, r2",
+      "1001e60a: fa1f fc86    \tuxth.w\tr12, r6",
+      "1001e60e: ea4f 059c    \tlsr.w\tr5, r12, #0x2",
+      "1001e612: fb05 f50a    \tmul\tr5, r5, r10",
+      "1001e616: ea4f 4555    \tlsr.w\tr5, r5, #0x11",
+      "1001e61a: fb05 661b    \tmls\tr6, r5, r11, r6",
+      "1001e61e: f830 5015    \tldrh.w\tr5, [r0, r5, lsl #1]",
+      "1001e622: 80e5         \tstrh\tr5, [r4, #0x6]",
+      "1001e624: b2b6         \tuxth\tr6, r6",
+      "1001e626: f830 6016    \tldrh.w\tr6, [r0, r6, lsl #1]",
+      "1001e62a: 8126         \tstrh\tr6, [r4, #0x8]",
+      "1001e62c: d8de         \tbhi\t0x1001e5ec <<u32 as core::fmt::Display>::fmt+0x3c> @ imm = #-0x44",
+      "1001e62e: e9dd 4502    \tldrd\tr4, r5, [sp, #8]",
+      "1001e632: 330a         \tadds\tr3, #0xa",
+      "1001e634: 2909         \tcmp\tr1, #0x9",
+      "1001e636: d806         \tbhi\t0x1001e646 <<u32 as core::fmt::Display>::fmt+0x96> @ imm = #0xc",
+      "1001e638: 460a         \tmov\tr2, r1",
+      "1001e63a: b9ac         \tcbnz\tr4, 0x1001e668 <<u32 as core::fmt::Display>::fmt+0xb8> @ imm = #0x2a",
+      "1001e63c: e015         \tb\t0x1001e66a <<u32 as core::fmt::Display>::fmt+0xba> @ imm = #0x2a",
+      "1001e63e: 230a         \tmovs\tr3, #0xa",
+      "1001e640: 4621         \tmov\tr1, r4",
+      "1001e642: 2909         \tcmp\tr1, #0x9",
+      "1001e644: d9f8         \tbls\t0x1001e638 <<u32 as core::fmt::Display>::fmt+0x88> @ imm = #-0x10",
+      "1001e646: b28a         \tuxth\tr2, r1",
+      "1001e648: f241 467b    \tmovw\tr6, #0x147b",
+      "1001e64c: 0892         \tlsrs\tr2, r2, #0x2",
+      "1001e64e: 3b02         \tsubs\tr3, #0x2",
+      "1001e650: 4372         \tmuls\tr2, r6, r2",
+      "1001e652: 2664         \tmovs\tr6, #0x64",
+      "1001e654: 0c52         \tlsrs\tr2, r2, #0x11",
+      "1001e656: fb02 1116    \tmls\tr1, r2, r6, r1",
+      "1001e65a: f1a7 0626    \tsub.w\tr6, r7, #0x26",
+      "1001e65e: b289         \tuxth\tr1, r1",
+      "1001e660: f830 1011    \tldrh.w\tr1, [r0, r1, lsl #1]",
+      "1001e664: 52f1         \tstrh\tr1, [r6, r3]",
+      "1001e666: b104         \tcbz\tr4, 0x1001e66a <<u32 as core::fmt::Display>::fmt+0xba> @ imm = #0x0",
+      "1001e668: b132         \tcbz\tr2, 0x1001e678 <<u32 as core::fmt::Display>::fmt+0xc8> @ imm = #0xc",
+      "1001e66a: eb00 0042    \tadd.w\tr0, r0, r2, lsl #1",
+      "1001e66e: 3b01         \tsubs\tr3, #0x1",
+      "1001e670: f1a7 0126    \tsub.w\tr1, r7, #0x26",
+      "1001e674: 7840         \tldrb\tr0, [r0, #0x1]",
+      "1001e676: 54c8         \tstrb\tr0, [r1, r3]",
+      "1001e678: f1c3 000a    \trsb.w\tr0, r3, #0xa",
+      "1001e67c: 9000         \tstr\tr0, [sp]",
+      "1001e67e: f1a7 0026    \tsub.w\tr0, r7, #0x26",
+      "1001e682: 2101         \tmovs\tr1, #0x1",
+      "1001e684: 4403         \tadd\tr3, r0",
+      "1001e686: 4628         \tmov\tr0, r5",
+      "1001e688: 2200         \tmovs\tr2, #0x0",
+      "1001e68a: f7ff f9b7    \tbl\t0x1001d9fc <<core::fmt::Formatter>::pad_integral> @ imm = #-0xc92",
+      "1001e68e: b007         \tadd\tsp, #0x1c",
+      "1001e690: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1001e694: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268559804,
+        "high_site": 268559810,
+        "register": "r0",
+        "address": 268715069,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268560010,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268556797,
+            "size": 396,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<u8 as core::fmt::Display>::fmt",
+    "address": 268567728,
+    "size": 96,
+    "frame": 16,
+    "aliases": [
+      {
+        "name": "_RNvXNtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imphNtB6_7Display3fmt",
+        "address": 268567729,
+        "size": 96,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f4682b0037844f23d4cc1f2040c0a2b0dd329205843020b642002fb1030c0b23cf8100027f8020c01201bb903e003201a4603b13ab102f07f020138fb1e0ceb420252781a5480f003020092fa1e1318084601210022fdf778fa02b080bd",
+    "mapping": [
+      [
+        268567728,
+        268567824,
+        "t"
+      ]
+    ],
+    "lines": [
+      "100204b0: b580         \tpush\t{r7, lr}",
+      "100204b2: 466f         \tmov\tr7, sp",
+      "100204b4: b082         \tsub\tsp, #0x8",
+      "100204b6: 7803         \tldrb\tr3, [r0]",
+      "100204b8: f244 4c3d    \tmovw\tr12, #0x443d",
+      "100204bc: f2c1 0c04    \tmovt\tr12, #0x1004",
+      "100204c0: 2b0a         \tcmp\tr3, #0xa",
+      "100204c2: d30d         \tblo\t0x100204e0 <<u8 as core::fmt::Display>::fmt+0x30> @ imm = #0x1a",
+      "100204c4: 2029         \tmovs\tr0, #0x29",
+      "100204c6: 4358         \tmuls\tr0, r3, r0",
+      "100204c8: 0b02         \tlsrs\tr2, r0, #0xc",
+      "100204ca: 2064         \tmovs\tr0, #0x64",
+      "100204cc: fb02 3010    \tmls\tr0, r2, r0, r3",
+      "100204d0: b2c0         \tuxtb\tr0, r0",
+      "100204d2: f83c 0010    \tldrh.w\tr0, [r12, r0, lsl #1]",
+      "100204d6: f827 0c02    \tstrh\tr0, [r7, #-2]",
+      "100204da: 2001         \tmovs\tr0, #0x1",
+      "100204dc: b91b         \tcbnz\tr3, 0x100204e6 <<u8 as core::fmt::Display>::fmt+0x36> @ imm = #0x6",
+      "100204de: e003         \tb\t0x100204e8 <<u8 as core::fmt::Display>::fmt+0x38> @ imm = #0x6",
+      "100204e0: 2003         \tmovs\tr0, #0x3",
+      "100204e2: 461a         \tmov\tr2, r3",
+      "100204e4: b103         \tcbz\tr3, 0x100204e8 <<u8 as core::fmt::Display>::fmt+0x38> @ imm = #0x0",
+      "100204e6: b13a         \tcbz\tr2, 0x100204f8 <<u8 as core::fmt::Display>::fmt+0x48> @ imm = #0xe",
+      "100204e8: f002 027f    \tand\tr2, r2, #0x7f",
+      "100204ec: 3801         \tsubs\tr0, #0x1",
+      "100204ee: 1efb         \tsubs\tr3, r7, #0x3",
+      "100204f0: eb0c 0242    \tadd.w\tr2, r12, r2, lsl #1",
+      "100204f4: 7852         \tldrb\tr2, [r2, #0x1]",
+      "100204f6: 541a         \tstrb\tr2, [r3, r0]",
+      "100204f8: f080 0203    \teor\tr2, r0, #0x3",
+      "100204fc: 9200         \tstr\tr2, [sp]",
+      "100204fe: 1efa         \tsubs\tr2, r7, #0x3",
+      "10020500: 1813         \tadds\tr3, r2, r0",
+      "10020502: 4608         \tmov\tr0, r1",
+      "10020504: 2101         \tmovs\tr1, #0x1",
+      "10020506: 2200         \tmovs\tr2, #0x0",
+      "10020508: f7fd fa78    \tbl\t0x1001d9fc <<core::fmt::Formatter>::pad_integral> @ imm = #-0x2b10",
+      "1002050c: b002         \tadd\tsp, #0x8",
+      "1002050e: bd80         \tpop\t{r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268567736,
+        "high_site": 268567740,
+        "register": "r12",
+        "address": 268715069,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268567816,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268556797,
+            "size": 396,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<u16 as core::fmt::Display>::fmt",
+    "address": 268573552,
+    "size": 158,
+    "frame": 32,
+    "aliases": [
+      {
+        "name": "_RNvXs3_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imptNtB9_7Display3fmt",
+        "address": 268573553,
+        "size": 158,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "d0b502af84b0028844f23d4c8e46c1f2040cb2f57a7f17d3100940f24731484342f2107141f27b44c00c00fb11218bb29b08634364245b0c03fb14113cf8133027f80c3c01230ae00a2a0fd3900841f27b41484364210323400c00fb112189b23cf8111027f80a1c1ab903e00523104602b138b14000013b80b2a7f10d0160444078c854c3f105000090a7f10d000121034470460022fbf7f9fe04b0d0bd",
+    "mapping": [
+      [
+        268573552,
+        268573710,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10021b70: b5d0         \tpush\t{r4, r6, r7, lr}",
+      "10021b72: af02         \tadd\tr7, sp, #0x8",
+      "10021b74: b084         \tsub\tsp, #0x10",
+      "10021b76: 8802         \tldrh\tr2, [r0]",
+      "10021b78: f244 4c3d    \tmovw\tr12, #0x443d",
+      "10021b7c: 468e         \tmov\tlr, r1",
+      "10021b7e: f2c1 0c04    \tmovt\tr12, #0x1004",
+      "10021b82: f5b2 7f7a    \tcmp.w\tr2, #0x3e8",
+      "10021b86: d317         \tblo\t0x10021bb8 <<u16 as core::fmt::Display>::fmt+0x48> @ imm = #0x2e",
+      "10021b88: 0910         \tlsrs\tr0, r2, #0x4",
+      "10021b8a: f240 3147    \tmovw\tr1, #0x347",
+      "10021b8e: 4348         \tmuls\tr0, r1, r0",
+      "10021b90: f242 7110    \tmovw\tr1, #0x2710",
+      "10021b94: f241 447b    \tmovw\tr4, #0x147b",
+      "10021b98: 0cc0         \tlsrs\tr0, r0, #0x13",
+      "10021b9a: fb00 2111    \tmls\tr1, r0, r1, r2",
+      "10021b9e: b28b         \tuxth\tr3, r1",
+      "10021ba0: 089b         \tlsrs\tr3, r3, #0x2",
+      "10021ba2: 4363         \tmuls\tr3, r4, r3",
+      "10021ba4: 2464         \tmovs\tr4, #0x64",
+      "10021ba6: 0c5b         \tlsrs\tr3, r3, #0x11",
+      "10021ba8: fb03 1114    \tmls\tr1, r3, r4, r1",
+      "10021bac: f83c 3013    \tldrh.w\tr3, [r12, r3, lsl #1]",
+      "10021bb0: f827 3c0c    \tstrh\tr3, [r7, #-12]",
+      "10021bb4: 2301         \tmovs\tr3, #0x1",
+      "10021bb6: e00a         \tb\t0x10021bce <<u16 as core::fmt::Display>::fmt+0x5e> @ imm = #0x14",
+      "10021bb8: 2a0a         \tcmp\tr2, #0xa",
+      "10021bba: d30f         \tblo\t0x10021bdc <<u16 as core::fmt::Display>::fmt+0x6c> @ imm = #0x1e",
+      "10021bbc: 0890         \tlsrs\tr0, r2, #0x2",
+      "10021bbe: f241 417b    \tmovw\tr1, #0x147b",
+      "10021bc2: 4348         \tmuls\tr0, r1, r0",
+      "10021bc4: 2164         \tmovs\tr1, #0x64",
+      "10021bc6: 2303         \tmovs\tr3, #0x3",
+      "10021bc8: 0c40         \tlsrs\tr0, r0, #0x11",
+      "10021bca: fb00 2111    \tmls\tr1, r0, r1, r2",
+      "10021bce: b289         \tuxth\tr1, r1",
+      "10021bd0: f83c 1011    \tldrh.w\tr1, [r12, r1, lsl #1]",
+      "10021bd4: f827 1c0a    \tstrh\tr1, [r7, #-10]",
+      "10021bd8: b91a         \tcbnz\tr2, 0x10021be2 <<u16 as core::fmt::Display>::fmt+0x72> @ imm = #0x6",
+      "10021bda: e003         \tb\t0x10021be4 <<u16 as core::fmt::Display>::fmt+0x74> @ imm = #0x6",
+      "10021bdc: 2305         \tmovs\tr3, #0x5",
+      "10021bde: 4610         \tmov\tr0, r2",
+      "10021be0: b102         \tcbz\tr2, 0x10021be4 <<u16 as core::fmt::Display>::fmt+0x74> @ imm = #0x0",
+      "10021be2: b138         \tcbz\tr0, 0x10021bf4 <<u16 as core::fmt::Display>::fmt+0x84> @ imm = #0xe",
+      "10021be4: 0040         \tlsls\tr0, r0, #0x1",
+      "10021be6: 3b01         \tsubs\tr3, #0x1",
+      "10021be8: b280         \tuxth\tr0, r0",
+      "10021bea: f1a7 010d    \tsub.w\tr1, r7, #0xd",
+      "10021bee: 4460         \tadd\tr0, r12",
+      "10021bf0: 7840         \tldrb\tr0, [r0, #0x1]",
+      "10021bf2: 54c8         \tstrb\tr0, [r1, r3]",
+      "10021bf4: f1c3 0005    \trsb.w\tr0, r3, #0x5",
+      "10021bf8: 9000         \tstr\tr0, [sp]",
+      "10021bfa: f1a7 000d    \tsub.w\tr0, r7, #0xd",
+      "10021bfe: 2101         \tmovs\tr1, #0x1",
+      "10021c00: 4403         \tadd\tr3, r0",
+      "10021c02: 4670         \tmov\tr0, lr",
+      "10021c04: 2200         \tmovs\tr2, #0x0",
+      "10021c06: f7fb fef9    \tbl\t0x1001d9fc <<core::fmt::Formatter>::pad_integral> @ imm = #-0x420e",
+      "10021c0a: b004         \tadd\tsp, #0x10",
+      "10021c0c: bdd0         \tpop\t{r4, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268573560,
+        "high_site": 268573566,
+        "register": "r12",
+        "address": 268715069,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268573702,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268556797,
+            "size": 396,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<bool as core::fmt::Display>::fmt",
+    "address": 268573932,
+    "size": 50,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXsg_NtCs6m2Zc6X1WBq_4core3fmtbNtB5_7Display3fmt",
+        "address": 268573933,
+        "size": 50,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f4600780a4648b145f6a8511046c1f203010422bde88040fbf7cdbc44f69c711046c1f204010522bde88040fbf7c3bc",
+    "mapping": [
+      [
+        268573932,
+        268573982,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10021cec: b580         \tpush\t{r7, lr}",
+      "10021cee: 466f         \tmov\tr7, sp",
+      "10021cf0: 7800         \tldrb\tr0, [r0]",
+      "10021cf2: 460a         \tmov\tr2, r1",
+      "10021cf4: b148         \tcbz\tr0, 0x10021d0a <<bool as core::fmt::Display>::fmt+0x1e> @ imm = #0x12",
+      "10021cf6: f645 51a8    \tmovw\tr1, #0x5da8",
+      "10021cfa: 4610         \tmov\tr0, r2",
+      "10021cfc: f2c1 0103    \tmovt\tr1, #0x1003",
+      "10021d00: 2204         \tmovs\tr2, #0x4",
+      "10021d02: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10021d06: f7fb bccd    \tb.w\t0x1001d6a4 <<core::fmt::Formatter>::pad> @ imm = #-0x4666",
+      "10021d0a: f644 719c    \tmovw\tr1, #0x4f9c",
+      "10021d0e: 4610         \tmov\tr0, r2",
+      "10021d10: f2c1 0104    \tmovt\tr1, #0x1004",
+      "10021d14: 2205         \tmovs\tr2, #0x5",
+      "10021d16: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10021d1a: f7fb bcc3    \tb.w\t0x1001d6a4 <<core::fmt::Formatter>::pad> @ imm = #-0x467a"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268573942,
+        "high_site": 268573948,
+        "register": "r1",
+        "address": 268656040,
+        "first24_hex": "74727565",
+        "origin_role": "bool_true"
+      },
+      {
+        "low_site": 268573962,
+        "high_site": 268573968,
+        "register": "r1",
+        "address": 268717980,
+        "first24_hex": "66616c7365",
+        "origin_role": "bool_false"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268573958,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+            "address": 268555941,
+            "size": 320,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 40
+      },
+      {
+        "site": 268573978,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+            "address": 268555941,
+            "size": 320,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 40
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<&u8 as core::fmt::Debug>::fmt",
+    "address": 268583054,
+    "size": 40,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRhNtB6_5Debug3fmtCsfZiO9kfYn6A_16dashboard_config",
+        "address": 268583055,
+        "size": 40,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f468a680068930105d4520107d4bde88040fcf705babde88040fdf7b0bdbde88040fcf752ba",
+    "mapping": [
+      [
+        268583054,
+        268583094,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1002408e: b580         \tpush\t{r7, lr}",
+      "10024090: 466f         \tmov\tr7, sp",
+      "10024092: 688a         \tldr\tr2, [r1, #0x8]",
+      "10024094: 6800         \tldr\tr0, [r0]",
+      "10024096: 0193         \tlsls\tr3, r2, #0x6",
+      "10024098: d405         \tbmi\t0x100240a6 <<&u8 as core::fmt::Debug>::fmt+0x18> @ imm = #0xa",
+      "1002409a: 0152         \tlsls\tr2, r2, #0x5",
+      "1002409c: d407         \tbmi\t0x100240ae <<&u8 as core::fmt::Debug>::fmt+0x20> @ imm = #0xe",
+      "1002409e: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100240a2: f7fc ba05    \tb.w\t0x100204b0 <<u8 as core::fmt::Display>::fmt> @ imm = #-0x3bf6",
+      "100240a6: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100240aa: f7fd bdb0    \tb.w\t0x10021c0e <<u8 as core::fmt::LowerHex>::fmt> @ imm = #-0x24a0",
+      "100240ae: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100240b2: f7fc ba52    \tb.w\t0x1002055a <<u8 as core::fmt::UpperHex>::fmt> @ imm = #-0x3b5c"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268583074,
+        "aliases": [
+          {
+            "name": "_RNvXNtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imphNtB6_7Display3fmt",
+            "address": 268567729,
+            "size": 96,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      },
+      {
+        "site": 268583082,
+        "aliases": [
+          {
+            "name": "_RNvXse_NtNtCs6m2Zc6X1WBq_4core3fmt3numhNtB7_8LowerHex3fmt",
+            "address": 268573711,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      },
+      {
+        "site": 268583090,
+        "aliases": [
+          {
+            "name": "_RNvXsg_NtNtCs6m2Zc6X1WBq_4core3fmt3numhNtB7_8UpperHex3fmt",
+            "address": 268567899,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<&bool as core::fmt::Debug>::fmt",
+    "address": 268645538,
+    "size": 14,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRbNtB6_5Debug3fmtCsaq33leWVyIt_6rp_pac",
+        "address": 268645539,
+        "size": 14,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f460068bde88040eef71ebc",
+    "mapping": [
+      [
+        268645538,
+        268645552,
+        "t"
+      ]
+    ],
+    "lines": [
+      "100334a2: b580         \tpush\t{r7, lr}",
+      "100334a4: 466f         \tmov\tr7, sp",
+      "100334a6: 6800         \tldr\tr0, [r0]",
+      "100334a8: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100334ac: f7ee bc1e    \tb.w\t0x10021cec <<bool as core::fmt::Display>::fmt> @ imm = #-0x117c4"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268645548,
+        "aliases": [
+          {
+            "name": "_RNvXsg_NtCs6m2Zc6X1WBq_4core3fmtbNtB5_7Display3fmt",
+            "address": 268573933,
+            "size": 50,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 8
+      }
+    ]
+  },
+  {
+    "mode": "sizes",
+    "role": "<&u16 as core::fmt::Debug>::fmt",
+    "address": 268645552,
+    "size": 40,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRtNtB6_5Debug3fmtCsaq33leWVyIt_6rp_pac",
+        "address": 268645553,
+        "size": 40,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f468a680068930105d4520107d4bde88040eef754bbbde88040edf7cbb9bde88040edf71cb8",
+    "mapping": [
+      [
+        268645552,
+        268645592,
+        "t"
+      ]
+    ],
+    "lines": [
+      "100334b0: b580         \tpush\t{r7, lr}",
+      "100334b2: 466f         \tmov\tr7, sp",
+      "100334b4: 688a         \tldr\tr2, [r1, #0x8]",
+      "100334b6: 6800         \tldr\tr0, [r0]",
+      "100334b8: 0193         \tlsls\tr3, r2, #0x6",
+      "100334ba: d405         \tbmi\t0x100334c8 <<&u16 as core::fmt::Debug>::fmt+0x18> @ imm = #0xa",
+      "100334bc: 0152         \tlsls\tr2, r2, #0x5",
+      "100334be: d407         \tbmi\t0x100334d0 <<&u16 as core::fmt::Debug>::fmt+0x20> @ imm = #0xe",
+      "100334c0: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100334c4: f7ee bb54    \tb.w\t0x10021b70 <<u16 as core::fmt::Display>::fmt> @ imm = #-0x11958",
+      "100334c8: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100334cc: f7ed b9cb    \tb.w\t0x10020866 <<u16 as core::fmt::LowerHex>::fmt> @ imm = #-0x12c6a",
+      "100334d0: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100334d4: f7ed b81c    \tb.w\t0x10020510 <<u16 as core::fmt::UpperHex>::fmt> @ imm = #-0x12fc8"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268645572,
+        "aliases": [
+          {
+            "name": "_RNvXs3_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imptNtB9_7Display3fmt",
+            "address": 268573553,
+            "size": 158,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 32
+      },
+      {
+        "site": 268645580,
+        "aliases": [
+          {
+            "name": "_RNvXsm_NtNtCs6m2Zc6X1WBq_4core3fmt3numtNtB7_8LowerHex3fmt",
+            "address": 268568679,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      },
+      {
+        "site": 268645588,
+        "aliases": [
+          {
+            "name": "_RNvXso_NtNtCs6m2Zc6X1WBq_4core3fmt3numtNtB7_8UpperHex3fmt",
+            "address": 268567825,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<usize as core::fmt::Debug>::fmt",
+    "address": 268522512,
+    "size": 38,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXsZ_NtNtCs6m2Zc6X1WBq_4core3fmt3numjNtB7_5Debug3fmt",
+        "address": 268522513,
+        "size": 38,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f468a68930105d4520107d4bde8804001f0f3bebde8804002f0c3bcbde8804005f051bf",
+    "mapping": [
+      [
+        268522512,
+        268522550,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10015410: b580         \tpush\t{r7, lr}",
+      "10015412: 466f         \tmov\tr7, sp",
+      "10015414: 688a         \tldr\tr2, [r1, #0x8]",
+      "10015416: 0193         \tlsls\tr3, r2, #0x6",
+      "10015418: d405         \tbmi\t0x10015426 <<usize as core::fmt::Debug>::fmt+0x16> @ imm = #0xa",
+      "1001541a: 0152         \tlsls\tr2, r2, #0x5",
+      "1001541c: d407         \tbmi\t0x1001542e <<usize as core::fmt::Debug>::fmt+0x1e> @ imm = #0xe",
+      "1001541e: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10015422: f001 bef3    \tb.w\t0x1001720c <<u32 as core::fmt::Display>::fmt> @ imm = #0x1de6",
+      "10015426: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1001542a: f002 bcc3    \tb.w\t0x10017db4 <<usize as core::fmt::LowerHex>::fmt> @ imm = #0x2986",
+      "1001542e: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10015432: f005 bf51    \tb.w\t0x1001b2d8 <<usize as core::fmt::UpperHex>::fmt> @ imm = #0x5ea2"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268522530,
+        "aliases": [
+          {
+            "name": "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt",
+            "address": 268530189,
+            "size": 230,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      },
+      {
+        "site": 268522538,
+        "aliases": [
+          {
+            "name": "_RNvXs6_NtNtCs6m2Zc6X1WBq_4core3fmt3numjNtB7_8LowerHex3fmt",
+            "address": 268533173,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268522546,
+        "aliases": [
+          {
+            "name": "_RNvXs8_NtNtCs6m2Zc6X1WBq_4core3fmt3numjNtB7_8UpperHex3fmt",
+            "address": 268546777,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<core::fmt::Formatter>::pad",
+    "address": 268526188,
+    "size": 320,
+    "frame": 40,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+        "address": 268526189,
+        "size": 320,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f81b0d0f808a0164688461af0c05f52d05feaca0111d4102e31d2002e00f08880a8f101020021334612f9015f15f1410fc8bf0131013bf7d12de0b0f80ec0bcf1000f24d008eb060300264446624609e0ef294ff0030188bf04216c18611b013a0e4415d09c4214d0254614f9011bb1f1ff3ff3dcc9b2e029ead2ac1ceee704464046314600f058f80146204603e000260022aceb0201828991420cd2531acaf341716ff35f5a4ff0000bdfe801f012020f129b460de0d0e900013246cb68414601b0bde8000fbde8f040184799b24fea510bd0e900544ff0000900931ffa8bf01ffa89f1814208d2226928465146904709f101090028f1d015e0e368284641463246984778b900980026a0eb0b001ffa80f8b0b240450dd2226928465146904701360028f5d0012001b0bde8000ff0bd0021b0e70020f7e7",
+    "mapping": [
+      [
+        268526188,
+        268526370,
+        "t"
+      ],
+      [
+        268526370,
+        268526374,
+        "d"
+      ],
+      [
+        268526374,
+        268526508,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001626c: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1001626e: af03         \tadd\tr7, sp, #0xc",
+      "10016270: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "10016274: b081         \tsub\tsp, #0x4",
+      "10016276: f8d0 a008    \tldr.w\tr10, [r0, #0x8]",
+      "1001627a: 4616         \tmov\tr6, r2",
+      "1001627c: 4688         \tmov\tr8, r1",
+      "1001627e: f01a 5fc0    \ttst.w\tr10, #0x18000000",
+      "10016282: d052         \tbeq\t0x1001632a <<core::fmt::Formatter>::pad+0xbe> @ imm = #0xa4",
+      "10016284: ea5f 01ca    \tlsls.w\tr1, r10, #0x3",
+      "10016288: d411         \tbmi\t0x100162ae <<core::fmt::Formatter>::pad+0x42> @ imm = #0x22",
+      "1001628a: 2e10         \tcmp\tr6, #0x10",
+      "1001628c: d231         \tbhs\t0x100162f2 <<core::fmt::Formatter>::pad+0x86> @ imm = #0x62",
+      "1001628e: 2e00         \tcmp\tr6, #0x0",
+      "10016290: f000 8088    \tbeq.w\t0x100163a4 <<core::fmt::Formatter>::pad+0x138> @ imm = #0x110",
+      "10016294: f1a8 0201    \tsub.w\tr2, r8, #0x1",
+      "10016298: 2100         \tmovs\tr1, #0x0",
+      "1001629a: 4633         \tmov\tr3, r6",
+      "1001629c: f912 5f01    \tldrsb\tr5, [r2, #1]!",
+      "100162a0: f115 0f41    \tcmn.w\tr5, #0x41",
+      "100162a4: bfc8         \tit\tgt",
+      "100162a6: 3101         \taddgt\tr1, #0x1",
+      "100162a8: 3b01         \tsubs\tr3, #0x1",
+      "100162aa: d1f7         \tbne\t0x1001629c <<core::fmt::Formatter>::pad+0x30> @ imm = #-0x12",
+      "100162ac: e02d         \tb\t0x1001630a <<core::fmt::Formatter>::pad+0x9e> @ imm = #0x5a",
+      "100162ae: f8b0 c00e    \tldrh.w\tr12, [r0, #0xe]",
+      "100162b2: f1bc 0f00    \tcmp.w\tr12, #0x0",
+      "100162b6: d024         \tbeq\t0x10016302 <<core::fmt::Formatter>::pad+0x96> @ imm = #0x48",
+      "100162b8: eb08 0306    \tadd.w\tr3, r8, r6",
+      "100162bc: 2600         \tmovs\tr6, #0x0",
+      "100162be: 4644         \tmov\tr4, r8",
+      "100162c0: 4662         \tmov\tr2, r12",
+      "100162c2: e009         \tb\t0x100162d8 <<core::fmt::Formatter>::pad+0x6c> @ imm = #0x12",
+      "100162c4: 29ef         \tcmp\tr1, #0xef",
+      "100162c6: f04f 0103    \tmov.w\tr1, #0x3",
+      "100162ca: bf88         \tit\thi",
+      "100162cc: 2104         \tmovhi\tr1, #0x4",
+      "100162ce: 186c         \tadds\tr4, r5, r1",
+      "100162d0: 1b61         \tsubs\tr1, r4, r5",
+      "100162d2: 3a01         \tsubs\tr2, #0x1",
+      "100162d4: 440e         \tadd\tr6, r1",
+      "100162d6: d015         \tbeq\t0x10016304 <<core::fmt::Formatter>::pad+0x98> @ imm = #0x2a",
+      "100162d8: 429c         \tcmp\tr4, r3",
+      "100162da: d014         \tbeq\t0x10016306 <<core::fmt::Formatter>::pad+0x9a> @ imm = #0x28",
+      "100162dc: 4625         \tmov\tr5, r4",
+      "100162de: f914 1b01    \tldrsb\tr1, [r4], #1",
+      "100162e2: f1b1 3fff    \tcmp.w\tr1, #0xffffffff",
+      "100162e6: dcf3         \tbgt\t0x100162d0 <<core::fmt::Formatter>::pad+0x64> @ imm = #-0x1a",
+      "100162e8: b2c9         \tuxtb\tr1, r1",
+      "100162ea: 29e0         \tcmp\tr1, #0xe0",
+      "100162ec: d2ea         \tbhs\t0x100162c4 <<core::fmt::Formatter>::pad+0x58> @ imm = #-0x2c",
+      "100162ee: 1cac         \tadds\tr4, r5, #0x2",
+      "100162f0: e7ee         \tb\t0x100162d0 <<core::fmt::Formatter>::pad+0x64> @ imm = #-0x24",
+      "100162f2: 4604         \tmov\tr4, r0",
+      "100162f4: 4640         \tmov\tr0, r8",
+      "100162f6: 4631         \tmov\tr1, r6",
+      "100162f8: f000 f858    \tbl\t0x100163ac <core::str::count::do_count_chars> @ imm = #0xb0",
+      "100162fc: 4601         \tmov\tr1, r0",
+      "100162fe: 4620         \tmov\tr0, r4",
+      "10016300: e003         \tb\t0x1001630a <<core::fmt::Formatter>::pad+0x9e> @ imm = #0x6",
+      "10016302: 2600         \tmovs\tr6, #0x0",
+      "10016304: 2200         \tmovs\tr2, #0x0",
+      "10016306: ebac 0102    \tsub.w\tr1, r12, r2",
+      "1001630a: 8982         \tldrh\tr2, [r0, #0xc]",
+      "1001630c: 4291         \tcmp\tr1, r2",
+      "1001630e: d20c         \tbhs\t0x1001632a <<core::fmt::Formatter>::pad+0xbe> @ imm = #0x18",
+      "10016310: 1a53         \tsubs\tr3, r2, r1",
+      "10016312: f3ca 7141    \tubfx\tr1, r10, #0x1d, #0x2",
+      "10016316: f36f 5a5f    \tbfc\tr10, #21, #11",
+      "1001631a: f04f 0b00    \tmov.w\tr11, #0x0",
+      "1001631e: e8df f001    \ttbb\t[pc, r1]",
+      "10016326: 469b         \tmov\tr11, r3",
+      "10016328: e00d         \tb\t0x10016346 <<core::fmt::Formatter>::pad+0xda> @ imm = #0x1a",
+      "1001632a: e9d0 0100    \tldrd\tr0, r1, [r0]",
+      "1001632e: 4632         \tmov\tr2, r6",
+      "10016330: 68cb         \tldr\tr3, [r1, #0xc]",
+      "10016332: 4641         \tmov\tr1, r8",
+      "10016334: b001         \tadd\tsp, #0x4",
+      "10016336: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1001633a: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "1001633e: 4718         \tbx\tr3",
+      "10016340: b299         \tuxth\tr1, r3",
+      "10016342: ea4f 0b51    \tlsr.w\tr11, r1, #0x1",
+      "10016346: e9d0 5400    \tldrd\tr5, r4, [r0]",
+      "1001634a: f04f 0900    \tmov.w\tr9, #0x0",
+      "1001634e: 9300         \tstr\tr3, [sp]",
+      "10016350: fa1f f08b    \tuxth.w\tr0, r11",
+      "10016354: fa1f f189    \tuxth.w\tr1, r9",
+      "10016358: 4281         \tcmp\tr1, r0",
+      "1001635a: d208         \tbhs\t0x1001636e <<core::fmt::Formatter>::pad+0x102> @ imm = #0x10",
+      "1001635c: 6922         \tldr\tr2, [r4, #0x10]",
+      "1001635e: 4628         \tmov\tr0, r5",
+      "10016360: 4651         \tmov\tr1, r10",
+      "10016362: 4790         \tblx\tr2",
+      "10016364: f109 0901    \tadd.w\tr9, r9, #0x1",
+      "10016368: 2800         \tcmp\tr0, #0x0",
+      "1001636a: d0f1         \tbeq\t0x10016350 <<core::fmt::Formatter>::pad+0xe4> @ imm = #-0x1e",
+      "1001636c: e015         \tb\t0x1001639a <<core::fmt::Formatter>::pad+0x12e> @ imm = #0x2a",
+      "1001636e: 68e3         \tldr\tr3, [r4, #0xc]",
+      "10016370: 4628         \tmov\tr0, r5",
+      "10016372: 4641         \tmov\tr1, r8",
+      "10016374: 4632         \tmov\tr2, r6",
+      "10016376: 4798         \tblx\tr3",
+      "10016378: b978         \tcbnz\tr0, 0x1001639a <<core::fmt::Formatter>::pad+0x12e> @ imm = #0x1e",
+      "1001637a: 9800         \tldr\tr0, [sp]",
+      "1001637c: 2600         \tmovs\tr6, #0x0",
+      "1001637e: eba0 000b    \tsub.w\tr0, r0, r11",
+      "10016382: fa1f f880    \tuxth.w\tr8, r0",
+      "10016386: b2b0         \tuxth\tr0, r6",
+      "10016388: 4540         \tcmp\tr0, r8",
+      "1001638a: d20d         \tbhs\t0x100163a8 <<core::fmt::Formatter>::pad+0x13c> @ imm = #0x1a",
+      "1001638c: 6922         \tldr\tr2, [r4, #0x10]",
+      "1001638e: 4628         \tmov\tr0, r5",
+      "10016390: 4651         \tmov\tr1, r10",
+      "10016392: 4790         \tblx\tr2",
+      "10016394: 3601         \tadds\tr6, #0x1",
+      "10016396: 2800         \tcmp\tr0, #0x0",
+      "10016398: d0f5         \tbeq\t0x10016386 <<core::fmt::Formatter>::pad+0x11a> @ imm = #-0x16",
+      "1001639a: 2001         \tmovs\tr0, #0x1",
+      "1001639c: b001         \tadd\tsp, #0x4",
+      "1001639e: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "100163a2: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "100163a4: 2100         \tmovs\tr1, #0x0",
+      "100163a6: e7b0         \tb\t0x1001630a <<core::fmt::Formatter>::pad+0x9e> @ imm = #-0xa0",
+      "100163a8: 2000         \tmovs\tr0, #0x0",
+      "100163aa: e7f7         \tb\t0x1001639c <<core::fmt::Formatter>::pad+0x130> @ imm = #-0x12"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268526328,
+        "aliases": [
+          {
+            "name": "_RNvNtNtCs6m2Zc6X1WBq_4core3str5count14do_count_chars",
+            "address": 268526509,
+            "size": 330,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 36
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<core::fmt::Formatter>::pad_integral",
+    "address": 268527044,
+    "size": 396,
+    "frame": 64,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+        "address": 268527045,
+        "size": 396,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f87b086689a461346d7f808c016f400124ff02b0908bf4ff0ff3905930ceb525b320201d400210de053b14a1e002512f9014f14f1410fc8bf0135013bf7d100e00025ab440691b0f80c80c34510d2f101cde903ca23d4c6f34171a8eb0b0b6ff35f560025dfe801f0530250025d464ee0d0e900464a460598314600906546069b204600f07ff8002864d1f368204651462a4607b0bde8000fbde8f04018470021d0e90245c9f6e07102902140d0e900a641f000514a4641f0300181600598314600905046069b00f05df8002842d1a8eb0b000695a146002584b2a8b2a04207d2326950463021904701350028f5d031e0dde903215046f368984758bb02980699c0e90291002026e01ffa8bf14d08d0e900484ff0000aa8b21ffa8af1814209d2d8f810202046314690470af1010a0028f1d00fe00598414600902046069b4a4600f020f830b9dde903212046d8f80c30984720b1012007b0bde8000ff0bdabeb050000251ffa80f9a8b24845cad2d8f810202046314690470135014601200029f2d0e8e7",
+    "mapping": [
+      [
+        268527044,
+        268527156,
+        "t"
+      ],
+      [
+        268527156,
+        268527160,
+        "d"
+      ],
+      [
+        268527160,
+        268527440,
+        "t"
+      ]
+    ],
+    "lines": [
+      "100165c4: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "100165c6: af03         \tadd\tr7, sp, #0xc",
+      "100165c8: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "100165cc: b087         \tsub\tsp, #0x1c",
+      "100165ce: 6886         \tldr\tr6, [r0, #0x8]",
+      "100165d0: 469a         \tmov\tr10, r3",
+      "100165d2: 4613         \tmov\tr3, r2",
+      "100165d4: f8d7 c008    \tldr.w\tr12, [r7, #0x8]",
+      "100165d8: f416 1200    \tands\tr2, r6, #0x200000",
+      "100165dc: f04f 092b    \tmov.w\tr9, #0x2b",
+      "100165e0: bf08         \tit\teq",
+      "100165e2: f04f 39ff    \tmoveq.w\tr9, #0xffffffff",
+      "100165e6: 9305         \tstr\tr3, [sp, #0x14]",
+      "100165e8: eb0c 5b52    \tadd.w\tr11, r12, r2, lsr #21",
+      "100165ec: 0232         \tlsls\tr2, r6, #0x8",
+      "100165ee: d401         \tbmi\t0x100165f4 <<core::fmt::Formatter>::pad_integral+0x30> @ imm = #0x2",
+      "100165f0: 2100         \tmovs\tr1, #0x0",
+      "100165f2: e00d         \tb\t0x10016610 <<core::fmt::Formatter>::pad_integral+0x4c> @ imm = #0x1a",
+      "100165f4: b153         \tcbz\tr3, 0x1001660c <<core::fmt::Formatter>::pad_integral+0x48> @ imm = #0x14",
+      "100165f6: 1e4a         \tsubs\tr2, r1, #0x1",
+      "100165f8: 2500         \tmovs\tr5, #0x0",
+      "100165fa: f912 4f01    \tldrsb\tr4, [r2, #1]!",
+      "100165fe: f114 0f41    \tcmn.w\tr4, #0x41",
+      "10016602: bfc8         \tit\tgt",
+      "10016604: 3501         \taddgt\tr5, #0x1",
+      "10016606: 3b01         \tsubs\tr3, #0x1",
+      "10016608: d1f7         \tbne\t0x100165fa <<core::fmt::Formatter>::pad_integral+0x36> @ imm = #-0x12",
+      "1001660a: e000         \tb\t0x1001660e <<core::fmt::Formatter>::pad_integral+0x4a> @ imm = #0x0",
+      "1001660c: 2500         \tmovs\tr5, #0x0",
+      "1001660e: 44ab         \tadd\tr11, r5",
+      "10016610: 9106         \tstr\tr1, [sp, #0x18]",
+      "10016612: f8b0 800c    \tldrh.w\tr8, [r0, #0xc]",
+      "10016616: 45c3         \tcmp\tr11, r8",
+      "10016618: d210         \tbhs\t0x1001663c <<core::fmt::Formatter>::pad_integral+0x78> @ imm = #0x20",
+      "1001661a: 01f1         \tlsls\tr1, r6, #0x7",
+      "1001661c: e9cd ca03    \tstrd\tr12, r10, [sp, #12]",
+      "10016620: d423         \tbmi\t0x1001666a <<core::fmt::Formatter>::pad_integral+0xa6> @ imm = #0x46",
+      "10016622: f3c6 7141    \tubfx\tr1, r6, #0x1d, #0x2",
+      "10016626: eba8 0b0b    \tsub.w\tr11, r8, r11",
+      "1001662a: f36f 565f    \tbfc\tr6, #21, #11",
+      "1001662e: 2500         \tmovs\tr5, #0x0",
+      "10016630: e8df f001    \ttbb\t[pc, r1]",
+      "10016638: 465d         \tmov\tr5, r11",
+      "1001663a: e04e         \tb\t0x100166da <<core::fmt::Formatter>::pad_integral+0x116> @ imm = #0x9c",
+      "1001663c: e9d0 4600    \tldrd\tr4, r6, [r0]",
+      "10016640: 464a         \tmov\tr2, r9",
+      "10016642: 9805         \tldr\tr0, [sp, #0x14]",
+      "10016644: 4631         \tmov\tr1, r6",
+      "10016646: 9000         \tstr\tr0, [sp]",
+      "10016648: 4665         \tmov\tr5, r12",
+      "1001664a: 9b06         \tldr\tr3, [sp, #0x18]",
+      "1001664c: 4620         \tmov\tr0, r4",
+      "1001664e: f000 f87f    \tbl\t0x10016750 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0xfe",
+      "10016652: 2800         \tcmp\tr0, #0x0",
+      "10016654: d164         \tbne\t0x10016720 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0xc8",
+      "10016656: 68f3         \tldr\tr3, [r6, #0xc]",
+      "10016658: 4620         \tmov\tr0, r4",
+      "1001665a: 4651         \tmov\tr1, r10",
+      "1001665c: 462a         \tmov\tr2, r5",
+      "1001665e: b007         \tadd\tsp, #0x1c",
+      "10016660: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "10016664: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "10016668: 4718         \tbx\tr3",
+      "1001666a: 2100         \tmovs\tr1, #0x0",
+      "1001666c: e9d0 4502    \tldrd\tr4, r5, [r0, #8]",
+      "10016670: f6c9 71e0    \tmovt\tr1, #0x9fe0",
+      "10016674: 9002         \tstr\tr0, [sp, #0x8]",
+      "10016676: 4021         \tands\tr1, r4",
+      "10016678: e9d0 a600    \tldrd\tr10, r6, [r0]",
+      "1001667c: f041 5100    \torr\tr1, r1, #0x20000000",
+      "10016680: 464a         \tmov\tr2, r9",
+      "10016682: f041 0130    \torr\tr1, r1, #0x30",
+      "10016686: 6081         \tstr\tr1, [r0, #0x8]",
+      "10016688: 9805         \tldr\tr0, [sp, #0x14]",
+      "1001668a: 4631         \tmov\tr1, r6",
+      "1001668c: 9000         \tstr\tr0, [sp]",
+      "1001668e: 4650         \tmov\tr0, r10",
+      "10016690: 9b06         \tldr\tr3, [sp, #0x18]",
+      "10016692: f000 f85d    \tbl\t0x10016750 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0xba",
+      "10016696: 2800         \tcmp\tr0, #0x0",
+      "10016698: d142         \tbne\t0x10016720 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x84",
+      "1001669a: eba8 000b    \tsub.w\tr0, r8, r11",
+      "1001669e: 9506         \tstr\tr5, [sp, #0x18]",
+      "100166a0: 46a1         \tmov\tr9, r4",
+      "100166a2: 2500         \tmovs\tr5, #0x0",
+      "100166a4: b284         \tuxth\tr4, r0",
+      "100166a6: b2a8         \tuxth\tr0, r5",
+      "100166a8: 42a0         \tcmp\tr0, r4",
+      "100166aa: d207         \tbhs\t0x100166bc <<core::fmt::Formatter>::pad_integral+0xf8> @ imm = #0xe",
+      "100166ac: 6932         \tldr\tr2, [r6, #0x10]",
+      "100166ae: 4650         \tmov\tr0, r10",
+      "100166b0: 2130         \tmovs\tr1, #0x30",
+      "100166b2: 4790         \tblx\tr2",
+      "100166b4: 3501         \tadds\tr5, #0x1",
+      "100166b6: 2800         \tcmp\tr0, #0x0",
+      "100166b8: d0f5         \tbeq\t0x100166a6 <<core::fmt::Formatter>::pad_integral+0xe2> @ imm = #-0x16",
+      "100166ba: e031         \tb\t0x10016720 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x62",
+      "100166bc: e9dd 2103    \tldrd\tr2, r1, [sp, #12]",
+      "100166c0: 4650         \tmov\tr0, r10",
+      "100166c2: 68f3         \tldr\tr3, [r6, #0xc]",
+      "100166c4: 4798         \tblx\tr3",
+      "100166c6: bb58         \tcbnz\tr0, 0x10016720 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x56",
+      "100166c8: 9802         \tldr\tr0, [sp, #0x8]",
+      "100166ca: 9906         \tldr\tr1, [sp, #0x18]",
+      "100166cc: e9c0 9102    \tstrd\tr9, r1, [r0, #8]",
+      "100166d0: 2000         \tmovs\tr0, #0x0",
+      "100166d2: e026         \tb\t0x10016722 <<core::fmt::Formatter>::pad_integral+0x15e> @ imm = #0x4c",
+      "100166d4: fa1f f18b    \tuxth.w\tr1, r11",
+      "100166d8: 084d         \tlsrs\tr5, r1, #0x1",
+      "100166da: e9d0 4800    \tldrd\tr4, r8, [r0]",
+      "100166de: f04f 0a00    \tmov.w\tr10, #0x0",
+      "100166e2: b2a8         \tuxth\tr0, r5",
+      "100166e4: fa1f f18a    \tuxth.w\tr1, r10",
+      "100166e8: 4281         \tcmp\tr1, r0",
+      "100166ea: d209         \tbhs\t0x10016700 <<core::fmt::Formatter>::pad_integral+0x13c> @ imm = #0x12",
+      "100166ec: f8d8 2010    \tldr.w\tr2, [r8, #0x10]",
+      "100166f0: 4620         \tmov\tr0, r4",
+      "100166f2: 4631         \tmov\tr1, r6",
+      "100166f4: 4790         \tblx\tr2",
+      "100166f6: f10a 0a01    \tadd.w\tr10, r10, #0x1",
+      "100166fa: 2800         \tcmp\tr0, #0x0",
+      "100166fc: d0f1         \tbeq\t0x100166e2 <<core::fmt::Formatter>::pad_integral+0x11e> @ imm = #-0x1e",
+      "100166fe: e00f         \tb\t0x10016720 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0x1e",
+      "10016700: 9805         \tldr\tr0, [sp, #0x14]",
+      "10016702: 4641         \tmov\tr1, r8",
+      "10016704: 9000         \tstr\tr0, [sp]",
+      "10016706: 4620         \tmov\tr0, r4",
+      "10016708: 9b06         \tldr\tr3, [sp, #0x18]",
+      "1001670a: 464a         \tmov\tr2, r9",
+      "1001670c: f000 f820    \tbl\t0x10016750 <<core::fmt::Formatter>::pad_integral::write_prefix> @ imm = #0x40",
+      "10016710: b930         \tcbnz\tr0, 0x10016720 <<core::fmt::Formatter>::pad_integral+0x15c> @ imm = #0xc",
+      "10016712: e9dd 2103    \tldrd\tr2, r1, [sp, #12]",
+      "10016716: 4620         \tmov\tr0, r4",
+      "10016718: f8d8 300c    \tldr.w\tr3, [r8, #0xc]",
+      "1001671c: 4798         \tblx\tr3",
+      "1001671e: b120         \tcbz\tr0, 0x1001672a <<core::fmt::Formatter>::pad_integral+0x166> @ imm = #0x8",
+      "10016720: 2001         \tmovs\tr0, #0x1",
+      "10016722: b007         \tadd\tsp, #0x1c",
+      "10016724: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "10016728: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "1001672a: ebab 0005    \tsub.w\tr0, r11, r5",
+      "1001672e: 2500         \tmovs\tr5, #0x0",
+      "10016730: fa1f f980    \tuxth.w\tr9, r0",
+      "10016734: b2a8         \tuxth\tr0, r5",
+      "10016736: 4548         \tcmp\tr0, r9",
+      "10016738: d2ca         \tbhs\t0x100166d0 <<core::fmt::Formatter>::pad_integral+0x10c> @ imm = #-0x6c",
+      "1001673a: f8d8 2010    \tldr.w\tr2, [r8, #0x10]",
+      "1001673e: 4620         \tmov\tr0, r4",
+      "10016740: 4631         \tmov\tr1, r6",
+      "10016742: 4790         \tblx\tr2",
+      "10016744: 3501         \tadds\tr5, #0x1",
+      "10016746: 4601         \tmov\tr1, r0",
+      "10016748: 2001         \tmovs\tr0, #0x1",
+      "1001674a: 2900         \tcmp\tr1, #0x0",
+      "1001674c: d0f2         \tbeq\t0x10016734 <<core::fmt::Formatter>::pad_integral+0x170> @ imm = #-0x1c",
+      "1001674e: e7e8         \tb\t0x10016722 <<core::fmt::Formatter>::pad_integral+0x15e> @ imm = #-0x30"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268527182,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268527441,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268527250,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268527441,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      },
+      {
+        "site": 268527372,
+        "aliases": [
+          {
+            "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+            "address": 268527441,
+            "size": 68,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 24
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<core::fmt::Formatter>::pad_integral::write_prefix",
+    "address": 268527440,
+    "size": 68,
+    "frame": 24,
+    "aliases": [
+      {
+        "name": "_RNvNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB7_9Formatter12pad_integral12write_prefix",
+        "address": 268527441,
+        "size": 68,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af4df8048dd7f8088006461c460d46501c08d02b6930461146984718b101205df8048bf0bd44b1eb683046214642465df8048bbde8f040184700205df8048bf0bd",
+    "mapping": [
+      [
+        268527440,
+        268527508,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10016750: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "10016752: af03         \tadd\tr7, sp, #0xc",
+      "10016754: f84d 8d04    \tstr\tr8, [sp, #-4]!",
+      "10016758: f8d7 8008    \tldr.w\tr8, [r7, #0x8]",
+      "1001675c: 4606         \tmov\tr6, r0",
+      "1001675e: 461c         \tmov\tr4, r3",
+      "10016760: 460d         \tmov\tr5, r1",
+      "10016762: 1c50         \tadds\tr0, r2, #0x1",
+      "10016764: d008         \tbeq\t0x10016778 <<core::fmt::Formatter>::pad_integral::write_prefix+0x28> @ imm = #0x10",
+      "10016766: 692b         \tldr\tr3, [r5, #0x10]",
+      "10016768: 4630         \tmov\tr0, r6",
+      "1001676a: 4611         \tmov\tr1, r2",
+      "1001676c: 4798         \tblx\tr3",
+      "1001676e: b118         \tcbz\tr0, 0x10016778 <<core::fmt::Formatter>::pad_integral::write_prefix+0x28> @ imm = #0x6",
+      "10016770: 2001         \tmovs\tr0, #0x1",
+      "10016772: f85d 8b04    \tldr\tr8, [sp], #4",
+      "10016776: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "10016778: b144         \tcbz\tr4, 0x1001678c <<core::fmt::Formatter>::pad_integral::write_prefix+0x3c> @ imm = #0x10",
+      "1001677a: 68eb         \tldr\tr3, [r5, #0xc]",
+      "1001677c: 4630         \tmov\tr0, r6",
+      "1001677e: 4621         \tmov\tr1, r4",
+      "10016780: 4642         \tmov\tr2, r8",
+      "10016782: f85d 8b04    \tldr\tr8, [sp], #4",
+      "10016786: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "1001678a: 4718         \tbx\tr3",
+      "1001678c: 2000         \tmovs\tr0, #0x0",
+      "1001678e: f85d 8b04    \tldr\tr8, [sp], #4",
+      "10016792: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [],
+    "ordinary_edges": []
+  },
+  {
+    "mode": "sizez",
+    "role": "<u32 as core::fmt::Display>::fmt",
+    "address": 268530188,
+    "size": 230,
+    "frame": 64,
+    "aliases": [
+      {
+        "name": "_RNvXs8_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3impmNtB9_7Display3fmt",
+        "address": 268530189,
+        "size": 230,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "f0b503af2de9000f87b0046843f659500d46c1f20300b4f57a7f38d349f27f68a7f1260e002342f2107941f27b4a4ff0640bc0f298082146039502940a4641f25971cdf2b7110eeb0304a2fb0116043b42454fea563101fb19261ffa86fc4fea9c0505fb0af54fea554505fb1b6630f81550e580b6b230f816602681ded8dde902450a33092906d80a46acb915e00a2321460929f8d98ab241f27b469208023b72436426520c02fb1611a7f1260689b230f81110f15204b132b100eb4200013ba7f126014078c854c3f10a000090a7f126000121034428460022fff76df907b0bde8000ff0bd",
+    "mapping": [
+      [
+        268530188,
+        268530418,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001720c: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1001720e: af03         \tadd\tr7, sp, #0xc",
+      "10017210: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "10017214: b087         \tsub\tsp, #0x1c",
+      "10017216: 6804         \tldr\tr4, [r0]",
+      "10017218: f643 5059    \tmovw\tr0, #0x3d59",
+      "1001721c: 460d         \tmov\tr5, r1",
+      "1001721e: f2c1 0003    \tmovt\tr0, #0x1003",
+      "10017222: f5b4 7f7a    \tcmp.w\tr4, #0x3e8",
+      "10017226: d338         \tblo\t0x1001729a <<u32 as core::fmt::Display>::fmt+0x8e> @ imm = #0x70",
+      "10017228: f249 687f    \tmovw\tr8, #0x967f",
+      "1001722c: f1a7 0e26    \tsub.w\tlr, r7, #0x26",
+      "10017230: 2300         \tmovs\tr3, #0x0",
+      "10017232: f242 7910    \tmovw\tr9, #0x2710",
+      "10017236: f241 4a7b    \tmovw\tr10, #0x147b",
+      "1001723a: f04f 0b64    \tmov.w\tr11, #0x64",
+      "1001723e: f2c0 0898    \tmovt\tr8, #0x98",
+      "10017242: 4621         \tmov\tr1, r4",
+      "10017244: 9503         \tstr\tr5, [sp, #0xc]",
+      "10017246: 9402         \tstr\tr4, [sp, #0x8]",
+      "10017248: 460a         \tmov\tr2, r1",
+      "1001724a: f241 7159    \tmovw\tr1, #0x1759",
+      "1001724e: f2cd 11b7    \tmovt\tr1, #0xd1b7",
+      "10017252: eb0e 0403    \tadd.w\tr4, lr, r3",
+      "10017256: fba2 1601    \tumull\tr1, r6, r2, r1",
+      "1001725a: 3b04         \tsubs\tr3, #0x4",
+      "1001725c: 4542         \tcmp\tr2, r8",
+      "1001725e: ea4f 3156    \tlsr.w\tr1, r6, #0xd",
+      "10017262: fb01 2619    \tmls\tr6, r1, r9, r2",
+      "10017266: fa1f fc86    \tuxth.w\tr12, r6",
+      "1001726a: ea4f 059c    \tlsr.w\tr5, r12, #0x2",
+      "1001726e: fb05 f50a    \tmul\tr5, r5, r10",
+      "10017272: ea4f 4555    \tlsr.w\tr5, r5, #0x11",
+      "10017276: fb05 661b    \tmls\tr6, r5, r11, r6",
+      "1001727a: f830 5015    \tldrh.w\tr5, [r0, r5, lsl #1]",
+      "1001727e: 80e5         \tstrh\tr5, [r4, #0x6]",
+      "10017280: b2b6         \tuxth\tr6, r6",
+      "10017282: f830 6016    \tldrh.w\tr6, [r0, r6, lsl #1]",
+      "10017286: 8126         \tstrh\tr6, [r4, #0x8]",
+      "10017288: d8de         \tbhi\t0x10017248 <<u32 as core::fmt::Display>::fmt+0x3c> @ imm = #-0x44",
+      "1001728a: e9dd 4502    \tldrd\tr4, r5, [sp, #8]",
+      "1001728e: 330a         \tadds\tr3, #0xa",
+      "10017290: 2909         \tcmp\tr1, #0x9",
+      "10017292: d806         \tbhi\t0x100172a2 <<u32 as core::fmt::Display>::fmt+0x96> @ imm = #0xc",
+      "10017294: 460a         \tmov\tr2, r1",
+      "10017296: b9ac         \tcbnz\tr4, 0x100172c4 <<u32 as core::fmt::Display>::fmt+0xb8> @ imm = #0x2a",
+      "10017298: e015         \tb\t0x100172c6 <<u32 as core::fmt::Display>::fmt+0xba> @ imm = #0x2a",
+      "1001729a: 230a         \tmovs\tr3, #0xa",
+      "1001729c: 4621         \tmov\tr1, r4",
+      "1001729e: 2909         \tcmp\tr1, #0x9",
+      "100172a0: d9f8         \tbls\t0x10017294 <<u32 as core::fmt::Display>::fmt+0x88> @ imm = #-0x10",
+      "100172a2: b28a         \tuxth\tr2, r1",
+      "100172a4: f241 467b    \tmovw\tr6, #0x147b",
+      "100172a8: 0892         \tlsrs\tr2, r2, #0x2",
+      "100172aa: 3b02         \tsubs\tr3, #0x2",
+      "100172ac: 4372         \tmuls\tr2, r6, r2",
+      "100172ae: 2664         \tmovs\tr6, #0x64",
+      "100172b0: 0c52         \tlsrs\tr2, r2, #0x11",
+      "100172b2: fb02 1116    \tmls\tr1, r2, r6, r1",
+      "100172b6: f1a7 0626    \tsub.w\tr6, r7, #0x26",
+      "100172ba: b289         \tuxth\tr1, r1",
+      "100172bc: f830 1011    \tldrh.w\tr1, [r0, r1, lsl #1]",
+      "100172c0: 52f1         \tstrh\tr1, [r6, r3]",
+      "100172c2: b104         \tcbz\tr4, 0x100172c6 <<u32 as core::fmt::Display>::fmt+0xba> @ imm = #0x0",
+      "100172c4: b132         \tcbz\tr2, 0x100172d4 <<u32 as core::fmt::Display>::fmt+0xc8> @ imm = #0xc",
+      "100172c6: eb00 0042    \tadd.w\tr0, r0, r2, lsl #1",
+      "100172ca: 3b01         \tsubs\tr3, #0x1",
+      "100172cc: f1a7 0126    \tsub.w\tr1, r7, #0x26",
+      "100172d0: 7840         \tldrb\tr0, [r0, #0x1]",
+      "100172d2: 54c8         \tstrb\tr0, [r1, r3]",
+      "100172d4: f1c3 000a    \trsb.w\tr0, r3, #0xa",
+      "100172d8: 9000         \tstr\tr0, [sp]",
+      "100172da: f1a7 0026    \tsub.w\tr0, r7, #0x26",
+      "100172de: 2101         \tmovs\tr1, #0x1",
+      "100172e0: 4403         \tadd\tr3, r0",
+      "100172e2: 4628         \tmov\tr0, r5",
+      "100172e4: 2200         \tmovs\tr2, #0x0",
+      "100172e6: f7ff f96d    \tbl\t0x100165c4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0xd26",
+      "100172ea: b007         \tadd\tsp, #0x1c",
+      "100172ec: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "100172f0: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268530200,
+        "high_site": 268530206,
+        "register": "r0",
+        "address": 268647769,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268530406,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268527045,
+            "size": 396,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<u8 as core::fmt::Display>::fmt",
+    "address": 268540718,
+    "size": 96,
+    "frame": 16,
+    "aliases": [
+      {
+        "name": "_RNvXNtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imphNtB6_7Display3fmt",
+        "address": 268540719,
+        "size": 96,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f4682b0037843f6595cc1f2030c0a2b0dd329205843020b642002fb1030c0b23cf8100027f8020c01201bb903e003201a4603b13ab102f07f020138fb1e0ceb420252781a5480f003020092fa1e1318084601210022fcf71dfd02b080bd",
+    "mapping": [
+      [
+        268540718,
+        268540814,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10019b2e: b580         \tpush\t{r7, lr}",
+      "10019b30: 466f         \tmov\tr7, sp",
+      "10019b32: b082         \tsub\tsp, #0x8",
+      "10019b34: 7803         \tldrb\tr3, [r0]",
+      "10019b36: f643 5c59    \tmovw\tr12, #0x3d59",
+      "10019b3a: f2c1 0c03    \tmovt\tr12, #0x1003",
+      "10019b3e: 2b0a         \tcmp\tr3, #0xa",
+      "10019b40: d30d         \tblo\t0x10019b5e <<u8 as core::fmt::Display>::fmt+0x30> @ imm = #0x1a",
+      "10019b42: 2029         \tmovs\tr0, #0x29",
+      "10019b44: 4358         \tmuls\tr0, r3, r0",
+      "10019b46: 0b02         \tlsrs\tr2, r0, #0xc",
+      "10019b48: 2064         \tmovs\tr0, #0x64",
+      "10019b4a: fb02 3010    \tmls\tr0, r2, r0, r3",
+      "10019b4e: b2c0         \tuxtb\tr0, r0",
+      "10019b50: f83c 0010    \tldrh.w\tr0, [r12, r0, lsl #1]",
+      "10019b54: f827 0c02    \tstrh\tr0, [r7, #-2]",
+      "10019b58: 2001         \tmovs\tr0, #0x1",
+      "10019b5a: b91b         \tcbnz\tr3, 0x10019b64 <<u8 as core::fmt::Display>::fmt+0x36> @ imm = #0x6",
+      "10019b5c: e003         \tb\t0x10019b66 <<u8 as core::fmt::Display>::fmt+0x38> @ imm = #0x6",
+      "10019b5e: 2003         \tmovs\tr0, #0x3",
+      "10019b60: 461a         \tmov\tr2, r3",
+      "10019b62: b103         \tcbz\tr3, 0x10019b66 <<u8 as core::fmt::Display>::fmt+0x38> @ imm = #0x0",
+      "10019b64: b13a         \tcbz\tr2, 0x10019b76 <<u8 as core::fmt::Display>::fmt+0x48> @ imm = #0xe",
+      "10019b66: f002 027f    \tand\tr2, r2, #0x7f",
+      "10019b6a: 3801         \tsubs\tr0, #0x1",
+      "10019b6c: 1efb         \tsubs\tr3, r7, #0x3",
+      "10019b6e: eb0c 0242    \tadd.w\tr2, r12, r2, lsl #1",
+      "10019b72: 7852         \tldrb\tr2, [r2, #0x1]",
+      "10019b74: 541a         \tstrb\tr2, [r3, r0]",
+      "10019b76: f080 0203    \teor\tr2, r0, #0x3",
+      "10019b7a: 9200         \tstr\tr2, [sp]",
+      "10019b7c: 1efa         \tsubs\tr2, r7, #0x3",
+      "10019b7e: 1813         \tadds\tr3, r2, r0",
+      "10019b80: 4608         \tmov\tr0, r1",
+      "10019b82: 2101         \tmovs\tr1, #0x1",
+      "10019b84: 2200         \tmovs\tr2, #0x0",
+      "10019b86: f7fc fd1d    \tbl\t0x100165c4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0x35c6",
+      "10019b8a: b002         \tadd\tsp, #0x8",
+      "10019b8c: bd80         \tpop\t{r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268540726,
+        "high_site": 268540730,
+        "register": "r12",
+        "address": 268647769,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268540806,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268527045,
+            "size": 396,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<u16 as core::fmt::Display>::fmt",
+    "address": 268546544,
+    "size": 158,
+    "frame": 32,
+    "aliases": [
+      {
+        "name": "_RNvXs3_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imptNtB9_7Display3fmt",
+        "address": 268546545,
+        "size": 158,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "d0b502af84b0028843f6595c8e46c1f2030cb2f57a7f17d3100940f24731484342f2107141f27b44c00c00fb11218bb29b08634364245b0c03fb14113cf8133027f80c3c01230ae00a2a0fd3900841f27b41484364210323400c00fb112189b23cf8111027f80a1c1ab903e00523104602b138b14000013b80b2a7f10d0160444078c854c3f105000090a7f10d000121034470460022fbf79df904b0d0bd",
+    "mapping": [
+      [
+        268546544,
+        268546702,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001b1f0: b5d0         \tpush\t{r4, r6, r7, lr}",
+      "1001b1f2: af02         \tadd\tr7, sp, #0x8",
+      "1001b1f4: b084         \tsub\tsp, #0x10",
+      "1001b1f6: 8802         \tldrh\tr2, [r0]",
+      "1001b1f8: f643 5c59    \tmovw\tr12, #0x3d59",
+      "1001b1fc: 468e         \tmov\tlr, r1",
+      "1001b1fe: f2c1 0c03    \tmovt\tr12, #0x1003",
+      "1001b202: f5b2 7f7a    \tcmp.w\tr2, #0x3e8",
+      "1001b206: d317         \tblo\t0x1001b238 <<u16 as core::fmt::Display>::fmt+0x48> @ imm = #0x2e",
+      "1001b208: 0910         \tlsrs\tr0, r2, #0x4",
+      "1001b20a: f240 3147    \tmovw\tr1, #0x347",
+      "1001b20e: 4348         \tmuls\tr0, r1, r0",
+      "1001b210: f242 7110    \tmovw\tr1, #0x2710",
+      "1001b214: f241 447b    \tmovw\tr4, #0x147b",
+      "1001b218: 0cc0         \tlsrs\tr0, r0, #0x13",
+      "1001b21a: fb00 2111    \tmls\tr1, r0, r1, r2",
+      "1001b21e: b28b         \tuxth\tr3, r1",
+      "1001b220: 089b         \tlsrs\tr3, r3, #0x2",
+      "1001b222: 4363         \tmuls\tr3, r4, r3",
+      "1001b224: 2464         \tmovs\tr4, #0x64",
+      "1001b226: 0c5b         \tlsrs\tr3, r3, #0x11",
+      "1001b228: fb03 1114    \tmls\tr1, r3, r4, r1",
+      "1001b22c: f83c 3013    \tldrh.w\tr3, [r12, r3, lsl #1]",
+      "1001b230: f827 3c0c    \tstrh\tr3, [r7, #-12]",
+      "1001b234: 2301         \tmovs\tr3, #0x1",
+      "1001b236: e00a         \tb\t0x1001b24e <<u16 as core::fmt::Display>::fmt+0x5e> @ imm = #0x14",
+      "1001b238: 2a0a         \tcmp\tr2, #0xa",
+      "1001b23a: d30f         \tblo\t0x1001b25c <<u16 as core::fmt::Display>::fmt+0x6c> @ imm = #0x1e",
+      "1001b23c: 0890         \tlsrs\tr0, r2, #0x2",
+      "1001b23e: f241 417b    \tmovw\tr1, #0x147b",
+      "1001b242: 4348         \tmuls\tr0, r1, r0",
+      "1001b244: 2164         \tmovs\tr1, #0x64",
+      "1001b246: 2303         \tmovs\tr3, #0x3",
+      "1001b248: 0c40         \tlsrs\tr0, r0, #0x11",
+      "1001b24a: fb00 2111    \tmls\tr1, r0, r1, r2",
+      "1001b24e: b289         \tuxth\tr1, r1",
+      "1001b250: f83c 1011    \tldrh.w\tr1, [r12, r1, lsl #1]",
+      "1001b254: f827 1c0a    \tstrh\tr1, [r7, #-10]",
+      "1001b258: b91a         \tcbnz\tr2, 0x1001b262 <<u16 as core::fmt::Display>::fmt+0x72> @ imm = #0x6",
+      "1001b25a: e003         \tb\t0x1001b264 <<u16 as core::fmt::Display>::fmt+0x74> @ imm = #0x6",
+      "1001b25c: 2305         \tmovs\tr3, #0x5",
+      "1001b25e: 4610         \tmov\tr0, r2",
+      "1001b260: b102         \tcbz\tr2, 0x1001b264 <<u16 as core::fmt::Display>::fmt+0x74> @ imm = #0x0",
+      "1001b262: b138         \tcbz\tr0, 0x1001b274 <<u16 as core::fmt::Display>::fmt+0x84> @ imm = #0xe",
+      "1001b264: 0040         \tlsls\tr0, r0, #0x1",
+      "1001b266: 3b01         \tsubs\tr3, #0x1",
+      "1001b268: b280         \tuxth\tr0, r0",
+      "1001b26a: f1a7 010d    \tsub.w\tr1, r7, #0xd",
+      "1001b26e: 4460         \tadd\tr0, r12",
+      "1001b270: 7840         \tldrb\tr0, [r0, #0x1]",
+      "1001b272: 54c8         \tstrb\tr0, [r1, r3]",
+      "1001b274: f1c3 0005    \trsb.w\tr0, r3, #0x5",
+      "1001b278: 9000         \tstr\tr0, [sp]",
+      "1001b27a: f1a7 000d    \tsub.w\tr0, r7, #0xd",
+      "1001b27e: 2101         \tmovs\tr1, #0x1",
+      "1001b280: 4403         \tadd\tr3, r0",
+      "1001b282: 4670         \tmov\tr0, lr",
+      "1001b284: 2200         \tmovs\tr2, #0x0",
+      "1001b286: f7fb f99d    \tbl\t0x100165c4 <<core::fmt::Formatter>::pad_integral> @ imm = #-0x4cc6",
+      "1001b28a: b004         \tadd\tsp, #0x10",
+      "1001b28c: bdd0         \tpop\t{r4, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268546552,
+        "high_site": 268546558,
+        "register": "r12",
+        "address": 268647769,
+        "first24_hex": "3030303130323033303430353036303730383039313031313132313331343135313631373138313932303231323232333234323532363237323832393330333133323333333433353336333733383339343034313432343334343435343634373438343935303531353235333534353535363537353835393630363136323633363436353636363736383639373037313732373337343735373637373738373938303831383238333834383538363837383838393930393139323933393439353936393739383939",
+        "origin_role": "decimal_pairs"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268546694,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter12pad_integral",
+            "address": 268527045,
+            "size": 396,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 64
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<bool as core::fmt::Display>::fmt",
+    "address": 268546924,
+    "size": 50,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXsg_NtCs6m2Zc6X1WBq_4core3fmtbNtB5_7Display3fmt",
+        "address": 268546925,
+        "size": 50,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f4600780a4648b14bf608511046c1f202010422bde88040faf771bf44f68e211046c1f203010522bde88040faf767bf",
+    "mapping": [
+      [
+        268546924,
+        268546974,
+        "t"
+      ]
+    ],
+    "lines": [
+      "1001b36c: b580         \tpush\t{r7, lr}",
+      "1001b36e: 466f         \tmov\tr7, sp",
+      "1001b370: 7800         \tldrb\tr0, [r0]",
+      "1001b372: 460a         \tmov\tr2, r1",
+      "1001b374: b148         \tcbz\tr0, 0x1001b38a <<bool as core::fmt::Display>::fmt+0x1e> @ imm = #0x12",
+      "1001b376: f64b 5108    \tmovw\tr1, #0xbd08",
+      "1001b37a: 4610         \tmov\tr0, r2",
+      "1001b37c: f2c1 0102    \tmovt\tr1, #0x1002",
+      "1001b380: 2204         \tmovs\tr2, #0x4",
+      "1001b382: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1001b386: f7fa bf71    \tb.w\t0x1001626c <<core::fmt::Formatter>::pad> @ imm = #-0x511e",
+      "1001b38a: f644 218e    \tmovw\tr1, #0x4a8e",
+      "1001b38e: 4610         \tmov\tr0, r2",
+      "1001b390: f2c1 0103    \tmovt\tr1, #0x1003",
+      "1001b394: 2205         \tmovs\tr2, #0x5",
+      "1001b396: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1001b39a: f7fa bf67    \tb.w\t0x1001626c <<core::fmt::Formatter>::pad> @ imm = #-0x5132"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268546934,
+        "high_site": 268546940,
+        "register": "r1",
+        "address": 268614920,
+        "first24_hex": "74727565",
+        "origin_role": "bool_true"
+      },
+      {
+        "low_site": 268546954,
+        "high_site": 268546960,
+        "register": "r1",
+        "address": 268651150,
+        "first24_hex": "66616c7365",
+        "origin_role": "bool_false"
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268546950,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+            "address": 268526189,
+            "size": 320,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 40
+      },
+      {
+        "site": 268546970,
+        "aliases": [
+          {
+            "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter3pad",
+            "address": 268526189,
+            "size": 320,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 40
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<&u8 as core::fmt::Debug>::fmt",
+    "address": 268595404,
+    "size": 40,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRhNtB6_5Debug3fmtCs2d9vx5aR9Rk_20embassy_hal_internal",
+        "address": 268595405,
+        "size": 40,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f468a680068930105d4520107d4bde88040f2f725bdbde88040f4f7d1b8bde88040f2f772bd",
+    "mapping": [
+      [
+        268595404,
+        268595444,
+        "t"
+      ]
+    ],
+    "lines": [
+      "100270cc: b580         \tpush\t{r7, lr}",
+      "100270ce: 466f         \tmov\tr7, sp",
+      "100270d0: 688a         \tldr\tr2, [r1, #0x8]",
+      "100270d2: 6800         \tldr\tr0, [r0]",
+      "100270d4: 0193         \tlsls\tr3, r2, #0x6",
+      "100270d6: d405         \tbmi\t0x100270e4 <<&u8 as core::fmt::Debug>::fmt+0x18> @ imm = #0xa",
+      "100270d8: 0152         \tlsls\tr2, r2, #0x5",
+      "100270da: d407         \tbmi\t0x100270ec <<&u8 as core::fmt::Debug>::fmt+0x20> @ imm = #0xe",
+      "100270dc: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100270e0: f7f2 bd25    \tb.w\t0x10019b2e <<u8 as core::fmt::Display>::fmt> @ imm = #-0xd5b6",
+      "100270e4: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100270e8: f7f4 b8d1    \tb.w\t0x1001b28e <<u8 as core::fmt::LowerHex>::fmt> @ imm = #-0xbe5e",
+      "100270ec: e8bd 4080    \tpop.w\t{r7, lr}",
+      "100270f0: f7f2 bd72    \tb.w\t0x10019bd8 <<u8 as core::fmt::UpperHex>::fmt> @ imm = #-0xd51c"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268595424,
+        "aliases": [
+          {
+            "name": "_RNvXNtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imphNtB6_7Display3fmt",
+            "address": 268540719,
+            "size": 96,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      },
+      {
+        "site": 268595432,
+        "aliases": [
+          {
+            "name": "_RNvXse_NtNtCs6m2Zc6X1WBq_4core3fmt3numhNtB7_8LowerHex3fmt",
+            "address": 268546703,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      },
+      {
+        "site": 268595440,
+        "aliases": [
+          {
+            "name": "_RNvXsg_NtNtCs6m2Zc6X1WBq_4core3fmt3numhNtB7_8UpperHex3fmt",
+            "address": 268540889,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<&bool as core::fmt::Debug>::fmt",
+    "address": 268599572,
+    "size": 14,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRbNtB6_5Debug3fmtCsgJZsPwMkeub_6rp_pac",
+        "address": 268599573,
+        "size": 14,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f460068bde88040f3f725b9",
+    "mapping": [
+      [
+        268599572,
+        268599586,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10028114: b580         \tpush\t{r7, lr}",
+      "10028116: 466f         \tmov\tr7, sp",
+      "10028118: 6800         \tldr\tr0, [r0]",
+      "1002811a: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1002811e: f7f3 b925    \tb.w\t0x1001b36c <<bool as core::fmt::Display>::fmt> @ imm = #-0xcdb6"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268599582,
+        "aliases": [
+          {
+            "name": "_RNvXsg_NtCs6m2Zc6X1WBq_4core3fmtbNtB5_7Display3fmt",
+            "address": 268546925,
+            "size": 50,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 8
+      }
+    ]
+  },
+  {
+    "mode": "sizez",
+    "role": "<&u16 as core::fmt::Debug>::fmt",
+    "address": 268599586,
+    "size": 40,
+    "frame": 8,
+    "aliases": [
+      {
+        "name": "_RNvXs1g_NtCs6m2Zc6X1WBq_4core3fmtRtNtB6_5Debug3fmtCsgJZsPwMkeub_6rp_pac",
+        "address": 268599587,
+        "size": 40,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "body_hex": "80b56f468a680068930105d4520107d4bde88040f3f75bb8bde88040f1f7d2bebde88040f1f722bd",
+    "mapping": [
+      [
+        268599586,
+        268599626,
+        "t"
+      ]
+    ],
+    "lines": [
+      "10028122: b580         \tpush\t{r7, lr}",
+      "10028124: 466f         \tmov\tr7, sp",
+      "10028126: 688a         \tldr\tr2, [r1, #0x8]",
+      "10028128: 6800         \tldr\tr0, [r0]",
+      "1002812a: 0193         \tlsls\tr3, r2, #0x6",
+      "1002812c: d405         \tbmi\t0x1002813a <<&u16 as core::fmt::Debug>::fmt+0x18> @ imm = #0xa",
+      "1002812e: 0152         \tlsls\tr2, r2, #0x5",
+      "10028130: d407         \tbmi\t0x10028142 <<&u16 as core::fmt::Debug>::fmt+0x20> @ imm = #0xe",
+      "10028132: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10028136: f7f3 b85b    \tb.w\t0x1001b1f0 <<u16 as core::fmt::Display>::fmt> @ imm = #-0xcf4a",
+      "1002813a: e8bd 4080    \tpop.w\t{r7, lr}",
+      "1002813e: f7f1 bed2    \tb.w\t0x10019ee6 <<u16 as core::fmt::LowerHex>::fmt> @ imm = #-0xe25c",
+      "10028142: e8bd 4080    \tpop.w\t{r7, lr}",
+      "10028146: f7f1 bd22    \tb.w\t0x10019b8e <<u16 as core::fmt::UpperHex>::fmt> @ imm = #-0xe5bc"
+    ],
+    "address_producers": [],
+    "ordinary_edges": [
+      {
+        "site": 268599606,
+        "aliases": [
+          {
+            "name": "_RNvXs3_NtNtNtCs6m2Zc6X1WBq_4core3fmt3num3imptNtB9_7Display3fmt",
+            "address": 268546545,
+            "size": 158,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 32
+      },
+      {
+        "site": 268599614,
+        "aliases": [
+          {
+            "name": "_RNvXsm_NtNtCs6m2Zc6X1WBq_4core3fmt3numtNtB7_8LowerHex3fmt",
+            "address": 268541671,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      },
+      {
+        "site": 268599622,
+        "aliases": [
+          {
+            "name": "_RNvXso_NtNtCs6m2Zc6X1WBq_4core3fmt3numtNtB7_8UpperHex3fmt",
+            "address": 268540815,
+            "size": 74,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 16
+      }
+    ]
+  }
+]

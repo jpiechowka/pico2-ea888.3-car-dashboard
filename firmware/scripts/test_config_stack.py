@@ -38,7 +38,7 @@ class CompleteFormatBridges(unittest.TestCase):
                     first,second=struct.unpack('<HH',raw)
                     raw=struct.pack('<HH',(first&~0x040f)|((value>>12)&15)|((value>>1)&0x400),
                                     (second&~0x70ff)|((value&0x700)<<4)|(value&255))
-                elif re.match(r'(?:b\w*|cb\w*)$',match[3]) and '0x' in operands:
+                elif re.match(r'(?:b\w*|cb\w*)$',match[3].removesuffix('.w')) and '0x' in operands:
                     operands=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operands,count=1)
                 body[address-start:address-start+len(raw)]=raw
                 rows.append(Instruction(address+code_shift,raw,match[3],operands))
@@ -178,6 +178,55 @@ class ValidationBuilder(unittest.TestCase):
             old=rows[index];rows[index]=Instruction(old.address,old.raw,mnemonic,operands)
             with self.subTest(mode=mode,offset=offset),self.assertRaises(AssertionError):
                 config_stack.validation_builder(objects,f['aliases'][0]['name'],rows)
+
+
+class NumericSupport(unittest.TestCase):
+    fixture=CompleteFormatBridges.fixture
+
+    def test_complete_numeric_bodies_all_modes_retain_default_and_excluded_edges(self):
+        import config_numeric
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,fixture=self.fixture(fixture_file='config-numeric.json',mode=mode)
+            for f in fixture:
+                proof=config_numeric.numeric_format(objects,f['aliases'][0]['name'],records[f['address']])
+                self.assertEqual(proof['frame'],f['frame'])
+                self.assertEqual(proof['requires_options'],(0x60000020,0,0))
+
+    def test_decimal_width_buffer_prefix_and_callback_operand_mutations_reject(self):
+        import config_numeric
+        objects,records,fixture=self.fixture(fixture_file='config-numeric.json',mode='sizes')
+        choices=[('<u8 as core::fmt::Display>::fmt',0x6,'ldrh','r3, [r0]'),
+                 ('<u16 as core::fmt::Display>::fmt',0x7a,'sub.w','r1, r7, #0x10'),
+                 ('<core::fmt::Formatter>::pad_integral',0x4e,'ldrh.w','r8, [r0, #0xe]'),
+                 ('<core::fmt::Formatter>::pad_integral::write_prefix',0x8,'ldr.w','r8, [sp]')]
+        for role,offset,mnemonic,operands in choices:
+            f=next(f for f in fixture if f['role']==role);rows=list(records[f['address']])
+            index=next(i for i,r in enumerate(rows) if r.address==f['address']+offset)
+            old=rows[index];rows[index]=Instruction(old.address,old.raw,mnemonic,operands)
+            with self.subTest(role=role),self.assertRaises(AssertionError):
+                config_numeric.numeric_format(objects,f['aliases'][0]['name'],rows)
+
+    def test_numeric_table_endpoint_and_mapped_tbb_changes_reject(self):
+        import config_numeric
+        for mutation in ('decimal_endpoint','tbb_entry'):
+            objects,records,fixture=self.fixture(fixture_file='config-numeric.json',mode='sizes')
+            f=next(f for f in fixture if f['role']==('<u8 as core::fmt::Display>::fmt' if mutation=='decimal_endpoint' else '<core::fmt::Formatter>::pad'))
+            data=bytearray(objects.elf.data)
+            address=f['address_producers'][0]['address']+199 if mutation=='decimal_endpoint' else f['address']+0xb6
+            section=next(s for s in objects.elf.sections if s[3]<=address<s[3]+s[5])
+            data[section[4]+address-section[3]]^=1;objects.elf.data=bytes(data)
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):
+                config_numeric.numeric_format(objects,f['aliases'][0]['name'],records[f['address']])
+
+    def test_numeric_code_data_and_targets_relocate_without_erasing_receiver_context(self):
+        import config_numeric
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,fixture=self.fixture(0x1800,0x20000,'config-numeric.json',mode)
+            for f in fixture:
+                result=config_numeric.numeric_format(objects,f['aliases'][0]['name'],records[f['address']+0x1800])
+                self.assertEqual(result['role'],config_stack.canonical_symbol(f['aliases'][0]['name']))
+                if f['role']=='<core::fmt::Formatter>::pad_integral':
+                    self.assertEqual(len(result['default_sites']),2)
 
 
 class DiagnosticRoots(unittest.TestCase):
