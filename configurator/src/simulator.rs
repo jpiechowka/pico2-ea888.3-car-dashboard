@@ -243,7 +243,15 @@ impl ControlSimulator {
     pub const fn pending_reset_token(&self) -> Option<u64> { self.reset_token }
 
     pub fn log_page(&self) -> dashboard_core::logging_view::LogPage {
-        dashboard_core::logging_view::LogPage::capture(&self.logs, self.display_session().log_anchor())
+        self.log_page_at(self.display_session().log_anchor())
+    }
+
+    /// Capture the log window owned by the session selected for this projection.
+    pub fn log_page_at(
+        &self,
+        anchor: Option<u64>,
+    ) -> dashboard_core::logging_view::LogPage {
+        dashboard_core::logging_view::LogPage::capture(&self.logs, anchor)
     }
 
     pub fn acknowledge_warnings(&mut self) {

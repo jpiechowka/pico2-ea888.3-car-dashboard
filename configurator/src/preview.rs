@@ -334,10 +334,15 @@ impl Preview {
                 dashboard_core::debug_view::DebugPage::new(&data, simulation.display_map()).draw(&mut display);
             }
             dashboard_config::ControlPage::Logs => {
-                let page = simulation.log_page();
+                let page = simulation.log_page_at(session.log_anchor());
                 page.draw_full(&mut display);
                 page.draw_hint(&mut display, simulation.display_map());
             }
+        }
+        if session.page() != dashboard_config::ControlPage::Dashboard
+            && let Some(overlay) = scene.overlay
+        {
+            overlay.draw(&mut display);
         }
         if session.backlight().compare() == 0 {
             use embedded_graphics::prelude::DrawTarget;

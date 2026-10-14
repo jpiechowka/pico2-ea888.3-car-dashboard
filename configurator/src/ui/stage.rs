@@ -324,7 +324,6 @@ fn style(placement: Placement) -> String {
 #[component]
 pub fn Canvas(ui: Ui) -> impl IntoView {
     let preview = RwSignal::new(Preview::default());
-    let queued = ui.dock.appearance_queued;
     let revision = Memo::new(move |_| ui.editor.with(Editor::revision));
     let json = Memo::new(move |_| json_editor::projection(ui));
     let source = Memo::new(move |_| {
@@ -358,22 +357,31 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         // projection before capturing a source callback, without new accepted state.
         ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
         // Mount/readiness is reactive too. Multiple input events share one draw.
-        if ui.canvas.get().is_none() || queued.get_untracked() {
+        if ui.canvas.get().is_none() {
             return;
         }
-        queued.set(true);
         let Some(callback) = super::simulation::capture_callback(ui) else {
-            queued.set(false);
+            return;
+        };
+        let mut request = None;
+        ui.dock
+            .callbacks
+            .update_value(|callbacks| request = callbacks.queue_appearance());
+        let Some(request) = request else {
             return;
         };
         match request_animation_frame_with_handle(move || {
             if !super::simulation::current_callback(ui, callback) {
                 return;
             }
-            if queued.try_set(false).is_some() {
+            let mut admitted = false;
+            let _ = ui
+                .dock
+                .callbacks
+                .try_update_value(|callbacks| admitted = callbacks.finish_appearance(request));
+            if !admitted {
                 return;
             }
-            let _ = ui.dock.appearance_raf.try_set(None);
             let Some(canvas) = ui.canvas.get_untracked() else {
                 return;
             };
@@ -523,9 +531,17 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 metrics::schedule_record(ui, trace_permit, start, submitted, render, (widgets, views), warnings);
             }
         }) {
-            Ok(handle) => ui.dock.appearance_raf.set(Some(handle)),
+            Ok(handle) => {
+                ui.dock.callbacks.update_value(|callbacks| {
+                    if let Err(handle) = callbacks.set_appearance_handle(request, handle) {
+                        handle.cancel();
+                    }
+                })
+            }
             Err(_) => {
-                queued.set(false);
+                ui.dock.callbacks.update_value(|callbacks| {
+                    callbacks.finish_appearance(request);
+                });
                 ui.render_issue(RenderLane::Appearance, Err(RenderIssue::Generic));
             }
         }

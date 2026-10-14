@@ -15,7 +15,7 @@ pub(super) fn capture_callback(ui: Ui) -> Option<CallbackToken> {
     let source = ui.dock.sim.try_with_untracked(ControlSimulator::source_key)?;
     ui.dock
         .callbacks
-        .try_with_value(|gate| gate.capture_for_editor(source, editor))
+        .try_with_value(|callbacks| callbacks.gate.capture_for_editor(source, editor))
         .flatten()
 }
 
@@ -43,7 +43,7 @@ pub(super) fn current_callback(
     };
     ui.dock
         .callbacks
-        .try_with_value(|gate| gate.is_current_for_editor(callback, source, editor))
+        .try_with_value(|callbacks| callbacks.gate.is_current_for_editor(callback, source, editor))
         .unwrap_or(false)
 }
 
@@ -53,15 +53,14 @@ pub(super) fn cancel(ui: Ui) {
     let _ = ui.dock.held.try_set([false; 4]);
     let _ = ui.dock.release_until.try_set(None);
     let _ = ui.dock.sim.try_update(ControlSimulator::cancel_inputs);
-    let _ = ui.dock.callbacks.try_update_value(|gate| gate.retire());
-    for signal in [ui.dock.completion_raf, ui.dock.appearance_raf] {
-        let _ = signal.try_update(|handle| {
-            if let Some(handle) = handle.take() {
-                handle.cancel();
-            }
-        });
-    }
-    let _ = ui.dock.appearance_queued.try_set(false);
+    retire_callbacks(ui);
+}
+
+fn retire_callbacks(ui: Ui) {
+    let _ = ui
+        .dock
+        .callbacks
+        .try_update_value(|callbacks| callbacks.retire(|handle| handle.cancel()));
 }
 
 fn freeze_clock(ui: Ui) {
@@ -164,12 +163,7 @@ pub(super) fn install(ui: Ui) {
                 on_cleanup(move || {
                     handle.clear();
                     freeze_clock(ui);
-                    let _ = ui.dock.callbacks.try_update_value(|gate| gate.retire());
-                    let _ = ui.dock.completion_raf.try_update(|handle| {
-                        if let Some(handle) = handle.take() {
-                            handle.cancel();
-                        }
-                    });
+                    retire_callbacks(ui);
                 })
             }
             Err(_) => {
@@ -275,7 +269,7 @@ pub(super) fn submit(
 }
 
 fn schedule_completion(ui: Ui) {
-    if ui.dock.completion_raf.get_untracked().is_some() {
+    if ui.dock.callbacks.with_value(|callbacks| callbacks.completion.is_some()) {
         return;
     }
     let Some(callback) = capture_callback(ui) else {
@@ -286,7 +280,7 @@ fn schedule_completion(ui: Ui) {
         if !current_callback(ui, callback) {
             return;
         }
-        ui.dock.completion_raf.set(None);
+        ui.dock.callbacks.update_value(|callbacks| callbacks.completion = None);
         if pending == ui.dock.pending.get_untracked()
             && ui.dock.mode.get_untracked() == PreviewMode::Simulation
             && !ui.inspection_active()
@@ -294,7 +288,11 @@ fn schedule_completion(ui: Ui) {
             complete(ui);
         }
     }) {
-        Ok(handle) => ui.dock.completion_raf.set(Some(handle)),
+        Ok(handle) => {
+            ui.dock
+                .callbacks
+                .update_value(|callbacks| callbacks.completion = Some(handle))
+        }
         Err(_) => {
             ui.dock
                 .notice

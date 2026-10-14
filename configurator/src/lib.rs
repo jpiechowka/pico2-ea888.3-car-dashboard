@@ -36,6 +36,7 @@ pub mod editor;
 pub mod event_adapters;
 pub mod events;
 pub mod field_registry;
+pub mod frame_callbacks;
 pub mod geometry;
 pub mod json_diff;
 pub mod json_draft;

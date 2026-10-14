@@ -29,16 +29,17 @@ pub struct PreviewDockState {
     pub release_until: RwSignal<Option<u64>>,
     pub inputs: RwSignal<[dashboard_configurator::simulator::BoundedText<64>; 8]>,
     pub ack_text: RwSignal<dashboard_configurator::simulator::BoundedText<20>>,
-    pub callbacks: StoredValue<dashboard_configurator::simulator::CallbackGate>,
+    pub callbacks: StoredValue<
+        dashboard_configurator::frame_callbacks::FrameCallbacks<
+            leptos::leptos_dom::helpers::AnimationFrameRequestHandle,
+        >,
+    >,
     pub playback_clock: StoredValue<
         Option<(
             dashboard_configurator::timing::Playback,
             dashboard_configurator::simulator::SourceSessionKey,
         )>,
     >,
-    pub completion_raf: RwSignal<Option<leptos::leptos_dom::helpers::AnimationFrameRequestHandle>>,
-    pub appearance_raf: RwSignal<Option<leptos::leptos_dom::helpers::AnimationFrameRequestHandle>>,
-    pub appearance_queued: RwSignal<bool>,
     pub inspection_stamp: RwSignal<Option<(EditorStamp, Option<dashboard_configurator::json_draft::JsonProjection>)>>,
     accepted_key: StoredValue<AcceptedConfigKey>,
     reported_key: StoredValue<AcceptedConfigKey>,
@@ -66,12 +67,9 @@ impl PreviewDockState {
                 dashboard_configurator::simulator::BoundedText::default()
             })),
             ack_text: RwSignal::new(dashboard_configurator::simulator::BoundedText::default()),
-            callbacks: StoredValue::new(dashboard_configurator::simulator::CallbackGate::new()),
+            callbacks: StoredValue::new(dashboard_configurator::frame_callbacks::FrameCallbacks::new()),
             playback_clock: StoredValue::new(None),
-            completion_raf: RwSignal::new(None),
             inspection_stamp: RwSignal::new(None),
-            appearance_raf: RwSignal::new(None),
-            appearance_queued: RwSignal::new(false),
             accepted_key: StoredValue::new(editor.accepted_config_key()),
             reported_key: StoredValue::new(editor.accepted_config_key()),
         }
