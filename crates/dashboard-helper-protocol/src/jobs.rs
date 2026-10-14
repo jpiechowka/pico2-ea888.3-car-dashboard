@@ -115,6 +115,7 @@ pub struct Event {
     pub text: Text<1024>,
     pub progress: Option<Progress>,
     pub tool: Option<ToolId>,
+    pub setup_step: Option<crate::setup::SetupStepId>,
 }
 impl Wire for Event {
     const MAX_BYTES: usize = 1024;
@@ -128,6 +129,12 @@ impl Wire for Event {
         }
         if let Some(p) = self.progress {
             p.validate()?;
+        }
+        if let Some(step) = self.setup_step {
+            step.validate()?;
+            if self.stage != StageId::Setup(step.stage) || self.tool != Some(step.tool) {
+                return Err(Error::Schema);
+            }
         }
         serialized_bound(self, Self::MAX_BYTES)
     }
@@ -193,6 +200,7 @@ pub struct JobSummary {
     pub output_dropped_chunks: u64,
     pub output_dropped_bytes: u64,
     pub anomalies: Anomalies,
+    pub active_setup_step: Option<crate::setup::SetupStepId>,
 }
 impl Wire for JobSummary {
     const MAX_BYTES: usize = 65536;
@@ -210,8 +218,25 @@ impl Wire for JobSummary {
         {
             return Err(Error::Schema);
         }
-        if self.stages.iter().filter(|s| s.state == StageState::Running).count() > 1 {
+        if self.operation != OperationKind::Setup
+            && self.stages.iter().filter(|s| s.state == StageState::Running).count() > 1
+        {
             return Err(Error::Schema);
+        }
+        if let Some(step) = self.active_setup_step {
+            step.validate()?;
+            if self.operation != OperationKind::Setup
+                || self.events_closed
+                || !self.stages.iter().any(|s| {
+                    s.stage == StageId::Setup(step.stage)
+                        && s.state == StageState::Running
+                        && s.tools
+                            .iter()
+                            .any(|t| t.tool == step.tool && t.state == StageState::Running)
+                })
+            {
+                return Err(Error::Schema);
+            }
         }
         for s in self.stages.iter() {
             if !matches!(s.stage, StageId::Setup(_)) && !s.tools.is_empty() {
@@ -233,6 +258,37 @@ impl Wire for JobSummary {
             exit.validate()?;
         }
         if self.operation != OperationKind::Flash && self.write_outcome != WriteOutcome::NotStarted {
+            return Err(Error::Schema);
+        }
+        if self.terminal_cause == Some(TerminalCause::Succeeded)
+            && (!self.events_closed
+                || self.cancel_requested
+                || self.stages.iter().any(|s| {
+                    s.state != StageState::Succeeded
+                        && !(self.operation == OperationKind::Setup && s.state == StageState::Skipped)
+                })
+                || (self.operation == OperationKind::Build && self.artifact_id.is_none())
+                || (self.operation == OperationKind::Flash && self.write_outcome != WriteOutcome::Verified))
+        {
+            return Err(Error::Schema);
+        }
+        if self.terminal_cause == Some(TerminalCause::Cancelled) && !self.cancel_requested {
+            return Err(Error::Schema);
+        }
+        if self.write_outcome == WriteOutcome::Verified
+            && !self
+                .stages
+                .iter()
+                .any(|s| s.stage == StageId::Firmware(FirmwareStage::Verification) && s.state == StageState::Succeeded)
+        {
+            return Err(Error::Schema);
+        }
+        if self.write_outcome == WriteOutcome::TransferredUnverified
+            && !self
+                .stages
+                .iter()
+                .any(|s| s.stage == StageId::Firmware(FirmwareStage::Transfer) && s.state == StageState::Succeeded)
+        {
             return Err(Error::Schema);
         }
         serialized_bound(self, Self::MAX_BYTES)

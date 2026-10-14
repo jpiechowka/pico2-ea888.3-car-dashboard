@@ -105,6 +105,7 @@ fn serialized_event_limit_includes_envelope_and_escapes() {
             unit: ProgressUnit::Bytes,
         }),
         tool: Some(ToolId::RustToolchain),
+        setup_step: None,
     };
     assert!(encode(&event).is_err());
     let mut event = event;
@@ -140,4 +141,95 @@ fn layouts_and_board_confirmation_are_closed() {
     assert!(encode(&r).is_ok());
     r.board_acknowledgement.device_id = DeviceId::new("3".repeat(32)).unwrap();
     assert!(encode(&r).is_err());
+}
+
+#[test]
+fn actual_maximum_event_envelopes_include_setup_step_and_escape_budget() {
+    use dashboard_helper_protocol::setup::*;
+    let mut shapes = Vec::new();
+    for op in [
+        OperationKind::Build,
+        OperationKind::Flash,
+        OperationKind::Setup,
+        OperationKind::PrerequisiteCheck,
+        OperationKind::DeviceScan,
+        OperationKind::Cleanup,
+    ] {
+        for stage in op.layout() {
+            shapes.push((stage, None, None));
+            if matches!(stage, StageId::Setup(_)) {
+                for tool in TOOLS {
+                    shapes.push((stage, Some(tool), None));
+                }
+            }
+        }
+    }
+    for step in setup_steps() {
+        shapes.push((StageId::Setup(step.stage), Some(step.tool), Some(step)));
+    }
+    let mut max = 0;
+    let mut largest = None;
+    for (stage, tool, setup_step) in shapes {
+        for kind in [
+            EventKind::Log,
+            EventKind::Progress,
+            EventKind::Stage,
+            EventKind::Diagnostic,
+        ] {
+            for level in [Level::Info, Level::Warning, Level::Error] {
+                for source in [Source::Stdout, Source::Stderr, Source::Internal] {
+                    for unit in [ProgressUnit::Bytes, ProgressUnit::Items, ProgressUnit::Percent] {
+                        let event = Event {
+                            sequence: u64::MAX - 1,
+                            utc_ms: Some(u64::MAX),
+                            elapsed_ms: u64::MAX,
+                            stage,
+                            kind,
+                            level,
+                            source,
+                            text: Text::new("").unwrap(),
+                            progress: Some(Progress {
+                                completed: if unit == ProgressUnit::Percent { 100 } else { u64::MAX },
+                                total: if unit == ProgressUnit::Percent { 100 } else { u64::MAX },
+                                unit,
+                            }),
+                            tool,
+                            setup_step,
+                        };
+                        let b = encode(&event).unwrap();
+                        if b.len() > max {
+                            max = b.len();
+                            largest = Some(event);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut event = largest.unwrap();
+    let remaining = 1024 - max;
+    event.text = Text::new("x".repeat(remaining)).unwrap();
+    assert_eq!(encode(&event).unwrap().len(), 1024);
+    event.text = Text::new("x".repeat(remaining + 1)).unwrap();
+    assert!(encode(&event).is_err());
+    event.text = Text::new("\0".repeat(remaining / 6)).unwrap();
+    assert!(encode(&event).is_ok());
+    event.text = Text::new("\0".repeat(remaining / 6 + 1)).unwrap();
+    assert!(encode(&event).is_err());
+    println!("Largest enumerated empty event envelope={max}; plain text budget={remaining}");
+}
+#[test]
+fn session_cap_and_normalized_tampering_are_enforced() {
+    let response = SessionResponse {
+        protocol_version: 1,
+        session_id: SessionId::new("f".repeat(32)).unwrap(),
+        ready: false,
+        reason: Some(Text::new("\0".repeat(512)).unwrap()),
+    };
+    let bytes = encode(&response).unwrap();
+    assert!(bytes.len() < 65536);
+    assert!(decode::<SessionResponse>(&bytes).is_ok());
+    let mut n = normalize(&BuildOptions::default()).unwrap();
+    n.clock.spi_neighbors.below_or_equal = None;
+    assert!(encode(&n).is_err());
 }
