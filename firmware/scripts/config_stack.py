@@ -340,3 +340,171 @@ def enum_dispatch(objects, name, instructions):
         require(objects.read_only(table + count, 1) == b'\0', 'typed enum table alignment differs')
     return {'role': role, 'function': start, 'table': table, 'entries': entries,
             'prefix_bytes': len(prefix)}
+
+
+FIELD_PAYLOADS = {'Controls': ('control_error_ref', 0), 'HistorySeconds': ('channel_ref', 1),
+                  'Color': ('color_role_ref', 1),
+                  **{n: ('u8_ref', 1) for n in ('BandLabel', 'BandMinimum', 'BandMaximum', 'BandOrder', 'BandColor')},
+                  **{n: ('bool_ref', 1) for n in ('LedBrightness', 'LedPeriod', 'LedOnPercent')}}
+TUPLE1_ROLE = '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish'
+FIELD_CASES = tuple('Controls Version CatalogueVersion Views ViewId ViewName BootView WidgetId '
+                   'WidgetView Placement Label Decimals Afr Readout Secondary Smoothing PeakHold '
+                   'Reference BandCount BandLabel BandMinimum BandMaximum BandOrder BandColor '
+                   'HistorySeconds WarningTriggerHigh WarningClearHigh WarningSnooze WarningAcknowledge '
+                   'LedBrightness LedPeriod LedOnPercent GraphRange GaugeRange Color WarningColors '
+                   'WarningMode WarningTrigger WarningClear WarningLoad WarningOn WarningOff '
+                   'WarningMessage WarningPage SourceDefinition SourceAccess SourceDecoder '
+                   'SourceEvidence SourceRoute SourcePoll SourceFreshness FuelRatio FuelPercent '
+                   'FuelGasolineRatio FuelEthanolRatio FuelGasolineDensity FuelEthanolDensity '
+                   'FuelReference'.split())
+
+
+def _field_case(objects, records, entry, case):
+    """Closed Field operand-materialization vocabulary; no general executor.
+
+    Input is a typed, byte-checked case entry from enum_dispatch. Registers carry
+    only Field/Formatter/sink identities, readonly constants or fixed stack cells.
+    Each predecessor is walked separately and cannot borrow another's producer.
+    This does not prove the subsequently selected tuple/sink bridge body.
+    """
+    values = {'r0': ('field', 0), 'r1': ('formatter', 0)}
+    cells = {}; sp = 0; visited = set(); binding = None; address = entry
+
+    def get(register):
+        if register == 'sp': return ('stack', sp)
+        require(register in values, 'missing typed Field operand producer')
+        return values[register]
+
+    def number(text):
+        require(re.fullmatch(r'#(?:0x[0-9a-f]+|[0-9]+)', text), 'unreviewed Field immediate')
+        return int(text[1:], 0)
+
+    def plus(term, amount):
+        require(isinstance(term, tuple) and term[0] in ('field', 'stack'), 'untyped Field address arithmetic')
+        return term[0], term[1] + amount
+
+    def memory(text):
+        match = re.fullmatch(r'\[(r(?:[0-9]|1[0-2])|sp|pc)(?:, (#(?:0x[0-9a-f]+|[0-9]+)))?\]', text)
+        require(match is not None, 'unreviewed Field memory operand/writeback')
+        return match[1], number(match[2]) if match[2] else 0
+
+    for _ in range(48):
+        require(address in records and address not in visited, 'unknown or cyclic Field suffix')
+        record = records[address]; visited.add(address)
+        mnemonic = record.mnemonic.removesuffix('.w')
+        operands = record.operands.split('@', 1)[0].strip()
+        destination, _, source = operands.partition(','); source = source.strip()
+        next_address = address + len(record.raw)
+        if mnemonic in ('movw', 'movt', 'mov', 'movs', 'ldr', 'ldrd'):
+            require(re.fullmatch(r'r(?:[0-9]|1[0-2])|lr', destination),
+                    'Field materialization writes implicit control/stack state')
+        if mnemonic in ('add', 'adds'):
+            require(re.fullmatch(r'r(?:[0-9]|1[0-2])|lr|sp', destination),
+                    'Field address arithmetic writes implicit control state')
+        if mnemonic in ('movw', 'movt', 'mov', 'movs'):
+            if source.startswith('#'):
+                immediate = number(source)
+                require(immediate <= (0xffff if mnemonic in ('movw', 'movt') else 0xffffffff),
+                        'Field address immediate overflow')
+                if mnemonic == 'movt':
+                    previous = get(destination)
+                    require(isinstance(previous, int), 'missing Field low-address producer')
+                    values[destination] = previous & 0xffff | immediate << 16
+                else: values[destination] = immediate
+            else:
+                require(mnemonic == 'mov', 'unreviewed Field register move')
+                values[destination] = get(source)
+        elif mnemonic in ('add', 'adds'):
+            parts = source.split(', ')
+            term = get(destination) if len(parts) == 1 else get(parts[0])
+            result = plus(term, number(parts[-1]))
+            if destination == 'sp':
+                require(result[0] == 'stack', 'Field stack restoration lacks known SP origin')
+                sp = result[1]
+            else: values[destination] = result
+        elif mnemonic == 'str':
+            base, offset = memory(source)
+            require(base == 'sp', 'Field store leaves known argument cells')
+            cells[sp + offset] = get(destination)
+        elif mnemonic == 'ldr':
+            base, offset = memory(source)
+            if base == 'pc':
+                values[destination] = struct.unpack('<I', objects.read_only(((address + 4) & ~3) + offset, 4))[0]
+            else:
+                require(get(base) == ('sink_vtable', 0) and offset == 12,
+                        'Field sink callback lacks live Formatter origin')
+                values[destination] = ('write_str', 0)
+        elif mnemonic == 'ldrd':
+            second, _, operand = source.partition(', ')
+            require(re.fullmatch(r'r(?:[0-9]|1[0-2])|lr', second),
+                    'Field paired load writes implicit control/stack state')
+            base, offset = memory(operand)
+            require(get(base) == ('formatter', 0) and offset == 0,
+                    'Field sink extraction lacks Formatter origin')
+            values[destination] = ('sink_data', 0); values[second] = ('sink_vtable', 0)
+        elif mnemonic == 'b':
+            target = re.match(r'0x([0-9a-f]+)(?:\s|$)', operands)
+            require(target is not None, 'unresolved Field shared-suffix branch')
+            next_address = int(target[1], 16)
+        elif mnemonic == 'bl':
+            target = re.match(r'0x([0-9a-f]+)(?:\s|$)', operands)
+            require(target is not None, 'unresolved Field callback bridge')
+            target = int(target[1], 16)
+            aliases = [n for n, e in objects.elf.functions.items() if e[0] & ~1 == target]
+            require(aliases and all(canonical_symbol(n) == TUPLE1_ROLE for n in aliases)
+                    and target in objects.sizes, 'unreviewed Field tuple bridge')
+            pointer, extent, index = objects.elf.functions[aliases[0]]
+            require(pointer & 1 and extent > 0 and 0 <= index < len(objects.elf.sections)
+                    and all(objects.elf.functions[n] == (pointer, extent, index) for n in aliases),
+                    'Field tuple bridge aliases/Thumb extent differ')
+            section = objects.elf.sections[index]
+            require(section[1] == 1 and section[2] & 6 == 6 and not section[2] & 1 and
+                    section[3] <= target < target + extent <= section[3] + section[5],
+                    'Field tuple bridge is outside its declared RO executable section')
+            objects.read_only(target, extent)
+            require(case in FIELD_PAYLOADS and binding is None and get('r0') == ('formatter', 0)
+                    and get('r3') == ('stack', 4) and cells.get(4) == ('field', FIELD_PAYLOADS[case][1]),
+                    'Field tuple reference does not match source case')
+            pointer, length = get('r1'), get('r2')
+            require(isinstance(pointer, int) and isinstance(length, int) and
+                    objects.read_only(pointer, length) == case.encode(), 'Field tuple name differs')
+            require(isinstance(cells.get(0), int), 'missing current Field vtable stack producer')
+            callback = objects.debug_vtable(cells[0], FIELD_PAYLOADS[case][0])
+            binding = {'case': case, 'role': FIELD_PAYLOADS[case][0], 'callback': callback,
+                       'vtable': cells[0], 'bridge': target, 'site': address}
+            for register in ('r0', 'r1', 'r2', 'r3', 'r12', 'lr'): values.pop(register, None)
+        elif mnemonic == 'pop':
+            registers = re.fullmatch(r'\{([^{}]+)\}', operands)
+            require(registers is not None, 'unreviewed Field return list')
+            registers = registers[1].split(', ')
+            require(registers in (['r7', 'pc'], ['r7', 'lr'], ['r5', 'r6', 'r7', 'lr']),
+                    'unreviewed Field return ABI')
+            sp += len(registers) * 4
+            if 'pc' in registers:
+                require(sp == 16 and binding is not None, 'Field tuple return lacks balanced binding')
+                return binding, visited
+        elif mnemonic == 'bx':
+            require(get(operands) == ('write_str', 0) and case not in FIELD_PAYLOADS
+                    and sp == 16 and get('r0') == ('sink_data', 0), 'unbound Field sink tail')
+            pointer, length = get('r1'), get('r2')
+            require(isinstance(pointer, int) and isinstance(length, int) and
+                    objects.read_only(pointer, length) == case.encode(), 'Field unit name differs')
+            return {'case': case, 'role': 'live_write_str', 'site': address}, visited
+        else: raise AssertionError('unreviewed instruction in Field materialization: ' + mnemonic)
+        address = next_address
+    raise AssertionError('Field producer/suffix bound exceeded')
+
+
+def field_case_bindings(objects, name, instructions):
+    dispatch = enum_dispatch(objects, name, instructions)
+    require(dispatch['role'] == 'field' and len(FIELD_CASES) == len(dispatch['entries']),
+            'wrong typed Field case family')
+    records = {i.address: i for i in instructions}
+    covered = {a for a in records if a < dispatch['table']}
+    bindings = []
+    for case, entry in zip(FIELD_CASES, dispatch['entries'], strict=True):
+        binding, visited = _field_case(objects, records, entry, case)
+        covered |= visited; bindings.append(binding)
+    require(all(a in covered or i.raw == b'\x00\xbf' and i.mnemonic == 'nop'
+                for a, i in records.items()), 'unreviewed Field body outside typed cases')
+    return bindings

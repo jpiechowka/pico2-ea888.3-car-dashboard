@@ -262,6 +262,11 @@ class EnumDispatch(unittest.TestCase):
         with self.assertRaises(AssertionError):
             config_stack.enum_dispatch(config_stack.DiagnosticObjects(elf,{base:64}),name,records)
 
+    def test_valid_dispatch_alone_cannot_admit_unproved_case_bodies(self):
+        elf,base,name,records=self.fixture()
+        with self.assertRaises(AssertionError):
+            config_stack.field_case_bindings(config_stack.DiagnosticObjects(elf,{base:16}),name,records)
+
     def test_wrong_tag_transform_unbacked_data_and_nonentry_destinations_reject(self):
         for fault in ('transform','data_target','outside','missing_record','wrong_role','writable'):
             elf,base,name,records=self.fixture();data=bytearray(elf.data)
@@ -275,5 +280,82 @@ class EnumDispatch(unittest.TestCase):
             elf.data=bytes(data)
             with self.subTest(fault=fault),self.assertRaises(AssertionError):
                 config_stack.enum_dispatch(config_stack.DiagnosticObjects(elf,{base:16}),name,records)
+
+class FieldSuffix(unittest.TestCase):
+    def fixture(self):
+        elf,base,sizes=TypedDiagnosticObjects.fixture(self)
+        data=bytearray(elf.data);data[32:40]=b'Controls'
+        struct.pack_into('<4I',data,0,0,4,4,base+97)
+        struct.pack_into('<4I',data,16,0,4,4,base+105)
+        elf.data=bytes(data)
+        tuple_role='_RNvMsa_NtCs123_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish'
+        elf.functions={CONTROL:(base+97,8,1),U8:(base+105,8,1),tuple_role:(base+113,8,1)}
+        sizes={base+96:64,base+104:24,base+112:64}
+        specs=[('movw','r12, #0x0'),('movt','r12, #0x1000'),('str','r0, [sp, #0x4]'),
+               ('add','r3, sp, #0x4'),('mov','r0, r1'),('movw','r1, #0x20'),
+               ('movt','r1, #0x1000'),('movs','r2, #0x8'),('str','r12, [sp]'),
+               ('bl','0x10000070'),('add','sp, #0x8'),('pop','{r7, pc}')]
+        records={base+0x200+4*i:Instruction(base+0x200+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        return config_stack.DiagnosticObjects(elf,sizes),base,records
+
+    def test_current_typed_controls_predecessor_binds_its_own_reference_and_vtable(self):
+        objects,base,records=self.fixture()
+        binding,visited=config_stack._field_case(objects,records,base+0x200,'Controls')
+        self.assertEqual((binding['role'],binding['callback'],binding['bridge']),
+                         ('control_error_ref',base+96,base+112))
+        self.assertEqual(visited,set(records))
+
+    def test_shared_suffix_cannot_borrow_valid_u8_object_or_skip_its_reference_producers(self):
+        for fault in ('wrong_type','ingress','writeback','wrong_field_offset','overwrite'):
+            objects,base,records=self.fixture();entry=base+0x200
+            if fault=='wrong_type':records[entry]=Instruction(entry,bytes(4),'movw','r12, #0x10')
+            elif fault=='ingress':entry+=8*4
+            elif fault=='writeback':records[entry+8]=Instruction(entry+8,bytes(4),'str','r0, [sp], #4')
+            elif fault=='wrong_field_offset':
+                specs=[(i.mnemonic,i.operands) for i in records.values()]
+                specs.insert(2,('adds','r0, #0x1'))
+                records={entry+4*i:Instruction(entry+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+            else:records[entry+7*4]=Instruction(entry+7*4,bytes(4),'movs','r12, #0x0')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_stack._field_case(objects,records,entry,'Controls')
+
+    def test_unit_suffix_retains_live_sink_origin_and_exact_name(self):
+        objects,base,_=self.fixture();data=bytearray(objects.elf.data);data[32:39]=b'Version';objects.elf.data=bytes(data)
+        specs=[('ldrd','r0, r1, [r1]'),('ldr','r3, [r1, #0xc]'),('movw','r1, #0x20'),
+               ('movt','r1, #0x1000'),('movs','r2, #0x7'),('add','sp, #0x8'),
+               ('pop','{r7, lr}'),('bx','r3')]
+        records={base+0x200+4*i:Instruction(base+0x200+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+        binding,_=config_stack._field_case(objects,records,base+0x200,'Version')
+        self.assertEqual(binding['role'],'live_write_str')
+        for fault in ('slot','origin','name','unbalanced','unknown'):
+            changed=dict(records)
+            if fault=='slot':changed[base+0x204]=Instruction(base+0x204,bytes(4),'ldr','r3, [r1, #0x10]')
+            elif fault=='origin':changed[base+0x200]=Instruction(base+0x200,bytes(4),'ldrd','r0, r1, [r0]')
+            elif fault=='name':changed[base+0x210]=Instruction(base+0x210,bytes(4),'movs','r2, #0x8')
+            elif fault=='unbalanced':changed[base+0x214]=Instruction(base+0x214,bytes(4),'add','sp, #0x4')
+            else:changed[base+0x210]=Instruction(base+0x210,bytes(4),'eors','r3, r0')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_stack._field_case(objects,changed,base+0x200,'Version')
+
+    def test_materialization_cannot_ignore_implicit_pc_or_stack_pointer_writes(self):
+        for mnemonic,operands in [('mov','pc, r1'),('mov','sp, r1'),('add','pc, r3, #0x0')]:
+            objects,base,records=self.fixture();entry=base+0x200
+            specs=[(i.mnemonic,i.operands) for i in records.values()]
+            specs.insert(8,(mnemonic,operands))
+            records={entry+4*i:Instruction(entry+4*i,bytes(4),m,o) for i,(m,o) in enumerate(specs)}
+            with self.subTest(mnemonic=mnemonic,operands=operands),self.assertRaises(AssertionError):
+                config_stack._field_case(objects,records,entry,'Controls')
+
+    def test_tuple_bridge_identity_includes_code_ownership_and_consistent_thumb_aliases(self):
+        for fault in ('data_section','arm','alias'):
+            objects,base,records=self.fixture()
+            name=next(n for n in objects.elf.functions if 'debug_tuple_field1_finish' in n)
+            value,extent,index=objects.elf.functions[name]
+            if fault=='data_section':objects.elf.functions[name]=(value,extent,0)
+            elif fault=='arm':objects.elf.functions[name]=(value&~1,extent,index)
+            else:objects.elf.functions[name+'.1']=(value,extent+2,index)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_stack._field_case(objects,records,base+0x200,'Controls')
+
 
 if __name__=='__main__':unittest.main()
