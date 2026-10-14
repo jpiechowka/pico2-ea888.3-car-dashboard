@@ -1,0 +1,3285 @@
+[
+  {
+    "mode": "speed2",
+    "objects": [
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "defmt_metadata_id",
+          "raw_names": [
+            "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}"
+          ]
+        },
+        "value": 2,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268461186,
+          "high": 268461190,
+          "register": "r0",
+          "value": 2
+        },
+        "resolved": {
+          "symbols": [
+            {
+              "name": "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}",
+              "address": 2,
+              "size": 1,
+              "type": 1,
+              "section": 12
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "fmt_write_vtable",
+          "layout": [
+            0,
+            0,
+            1
+          ],
+          "slots": [
+            [
+              "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+            ],
+            [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+            ],
+            [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+            ]
+          ]
+        },
+        "value": 268807300,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727356,
+          "high": 268727360,
+          "register": "r1",
+          "value": 268807300,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "00000000000000000100000099730410a973041035740410ff6578706c696369742070616e696300b4a504107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c790000feb7041074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874feb7041074000000e20000000d000000757904108579041085790410357a041042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a65602061747472696275746520"
+        },
+        "resolved": {
+          "words": [
+            0,
+            0,
+            1,
+            268727193,
+            268727209,
+            268727349
+          ],
+          "slots": [
+            {
+              "address": 268727192,
+              "aliases": [
+                {
+                  "name": "_RNvXs3_NtCs67cez4QvGWc_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str",
+                  "address": 268727193,
+                  "size": 16,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+              ]
+            },
+            {
+              "address": 268727208,
+              "aliases": [
+                {
+                  "name": "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_",
+                  "address": 268727209,
+                  "size": 140,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+              ]
+            },
+            {
+              "address": 268727348,
+              "aliases": [
+                {
+                  "name": "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_",
+                  "address": 268727349,
+                  "size": 24,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+              ]
+            }
+          ],
+          "hex": "00000000000000000100000099730410a973041035740410"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "literal",
+          "length": 14,
+          "hex": "6578706c696369742070616e6963"
+        },
+        "value": 268807325,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727392,
+          "high": 268727400,
+          "register": "r0",
+          "value": 268807325,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6578706c696369742070616e696300b4a504107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c790000feb7041074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874feb7041074000000e20000000d000000757904108579041085790410357a041042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e617373657274696f6e20666169"
+        },
+        "resolved": {
+          "text": "explicit panic"
+        }
+      },
+      {
+        "token": "obj1",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d312e312e315c7372635c6c69622e7273",
+          "line": 385,
+          "column": 5
+        },
+        "value": 268807340,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727396,
+          "high": 268727404,
+          "register": "r2",
+          "value": 268807340,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "b4a504107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c790000feb7041074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874feb7041074000000e20000000d000000757904108579041085790410357a041042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e617373657274696f6e206661696c65643a206e203c20327573697a65"
+        },
+        "resolved": {
+          "words": [
+            268740020,
+            112,
+            385,
+            5
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-1.1.1\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvNtCs_10embassy_rp21critical_section_impl10LOCK_OWNER.0"
+          ]
+        },
+        "value": 537317760,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268730802,
+          "high": 268730806,
+          "register": "r1",
+          "value": 537317760
+        },
+        "resolved": {
+          "address": 537317760,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvNtCsfGU2NfsDJ99_10embassy_rp21critical_section_impl10LOCK_OWNER.0",
+              "address": 537317760,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.0"
+          ]
+        },
+        "value": 537317736,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727678,
+          "high": 268727682,
+          "register": "r5",
+          "value": 537317736
+        },
+        "resolved": {
+          "address": 537317736,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.0",
+              "address": 537317736,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj2",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.2"
+          ]
+        },
+        "value": 537317738,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727504,
+          "high": 268727508,
+          "register": "r2",
+          "value": 537317738
+        },
+        "resolved": {
+          "address": 537317738,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.2",
+              "address": 537317738,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj5",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.1"
+          ]
+        },
+        "value": 537317737,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727998,
+          "high": 268728002,
+          "register": "r0",
+          "value": 537317737
+        },
+        "resolved": {
+          "address": 537317737,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.1",
+              "address": 537317737,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj1",
+        "type": {
+          "kind": "rtt_header",
+          "extent": 48,
+          "name_bytes": "6465666d7400",
+          "buffer_extent": 1024,
+          "fixed_words": {
+            "4": 1,
+            "5": 0,
+            "8": 1024,
+            "9": 0,
+            "10": 0,
+            "11": 1
+          },
+          "roles": [
+            "_SEGGER_RTT"
+          ]
+        },
+        "value": 536947448,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268728106,
+          "high": 268728112,
+          "register": "r9",
+          "value": 536947448,
+          "section": ".data",
+          "flags": 7,
+          "first256": "534547474552205254540000000000000100000000000000f02a012010d3062000040000000000000000000001000000"
+        },
+        "resolved": {
+          "address": 536947448,
+          "extent": 1,
+          "section": ".data",
+          "flags": 7,
+          "section_type": 1,
+          "symbols": [
+            {
+              "name": "_SEGGER_RTT",
+              "address": 536947448,
+              "size": 48,
+              "type": 1,
+              "section": 6
+            }
+          ],
+          "words": [
+            1195853139,
+            1377849925,
+            21588,
+            0,
+            1,
+            0,
+            536947440,
+            537318160,
+            1024,
+            0,
+            0,
+            1
+          ],
+          "initial_hex": "534547474552205254540000000000000100000000000000f02a012010d3062000040000000000000000000001000000",
+          "name": {
+            "address": 536947440,
+            "extent": 6,
+            "section": ".data",
+            "flags": 7,
+            "section_type": 1,
+            "symbols": [
+              {
+                "name": "_RNvCsgiP2eO6CbBA_9defmt_rtt4NAME",
+                "address": 536947440,
+                "size": 6,
+                "type": 1,
+                "section": 6
+              }
+            ]
+          },
+          "buffer": {
+            "address": 537318160,
+            "extent": 1024,
+            "section": ".uninit",
+            "flags": 3,
+            "section_type": 8,
+            "symbols": [
+              {
+                "name": "_RNvCsgiP2eO6CbBA_9defmt_rtt6BUFFER",
+                "address": 537318160,
+                "size": 1024,
+                "type": 1,
+                "section": 9
+              }
+            ]
+          }
+        }
+      },
+      {
+        "token": "obj5",
+        "type": {
+          "kind": "literal",
+          "length": 30,
+          "hex": "6465666d74206c6f676765722074616b656e207265656e7472616e746c79"
+        },
+        "value": 268807356,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727646,
+          "high": 268727654,
+          "register": "r0",
+          "value": 268807356,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6465666d74206c6f676765722074616b656e207265656e7472616e746c790000feb7041074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874feb7041074000000e20000000d000000757904108579041085790410357a041042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e617373657274696f6e206661696c65643a206e203c20327573697a6557a30410790000008700000009000000"
+        },
+        "resolved": {
+          "text": "defmt logger taken reentrantly"
+        }
+      },
+      {
+        "token": "obj6",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273",
+          "line": 173,
+          "column": 13
+        },
+        "value": 268807388,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268727650,
+          "high": 268727658,
+          "register": "r2",
+          "value": 268807388,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "feb7041074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874feb7041074000000e20000000d000000757904108579041085790410357a041042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e617373657274696f6e206661696c65643a206e203c20327573697a6557a30410790000008700000009000000617373657274696f6e206661696c65643a206e203c20367573697a6514b00410"
+        },
+        "resolved": {
+          "words": [
+            268744702,
+            116,
+            173,
+            13
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-rtt-1.3.0\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj8",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.3"
+          ]
+        },
+        "value": 537317739,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268728564,
+          "high": 268728572,
+          "register": "r2",
+          "value": 537317739
+        },
+        "resolved": {
+          "address": 537317739,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.3",
+              "address": 537317739,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj6",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.4"
+          ]
+        },
+        "value": 537317740,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268728444,
+          "high": 268728452,
+          "register": "r1",
+          "value": 537317740
+        },
+        "resolved": {
+          "address": 537317740,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.4",
+              "address": 537317740,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj7",
+        "type": {
+          "kind": "literal",
+          "length": 28,
+          "hex": "6465666d742072656c65617365206f7574206f6620636f6e74657874"
+        },
+        "value": 268807404,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268728058,
+          "high": 268728066,
+          "register": "r0",
+          "value": 268807404,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6465666d742072656c65617365206f7574206f6620636f6e74657874feb7041074000000e20000000d000000757904108579041085790410357a041042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e617373657274696f6e206661696c65643a206e203c20327573697a6557a30410790000008700000009000000617373657274696f6e206661696c65643a206e203c20367573697a6514b0041024000000300000003300000014b00410"
+        },
+        "resolved": {
+          "text": "defmt release out of context"
+        }
+      },
+      {
+        "token": "obj8",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273",
+          "line": 226,
+          "column": 13
+        },
+        "value": 268807432,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268728062,
+          "high": 268728070,
+          "register": "r2",
+          "value": 268807432,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "feb7041074000000e20000000d000000757904108579041085790410357a041042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e617373657274696f6e206661696c65643a206e203c20327573697a6557a30410790000008700000009000000617373657274696f6e206661696c65643a206e203c20367573697a6514b0041024000000300000003300000014b00410240000006b0000002a00000014b0041024000000690000002e000000"
+        },
+        "resolved": {
+          "words": [
+            268744702,
+            116,
+            226,
+            13
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-rtt-1.3.0\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "literal",
+          "length": 104,
+          "hex": "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e"
+        },
+        "value": 268807464,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268728904,
+          "high": 268728908,
+          "register": "r1",
+          "value": 268807464,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e617373657274696f6e206661696c65643a206e203c20327573697a6557a30410790000008700000009000000617373657274696f6e206661696c65643a206e203c20367573697a6514b0041024000000300000003300000014b00410240000006b0000002a00000014b0041024000000690000002e00000057a3041079000000820000000900000057a30410790000002b00000009000000"
+        },
+        "resolved": {
+          "text": "Busy - Too many instances of this task are already running. Check the `pool_size` attribute of the task."
+        }
+      }
+    ],
+    "sections": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        28,
+        1,
+        6,
+        268435776,
+        624,
+        303148,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        46,
+        1,
+        50,
+        268738944,
+        303792,
+        70068,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        54,
+        1,
+        7,
+        536870912,
+        373864,
+        76584,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        73,
+        8,
+        3,
+        536947520,
+        450464,
+        370640,
+        0,
+        0,
+        32,
+        0
+      ],
+      [
+        78,
+        8,
+        3,
+        537318160,
+        450464,
+        1024,
+        0,
+        0,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        110,
+        1,
+        2097152,
+        0,
+        452486,
+        19,
+        0,
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "named": {
+      ".text": 3,
+      ".rodata": 5,
+      ".data": 6,
+      ".bss": 8,
+      ".uninit": 9,
+      ".defmt": 12
+    },
+    "segments": [
+      [
+        3,
+        268727192,
+        "80b56f460846114600f0b6f9002080bd"
+      ],
+      [
+        3,
+        268727208,
+        "80b56f4682b000208029019003d28df80410012134e04ff6fe7cc0f2ff3c08466cf39f10b1f5006f4fea911207d242f0c0018df804108df80500022120e000236cf39f12b3eb114f4fea113e09d14ef0e0018df804108df805208df8060003210ee06ff00f0343ea91416cf39f1e8df8041004218df805e08df806208df8070001a800f071f9002002b080bd"
+      ],
+      [
+        3,
+        268727348,
+        "80b56f4613460a464af68441c1f20501bde88040e8f7debc"
+      ],
+      [
+        5,
+        268807300,
+        "00000000000000000100000099730410a973041035740410"
+      ],
+      [
+        5,
+        268807325,
+        "6578706c696369742070616e6963"
+      ],
+      [
+        5,
+        268807340,
+        "b4a50410700000008101000005000000"
+      ],
+      [
+        5,
+        268740020,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d312e312e315c7372635c6c69622e7273"
+      ],
+      [
+        6,
+        536947448,
+        "534547474552205254540000000000000100000000000000f02a012010d3062000040000000000000000000001000000"
+      ],
+      [
+        6,
+        536947440,
+        "6465666d7400"
+      ],
+      [
+        5,
+        268807356,
+        "6465666d74206c6f676765722074616b656e207265656e7472616e746c79"
+      ],
+      [
+        5,
+        268807388,
+        "feb7041074000000ad0000000d000000"
+      ],
+      [
+        5,
+        268744702,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273"
+      ],
+      [
+        5,
+        268807404,
+        "6465666d742072656c65617365206f7574206f6620636f6e74657874"
+      ],
+      [
+        5,
+        268807432,
+        "feb7041074000000e20000000d000000"
+      ],
+      [
+        5,
+        268807464,
+        "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e"
+      ]
+    ],
+    "symbol_entries": [
+      [
+        "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}",
+        2,
+        1,
+        17,
+        12
+      ],
+      [
+        "_RNvXs3_NtCs67cez4QvGWc_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str",
+        268727193,
+        16,
+        2,
+        3
+      ],
+      [
+        "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_",
+        268727209,
+        140,
+        2,
+        3
+      ],
+      [
+        "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_",
+        268727349,
+        24,
+        2,
+        3
+      ],
+      [
+        "_RNvNtCsfGU2NfsDJ99_10embassy_rp21critical_section_impl10LOCK_OWNER.0",
+        537317760,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.0",
+        537317736,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.2",
+        537317738,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.1",
+        537317737,
+        1,
+        1,
+        8
+      ],
+      [
+        "_SEGGER_RTT",
+        536947448,
+        48,
+        17,
+        6
+      ],
+      [
+        "_RNvCsgiP2eO6CbBA_9defmt_rtt4NAME",
+        536947440,
+        6,
+        1,
+        6
+      ],
+      [
+        "_RNvCsgiP2eO6CbBA_9defmt_rtt6BUFFER",
+        537318160,
+        1024,
+        1,
+        9
+      ],
+      [
+        "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.3",
+        537317739,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsgiP2eO6CbBA_9defmt_rtt11RTT_ENCODER.4",
+        537317740,
+        1,
+        1,
+        8
+      ]
+    ],
+    "functions": {
+      "_RNvXs3_NtCs67cez4QvGWc_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str": [
+        268727193,
+        16,
+        3
+      ],
+      "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_": [
+        268727209,
+        140,
+        3
+      ],
+      "_RNvYNtNtCs67cez4QvGWc_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_": [
+        268727349,
+        24,
+        3
+      ]
+    },
+    "sizes": {
+      "268727192": 8,
+      "268727208": 16,
+      "268727348": 8
+    },
+    "elf_sha256": "db82c13fc9f8f06379ae2487306950964d7a09d0c8063c916919988a5ed3231a"
+  },
+  {
+    "mode": "sizes",
+    "objects": [
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "defmt_metadata_id",
+          "raw_names": [
+            "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}"
+          ]
+        },
+        "value": 1,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268638590,
+          "high": 268638594,
+          "register": "r0",
+          "value": 1
+        },
+        "resolved": {
+          "symbols": [
+            {
+              "name": "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}",
+              "address": 1,
+              "size": 1,
+              "type": 1,
+              "section": 12
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "fmt_write_vtable",
+          "layout": [
+            0,
+            0,
+            1
+          ],
+          "slots": [
+            [
+              "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+            ],
+            [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+            ],
+            [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+            ]
+          ]
+        },
+        "value": 268747124,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268638706,
+          "high": 268638710,
+          "register": "r1",
+          "value": 268747124,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "000000000000000001000000031a0310131a0310eb1903106578706c696369742070616e69630000f24703107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c7900003f5b031074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e746578743f5b031074000000e20000000d0000005f1f0310711f0310711f0310bb1f031042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a65602061747472696275746520"
+        },
+        "resolved": {
+          "words": [
+            0,
+            0,
+            1,
+            268638723,
+            268638739,
+            268638699
+          ],
+          "slots": [
+            {
+              "address": 268638722,
+              "aliases": [
+                {
+                  "name": "_RNvXs3_NtCs9wYuybjb7iG_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str",
+                  "address": 268638723,
+                  "size": 16,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+              ]
+            },
+            {
+              "address": 268638738,
+              "aliases": [
+                {
+                  "name": "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_",
+                  "address": 268638739,
+                  "size": 140,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+              ]
+            },
+            {
+              "address": 268638698,
+              "aliases": [
+                {
+                  "name": "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_",
+                  "address": 268638699,
+                  "size": 24,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+              ]
+            }
+          ],
+          "hex": "000000000000000001000000031a0310131a0310eb190310"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "literal",
+          "length": 14,
+          "hex": "6578706c696369742070616e6963"
+        },
+        "value": 268747148,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268638898,
+          "high": 268638906,
+          "register": "r0",
+          "value": 268747148,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6578706c696369742070616e69630000f24703107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c7900003f5b031074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e746578743f5b031074000000e20000000d0000005f1f0310711f0310711f0310bb1f031042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e23490310210000001e040000"
+        },
+        "resolved": {
+          "text": "explicit panic"
+        }
+      },
+      {
+        "token": "obj1",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d312e312e315c7372635c6c69622e7273",
+          "line": 385,
+          "column": 5
+        },
+        "value": 268747164,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268638902,
+          "high": 268638910,
+          "register": "r2",
+          "value": 268747164,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "f24703107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c7900003f5b031074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e746578743f5b031074000000e20000000d0000005f1f0310711f0310711f0310bb1f031042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e23490310210000001e04000020000000145303102400000030000000"
+        },
+        "resolved": {
+          "words": [
+            268650482,
+            112,
+            385,
+            5
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-1.1.1\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj5",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.0"
+          ]
+        },
+        "value": 537277896,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268639290,
+          "high": 268639294,
+          "register": "r3",
+          "value": 537277896
+        },
+        "resolved": {
+          "address": 537277896,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.0",
+              "address": 537277896,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj1",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.2"
+          ]
+        },
+        "value": 537277898,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268638952,
+          "high": 268638956,
+          "register": "r2",
+          "value": 537277898
+        },
+        "resolved": {
+          "address": 537277898,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.2",
+              "address": 537277898,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj7",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.1"
+          ]
+        },
+        "value": 537277897,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268639416,
+          "high": 268639424,
+          "register": "r0",
+          "value": 537277897
+        },
+        "resolved": {
+          "address": 537277897,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.1",
+              "address": 537277897,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj13",
+        "type": {
+          "kind": "rtt_header",
+          "extent": 48,
+          "name_bytes": "6465666d7400",
+          "buffer_extent": 1024,
+          "fixed_words": {
+            "4": 1,
+            "5": 0,
+            "8": 1024,
+            "9": 0,
+            "10": 0,
+            "11": 1
+          },
+          "roles": [
+            "_SEGGER_RTT"
+          ]
+        },
+        "value": 536900184,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268640008,
+          "high": 268640012,
+          "register": "r2",
+          "value": 536900184,
+          "section": ".data",
+          "flags": 7,
+          "first256": "53454747455220525454000000000000010000000000000050720020a437062000040000000000000000000001000000"
+        },
+        "resolved": {
+          "address": 536900184,
+          "extent": 1,
+          "section": ".data",
+          "flags": 7,
+          "section_type": 1,
+          "symbols": [
+            {
+              "name": "_SEGGER_RTT",
+              "address": 536900184,
+              "size": 48,
+              "type": 1,
+              "section": 6
+            }
+          ],
+          "words": [
+            1195853139,
+            1377849925,
+            21588,
+            0,
+            1,
+            0,
+            536900176,
+            537278372,
+            1024,
+            0,
+            0,
+            1
+          ],
+          "initial_hex": "53454747455220525454000000000000010000000000000050720020a437062000040000000000000000000001000000",
+          "name": {
+            "address": 536900176,
+            "extent": 6,
+            "section": ".data",
+            "flags": 7,
+            "section_type": 1,
+            "symbols": [
+              {
+                "name": "_RNvCshUgi4247fxc_9defmt_rtt4NAME",
+                "address": 536900176,
+                "size": 6,
+                "type": 1,
+                "section": 6
+              }
+            ]
+          },
+          "buffer": {
+            "address": 537278372,
+            "extent": 1024,
+            "section": ".uninit",
+            "flags": 3,
+            "section_type": 8,
+            "symbols": [
+              {
+                "name": "_RNvCshUgi4247fxc_9defmt_rtt6BUFFER",
+                "address": 537278372,
+                "size": 1024,
+                "type": 1,
+                "section": 9
+              }
+            ]
+          }
+        }
+      },
+      {
+        "token": "obj4",
+        "type": {
+          "kind": "literal",
+          "length": 30,
+          "hex": "6465666d74206c6f676765722074616b656e207265656e7472616e746c79"
+        },
+        "value": 268747180,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268639080,
+          "high": 268639088,
+          "register": "r0",
+          "value": 268747180,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6465666d74206c6f676765722074616b656e207265656e7472616e746c7900003f5b031074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e746578743f5b031074000000e20000000d0000005f1f0310711f0310711f0310bb1f031042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e23490310210000001e0400002000000014530310240000003000000033000000145303102400000069000000"
+        },
+        "resolved": {
+          "text": "defmt logger taken reentrantly"
+        }
+      },
+      {
+        "token": "obj5",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273",
+          "line": 173,
+          "column": 13
+        },
+        "value": 268747212,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268639084,
+          "high": 268639092,
+          "register": "r2",
+          "value": 268747212,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "3f5b031074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e746578743f5b031074000000e20000000d0000005f1f0310711f0310711f0310bb1f031042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e23490310210000001e04000020000000145303102400000030000000330000001453031024000000690000002e00000014530310240000006b0000002a000000617373657274696f6e206661"
+        },
+        "resolved": {
+          "words": [
+            268655423,
+            116,
+            173,
+            13
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-rtt-1.3.0\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj10",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.3"
+          ]
+        },
+        "value": 537277899,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268639812,
+          "high": 268639816,
+          "register": "r11",
+          "value": 537277899
+        },
+        "resolved": {
+          "address": 537277899,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.3",
+              "address": 537277899,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj14",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvCs_9defmt_rtt11RTT_ENCODER.4"
+          ]
+        },
+        "value": 537277900,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268640044,
+          "high": 268640056,
+          "register": "r0",
+          "value": 537277900
+        },
+        "resolved": {
+          "address": 537277900,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.4",
+              "address": 537277900,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvNtCs_10embassy_rp21critical_section_impl10LOCK_OWNER.0"
+          ]
+        },
+        "value": 537277920,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268642174,
+          "high": 268642178,
+          "register": "r1",
+          "value": 537277920
+        },
+        "resolved": {
+          "address": 537277920,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvNtCs5TA4rS8VFK2_10embassy_rp21critical_section_impl10LOCK_OWNER.0",
+              "address": 537277920,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj9",
+        "type": {
+          "kind": "literal",
+          "length": 28,
+          "hex": "6465666d742072656c65617365206f7574206f6620636f6e74657874"
+        },
+        "value": 268747228,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268639478,
+          "high": 268639486,
+          "register": "r0",
+          "value": 268747228,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6465666d742072656c65617365206f7574206f6620636f6e746578743f5b031074000000e20000000d0000005f1f0310711f0310711f0310bb1f031042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e23490310210000001e04000020000000145303102400000030000000330000001453031024000000690000002e00000014530310240000006b0000002a000000617373657274696f6e206661696c65643a206e203c2031367573697a"
+        },
+        "resolved": {
+          "text": "defmt release out of context"
+        }
+      },
+      {
+        "token": "obj10",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273",
+          "line": 226,
+          "column": 13
+        },
+        "value": 268747256,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268639482,
+          "high": 268639490,
+          "register": "r2",
+          "value": 268747256,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "3f5b031074000000e20000000d0000005f1f0310711f0310711f0310bb1f031042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e23490310210000001e04000020000000145303102400000030000000330000001453031024000000690000002e00000014530310240000006b0000002a000000617373657274696f6e206661696c65643a206e203c2031367573697a65000000705003107a0000007d00000009000000617373657274696f"
+        },
+        "resolved": {
+          "words": [
+            268655423,
+            116,
+            226,
+            13
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-rtt-1.3.0\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "literal",
+          "length": 104,
+          "hex": "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e"
+        },
+        "value": 268747288,
+        "producer": {
+          "kind": "mov_pair",
+          "low": 268640204,
+          "high": 268640208,
+          "register": "r1",
+          "value": 268747288,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e23490310210000001e04000020000000145303102400000030000000330000001453031024000000690000002e00000014530310240000006b0000002a000000617373657274696f6e206661696c65643a206e203c2031367573697a65000000705003107a0000007d00000009000000617373657274696f6e206661696c65643a206e203c2031327573697a65000000825c03107a000000"
+        },
+        "resolved": {
+          "text": "Busy - Too many instances of this task are already running. Check the `pool_size` attribute of the task."
+        }
+      }
+    ],
+    "sections": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        28,
+        1,
+        6,
+        268435776,
+        624,
+        213348,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        46,
+        1,
+        50,
+        268649144,
+        213992,
+        99772,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        54,
+        1,
+        7,
+        536870912,
+        313768,
+        29320,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        73,
+        8,
+        3,
+        536900256,
+        343104,
+        378116,
+        0,
+        0,
+        32,
+        0
+      ],
+      [
+        78,
+        8,
+        3,
+        537278372,
+        343104,
+        1024,
+        0,
+        0,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        110,
+        1,
+        2097152,
+        0,
+        345788,
+        20,
+        0,
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "named": {
+      ".text": 3,
+      ".rodata": 5,
+      ".data": 6,
+      ".bss": 8,
+      ".uninit": 9,
+      ".defmt": 12
+    },
+    "segments": [
+      [
+        3,
+        268638722,
+        "80b56f460846114600f07ff9002080bd"
+      ],
+      [
+        3,
+        268638738,
+        "80b56f4682b000208029019003d28df80410012134e04ff6fe7cc0f2ff3c08466cf39f10b1f5006f4fea911207d242f0c0018df804108df80500022120e000236cf39f12b3eb114f4fea113e09d14ef0e0018df804108df805208df8060003210ee06ff00f0343ea91416cf39f1e8df8041004218df805e08df806208df8070001a800f03af9002002b080bd"
+      ],
+      [
+        3,
+        268638698,
+        "80b56f4613460a464cf27411c1f20401bde88040ebf7cdbd"
+      ],
+      [
+        5,
+        268747124,
+        "000000000000000001000000031a0310131a0310eb190310"
+      ],
+      [
+        5,
+        268747148,
+        "6578706c696369742070616e6963"
+      ],
+      [
+        5,
+        268747164,
+        "f2470310700000008101000005000000"
+      ],
+      [
+        5,
+        268650482,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d312e312e315c7372635c6c69622e7273"
+      ],
+      [
+        6,
+        536900184,
+        "53454747455220525454000000000000010000000000000050720020a437062000040000000000000000000001000000"
+      ],
+      [
+        6,
+        536900176,
+        "6465666d7400"
+      ],
+      [
+        5,
+        268747180,
+        "6465666d74206c6f676765722074616b656e207265656e7472616e746c79"
+      ],
+      [
+        5,
+        268747212,
+        "3f5b031074000000ad0000000d000000"
+      ],
+      [
+        5,
+        268655423,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273"
+      ],
+      [
+        5,
+        268747228,
+        "6465666d742072656c65617365206f7574206f6620636f6e74657874"
+      ],
+      [
+        5,
+        268747256,
+        "3f5b031074000000e20000000d000000"
+      ],
+      [
+        5,
+        268747288,
+        "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e"
+      ]
+    ],
+    "symbol_entries": [
+      [
+        "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}",
+        1,
+        1,
+        17,
+        12
+      ],
+      [
+        "_RNvXs3_NtCs9wYuybjb7iG_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str",
+        268638723,
+        16,
+        2,
+        3
+      ],
+      [
+        "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_",
+        268638739,
+        140,
+        2,
+        3
+      ],
+      [
+        "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_",
+        268638699,
+        24,
+        2,
+        3
+      ],
+      [
+        "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.0",
+        537277896,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.2",
+        537277898,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.1",
+        537277897,
+        1,
+        1,
+        8
+      ],
+      [
+        "_SEGGER_RTT",
+        536900184,
+        48,
+        17,
+        6
+      ],
+      [
+        "_RNvCshUgi4247fxc_9defmt_rtt4NAME",
+        536900176,
+        6,
+        1,
+        6
+      ],
+      [
+        "_RNvCshUgi4247fxc_9defmt_rtt6BUFFER",
+        537278372,
+        1024,
+        1,
+        9
+      ],
+      [
+        "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.3",
+        537277899,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCshUgi4247fxc_9defmt_rtt11RTT_ENCODER.4",
+        537277900,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvNtCs5TA4rS8VFK2_10embassy_rp21critical_section_impl10LOCK_OWNER.0",
+        537277920,
+        1,
+        1,
+        8
+      ]
+    ],
+    "functions": {
+      "_RNvXs3_NtCs9wYuybjb7iG_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str": [
+        268638723,
+        16,
+        3
+      ],
+      "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_": [
+        268638739,
+        140,
+        3
+      ],
+      "_RNvYNtNtCs9wYuybjb7iG_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_": [
+        268638699,
+        24,
+        3
+      ]
+    },
+    "sizes": {
+      "268638722": 8,
+      "268638738": 16,
+      "268638698": 8
+    },
+    "elf_sha256": "856d628b9e1b32752a03facf96a8f1a6d02b8e8f0fcc91eabe799774d84cfcce"
+  },
+  {
+    "mode": "sizez",
+    "objects": [
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "defmt_metadata_id",
+          "raw_names": [
+            "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}"
+          ]
+        },
+        "value": 2,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594452,
+          "pool": 268594468,
+          "register": "r0",
+          "value": 2
+        },
+        "resolved": {
+          "symbols": [
+            {
+              "name": "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}",
+              "address": 2,
+              "size": 1,
+              "type": 1,
+              "section": 12
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "fmt_write_vtable",
+          "layout": [
+            0,
+            0,
+            1
+          ],
+          "slots": [
+            [
+              "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+            ],
+            [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+            ],
+            [
+              "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+            ]
+          ]
+        },
+        "value": 268680956,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594552,
+          "pool": 268594564,
+          "register": "r1",
+          "value": 268680956,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "000000000000000001000000896d0210996d0210716d02106578706c696369742070616e696300000da502107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c790000ddb9021074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874ddb9021074000000e20000000d0000005170021061700210617002108970021042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a65602061747472696275746520"
+        },
+        "resolved": {
+          "words": [
+            0,
+            0,
+            1,
+            268594569,
+            268594585,
+            268594545
+          ],
+          "slots": [
+            {
+              "address": 268594568,
+              "aliases": [
+                {
+                  "name": "_RNvXs3_NtCsaFtIK0bfMPA_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str",
+                  "address": 268594569,
+                  "size": 16,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvXs3_NtCs_5defmt6exportNtB5_8FmtWriteNtNtCs_4core3fmt5Write9write_str"
+              ]
+            },
+            {
+              "address": 268594584,
+              "aliases": [
+                {
+                  "name": "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_",
+                  "address": 268594585,
+                  "size": 128,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write10write_charB6_"
+              ]
+            },
+            {
+              "address": 268594544,
+              "aliases": [
+                {
+                  "name": "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_",
+                  "address": 268594545,
+                  "size": 24,
+                  "type": 2,
+                  "section": 3
+                }
+              ],
+              "normalized_roles": [
+                "_RNvYNtNtCs_5defmt6export8FmtWriteNtNtCs_4core3fmt5Write9write_fmtB6_"
+              ]
+            }
+          ],
+          "hex": "000000000000000001000000896d0210996d0210716d0210"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "literal",
+          "length": 14,
+          "hex": "6578706c696369742070616e6963"
+        },
+        "value": 268680980,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594732,
+          "pool": 268594744,
+          "register": "r0",
+          "value": 268680980,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6578706c696369742070616e696300000da502107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c790000ddb9021074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874ddb9021074000000e20000000d0000005170021061700210617002108970021042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e88b002102400000030000000"
+        },
+        "resolved": {
+          "text": "explicit panic"
+        }
+      },
+      {
+        "token": "obj1",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d312e312e315c7372635c6c69622e7273",
+          "line": 385,
+          "column": 5
+        },
+        "value": 268680996,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594734,
+          "pool": 268594748,
+          "register": "r2",
+          "value": 268680996,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "0da502107000000081010000050000006465666d74206c6f676765722074616b656e207265656e7472616e746c790000ddb9021074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874ddb9021074000000e20000000d0000005170021061700210617002108970021042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e88b0021024000000300000003300000088b002102400000069000000"
+        },
+        "resolved": {
+          "words": [
+            268608781,
+            112,
+            385,
+            5
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-1.1.1\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "rtt_header",
+          "extent": 48,
+          "name_bytes": "6465666d7400",
+          "buffer_extent": 1024,
+          "fixed_words": {
+            "4": 1,
+            "5": 0,
+            "8": 1024,
+            "9": 0,
+            "10": 0,
+            "11": 1
+          },
+          "roles": [
+            "_SEGGER_RTT"
+          ]
+        },
+        "value": 536946608,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594760,
+          "pool": 268594844,
+          "register": "r9",
+          "value": 536946608,
+          "section": ".data",
+          "flags": 7,
+          "first256": "534547474552205254540000000000000100000000000000a8270120d8cf06200004000000000000000000000100000080d1f00800a3e111000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff00000000000000"
+        },
+        "resolved": {
+          "address": 536946608,
+          "extent": 1,
+          "section": ".data",
+          "flags": 7,
+          "section_type": 1,
+          "symbols": [
+            {
+              "name": "_SEGGER_RTT",
+              "address": 536946608,
+              "size": 48,
+              "type": 1,
+              "section": 6
+            }
+          ],
+          "words": [
+            1195853139,
+            1377849925,
+            21588,
+            0,
+            1,
+            0,
+            536946600,
+            537317336,
+            1024,
+            0,
+            0,
+            1
+          ],
+          "initial_hex": "534547474552205254540000000000000100000000000000a8270120d8cf062000040000000000000000000001000000",
+          "name": {
+            "address": 536946600,
+            "extent": 6,
+            "section": ".data",
+            "flags": 7,
+            "section_type": 1,
+            "symbols": [
+              {
+                "name": "_RNvCsHa5H3rBApY_9defmt_rtt4NAME",
+                "address": 536946600,
+                "size": 6,
+                "type": 1,
+                "section": 6
+              }
+            ]
+          },
+          "buffer": {
+            "address": 537317336,
+            "extent": 1024,
+            "section": ".uninit",
+            "flags": 3,
+            "section_type": 8,
+            "symbols": [
+              {
+                "name": "_RNvCsHa5H3rBApY_9defmt_rtt6BUFFER",
+                "address": 537317336,
+                "size": 1024,
+                "type": 1,
+                "section": 9
+              }
+            ]
+          }
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "split_state_anchor",
+          "anchor_is_encoder": false,
+          "offsets": {
+            "taken": 1,
+            "cs_restore": 2,
+            "started": 3,
+            "run": 4,
+            "zeros": 5
+          },
+          "roles": [
+            [
+              "_RNvCs_9defmt_rtt11RTT_ENCODER.0"
+            ],
+            [
+              "_RNvCs_9defmt_rtt11RTT_ENCODER.1"
+            ],
+            [
+              "_RNvCs_9defmt_rtt11RTT_ENCODER.2"
+            ],
+            [
+              "_RNvCs_9defmt_rtt11RTT_ENCODER.3"
+            ],
+            [
+              "_RNvCs_9defmt_rtt11RTT_ENCODER.4"
+            ]
+          ]
+        },
+        "value": 537317120,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268595028,
+          "pool": 268595172,
+          "register": "r9",
+          "value": 537317120
+        },
+        "resolved": {
+          "anchor": {
+            "address": 537317120,
+            "extent": 1,
+            "section": ".bss",
+            "flags": 3,
+            "section_type": 8,
+            "symbols": [
+              {
+                "name": "_RNvNtNtCsdG82raX1K7S_5pico25tasks8recovery15DISPLAY_PENDING.0",
+                "address": 537317120,
+                "size": 1,
+                "type": 1,
+                "section": 8
+              }
+            ]
+          },
+          "fields": [
+            {
+              "offset": 1,
+              "semantic": "taken",
+              "object": {
+                "address": 537317121,
+                "extent": 1,
+                "section": ".bss",
+                "flags": 3,
+                "section_type": 8,
+                "symbols": [
+                  {
+                    "name": "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.0",
+                    "address": 537317121,
+                    "size": 1,
+                    "type": 1,
+                    "section": 8
+                  }
+                ]
+              }
+            },
+            {
+              "offset": 2,
+              "semantic": "cs_restore",
+              "object": {
+                "address": 537317122,
+                "extent": 1,
+                "section": ".bss",
+                "flags": 3,
+                "section_type": 8,
+                "symbols": [
+                  {
+                    "name": "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.1",
+                    "address": 537317122,
+                    "size": 1,
+                    "type": 1,
+                    "section": 8
+                  }
+                ]
+              }
+            },
+            {
+              "offset": 3,
+              "semantic": "started",
+              "object": {
+                "address": 537317123,
+                "extent": 1,
+                "section": ".bss",
+                "flags": 3,
+                "section_type": 8,
+                "symbols": [
+                  {
+                    "name": "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.2",
+                    "address": 537317123,
+                    "size": 1,
+                    "type": 1,
+                    "section": 8
+                  }
+                ]
+              }
+            },
+            {
+              "offset": 4,
+              "semantic": "run",
+              "object": {
+                "address": 537317124,
+                "extent": 1,
+                "section": ".bss",
+                "flags": 3,
+                "section_type": 8,
+                "symbols": [
+                  {
+                    "name": "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.3",
+                    "address": 537317124,
+                    "size": 1,
+                    "type": 1,
+                    "section": 8
+                  }
+                ]
+              }
+            },
+            {
+              "offset": 5,
+              "semantic": "zeros",
+              "object": {
+                "address": 537317125,
+                "extent": 1,
+                "section": ".bss",
+                "flags": 3,
+                "section_type": 8,
+                "symbols": [
+                  {
+                    "name": "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.4",
+                    "address": 537317125,
+                    "size": 1,
+                    "type": 1,
+                    "section": 8
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "token": "obj1",
+        "type": {
+          "kind": "literal",
+          "length": 30,
+          "hex": "6465666d74206c6f676765722074616b656e207265656e7472616e746c79"
+        },
+        "value": 268681012,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594904,
+          "pool": 268594920,
+          "register": "r0",
+          "value": 268681012,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6465666d74206c6f676765722074616b656e207265656e7472616e746c790000ddb9021074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874ddb9021074000000e20000000d0000005170021061700210617002108970021042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e88b0021024000000300000003300000088b0021024000000690000002e00000088b00210240000006b000000"
+        },
+        "resolved": {
+          "text": "defmt logger taken reentrantly"
+        }
+      },
+      {
+        "token": "obj2",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273",
+          "line": 173,
+          "column": 13
+        },
+        "value": 268681044,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594906,
+          "pool": 268594924,
+          "register": "r2",
+          "value": 268681044,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "ddb9021074000000ad0000000d0000006465666d742072656c65617365206f7574206f6620636f6e74657874ddb9021074000000e20000000d0000005170021061700210617002108970021042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e88b0021024000000300000003300000088b0021024000000690000002e00000088b00210240000006b0000002a000000617373657274696f6e206661696c65643a206e203c2035307573697a"
+        },
+        "resolved": {
+          "words": [
+            268614109,
+            116,
+            173,
+            13
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-rtt-1.3.0\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj1",
+        "type": {
+          "kind": "literal",
+          "length": 28,
+          "hex": "6465666d742072656c65617365206f7574206f6620636f6e74657874"
+        },
+        "value": 268681060,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594996,
+          "pool": 268595012,
+          "register": "r0",
+          "value": 268681060,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "6465666d742072656c65617365206f7574206f6620636f6e74657874ddb9021074000000e20000000d0000005170021061700210617002108970021042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e88b0021024000000300000003300000088b0021024000000690000002e00000088b00210240000006b0000002a000000617373657274696f6e206661696c65643a206e203c2035307573697a65000000c5b402107b00000019000000"
+        },
+        "resolved": {
+          "text": "defmt release out of context"
+        }
+      },
+      {
+        "token": "obj2",
+        "type": {
+          "kind": "location",
+          "path_hex": "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273",
+          "line": 226,
+          "column": 13
+        },
+        "value": 268681088,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268594998,
+          "pool": 268595016,
+          "register": "r2",
+          "value": 268681088,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "ddb9021074000000e20000000d0000005170021061700210617002108970021042757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e88b0021024000000300000003300000088b0021024000000690000002e00000088b00210240000006b0000002a000000617373657274696f6e206661696c65643a206e203c2035307573697a65000000c5b402107b0000001900000009000000617373657274696f6e206661696c65643a206e203c203675"
+        },
+        "resolved": {
+          "words": [
+            268614109,
+            116,
+            226,
+            13
+          ],
+          "path": "C:\\Users\\Johnny\\scoop\\persist\\rustup\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\defmt-rtt-1.3.0\\src\\lib.rs"
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "literal",
+          "length": 104,
+          "hex": "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e"
+        },
+        "value": 268681120,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268595356,
+          "pool": 268595364,
+          "register": "r1",
+          "value": 268681120,
+          "section": ".rodata",
+          "flags": 50,
+          "first256": "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e88b0021024000000300000003300000088b0021024000000690000002e00000088b00210240000006b0000002a000000617373657274696f6e206661696c65643a206e203c2035307573697a65000000c5b402107b0000001900000009000000617373657274696f6e206661696c65643a206e203c20367573697a65617373657274696f6e206661696c65643a206e203c2031367573697a"
+        },
+        "resolved": {
+          "text": "Busy - Too many instances of this task are already running. Check the `pool_size` attribute of the task."
+        }
+      },
+      {
+        "token": "obj0",
+        "type": {
+          "kind": "writable_symbol",
+          "roles": [
+            "_RNvNtCs_10embassy_rp21critical_section_impl10LOCK_OWNER.0"
+          ]
+        },
+        "value": 537316728,
+        "producer": {
+          "kind": "pc_literal",
+          "site": 268595882,
+          "pool": 268595904,
+          "register": "r1",
+          "value": 537316728
+        },
+        "resolved": {
+          "address": 537316728,
+          "extent": 1,
+          "section": ".bss",
+          "flags": 3,
+          "section_type": 8,
+          "symbols": [
+            {
+              "name": "_RNvNtCs36h56Kxat0E_10embassy_rp21critical_section_impl10LOCK_OWNER.0",
+              "address": 537316728,
+              "size": 1,
+              "type": 1,
+              "section": 8
+            }
+          ]
+        }
+      }
+    ],
+    "sections": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        28,
+        1,
+        6,
+        268435776,
+        624,
+        171512,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        46,
+        1,
+        50,
+        268607304,
+        172152,
+        75180,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        54,
+        1,
+        7,
+        536870912,
+        247336,
+        75832,
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        73,
+        8,
+        3,
+        536946752,
+        323168,
+        370584,
+        0,
+        0,
+        32,
+        0
+      ],
+      [
+        78,
+        8,
+        3,
+        537317336,
+        323168,
+        1024,
+        0,
+        0,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        110,
+        1,
+        2097152,
+        0,
+        328275,
+        19,
+        0,
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "named": {
+      ".text": 3,
+      ".rodata": 5,
+      ".data": 6,
+      ".bss": 8,
+      ".uninit": 9,
+      ".defmt": 12
+    },
+    "segments": [
+      [
+        3,
+        268594568,
+        "80b56f460846114600f0dcf8002080bd"
+      ],
+      [
+        3,
+        268594584,
+        "bcb504af00208029019003d28df8041001212de0194b0a468809b1f5006f63f39f1205d240f0c0008df8052002210de00c0b002563f39f10b5eb114f09d18df8050044f0e0008df8062003218df804000ee06ff00f0563f39f148df807208df8060045ea91418df805408df80410042101a800f09ff80020bcbd00bffeffff03"
+      ],
+      [
+        3,
+        268594544,
+        "80b56f4613460a460249bde88040eff7f1b900bffcbe0310"
+      ],
+      [
+        5,
+        268680956,
+        "000000000000000001000000896d0210996d0210716d0210"
+      ],
+      [
+        5,
+        268680980,
+        "6578706c696369742070616e6963"
+      ],
+      [
+        5,
+        268680996,
+        "0da50210700000008101000005000000"
+      ],
+      [
+        5,
+        268608781,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d312e312e315c7372635c6c69622e7273"
+      ],
+      [
+        6,
+        536946608,
+        "534547474552205254540000000000000100000000000000a8270120d8cf062000040000000000000000000001000000"
+      ],
+      [
+        6,
+        536946600,
+        "6465666d7400"
+      ],
+      [
+        5,
+        268681012,
+        "6465666d74206c6f676765722074616b656e207265656e7472616e746c79"
+      ],
+      [
+        5,
+        268681044,
+        "ddb9021074000000ad0000000d000000"
+      ],
+      [
+        5,
+        268614109,
+        "433a5c55736572735c4a6f686e6e795c73636f6f705c706572736973745c7275737475705c2e636172676f5c72656769737472795c7372635c696e6465782e6372617465732e696f2d313934396366386336623562353537665c6465666d742d7274742d312e332e305c7372635c6c69622e7273"
+      ],
+      [
+        5,
+        268681060,
+        "6465666d742072656c65617365206f7574206f6620636f6e74657874"
+      ],
+      [
+        5,
+        268681088,
+        "ddb9021074000000e20000000d000000"
+      ],
+      [
+        5,
+        268681120,
+        "42757379202d20546f6f206d616e7920696e7374616e636573206f662074686973207461736b2061726520616c72656164792072756e6e696e672e20436865636b207468652060706f6f6c5f73697a656020617474726962757465206f6620746865207461736b2e"
+      ]
+    ],
+    "symbol_entries": [
+      [
+        "{\"package\":\"defmt\",\"tag\":\"defmt_prim\",\"data\":\"{=usize}\",\"disambiguator\":\"16820184023760196734\",\"crate_name\":\"defmt\"}",
+        2,
+        1,
+        17,
+        12
+      ],
+      [
+        "_RNvXs3_NtCsaFtIK0bfMPA_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str",
+        268594569,
+        16,
+        2,
+        3
+      ],
+      [
+        "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_",
+        268594585,
+        128,
+        2,
+        3
+      ],
+      [
+        "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_",
+        268594545,
+        24,
+        2,
+        3
+      ],
+      [
+        "_SEGGER_RTT",
+        536946608,
+        48,
+        17,
+        6
+      ],
+      [
+        "_RNvCsHa5H3rBApY_9defmt_rtt4NAME",
+        536946600,
+        6,
+        1,
+        6
+      ],
+      [
+        "_RNvCsHa5H3rBApY_9defmt_rtt6BUFFER",
+        537317336,
+        1024,
+        1,
+        9
+      ],
+      [
+        "_RNvNtNtCsdG82raX1K7S_5pico25tasks8recovery15DISPLAY_PENDING.0",
+        537317120,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.0",
+        537317121,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.1",
+        537317122,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.2",
+        537317123,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.3",
+        537317124,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvCsHa5H3rBApY_9defmt_rtt11RTT_ENCODER.4",
+        537317125,
+        1,
+        1,
+        8
+      ],
+      [
+        "_RNvNtCs36h56Kxat0E_10embassy_rp21critical_section_impl10LOCK_OWNER.0",
+        537316728,
+        1,
+        1,
+        8
+      ]
+    ],
+    "functions": {
+      "_RNvXs3_NtCsaFtIK0bfMPA_5defmt6exportNtB5_8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_str": [
+        268594569,
+        16,
+        3
+      ],
+      "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write10write_charB6_": [
+        268594585,
+        128,
+        3
+      ],
+      "_RNvYNtNtCsaFtIK0bfMPA_5defmt6export8FmtWriteNtNtCs6m2Zc6X1WBq_4core3fmt5Write9write_fmtB6_": [
+        268594545,
+        24,
+        3
+      ]
+    },
+    "sizes": {
+      "268594568": 8,
+      "268594584": 24,
+      "268594544": 8
+    },
+    "elf_sha256": "55070b3fefd8092588abfe4d7e47515b1aa8cb55b034c07e2e9835dd41a31520"
+  }
+]

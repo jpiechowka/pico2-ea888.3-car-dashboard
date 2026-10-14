@@ -564,6 +564,91 @@ class RootWindows(unittest.TestCase):
                     config_roots.root_window(objects,f['aliases'][0]['name'],records,item['site'])
 
 
+class LoggerObjects(unittest.TestCase):
+    def fixture(self,mode,code_shift=0,data_shift=0,ram_shift=0):
+        item=next(v for v in json.loads((Path(__file__).parent/'fixtures/config-logger-objects.json').read_text()) if v['mode']==mode)
+        sections=[list(v) for v in item['sections']];data=bytearray()
+        for s in sections:
+            s[4]=len(data)
+            if s[1]==1:data.extend(bytes(s[5]))
+        for index,address,encoded in item['segments']:
+            s=sections[index];offset=s[4]+address-s[3];raw=bytes.fromhex(encoded);data[offset:offset+len(raw)]=raw
+        shifts=[0 if not s[2]&2 else ram_shift if s[2]&1 else code_shift if s[2]&4 else data_shift for s in sections]
+        for obj in item['objects']:
+            address=obj['value'];kind=obj['type']['kind']
+            if kind=='defmt_metadata_id':continue
+            index=next(i for i,s in enumerate(sections) if s[2]&2 and s[3]<=address<s[3]+s[5]);s=sections[index];offset=s[4]+address-s[3]
+            if kind in ('location','fmt_write_vtable','rtt_header'):
+                pointer_offsets=(0,) if kind=='location' else (12,16,20) if kind=='fmt_write_vtable' else (24,28)
+                for at in pointer_offsets:
+                    old=struct.unpack_from('<I',data,offset+at)[0];target=old&~1 if kind=='fmt_write_vtable' else old
+                    owner=next(i for i,s in enumerate(sections) if s[2]&2 and s[3]<=target<s[3]+s[5])
+                    struct.pack_into('<I',data,offset+at,old+shifts[owner])
+            obj['value']+=shifts[index]
+        for row in item['symbol_entries']:row[1]+=shifts[row[4]]
+        for row in item['functions'].values():row[0]+=shifts[row[2]]
+        item['sizes']={str(int(a)+code_shift):v for a,v in item['sizes'].items()}
+        for s,shift in zip(sections,shifts):s[3]+=shift
+        sections=[tuple(v) for v in sections]
+        elf=SimpleNamespace(data=bytes(data),sections=sections,named={n:sections[i] for n,i in item['named'].items()},
+            symbol_entries=[tuple(v) for v in item['symbol_entries']],functions={n:tuple(v) for n,v in item['functions'].items()})
+        return config_stack.DiagnosticObjects(elf,{int(a):n for a,n in item['sizes'].items()}),item
+
+    def test_current_logger_objects_preserve_split_field_ordinals_and_writable_name(self):
+        import config_logger
+        for mode in ('speed2','sizes','sizez'):
+            objects,item=self.fixture(mode)
+            for obj in item['objects']:config_logger.logger_object(objects,obj['value'],obj['type'])
+
+    def test_logger_code_readonly_ram_and_split_state_relocations_are_independent(self):
+        import config_logger
+        for mode in ('speed2','sizes','sizez'):
+            objects,item=self.fixture(mode,0x1800,0x21000,0x4000)
+            for obj in item['objects']:config_logger.logger_object(objects,obj['value'],obj['type'])
+
+    def test_split_state_anchor_cannot_be_mislabelled_as_encoder_or_merge_field_ordinals(self):
+        import config_logger
+        for fault in ('anchor','field','duplicate','section','size'):
+            objects,item=self.fixture('sizez');obj=next(v for v in item['objects'] if v['type']['kind']=='split_state_anchor')
+            entries=objects.elf.symbol_entries
+            at=next(i for i,v in enumerate(entries) if 'DISPLAY_PENDING' in v[0]) if fault=='anchor' else next(i for i,v in enumerate(entries) if 'RTT_ENCODER.2' in v[0])
+            row=list(entries[at])
+            if fault=='anchor':row[0]=row[0].replace('DISPLAY_PENDING','RTT_ENCODER')
+            elif fault=='field':row[0]=row[0].replace('RTT_ENCODER.2','RTT_ENCODER.3')
+            elif fault=='duplicate':entries.append(tuple(row))
+            elif fault=='section':row[4]=0
+            else:row[2]=2
+            entries[at]=tuple(row)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_logger.logger_object(objects,obj['value'],obj['type'])
+
+    def test_rtt_header_pointer_size_signature_and_typed_writable_name_reject(self):
+        import config_logger
+        for fault in ('signature','buffer_pointer','buffer_size','name','name_section','buffer_extent'):
+            objects,item=self.fixture('sizez');obj=next(v for v in item['objects'] if v['type']['kind']=='rtt_header')
+            data=bytearray(objects.elf.data);address=obj['value'];section=objects.elf.named['.data'];offset=section[4]+address-section[3]
+            if fault=='signature':data[offset]^=1
+            elif fault=='buffer_pointer':struct.pack_into('<I',data,offset+28,struct.unpack_from('<I',data,offset+28)[0]+1)
+            elif fault=='buffer_size':struct.pack_into('<I',data,offset+32,1023)
+            elif fault=='name':data[section[4]+obj['resolved']['name']['address']-section[3]]^=1
+            else:
+                ordinal=next(i for i,v in enumerate(objects.elf.symbol_entries) if ('4NAME' if fault=='name_section' else '6BUFFER') in v[0]);row=list(objects.elf.symbol_entries[ordinal])
+                row[4 if fault=='name_section' else 2]=0 if fault=='name_section' else 1023;objects.elf.symbol_entries[ordinal]=tuple(row)
+            objects.elf.data=bytes(data)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_logger.logger_object(objects,address,obj['type'])
+
+    def test_rtt_buffer_extent_cannot_wrap_the_32_bit_address_space(self):
+        import config_logger
+        objects,item=self.fixture('sizez');obj=next(v for v in item['objects'] if v['type']['kind']=='rtt_header')
+        elf=objects.elf;index=next(i for i,v in enumerate(elf.symbol_entries) if '6BUFFER' in v[0]);entry=list(elf.symbol_entries[index])
+        entry[1]=0xffffff00;elf.symbol_entries[index]=tuple(entry)
+        section=list(elf.sections[entry[4]]);section[3]=entry[1];section[5]=1024
+        elf.sections[entry[4]]=tuple(section);elf.named['.uninit']=tuple(section)
+        data=bytearray(elf.data);section=elf.named['.data'];struct.pack_into('<I',data,section[4]+obj['value']-section[3]+28,entry[1]);elf.data=bytes(data)
+        with self.assertRaises(AssertionError):config_logger.logger_object(objects,obj['value'],obj['type'])
+
+
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
         value=path.encode('utf-8');base=0x10000000
@@ -871,7 +956,7 @@ class PanicSymbolObjects(unittest.TestCase):
         self.assertEqual(objects.defmt_id(14,'header_id'),14)
 
     def test_defmt_pre_end_object_ids_reject_reserved_domain_with_coherent_metadata(self):
-        for role in ('header_id','display_encoding_id'):
+        for role in ('header_id','display_encoding_id','usize_encoding_id'):
             for value in (0,65533,65534,65535):
                 objects,_,_=self.fixture()
                 name=json.dumps(config_stack.DEFMT_IDENTITIES[role])
@@ -883,7 +968,7 @@ class PanicSymbolObjects(unittest.TestCase):
                     objects.defmt_id(value,role)
 
     def test_defmt_pre_end_object_id_boundaries_accept(self):
-        for role in ('header_id','display_encoding_id'):
+        for role in ('header_id','display_encoding_id','usize_encoding_id'):
             for value in (1,65532):
                 objects,_,_=self.fixture()
                 name=json.dumps(config_stack.DEFMT_IDENTITIES[role])

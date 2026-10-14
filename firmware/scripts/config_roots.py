@@ -10,6 +10,9 @@ from config_stack import canonical_symbol,typed_function
 from validation import require
 
 LOCATION_ROLES = {
+    'logger_acquire': ('defmt-rtt-1.3.0/src/lib.rs',173,13),
+    'logger_release': ('defmt-rtt-1.3.0/src/lib.rs',226,13),
+    'defmt_default_panic': ('defmt-1.1.1/src/lib.rs',385,5),
     'spawn_core0': ('pico2/src/main.rs',155,1),
     'spawn_dashboard': ('pico2/src/main.rs',161,58),
     'initialize_taken': ('static_cell-2.1.1/src/lib.rs',188,13),

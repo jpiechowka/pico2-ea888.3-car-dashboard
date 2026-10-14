@@ -74,6 +74,8 @@ PAYLOAD_LAYOUTS = {
 FIXED_LITERALS = {'view_count': b'built-in view count', 'widget_count': b'built-in widget count'}
 PANIC_GUARD_ROLE = '_RNvNvNtCs_11panic_probe3imp5panic8PANICKED.0'
 DEFMT_IDENTITIES = {
+    'usize_encoding_id': dict(package='defmt',tag='defmt_prim',data='{=usize}',
+                             disambiguator='16820184023760196734',crate_name='defmt'),
     'header_id': dict(package='panic-probe',tag='defmt_error',data='{}',
                       disambiguator='3281125884690968605',crate_name='panic_probe'),
     'display_encoding_id': dict(package='defmt',tag='defmt_prim',data='{=__internal_Display}',
