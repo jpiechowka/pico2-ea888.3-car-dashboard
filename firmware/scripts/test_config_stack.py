@@ -75,5 +75,15 @@ class TypedDiagnosticObjects(unittest.TestCase):
                 if mutation in ('pretty','arity'):objects.default_template(base+32,'unwrap_failed')
                 else:objects.tagged_literal(base+48,41 if mutation=='literal_length' else 42 if mutation=='not_tagged' else 43,'widget_count')
 
+    def test_callback_extent_must_belong_to_its_declared_existing_code_section(self):
+        elf,base,sizes=self.fixture()
+        # A different valid RO/EXEC section has the same flags, but does not own
+        # this callback. The original section still backs the address and bytes.
+        elf.data += bytes(32)
+        elf.sections.append((0,1,6,base+0x100,128,32,0,0,2,0))
+        elf.functions[VALIDATION]=(base+97,8,2)
+        with self.assertRaises(AssertionError):
+            config_stack.DiagnosticObjects(elf,sizes).debug_vtable(base,'validation_error')
+
 
 if __name__=='__main__':unittest.main()

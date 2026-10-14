@@ -74,6 +74,8 @@ class DiagnosticObjects:
             section = self.elf.sections[index]
             require(section[1] == 1 and section[2] & 6 == 6 and not section[2] & 1,
                     'diagnostic callback is not allocated read-only executable code')
+            require(section[3] <= target < target + extent <= section[3] + section[5],
+                    'diagnostic callback extent is outside its declared section')
             self.read_only(target, extent)
         require(target in self.sizes, 'missing diagnostic callback frame metadata')
         return target
