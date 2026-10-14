@@ -1303,6 +1303,20 @@ class OrdinaryCoverage(unittest.TestCase):
         with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,padding))
 
 
+    def test_post_return_padding_can_precede_completely_owned_literal_data(self):
+        from config_regions import Region,audit_coverage
+        objects,name,records,context,region=self.fixture();base=context[0]
+        objects.elf.data+=bytes.fromhex('00bf1234');objects.elf.sections=[(0,1,6,base,0,10,0,0,2,0)]
+        pointer,_,index=objects.elf.functions[name];objects.elf.functions[name]=(pointer,10,index)
+        objects.elf.mapping_symbols=[('$t',base,0),('$d',base+8,0)]
+        records[base+6]=Instruction(base+6,bytes.fromhex('00bf'),'nop','')
+        padding=Region(context,'padding',base+6,base+8,(base+6,),(),())
+        data=Region(context,'data',base+8,base+10,(),((base+8,bytes.fromhex('1234')),),())
+        proof=audit_coverage(objects,name,records,context,(region,padding,data))
+        self.assertEqual((proof['code_bytes'],proof['data_bytes']),(8,2))
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,padding))
+
+
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
         value=path.encode('utf-8');base=0x10000000

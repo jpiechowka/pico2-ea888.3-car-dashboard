@@ -219,7 +219,7 @@ def audit_coverage(objects,name,instructions,context,regions,_function_consumer=
             data_seen|=covered;points|=covered
         require(points==set(range(region.start,region.end)),'region has an unowned byte or gap')
         if region.family=='padding':
-            require(padding_start is None and start<region.start and region.end==end and not region.data and
+            require(padding_start is None and start<region.start and region.end==max(code)+1 and not region.data and
                     not region.transfers and all(rows[a].raw==b'\x00\xbf' and rows[a].mnemonic=='nop' and
                     not rows[a].operands.strip() for a in region.instructions),'unreviewed post-terminal padding')
             padding_start=region.start;padding.update(region.instructions)
