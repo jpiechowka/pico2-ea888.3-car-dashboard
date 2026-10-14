@@ -18,6 +18,15 @@ DASHBOARD_POOL='_RNvNvCs_5pico214dashboard_task4POOL'
 CONFIG='_RNvNtCs_5pico211view_config13CONFIGURATION'
 ISSUER='_RNvNtCs_16dashboard_config14cache_identity6ISSUER'
 STATICS={BOOT_POOL:(48,'.bss'),DASHBOARD_POOL:(10840,'.bss'),CONFIG:(14604,'.data'),ISSUER:(4,'.data')}
+PHASES={key:phase for phase,keys in {
+    'boot_initializer':('speed2_0','sizes_0','sizez_0'),
+    'dashboard_initializer':('speed2_1','sizes_1','sizez_1'),
+    'run':('speed2_2','sizes_2','sizez_2'),
+    'cortex_main':('speed2_3','sizes_3','sizez_3'),
+    'boot_poll':('speed2_4','sizes_4','sizez_4'),
+    'main':('speed2_5',),'queue_push':('sizez_6',),'raw_poll':('sizez_7',),
+    'raw_spawn':('sizez_8',),'callback_install':('sizez_9',)}.items() for key in keys}
+INITIALIZE='_RNvNtCs_5pico211view_config10initialize'
 
 
 def static_role(name):
@@ -62,3 +71,68 @@ def entry_body(objects,name,instructions,outline_role=None,_ancestry=()):
         results.append(proof)
     require(len(results)==1,'missing, changed or ambiguous complete entry shape')
     return results[0]
+
+
+def boot_entry(objects,instructions):
+    """Compose the finite first-batch entry interface.
+
+    Full bodies prove the reviewed local queue/claim and register effects.
+    Frozen source ownership supplies the single-publisher, initially empty
+    executor and detached-batch premises. Configuration memory/helper closure
+    must preserve these live objects before this interface is admitted by the
+    final graph. Later executor iterations receive no boot callback binding.
+    """
+    proofs={};external=[]
+
+    def visit(target,role):
+        names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target and
+               (role.startswith('@outline:') or canonical_symbol(n)==role)]
+        require(len(names)==1,'ambiguous complete entry target')
+        name=names[0]
+        if not role.startswith('@outline:'):
+            definitions=[v for v in objects.elf.symbol_entries if canonical_symbol(v[0])==role]
+            require(len(definitions)==1 and definitions[0][0]==name and definitions[0][1]==target|1,
+                    'entry phase has duplicate/conflicting raw definition')
+        proof=entry_body(objects,name,instructions,role if role.startswith('@outline:') else None)
+        phase=PHASES[proof['shape']]
+        if phase in proofs:
+            require(proofs[phase]['function']==target,'distinct functions implement the same entry phase')
+            return proofs[phase]
+        proofs[phase]=proof
+        for offset,operation,child,child_role,frame in proof['ordinary_edges']:
+            if child_role in ENTRY_ROLES:visit(child,child_role)
+            else:external.append((phase,offset,child,child_role,frame))
+        if phase=='run':
+            contract=ENTRY_GRAMMARS[proof['shape']]
+            callbacks=[(proof['objects'][i],v) for i,v in enumerate(contract['objects']) if v['kind']=='entry_callback']
+            require(len(callbacks)==1,'run has ambiguous boot callback producer')
+            pointer,descriptor=callbacks[0];boot=visit(pointer&~1,descriptor['role'])
+            require(PHASES[boot['shape']]=='boot_poll','first run callback is not the boot poll')
+        return proof
+
+    mains=[(n,e) for n,e in objects.elf.functions.items() if canonical_symbol(n)=='main']
+    require(len(mains)==1,'missing or ambiguous main entry')
+    visit(mains[0][1][0]&~1,'main')
+    required={'main','cortex_main','run','boot_poll','boot_initializer','dashboard_initializer'}
+    sizez=proofs['run']['shape']=='sizez_2'
+    if sizez:required|={'raw_poll','raw_spawn','queue_push','callback_install'}
+    require(set(proofs)==required,'incomplete or mixed entry phase closure')
+    consumer=proofs['raw_poll' if sizez else 'run']
+    require(len(consumer['indirect_sites'])==1,'entry callback consumption is missing or ambiguous')
+    offset,operation,register=consumer['indirect_sites'][0]
+    require(operation=='blx' and register=='r1','changed entry callback call ABI')
+    require(all(not p['indirect_sites'] for phase,p in proofs.items() if phase not in ('run' if not sizez else 'raw_poll',)),
+            'unbound callback in another entry phase')
+    boot=proofs['boot_poll'];contract=ENTRY_GRAMMARS[boot['shape']]
+    later=[(boot['objects'][i],v) for i,v in enumerate(contract['objects']) if v['kind']=='entry_callback']
+    require(len(later)==2 and later[1][1]['role']=='_RNvNtCs_16embassy_executor3raw11poll_exited',
+            'Dashboard/retirement callback interface differs')
+    initialize=[v for v in external if v[0]=='boot_poll' and v[3]==INITIALIZE]
+    require(len(initialize)==1 and initialize[0][4]==8,'missing synchronous configuration initialization boundary')
+    chain=[proofs[p] for p in ('main','cortex_main','run')+ (('raw_poll',) if sizez else ())]
+    return dict(entry_frame=sum(p['frame'] for p in chain),entry_chain=tuple((p['function'],p['frame']) for p in chain),
+                boot_poll=boot['function'],boot_poll_frame=boot['frame'],initialize=initialize[0][2],initialize_frame=initialize[0][4],
+                callback_edge=dict(caller=consumer['function'],offset=offset,target=boot['function'],scope='first detached boot batch'),
+                later_dashboard_callback=later[0][0]&~1,retired_callback=later[1][0]&~1,
+                phases=proofs,external_edges=tuple(external),requires_frozen_executor_source_ownership=True,
+                requires_configuration_and_diagnostic_memory_closure=True)

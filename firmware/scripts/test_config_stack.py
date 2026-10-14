@@ -828,6 +828,32 @@ class EntryBodies(unittest.TestCase):
             else:objects.sizes[address&~1]+=8
             with self.subTest(fault=fault),self.assertRaises(AssertionError):config_entry.entry_object(objects,address,descriptor)
 
+    def test_contextual_entry_binds_one_first_batch_callback_and_retains_actual_ancestors(self):
+        import config_entry
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,item=self.fixture(mode);proof=config_entry.boot_entry(objects,records)
+            self.assertEqual(proof['entry_frame'],56 if mode=='sizez' else 40)
+            self.assertEqual(proof['boot_poll_frame'],32)
+            self.assertEqual(proof['initialize_frame'],8)
+            self.assertEqual(proof['callback_edge']['scope'],'first detached boot batch')
+            self.assertNotEqual(proof['callback_edge']['target'],proof['later_dashboard_callback'])
+            self.assertTrue(proof['requires_configuration_and_diagnostic_memory_closure'])
+
+    def test_contextual_entry_cannot_ignore_duplicate_phase_or_changed_dequeue_callback(self):
+        import config_entry
+        for fault in ('duplicate_phase','changed_callback_load','changed_queue_head'):
+            objects,records,item=self.fixture('sizez')
+            if fault=='duplicate_phase':
+                raw=next(v for v in objects.elf.symbol_entries if config_stack.canonical_symbol(v[0])=='_RNvCs_5pico218___cortex_m_rt_main')
+                other=list(raw);other[1]+=0x200;other[2]=0;objects.elf.symbol_entries.append(tuple(other))
+            else:
+                instance=next(v for v in item['instances'] if v['role']=='_RNvMs8_NtCs_16embassy_executor3rawNtB5_8Executor4poll')
+                row=next(r for a,r in sorted(records.items()) if instance['entry']<=a<instance['entry']+instance['extent'] and
+                    (r.mnemonic=='ldr' and '#0x24' in r.operands if fault=='changed_callback_load' else r.mnemonic.startswith(('strex','stlex'))))
+                records[row.address]=Instruction(row.address,row.raw,row.mnemonic,
+                    row.operands.replace('#0x24','#0x20') if fault=='changed_callback_load' else 'r3, r5, [r4]')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_entry.boot_entry(objects,records)
+
 
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
