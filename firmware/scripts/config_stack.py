@@ -194,6 +194,20 @@ def constant_before(instructions, consumer, register, objects):
         require(not mnemonic.startswith(('rfe', 'eret')) and mnemonic not in
                 ('svc', 'hvc', 'smc', 'bkpt', 'udf', 'trap'),
                 'constant producer has unresolved exception ingress')
+        if mnemonic == 'tbb':
+            # Architectural exclusion only: an unsigned byte gives PC+4+2*x,
+            # x in 0..255. This proves no ingress into this protected interval,
+            # NOT table/index provenance, valid enum objects or ordinary closure.
+            index = re.fullmatch(r'\[pc, r([0-9]|1[0-2])\]', operands)
+            require(index is not None and len(record.raw) == 4 and
+                    record.raw == struct.pack('<HH', 0xe8df, 0xf000 | int(index[1])),
+                    'unreviewed PC-relative TBB ingress encoding')
+            require(0 <= record.address <= 0xffffffff - 514 and record.address % 2 == 0,
+                    'PC-relative TBB destination extent wraps')
+            lo, hi = record.address + 4, record.address + 514
+            require(hi <= first or lo > consumer,
+                    'PC-relative TBB destination interval overlaps argument producer')
+            continue
         require(mnemonic not in ('tbb', 'tbh', 'blx') and not (mnemonic == 'bx' and operands != 'lr'),
                 'constant producer has unresolved caller ingress')
         if mnemonic in transfers and mnemonic not in ('bx', 'blx'):

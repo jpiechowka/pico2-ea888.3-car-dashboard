@@ -156,5 +156,26 @@ class BoundaryProducers(unittest.TestCase):
             value,_=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
             self.assertEqual(value,base)
 
+    def test_pc_relative_tbb_interval_disjoint_from_producer_is_only_ingress_exclusion(self):
+        elf,base,sizes=self.fixture();data=bytearray(elf.data)
+        struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+        for address in (0x0ffffe00,0x10000200):
+            block=[Instruction(address,bytes.fromhex('dfe800f0'),'tbb','[pc, r0]'),*self.block()]
+            value,_=config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+            self.assertEqual(value,base)
+
+    def test_overlapping_unbounded_or_wrapping_table_ingress_rejects(self):
+        for address,mnemonic,operands,raw in [
+            (0x10000000,'tbb','[pc, r0]',bytes.fromhex('dfe800f0')),
+            (0xfffffe00,'tbb','[pc, r0]',bytes.fromhex('dfe800f0')),
+            (0x0ffffe00,'tbh','[pc, r0, lsl #1]',bytes.fromhex('dfe810f0')),
+            (0x0ffffe00,'tbb','[r4, r0]',bytes.fromhex('d4e800f0')),
+            (0x0ffffe00,'tbb','[pc, r0]',bytes(2))]:
+            elf,base,sizes=self.fixture();data=bytearray(elf.data)
+            struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+            block=[Instruction(address,raw,mnemonic,operands),*self.block()]
+            with self.subTest(address=address,mnemonic=mnemonic,operands=operands),self.assertRaises(AssertionError):
+                config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+
 
 if __name__=='__main__':unittest.main()
