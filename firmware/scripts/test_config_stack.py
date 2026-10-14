@@ -481,6 +481,42 @@ class RootAdapters(unittest.TestCase):
                     config_roots.root_adapter(objects,f['aliases'][0]['name'],records)
 
 
+class RootLocations(unittest.TestCase):
+    def fixture(self,path,line=61,column=63):
+        value=path.encode('utf-8');base=0x10000000
+        blob=struct.pack('<4I',base+16,len(value),line,column)+value
+        elf=SimpleNamespace(data=blob,sections=[(0,1,2,base,0,len(blob),0,0,4,0)])
+        return config_stack.DiagnosticObjects(elf,{}),base
+
+    def test_location_source_role_line_column_accept_actual_host_prefixes_and_separator_forms(self):
+        import config_roots
+        for path in ('D:/GitHub/project/crates/dashboard-config/src/slot.rs',
+                     r'D:\GitHub\project\crates\dashboard-config\src\slot.rs',
+                     '/home/ci/work/project/crates/dashboard-config/src/slot.rs',
+                     '/home/żółw/project/crates/dashboard-config/src/slot.rs',
+                     'crates/dashboard-config/src/slot.rs'):
+            objects,address=self.fixture(path)
+            proof=config_roots.root_location(objects,address,'reviewed_defaults')
+            self.assertEqual(proof['filename_bytes'],path.encode('utf-8'))
+            self.assertEqual((proof['line'],proof['column']),(61,63))
+
+    def test_location_wrong_role_line_column_suffix_storage_or_nonpath_bytes_reject(self):
+        import config_roots
+        for fault in ('role','line','column','filename','prefix_only','nul','traversal','unbacked','writable','unaligned'):
+            path='D:/repo/crates/dashboard-config/src/slot.rs'
+            if fault=='filename':path=path.replace('slot.rs','slots.rs')
+            if fault=='prefix_only':path+='-other'
+            if fault=='nul':path='D:/bad\0name/crates/dashboard-config/src/slot.rs'
+            if fault=='traversal':path='D:/repo/../crates/dashboard-config/src/slot.rs'
+            objects,address=self.fixture(path,62 if fault=='line' else 61,64 if fault=='column' else 63)
+            if fault=='unbacked':objects.elf.data=objects.elf.data[:-1]
+            if fault=='writable':
+                section=list(objects.elf.sections[0]);section[2]|=1;objects.elf.sections[0]=tuple(section)
+            if fault=='unaligned':address+=1
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_roots.root_location(objects,address,'not_a_role' if fault=='role' else 'reviewed_defaults')
+
+
 class PanicBodies(unittest.TestCase):
     def fixture(self,mode,code_shift=0,data_shift=0,guard_shift=0):
         spec=next(r for r in json.loads((Path(__file__).parent/'fixtures/config-panic.json').read_text()) if r['mode']==mode)
