@@ -25,6 +25,37 @@ def error_root_role(symbol):
 
 
 ERROR_LAYOUTS = {'capacity_error': (0, 1), 'validation_error': (12, 2), 'utf8_error': (8, 4)}
+# Exact boot payload interfaces from the source-reviewed per-mode contracts.
+# A role is selected by its originating field, never a union of nearby vtables.
+PAYLOAD_ROLES = {
+    '_RNvXs6_NtCs_16dashboard_config8validateNtB5_9ErrorCodeNtNtCs_4core3fmt5Debug3fmt': 'error_code',
+    '_RNvXsd_NtCs_16dashboard_config8validateNtB5_5FieldNtNtCs_4core3fmt5Debug3fmt': 'field',
+    '_RNvXsR_NtCs_4core6optionINtB5_6OptionhENtNtB7_3fmt5Debug3fmtCs_16dashboard_config': 'option_u8',
+    '_RNvXsR_NtCs_4core6optionINtB5_6OptiontENtNtB7_3fmt5Debug3fmtCs_16dashboard_config': 'option_u16',
+    '_RNvXs1g_NtCs_4core3fmtRINtNtB8_6option6OptionNtNtCs_16dashboard_config5model7ChannelENtB6_5Debug3fmtBW_': 'option_channel_ref',
+    '_RNvXs1g_NtCs_4core3fmtRNtNtCs_16dashboard_config8controls12ControlErrorNtB6_5Debug3fmtBA_': 'control_error_ref',
+    '_RNvXs1g_NtCs_4core3fmtRNtNtCs_16dashboard_config10appearance9ColorRoleNtB6_5Debug3fmtBA_': 'color_role_ref',
+    '_RNvXs1g_NtCs_4core3fmtRNtNtCs_16dashboard_config5model7ChannelNtB6_5Debug3fmtBA_': 'channel_ref',
+    '_RNvXs1g_NtCs_4core3fmtRINtNtB8_6option6OptionhENtB6_5Debug3fmtCs_16dashboard_config': 'option_u8_ref',
+    '_RNvXsZ_NtNtCs_4core3fmt3numjNtB7_5Debug3fmt': 'usize',
+    '_RNvXs6_NtCs_16dashboard_config8controlsNtB5_11ControlPageNtNtCs_4core3fmt5Debug3fmt': 'control_page',
+    '_RNvXse_NtCs_16dashboard_config8controlsNtB5_8ButtonIdNtNtCs_4core3fmt5Debug3fmt': 'button_id',
+    '_RNvXs1g_NtCs_4core3fmtRNtNtCs_16dashboard_config8controls11ControlPageNtB6_5Debug3fmtBA_': 'control_page_ref',
+    '_RNvXs1g_NtCs_4core3fmtRbNtB6_5Debug3fmtCs_16dashboard_config': 'bool_ref',
+    '_RNvXs1g_NtCs_4core3fmtRbNtB6_5Debug3fmtCs_6rp_pac': 'bool_ref',
+    '_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_14dashboard_core': 'u8_ref',
+    '_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_16dashboard_config': 'u8_ref',
+    '_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_20embassy_hal_internal': 'u8_ref',
+    '_RNvXs1g_NtCs_4core3fmtRtNtB6_5Debug3fmtCs_16dashboard_config': 'u16_ref',
+    '_RNvXs1g_NtCs_4core3fmtRtNtB6_5Debug3fmtCs_6rp_pac': 'u16_ref',
+}
+PAYLOAD_LAYOUTS = {
+    'error_code': (1, 1), 'field': (3, 1), 'option_u8': (2, 1), 'option_u16': (4, 2),
+    'control_page': (1, 1), 'button_id': (1, 1),
+    **{role: (4, 4) for role in ('option_channel_ref', 'control_error_ref', 'color_role_ref',
+                               'channel_ref', 'option_u8_ref', 'usize', 'control_page_ref',
+                               'bool_ref', 'u8_ref', 'u16_ref')},
+}
 FIXED_LITERALS = {'view_count': b'built-in view count', 'widget_count': b'built-in widget count'}
 # Pinned core::fmt Arguments templates: C0 is one default placeholder; a
 # following byte is the next literal length, not an argument index.
@@ -59,16 +90,18 @@ class DiagnosticObjects:
         return data
 
     def debug_vtable(self, address, role):
-        require(role in ERROR_LAYOUTS and address % 4 == 0, 'unreviewed or unaligned diagnostic vtable')
+        layouts = ERROR_LAYOUTS | PAYLOAD_LAYOUTS
+        require(role in layouts and address % 4 == 0, 'unreviewed or unaligned diagnostic vtable')
         drop, size, align, pointer = struct.unpack('<4I', self.read_only(address, 16))
-        require((drop, size, align) == (0, *ERROR_LAYOUTS[role]), 'diagnostic vtable type layout differs')
+        require((drop, size, align) == (0, *layouts[role]), 'diagnostic vtable type layout differs')
         require(pointer & 1, 'diagnostic callback is not Thumb')
         target = pointer & ~1
         aliases = [(name, entry) for name, entry in self.elf.functions.items() if entry[0] & ~1 == target]
         require(aliases, 'diagnostic callback is not a function entry')
         require(len({entry for _, entry in aliases}) == 1, 'diagnostic callback aliases disagree')
         for name, (value, extent, index) in aliases:
-            require(value & 1 and extent > 0 and error_root_role(name) == role,
+            actual_role = (ERROR_ROOTS | PAYLOAD_ROLES).get(canonical_symbol(name))
+            require(value & 1 and extent > 0 and actual_role == role,
                     'diagnostic callback role differs from originating object')
             require(0 <= index < len(self.elf.sections), 'diagnostic callback section is missing')
             section = self.elf.sections[index]

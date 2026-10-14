@@ -8,6 +8,8 @@ from config_stack import error_root_role
 
 VALIDATION = '_RNvXsk_NtCshxbT6mSCLYQ_16dashboard_config8validateNtB5_15ValidationErrorNtNtCs6m2Zc6X1WBq_4core3fmt5Debug3fmt'
 WIDGET = '_RNvXsc_NtCshxbT6mSCLYQ_16dashboard_config5modelNtB5_6WidgetNtNtCs6m2Zc6X1WBq_4core3fmt5Debug3fmt'
+CONTROL = '_RNvXs1g_NtCs123_4core3fmtRNtNtCs456_16dashboard_config8controls12ControlErrorNtB6_5Debug3fmtBA_'
+U8 = '_RNvXs1g_NtCs123_4core3fmtRhNtB6_5Debug3fmtCs456_14dashboard_core'
 
 
 class DiagnosticRoots(unittest.TestCase):
@@ -85,6 +87,27 @@ class TypedDiagnosticObjects(unittest.TestCase):
         elf.functions[VALIDATION]=(base+97,8,2)
         with self.assertRaises(AssertionError):
             config_stack.DiagnosticObjects(elf,sizes).debug_vtable(base,'validation_error')
+
+    def test_payload_vtable_keeps_reference_type_origin_after_relocation(self):
+        for shift in (0,0x1400):
+            elf,base,sizes=self.fixture(shift);data=bytearray(elf.data)
+            struct.pack_into('<4I',data,0,0,4,4,base+97);elf.data=bytes(data)
+            elf.functions={CONTROL:(base+97,8,1)}
+            objects=config_stack.DiagnosticObjects(elf,sizes)
+            self.assertEqual(objects.debug_vtable(base,'control_error_ref'),base+96)
+            elf.functions={U8:(base+97,8,1)}
+            with self.assertRaises(AssertionError):objects.debug_vtable(base,'control_error_ref')
+            self.assertEqual(objects.debug_vtable(base,'u8_ref'),base+96)
+
+    def test_reference_and_value_payload_layouts_cannot_substitute(self):
+        elf,base,sizes=self.fixture();data=bytearray(elf.data)
+        field='_RNvXsd_NtCs123_16dashboard_config8validateNtB5_5FieldNtNtCs456_4core3fmt5Debug3fmt'
+        elf.functions={field:(base+97,8,1)}
+        struct.pack_into('<4I',data,0,0,3,1,base+97);elf.data=bytes(data)
+        objects=config_stack.DiagnosticObjects(elf,sizes)
+        self.assertEqual(objects.debug_vtable(base,'field'),base+96)
+        struct.pack_into('<I',data,4,4);elf.data=bytes(data)
+        with self.assertRaises(AssertionError):objects.debug_vtable(base,'field')
 
 
 class BoundaryProducers(unittest.TestCase):
