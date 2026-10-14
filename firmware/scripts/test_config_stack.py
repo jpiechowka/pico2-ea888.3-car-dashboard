@@ -1219,6 +1219,129 @@ class OrdinaryIndexEffects(unittest.TestCase):
             config_helpers.index_prefix(*values,location_role='postcard_varint_usize')
 
 
+class OrdinaryDecodeEffects(unittest.TestCase):
+    def fixture(self,semantic,raw,cursor=0):
+        import config_decode_effects,config_helpers
+        from config_regions import Storage,borrow
+        objects,records,item=OrdinaryHelperBodies.fixture(self)
+        payload_base=0x10070000;blob=bytes(12)+(raw or bytes(1));at=len(objects.elf.data)
+        objects.elf.sections.append((0,1,2,payload_base,at,len(blob),0,0,1,0));objects.elf.data+=blob
+        owner=Storage('address','embedded_eav',payload_base,len(blob),1,'decode',False)
+        payload=borrow(owner,12,len(blob)-12,'decode')
+        header_owner=Storage('stack:decode','D',128,8,4,'decode',True)
+        header=borrow(header_owner,0,8,'decode',writable=True)
+        state=config_decode_effects.DecoderState(header,payload,cursor)
+        instance=next(v for v in item['instances'] if v['role']==semantic)
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'fixed decoder','caller still required'))
+        frame=Storage('stack:decode',semantic,-proof['frame'],proof['frame'],8,'decode',True)
+        return objects,records,proof,state,frame,()
+
+    def run_effect(self,semantic,raw,cursor=0,**kwargs):
+        import config_decode_effects
+        args=self.fixture(semantic,raw,cursor)
+        if semantic in ('take_varint_u32','deserialize_seed_f32'):
+            from config_regions import Storage,borrow
+            output=Storage('stack:decode','R8',144,8,4,'decode',True)
+            kwargs.setdefault('output',borrow(output,0,8,'decode',writable=True))
+        return config_decode_effects.decode_effect(*args,**kwargs)
+
+    def test_slice_empty_and_byte_have_distinct_reads_writes_and_registers(self):
+        empty=self.run_effect('slice_pop',b'\xff',1)
+        self.assertEqual((empty['registers'],empty['state'].cursor,empty['input_reads'],empty['writes']),
+                         ({'r0':1,'r1':4},1,(),()))
+        success=self.run_effect('slice_pop',b'\xff')
+        self.assertEqual((success['registers'],success['state'].cursor),({'r0':0,'r1':255},1))
+        self.assertEqual([(off,data) for view,off,data in success['writes']],[(0,struct.pack('<I',0x1007000d))])
+        self.assertEqual(success['input_reads'],((0x1007000c,1),))
+
+    def test_u16_errors_retain_consumed_prefix_and_never_read_a_fourth_byte(self):
+        cases=((b'\x00',0,1),(b'\x80\x00',0,2),(b'\xff\xff\x03',65535,3),
+               (b'\xff\xff\x04',None,3),(b'\x80\x80\x80\x00',None,3),
+               (b'\x80',None,1),(b'\x80\x80',None,2))
+        for raw,value,consumed in cases:
+            result=self.run_effect('deserialize_u16',raw)
+            expected=(value<<16) if value is not None else ((4 if len(raw)<3 else 5)<<8)|1
+            with self.subTest(raw=raw):
+                self.assertEqual(result['registers'],{'r0':expected})
+                self.assertEqual(result['state'].cursor,consumed)
+                self.assertEqual(result['value'],value)
+                self.assertEqual(len(result['input_reads']),consumed)
+
+    def test_u32_result_only_initializes_its_actual_tag_and_payload_fields(self):
+        for raw,value,error,consumed in ((b'\xff\xff\xff\xff\x0f',0xffffffff,None,5),
+                                        (b'\x80\x00',0,None,2),(b'\x80',None,4,1),
+                                        (b'\xff\xff\xff\xff\x10',None,5,5),
+                                        (b'\x80\x80\x80\x80\x80\x00',None,5,5)):
+            result=self.run_effect('take_varint_u32',raw)
+            with self.subTest(raw=raw):
+                self.assertEqual((result['value'],result['error'],result['state'].cursor),(value,error,consumed))
+                self.assertEqual(result['initialized_result_fields'],((0,1),(4,4)) if error is None else ((0,1),(1,1)))
+                self.assertEqual([(off,len(data)) for view,off,data in result['writes'] if view==result['output']],
+                                 [(4,4),(0,1)] if error is None else [(1,1),(0,1)])
+
+    def test_decoder_ordering_alias_and_child_mutations_reject(self):
+        import config_decode_effects
+        from config_regions import Storage,borrow
+        for fault in ('past_end','header_save','ancestor','child'):
+            objects,records,proof,state,frame,protected=self.fixture('deserialize_u16',b'\x01')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                if fault=='past_end':state=config_decode_effects.DecoderState(state.header,state.payload,2)
+                elif fault=='header_save':
+                    owner=Storage(frame.space,'D-alias',frame.start,8,4,frame.phase,True)
+                    state=config_decode_effects.DecoderState(borrow(owner,0,8,frame.phase,writable=True),state.payload,0)
+                elif fault=='ancestor':protected=(Storage(frame.space,'saved-r8',state.header.start,4,4,frame.phase,False),)
+                else:
+                    child=next(row[2] for row in proof['ordinary_edges'] if row[3].endswith('6Flavor3pop'))
+                    row=records[child];records[child]=Instruction(child,row.raw,'ldrd','r2, r3, [r1]')
+                config_decode_effects.decode_effect(objects,records,proof,state,frame,protected)
+
+    def test_empty_varints_keep_cursor_and_never_initialize_success_values(self):
+        for semantic in ('deserialize_u16','take_varint_u32'):
+            result=self.run_effect(semantic,b'\x80',1)
+            self.assertEqual((result['error'],result['value'],result['state'].cursor,result['input_reads']),(4,None,1,()))
+            self.assertFalse(any(view==result['state'].header for view,off,data in result['writes']))
+
+    def test_header_result_alignment_mutability_and_full_aliases_reject(self):
+        import config_decode_effects
+        from config_regions import Storage,borrow
+        for fault in ('misaligned_header','readonly_header','result_save','result_end_header','readonly_result','misaligned_result'):
+            args=list(self.fixture('take_varint_u32',b'\x01'));state,frame=args[3:5]
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                if 'header' in fault and fault!='result_end_header':
+                    owner=Storage(frame.space,'D',130 if fault=='misaligned_header' else 128,8,1,frame.phase,fault!='readonly_header')
+                    args[3]=config_decode_effects.DecoderState(borrow(owner,0,8,frame.phase,writable=owner.writable),state.payload,0)
+                start=frame.start if fault=='result_save' else 132 if fault=='result_end_header' else 146 if fault=='misaligned_result' else 144
+                owner=Storage(frame.space,'R8',start,8,1 if fault=='misaligned_result' else 4,frame.phase,fault!='readonly_result')
+                output=borrow(owner,0,8,frame.phase,writable=owner.writable)
+                config_decode_effects.decode_effect(*args,output=output)
+
+    def test_f32_keeps_all_bits_and_policy_with_unaligned_input_and_partial_errors(self):
+        import config_decode_effects,config_platform
+        from config_regions import Storage,borrow
+        for residue in range(4):
+            args=self.fixture('deserialize_seed_f32',bytes(residue)+bytes.fromhex('0100c07f'),residue)
+            objects,records,proof,state,frame,protected=args
+            policy=config_platform.reviewed_eav_policy(objects,state.payload,dict(target=config_platform.TARGET,core=0,
+                security='secure',boot_context=config_platform.BOOT_CONTEXT),contradictory_effects=())
+            owner=Storage(frame.space,'R8',144,8,4,frame.phase,True);output=borrow(owner,0,8,frame.phase,writable=True)
+            result=config_decode_effects.decode_effect(*args,output=output,platform_policy=policy)
+            self.assertEqual((result['value'],result['state'].cursor,result['platform_policy']),(0x7fc00001,residue+4,policy))
+            with self.assertRaises(AssertionError):config_decode_effects.decode_effect(*args,output=output)
+            changed=bytearray(objects.elf.data);changed[-1]^=1;objects.elf.data=bytes(changed)
+            with self.assertRaises(AssertionError):config_decode_effects.decode_effect(*args,output=output,platform_policy=policy)
+        for remaining in range(4):
+            args=self.fixture('deserialize_seed_f32',b'\x01\x02\x03',3-remaining)
+            objects,records,proof,state,frame,protected=args
+            policy=config_platform.reviewed_eav_policy(objects,state.payload,dict(target=config_platform.TARGET,core=0,
+                security='secure',boot_context=config_platform.BOOT_CONTEXT),contradictory_effects=())
+            owner=Storage(frame.space,'R8',144,8,4,frame.phase,True);output=borrow(owner,0,8,frame.phase,writable=True)
+            result=config_decode_effects.decode_effect(*args,output=output,platform_policy=policy)
+            self.assertEqual((result['error'],result['state'].cursor,result['input_reads']),(4,3-remaining,()))
+            self.assertEqual(result['initialized_result_fields'],((0,1),(1,1)))
+            with self.assertRaises(AssertionError):
+                config_decode_effects.decode_effect(*args,output=state.header,platform_policy=policy)
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow
