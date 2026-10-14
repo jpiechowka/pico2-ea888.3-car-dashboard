@@ -26,6 +26,9 @@ class ElfImage:
         self.named = {string(names, s[0]): s for s in self.sections}
         self.symbols = {}
         self.functions = {}
+        # Mapping symbols deliberately repeat their short names. A dictionary
+        # loses code/data transitions needed by the pinned decoder adapter.
+        self.mapping_symbols = []
         for section in self.sections:
             if section[1] != 2:
                 continue
@@ -35,6 +38,8 @@ class ElfImage:
                 name, value, size, info, _, index = struct.unpack_from("<IIIBBH", data, offset)
                 name = string(strings, name)
                 self.symbols[name] = value
+                if name in ('$t', '$d', '$a') or name.startswith(('$t.', '$d.', '$a.')):
+                    self.mapping_symbols.append((name, value, index))
                 if info & 15 == 2 and size:
                     self.functions[name] = (value, size, index)
         phoff = struct.unpack_from("<I", data, 28)[0]
