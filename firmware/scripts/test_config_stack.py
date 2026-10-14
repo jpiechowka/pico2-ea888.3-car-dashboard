@@ -972,6 +972,77 @@ class IssuerRegions(unittest.TestCase):
         with self.assertRaises(AssertionError):config_upstream.issuer_region(objects,item['issuer']['name'],records)
 
 
+class OrdinaryContexts(unittest.TestCase):
+    def test_checked_borrows_and_helper_writes_keep_exact_parent_ownership(self):
+        from config_regions import Storage,borrow,require_writes
+        local=Storage('stack:boot','scratch',0,184,4,'validation',True)
+        saved=Storage('stack:boot','saved_r11',264,4,4,'validation',False)
+        view=borrow(local,104,22,'validation',writable=True)
+        require_writes((view,),((view,0,22),),(saved,))
+        for offset,size in ((-1,1),(0,23),(21,2),(0,0x100000000)):
+            with self.subTest(offset=offset,size=size),self.assertRaises(AssertionError):
+                require_writes((view,),((view,offset,size),),(saved,))
+        with self.assertRaises(AssertionError):borrow(local,0,4,'publication')
+
+    def test_helper_output_cannot_alias_protected_carrier_even_with_another_owner_name(self):
+        from config_regions import Storage,borrow,require_writes,require_disjoint
+        saved=Storage('stack:boot','saved_r8',284,4,4,'validation',False)
+        fake=Storage('stack:boot','output',280,12,2,'validation',True)
+        with self.assertRaises(AssertionError):require_disjoint((saved,fake))
+        view=borrow(fake,0,12,'validation',writable=True)
+        with self.assertRaises(AssertionError):require_writes((view,),((view,0,12),),(saved,))
+        adjacent=Storage('stack:boot','output',288,12,2,'validation',True)
+        require_disjoint((saved,adjacent))
+
+    def test_call_interfaces_preserve_receiver_levels_objects_and_source_domains(self):
+        from config_regions import Storage,borrow,Argument,require_arguments
+        pool=Storage('address','boot_pool',0x20000000,48,4,'entry',True)
+        executor=Storage('stack:main','executor',0,8,4,'entry',True)
+        future=Argument('future',borrow(pool,40,8,'entry'),0)
+        exe=Argument('executor',borrow(executor,0,8,'entry'),0)
+        require_arguments({'r0':future,'r1':exe},{'r0':future,'r1':exe})
+        # The shared raw initializer role cannot substitute executor for future.
+        with self.assertRaises(AssertionError):require_arguments({'r0':exe},{'r0':future,'r1':exe})
+        with self.assertRaises(AssertionError):require_arguments({'r0':Argument('future',future.view,1)},{'r0':future})
+        small=Argument('u32',None,0,32,frozenset(range(128)))
+        wide=Argument('u32',None,0,32,frozenset((0,128)))
+        require_arguments({'r1':Argument('u32',None,0,32,frozenset((0,18)))},{'r1':small})
+        with self.assertRaises(AssertionError):require_arguments({'r1':wide},{'r1':small})
+
+    def test_join_requires_each_predecessor_to_supply_the_same_owned_pointer_and_length(self):
+        from config_regions import Storage,borrow,Argument,require_join
+        label_a=Storage('address','label_a',0x10000000,9,1,'defaults',False)
+        label_b=Storage('address','label_b',0x10000020,3,1,'defaults',False)
+        a=Argument('label',borrow(label_a,0,9,'defaults'),0)
+        b=Argument('label',borrow(label_b,0,3,'defaults'),0)
+        n9=Argument('length',None,0,32,frozenset((9,)))
+        n3=Argument('length',None,0,32,frozenset((3,)))
+        require_join(({'r11':a,'r4':n9},{'r11':a,'r4':n9}),{'r11':a,'r4':n9})
+        with self.assertRaises(AssertionError):require_join(({'r11':a,'r4':n3},{'r11':b,'r4':n9}),{'r11':a,'r4':n9})
+
+    def test_readonly_borrow_of_mutable_owner_does_not_grant_a_helper_write(self):
+        from config_regions import Storage,borrow,require_writes,Argument,require_arguments
+        owner=Storage('stack:caller','Config',0,32,4,'validated',True)
+        readonly=borrow(owner,0,32,'validated')
+        with self.assertRaises(AssertionError):require_writes((readonly,),((readonly,0,4),),())
+        mutable=borrow(owner,0,32,'validated',writable=True)
+        with self.assertRaises(AssertionError):require_arguments({'r0':Argument('Config',readonly,1)},
+                                                               {'r0':Argument('Config',mutable,1)})
+
+    def test_context_ranges_and_domains_reject_wrap_empty_values_and_foreign_coordinate_spaces(self):
+        from config_regions import Storage,borrow,Argument,require_join
+        for start,extent in ((0xfffffff0,32),(-1,4),(0,0)):
+            with self.subTest(start=start,extent=extent),self.assertRaises(AssertionError):
+                Storage('address','input',start,extent,1,'decode',False)
+        with self.assertRaises(AssertionError):Storage('arbitrary','input',0,4,1,'decode',False)
+        owner=Storage('stack:root','scratch',-32,32,4,'decode',True)
+        for offset,extent in ((-1,2),(31,2),(0,0)):
+            with self.subTest(offset=offset,extent=extent),self.assertRaises(AssertionError):borrow(owner,offset,extent,'decode')
+        for domain in (frozenset(),frozenset((-1,)),frozenset((256,)),frozenset((True,))):
+            with self.subTest(domain=domain),self.assertRaises(AssertionError):Argument('u8',None,0,8,domain)
+        with self.assertRaises(AssertionError):require_join((),{})
+
+
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
         value=path.encode('utf-8');base=0x10000000
