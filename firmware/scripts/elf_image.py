@@ -39,6 +39,7 @@ class ElfImage:
                 name = string(strings, name)
                 self.symbols[name] = value
                 if name in ('$t', '$d', '$a') or name.startswith(('$t.', '$d.', '$a.')):
+                    require(info==0 and size==0, 'mapping symbol must be local NOTYPE with zero size')
                     self.mapping_symbols.append((name, value, index))
                 if info & 15 == 2 and size:
                     self.functions[name] = (value, size, index)

@@ -7,7 +7,7 @@ import re
 import struct
 import subprocess
 import tempfile
-import threading
+import time
 
 from elf_image import ElfImage
 from validation import require
@@ -128,29 +128,59 @@ def _digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def _run(argv, limit, timeout=60):
-    """Drain both pipes concurrently, retain bounded bytes and reap on failure."""
+    """Bound execution and pipe draining by one deadline, including cleanup.
+
+    No blocking reader thread can outlive this call. Windows PeekNamedPipe
+    supports the declared Python 3.11 minimum without nonblocking-pipe APIs
+    introduced in later Python releases. Only these fixed tools are launched.
+    """
     env={k:v for k,v in os.environ.items() if k.upper() in ('SYSTEMROOT','WINDIR','TEMP','TMP')}
     env.update(LC_ALL='C',LANG='C')
-    child=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env)
-    buffers=[bytearray(),bytearray()];oversized=threading.Event()
-    def drain(pipe,index):
-        with pipe:
-            while chunk:=pipe.read(65536):
-                room=limit-len(buffers[index])
-                buffers[index].extend(chunk[:max(room,0)])
-                if len(chunk)>room:
-                    oversized.set()
-                    try: child.kill()
-                    except ProcessLookupError: pass
-    workers=[threading.Thread(target=drain,args=(pipe,i)) for i,pipe in enumerate((child.stdout,child.stderr))]
-    for worker in workers:worker.start()
+    deadline=time.monotonic()+timeout
+    running_deadline=deadline-min(.25,timeout/2)
+    child=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                           env=env,bufsize=0)
+    streams=(child.stdout,child.stderr)
+    buffers=[bytearray(),bytearray()];ended=[False,False]
+    if os.name=='nt':
+        import ctypes
+        from ctypes import wintypes
+        import msvcrt
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        peek=kernel.PeekNamedPipe
+        peek.argtypes=[wintypes.HANDLE,wintypes.LPVOID,wintypes.DWORD,wintypes.LPVOID,
+                       ctypes.POINTER(wintypes.DWORD),wintypes.LPVOID]
+        peek.restype=wintypes.BOOL
+        def read(pipe):
+            available=wintypes.DWORD()
+            if not peek(msvcrt.get_osfhandle(pipe.fileno()),None,0,None,ctypes.byref(available),None):
+                require(ctypes.get_last_error() in (109,232),'LLVM pipe inspection failed')
+                return b''
+            return os.read(pipe.fileno(),min(available.value,65536)) if available.value else None
+    else:
+        for pipe in streams:os.set_blocking(pipe.fileno(),False)
+        def read(pipe):
+            try:return os.read(pipe.fileno(),65536)
+            except BlockingIOError:return None
     try:
-        try:status=child.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            child.kill();child.wait();raise AssertionError('LLVM child deadline exceeded')
+        while True:
+            require(time.monotonic()<running_deadline,'LLVM child/drain deadline exceeded')
+            for index,pipe in enumerate(streams):
+                if ended[index]:continue
+                chunk=read(pipe)
+                if chunk is None:continue
+                if not chunk:ended[index]=True;continue
+                require(len(buffers[index])+len(chunk)<=limit,'LLVM output bound exceeded')
+                buffers[index].extend(chunk)
+            if all(ended) and child.poll() is not None:break
+            time.sleep(.001)
+        status=child.wait(timeout=max(.001,deadline-time.monotonic()))
     finally:
-        for worker in workers:worker.join()
-    require(not oversized.is_set(),'LLVM output bound exceeded')
+        if child.poll() is None:child.kill()
+        try:child.wait(timeout=max(.001,deadline-time.monotonic()))
+        except subprocess.TimeoutExpired:raise AssertionError('LLVM direct child cleanup deadline exceeded')
+        finally:
+            for pipe in streams:pipe.close()
     require(status==0,'LLVM child failed: '+bytes(buffers[1]).decode('utf-8',errors='replace')[:512])
     require(not buffers[1],'LLVM diagnostic output is not permitted')
     return bytes(buffers[0]).decode('utf-8',errors='strict').replace('\r\n','\n')
@@ -214,8 +244,9 @@ def disassemble(path, elf, context):
     command=[context.executable,*context.arguments,str(source)]
     output=_run(command,min(64*1024*1024,max(1024*1024,len(elf.data)*32)))
     instructions=decode_listing(output,elf)
-    require(source.read_bytes()==elf.data and _digest(context.executable)==context.executable_sha256,
-            'ELF/decoder changed during admission')
+    require(source.read_bytes()==elf.data and _digest(context.executable)==context.executable_sha256 and
+            _digest(context.compiler_path)==context.compiler_sha256,
+            'ELF/decoder/compiler changed during admission')
     evidence=dict(context=asdict(context),command=command,elf_sha256=hashlib.sha256(elf.data).hexdigest(),
                   output_sha256=hashlib.sha256(output.encode()).hexdigest(),covered_instructions=len(instructions))
     return instructions,evidence

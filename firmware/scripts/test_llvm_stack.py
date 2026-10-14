@@ -4,6 +4,11 @@ from pathlib import Path
 import tempfile
 import unittest
 import sys
+import struct
+import time
+import hashlib
+from unittest.mock import patch
+import llvm_stack
 from llvm_stack import capability_elf, decode_listing, mapping_ranges, _run
 from elf_image import ElfImage
 
@@ -21,6 +26,19 @@ class Decoder(unittest.TestCase):
         self.assertEqual([n for n,_,_ in elf.mapping_symbols], ['$t','$d','$t'])
         self.assertEqual(mapping_ranges(elf, 'probe'), [(0x10000000,0x10000020,'t')])
         self.assertEqual(mapping_ranges(elf, 'tail'), [(0x10000024,0x10000028,'t')])
+
+    def test_nonlocal_typed_and_nonzero_mapping_symbols_reject(self):
+        elf=self.fixture()
+        offset=elf.sections[2][4]+3*16
+        for field,value in [('info',16),('info',2),('size',2)]:
+            data=bytearray(elf.data)
+            if field=='info':data[offset+12]=value
+            else:struct.pack_into('<I',data,offset+8,value)
+            path=Path(tempfile.mktemp(suffix='.elf'))
+            self.addCleanup(path.unlink,missing_ok=True)
+            path.write_bytes(data)
+            with self.assertRaisesRegex(AssertionError,'mapping symbol'):
+                ElfImage(path)
 
     def test_raw_instruction_bytes_coverage_and_literal_data(self):
         elf = self.fixture()
@@ -67,6 +85,44 @@ class Decoder(unittest.TestCase):
             with self.assertRaises(AssertionError):_run([sys.executable,'-c',script],128)
         with self.assertRaisesRegex(AssertionError,'deadline'):
             _run([sys.executable,'-c','import time; time.sleep(5)'],128,timeout=.1)
+
+    def test_inherited_pipe_cannot_extend_decoder_deadline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker=Path(folder)/'finished'
+            script='import time; from pathlib import Path; time.sleep(1); Path('+repr(str(marker))+').write_text("done")'
+            parent='import subprocess,sys; subprocess.Popen([sys.executable,"-c",'+repr(script)+'])'
+            started=time.monotonic()
+            try:
+                with self.assertRaisesRegex(AssertionError,'deadline'):
+                    _run([sys.executable,'-c',parent],128,timeout=.2)
+                self.assertLess(time.monotonic()-started,.7)
+            finally:
+                # The fixture's only descendant ends itself; keep its lifetime
+                # owned and wait for its completion before removing test files.
+                deadline=time.monotonic()+3
+                while not marker.exists() and time.monotonic()<deadline:time.sleep(.01)
+                self.assertTrue(marker.exists(),'fixture descendant did not complete')
+
+    def test_compiler_change_during_decoder_execution_rejects(self):
+        elf=self.fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.elf';source.write_bytes(elf.data)
+            compiler=Path(folder)/'rustc';compiler.write_bytes(b'compiler-before')
+            tool=Path(folder)/'objdump';tool.write_bytes(b'decoder')
+            context=llvm_stack.LlvmContext(1,str(compiler),hashlib.sha256(compiler.read_bytes()).hexdigest(),
+                'reviewed compiler',folder,'host',str(tool),hashlib.sha256(tool.read_bytes()).hexdigest(),
+                'reviewed decoder',llvm_stack.TARGET,llvm_stack.DECODER_ARGS,'fixture','output',
+                hashlib.sha256(Path(llvm_stack.__file__).read_bytes()).hexdigest())
+            # Isolate the identity boundary with a real byte-checked leaf. The
+            # external invocation is the only mocked dependency and changes the
+            # compiler bytes while it runs.
+            elf.functions={'tail':elf.functions['tail']}
+            def output(*args):
+                compiler.write_bytes(b'compiler-after')
+                return '10000024: e7ec b 0x10000000 <probe>\n10000026: 4770 bx lr\n'
+            with patch.object(llvm_stack,'_run',side_effect=output):
+                with self.assertRaisesRegex(AssertionError,'changed during admission'):
+                    llvm_stack.disassemble(source,elf,context)
 
 
 if __name__=='__main__': unittest.main()
