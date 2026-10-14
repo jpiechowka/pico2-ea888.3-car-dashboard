@@ -1342,6 +1342,162 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                 config_decode_effects.decode_effect(*args,output=state.header,platform_policy=policy)
 
 
+class OrdinarySequenceEffects(unittest.TestCase):
+    def fixture(self,semantic,raw,count,cursor=0):
+        import config_decode_effects
+        from config_regions import Storage,borrow
+        args=list(OrdinaryDecodeEffects.fixture(self,semantic,raw,cursor));state=args[3]
+        owner=Storage('stack:decode','Q',160,8,4,'decode',True)
+        args[3]=config_decode_effects.SequenceState(borrow(owner,0,8,'decode',writable=True),state,count)
+        return args
+
+    def run_effect(self,semantic,raw,count,cursor=0):
+        import config_decode_effects,config_platform
+        from config_regions import Storage,borrow
+        args=self.fixture(semantic,raw,count,cursor);kwargs={}
+        if semantic=='seq_f32':
+            objects,records,proof,state,frame,protected=args
+            owner=Storage(frame.space,'RO8',184,8,4,frame.phase,True)
+            kwargs['output']=borrow(owner,0,8,frame.phase,writable=True)
+            kwargs['platform_policy']=config_platform.reviewed_eav_policy(objects,state.decoder.payload,dict(target=config_platform.TARGET,
+                core=0,security='secure',boot_context=config_platform.BOOT_CONTEXT),contradictory_effects=())
+        return config_decode_effects.sequence_effect(*args,**kwargs)
+
+    def test_zero_count_has_no_child_or_cursor_write_and_uses_each_none_abi(self):
+        for semantic,registers in (('seq_u8',{'r0':0}),('seq_u16',{'r0':0}),('seq_bool',{'r0':0,'r1':2}),('seq_f32',{})):
+            result=self.run_effect(semantic,b'\xff',0)
+            self.assertEqual((result['registers'],result['state'].count,result['state'].decoder.cursor,result['children']),
+                             (registers,0,0,()))
+            self.assertFalse(any(view in (result['state'].header,result['state'].decoder.header) for view,off,data in result['writes']))
+            if semantic=='seq_f32':self.assertEqual(result['initialized_result_fields'],((0,4),))
+
+    def test_positive_count_decrements_before_empty_input_error_without_rollback(self):
+        for semantic,registers in (('seq_u8',{'r0':0x402}),('seq_u16',{'r0':0x40002}),('seq_bool',{'r0':1,'r1':4})):
+            result=self.run_effect(semantic,b'\xff',2,1)
+            self.assertEqual((result['registers'],result['state'].count,result['state'].decoder.cursor),(registers,1,1))
+            self.assertEqual((result['writes'][0][1],result['writes'][0][2]),(4,struct.pack('<I',1)))
+        result=self.run_effect('seq_u16',b'\x80',1)
+        self.assertEqual((result['state'].count,result['state'].decoder.cursor,result['registers']),(0,1,{'r0':0x40002}))
+
+    def test_some_and_bad_bool_keep_distinct_register_layouts(self):
+        for semantic,raw,registers in (('seq_u8',b'\xff',{'r0':0xff01}),('seq_u16',b'\xff\xff\x03',{'r0':0xffff0001}),
+                                      ('seq_bool',b'\x00',{'r0':0,'r1':0}),('seq_bool',b'\x01',{'r0':0,'r1':1}),
+                                      ('seq_bool',b'\x02',{'r0':1,'r1':6})):
+            result=self.run_effect(semantic,raw,1)
+            self.assertEqual(result['registers'],registers)
+            self.assertEqual((result['state'].count,result['state'].decoder.cursor),(0,len(raw)))
+
+    def test_f32_only_reads_initialized_child_value_and_preserves_conditional_policy(self):
+        for raw,tag,fields,cursor in ((bytes.fromhex('0000803f'),1,((0,4),(4,4)),4),(b'\x01\x02',2,((0,4),(4,1)),0)):
+            result=self.run_effect('seq_f32',raw,1)
+            self.assertEqual((result['tag'],result['initialized_result_fields'],result['state'].decoder.cursor),(tag,fields,cursor))
+            self.assertEqual(result['platform_policy'],result['children'][0]['platform_policy'])
+            self.assertEqual(result['state'].count,0)
+
+    def test_q_alias_saved_protection_and_wrong_count_domains_reject(self):
+        import config_decode_effects
+        from config_regions import Storage,borrow
+        for fault in ('D_alias','saved_alias','ancestor','negative','bool_count'):
+            args=self.fixture('seq_u8',b'\x01',1);state,frame=args[3:5]
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                if fault in ('negative','bool_count'):
+                    args[3]=config_decode_effects.SequenceState(state.header,state.decoder,-1 if fault=='negative' else True)
+                elif fault=='ancestor':args[5]=(Storage(frame.space,'saved_r11',state.header.start+4,4,4,frame.phase,False),)
+                else:
+                    owner=Storage(frame.space,'Q-alias',state.decoder.header.start if fault=='D_alias' else frame.start,8,4,frame.phase,True)
+                    args[3]=config_decode_effects.SequenceState(borrow(owner,0,8,frame.phase,writable=True),state.decoder,1)
+                config_decode_effects.sequence_effect(*args)
+
+    def test_entire_live_D_header_must_survive_parent_and_child_prologue(self):
+        import config_decode_effects
+        from config_regions import Storage,borrow
+        for semantic,start in (('slice_pop',-20),('deserialize_u16',-44)):
+            args=list(OrdinaryDecodeEffects.fixture(self,semantic,b'\x01'));state,frame=args[3:5]
+            owner=Storage(frame.space,'D-end-alias',start,8,4,frame.phase,True)
+            args[3]=config_decode_effects.DecoderState(borrow(owner,0,8,frame.phase,writable=True),state.payload,0)
+            with self.subTest(semantic=semantic),self.assertRaises(AssertionError):
+                config_decode_effects.decode_effect(*args)
+
+    def test_f32_external_Q_D_and_RO8_cannot_borrow_pushed_scratch_even_on_none(self):
+        import config_decode_effects,config_platform
+        from config_regions import Storage,borrow
+        for fault in ('Q','D','RO8'):
+            args=self.fixture('seq_f32',bytes(4),0);objects,records,proof,state,frame,protected=args
+            policy=config_platform.reviewed_eav_policy(objects,state.decoder.payload,dict(target=config_platform.TARGET,
+                core=0,security='secure',boot_context=config_platform.BOOT_CONTEXT),contradictory_effects=())
+            alias=Storage(frame.space,'prologue-scratch',frame.start,8,4,frame.phase,True)
+            view=borrow(alias,0,8,frame.phase,writable=True)
+            out_owner=Storage(frame.space,'RO8',184,8,4,frame.phase,True);output=borrow(out_owner,0,8,frame.phase,writable=True)
+            if fault=='Q':args[3]=config_decode_effects.SequenceState(view,state.decoder,0)
+            elif fault=='D':args[3]=config_decode_effects.SequenceState(state.header,
+                config_decode_effects.DecoderState(view,state.decoder.payload,0),0)
+            else:output=view
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_decode_effects.sequence_effect(*args,output=output,platform_policy=policy)
+
+
+class OrdinaryCompareEffects(unittest.TestCase):
+    def fixture(self,raw=b'abc',source=b'ab',cursor=0):
+        import config_compare_effects
+        from config_regions import Storage,borrow
+        objects,records,proof,state,frame,protected=OrdinaryDecodeEffects.fixture(self,'compare_extend',raw,cursor)
+        donor,other_records,item=LoggerBodies.fixture(self,'sizez');start=donor.elf.functions['memcmp'][0]&~1
+        blob=donor.read_only(start,116);section=next(s for s in objects.elf.sections if s[2]&4 and s[3]<=start<start+116<=s[3]+s[5])
+        at=section[4]+start-section[3];data=bytearray(objects.elf.data);data[at:at+116]=blob;objects.elf.data=bytes(data)
+        records.update({at:row for at,row in other_records.items() if start<=at<start+116})
+        source_owner=Storage(frame.space,'serialized-bytes',176,max(len(source),1),4,frame.phase,True)
+        encoded=config_compare_effects.SourceBytes(borrow(source_owner,0,source_owner.extent,frame.phase),source)
+        compare=config_compare_effects.CompareState(state.header,state.payload,state.cursor)
+        return objects,records,proof,compare,encoded,frame,protected
+
+    def test_equal_prefix_advances_but_mismatch_or_insufficient_length_does_not(self):
+        import config_compare_effects
+        for raw,source,cursor,status,writes in ((b'abc',b'ab',2,255,1),(b'abc',b'ax',0,2,0),(b'a',b'ab',0,2,0)):
+            result=config_compare_effects.compare_effect(*self.fixture(raw,source))
+            self.assertEqual((result['state'].cursor,result['registers'],len(result['writes'])),(cursor,{'r0':status},writes))
+            self.assertEqual(result['input_read_envelopes'],() if len(raw)<len(source) else ((0x1007000c,len(source)),(176,len(source))))
+
+    def test_empty_extension_keeps_valid_slice_and_writes_unchanged_header(self):
+        import config_compare_effects
+        result=config_compare_effects.compare_effect(*self.fixture(b'a',b'',1))
+        self.assertEqual((result['state'].cursor,result['registers'],result['input_read_envelopes']),(1,{'r0':255},()))
+        self.assertEqual(result['writes'][0][2],struct.pack('<II',0x1007000d,0))
+        self.assertEqual(result['conservative_activation_frames'],(24,32))
+
+    def test_relative_stack_zero_is_a_valid_source_coordinate_not_a_null_pointer(self):
+        import config_compare_effects
+        from config_regions import Storage,borrow
+        args=list(self.fixture());frame=args[5]
+        owner=Storage(frame.space,'relative-source',0,2,4,frame.phase,True)
+        args[4]=config_compare_effects.SourceBytes(borrow(owner,0,2,frame.phase),b'ab')
+        self.assertEqual(config_compare_effects.compare_effect(*args)['registers'],{'r0':255})
+
+    def test_full_C_header_and_source_bytes_survive_own_and_memcmp_frames(self):
+        import config_compare_effects
+        from config_regions import Storage,borrow
+        for fault in ('C_end_save','C_source_alias','source_memcmp_save','C_memcmp_save'):
+            args=list(self.fixture());state,source,frame=args[3:6]
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                if fault.startswith('C_'):
+                    start=-28 if fault=='C_end_save' else -60 if fault=='C_memcmp_save' else source.view.start
+                    owner=Storage(frame.space,'C-alias',start,8,4,frame.phase,True)
+                    args[3]=config_compare_effects.CompareState(borrow(owner,0,8,frame.phase,writable=True),state.payload,0)
+                else:
+                    owner=Storage(frame.space,'source-alias',-56,2,4,frame.phase,True)
+                    args[4]=config_compare_effects.SourceBytes(borrow(owner,0,2,frame.phase),b'ab')
+                config_compare_effects.compare_effect(*args)
+
+    def test_memcmp_body_and_bound_readonly_source_identity_are_required(self):
+        import config_compare_effects
+        from config_regions import borrow
+        for fault in ('memcmp','source_bytes'):
+            args=list(self.fixture());objects,records=args[:2]
+            if fault=='memcmp':
+                start=objects.elf.functions['memcmp'][0]&~1;row=records[start];records[start]=Instruction(start,row.raw,'bx','lr')
+            else:args[4]=config_compare_effects.SourceBytes(borrow(args[3].payload.storage,12,2,args[3].payload.storage.phase),b'zz')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_compare_effects.compare_effect(*args)
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow
