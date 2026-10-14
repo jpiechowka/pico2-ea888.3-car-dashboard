@@ -322,6 +322,20 @@ class PublicationFrames(unittest.TestCase):
 
 
 class OwnerPublicationFrames(unittest.TestCase):
+    def test_demo_and_unavailable_constructor_boundary_is_counted_and_requires_metadata(self):
+        from check_stack_budget import constructor_frames
+        functions = {'pico2_tasks_acquisition_configured_model': (0x101, 4, 0)}
+        self.assertEqual(constructor_frames(functions, {0x100: 24000}), 24000)
+        with self.assertRaisesRegex(AssertionError, 'missing constructor frame metadata'):
+            constructor_frames(functions, {})
+
+    def test_prepared_session_assembly_is_counted_and_requires_metadata(self):
+        from check_stack_budget import constructor_frames
+        functions = {'dashboard_core_diagnostics_session_PreparedSession_8assemble': (0x101, 4, 0)}
+        self.assertEqual(constructor_frames(functions, {0x100: 17000}), 17000)
+        with self.assertRaisesRegex(AssertionError, 'missing constructor frame metadata'):
+            constructor_frames(functions, {})
+
     def fixture(self):
         functions = {
             'pico2_tasks_acquisition_publish_snapshot': (0x101, 4, 0),

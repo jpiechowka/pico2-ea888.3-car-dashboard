@@ -9,7 +9,7 @@ use super::bootstrap::{self, Bootstrap};
 use super::client::{self, TxAction};
 use super::longan::{BridgeError, RawRecord, Rx12};
 use super::serial_tx::{self, Completion, Pump, Work};
-use super::session::{Counters, Session, SessionError};
+use super::session::{Counters, PreparedSession, Session, SessionError};
 use crate::acquisition::DashboardSnapshot;
 
 pub const RX_WORK_BYTES: usize = 32;
@@ -177,17 +177,14 @@ impl<'a, P: Port> Vehicle<'a, P> {
         // handshake advances past it; capabilities and tokens are never reused.
         let mut rx = Rx12::new();
         rx.fault();
+        let session = PreparedSession::new(profile.responder, 1)?;
         Ok(Self {
             port,
             profile,
             bootstrap: Bootstrap::new(now),
             rx,
             tx: Pump::new(),
-            session: if let Some(config) = config {
-                Session::configured(profile.responder, 1, config)?
-            } else {
-                Session::new(profile.responder, 1)?
-            },
+            session: session.assemble(config),
             owner: OwnerState::Recover { since: now, wait: 0 },
             raw: Deque::new(),
             raw_records: 0,

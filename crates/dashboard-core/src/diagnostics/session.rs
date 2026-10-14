@@ -106,6 +106,45 @@ pub struct Session<'a> {
     timing: Option<ActiveTiming>,
     reply_ms: [Histogram<160>; 7],
 }
+
+/// Validate only the small transport fields before assembling a large owner.
+/// Kept inside diagnostics so callers cannot bypass Session validation.
+pub(super) struct PreparedSession {
+    client: Client,
+    capabilities: Capabilities,
+}
+impl PreparedSession {
+    pub(super) fn new(
+        ecu: u16,
+        epoch: u64,
+    ) -> Result<Self, SessionError> {
+        let capabilities = Capabilities::new(ecu, epoch).map_err(|_| SessionError::Client(ClientError::Address))?;
+        let client = Client::new(ecu - 8, ecu, epoch).map_err(SessionError::Client)?;
+        Ok(Self { client, capabilities })
+    }
+
+    pub(super) fn assemble(
+        self,
+        config: Option<&ValidatedConfig>,
+    ) -> Session<'_> {
+        let ecu = self.client.response_id();
+        Session {
+            client: self.client,
+            capabilities: self.capabilities,
+            model: config.map_or_else(AcquisitionModel::new, |config| {
+                AcquisitionModel::configured(config, ecu)
+            }),
+            slots: [Slot::default(); 7],
+            cursor: 0,
+            next_query: 0,
+            last_ms: 0,
+            counters: Counters::default(),
+            channels: [Counters::default(); 7],
+            timing: None,
+            reply_ms: [const { Histogram::new() }; 7],
+        }
+    }
+}
 impl<'a> Session<'a> {
     pub fn new(
         ecu: u16,
@@ -129,23 +168,7 @@ impl<'a> Session<'a> {
         epoch: u64,
         config: Option<&'a ValidatedConfig>,
     ) -> Result<Self, SessionError> {
-        let capabilities = Capabilities::new(ecu, epoch).map_err(|_| SessionError::Client(ClientError::Address))?;
-        let client = Client::new(ecu - 8, ecu, epoch).map_err(SessionError::Client)?;
-        Ok(Self {
-            client,
-            capabilities,
-            model: config.map_or_else(AcquisitionModel::new, |config| {
-                AcquisitionModel::configured(config, ecu)
-            }),
-            slots: [Slot::default(); 7],
-            cursor: 0,
-            next_query: 0,
-            last_ms: 0,
-            counters: Counters::default(),
-            channels: [Counters::default(); 7],
-            timing: None,
-            reply_ms: [const { Histogram::new() }; 7],
-        })
+        Ok(PreparedSession::new(ecu, epoch)?.assemble(config))
     }
 
     pub fn snapshot(&self) -> DashboardSnapshot { self.model.snapshot() }

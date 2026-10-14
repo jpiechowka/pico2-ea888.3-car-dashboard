@@ -52,6 +52,21 @@ fn configured_vehicle(resources: Resources) -> Vehicle<'static, crate::drivers::
     .expect("invalid vehicle profile")
 }
 
+// Isolate one-time construction from the frame used by every resumed poll.
+// This boundary also covers the historical unavailable acquisition backend.
+#[cfg(not(feature = "longan-rx12"))]
+#[inline(never)]
+fn configured_model(resources: Resources) -> AcquisitionModel<'static> {
+    if cfg!(feature = "demo") {
+        AcquisitionModel::demo_configured(resources.configuration)
+    } else {
+        AcquisitionModel::configured(
+            resources.configuration,
+            dashboard_pico2::config::vehicle::PROFILE.responder,
+        )
+    }
+}
+
 // Publication owns the by-value Watch copies in a separate call frame. Keeping
 // them in the async poll also reserves them during Vehicle construction.
 #[inline(never)]
@@ -91,13 +106,7 @@ pub async fn acquisition_task(
     let mut last_util_calc = Instant::now();
     let mut total_work_cycles = 0u32;
     #[cfg(not(feature = "longan-rx12"))]
-    let configuration = resources.configuration;
-    #[cfg(not(feature = "longan-rx12"))]
-    let mut model = if cfg!(feature = "demo") {
-        AcquisitionModel::demo_configured(configuration)
-    } else {
-        AcquisitionModel::configured(configuration, dashboard_pico2::config::vehicle::PROFILE.responder)
-    };
+    let mut model = configured_model(resources);
     #[cfg(feature = "longan-rx12")]
     let mut model = configured_vehicle(resources);
     #[cfg(feature = "longan-rx12")]

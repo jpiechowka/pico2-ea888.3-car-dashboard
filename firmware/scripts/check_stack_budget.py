@@ -227,7 +227,8 @@ def constructor_frames(functions, sizes):
     # Constructors may inline. Every emitted owner/storage/policy frame must be
     # counted, including the extra owner boundary; aliases count once by address.
     matches = {address & ~1 for name, (address, _, _) in functions.items()
-               if 'configured_vehicle' in name
+               if 'configured_vehicle' in name or 'configured_model' in name
+               or ('PreparedSession' in name and '8assemble' in name)
                or (any(token in name for token in ('AcquisitionModel', 'AcquisitionOwner',
                                                    'AcquisitionState', 'Session', 'Vehicle',
                                                    'RuleEngine', 'RuleEngineState'))
