@@ -141,28 +141,29 @@ def _run(argv, limit, timeout=60):
     child=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                            env=env,bufsize=0)
     streams=(child.stdout,child.stderr)
-    buffers=[bytearray(),bytearray()];ended=[False,False]
-    if os.name=='nt':
-        import ctypes
-        from ctypes import wintypes
-        import msvcrt
-        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
-        peek=kernel.PeekNamedPipe
-        peek.argtypes=[wintypes.HANDLE,wintypes.LPVOID,wintypes.DWORD,wintypes.LPVOID,
-                       ctypes.POINTER(wintypes.DWORD),wintypes.LPVOID]
-        peek.restype=wintypes.BOOL
-        def read(pipe):
-            available=wintypes.DWORD()
-            if not peek(msvcrt.get_osfhandle(pipe.fileno()),None,0,None,ctypes.byref(available),None):
-                require(ctypes.get_last_error() in (109,232),'LLVM pipe inspection failed')
-                return b''
-            return os.read(pipe.fileno(),min(available.value,65536)) if available.value else None
-    else:
-        for pipe in streams:os.set_blocking(pipe.fileno(),False)
-        def read(pipe):
-            try:return os.read(pipe.fileno(),65536)
-            except BlockingIOError:return None
     try:
+        # Child ownership begins at spawn, including platform pipe setup.
+        buffers=[bytearray(),bytearray()];ended=[False,False]
+        if os.name=='nt':
+            import ctypes
+            from ctypes import wintypes
+            import msvcrt
+            kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+            peek=kernel.PeekNamedPipe
+            peek.argtypes=[wintypes.HANDLE,wintypes.LPVOID,wintypes.DWORD,wintypes.LPVOID,
+                           ctypes.POINTER(wintypes.DWORD),wintypes.LPVOID]
+            peek.restype=wintypes.BOOL
+            def read(pipe):
+                available=wintypes.DWORD()
+                if not peek(msvcrt.get_osfhandle(pipe.fileno()),None,0,None,ctypes.byref(available),None):
+                    require(ctypes.get_last_error() in (109,232),'LLVM pipe inspection failed')
+                    return b''
+                return os.read(pipe.fileno(),min(available.value,65536)) if available.value else None
+        else:
+            for pipe in streams:os.set_blocking(pipe.fileno(),False)
+            def read(pipe):
+                try:return os.read(pipe.fileno(),65536)
+                except BlockingIOError:return None
         while True:
             require(time.monotonic()<running_deadline,'LLVM child/drain deadline exceeded')
             for index,pipe in enumerate(streams):

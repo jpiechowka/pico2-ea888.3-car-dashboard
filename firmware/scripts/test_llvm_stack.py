@@ -7,6 +7,9 @@ import sys
 import struct
 import time
 import hashlib
+import ctypes
+import os
+import subprocess
 from unittest.mock import patch
 import llvm_stack
 from llvm_stack import capability_elf, decode_listing, mapping_ranges, _run
@@ -102,6 +105,35 @@ class Decoder(unittest.TestCase):
                 deadline=time.monotonic()+3
                 while not marker.exists() and time.monotonic()<deadline:time.sleep(.01)
                 self.assertTrue(marker.exists(),'fixture descendant did not complete')
+
+    def test_pipe_setup_failure_reaps_child_and_closes_both_pipes(self):
+        # Exercise the real owned child. Only the failing platform setup is
+        # injected; leaving setup outside cleanup makes these assertions fail.
+        original=subprocess.Popen
+        for platform,owner,attribute in [('nt',ctypes,'WinDLL'),('posix',os,'set_blocking')]:
+            children=[]
+            def spawn(*args,**kwargs):
+                child=original(*args,**kwargs)
+                children.append(child)
+                return child
+            with self.subTest(platform=platform):
+                try:
+                    with patch.object(llvm_stack.subprocess,'Popen',side_effect=spawn), \
+                         patch.object(llvm_stack.os,'name',platform), \
+                         patch.object(owner,attribute,side_effect=OSError('injected pipe setup failure'),create=True):
+                        with self.assertRaisesRegex(OSError,'injected pipe setup failure'):
+                            _run([sys.executable,'-c','import time; time.sleep(30)'],128,timeout=1)
+                    self.assertEqual(len(children),1)
+                    child=children[0]
+                    self.assertIsNotNone(child.poll(),'owned child survived setup failure')
+                    self.assertTrue(child.stdout.closed,'stdout survived setup failure')
+                    self.assertTrue(child.stderr.closed,'stderr survived setup failure')
+                finally:
+                    # RED also owns its cleanup: never leave its failed child.
+                    for child in children:
+                        if child.poll() is None:child.kill()
+                        child.wait(timeout=3)
+                        child.stdout.close();child.stderr.close()
 
     def test_compiler_change_during_decoder_execution_rejects(self):
         elf=self.fixture()
