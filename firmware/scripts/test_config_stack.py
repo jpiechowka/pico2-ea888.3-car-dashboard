@@ -200,6 +200,9 @@ class BoundaryProducers(unittest.TestCase):
             with self.subTest(address=address,mnemonic=mnemonic,operands=operands),self.assertRaises(AssertionError):
                 config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
 
+
+
+
     def test_conditional_and_security_transfers_outside_slice_reject(self):
         # Spellings independently confirmed with selected LLVM on a decoded-only
         # IT/BX/BLX/BXNS/BLXNS/SVC fixture; these remain semantic-record tests.
@@ -212,5 +215,65 @@ class BoundaryProducers(unittest.TestCase):
             with self.subTest(mnemonic=mnemonic),self.assertRaises(AssertionError):
                 config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
 
+
+
+class EnumDispatch(unittest.TestCase):
+    def fixture(self, shift=0, control=False):
+        base=0x10000000+shift
+        name='_RNvXsd_NtCs123_16dashboard_config8validateNtB5_5FieldNtNtCs456_4core3fmt5Debug3fmt'
+        prefix=[('80b5','push','{r7, lr}'),('6f46','mov','r7, sp'),('82b0','sub','sp, #0x8'),
+                ('0278','ldrb','r2, [r0]'),('083a','subs','r2, #0x8'),('98bf','it','ls'),
+                ('0022','movls','r2, #0x0'),('dfe812f0','tbh','[pc, r2, lsl #1]')]
+        if control:
+            name=CONTROL
+            prefix=[('f0b5','push','{r4, r5, r6, r7, lr}'),('03af','add','r7, sp, #0xc'),
+                    ('4df804bd','str','r11, [sp, #-4]!'),('8ab0','sub','sp, #0x28'),
+                    ('0268','ldr','r2, [r0]'),('1078','ldrb','r0, [r2]'),('0238','subs','r0, #0x2'),
+                    ('38bf','it','lo'),('0220','movlo','r0, #0x2'),('c0b2','uxtb','r0, r0'),
+                    ('dfe800f0','tbb','[pc, r0]')]
+        code=b''.join(bytes.fromhex(r) for r,_,_ in prefix)
+        count=7 if control else 58
+        table=bytes(4+i for i in range(7))+b'\0' if control else b''.join(struct.pack('<H',58+i) for i in range(58))
+        tail=len(code)+len(table)
+        data=code+table+bytes.fromhex('00bf')*count
+        records=[];address=base
+        for raw,mnemonic,operands in prefix:
+            raw=bytes.fromhex(raw);records.append(Instruction(address,raw,mnemonic,operands));address+=len(raw)
+        records += [Instruction(base+tail+2*i,bytes.fromhex('00bf'),'nop','') for i in range(count)]
+        elf=SimpleNamespace(data=data,sections=[(0,1,6,base,0,len(data),0,0,2,0)],
+                            functions={name:(base|1,len(data),0)},
+                            mapping_symbols=[('$t',base,0),('$d',base+len(code),0),('$t',base+tail,0)])
+        # The complete byte-checked producer body, not an arbitrary table blob.
+        elf.function_bytes=lambda selected: elf.data
+        return elf,base,name,records
+
+    def test_typed_field_dispatch_relocates_all_58_current_entries(self):
+        for shift in (0,0x2000):
+            elf,base,name,records=self.fixture(shift)
+            dispatch=config_stack.enum_dispatch(config_stack.DiagnosticObjects(elf,{base:16}),name,records)
+            self.assertEqual(dispatch['role'],'field')
+            self.assertEqual(dispatch['entries'],tuple(base+134+2*i for i in range(58)))
+
+    def test_control_dispatch_has_seven_cases_and_no_eighth_padding_case(self):
+        elf,base,name,records=self.fixture(control=True)
+        dispatch=config_stack.enum_dispatch(config_stack.DiagnosticObjects(elf,{base:64}),name,records)
+        self.assertEqual(dispatch['entries'],tuple(base+34+2*i for i in range(7)))
+        data=bytearray(elf.data);data[33]=1;elf.data=bytes(data)
+        with self.assertRaises(AssertionError):
+            config_stack.enum_dispatch(config_stack.DiagnosticObjects(elf,{base:64}),name,records)
+
+    def test_wrong_tag_transform_unbacked_data_and_nonentry_destinations_reject(self):
+        for fault in ('transform','data_target','outside','missing_record','wrong_role','writable'):
+            elf,base,name,records=self.fixture();data=bytearray(elf.data)
+            if fault=='transform':data[8]^=1
+            elif fault=='data_target':struct.pack_into('<H',data,18,1)
+            elif fault=='outside':struct.pack_into('<H',data,18,0xffff)
+            elif fault=='missing_record':records.pop()
+            elif fault=='wrong_role':
+                other=name.replace('5Field','9ErrorCode');elf.functions={other:elf.functions[name]};name=other
+            elif fault=='writable':elf.sections[0]=(0,1,7,base,0,len(data),0,0,2,0)
+            elf.data=bytes(data)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_stack.enum_dispatch(config_stack.DiagnosticObjects(elf,{base:16}),name,records)
 
 if __name__=='__main__':unittest.main()

@@ -2,6 +2,7 @@
 import re
 import struct
 from validation import require
+from llvm_stack import mapping_ranges
 
 CONDITIONS = r'(?:eq|ne|hs|lo|hi|ls|ge|lt|gt|le|cs|cc|mi|pl|vs|vc)?'
 
@@ -263,3 +264,79 @@ def constant_before(instructions, consumer, register, objects):
             require(not (first < target <= consumer and not first <= record.address < consumer),
                     'alternate ingress bypasses current argument producer')
     return value, evidence
+
+
+# Source-created enum layouts only. The caller must bind Field to
+# ValidationError.field, and ControlError to the Field.Controls reference cell.
+# This table/prefix witness does not prove any case's payload or suffix binding.
+ENUM_PREFIXES = {
+    'field': (
+        bytes.fromhex('80b5 6f46 82b0 0278 083a 98bf 0022 dfe812f0'),
+        bytes.fromhex('e0b5 02af 0278 083a 98bf 0022 dfe812f0'),
+    ),
+    'control_error_ref': (
+        bytes.fromhex('f0b5 03af 4df804bd 8ab0 0268 1078 0238 38bf 0220 c0b2 dfe800f0'),
+        bytes.fromhex('f0b5 03af 4df804bd 88b0 0568 0c46 2878 0238 38bf 0220 c0b2 dfe800f0'),
+        bytes.fromhex('f0b5 03af 2de9000f 89b0 0568 0e46 2878 0238 38bf 0220 c0b2 dfe800f0'),
+    ),
+}
+
+
+def enum_dispatch(objects, name, instructions):
+    """Bind one finite typed enum prefix and current code/data entry table.
+
+    It does not accept a raw table hash, prove arbitrary invalid enum values,
+    or discharge subsequent typed cases/ordinary callback closure.
+    """
+    elf = objects.elf
+    require(name in elf.functions, 'missing typed enum callback')
+    role = PAYLOAD_ROLES.get(canonical_symbol(name))
+    require(role in ENUM_PREFIXES, 'unreviewed typed enum dispatch role')
+    pointer, extent, index = elf.functions[name]
+    start = pointer & ~1
+    require(pointer & 1 and extent > 0 and 0 <= index < len(elf.sections),
+            'invalid typed enum callback extent')
+    aliases = [(n, e) for n, e in elf.functions.items() if e[0] & ~1 == start]
+    require(all(e == (pointer, extent, index) and PAYLOAD_ROLES.get(canonical_symbol(n)) == role
+                for n, e in aliases), 'typed enum callback aliases differ')
+    section = elf.sections[index]
+    require(section[1] == 1 and section[2] & 6 == 6 and not section[2] & 1 and
+            section[3] <= start < start + extent <= section[3] + section[5],
+            'typed enum body is outside its declared read-only executable section')
+    require(start in objects.sizes, 'missing typed enum frame metadata')
+    raw = objects.read_only(start, extent)
+    matches = [p for p in ENUM_PREFIXES[role] if raw.startswith(p)]
+    require(len(matches) == 1, 'unreviewed typed enum tag/index transform')
+    prefix = matches[0]
+    records = {i.address: i for i in instructions}
+    require(len(records) == len(instructions), 'duplicate typed enum instruction')
+    ranges = mapping_ranges(elf, name)
+    code = {a for lo, hi, kind in ranges if kind == 't' for a in range(lo, hi)}
+    covered = set()
+    for address, record in records.items():
+        require(len(record.raw) in (2, 4) and address % 2 == 0 and
+                start <= address < address + len(record.raw) <= start + extent,
+                'invalid typed enum instruction extent')
+        points = set(range(address, address + len(record.raw)))
+        require(points <= code and not points & covered and
+                record.raw == raw[address - start:address - start + len(record.raw)],
+                'typed enum instruction is not current mapped bytes')
+        covered |= points
+    require(covered == code, 'incomplete typed enum code coverage')
+    table = start + len(prefix)
+    count, width = (58, 2) if role == 'field' else (7, 1)
+    require(table + count * width <= start + extent <= 0x100000000,
+            'typed enum table extent overflow')
+    require(any(kind == 'd' and lo <= table < table + count * width <= hi
+                for lo, hi, kind in ranges), 'typed enum table is not mapped read-only data')
+    offsets = objects.read_only(table, count * width)
+    offsets = struct.unpack('<58H', offsets) if width == 2 else tuple(offsets)
+    entries = tuple(table + 2 * offset for offset in offsets)
+    require(len(set(entries)) == count and all(table + count * width <= target < start + extent
+                                              and target in records for target in entries),
+            'typed enum table target is not a distinct current case entry')
+    # Alignment after the seven TBB entries is not an eighth source variant.
+    if width == 1:
+        require(objects.read_only(table + count, 1) == b'\0', 'typed enum table alignment differs')
+    return {'role': role, 'function': start, 'table': table, 'entries': entries,
+            'prefix_bytes': len(prefix)}
