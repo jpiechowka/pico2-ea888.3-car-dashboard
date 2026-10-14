@@ -1073,6 +1073,146 @@ class OrdinaryContexts(unittest.TestCase):
         with self.assertRaises(AssertionError):require_join((),{})
 
 
+class OrdinaryCoverage(unittest.TestCase):
+    def fixture(self,data=b''):
+        from config_regions import Region,Transfer
+        base=0x10000000;name='_RNvCs123_4test5frame';raw=bytes.fromhex('80b56f4680bd')+data
+        elf=SimpleNamespace(data=raw,sections=[(0,1,6,base,0,len(raw),0,0,2,0)],
+            functions={name:(base|1,len(raw),0)},symbol_entries=[(name,base|1,len(raw),18,0)],
+            mapping_symbols=[('$t',base,0)]+([('$d',base+6,0)] if data else []))
+        objects=config_stack.DiagnosticObjects(elf,{base:8})
+        records={base:Instruction(base,raw[:2],'push','{r7, lr}'),
+                 base+2:Instruction(base+2,raw[2:4],'mov','r7, sp'),
+                 base+4:Instruction(base+4,raw[4:6],'pop','{r7, pc}')}
+        context=(base,'boot','callsite-0')
+        region=Region(context,'frame',base,base+6,tuple(records),(),
+                      (Transfer(base+4,'pop','return',None,'restored low saves'),))
+        return objects,name,records,context,region
+
+    def test_complete_current_code_and_return_coverage_has_no_source_or_effect_exemption(self):
+        from config_regions import audit_coverage
+        objects,name,records,context,region=self.fixture();proof=audit_coverage(objects,name,records,context,(region,))
+        self.assertEqual((proof['code_bytes'],proof['data_bytes'],proof['frame']),(6,0,8))
+        self.assertTrue(proof['requires_authored_semantics_source_and_child_effects'])
+
+    def test_uncovered_overlap_wrong_context_and_missing_return_are_rejected(self):
+        from dataclasses import replace
+        from config_regions import audit_coverage
+        objects,name,records,context,region=self.fixture()
+        cases=((replace(region,instructions=region.instructions[:-1]),),
+               (region,region),(replace(region,context=(context[0],'different phase','callsite-0')),),
+               (replace(region,transfers=()),))
+        for regions in cases:
+            with self.subTest(regions=regions),self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,regions)
+
+    def test_implicit_pc_write_or_unbound_register_transfer_cannot_hide_in_covered_bytes(self):
+        from config_regions import audit_coverage
+        for raw,mnemonic,operands in ((bytes.fromhex('a746'),'mov','pc, r4'),(bytes.fromhex('2047'),'bx','r4')):
+            objects,name,records,context,region=self.fixture();at=context[0]+2;data=bytearray(objects.elf.data);data[2:4]=raw
+            objects.elf.data=bytes(data);records[at]=Instruction(at,raw,mnemonic,operands)
+            with self.subTest(operation=mnemonic),self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,))
+
+    def test_cross_region_fallthrough_needs_its_exact_continuation(self):
+        from dataclasses import replace
+        from config_regions import audit_coverage,Region,Transfer
+        objects,name,records,context,region=self.fixture();base=context[0]
+        first=replace(region,end=base+4,instructions=(base,base+2),transfers=())
+        last=replace(region,start=base+4,instructions=(base+4,))
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(first,last))
+        first=replace(first,transfers=(Transfer(base+2,'mov','fallthrough',base+4,'frame continuation'),))
+        proof=audit_coverage(objects,name,records,context,(first,last));self.assertEqual(proof['cross_region_fallthrough'],1)
+        bad=replace(first,transfers=(Transfer(base+2,'mov','fallthrough',base+2,'wrong continuation'),))
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(bad,last))
+
+    def test_mapped_data_requires_complete_current_bytes_and_cannot_be_code(self):
+        from dataclasses import replace
+        from config_regions import audit_coverage,Region
+        objects,name,records,context,region=self.fixture(b'\x12\x34');base=context[0]
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,))
+        data=Region(context,'data',base+6,base+8,(),((base+6,b'\x12\x34'),),())
+        self.assertEqual(audit_coverage(objects,name,records,context,(region,data))['data_bytes'],2)
+        for bad in (replace(data,data=((base+6,b'\x12\x35'),)),replace(data,data=((base+4,b'\x80\xbd'),))):
+            with self.subTest(data=bad),self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,bad))
+
+    def test_a_matched_issuer_region_does_not_cover_the_rest_of_its_loader(self):
+        from config_regions import Region,Transfer,audit_coverage
+        import config_upstream
+        objects,records,item=IssuerRegions().fixture('sizez');name=item['issuer']['name']
+        proof=config_upstream.issuer_region(objects,name,records);start=proof['window'];end=start+proof['extent']
+        context=(proof['caller'],'load','callsite-0')
+        covered=tuple(a for a in sorted(records) if start<=a<end)
+        region=Region(context,'issuer',start,end,covered,(),())
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,))
+
+    def test_conditional_external_tail_must_keep_its_untaken_fallthrough(self):
+        from dataclasses import replace
+        from config_regions import Region,Transfer,audit_coverage
+        objects,name,records,context,region=self.fixture();base=context[0];child=base+0x80
+        data=bytearray(0x82);data[:6]=bytes.fromhex('80b53dd180bd');data[0x80:]=bytes.fromhex('7047');objects.elf.data=bytes(data)
+        objects.elf.sections=[(0,1,6,base,0,len(data),0,0,2,0)]
+        objects.elf.functions['child']=(child|1,2,0);objects.elf.symbol_entries.append(('child',child|1,2,18,0));objects.sizes[child]=0
+        last=replace(region,start=base+4,instructions=(base+4,))
+        for operation,raw in (('bne','3dd1'),('cbz','e8b3'),('cbnz','e8bb')):
+            value=bytes.fromhex(raw);objects.elf.data=objects.elf.data[:2]+value+objects.elf.data[4:]
+            records[base+2]=Instruction(base+2,value,operation,('r0, ' if operation!='bne' else '')+hex(child))
+            first=replace(region,end=base+4,instructions=(base,base+2),transfers=(Transfer(base+2,operation,'tail',child,'conditional child','child'),))
+            with self.subTest(operation=operation),self.assertRaises(AssertionError):
+                audit_coverage(objects,name,records,context,(first,last))
+            first=replace(first,transfers=first.transfers+(Transfer(base+2,operation,'fallthrough',base+4,'untaken conditional'),))
+            with self.subTest(positive=operation):
+                self.assertEqual(audit_coverage(objects,name,records,context,(first,last))['cross_region_fallthrough'],1)
+
+    def test_unconditional_bound_register_branch_has_no_fallthrough(self):
+        from dataclasses import replace
+        from config_regions import Transfer,audit_coverage
+        objects,name,records,context,region=self.fixture();base=context[0]
+        data=bytearray(objects.elf.data);data[2:4]=bytes.fromhex('2047');objects.elf.data=bytes(data)
+        records[base+2]=Instruction(base+2,bytes.fromhex('2047'),'bx','r4')
+        first=replace(region,end=base+4,instructions=(base,base+2),transfers=(Transfer(base+2,'bx','branch',base+4,'bound local register target'),))
+        last=replace(region,start=base+4,instructions=(base+4,))
+        self.assertEqual(audit_coverage(objects,name,records,context,(first,last))['cross_region_fallthrough'],0)
+
+    def test_all_data_mapping_cannot_serve_as_a_thumb_function_entry(self):
+        from config_regions import Region,audit_coverage
+        objects,name,records,context,region=self.fixture();base=context[0]
+        objects.elf.mapping_symbols=[('$d',base,0)]
+        data=Region(context,'data',base,base+6,(),((base,objects.elf.data),),())
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,{},context,(data,))
+
+    def test_foreign_direct_transfer_cannot_enter_a_function_region_interior(self):
+        from config_regions import audit_coverage
+        objects,name,records,context,region=self.fixture();base=context[0]
+        records[base-4]=Instruction(base-4,bytes.fromhex('01e0'),'b',hex(base+2))
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,))
+
+    def test_exact_post_return_nop_padding_requires_no_incoming_or_fallthrough_edge(self):
+        from dataclasses import replace
+        from config_regions import audit_coverage,Region,Transfer
+        objects,name,records,context,region=self.fixture();base=context[0]
+        objects.elf.data+=bytes.fromhex('00bf');objects.elf.sections=[(0,1,6,base,0,8,0,0,2,0)]
+        pointer,_,index=objects.elf.functions[name];objects.elf.functions[name]=(pointer,8,index)
+        records[base+6]=Instruction(base+6,bytes.fromhex('00bf'),'nop','')
+        padding=Region(context,'padding',base+6,base+8,(base+6,),(),())
+        self.assertEqual(audit_coverage(objects,name,records,context,(region,padding))['code_bytes'],8)
+        for kind in ('direct','table'):
+            changed=dict(records);changed[base+4]=Instruction(base+4,bytes.fromhex('00e0'),'b',hex(base+6))
+            if kind=='table':changed[base+4]=Instruction(base+4,bytes.fromhex('00e0'),'tbb','[pc, r0]')
+            objects.elf.data=objects.elf.data[:4]+bytes.fromhex('00e0')+objects.elf.data[6:]
+            edge=Transfer(base+4,changed[base+4].mnemonic,'table' if kind=='table' else 'branch',
+                          (base+6,) if kind=='table' else base+6,'forbidden padding ingress')
+            with self.subTest(kind=kind),self.assertRaises(AssertionError):
+                audit_coverage(objects,name,changed,context,(replace(region,transfers=(edge,)),padding))
+        objects.elf.data=objects.elf.data[:4]+bytes.fromhex('80bd')+objects.elf.data[6:]
+        changed=dict(records);changed[base+4]=Instruction(base+4,bytes.fromhex('3f46'),'mov','r7, r7')
+        objects.elf.data=objects.elf.data[:4]+bytes.fromhex('3f46')+objects.elf.data[6:]
+        fall=Transfer(base+4,'mov','fallthrough',base+6,'forbidden padding fallthrough')
+        with self.assertRaises(AssertionError):
+            audit_coverage(objects,name,changed,context,(replace(region,transfers=(fall,)),padding))
+        objects.elf.data=objects.elf.data[:4]+bytes.fromhex('80bd')+objects.elf.data[6:]
+        records[base-4]=Instruction(base-4,bytes.fromhex('03e0'),'b',hex(base+6))
+        with self.assertRaises(AssertionError):audit_coverage(objects,name,records,context,(region,padding))
+
+
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
         value=path.encode('utf-8');base=0x10000000
