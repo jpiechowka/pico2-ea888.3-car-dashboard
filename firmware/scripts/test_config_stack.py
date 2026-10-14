@@ -973,6 +973,41 @@ class IssuerRegions(unittest.TestCase):
 
 
 class OrdinaryHelperBodies(unittest.TestCase):
+    def test_bound_helper_frames_keep_exact_scratch_and_save_cells(self):
+        import config_helpers
+        from config_regions import Storage,require_writes
+        objects,records,item=self.fixture()
+        expected={'serialize_u16':(4,3),'serialize_u8':(7,1),'varint_usize':(0,5),
+                  'varint_u32_small':(3,5),'serialize_f32':(4,4),'seq_f32':(0,8)}
+        for instance in item['instances']:
+            if not instance['frame']:continue
+            proof=config_helpers.helper_body(objects,instance['name'],records)
+            frame=Storage('stack:boot_call','active:'+instance['role'],-instance['frame'],instance['frame'],8,'parse',True)
+            facts=config_helpers.helper_frame(proof,frame,())
+            self.assertEqual([(v.offset,v.extent) for v in facts['scratch']],
+                             [expected[instance['role']]] if instance['role'] in expected else [])
+            self.assertTrue(facts['requires_caller_sp_inputs_child_effects_and_initialization'])
+            for view in facts['scratch']:
+                require_writes(facts['scratch'],((view,0,view.extent),),facts['protected'])
+                with self.assertRaises(AssertionError):
+                    require_writes(facts['scratch'],((view,0,view.extent+1),),facts['protected'])
+
+    def test_helper_frame_cannot_overlap_ancestor_or_invent_outline_storage(self):
+        import config_helpers
+        from config_regions import Storage
+        objects,records,item=self.fixture();instance=next(v for v in item['instances'] if v['role']=='varint_u32_small')
+        proof=config_helpers.helper_body(objects,instance['name'],records)
+        frame=Storage('stack:boot_call','active',-24,24,8,'parse',True)
+        alias=Storage('stack:boot_call','ancestor_saved_r8',-20,4,4,'parse',False)
+        with self.assertRaises(AssertionError):config_helpers.helper_frame(proof,frame,iter((alias,)))
+        for extent,alignment,writable in ((32,8,True),(24,4,True),(24,8,False)):
+            invalid=Storage('stack:boot_call','active',-32,extent,alignment,'parse',writable)
+            with self.subTest(extent=extent,alignment=alignment,writable=writable),self.assertRaises(AssertionError):
+                config_helpers.helper_frame(proof,invalid,())
+        outline=next(v for v in item['instances'] if v['role']=='restore_high12_low20')
+        bound=config_helpers.helper_body(objects,outline['name'],records,outline['typed_role'])
+        with self.assertRaises(AssertionError):config_helpers.helper_frame(bound,frame,())
+
     def fixture(self,code_shift=0,data_shift=0):
         objects,item=LoggerObjects.fixture(self,'sizez',code_shift,data_shift,fixture_file='config-small-helpers.json')
         objects.elf.mapping_symbols=[(n,a+code_shift,i) for n,a,i in item['mapping_symbols']]
@@ -1035,6 +1070,18 @@ class OrdinaryHelperBodies(unittest.TestCase):
                 objects.elf.data=bytes(data)
             with self.subTest(fault=fault),self.assertRaises(AssertionError):
                 config_helpers.helper_body(objects,instance['name'],records)
+
+
+    def test_complete_helper_coverage_includes_post_return_padding_and_typed_pool(self):
+        import config_helpers
+        objects,records,item=self.fixture()
+        for instance in item['instances']:
+            role=instance['typed_role'];outline=role if role.startswith('@outline:') else None
+            proof=config_helpers.helper_coverage(objects,instance['name'],records,
+                (instance['address'],'helper inventory','source inputs still required'),outline)
+            coverage=proof['coverage']
+            self.assertEqual(coverage['code_bytes']+coverage['data_bytes'],instance['extent'])
+            self.assertTrue(coverage['requires_authored_semantics_source_and_child_effects'])
 
 
 class OrdinaryContexts(unittest.TestCase):
