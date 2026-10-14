@@ -3,6 +3,17 @@ import re
 import struct
 from validation import require
 
+CONDITIONS = r'(?:eq|ne|hs|lo|hi|ls|ge|lt|gt|le|cs|cc|mi|pl|vs|vc)?'
+
+
+def transfer_family(mnemonic):
+    """Finite selected-LLVM transfer spellings, including predicated forms."""
+    for family in ('blxns', 'bxns', 'blx', 'bx', 'bl', 'b', 'cbnz', 'cbz', 'tbb', 'tbh',
+                   'svc', 'hvc', 'smc', 'bkpt', 'udf', 'trap', 'eret'):
+        if re.fullmatch(family + CONDITIONS, mnemonic):
+            return family
+    return None
+
 
 def canonical_symbol(symbol):
     # Preserve the complete v0 receiver/trait/generic backreference structure.
@@ -209,14 +220,14 @@ def constant_before(instructions, consumer, register, objects):
     # The closed caller ABI permits BX LR, POP {..., PC}, and LDMIA SP!,
     # {..., PC} as returns. They terminate a path; they are not arbitrary ingress
     # targets. Full callback closure must separately prove ordinary call edges.
-    conditions = r'(?:eq|ne|hs|lo|hi|ls|ge|lt|gt|le|cs|cc|mi|pl|vs|vc)?'
     for record in records:
         mnemonic = record.mnemonic.removesuffix('.w')
+        transfer = transfer_family(mnemonic)
         operands = record.operands.split('@', 1)[0].strip()
         destination, _, source = operands.partition(',')
         destination = destination.strip()
-        pop = re.fullmatch('pop' + conditions, mnemonic) is not None
-        ldm = re.fullmatch(r'ldm(?:ia|ib|da|db)?' + conditions, mnemonic) is not None
+        pop = re.fullmatch('pop' + CONDITIONS, mnemonic) is not None
+        ldm = re.fullmatch(r'ldm(?:ia|ib|da|db)?' + CONDITIONS, mnemonic) is not None
         list_pc = (pop or ldm) and re.search(r'\bpc\b', operands) is not None
         return_list = r'\{(?:r(?:[0-9]|1[0-2])\s*,\s*)*pc\}'
         return_form = (pop and re.fullmatch(return_list, operands)
@@ -224,7 +235,7 @@ def constant_before(instructions, consumer, register, objects):
                        and re.fullmatch(return_list, source.strip()))
         require(not (destination == 'pc' or list_pc) or return_form,
                 'constant producer has unresolved implicit PC ingress')
-        require(not mnemonic.startswith(('rfe', 'eret')) and mnemonic not in
+        require(not mnemonic.startswith('rfe') and transfer not in
                 ('svc', 'hvc', 'smc', 'bkpt', 'udf', 'trap'),
                 'constant producer has unresolved exception ingress')
         if mnemonic == 'tbb':
@@ -241,10 +252,11 @@ def constant_before(instructions, consumer, register, objects):
             require(hi <= first or lo > consumer,
                     'PC-relative TBB destination interval overlaps argument producer')
             continue
-        require(mnemonic not in ('tbb', 'tbh', 'blx') and not (mnemonic == 'bx' and operands != 'lr'),
+        require(transfer not in ('tbb', 'tbh', 'blx', 'bxns', 'blxns', 'eret') and
+                not (transfer == 'bx' and (mnemonic != 'bx' or operands != 'lr')),
                 'constant producer has unresolved caller ingress')
-        if mnemonic in transfers and mnemonic not in ('bx', 'blx'):
-            target_text = operands.split(',')[-1].strip() if mnemonic in ('cbz', 'cbnz') else operands
+        if transfer in ('b', 'bl', 'cbz', 'cbnz'):
+            target_text = operands.split(',')[-1].strip() if transfer in ('cbz', 'cbnz') else operands
             target = re.match(r'(0x[0-9a-f]+)(?:\s|$)', target_text)
             require(target is not None, 'constant producer has unresolved direct ingress')
             target = int(target[1], 16)

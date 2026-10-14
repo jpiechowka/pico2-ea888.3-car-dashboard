@@ -200,5 +200,17 @@ class BoundaryProducers(unittest.TestCase):
             with self.subTest(address=address,mnemonic=mnemonic,operands=operands),self.assertRaises(AssertionError):
                 config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
 
+    def test_conditional_and_security_transfers_outside_slice_reject(self):
+        # Spellings independently confirmed with selected LLVM on a decoded-only
+        # IT/BX/BLX/BXNS/BLXNS/SVC fixture; these remain semantic-record tests.
+        for mnemonic,operands,raw in [('bxeq','r4','2047'),('blxeq','r4','a047'),
+                                      ('bxns','r4','2447'),('blxns','r4','a447'),
+                                      ('svcne','#0x0','00df')]:
+            elf,base,sizes=self.fixture();data=bytearray(elf.data)
+            struct.pack_into('<I',data,0x74,base);elf.data=bytes(data)
+            block=[Instruction(0x10000050,bytes.fromhex(raw),mnemonic,operands),*self.block()]
+            with self.subTest(mnemonic=mnemonic),self.assertRaises(AssertionError):
+                config_stack.constant_before(block,0x10000068,'r3',config_stack.DiagnosticObjects(elf,sizes))
+
 
 if __name__=='__main__':unittest.main()
