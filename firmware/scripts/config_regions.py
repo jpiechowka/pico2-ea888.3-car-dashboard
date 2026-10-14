@@ -164,6 +164,8 @@ def _control(record):
     if re.fullmatch(r'ldm(?:ia|fd)?'+CONDITIONS,operation) and re.search(r'\bpc\b',operands):
         require(re.match(r'sp!,',operands),'ordinary LDM PC is not the reviewed stack return ABI')
         return 'return',operation not in ('ldm','ldmia','ldmfd')
+    require(not (operation.startswith('ldm') and re.search(r'\bpc\b',operands)),
+            'unsupported multiple-load PC transfer')
     require(not re.match(r'pc(?:,|$)',operands),'unsupported implicit PC transfer')
     return None,False
 

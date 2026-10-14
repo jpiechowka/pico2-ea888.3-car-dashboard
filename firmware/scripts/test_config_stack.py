@@ -1139,6 +1139,31 @@ class OrdinaryContexts(unittest.TestCase):
 
 
 class OrdinaryCoverage(unittest.TestCase):
+    def test_unsupported_multiple_load_pc_cannot_have_ordinary_fallthrough(self):
+        from dataclasses import replace
+        from config_regions import Transfer,audit_coverage
+        for operation in ('ldmdb','ldmdb.w','ldmdbne.w'):
+            objects,name,records,context,region=self.fixture();base=context[0]
+            objects.elf.data=bytes.fromhex('80b53de9108080bd')
+            objects.elf.sections=[(0,1,6,base,0,8,0,0,2,0)]
+            objects.elf.functions[name]=(base|1,8,0);objects.elf.symbol_entries=[(name,base|1,8,18,0)]
+            records={base:records[base],base+2:Instruction(base+2,bytes.fromhex('3de91080'),operation,'sp!, {r4, pc}'),
+                     base+6:Instruction(base+6,bytes.fromhex('80bd'),'pop','{r7, pc}')}
+            region=replace(region,end=base+8,instructions=tuple(records),
+                transfers=(Transfer(base+6,'pop','return',None,'final low-save restore'),))
+            # Semantic records exercise the inventory consequence; no decoder
+            # execution or raw predication/encoding validity is claimed here.
+            with self.subTest(operation=operation),self.assertRaises(AssertionError):
+                audit_coverage(objects,name,records,context,(region,))
+
+    def test_pc_relative_reads_and_reviewed_stack_returns_keep_their_classification(self):
+        from config_regions import _control
+        for operation,operands,expected in (
+                ('ldr','r0, [pc, #0x4]',(None,False)),('ldmdb.w','r4!, {r0, r1}',(None,False)),
+                ('ldmia.w','sp!, {r4, pc}',('return',False)),('ldmiaeq.w','sp!, {r4, pc}',('return',True))):
+            with self.subTest(operation=operation):
+                self.assertEqual(_control(Instruction(0,b'\0\0',operation,operands)),expected)
+
     def fixture(self,data=b''):
         from config_regions import Region,Transfer
         base=0x10000000;name='_RNvCs123_4test5frame';raw=bytes.fromhex('80b56f4680bd')+data
