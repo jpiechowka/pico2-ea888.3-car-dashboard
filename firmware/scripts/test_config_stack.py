@@ -1155,6 +1155,67 @@ class OrdinaryHelperBodies(unittest.TestCase):
             self.assertTrue(coverage['requires_authored_semantics_source_and_child_effects'])
 
 
+class OrdinaryIndexEffects(unittest.TestCase):
+    def fixture(self,wrapper=False):
+        import config_helpers
+        from config_regions import Storage,borrow,Argument
+        objects,records,item=OrdinaryHelperBodies().fixture()
+        role='array5_index_mut' if wrapper else 'range_to_inclusive_index_mut'
+        instance=next(v for v in item['instances'] if v['role']==role)
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'index','caller transport still required'))
+        parent=Storage('stack:call','serializer',0,24,8,'active-varint',True)
+        buffer=borrow(parent,0 if wrapper else 4,5 if wrapper else 3,'active-varint',writable=True)
+        frame=Storage('stack:call','index',-8 if wrapper else -16,8 if wrapper else 16,8,'active-index',True)
+        saved=Storage('stack:call','serializer_saved',8,16,4,'active-varint',False)
+        producer=next(v for v in item['instances'] if v['role']==('varint_usize' if wrapper else 'serialize_u16'))
+        location=next(iter(config_helpers.helper_body(objects,producer['name'],records)['objects'].values()))
+        argument=Argument('usize',None,0,32,frozenset((0,4,5,0xffffffff) if wrapper else (0,2,3,0xffffffff)))
+        return objects,records,proof,buffer,frame,(saved,),location,argument
+
+    def test_inclusive_prefix_normal_and_failure_preserve_the_original_endpoint(self):
+        import config_helpers
+        values=self.fixture();proof=config_helpers.index_prefix(*values,location_role='postcard_serialize_u16')
+        outcomes={v['endpoint']:v for v in proof['outcomes']}
+        self.assertEqual([(i,outcomes[i]['prefix'].extent) for i in (0,2)],[(0,1),(2,3)])
+        for i in (3,0xffffffff):
+            self.assertEqual(outcomes[i]['diagnostic_arguments'],(0,i,3,values[6]))
+            self.assertNotIn('prefix',outcomes[i])
+        self.assertEqual(proof['payload_writes'],())
+        self.assertTrue(proof['requires_machine_arguments_child_graph_and_source_lifetime'])
+
+    def test_array_restores_own_storage_before_range_but_retains_both_metadata_frames(self):
+        import config_helpers
+        values=self.fixture(True);proof=config_helpers.index_prefix(*values,location_role='postcard_varint_usize')
+        self.assertEqual(proof['conservative_frame_metadata'],(8,16))
+        self.assertTrue(proof['restored_tail_storage'])
+        outcomes={v['endpoint']:v for v in proof['outcomes']}
+        self.assertEqual((outcomes[0]['prefix'].extent,outcomes[4]['prefix'].extent),(1,5))
+        self.assertEqual(outcomes[5]['diagnostic_arguments'],(0,5,5,values[6]))
+
+    def test_index_borrow_cannot_grant_protected_or_readonly_memory_or_foreign_location(self):
+        import config_helpers
+        from config_regions import Storage,borrow,Argument
+        values=list(self.fixture())
+        for fault in ('protected','ancestor','readonly','extent','domain','location'):
+            current=list(values);role='postcard_serialize_u16'
+            if fault=='protected':current[3]=borrow(Storage('stack:call','alias',-16,3,1,'active',True),0,3,'active',writable=True)
+            if fault=='ancestor':current[5]=iter(values[5]+(Storage('stack:call','ancestor_alias',4,3,1,'active',False),))
+            if fault=='readonly':current[3]=borrow(values[3].storage,4,3,'active-varint')
+            if fault=='extent':current[3]=borrow(values[3].storage,4,4,'active-varint',writable=True)
+            if fault=='domain':current[7]=Argument('u32',None,0,32,frozenset((0,)))
+            if fault=='location':role='postcard_varint_usize'
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_helpers.index_prefix(*current,location_role=role)
+
+    def test_array_effects_do_not_inherit_an_unmatched_child_body(self):
+        import config_helpers
+        values=list(self.fixture(True));objects,records=values[:2]
+        child=next(n for n in objects.elf.functions if 'RangeToInclusivejEINtB5_10SliceIndexSh' in config_stack.canonical_symbol(n))
+        at=(objects.elf.functions[child][0]&~1)+8;row=records[at];records[at]=Instruction(at,row.raw,'itttt','hi')
+        with self.assertRaises(AssertionError):
+            config_helpers.index_prefix(*values,location_role='postcard_varint_usize')
+
+
 class OrdinaryContexts(unittest.TestCase):
     def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self):
         from config_regions import Storage,require_disjoint

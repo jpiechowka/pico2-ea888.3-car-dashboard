@@ -10,7 +10,7 @@ from config_finite import _complete_body
 from config_helper_contracts import HELPER_GRAMMARS,HELPER_ROLES,HELPER_SEMANTIC_ROLES
 from config_logger import _logger_function
 from config_roots import root_location,root_adapter
-from config_regions import Region,Transfer,Storage,borrow,require_disjoint,require_writes,audit_coverage,_control
+from config_regions import Region,Transfer,Storage,View,Argument,borrow,require_disjoint,require_writes,audit_coverage,_control
 from config_stack import canonical_symbol,transfer_family
 from validation import require
 
@@ -132,3 +132,52 @@ def helper_frame(proof,frame,ancestor_protected):
     return dict(frame=frame,scratch=scratch,protected=protected,local_writes=local_writes,
                 child_result_scratch=scratch if semantic=='seq_f32' else (),
                 requires_caller_sp_inputs_child_effects_and_initialization=True)
+
+
+def index_prefix(objects,instructions,proof,buffer,frame,ancestor_protected,location,index,*,location_role):
+    """Fixed inclusive-index effects on caller-established typed local borrows.
+
+    The writable-return capability must avoid protected cells even though these
+    index bodies perform no payload write. Machine register/Location transport,
+    actual SP and source ownership are prerequisites of supplying these facts.
+    Only this reviewed restored wrapper→range composition is modeled here.
+    """
+    semantic=proof['semantic_role']
+    require(semantic in ('range_to_inclusive_index_mut','array5_index_mut') and 'coverage' in proof,
+            'index effects lack their complete body/inventory proof')
+    names=[n for n,e in objects.elf.functions.items() if e[0]&~1==proof['function'] and canonical_symbol(n)==proof['role']]
+    require(len(names)==1,'index effects have no exact current receiver')
+    current=helper_coverage(objects,names[0],instructions,proof['coverage']['context'])
+    require(current==proof,'index effects use a stale body/child inventory')
+    require(isinstance(buffer,View) and buffer.writable and buffer.storage.space==frame.space and
+            buffer.extent in (3,5),'index has no reviewed mutable local slice')
+    require(isinstance(index,Argument) and (index.kind,index.view,index.levels,index.bits)==('usize',None,0,32),
+            'inclusive endpoint lacks its source usize domain')
+    allowed=('postcard_serialize_u16',) if buffer.extent==3 else ('postcard_varint_usize','postcard_varint_u32_small')
+    require(location_role in allowed,'index Location belongs to another caller buffer')
+    bound_location=root_location(objects,location,location_role)
+    ancestor_protected=tuple(ancestor_protected);active=helper_frame(current,frame,ancestor_protected)
+    require_writes((buffer,),((buffer,0,buffer.extent),),active['protected'])
+    if semantic=='array5_index_mut':
+        require(buffer.extent==5,'array5 wrapper has another slice length')
+        children=current['ordinary_edges'];require(len(children)==1 and children[0][1]=='b.w' and
+                children[0][3]==HELPER_SEMANTIC_ROLES['range_to_inclusive_index_mut'],'array5 restored tail differs')
+        target=children[0][2];names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target]
+        require(len(names)==1,'array5 has no unique range child')
+        child=helper_coverage(objects,names[0],instructions,(target,'restored array tail',current['function']))
+        # The wrapper's saved storage is retired before the child reuses SP.
+        # Its full metadata remains retained by the conservative stack policy.
+        child_frame=Storage(frame.space,frame.identity+':range-tail',frame.start+frame.extent-16,16,8,frame.phase,True)
+        result=index_prefix(objects,instructions,child,buffer,child_frame,ancestor_protected,location,index,location_role=location_role)
+        result.update(conservative_frame_metadata=(8,)+result['conservative_frame_metadata'],restored_tail_storage=True)
+        return result
+    outcomes=[]
+    for endpoint in sorted(index.domain):
+        if endpoint<buffer.extent:
+            outcomes.append(dict(endpoint=endpoint,prefix=borrow(buffer.storage,buffer.offset,endpoint+1,buffer.storage.phase,writable=True)))
+        else:
+            outcomes.append(dict(endpoint=endpoint,diagnostic_arguments=(0,endpoint,buffer.extent,location),nonreturn='slice_index_fail'))
+    return dict(outcomes=tuple(outcomes),payload_writes=(),location=bound_location,
+                normal_preserves=tuple('r'+str(i) for i in range(4,12))+('sp',),
+                conservative_frame_metadata=(16,),restored_tail_storage=False,
+                requires_machine_arguments_child_graph_and_source_lifetime=True)
