@@ -883,6 +883,54 @@ class EntryBodies(unittest.TestCase):
             with self.subTest(fault=fault),self.assertRaises(AssertionError):config_entry.boot_entry(objects,records)
 
 
+class IssuerRegions(unittest.TestCase):
+    def fixture(self,mode):
+        objects,item=LoggerObjects.fixture(self,mode,fixture_file='config-issuer-regions.json')
+        objects.elf.mapping_symbols=[tuple(v) for v in item['mapping_symbols']]
+        records={}
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address']
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],op[1] if len(op)>1 else '')
+        return objects,records,item
+
+    def test_issuer_regions_bind_every_retry_lane_and_independently_typed_failure_suffix(self):
+        import config_upstream
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,item=self.fixture(mode);proof=config_upstream.issuer_region(objects,item['issuer']['name'],records)
+            self.assertEqual(proof['window'],item['issuer']['start'])
+            self.assertEqual(proof['attempts'],4 if mode=='speed2' else 1)
+            self.assertEqual(proof['previous_register'],'r1' if mode=='speed2' else 'r0')
+            self.assertEqual(proof['failure_suffix']['location_role'],'identity_first')
+            self.assertEqual(proof['local_write_ranges'],())
+            self.assertEqual(proof['writes'][0]['extent'],4)
+            self.assertEqual([v['tag_value'] for v in proof['state_alternatives']],[0,2])
+            self.assertTrue(proof['requires_parent_phase_all_ingress_and_coverage'])
+
+    def test_issuer_previous_value_status_retry_and_static_identity_cannot_change(self):
+        import config_upstream
+        for fault in ('status','previous_lane','retry','static_initial','failure_target'):
+            objects,records,item=self.fixture('speed2');start=item['issuer']['start'];end=item['issuer']['end']
+            rows=[r for a,r in sorted(records.items()) if start<=a<end]
+            if fault=='static_initial':
+                entry=next(v for v in objects.elf.symbol_entries if __import__('config_entry').static_role(v[0])==__import__('config_entry').ISSUER)
+                section=objects.elf.sections[entry[4]];data=bytearray(objects.elf.data);data[section[4]+entry[1]-section[3]]=0;objects.elf.data=bytes(data)
+            else:
+                row=next(r for r in rows if r.mnemonic.startswith('strex')) if fault=='status' else (
+                    next(r for r in rows if r.mnemonic=='mov' and r.operands=='r1, r2') if fault=='previous_lane' else
+                    next(r for r in rows if r.mnemonic=='beq') if fault=='retry' else
+                    next(r for r in rows if r.mnemonic=='beq.w'))
+                records[row.address]=Instruction(row.address,row.raw,row.mnemonic,
+                    'r2, r2, [r0]' if fault=='status' else 'r1, r3' if fault=='previous_lane' else
+                    '0x'+format(end,'x'))
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_upstream.issuer_region(objects,item['issuer']['name'],records)
+
+    def test_semantic_record_foreign_direct_ingress_cannot_skip_static_or_cas_producers(self):
+        import config_upstream
+        objects,records,item=self.fixture('speed2');start=item['issuer']['start']
+        row=records[max(a for a in records if a<start)];records[row.address]=Instruction(row.address,row.raw,'b','0x'+format(start+14,'x'))
+        with self.assertRaises(AssertionError):config_upstream.issuer_region(objects,item['issuer']['name'],records)
+
+
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
         value=path.encode('utf-8');base=0x10000000
