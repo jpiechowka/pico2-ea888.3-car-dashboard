@@ -428,3 +428,67 @@ fn immutable_flash_binding_and_unjoined_cleanup_fatal_survive_polling() {
     assert_eq!(summary.device_id, Some(device));
     assert!(summary.events_closed);
 }
+
+#[test]
+fn setup_ledger_cleanup_fatal_cannot_be_downgraded_at_finalization() {
+    use dashboard_helper_protocol::setup::*;
+    let mut s = store();
+    let steps = setup_steps();
+    let plan = SetupPlan::new(
+        steps[..2]
+            .iter()
+            .map(|&step| {
+                SetupAssignment {
+                    step,
+                    executor: SetupExecutor::OriginalOwner,
+                }
+            })
+            .collect(),
+        DelegationShape::Cold,
+    )
+    .unwrap();
+    s.start_setup(id(1), plan, None).unwrap();
+    s.setup_start_next(&id(1), SetupExecutor::OriginalOwner, steps[0])
+        .unwrap();
+    s.cancel(&id(1)).unwrap();
+    // Cleanup-fatal supersedes the earlier cancellation, through the ledger only.
+    s.setup_finish_active(
+        &id(1),
+        SetupStepOutcome {
+            step: steps[0],
+            state: StageState::Failed,
+            failure: Some(SetupFailure::OwnershipCleanupFatal),
+            raw_exit: None,
+            elapsed_ms: 1,
+            output_incomplete: true,
+        },
+    )
+    .unwrap();
+    let before = s.summaries();
+    for cause in [
+        TerminalCause::Failed,
+        TerminalCause::Cancelled,
+        TerminalCause::Succeeded,
+    ] {
+        assert!(
+            s.finish(&id(1), cause, closure(), None, None).is_err(),
+            "must reject downgrade to {cause:?}"
+        );
+        assert_eq!(s.summaries(), before);
+    }
+    assert_eq!(before[0].terminal_cause, Some(TerminalCause::OwnershipCleanupFatal));
+    assert!(!before[0].events_closed);
+    assert_eq!(before[0].final_next, None);
+    let mut unjoined = closure();
+    unjoined.workers_joined = false;
+    assert!(
+        s.finish(&id(1), TerminalCause::OwnershipCleanupFatal, unjoined, None, None)
+            .is_err()
+    );
+    assert_eq!(s.summaries(), before);
+    s.finish(&id(1), TerminalCause::OwnershipCleanupFatal, closure(), None, None)
+        .unwrap();
+    let final_summary = s.summaries().remove(0);
+    assert_eq!(final_summary.terminal_cause, Some(TerminalCause::OwnershipCleanupFatal));
+    assert!(final_summary.events_closed);
+}

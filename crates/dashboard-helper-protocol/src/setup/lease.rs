@@ -218,6 +218,14 @@ impl SetupLeasePeer {
             (Phase::Idle, PeerToOwner, Close { disposition })
                 if self.result_ready || *disposition != SetupCloseDisposition::Completed =>
             {
+                // Retiring a peer must also stop its executable work immediately;
+                // the acknowledgement only confirms receipt, not the stop itself.
+                match disposition {
+                    SetupCloseDisposition::Completed => {}
+                    SetupCloseDisposition::Failed => ledger.stop(SetupFailure::CommandFailed),
+                    SetupCloseDisposition::Cancelled => ledger.stop(SetupFailure::Cancelled),
+                    SetupCloseDisposition::CleanupFatal => ledger.stop(SetupFailure::OwnershipCleanupFatal),
+                }
                 Phase::Close(*disposition)
             }
             (Phase::Close(want), OwnerToPeer, Closed { disposition }) if disposition == want => Phase::Closed,

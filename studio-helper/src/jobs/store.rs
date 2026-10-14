@@ -436,7 +436,10 @@ impl JobStore {
             if !closure.workers_joined || !closure.tree_empty || !j.pending.is_empty() {
                 return Err(Error::InvalidState);
             }
-            if j.summary.terminal_cause == Some(TerminalCause::OwnershipCleanupFatal)
+            if (j.summary.terminal_cause == Some(TerminalCause::OwnershipCleanupFatal)
+                || j.setup
+                    .as_ref()
+                    .is_some_and(|setup| setup.stop_cause() == Some(SetupFailure::OwnershipCleanupFatal)))
                 && cause != TerminalCause::OwnershipCleanupFatal
             {
                 return Err(Error::InvalidState);
@@ -457,6 +460,8 @@ impl JobStore {
                 if cause != TerminalCause::Succeeded {
                     setup.stop(if cause == TerminalCause::Cancelled {
                         SetupFailure::Cancelled
+                    } else if cause == TerminalCause::OwnershipCleanupFatal {
+                        SetupFailure::OwnershipCleanupFatal
                     } else {
                         SetupFailure::CommandFailed
                     });
@@ -606,6 +611,11 @@ impl Job {
     fn project_setup(&mut self) -> Result<(), Error> {
         let elapsed = self.elapsed();
         let ledger = self.setup.as_ref().ok_or(Error::InvalidState)?;
+        // Every ledger path is authoritative, including step outcomes and rejected
+        // acknowledgements. Reporting this failure does not assert output closure.
+        if ledger.stop_cause() == Some(SetupFailure::OwnershipCleanupFatal) {
+            self.summary.terminal_cause = Some(TerminalCause::OwnershipCleanupFatal);
+        }
         let mut stages = self.summary.stages.clone().into_vec();
         for (s, p) in stages.iter_mut().zip(ledger.projection()) {
             s.state = p.state;

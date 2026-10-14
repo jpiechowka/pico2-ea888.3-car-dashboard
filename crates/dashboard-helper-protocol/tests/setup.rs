@@ -528,3 +528,93 @@ fn invalid_nonce_replay_context_or_late_ack_retires_peer_without_success() {
     let bad = 4093u32.to_le_bytes();
     assert!(decode_private::<SetupLeaseFrame>(&bad).is_err());
 }
+
+#[test]
+fn abnormal_close_immediately_stops_pending_work_and_preserves_prior_facts() {
+    for (disposition, failure) in [
+        (SetupCloseDisposition::Failed, SetupFailure::CommandFailed),
+        (SetupCloseDisposition::Cancelled, SetupFailure::Cancelled),
+        (SetupCloseDisposition::CleanupFatal, SetupFailure::OwnershipCleanupFatal),
+    ] {
+        for active_owner in [false, true] {
+            let steps = setup_steps();
+            let plan = SetupPlan::new(
+                vec![
+                    SetupAssignment {
+                        step: steps[0],
+                        executor: SetupExecutor::OriginalOwner,
+                    },
+                    SetupAssignment {
+                        step: steps[1],
+                        executor: SetupExecutor::Peer0,
+                    },
+                ],
+                DelegationShape::Cold,
+            )
+            .unwrap();
+            let mut ledger = SetupLedger::new(plan);
+            ledger.start_next(SetupExecutor::OriginalOwner, steps[0]).unwrap();
+            if !active_owner {
+                ledger
+                    .finish_active(outcome(steps[0], StageState::Succeeded, None))
+                    .unwrap();
+            }
+            let prior = ledger.outcomes()[0].clone();
+            let e = envelope();
+            let nonce = e.nonce.clone();
+            let mut peer_lease = SetupLeasePeer::new(e, peer(), 0).unwrap();
+            peer_lease
+                .accept(
+                    SetupDirection::PeerToOwner,
+                    &frame(
+                        1,
+                        SetupLeaseMessage::Hello {
+                            nonce: nonce.clone(),
+                            peer: peer(),
+                        },
+                    ),
+                    0,
+                    &mut ledger,
+                )
+                .unwrap();
+            peer_lease
+                .accept(
+                    SetupDirection::OwnerToPeer,
+                    &frame(2, SetupLeaseMessage::HelloAck { nonce }),
+                    1,
+                    &mut ledger,
+                )
+                .unwrap();
+            peer_lease
+                .accept(
+                    SetupDirection::PeerToOwner,
+                    &frame(3, SetupLeaseMessage::Close { disposition }),
+                    2,
+                    &mut ledger,
+                )
+                .unwrap();
+            assert_eq!(
+                ledger.stop_cause(),
+                Some(failure),
+                "Close must latch {disposition:?} before its acknowledgement"
+            );
+            assert_eq!(ledger.outcomes()[0], prior);
+            assert_eq!(ledger.active(), active_owner.then_some(steps[0]));
+            assert_eq!(ledger.outcomes()[1].state, StageState::Skipped);
+            assert_eq!(ledger.outcomes()[1].failure, Some(failure));
+            assert!(ledger.start_next(SetupExecutor::Peer0, steps[1]).is_err());
+            peer_lease
+                .accept(
+                    SetupDirection::OwnerToPeer,
+                    &frame(4, SetupLeaseMessage::Closed { disposition }),
+                    3,
+                    &mut ledger,
+                )
+                .unwrap();
+            assert!(peer_lease.closed());
+            assert_eq!(ledger.stop_cause(), Some(failure));
+            assert_eq!(ledger.outcomes()[0], prior);
+            assert!(ledger.start_next(SetupExecutor::Peer0, steps[1]).is_err());
+        }
+    }
+}
