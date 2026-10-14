@@ -754,6 +754,81 @@ class LoggerBodies(unittest.TestCase):
                 config_logger.logger_body(objects,name,records,self.OUTLINES.get(name))
 
 
+class EntryBodies(unittest.TestCase):
+    def fixture(self,mode):
+        objects,item=LoggerObjects.fixture(self,mode,fixture_file='config-entry-bodies.json')
+        objects.elf.mapping_symbols=[tuple(v) for v in item['mapping_symbols']]
+        records={}
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address']
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],op[1] if len(op)>1 else '')
+        return objects,records,item
+
+    def test_complete_boot_bodies_bind_all_queue_callback_and_retirement_instructions(self):
+        import config_entry
+        count=0
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,item=self.fixture(mode)
+            for instance in item['instances']:
+                proof=config_entry.entry_body(objects,instance['name'],records,
+                    instance['role'] if instance['role'].startswith('@outline:') else None)
+                self.assertEqual((proof['extent'],proof['frame']),(instance['extent'],instance['frame']))
+                self.assertTrue(proof['requires_first_batch_source_and_task_ownership'])
+                count+=1
+        self.assertEqual(count,22)
+
+    def test_entry_callback_pool_field_and_queue_instructions_cannot_change(self):
+        import config_entry
+        for fault in ('callback_field','retained_next','completion','claim'):
+            objects,records,item=self.fixture('sizez')
+            instance=next(v for v in item['instances'] if v['role']==('@outline:entry_install_boot_callback' if fault=='callback_field'
+                else '_RNvMs8_NtCs_16embassy_executor3rawNtB5_8Executor4poll' if fault=='retained_next'
+                else next(v['role'] for v in item['instances'] if v['frame']==32) if fault=='completion'
+                else next(v['role'] for v in item['instances'] if 'Executor3run' in v['role'])))
+            rows=[r for a,r in sorted(records.items()) if instance['entry']<=a<instance['entry']+instance['extent']]
+            row=next(r for r in rows if r.mnemonic.startswith('str') and '#0x24' in r.operands) if fault=='callback_field' else (
+                next(r for r in rows if r.mnemonic=='ldr' and '#0x1c' in r.operands) if fault=='retained_next' else
+                next(r for r in rows if r.mnemonic.startswith('strb') and '#0x2c' in r.operands) if fault=='completion' else
+                next(r for r in rows if r.mnemonic.startswith('strex')))
+            records[row.address]=Instruction(row.address,row.raw,row.mnemonic,row.operands.replace('#0x24','#0x20') if fault=='callback_field' else
+                row.operands.replace('#0x1c','#0x20') if fault=='retained_next' else row.operands.replace('#0x2c','#0x2d') if fault=='completion' else 'r2, r2, [r1]')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_entry.entry_body(objects,instance['name'],records,instance['role'] if instance['role'].startswith('@outline:') else None)
+
+    def test_task_storage_is_complete_zero_initialized_disjoint_and_typed(self):
+        import config_entry
+        for fault in ('size','binding','section','duplicate','alias','config_taken'):
+            objects,records,item=self.fixture('sizez');role=config_entry.CONFIG if fault=='config_taken' else config_entry.BOOT_POOL
+            ordinal=next(i for i,v in enumerate(objects.elf.symbol_entries) if config_entry.static_role(v[0])==role)
+            entry=list(objects.elf.symbol_entries[ordinal])
+            if fault=='size':entry[2]-=1
+            elif fault=='binding':entry[3]=17
+            elif fault=='section':entry[4]=0
+            elif fault=='duplicate':objects.elf.symbol_entries.append(tuple(entry))
+            elif fault=='alias':objects.elf.symbol_entries.append(('other_allocated_object',entry[1]+24,4,1,entry[4]))
+            else:
+                section=objects.elf.sections[entry[4]];data=bytearray(objects.elf.data)
+                data[section[4]+entry[1]-section[3]+14600]=1;objects.elf.data=bytes(data)
+            objects.elf.symbol_entries[ordinal]=tuple(entry)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_entry.entry_object(objects,entry[1],dict(kind='entry_static',role=role))
+
+    def test_producer_selected_callback_cannot_be_another_approved_task_or_an_interior(self):
+        import config_entry
+        for fault in ('different_task','interior','non_thumb','wrong_frame'):
+            objects,records,item=self.fixture('sizez')
+            descriptors=[v for g in config_entry.ENTRY_GRAMMARS.values() for v in g['objects'] if v['kind']=='entry_callback']
+            descriptor=next(v for v in descriptors if '____embassy_main_task' in v['role'] and v['extent']==176)
+            name=next(n for n in objects.elf.functions if config_stack.canonical_symbol(n)==descriptor['role'])
+            address=objects.elf.functions[name][0]
+            if fault=='different_task':
+                address=next(e[0] for n,e in objects.elf.functions.items() if 'dashboard_task' in n and '4poll' in n)
+            elif fault=='interior':address+=2
+            elif fault=='non_thumb':address&=~1
+            else:objects.sizes[address&~1]+=8
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_entry.entry_object(objects,address,descriptor)
+
+
 class RootLocations(unittest.TestCase):
     def fixture(self,path,line=61,column=63):
         value=path.encode('utf-8');base=0x10000000
