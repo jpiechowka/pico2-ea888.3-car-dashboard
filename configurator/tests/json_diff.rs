@@ -1,5 +1,5 @@
 use dashboard_configurator::config::*;
-use dashboard_configurator::json_diff::{DiffKind, diff_configs, diff_json, pointer_segment};
+use dashboard_configurator::json_diff::{DiffKind, PointerSide, diff_configs, diff_json, pointer_segment};
 
 #[test]
 fn equal_and_scalar_changes_compare_typed_values_at_real_pointers() {
@@ -79,6 +79,54 @@ fn duplicate_ids_fall_back_to_ambiguous_indexed_entries() {
             .any(|entry| entry.pointer == "/widgets/1/display/decimals")
     );
     assert!(diff_configs(&after, &after).unwrap().changes.is_empty());
+}
+
+#[test]
+fn ambiguous_tail_pointers_identify_the_present_document_and_displayed_side() {
+    let accepted = default_config();
+    let mut shorter = accepted.clone();
+    shorter.widgets.pop();
+    let mut removed = shorter.clone();
+    removed.widgets[1].id = removed.widgets[0].id;
+    let mut added = accepted.clone();
+    added.widgets[1].id = added.widgets[0].id;
+    let pointer = format!("/widgets/{}", accepted.widgets.len() - 1);
+    for (before, after, side, label) in [
+        (&accepted, &removed, PointerSide::Accepted, "Pointer in accepted JSON"),
+        (&shorter, &added, PointerSide::Candidate, "Pointer in candidate JSON"),
+    ] {
+        let before_json = serde_json::to_value(before).unwrap();
+        let after_json = serde_json::to_value(after).unwrap();
+        let diff = diff_configs(before, after).unwrap();
+        let entry = diff.changes.iter().find(|entry| entry.pointer == pointer).unwrap();
+        assert_eq!(
+            entry.kind,
+            DiffKind::Ambiguous,
+            "duplicate IDs still require indexed ambiguity"
+        );
+        assert_eq!(entry.pointer_side(), side);
+        assert_eq!(
+            entry.pointer_side().label(),
+            label,
+            "UI consumes this exact shared label"
+        );
+        assert_eq!(entry.before.is_some(), before_json.pointer(&entry.pointer).is_some());
+        assert_eq!(entry.after.is_some(), after_json.pointer(&entry.pointer).is_some());
+        match side {
+            PointerSide::Accepted => {
+                assert!(entry.before.is_some());
+                assert!(entry.after.is_none());
+                assert!(before_json.pointer(&entry.pointer).unwrap().is_object());
+                assert!(after_json.pointer(&entry.pointer).is_none());
+            }
+            PointerSide::Candidate => {
+                assert!(entry.before.is_none());
+                assert!(entry.after.is_some());
+                assert!(before_json.pointer(&entry.pointer).is_none());
+                assert!(after_json.pointer(&entry.pointer).unwrap().is_object());
+            }
+        }
+    }
 }
 
 #[test]

@@ -248,11 +248,12 @@ fn diff_view(report: DiffReport) -> impl IntoView {
     let omitted = report.omitted;
     let count = report.changes.len();
     view! {
-        <p class="hint">{format!("{count} retained changed paths · {omitted} omitted. Removed pointers address accepted JSON; other field pointers address candidate JSON. IDs are labels only.")}</p>
+        <p class="hint">{format!("{count} retained changed paths · {omitted} omitted. Each pointer is labelled accepted or candidate JSON. IDs are labels only.")}</p>
         <ol class="json-diff">{report.changes.into_iter().map(|entry| {
             let kind = match entry.kind { DiffKind::Added=>"Added", DiffKind::Removed=>"Removed", DiffKind::Changed=>"Changed", DiffKind::Reordered=>"Reordered", DiffKind::Ambiguous=>"Ambiguous (array index)" };
+            let pointer_side = entry.pointer_side().label();
             let value = |summary: Option<dashboard_configurator::json_diff::ValueSummary>| summary.map_or("Absent".into(), |summary|format!("{}{}",summary.text,if summary.truncated{" … [truncated]"}else{""}));
-            view! { <li><strong>{kind}</strong><code>{entry.pointer}</code><small>{entry.object_label}</small><div><span>"Before: "</span><code>{value(entry.before)}</code></div><div><span>"After: "</span><code>{value(entry.after)}</code></div></li> }
+            view! { <li><strong>{kind}</strong><small>{pointer_side}</small><code>{entry.pointer}</code><small>{entry.object_label}</small><div><span>"Before: "</span><code>{value(entry.before)}</code></div><div><span>"After: "</span><code>{value(entry.after)}</code></div></li> }
         }).collect_view()}</ol>
     }
 }

@@ -17,6 +17,20 @@ pub enum DiffKind {
     Ambiguous,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerSide {
+    Accepted,
+    Candidate,
+}
+impl PointerSide {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Accepted => "Pointer in accepted JSON",
+            Self::Candidate => "Pointer in candidate JSON",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValueSummary {
     pub text: String,
@@ -25,12 +39,23 @@ pub struct ValueSummary {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiffEntry {
-    /// Added/changed: candidate index. Removed: accepted index. Reorder: array.
+    /// Indexed pointer in pointer_side(), including ambiguous additions/removals.
     pub pointer: String,
     pub object_label: Option<String>,
     pub kind: DiffKind,
     pub before: Option<ValueSummary>,
     pub after: Option<ValueSummary>,
+}
+impl DiffEntry {
+    /// Absent candidate values address accepted JSON. JSON null is a present
+    /// value summary, so it still addresses candidate JSON when present there.
+    pub fn pointer_side(&self) -> PointerSide {
+        if self.after.is_none() {
+            PointerSide::Accepted
+        } else {
+            PointerSide::Candidate
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -280,9 +305,17 @@ mod tests {
         let added = report.changes.iter().find(|entry| entry.pointer == "/added").unwrap();
         assert!(added.before.is_none());
         assert_eq!(added.after.as_ref().unwrap().text, "null");
+        assert_eq!(added.pointer_side(), PointerSide::Candidate);
+        assert_eq!(added.pointer_side().label(), "Pointer in candidate JSON");
+        assert!(before.pointer(&added.pointer).is_none());
+        assert!(after.pointer(&added.pointer).unwrap().is_null());
         let removed = report.changes.iter().find(|entry| entry.pointer == "/null").unwrap();
         assert_eq!(removed.before.as_ref().unwrap().text, "null");
         assert!(removed.after.is_none());
+        assert_eq!(removed.pointer_side(), PointerSide::Accepted);
+        assert_eq!(removed.pointer_side().label(), "Pointer in accepted JSON");
+        assert!(before.pointer(&removed.pointer).unwrap().is_null());
+        assert!(after.pointer(&removed.pointer).is_none());
     }
 
     #[test]
