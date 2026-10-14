@@ -3,7 +3,9 @@ import re
 import struct
 import hashlib
 from config_root_contracts import ROOT_WRAPPERS,ROOT_WRAPPER_ROLES
-from config_finite import _complete_body
+from config_finite import _complete_body,_bounded_body
+from config_root_windows import ROOT_WINDOWS
+from config_payload import payload_object
 from config_stack import canonical_symbol,typed_function
 from validation import require
 
@@ -66,6 +68,38 @@ def root_object(objects,address,descriptor):
     require(word&1 and word>>1==len(value) and objects.read_only(address,len(value))==value,
             'root tagged literal bytes/length differ')
     return ()
+
+
+def _window_object(objects,address,descriptor):
+    if descriptor['kind']=='source_location':
+        root_location(objects,address,descriptor['role'])
+        return ()
+    return payload_object(objects,address,descriptor)
+
+
+def root_window(objects,name,instructions,site):
+    """Bind one terminal producer span, without substituting for caller proof.
+
+    Whole-caller ingress, typed Result/Option/accessor/CAS provenance and live
+    frame coordinates are mandatory downstream obligations. A matching suffix
+    never establishes those facts, particularly the shared SizeZ bounds path.
+    """
+    require(name in objects.elf.functions and site in instructions,'missing diagnostic caller/site')
+    role=canonical_symbol(name);results=[]
+    for shape,contract in ROOT_WINDOWS.items():
+        if contract['caller']!=role:continue
+        offset,width,operation=contract['instructions'][-1];start=site-offset
+        try:
+            proof=_bounded_body(objects,name,instructions,role,shape,contract,_window_object,root_adapter,start)
+        except AssertionError:continue
+        proof.update(caller=objects.elf.functions[name][0]&~1,window=start,site=site,
+                     location_role=contract['location'],kind=contract['kind'],
+                     requires_upstream_typed_value_and_all_ingress=True,
+                     requires_parent_frame_coordinates_and_preserved_registers=True,
+                     requires_default_options_live_sink_and_whole_closure=True)
+        results.append(proof)
+    require(len(results)==1,'missing, changed or ambiguous diagnostic terminal producer window')
+    return results[0]
 
 
 def root_adapter(objects,name,instructions,outline_role=None,_ancestry=()):

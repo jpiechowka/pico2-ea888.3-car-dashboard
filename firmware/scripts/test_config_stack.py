@@ -230,8 +230,9 @@ class NumericSupport(unittest.TestCase):
 
 
 class ControlBodies(unittest.TestCase):
-    def fixture(self,mode,code_shift=0,data_shift=0,fixture_file='config-control.json'):
-        spec=[v for v in json.loads((Path(__file__).parent/'fixtures'/fixture_file).read_text()) if v['mode']==mode]
+    def fixture(self,mode,code_shift=0,data_shift=0,fixture_file='config-control.json',fixture_data=None):
+        spec=[v for v in (fixture_data if fixture_data is not None else
+              json.loads((Path(__file__).parent/'fixtures'/fixture_file).read_text())) if v['mode']==mode]
         if code_shift or data_shift:
             locations={a:a+data_shift for item in spec for a,b in item['objects']}
             locations.update({f['address']:f['address']+code_shift for item in spec for f in item['extra_functions']})
@@ -264,6 +265,10 @@ class ControlBodies(unittest.TestCase):
                         begin=3 if len(words) in (4,6) and words[:3] in ([0,1,1],[0,4,4],[0,12,4]) else 0
                         if all(v in locations for v in words[begin:]):
                             raw=struct.pack('<'+'I'*len(words),*words[:begin],*(locations[v] for v in words[begin:]))
+                    for object_address,offset in item.get('pointer_offsets',()):
+                        if object_address==address:
+                            old=struct.unpack_from('<I',bytes.fromhex(encoded),offset)[0]
+                            patch=bytearray(raw);struct.pack_into('<I',patch,offset,locations[old]);raw=bytes(patch)
                     relocated.append((address+data_shift,raw.hex()))
                 item['objects']=relocated
                 for child in item['extra_functions']:
@@ -479,6 +484,84 @@ class RootAdapters(unittest.TestCase):
                     objects.elf.data=bytes(data)
                 with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
                     config_roots.root_adapter(objects,f['aliases'][0]['name'],records)
+
+
+class RootWindows(unittest.TestCase):
+    def fixture(self,mode,code_shift=0,data_shift=0):
+        spec=json.loads((Path(__file__).parent/'fixtures/config-root-windows.json').read_text())
+        # Multiple windows share a caller. Each copied backing body must carry
+        # every relocated pool producer, not just its own selected window.
+        for item in spec:
+            if item.get('support'):continue
+            peers=[p for p in spec if p['mode']==item['mode'] and
+                   p['function']['address']==item['function']['address']]
+            literals={json.dumps(p,sort_keys=True):p for peer in peers for p in peer['function']['literals']}
+            item['function']['literals']=list(literals.values())
+            rows={p['address']:dict(p) for peer in peers for p in peer['function']['instructions']}
+            item['function']['instructions']=[rows[a] for a in sorted(rows)]
+        objects,records,spec=ControlBodies.fixture(self,mode,code_shift,data_shift,fixture_data=spec)
+        for item in spec:
+            if not item.get('support'):item['window']+=code_shift;item['site']+=code_shift
+        return objects,records,spec
+
+    def test_all_terminal_windows_bind_current_caller_source_and_concrete_objects(self):
+        import config_roots
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode)
+            for item in spec:
+                if item.get('support'):continue
+                proof=config_roots.root_window(objects,item['function']['aliases'][0]['name'],records,item['site'])
+                self.assertEqual((proof['window'],proof['location_role']),(item['window'],item['source_role']))
+                self.assertTrue(proof['requires_upstream_typed_value_and_all_ingress'])
+
+    def test_terminal_code_pool_data_filename_and_callback_relocations_remain_typed(self):
+        import config_roots
+        for mode in ('speed2','sizes','sizez'):
+            objects,records,spec=self.fixture(mode,0x1800,0x21000)
+            for item in spec:
+                if item.get('support'):continue
+                proof=config_roots.root_window(objects,item['function']['aliases'][0]['name'],records,item['site'])
+                self.assertEqual(proof['window'],item['window'])
+
+    def test_terminal_pc_pool_requires_its_declared_caller_data_mapping(self):
+        import config_roots
+        objects,records,spec=self.fixture('sizez');item=next(v for v in spec if v.get('source_role')=='reviewed_defaults')
+        objects.elf.mapping_symbols=[(n.replace('$d','$t'),a,s) for n,a,s in objects.elf.mapping_symbols]
+        with self.assertRaises(AssertionError):
+            config_roots.root_window(objects,item['function']['aliases'][0]['name'],records,item['site'])
+
+    def test_terminal_caller_extent_alias_and_current_code_bytes_are_required(self):
+        import config_roots
+        for fault in ('extent','alias','bytes','missing'):
+            objects,records,spec=self.fixture('sizes');item=next(v for v in spec if v.get('source_role')=='reviewed_defaults')
+            name=item['function']['aliases'][0]['name'];value,extent,index=objects.elf.functions[name]
+            if fault=='extent':objects.elf.functions[name]=(value,item['window']-(value&~1)+2,index)
+            elif fault=='alias':objects.elf.functions['unreviewed_alias']=(value,extent,index)
+            elif fault=='missing':del records[item['window']]
+            else:
+                at=item['window'];row=records[at];records[at]=Instruction(at,bytes(len(row.raw)),row.mnemonic,row.operands)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_roots.root_window(objects,name,records,item['site'])
+
+    def test_terminal_copy_pointer_length_and_live_object_producers_cannot_be_skipped(self):
+        import config_roots
+        for mode in ('speed2','sizes','sizez'):
+            for fault in ('copy','message','location','vtable','call'):
+                objects,records,spec=self.fixture(mode)
+                item=next(v for v in spec if v['source_role']=='reviewed_defaults')
+                f=item['function'];at=item['window'];row=records[at]
+                if fault=='copy':records[at]=Instruction(at,row.raw,'mov','r0, r0')
+                elif fault=='call':
+                    at=item['site'];row=records[at];records[at]=Instruction(at,row.raw,'bl',hex(at))
+                else:
+                    ordinal={'message':0,'location':8,'vtable':4}[fault]
+                    obj=next((a,b) for a,b in item['objects'] if len(bytes.fromhex(b))==(30 if fault=='message' else 16))
+                    if fault=='vtable':obj=next((a,b) for a,b in item['objects'] if bytes.fromhex(b)[:12]==struct.pack('<3I',0,12,2))
+                    if fault=='location':obj=next((a,b) for a,b in item['objects'] if bytes.fromhex(b)[8:]==struct.pack('<2I',61,63))
+                    data=bytearray(objects.elf.data);section=next(s for s in objects.elf.sections if s[3]<=obj[0]<s[3]+s[5])
+                    data[section[4]+obj[0]-section[3]+ordinal]^=1;objects.elf.data=bytes(data)
+                with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
+                    config_roots.root_window(objects,f['aliases'][0]['name'],records,item['site'])
 
 
 class RootLocations(unittest.TestCase):

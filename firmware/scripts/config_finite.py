@@ -7,26 +7,45 @@ from validation import require
 
 
 def _complete_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry=()):
+    return _literal_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry)
+
+
+def _bounded_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,start):
+    """A reviewed terminal window; upstream/whole-caller proof stays required."""
+    proof=_literal_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,(),start)
+    proof.update(function=objects.elf.functions[name][0]&~1,caller_extent=objects.elf.functions[name][1])
+    return proof
+
+
+def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry=(),window=None):
     """Literal byte/operand matcher for closed, reviewed internal grammars.
 
     No instruction execution, inferred CFG, runtime learning or public plugin
     selection. Consumers supply fixed typed policies and retain caller proof.
     """
-    start=objects.elf.functions[name][0]&~1
-    extent,frame,_=typed_function(objects,start,canonical_symbol(name))
-    require((extent,frame)==(contract['extent'],contract['frame']),'payload extent/frame differs')
-    mapping=[(start+a,start+b,k) for a,b,k in contract['mapping']]
-    require(mapping_ranges(objects.elf,name)==mapping,'payload code/data mapping differs')
+    parent=objects.elf.functions[name][0]&~1
+    parent_extent,frame,_=typed_function(objects,parent,canonical_symbol(name))
+    start=parent if window is None else window;extent=contract['extent']
+    caller_mapping=mapping_ranges(objects.elf,name)
+    if window is None:
+        require((parent_extent,frame)==(extent,contract['frame']),'payload extent/frame differs')
+        mapping=[(start+a,start+b,k) for a,b,k in contract['mapping']]
+        require(caller_mapping==mapping,'payload code/data mapping differs')
+    else:
+        require(parent<=start<start+extent<=parent+parent_extent,'root window exceeds declared caller')
+        mapping=[(max(start,a),min(start+extent,b),k) for a,b,k in caller_mapping if a<start+extent and start<b]
+        require(all(k=='t' for a,b,k in mapping) and sum(b-a for a,b,k in mapping)==extent,
+                'root window is not wholly mapped Thumb code')
     raw=objects.read_only(start,extent);rows=sorted((r for a,r in instructions.items() if start<=a<start+extent),key=lambda r:r.address)
     require(len(rows)==len(contract['instructions']),'payload instruction inventory differs')
-    code={a for lo,hi,k in mapping if k=='t' for a in range(lo,hi)};covered=set();producers={};edges=[];indirect=[]
+    code={a for lo,hi,k in mapping if k=='t' for a in range(lo,hi)};covered=set();producers={};edges=[];indirect=[];external_values={}
     for row,(offset,width,operation) in zip(rows,contract['instructions']):
         mnemonic,_,expected=operation.partition(' ');points=set(range(row.address,row.address+len(row.raw)))
         require(row.address==start+offset and len(row.raw)==width and points<=code and not points&covered and
                 row.raw==raw[offset:offset+width],'payload current bytes/coverage differ')
         covered|=points;require(row.mnemonic==mnemonic,'payload source/return/selector instruction differs')
         actual=row.operands.split('@',1)[0].strip();producer=re.search(r'@object([0-9]+)\.(low|high)',expected)
-        local=re.search(r'@self\+([0-9a-f]+)',expected)
+        local=re.search(r'@self\+([0-9a-f]+)',expected);pool_producer=re.search(r'@object([0-9]+)\.pc_slot',expected)
         target_role=expected if expected.startswith(('@role:','@outline:')) else None
         if producer:
             match=re.fullmatch(r'(r[0-9]+|lr), #(0x[0-9a-f]+|[0-9]+)',actual)
@@ -34,6 +53,16 @@ def _complete_body(objects,name,instructions,role,shape,contract,object_consumer
             ordinal,part=int(producer[1]),producer[2]
             require(part not in producers.setdefault(ordinal,{}),'ambiguous payload object producer')
             producers[ordinal][part]=int(match[2],0);actual=match[1]+', '+producer[0]
+        elif pool_producer:
+            require(window is not None,'external PC pool only belongs to bounded root contract')
+            match=re.fullmatch(r'(r[0-9]+), \[pc, #(0x[0-9a-f]+|[0-9]+)\]',actual)
+            require(match is not None and mnemonic in ('ldr','ldr.w'),'invalid root PC pool producer')
+            pool=((row.address+4)&~3)+int(match[2],0);ordinal=int(pool_producer[1])
+            require(any(k=='d' and a<=pool<pool+4<=b for a,b,k in caller_mapping) and pool%4==0,
+                    'root PC pool is not owned mapped caller data')
+            value=struct.unpack('<I',objects.read_only(pool,4))[0]
+            require(ordinal not in external_values,'duplicate root PC object producer')
+            external_values[ordinal]=value;actual=match[1]+', [pc, '+pool_producer[0]+']'
         elif local:
             match=re.search(r'0x([0-9a-f]+)(?:\s|$)',actual)
             require(match is not None and int(match[1],16)==start+int(local[1],16),'payload case/predecessor destination differs')
@@ -51,8 +80,8 @@ def _complete_body(objects,name,instructions,role,shape,contract,object_consumer
         elif mnemonic in ('bx','blx') and actual!='lr':indirect.append((offset,mnemonic,actual))
         require(actual==expected,'payload reference/cell/ABI/default/return operands differ')
     require(covered==code,'incomplete payload mapped code')
-    data={a for lo,hi,k in mapping if k=='d' for a in range(lo,hi)};covered=set();values={};pool_objects={}
-    for offset,width,value in contract['data']:
+    data={a for lo,hi,k in mapping if k=='d' for a in range(lo,hi)};covered=set();values=dict(external_values);pool_objects={}
+    for offset,width,value in contract.get('data',()):
         points=set(range(start+offset,start+offset+width))
         require(points<=data and not points&covered,'payload mapped data ownership differs');covered|=points
         if value.startswith('@object'):
@@ -64,7 +93,7 @@ def _complete_body(objects,name,instructions,role,shape,contract,object_consumer
     pool_reads=set()
     for row in rows:
         actual=row.operands.split('@',1)[0].strip();match=re.fullmatch(r'r[0-9]+, \[pc, #(0x[0-9a-f]+|[0-9]+)\]',actual)
-        if match:
+        if match and window is None:
             pool=((row.address+4)&~3)+int(match[1],0)
             require(row.mnemonic.startswith('ldr') and pool in pool_objects,'unbound payload PC pool consumer')
             pool_reads.add(pool)
