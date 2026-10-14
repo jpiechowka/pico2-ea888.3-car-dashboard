@@ -1,0 +1,774 @@
+[
+  {
+    "role": "core::fmt::write",
+    "address": 268631560,
+    "size": 262,
+    "frame": 56,
+    "aliases": [
+      {
+        "name": "_RNvNtCs6m2Zc6X1WBq_4core3fmt5write",
+        "address": 268631561,
+        "size": 262,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "lines": [
+      "1002fe08: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "1002fe0a: af03         \tadd\tr7, sp, #0xc",
+      "1002fe0c: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "1002fe10: b085         \tsub\tsp, #0x14",
+      "1002fe12: 4606         \tmov\tr6, r0",
+      "1002fe14: 469b         \tmov\tr11, r3",
+      "1002fe16: 468a         \tmov\tr10, r1",
+      "1002fe18: 07d8         \tlsls\tr0, r3, #0x1f",
+      "1002fe1a: d164         \tbne\t0x1002fee6 <core::fmt::write+0xde> @ imm = #0xc8",
+      "1002fe1c: 7815         \tldrb\tr5, [r2]",
+      "1002fe1e: 2000         \tmovs\tr0, #0x0",
+      "1002fe20: 2d00         \tcmp\tr5, #0x0",
+      "1002fe22: d070         \tbeq\t0x1002ff06 <core::fmt::write+0xfe> @ imm = #0xe0",
+      "1002fe24: f8da 900c    \tldr.w\tr9, [r10, #0xc]",
+      "1002fe28: f04f 0800    \tmov.w\tr8, #0x0",
+      "1002fe2c: e002         \tb\t0x1002fe34 <core::fmt::write+0x2c> @ imm = #0x4",
+      "1002fe2e: 7815         \tldrb\tr5, [r2]",
+      "1002fe30: 2d00         \tcmp\tr5, #0x0",
+      "1002fe32: d067         \tbeq\t0x1002ff04 <core::fmt::write+0xfc> @ imm = #0xce",
+      "1002fe34: 1c54         \tadds\tr4, r2, #0x1",
+      "1002fe36: b268         \tsxtb\tr0, r5",
+      "1002fe38: f1b0 3fff    \tcmp.w\tr0, #0xffffffff",
+      "1002fe3c: dd07         \tble\t0x1002fe4e <core::fmt::write+0x46> @ imm = #0xe",
+      "1002fe3e: 4630         \tmov\tr0, r6",
+      "1002fe40: 4621         \tmov\tr1, r4",
+      "1002fe42: 462a         \tmov\tr2, r5",
+      "1002fe44: 47c8         \tblx\tr9",
+      "1002fe46: 2800         \tcmp\tr0, #0x0",
+      "1002fe48: d15a         \tbne\t0x1002ff00 <core::fmt::write+0xf8> @ imm = #0xb4",
+      "1002fe4a: 1962         \tadds\tr2, r4, r5",
+      "1002fe4c: e7ef         \tb\t0x1002fe2e <core::fmt::write+0x26> @ imm = #-0x22",
+      "1002fe4e: 2d80         \tcmp\tr5, #0x80",
+      "1002fe50: d009         \tbeq\t0x1002fe66 <core::fmt::write+0x5e> @ imm = #0x12",
+      "1002fe52: 2dc0         \tcmp\tr5, #0xc0",
+      "1002fe54: d112         \tbne\t0x1002fe7c <core::fmt::write+0x74> @ imm = #0x24",
+      "1002fe56: f85b 0038    \tldr.w\tr0, [r11, r8, lsl #3]",
+      "1002fe5a: 2100         \tmovs\tr1, #0x0",
+      "1002fe5c: 9104         \tstr\tr1, [sp, #0x10]",
+      "1002fe5e: 2120         \tmovs\tr1, #0x20",
+      "1002fe60: f2c6 0100    \tmovt\tr1, #0x6000",
+      "1002fe64: e031         \tb\t0x1002feca <core::fmt::write+0xc2> @ imm = #0x62",
+      "1002fe66: f8b2 4001    \tldrh.w\tr4, [r2, #0x1]",
+      "1002fe6a: 1cd5         \tadds\tr5, r2, #0x3",
+      "1002fe6c: 4630         \tmov\tr0, r6",
+      "1002fe6e: 4629         \tmov\tr1, r5",
+      "1002fe70: 4622         \tmov\tr2, r4",
+      "1002fe72: 47c8         \tblx\tr9",
+      "1002fe74: 2800         \tcmp\tr0, #0x0",
+      "1002fe76: d143         \tbne\t0x1002ff00 <core::fmt::write+0xf8> @ imm = #0x86",
+      "1002fe78: 192a         \tadds\tr2, r5, r4",
+      "1002fe7a: e7d8         \tb\t0x1002fe2e <core::fmt::write+0x26> @ imm = #-0x50",
+      "1002fe7c: 07e8         \tlsls\tr0, r5, #0x1f",
+      "1002fe7e: d103         \tbne\t0x1002fe88 <core::fmt::write+0x80> @ imm = #0x6",
+      "1002fe80: 2120         \tmovs\tr1, #0x20",
+      "1002fe82: f2c6 0100    \tmovt\tr1, #0x6000",
+      "1002fe86: e002         \tb\t0x1002fe8e <core::fmt::write+0x86> @ imm = #0x4",
+      "1002fe88: f8d2 1001    \tldr.w\tr1, [r2, #0x1]",
+      "1002fe8c: 1d54         \tadds\tr4, r2, #0x5",
+      "1002fe8e: 07a8         \tlsls\tr0, r5, #0x1e",
+      "1002fe90: bf4c         \tite\tmi",
+      "1002fe92: f834 2b02    \tldrhmi\tr2, [r4], #2",
+      "1002fe96: 2200         \tmovpl\tr2, #0x0",
+      "1002fe98: 0768         \tlsls\tr0, r5, #0x1d",
+      "1002fe9a: bf4c         \tite\tmi",
+      "1002fe9c: f834 3b02    \tldrhmi\tr3, [r4], #2",
+      "1002fea0: 2300         \tmovpl\tr3, #0x0",
+      "1002fea2: 0728         \tlsls\tr0, r5, #0x1c",
+      "1002fea4: bf48         \tit\tmi",
+      "1002fea6: f834 8b02    \tldrhmi\tr8, [r4], #2",
+      "1002feaa: 06e8         \tlsls\tr0, r5, #0x1b",
+      "1002feac: bf44         \titt\tmi",
+      "1002feae: eb0b 00c2    \taddmi.w\tr0, r11, r2, lsl #3",
+      "1002feb2: 8882         \tldrhmi\tr2, [r0, #0x4]",
+      "1002feb4: 06a8         \tlsls\tr0, r5, #0x1a",
+      "1002feb6: bf44         \titt\tmi",
+      "1002feb8: eb0b 00c3    \taddmi.w\tr0, r11, r3, lsl #3",
+      "1002febc: 8883         \tldrhmi\tr3, [r0, #0x4]",
+      "1002febe: f85b 0038    \tldr.w\tr0, [r11, r8, lsl #3]",
+      "1002fec2: f8ad 3012    \tstrh.w\tr3, [sp, #0x12]",
+      "1002fec6: f8ad 2010    \tstrh.w\tr2, [sp, #0x10]",
+      "1002feca: 9103         \tstr\tr1, [sp, #0xc]",
+      "1002fecc: eb0b 01c8    \tadd.w\tr1, r11, r8, lsl #3",
+      "1002fed0: f8cd a008    \tstr.w\tr10, [sp, #0x8]",
+      "1002fed4: 684a         \tldr\tr2, [r1, #0x4]",
+      "1002fed6: a901         \tadd\tr1, sp, #0x4",
+      "1002fed8: 9601         \tstr\tr6, [sp, #0x4]",
+      "1002feda: 4790         \tblx\tr2",
+      "1002fedc: b980         \tcbnz\tr0, 0x1002ff00 <core::fmt::write+0xf8> @ imm = #0x20",
+      "1002fede: f108 0801    \tadd.w\tr8, r8, #0x1",
+      "1002fee2: 4622         \tmov\tr2, r4",
+      "1002fee4: e7a3         \tb\t0x1002fe2e <core::fmt::write+0x26> @ imm = #-0xba",
+      "1002fee6: ea4f 035b    \tlsr.w\tr3, r11, #0x1",
+      "1002feea: 4611         \tmov\tr1, r2",
+      "1002feec: f8da c00c    \tldr.w\tr12, [r10, #0xc]",
+      "1002fef0: 4630         \tmov\tr0, r6",
+      "1002fef2: 461a         \tmov\tr2, r3",
+      "1002fef4: b005         \tadd\tsp, #0x14",
+      "1002fef6: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1002fefa: e8bd 40f0    \tpop.w\t{r4, r5, r6, r7, lr}",
+      "1002fefe: 4760         \tbx\tr12",
+      "1002ff00: 2001         \tmovs\tr0, #0x1",
+      "1002ff02: e000         \tb\t0x1002ff06 <core::fmt::write+0xfe> @ imm = #0x0",
+      "1002ff04: 2000         \tmovs\tr0, #0x0",
+      "1002ff06: b005         \tadd\tsp, #0x14",
+      "1002ff08: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "1002ff0c: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [],
+    "ordinary_edges": []
+  },
+  {
+    "role": "<core::fmt::builders::DebugStruct>::field",
+    "address": 268636180,
+    "size": 282,
+    "frame": 72,
+    "aliases": [
+      {
+        "name": "_RNvMs2_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_11DebugStruct5field",
+        "address": 268636181,
+        "size": 282,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "lines": [
+      "10031014: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "10031016: af03         \tadd\tr7, sp, #0xc",
+      "10031018: e92d 0f00    \tpush.w\t{r8, r9, r10, r11}",
+      "1003101c: b089         \tsub\tsp, #0x24",
+      "1003101e: 4698         \tmov\tr8, r3",
+      "10031020: 4603         \tmov\tr3, r0",
+      "10031022: 7900         \tldrb\tr0, [r0, #0x4]",
+      "10031024: f04f 0901    \tmov.w\tr9, #0x1",
+      "10031028: 2800         \tcmp\tr0, #0x0",
+      "1003102a: f04f 0001    \tmov.w\tr0, #0x1",
+      "1003102e: d16c         \tbne\t0x1003110a <<core::fmt::builders::DebugStruct>::field+0xf6> @ imm = #0xd8",
+      "10031030: 681d         \tldr\tr5, [r3]",
+      "10031032: 469a         \tmov\tr10, r3",
+      "10031034: f8d7 b008    \tldr.w\tr11, [r7, #0x8]",
+      "10031038: 795b         \tldrb\tr3, [r3, #0x5]",
+      "1003103a: 7aa8         \tldrb\tr0, [r5, #0xa]",
+      "1003103c: 0600         \tlsls\tr0, r0, #0x18",
+      "1003103e: d42d         \tbmi\t0x1003109c <<core::fmt::builders::DebugStruct>::field+0x88> @ imm = #0x5a",
+      "10031040: 460c         \tmov\tr4, r1",
+      "10031042: f243 318d    \tmovw\tr1, #0x338d",
+      "10031046: 4693         \tmov\tr11, r2",
+      "10031048: f243 3290    \tmovw\tr2, #0x3390",
+      "1003104c: f2c1 0105    \tmovt\tr1, #0x1005",
+      "10031050: e9d5 0600    \tldrd\tr0, r6, [r5]",
+      "10031054: f2c1 0205    \tmovt\tr2, #0x1005",
+      "10031058: 2b00         \tcmp\tr3, #0x0",
+      "1003105a: bf18         \tit\tne",
+      "1003105c: 4611         \tmovne\tr1, r2",
+      "1003105e: 68f3         \tldr\tr3, [r6, #0xc]",
+      "10031060: f04f 0203    \tmov.w\tr2, #0x3",
+      "10031064: bf18         \tit\tne",
+      "10031066: 2202         \tmovne\tr2, #0x2",
+      "10031068: 4798         \tblx\tr3",
+      "1003106a: 2800         \tcmp\tr0, #0x0",
+      "1003106c: d14b         \tbne\t0x10031106 <<core::fmt::builders::DebugStruct>::field+0xf2> @ imm = #0x96",
+      "1003106e: e9d5 0100    \tldrd\tr0, r1, [r5]",
+      "10031072: 465a         \tmov\tr2, r11",
+      "10031074: 68cb         \tldr\tr3, [r1, #0xc]",
+      "10031076: 4621         \tmov\tr1, r4",
+      "10031078: 4798         \tblx\tr3",
+      "1003107a: 2800         \tcmp\tr0, #0x0",
+      "1003107c: d143         \tbne\t0x10031106 <<core::fmt::builders::DebugStruct>::field+0xf2> @ imm = #0x86",
+      "1003107e: e9d5 0100    \tldrd\tr0, r1, [r5]",
+      "10031082: 2202         \tmovs\tr2, #0x2",
+      "10031084: 68cb         \tldr\tr3, [r1, #0xc]",
+      "10031086: f243 3192    \tmovw\tr1, #0x3392",
+      "1003108a: f2c1 0105    \tmovt\tr1, #0x1005",
+      "1003108e: 4798         \tblx\tr3",
+      "10031090: bbc8         \tcbnz\tr0, 0x10031106 <<core::fmt::builders::DebugStruct>::field+0xf2> @ imm = #0x72",
+      "10031092: 68ba         \tldr\tr2, [r7, #0x8]",
+      "10031094: 4640         \tmov\tr0, r8",
+      "10031096: 4629         \tmov\tr1, r5",
+      "10031098: 4790         \tblx\tr2",
+      "1003109a: e035         \tb\t0x10031108 <<core::fmt::builders::DebugStruct>::field+0xf4> @ imm = #0x6a",
+      "1003109c: b973         \tcbnz\tr3, 0x100310bc <<core::fmt::builders::DebugStruct>::field+0xa8> @ imm = #0x1c",
+      "1003109e: e9d5 0300    \tldrd\tr0, r3, [r5]",
+      "100310a2: f243 3694    \tmovw\tr6, #0x3394",
+      "100310a6: 68db         \tldr\tr3, [r3, #0xc]",
+      "100310a8: f2c1 0605    \tmovt\tr6, #0x1005",
+      "100310ac: 460c         \tmov\tr4, r1",
+      "100310ae: 4631         \tmov\tr1, r6",
+      "100310b0: 4616         \tmov\tr6, r2",
+      "100310b2: 2203         \tmovs\tr2, #0x3",
+      "100310b4: 4798         \tblx\tr3",
+      "100310b6: 4621         \tmov\tr1, r4",
+      "100310b8: 4632         \tmov\tr2, r6",
+      "100310ba: bb20         \tcbnz\tr0, 0x10031106 <<core::fmt::builders::DebugStruct>::field+0xf2> @ imm = #0x48",
+      "100310bc: 2001         \tmovs\tr0, #0x1",
+      "100310be: e9d5 3600    \tldrd\tr3, r6, [r5]",
+      "100310c2: f807 0c2d    \tstrb\tr0, [r7, #-45]",
+      "100310c6: f1a7 002d    \tsub.w\tr0, r7, #0x2d",
+      "100310ca: 9003         \tstr\tr0, [sp, #0xc]",
+      "100310cc: f243 4018    \tmovw\tr0, #0x3418",
+      "100310d0: f2c1 0005    \tmovt\tr0, #0x1005",
+      "100310d4: e9d5 4502    \tldrd\tr4, r5, [r5, #8]",
+      "100310d8: 9006         \tstr\tr0, [sp, #0x18]",
+      "100310da: a801         \tadd\tr0, sp, #0x4",
+      "100310dc: 9005         \tstr\tr0, [sp, #0x14]",
+      "100310de: e9cd 4507    \tstrd\tr4, r5, [sp, #28]",
+      "100310e2: e9cd 3601    \tstrd\tr3, r6, [sp, #4]",
+      "100310e6: f7ff fb6d    \tbl\t0x100307c4 <<core::fmt::builders::PadAdapter as core::fmt::Write>::write_str> @ imm = #-0x926",
+      "100310ea: b960         \tcbnz\tr0, 0x10031106 <<core::fmt::builders::DebugStruct>::field+0xf2> @ imm = #0x18",
+      "100310ec: f243 3192    \tmovw\tr1, #0x3392",
+      "100310f0: a801         \tadd\tr0, sp, #0x4",
+      "100310f2: f2c1 0105    \tmovt\tr1, #0x1005",
+      "100310f6: 2202         \tmovs\tr2, #0x2",
+      "100310f8: f7ff fb64    \tbl\t0x100307c4 <<core::fmt::builders::PadAdapter as core::fmt::Write>::write_str> @ imm = #-0x938",
+      "100310fc: b918         \tcbnz\tr0, 0x10031106 <<core::fmt::builders::DebugStruct>::field+0xf2> @ imm = #0x6",
+      "100310fe: a905         \tadd\tr1, sp, #0x14",
+      "10031100: 4640         \tmov\tr0, r8",
+      "10031102: 47d8         \tblx\tr11",
+      "10031104: b148         \tcbz\tr0, 0x1003111a <<core::fmt::builders::DebugStruct>::field+0x106> @ imm = #0x12",
+      "10031106: 2001         \tmovs\tr0, #0x1",
+      "10031108: 4653         \tmov\tr3, r10",
+      "1003110a: 7118         \tstrb\tr0, [r3, #0x4]",
+      "1003110c: 4618         \tmov\tr0, r3",
+      "1003110e: f883 9005    \tstrb.w\tr9, [r3, #0x5]",
+      "10031112: b009         \tadd\tsp, #0x24",
+      "10031114: e8bd 0f00    \tpop.w\t{r8, r9, r10, r11}",
+      "10031118: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "1003111a: e9dd 0105    \tldrd\tr0, r1, [sp, #20]",
+      "1003111e: 2202         \tmovs\tr2, #0x2",
+      "10031120: 68cb         \tldr\tr3, [r1, #0xc]",
+      "10031122: f243 3197    \tmovw\tr1, #0x3397",
+      "10031126: f2c1 0105    \tmovt\tr1, #0x1005",
+      "1003112a: 4798         \tblx\tr3",
+      "1003112c: e7ec         \tb\t0x10031108 <<core::fmt::builders::DebugStruct>::field+0xf4> @ imm = #-0x28"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268636226,
+        "high_site": 268636236,
+        "register": "r1",
+        "address": 268776333,
+        "first24_hex": "207b202c203a20207b0a2c0a2928280a00000041a6041055",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268636232,
+        "high_site": 268636244,
+        "register": "r2",
+        "address": 268776336,
+        "first24_hex": "2c203a20207b0a2c0a2928280a00000041a6041055000000",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268636294,
+        "high_site": 268636298,
+        "register": "r1",
+        "address": 268776338,
+        "first24_hex": "3a20207b0a2c0a2928280a00000041a60410550000002e00",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268636322,
+        "high_site": 268636328,
+        "register": "r6",
+        "address": 268776340,
+        "first24_hex": "207b0a2c0a2928280a00000041a60410550000002e000000",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268636364,
+        "high_site": 268636368,
+        "register": "r0",
+        "address": 268776472,
+        "first24_hex": "000000000c00000004000000c5070310110a03105d0a0310",
+        "vtable_words": [
+          0,
+          12,
+          4,
+          268634053,
+          268634641,
+          268634717
+        ],
+        "targets": [
+          {
+            "pointer": 268634053,
+            "aliases": [
+              {
+                "name": "_RNvXs0_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write9write_str",
+                "address": 268634053,
+                "size": 588,
+                "type": 2,
+                "section": 3
+              }
+            ],
+            "frame": 56
+          },
+          {
+            "pointer": 268634641,
+            "aliases": [
+              {
+                "name": "_RNvXs0_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write10write_char",
+                "address": 268634641,
+                "size": 76,
+                "type": 2,
+                "section": 3
+              }
+            ],
+            "frame": 24
+          },
+          {
+            "pointer": 268634717,
+            "aliases": [
+              {
+                "name": "_RNvYNtNtNtCs6m2Zc6X1WBq_4core3fmt8builders10PadAdapterNtB6_5Write9write_fmtB8_",
+                "address": 268634717,
+                "size": 24,
+                "type": 2,
+                "section": 3
+              }
+            ],
+            "frame": 8
+          }
+        ],
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268636396,
+        "high_site": 268636402,
+        "register": "r1",
+        "address": 268776338,
+        "first24_hex": "3a20207b0a2c0a2928280a00000041a60410550000002e00",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268636450,
+        "high_site": 268636454,
+        "register": "r1",
+        "address": 268776343,
+        "first24_hex": "2c0a2928280a00000041a60410550000002e000000090000",
+        "section": ".rodata",
+        "section_flags": 50
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268636390,
+        "target": 268634052,
+        "aliases": [
+          {
+            "name": "_RNvXs0_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write9write_str",
+            "address": 268634053,
+            "size": 588,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 56
+      },
+      {
+        "site": 268636408,
+        "target": 268634052,
+        "aliases": [
+          {
+            "name": "_RNvXs0_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write9write_str",
+            "address": 268634053,
+            "size": 588,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 56
+      }
+    ]
+  },
+  {
+    "role": "<core::fmt::Formatter>::debug_struct_field5_finish",
+    "address": 268637058,
+    "size": 198,
+    "frame": 40,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter26debug_struct_field5_finish",
+        "address": 268637059,
+        "size": 198,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "lines": [
+      "10031382: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "10031384: af03         \tadd\tr7, sp, #0xc",
+      "10031386: f84d bd04    \tstr\tr11, [sp, #-4]!",
+      "1003138a: b084         \tsub\tsp, #0x10",
+      "1003138c: 4615         \tmov\tr5, r2",
+      "1003138e: 4606         \tmov\tr6, r0",
+      "10031390: e9d0 0200    \tldrd\tr0, r2, [r0]",
+      "10031394: 461c         \tmov\tr4, r3",
+      "10031396: 68d3         \tldr\tr3, [r2, #0xc]",
+      "10031398: 220f         \tmovs\tr2, #0xf",
+      "1003139a: 4798         \tblx\tr3",
+      "1003139c: 68b9         \tldr\tr1, [r7, #0x8]",
+      "1003139e: 2200         \tmovs\tr2, #0x0",
+      "100313a0: f88d 000c    \tstrb.w\tr0, [sp, #0xc]",
+      "100313a4: a802         \tadd\tr0, sp, #0x8",
+      "100313a6: f88d 200d    \tstrb.w\tr2, [sp, #0xd]",
+      "100313aa: 2204         \tmovs\tr2, #0x4",
+      "100313ac: 68c9         \tldr\tr1, [r1, #0xc]",
+      "100313ae: 4623         \tmov\tr3, r4",
+      "100313b0: 9100         \tstr\tr1, [sp]",
+      "100313b2: 4629         \tmov\tr1, r5",
+      "100313b4: 9602         \tstr\tr6, [sp, #0x8]",
+      "100313b6: f7ff fe2d    \tbl\t0x10031014 <<core::fmt::builders::DebugStruct>::field> @ imm = #-0x3a6",
+      "100313ba: 697a         \tldr\tr2, [r7, #0x14]",
+      "100313bc: 68f9         \tldr\tr1, [r7, #0xc]",
+      "100313be: 693b         \tldr\tr3, [r7, #0x10]",
+      "100313c0: 68d2         \tldr\tr2, [r2, #0xc]",
+      "100313c2: 9200         \tstr\tr2, [sp]",
+      "100313c4: 2205         \tmovs\tr2, #0x5",
+      "100313c6: f7ff fe25    \tbl\t0x10031014 <<core::fmt::builders::DebugStruct>::field> @ imm = #-0x3b6",
+      "100313ca: 6a3a         \tldr\tr2, [r7, #0x20]",
+      "100313cc: 69b9         \tldr\tr1, [r7, #0x18]",
+      "100313ce: 69fb         \tldr\tr3, [r7, #0x1c]",
+      "100313d0: 68d2         \tldr\tr2, [r2, #0xc]",
+      "100313d2: 9200         \tstr\tr2, [sp]",
+      "100313d4: 2204         \tmovs\tr2, #0x4",
+      "100313d6: f7ff fe1d    \tbl\t0x10031014 <<core::fmt::builders::DebugStruct>::field> @ imm = #-0x3c6",
+      "100313da: 6afa         \tldr\tr2, [r7, #0x2c]",
+      "100313dc: 6a79         \tldr\tr1, [r7, #0x24]",
+      "100313de: 6abb         \tldr\tr3, [r7, #0x28]",
+      "100313e0: 68d2         \tldr\tr2, [r2, #0xc]",
+      "100313e2: 9200         \tstr\tr2, [sp]",
+      "100313e4: 2206         \tmovs\tr2, #0x6",
+      "100313e6: f7ff fe15    \tbl\t0x10031014 <<core::fmt::builders::DebugStruct>::field> @ imm = #-0x3d6",
+      "100313ea: 6bba         \tldr\tr2, [r7, #0x38]",
+      "100313ec: 6b39         \tldr\tr1, [r7, #0x30]",
+      "100313ee: 6b7b         \tldr\tr3, [r7, #0x34]",
+      "100313f0: 68d2         \tldr\tr2, [r2, #0xc]",
+      "100313f2: 9200         \tstr\tr2, [sp]",
+      "100313f4: 2207         \tmovs\tr2, #0x7",
+      "100313f6: f7ff fe0d    \tbl\t0x10031014 <<core::fmt::builders::DebugStruct>::field> @ imm = #-0x3e6",
+      "100313fa: f89d 200d    \tldrb.w\tr2, [sp, #0xd]",
+      "100313fe: f89d 100c    \tldrb.w\tr1, [sp, #0xc]",
+      "10031402: 2a01         \tcmp\tr2, #0x1",
+      "10031404: ea42 0001    \torr.w\tr0, r2, r1",
+      "10031408: bf08         \tit\teq",
+      "1003140a: ea5f 71c1    \tlslseq.w\tr1, r1, #0x1f",
+      "1003140e: d115         \tbne\t0x1003143c <<core::fmt::Formatter>::debug_struct_field5_finish+0xba> @ imm = #0x2a",
+      "10031410: 9802         \tldr\tr0, [sp, #0x8]",
+      "10031412: 7a81         \tldrb\tr1, [r0, #0xa]",
+      "10031414: 0609         \tlsls\tr1, r1, #0x18",
+      "10031416: d408         \tbmi\t0x1003142a <<core::fmt::Formatter>::debug_struct_field5_finish+0xa8> @ imm = #0x10",
+      "10031418: e9d0 0100    \tldrd\tr0, r1, [r0]",
+      "1003141c: 2202         \tmovs\tr2, #0x2",
+      "1003141e: 68cb         \tldr\tr3, [r1, #0xc]",
+      "10031420: f243 31e5    \tmovw\tr1, #0x33e5",
+      "10031424: f2c1 0105    \tmovt\tr1, #0x1005",
+      "10031428: e007         \tb\t0x1003143a <<core::fmt::Formatter>::debug_struct_field5_finish+0xb8> @ imm = #0xe",
+      "1003142a: e9d0 0100    \tldrd\tr0, r1, [r0]",
+      "1003142e: 2201         \tmovs\tr2, #0x1",
+      "10031430: 68cb         \tldr\tr3, [r1, #0xc]",
+      "10031432: f243 318c    \tmovw\tr1, #0x338c",
+      "10031436: f2c1 0105    \tmovt\tr1, #0x1005",
+      "1003143a: 4798         \tblx\tr3",
+      "1003143c: f000 0001    \tand\tr0, r0, #0x1",
+      "10031440: b004         \tadd\tsp, #0x10",
+      "10031442: f85d bb04    \tldr\tr11, [sp], #4",
+      "10031446: bdf0         \tpop\t{r4, r5, r6, r7, pc}"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268637216,
+        "high_site": 268637220,
+        "register": "r1",
+        "address": 268776421,
+        "first24_hex": "207d0064b004105200000086010000010000006173736572",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268637234,
+        "high_site": 268637238,
+        "register": "r1",
+        "address": 268776332,
+        "first24_hex": "7d207b202c203a20207b0a2c0a2928280a00000041a60410",
+        "section": ".rodata",
+        "section_flags": 50
+      }
+    ],
+    "ordinary_edges": [
+      {
+        "site": 268637110,
+        "target": 268636180,
+        "aliases": [
+          {
+            "name": "_RNvMs2_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_11DebugStruct5field",
+            "address": 268636181,
+            "size": 282,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 72
+      },
+      {
+        "site": 268637126,
+        "target": 268636180,
+        "aliases": [
+          {
+            "name": "_RNvMs2_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_11DebugStruct5field",
+            "address": 268636181,
+            "size": 282,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 72
+      },
+      {
+        "site": 268637142,
+        "target": 268636180,
+        "aliases": [
+          {
+            "name": "_RNvMs2_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_11DebugStruct5field",
+            "address": 268636181,
+            "size": 282,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 72
+      },
+      {
+        "site": 268637158,
+        "target": 268636180,
+        "aliases": [
+          {
+            "name": "_RNvMs2_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_11DebugStruct5field",
+            "address": 268636181,
+            "size": 282,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 72
+      },
+      {
+        "site": 268637174,
+        "target": 268636180,
+        "aliases": [
+          {
+            "name": "_RNvMs2_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_11DebugStruct5field",
+            "address": 268636181,
+            "size": 282,
+            "type": 2,
+            "section": 3
+          }
+        ],
+        "frame": 72
+      }
+    ]
+  },
+  {
+    "role": "<core::fmt::Formatter>::debug_tuple_field1_finish",
+    "address": 268633364,
+    "size": 206,
+    "frame": 64,
+    "aliases": [
+      {
+        "name": "_RNvMsa_NtCs6m2Zc6X1WBq_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish",
+        "address": 268633365,
+        "size": 206,
+        "type": 2,
+        "section": 3
+      }
+    ],
+    "lines": [
+      "10030514: b5f0         \tpush\t{r4, r5, r6, r7, lr}",
+      "10030516: af03         \tadd\tr7, sp, #0xc",
+      "10030518: e92d 0700    \tpush.w\t{r8, r9, r10}",
+      "1003051c: b088         \tsub\tsp, #0x20",
+      "1003051e: e9d0 4500    \tldrd\tr4, r5, [r0]",
+      "10030522: 4606         \tmov\tr6, r0",
+      "10030524: f8d5 a00c    \tldr.w\tr10, [r5, #0xc]",
+      "10030528: 4698         \tmov\tr8, r3",
+      "1003052a: 4620         \tmov\tr0, r4",
+      "1003052c: 47d0         \tblx\tr10",
+      "1003052e: b120         \tcbz\tr0, 0x1003053a <<core::fmt::Formatter>::debug_tuple_field1_finish+0x26> @ imm = #0x8",
+      "10030530: 2001         \tmovs\tr0, #0x1",
+      "10030532: b008         \tadd\tsp, #0x20",
+      "10030534: e8bd 0700    \tpop.w\t{r8, r9, r10}",
+      "10030538: bdf0         \tpop\t{r4, r5, r6, r7, pc}",
+      "1003053a: 7ab0         \tldrb\tr0, [r6, #0xa]",
+      "1003053c: f8d7 9008    \tldr.w\tr9, [r7, #0x8]",
+      "10030540: 0600         \tlsls\tr0, r0, #0x18",
+      "10030542: d417         \tbmi\t0x10030574 <<core::fmt::Formatter>::debug_tuple_field1_finish+0x60> @ imm = #0x2e",
+      "10030544: f243 319a    \tmovw\tr1, #0x339a",
+      "10030548: 4620         \tmov\tr0, r4",
+      "1003054a: f2c1 0105    \tmovt\tr1, #0x1005",
+      "1003054e: 2201         \tmovs\tr2, #0x1",
+      "10030550: 2501         \tmovs\tr5, #0x1",
+      "10030552: 47d0         \tblx\tr10",
+      "10030554: 4601         \tmov\tr1, r0",
+      "10030556: 4628         \tmov\tr0, r5",
+      "10030558: 2900         \tcmp\tr1, #0x0",
+      "1003055a: d1ea         \tbne\t0x10030532 <<core::fmt::Formatter>::debug_tuple_field1_finish+0x1e> @ imm = #-0x2c",
+      "1003055c: f8d9 200c    \tldr.w\tr2, [r9, #0xc]",
+      "10030560: 4640         \tmov\tr0, r8",
+      "10030562: 4631         \tmov\tr1, r6",
+      "10030564: 4790         \tblx\tr2",
+      "10030566: 2800         \tcmp\tr0, #0x0",
+      "10030568: d1e2         \tbne\t0x10030530 <<core::fmt::Formatter>::debug_tuple_field1_finish+0x1c> @ imm = #-0x3c",
+      "1003056a: e9d6 4000    \tldrd\tr4, r0, [r6]",
+      "1003056e: f8d0 a00c    \tldr.w\tr10, [r0, #0xc]",
+      "10030572: e02e         \tb\t0x100305d2 <<core::fmt::Formatter>::debug_tuple_field1_finish+0xbe> @ imm = #0x5c",
+      "10030574: f243 319b    \tmovw\tr1, #0x339b",
+      "10030578: 4620         \tmov\tr0, r4",
+      "1003057a: f2c1 0105    \tmovt\tr1, #0x1005",
+      "1003057e: 2202         \tmovs\tr2, #0x2",
+      "10030580: 47d0         \tblx\tr10",
+      "10030582: 4601         \tmov\tr1, r0",
+      "10030584: 2001         \tmovs\tr0, #0x1",
+      "10030586: 2900         \tcmp\tr1, #0x0",
+      "10030588: d1d3         \tbne\t0x10030532 <<core::fmt::Formatter>::debug_tuple_field1_finish+0x1e> @ imm = #-0x5a",
+      "1003058a: f1a7 0129    \tsub.w\tr1, r7, #0x29",
+      "1003058e: f243 4218    \tmovw\tr2, #0x3418",
+      "10030592: f2c1 0205    \tmovt\tr2, #0x1005",
+      "10030596: f807 0c29    \tstrb\tr0, [r7, #-41]",
+      "1003059a: e9cd 5101    \tstrd\tr5, r1, [sp, #4]",
+      "1003059e: 466b         \tmov\tr3, sp",
+      "100305a0: e9d6 0102    \tldrd\tr0, r1, [r6, #8]",
+      "100305a4: e9cd 0106    \tstrd\tr0, r1, [sp, #24]",
+      "100305a8: a904         \tadd\tr1, sp, #0x10",
+      "100305aa: 9205         \tstr\tr2, [sp, #0x14]",
+      "100305ac: 4640         \tmov\tr0, r8",
+      "100305ae: f8d9 200c    \tldr.w\tr2, [r9, #0xc]",
+      "100305b2: 9400         \tstr\tr4, [sp]",
+      "100305b4: 9304         \tstr\tr3, [sp, #0x10]",
+      "100305b6: 4790         \tblx\tr2",
+      "100305b8: 2800         \tcmp\tr0, #0x0",
+      "100305ba: d1b9         \tbne\t0x10030530 <<core::fmt::Formatter>::debug_tuple_field1_finish+0x1c> @ imm = #-0x8e",
+      "100305bc: e9dd 0104    \tldrd\tr0, r1, [sp, #16]",
+      "100305c0: 2202         \tmovs\tr2, #0x2",
+      "100305c2: 68cb         \tldr\tr3, [r1, #0xc]",
+      "100305c4: f243 3197    \tmovw\tr1, #0x3397",
+      "100305c8: f2c1 0105    \tmovt\tr1, #0x1005",
+      "100305cc: 4798         \tblx\tr3",
+      "100305ce: 2800         \tcmp\tr0, #0x0",
+      "100305d0: d1ae         \tbne\t0x10030530 <<core::fmt::Formatter>::debug_tuple_field1_finish+0x1c> @ imm = #-0xa4",
+      "100305d2: f243 3199    \tmovw\tr1, #0x3399",
+      "100305d6: 4620         \tmov\tr0, r4",
+      "100305d8: f2c1 0105    \tmovt\tr1, #0x1005",
+      "100305dc: 2201         \tmovs\tr2, #0x1",
+      "100305de: 47d0         \tblx\tr10",
+      "100305e0: e7a7         \tb\t0x10030532 <<core::fmt::Formatter>::debug_tuple_field1_finish+0x1e> @ imm = #-0xb2"
+    ],
+    "address_producers": [
+      {
+        "low_site": 268633412,
+        "high_site": 268633418,
+        "register": "r1",
+        "address": 268776346,
+        "first24_hex": "28280a00000041a60410550000002e000000090000006173",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268633460,
+        "high_site": 268633466,
+        "register": "r1",
+        "address": 268776347,
+        "first24_hex": "280a00000041a60410550000002e00000009000000617373",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268633486,
+        "high_site": 268633490,
+        "register": "r2",
+        "address": 268776472,
+        "first24_hex": "000000000c00000004000000c5070310110a03105d0a0310",
+        "vtable_words": [
+          0,
+          12,
+          4,
+          268634053,
+          268634641,
+          268634717
+        ],
+        "targets": [
+          {
+            "pointer": 268634053,
+            "aliases": [
+              {
+                "name": "_RNvXs0_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write9write_str",
+                "address": 268634053,
+                "size": 588,
+                "type": 2,
+                "section": 3
+              }
+            ],
+            "frame": 56
+          },
+          {
+            "pointer": 268634641,
+            "aliases": [
+              {
+                "name": "_RNvXs0_NtNtCs6m2Zc6X1WBq_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write10write_char",
+                "address": 268634641,
+                "size": 76,
+                "type": 2,
+                "section": 3
+              }
+            ],
+            "frame": 24
+          },
+          {
+            "pointer": 268634717,
+            "aliases": [
+              {
+                "name": "_RNvYNtNtNtCs6m2Zc6X1WBq_4core3fmt8builders10PadAdapterNtB6_5Write9write_fmtB8_",
+                "address": 268634717,
+                "size": 24,
+                "type": 2,
+                "section": 3
+              }
+            ],
+            "frame": 8
+          }
+        ],
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268633540,
+        "high_site": 268633544,
+        "register": "r1",
+        "address": 268776343,
+        "first24_hex": "2c0a2928280a00000041a60410550000002e000000090000",
+        "section": ".rodata",
+        "section_flags": 50
+      },
+      {
+        "low_site": 268633554,
+        "high_site": 268633560,
+        "register": "r1",
+        "address": 268776345,
+        "first24_hex": "2928280a00000041a60410550000002e0000000900000061",
+        "section": ".rodata",
+        "section_flags": 50
+      }
+    ],
+    "ordinary_edges": []
+  }
+]

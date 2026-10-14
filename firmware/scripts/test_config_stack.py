@@ -2,6 +2,9 @@
 import unittest
 from types import SimpleNamespace
 import struct
+import json
+import re
+from pathlib import Path
 import config_stack
 from llvm_stack import Instruction
 from config_stack import error_root_role
@@ -10,6 +13,108 @@ VALIDATION = '_RNvXsk_NtCshxbT6mSCLYQ_16dashboard_config8validateNtB5_15Validati
 WIDGET = '_RNvXsc_NtCshxbT6mSCLYQ_16dashboard_config5modelNtB5_6WidgetNtNtCs6m2Zc6X1WBq_4core3fmt5Debug3fmt'
 CONTROL = '_RNvXs1g_NtCs123_4core3fmtRNtNtCs456_16dashboard_config8controls12ControlErrorNtB6_5Debug3fmtBA_'
 U8 = '_RNvXs1g_NtCs123_4core3fmtRhNtB6_5Debug3fmtCs456_14dashboard_core'
+
+
+class CompleteFormatBridges(unittest.TestCase):
+    def fixture(self, code_shift=0, data_shift=0):
+        # Literal reviewed raw input bodies; expected grammars live only in the
+        # production consumer. No firmware is built/executed by this fixture.
+        fixture=json.loads((Path(__file__).parent/'fixtures/config-format.json').read_text())
+        functions={};sizes={};records={};segments=[]
+        for f in fixture:
+            start=f['address'];body=bytearray(f['size']);rows=[]
+            producers={site:p for p in f['address_producers'] for site in (p['low_site'],p['high_site'])}
+            for line in f['lines']:
+                match=re.match(r'([0-9a-f]+):\s+((?:(?:[0-9a-f]{4})\s+)+)(\S+)\s*(.*)',line)
+                address=int(match[1],16);raw=b''.join(int(x,16).to_bytes(2,'little') for x in match[2].split())
+                operands=match[4].split('@',1)[0].strip()
+                if address in producers:
+                    p=producers[address];value=p['address']+data_shift
+                    value=(value&0xffff) if address==p['low_site'] else (value>>16)
+                    operands=p['register']+', #'+hex(value)
+                    first,second=struct.unpack('<HH',raw)
+                    raw=struct.pack('<HH',(first&~0x040f)|((value>>12)&15)|((value>>1)&0x400),
+                                    (second&~0x70ff)|((value&0x700)<<4)|(value&255))
+                elif re.match(r'(?:b\w*|cb\w*)$',match[3]) and '0x' in operands:
+                    operands=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operands,count=1)
+                body[address-start:address-start+len(raw)]=raw
+                rows.append(Instruction(address+code_shift,raw,match[3],operands))
+            segments.append((start+code_shift,bytes(body)));records[start+code_shift]=rows
+            for a in f['aliases']:functions[a['name']]=(a['address']+code_shift,a['size'],0)
+            sizes[start+code_shift]=f['frame']
+            for p in f['address_producers']:
+                object_bytes=bytes.fromhex(p['first24_hex'])
+                if 'vtable_words' in p:
+                    words=p['vtable_words'];object_bytes=struct.pack('<6I',*words[:3],*(w+code_shift for w in words[3:]))
+                segments.append((p['address']+data_shift,object_bytes))
+                for target in p.get('targets',[]):
+                    for a in target['aliases']:functions[a['name']]=(a['address']+code_shift,a['size'],0)
+                    sizes[(target['pointer']&~1)+code_shift]=target['frame']
+        lo=min(a for a,_ in segments);ro=min(p['address']+data_shift for f in fixture for p in f['address_producers'])
+        hi=max(a+len(b) for a,b in segments);data=bytearray(hi-lo)
+        for a,b in segments:data[a-lo:a-lo+len(b)]=b
+        elf=SimpleNamespace(data=bytes(data),sections=[(0,1,6,lo,0,ro-lo,0,0,2,0),
+                (0,1,2,ro,ro-lo,hi-ro,0,0,4,0)],functions=functions,mapping_symbols=[('$t',lo,0)])
+        return config_stack.DiagnosticObjects(elf,sizes),records,fixture
+
+    def test_independent_code_and_data_relocation_crosses_movw_half_boundary(self):
+        for code_shift,data_shift in ((0x100,0x18000),(0x3400,0x21000)):
+            objects,records,fixture=self.fixture(code_shift,data_shift)
+            for f in fixture:
+                result=config_stack.format_bridge(objects,f['aliases'][0]['name'],records[f['address']+code_shift])
+                self.assertEqual(result['objects'],tuple(p['address']+data_shift for p in f['address_producers']))
+
+    def test_readonly_delimiters_and_pad_typed_callbacks_reject_wrong_valid_objects(self):
+        for change in ('delimiter','slot','header','callback','frame','alias'):
+            objects,records,fixture=self.fixture();f=fixture[1]
+            data=bytearray(objects.elf.data);section=objects.elf.sections[1]
+            p=f['address_producers'][0 if change=='delimiter' else 4]
+            at=section[4]+p['address']-section[3]
+            if change=='delimiter':data[at]=ord('x')
+            if change=='slot':data[at+12:at+16]=data[at+16:at+20]
+            if change=='header':struct.pack_into('<I',data,at+4,16)
+            if change=='callback':struct.pack_into('<I',data,at+12,p['vtable_words'][3]+2)
+            if change=='frame':objects.sizes[p['vtable_words'][3]&~1]=0
+            if change=='alias':
+                a=p['targets'][0]['aliases'][0];objects.elf.functions[a['name']+'.2']=(a['address'],a['size']+2,0)
+            objects.elf.data=bytes(data)
+            with self.subTest(change=change),self.assertRaises(AssertionError):
+                config_stack.format_bridge(objects,f['aliases'][0]['name'],records[f['address']])
+
+    def test_unused_external_literal_bytes_do_not_define_bridge_identity(self):
+        objects,records,fixture=self.fixture();f=fixture[1]
+        # Append a separate unused external literal, outside every carried
+        # table and consumed delimiter; no whole-section hash is required.
+        section=list(objects.elf.sections[1]);section[5]+=1
+        objects.elf.sections[1]=tuple(section)
+        objects.elf.data+=b'x'
+        result=config_stack.format_bridge(objects,f['aliases'][0]['name'],records[f['address']])
+        self.assertEqual(result['pretty_sites'],(0xa0,0xd2,0xe4,0xee,0x116))
+
+    def test_complete_current_bridges_inventory_all_transfer_sites(self):
+        objects,records,fixture=self.fixture()
+        for f in fixture:
+            result=config_stack.format_bridge(objects,f['aliases'][0]['name'],records[f['address']])
+            self.assertEqual(result['frame'],f['frame'])
+            self.assertEqual(result['extent'],f['size'])
+        field=config_stack.format_bridge(objects,fixture[1]['aliases'][0]['name'],records[fixture[1]['address']])
+        self.assertEqual(field['raw_callbacks'],(0x84,0xee))
+        self.assertEqual(field['ordinary_sites'],(0xd2,0xe4))
+
+    def test_bridge_operand_changes_unknown_transfer_and_partial_coverage_reject(self):
+        objects,records,fixture=self.fixture()
+        for ordinal,offset,mnemonic,operands in [(0,0x54,'str','r1, [sp, #0xc]'),
+                (0,0xcc,'ldr','r2, [r1, #0x8]'),(1,0x80,'ldr','r2, [r7, #0xc]'),
+                (2,0x2c,'ldr','r1, [r1, #0x10]'),(3,0x4e,'ldr','r2, [r2, #0x10]'),
+                (1,0x0a,'blx','r3')]:
+            f=fixture[ordinal];rows=list(records[f['address']]);site=f['address']+offset
+            index=next(i for i,r in enumerate(rows) if r.address==site)
+            old=rows[index];rows[index]=Instruction(old.address,old.raw,mnemonic,operands)
+            with self.subTest(ordinal=ordinal,offset=offset),self.assertRaises(AssertionError):
+                config_stack.format_bridge(objects,f['aliases'][0]['name'],rows)
+        f=fixture[0]
+        with self.assertRaises(AssertionError):
+            config_stack.format_bridge(objects,f['aliases'][0]['name'],records[f['address']][:-1])
 
 
 class DiagnosticRoots(unittest.TestCase):

@@ -3,6 +3,7 @@ import re
 import struct
 from validation import require
 from llvm_stack import mapping_ranges
+from config_format_contracts import FORMAT_GRAMMARS
 
 CONDITIONS = r'(?:eq|ne|hs|lo|hi|ls|ge|lt|gt|le|cs|cc|mi|pl|vs|vc)?'
 
@@ -140,6 +141,127 @@ class DiagnosticObjects:
         actual = self.read_only(address, len(expected))
         require(actual == expected, 'fixed diagnostic literal differs')
         return actual
+
+
+def typed_function(objects, target, role):
+    """Current complete function ownership for one exact normalized interface."""
+    aliases=[(n,e) for n,e in objects.elf.functions.items() if e[0]&~1==target]
+    require(aliases,'missing typed function entry')
+    pointer,extent,index=aliases[0][1]
+    require(pointer&1 and extent>0 and 0<=index<len(objects.elf.sections),
+            'invalid typed function extent/Thumb')
+    require(all(e==(pointer,extent,index) and canonical_symbol(n)==role for n,e in aliases),
+            'typed function aliases or interface differ')
+    section=objects.elf.sections[index]
+    require(section[1]==1 and section[2]&6==6 and not section[2]&1 and
+            section[3]<=target<target+extent<=section[3]+section[5],
+            'typed function exceeds declared read-only executable section')
+    objects.read_only(target,extent)
+    require(target in objects.sizes,'missing typed function frame')
+    return extent,objects.sizes[target],aliases[0][0]
+
+
+PAD_ROLES = (
+    '_RNvXs0_NtNtCs_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write9write_str',
+    '_RNvXs0_NtNtCs_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write10write_char',
+    '_RNvYNtNtNtCs_4core3fmt8builders10PadAdapterNtB6_5Write9write_fmtB8_',
+)
+FORMAT_OBJECTS = {
+    '_RNvNtCs_4core3fmt5write': (),
+    '_RNvMs2_NtNtCs_4core3fmt8buildersNtB5_11DebugStruct5field':
+        (b' { ', b', ', b': ', b' {\n', 'pad_vtable', b': ', b',\n'),
+    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field5_finish': (b' }', b'}'),
+    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish':
+        (b'(', b'(\n', 'pad_vtable', b',\n', b')'),
+}
+FORMAT_TRANSFERS = {
+    '_RNvNtCs_4core3fmt5write': ((0xd2,), (0x3c,0x6a,0xf6), (), ()),
+    '_RNvMs2_NtNtCs_4core3fmt8buildersNtB5_11DebugStruct5field':
+        ((0x84,0xee), (0x54,0x64,0x7a,0xa0,0x116), (0xd2,0xe4), (0xa0,0xd2,0xe4,0xee,0x116)),
+    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field5_finish':
+        ((), (0x18,0xb8), (0x34,0x44,0x54,0x64,0x74), ()),
+    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish':
+        ((0x50,0xa2), (0x18,0x3e,0x6c,0xb8,0xca), (), (0x6c,0xa2,0xb8)),
+}
+
+
+def format_bridge(objects, name, instructions):
+    """Complete finite body/relocation witness; caller defaults remain required.
+
+    Every pretty transfer is retained in the returned inventory. This function
+    never excludes it merely because its template is a known formatting role.
+    """
+    role=canonical_symbol(name)
+    require(role in FORMAT_GRAMMARS and name in objects.elf.functions,'unreviewed formatting bridge')
+    start=objects.elf.functions[name][0]&~1
+    extent,frame,_=typed_function(objects,start,role)
+    expected_extent,expected_frame,grammar=FORMAT_GRAMMARS[role]
+    require((extent,frame)==(expected_extent,expected_frame),'formatting bridge extent/frame differs')
+    require(mapping_ranges(objects.elf,name)==[(start,start+extent,'t')],'formatting bridge mapping differs')
+    raw=objects.read_only(start,extent);records=sorted(instructions,key=lambda r:r.address)
+    require(len(records)==len(grammar),'formatting bridge instruction inventory differs')
+    next_address=start;producers={};edges=[]
+    for record,line in zip(records,grammar):
+        offset=int(line.split(' ',1)[0],16)
+        require(record.address==start+offset==next_address and len(record.raw) in (2,4) and
+                record.raw==raw[offset:offset+len(record.raw)],'formatting bridge bytes/coverage differ')
+        next_address+=len(record.raw)
+        mnemonic,operands=line.split(' ',1)[1].split('\t',1)
+        require(record.mnemonic==mnemonic,'formatting bridge instruction differs')
+        actual=record.operands.split('@',1)[0].strip()
+        address=re.search(r'@addr([0-9]+)\.(low|high)',operands)
+        self_branch=re.search(r'@self\+([0-9a-f]+)',operands)
+        target_role=re.search(r'@role:(\S+)',operands)
+        if address:
+            match=re.fullmatch(r'(r[0-9]+), #(0x[0-9a-f]+|[0-9]+)',actual)
+            require(match is not None and int(match[2],0)<=0xffff,'invalid bridge readonly producer')
+            index=int(address[1]);part=address[2]
+            require(index<len(FORMAT_OBJECTS[role]) and part not in producers.setdefault(index,{}),
+                    'ambiguous bridge readonly producer')
+            producers[index][part]=int(match[2],0)
+            actual=match[1]+', '+address[0]
+        elif self_branch:
+            target=re.search(r'0x([0-9a-f]+)(?:\s|$)',actual)
+            require(target is not None and int(target[1],16)==start+int(self_branch[1],16),
+                    'bridge branch target differs')
+            actual=actual[:target.start()]+self_branch[0]
+        elif target_role:
+            target=re.match(r'0x([0-9a-f]+)(?:\s|$)',actual)
+            require(target is not None,'unresolved bridge ordinary edge')
+            address_value=int(target[1],16)
+            typed_function(objects,address_value,target_role[1])
+            edges.append((offset,address_value,target_role[1]))
+            actual=target_role[0]
+        require(actual==operands,'formatting bridge operands differ')
+    require(next_address==start+extent,'formatting bridge truncated body')
+    require(set(producers)==set(range(len(FORMAT_OBJECTS[role]))),'missing readonly bridge producer')
+    pad_targets=None;resolved=[]
+    for index,expected in enumerate(FORMAT_OBJECTS[role]):
+        pair=producers[index]
+        require(set(pair)=={'low','high'},'incomplete readonly bridge producer')
+        address=pair['low']|(pair['high']<<16);resolved.append(address)
+        if isinstance(expected,bytes):
+            require(objects.read_only(address,len(expected))==expected,'bridge delimiter differs')
+        else:
+            require(address%4==0,'unaligned bridge PadAdapter table')
+            words=struct.unpack('<6I',objects.read_only(address,24))
+            require(words[:3]==(0,12,4),'bridge PadAdapter layout differs')
+            targets=[]
+            for pointer,target_role,expected_frame in zip(words[3:],PAD_ROLES,(56,24,8)):
+                require(pointer&1,'bridge PadAdapter callback is not Thumb')
+                _,current_frame,_=typed_function(objects,pointer&~1,target_role)
+                require(current_frame==expected_frame,'bridge PadAdapter callback frame differs')
+                targets.append(pointer&~1)
+            pad_targets=tuple(targets)
+    if pad_targets:
+        require(all(target==pad_targets[0] for _,target,r in edges if r==PAD_ROLES[0]),
+                'bridge direct adapter does not match its carried table')
+    callbacks,sinks,ordinary,pretty=FORMAT_TRANSFERS[role]
+    require(tuple(o for o,_,_ in edges)==ordinary,'bridge ordinary call inventory differs')
+    return dict(role=role,function=start,extent=extent,frame=frame,objects=tuple(resolved),
+                pad_targets=pad_targets,raw_callbacks=callbacks,sink_sites=sinks,
+                ordinary_sites=ordinary,ordinary_edges=tuple(edges),pretty_sites=pretty,
+                defaults_required=True)
 
 
 def constant_before(instructions, consumer, register, objects):
