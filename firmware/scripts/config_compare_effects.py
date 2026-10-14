@@ -38,6 +38,18 @@ class SourceBytes:
                 isinstance(self.data,bytes) and len(self.data)<=self.view.extent,'source bytes lack initialized bounded readonly borrow')
 
 
+def _source_bytes(objects,source,frame):
+    require(isinstance(source,SourceBytes),'serialized bytes have no typed initialized source borrow')
+    if source.view.storage.space=='address' and source.data:
+        require(not source.view.storage.writable and objects.read_only(source.view.start,len(source.data))==source.data,
+                'readonly source-byte fact differs from its current ELF allocation')
+    else:
+        require(source.view.storage.space==frame.space and source.view.storage.phase==frame.phase or
+                source.view.storage.space=='address' and not source.view.storage.writable,
+                'serialized source belongs to another coordinate/lifetime')
+    return source.data
+
+
 def compare_effect(objects,instructions,proof,state,source,frame,ancestor_protected):
     """One try_extend operation. A failed later operation never rolls back C."""
     proof=_current(objects,instructions,proof)
@@ -46,14 +58,7 @@ def compare_effect(objects,instructions,proof,state,source,frame,ancestor_protec
     require(state.header.storage.space==frame.space and state.header.storage.phase==frame.phase,
             'Compare header belongs to another activation/lifetime')
     active=helper_frame(proof,frame,tuple(ancestor_protected))
-    payload=objects.read_only(state.payload.start,state.payload.extent);n=len(source.data)
-    if source.view.storage.space=='address' and n:
-        require(not source.view.storage.writable and objects.read_only(source.view.start,n)==source.data,
-                'readonly source-byte fact differs from its current ELF allocation')
-    else:
-        require(source.view.storage.space==frame.space and source.view.storage.phase==frame.phase or
-                source.view.storage.space=='address' and not source.view.storage.writable,
-                'serialized source belongs to another coordinate/lifetime')
+    payload=objects.read_only(state.payload.start,state.payload.extent);n=len(_source_bytes(objects,source,frame))
     protected=active['protected']+(_object(state.payload,'immutable-input'),_object(source.view,'serialized-input'))
     # Validate the full live C capability: initial prologue writes cannot touch
     # even a word which this particular operation would not update on Err.

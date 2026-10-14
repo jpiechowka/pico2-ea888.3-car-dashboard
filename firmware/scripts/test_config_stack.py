@@ -1498,6 +1498,71 @@ class OrdinaryCompareEffects(unittest.TestCase):
             with self.subTest(fault=fault),self.assertRaises(AssertionError):config_compare_effects.compare_effect(*args)
 
 
+class OrdinarySerializeEffects(unittest.TestCase):
+    def fixture(self,semantic,raw,kind,bits,value):
+        import config_helpers,config_compare_effects
+        from config_regions import Argument,Storage
+        objects,records,unused,state,source,unused_frame,protected=OrdinaryCompareEffects.fixture(self,raw,b'')
+        item=json.loads((Path(__file__).parent/'fixtures/config-small-helpers.json').read_text())[0]
+        instance=next(v for v in item['instances'] if v['role']==semantic)
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'serializer','source field still required'))
+        frame=Storage(state.header.storage.space,semantic,-proof['frame'],proof['frame'],8,state.header.storage.phase,True)
+        argument=Argument(kind,None,0,bits,frozenset((value,)))
+        return objects,records,proof,state,argument,frame,protected
+
+    def test_scalar_varint_and_hard_float_bytes_have_exact_distinct_status_ABIs(self):
+        import config_serialize_effects
+        cases=(('serialize_u8',b'\xff','u8',8,255,0xffffffff),('serialize_u16',b'\xff\xff\x03','u16',16,65535,0xffffffff),
+               ('varint_usize',b'\xff\xff\xff\xff\x0f','usize',32,0xffffffff,255),
+               ('varint_u32_small',b'\x7f','u32',32,127,255),('serialize_f32',bytes.fromhex('0100c07f'),'f32_bits',32,0x7fc00001,0xffffffff))
+        for semantic,raw,kind,bits,value,status in cases:
+            result=config_serialize_effects.serialize_effect(*self.fixture(semantic,raw,kind,bits,value))
+            self.assertEqual((result['registers'],result['state'].cursor,result['encoded']),({'r0':status},len(raw),raw))
+            self.assertTrue(result['requires_machine_source_field_arguments_lifetime_ingress_and_enclosing_graph'])
+
+    def test_compare_error_never_advances_current_C_for_one_scalar(self):
+        import config_serialize_effects
+        result=config_serialize_effects.serialize_effect(*self.fixture('serialize_u16',b'\x00','u16',16,128))
+        self.assertEqual((result['registers'],result['state'].cursor),({'r0':2},0))
+
+    def test_u16_group_boundaries_and_nonminimal_decoded_zero_stay_canonical(self):
+        import config_serialize_effects
+        for number,raw in ((0,b'\x00'),(127,b'\x7f'),(128,b'\x80\x01'),(16383,b'\xff\x7f'),(16384,b'\x80\x80\x01')):
+            result=config_serialize_effects.serialize_effect(*self.fixture('serialize_u16',raw,'u16',16,number))
+            self.assertEqual((result['encoded'],result['state'].cursor),(raw,len(raw)))
+        import config_decode_effects
+        decoded=config_decode_effects.decode_effect(*OrdinaryDecodeEffects.fixture(self,'deserialize_u16',b'\x80\x00'))
+        result=config_serialize_effects.serialize_effect(*self.fixture('serialize_u16',b'\x80\x00','u16',16,decoded['value']))
+        self.assertEqual((decoded['value'],decoded['state'].cursor,result['error'],result['state'].cursor),(0,2,2,0))
+
+    def test_specialized_u32_and_scalar_or_hard_float_argument_domains_reject(self):
+        import config_serialize_effects
+        from config_regions import Argument
+        for semantic,kind,bits,value in (('varint_u32_small','u32',32,128),('serialize_f32','u32',32,0),
+                                        ('serialize_u8','u16',16,256)):
+            with self.subTest(semantic=semantic),self.assertRaises(AssertionError):
+                config_serialize_effects.serialize_effect(*self.fixture(semantic,b'\x00',kind,bits,value))
+        args=list(self.fixture('serialize_u8',b'\x00','u8',8,0));args[4]=Argument('u8',None,0,8,frozenset((0,1)))
+        with self.assertRaises(AssertionError):config_serialize_effects.serialize_effect(*args)
+
+    def test_string_prefix_success_remains_consumed_when_body_mismatches(self):
+        import config_serialize_effects,config_helpers,config_compare_effects
+        from config_regions import Storage,borrow
+        objects,records,unused,state,source,unused_frame,protected=OrdinaryCompareEffects.fixture(self,b'\x02ax',b'ab')
+        item=json.loads((Path(__file__).parent/'fixtures/config-small-helpers.json').read_text())[0]
+        instance=next(v for v in item['instances'] if v['role']=='serialize_str')
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'string serializer','source field still required'))
+        frame=Storage(state.header.storage.space,'serialize_str',-24,24,8,state.header.storage.phase,True)
+        result=config_serialize_effects.serialize_effect(objects,records,proof,state,source,frame,())
+        self.assertEqual((result['registers'],result['state'].cursor),({'r0':2},1))
+        self.assertEqual(len(result['children']),2)
+        invalid=config_compare_effects.SourceBytes(source.view,b'\xff')
+        with self.assertRaises(AssertionError):config_serialize_effects.serialize_effect(objects,records,proof,state,invalid,frame,())
+        alias=Storage(frame.space,'live-string-under-prefix',-88,2,4,frame.phase,True)
+        threatened=config_compare_effects.SourceBytes(borrow(alias,0,2,frame.phase),b'ab')
+        with self.assertRaises(AssertionError):config_serialize_effects.serialize_effect(objects,records,proof,state,threatened,frame,())
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow
