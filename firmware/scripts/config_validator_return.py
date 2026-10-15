@@ -107,8 +107,9 @@ def _source_arguments(family,offset,source,inputs,context,parent):
         original_count4_diagnostic_pending=True)
 
 
-def checksum_refill_validator_return(objects,instructions,source_context):
+def _checksum_refill_validator_state(objects,instructions,source_context):
     description,source,context,boundary=_checksum_refill_state(objects,instructions,source_context)
+    fault_source=description['fault']
     names=[n for n in objects.elf.functions if canonical_symbol(n)==VALIDATOR_ROLE]
     require(len(names)==1,'selected checksum validator is missing or ambiguous');name=names[0]
     call=description['before_validator']['call'];q=context.frame
@@ -207,7 +208,7 @@ def checksum_refill_validator_return(objects,instructions,source_context):
                   dict(kind='Ok',tag=2,writes=((context.result.start+4,4),(context.result.start,2)),
                        tag_after_payload=True,requires_valid_and_guarded_stoichiometric_s0=True,
                        opaque=((context.result.start+2,2),(context.result.start+8,4))))
-    return dict(phase='checksum_refill_validator_return_pending_diagnostics_and_loader_continuation',mode='sizez',
+    description=dict(phase='checksum_refill_validator_return_pending_diagnostics_and_loader_continuation',mode='sizez',
         claim_scope='selected ordinary execution before a pending diagnostic, exception or other invocation',
         return_after_unclosed_diagnostic_not_covered=True,
         checksum_alternative_observed_taken=description['checksum_alternative_observed_taken'],
@@ -228,3 +229,10 @@ def checksum_refill_validator_return(objects,instructions,source_context):
         exception_graph_limit=description['exception_graph_limit'],exception_absence_established=False,
         target_access_requirements_unresolved=True,requires_complete_same_B_loader_before_owner=True,
         requires_full_diagnostic_and_activation_graph_and_resource_gates=True,hardware_qualified=False)
+
+    return description,source,context,boundary,dict(result=result,parent=parent,rows=rows,
+        projection=projection,computed=actual_tables,closure=closure,relations=relations,children=children,fault_source=fault_source)
+
+
+def checksum_refill_validator_return(objects,instructions,source_context):
+    return _checksum_refill_validator_state(objects,instructions,source_context)[0]

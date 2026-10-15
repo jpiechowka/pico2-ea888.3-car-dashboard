@@ -6706,4 +6706,202 @@ class ChecksumValidatorReturn(unittest.TestCase):
         with self.assertRaises(AssertionError):checksum_refill_validator_return(objects,rows,context)
 
 
+class ActualChecksumLoaderReturn(unittest.TestCase):
+    def fixture(self):
+        objects,rows,context=ChecksumValidatorReturn().fixture()
+        item=json.loads((Path(__file__).parent/'fixtures/config-loader-continuation.json').read_text())
+        for index,address,encoded in item['segments']:StartupConfigurationCopy.put(objects,address,bytes.fromhex(encoded))
+        objects.elf.functions.update({n:tuple(v) for n,v in item['functions'].items()})
+        objects.sizes.update({int(a):n for a,n in item['sizes'].items()})
+        objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+[tuple(v) for v in item['symbol_entries']]))
+        for r in item['records']:
+            parts=r['text'].split(None,1);a=r['address']
+            rows[a]=Instruction(a,bytes.fromhex(r['bytes']),parts[0],parts[1] if len(parts)>1 else '')
+        return objects,rows,SameBLoaderBoundary.rebound(objects,context)
+
+    def consume(self,objects,rows,context):
+        from config_actual_loader_return import checksum_refill_loader_return
+        return checksum_refill_loader_return(objects,rows,context)
+
+    def test_same_private_chain_pairs_Result_fault_issuer_and_protected_Boot_return(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_actual_loader_return'),'missing actual private loader continuation')
+        proof=self.consume(*self.fixture());P=0x20080000-544
+        self.assertEqual(proof['phase'],'checksum_refill_loader_return_pending_diagnostics_and_other_loader_routes')
+        self.assertEqual(proof['return']['SP'],P+456)
+        self.assertEqual(proof['return']['saved_PC_slot'],P+452)
+        self.assertEqual(proof['return']['PC']|1,proof['return']['saved_value'])
+        self.assertEqual(proof['fault_installation']['constructor'],'ConfigError::Checksum')
+        self.assertEqual(proof['result_consumption']['tags'],(0,1,2))
+        self.assertEqual({(v['status'],v['identity']) for v in proof['publication_pairs']},
+                         {(0,'nonzero successfully issued previous'),(2,0)})
+        self.assertTrue(proof['issuer_retry']['mismatch_and_store_failure'])
+        self.assertFalse(proof['issuer_retry']['termination_established'])
+        self.assertEqual(proof['return']['r0'],'issued previous identity or zero; not Config pointer')
+        self.assertFalse(proof['hardware_qualified']);self.assertNotIn('acquired_owner',proof)
+
+    def test_guard_retirement_preserves_Config_cache_padding_taken_and_outer_padding(self):
+        proof=self.consume(*self.fixture());B=0x2000031c
+        self.assertIn((B,14576),proof['protected_static_ranges'])
+        self.assertIn((B+14585,3),proof['protected_static_ranges'])
+        self.assertIn((B+14600,4),proof['protected_static_ranges'])
+        self.assertEqual(set(proof['metadata_writes']),{(B+14576,4),(B+14580,4),(B+14584,1),
+            (B+14588,4),(B+14592,4),(B+14596,4)})
+        for a,n in proof['metadata_writes']:
+            for p,z in proof['protected_static_ranges']:self.assertFalse(a<p+z and p<a+n)
+
+    def test_Result_fault_and_stoich_transports_cannot_be_replaced_by_neighbor_cells(self):
+        from dataclasses import replace
+        for at,operand in ((0x100203e6,'r0, [sp, #0x70]'),(0x10020404,'r1, [sp, #0xf4]'),
+            (0x10020414,'r0, r1, #0x0'),(0x100209aa,'r8, {r0, r1, r2}')):
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            rows[at]=replace(rows[at],operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_issuer_compare_retry_overflow_and_publication_pair_are_current_operands(self):
+        from dataclasses import replace
+        for at,operand in ((0x10020434,'r0, r2'),(0x1002043c,'r0, '+hex(0x1002044a)),
+            (0x10020450,'r0, #0x1'),(0x10020464,'r0, [r3, r2]')):
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            rows[at]=replace(rows[at],operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_diagnostic_cuts_and_foreign_suffix_ingress_never_issue_return_tokens(self):
+        from dataclasses import replace
+        proof=self.consume(*self.fixture())
+        cuts=proof['continuation_closure']['pending_diagnostic_cuts']
+        self.assertEqual({v['kind'] for v in cuts},{'pending_diagnostic_cut'})
+        for cut in cuts:self.assertIsNone(cut['return_token']);self.assertFalse(cut['machine_nonreturn_established'])
+        for site,target in ((0x1001feee,0x100209c8),(0x10060000,0x100209d0)):
+            objects,rows,context=self.fixture();rows[site]=Instruction(site,b'\x00\xbf','b',hex(target))
+            with self.subTest(target=hex(target)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+        objects,rows,context=self.fixture();at=0x100209d2
+        rows[at]=replace(rows[at],mnemonic='mov',operands='pc, r0')
+        with self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_loader_restore_and_saved_PC_cannot_borrow_another_frame_or_return(self):
+        from dataclasses import replace
+        for at,operation,operand in ((0x1002046c,'add','sp, #0x164'),(0x1002846c,'pop.w','{r8, r9, r10}'),
+            (0x10028470,'pop','{r4, r5, r6, r7, lr}'),(0x10020472,'bl',hex(0x1002846a))):
+            objects,rows,context=self.fixture();rows[at]=replace(rows[at],mnemonic=operation,operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_Reset_S_and_issuer_pool_relocations_are_independent_of_B_and_code(self):
+        for kind in ('stack','issuer_pool','issuer_object','restore_code'):
+            objects,rows,context=self.fixture();S=0x20080000
+            if kind=='stack':
+                S-=0x1000;StartupConfigurationCopy.put(objects,objects.elf.named['.vector_table'][3],struct.pack('<I',S))
+                objects.elf.symbol_entries=[(n,S if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in objects.elf.symbol_entries]
+            elif kind=='issuer_pool':
+                # Swap the two consumed words and independently update their
+                # LDRs; neither the issuer nor expect-message producer is lost.
+                at=0x10020424;row=rows[at];offset=int(row.operands.split('#')[1].split(']')[0],0)+4
+                slot=((at+4)&~3)+offset;old=slot-4;left=objects.read_only(old,4);right=objects.read_only(slot,4)
+                StartupConfigurationCopy.put(objects,slot,left);StartupConfigurationCopy.put(objects,old,right)
+                for site,reg,pool in ((at,1,slot),(0x100209c8,0,old)):
+                    immediate=pool-((site+4)&~3);encoded=struct.pack('<HH',0xf8df,(reg<<12)|immediate)
+                    StartupConfigurationCopy.put(objects,site,encoded)
+                    rows[site]=Instruction(site,encoded,'ldr.w','r'+str(reg)+', [pc, #'+hex(immediate)+']')
+            elif kind=='issuer_object':
+                from config_entry import ISSUER,static_role
+                old,new=0x200127a0,0x200127a4
+                s=objects.elf.named['.data'];left=s[4]+old-s[3];right=s[4]+new-s[3]
+                initial=objects.elf.data[left:left+4];other=objects.elf.data[right:right+4]
+                StartupConfigurationCopy.put(objects,old,other);StartupConfigurationCopy.put(objects,new,initial)
+                objects.elf.symbol_entries=[(n,new if static_role(n)==ISSUER else old if a==new and t&15==1 else a,z,t,i)
+                    for n,a,z,t,i in objects.elf.symbol_entries]
+                StartupConfigurationCopy.put(objects,0x10020ed0,struct.pack('<I',new))
+            else:
+                elf=objects.elf;new=0x10072000;code=objects.read_only(0x1002846a,8)
+                file_at=(len(elf.data)+3)&~3;index=len(elf.sections);elf.data=elf.data.ljust(file_at,b'\0')+code
+                elf.sections.append((0,1,6,new,file_at,8,0,0,4,0));elf.segments.append((1,file_at,new,new,8,8,5,4))
+                name='OUTLINED_FUNCTION_9999';elf.functions[name]=(new|1,8,index)
+                elf.symbol_entries.append((name,new|1,8,2,index));elf.mapping_symbols.append(('$t',new,index));objects.sizes[new]=0
+                for at in (0x1002846a,0x1002846c,0x10028470):
+                    row=rows[at];rows[new+at-0x1002846a]=Instruction(new+at-0x1002846a,row.raw,row.mnemonic,row.operands)
+                at=0x10020472;low,high=struct.unpack('<HH',StartupConfigurationCopy.branch_link(at,new))
+                encoded=struct.pack('<HH',low,high&~0x4000);StartupConfigurationCopy.put(objects,at,encoded)
+                rows[at]=Instruction(at,encoded,'b.w',hex(new))
+            proof=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+            with self.subTest(kind=kind):self.assertEqual(proof['return']['SP'],S-88)
+
+    def test_issuer_wrong_object_and_cross_space_physical_alias_cannot_gain_write_permission(self):
+        from config_entry import ISSUER,static_role
+        for kind in ('another_object','stack_alias'):
+            objects,rows,context=self.fixture()
+            target=0x200127a4 if kind=='another_object' else 0x20080000-92
+            if kind=='stack_alias':
+                objects.elf.symbol_entries=[(n,target if static_role(n)==ISSUER else a,z,t,i)
+                    for n,a,z,t,i in objects.elf.symbol_entries]
+            StartupConfigurationCopy.put(objects,0x10020ed0,struct.pack('<I',target))
+            with self.subTest(kind=kind),self.assertRaises(AssertionError):
+                self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_active_catalogue_target_and_cache_or_taken_suffix_writes_reject(self):
+        from dataclasses import replace
+        for fault in ('table','cache_padding','taken_boundary'):
+            objects,rows,context=self.fixture()
+            if fault=='table':
+                table=0x1001be30+48;target=0x10020424
+                StartupConfigurationCopy.put(objects,table,struct.pack('<H',(target-table)//2))
+                context=SameBLoaderBoundary.rebound(objects,context)
+            else:
+                at=0x10020460 if fault=='cache_padding' else 0x100203f2
+                rows[at]=replace(rows[at],operands='r2, #0x38f9' if fault=='cache_padding' else 'r0, #0x3905')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_independent_B_relocation_reaches_actual_continuation_and_rejects_one_stale_producer(self):
+        from config_entry import ISSUER,static_role
+        donor,more,unused=self.fixture();delta=0x4000
+        objects,prefix,context,item=SameBLoaderBoundary().fixture('sizez',delta);elf=objects.elf
+        # Reuse the reviewed relocated startup/task/B fixture, then compose
+        # complete readonly consuming bodies without copying stale RAM images.
+        pools={}
+        for at,row in prefix.items():
+            match=re.search(r'\[pc, #(0x[0-9a-f]+|[0-9]+)\]',row.operands)
+            if row.mnemonic in ('ldr','ldr.w') and match:
+                slot=((at+4)&~3)+int(match[1],0);pools[slot]=objects.read_only(slot,4)
+        for section in donor.elf.sections:
+            if section[1]==1 and section[2]&2 and not section[2]&1 and section[5]:
+                StartupConfigurationCopy.put(objects,section[3],donor.elf.data[section[4]:section[4]+section[5]])
+        for at,row in prefix.items():StartupConfigurationCopy.put(objects,at,row.raw)
+        for at,value in pools.items():StartupConfigurationCopy.put(objects,at,value)
+        rows=dict(more);rows.update(prefix)
+        for n,(a,z,i) in donor.elf.functions.items():
+            elf.functions[n]=(a+(delta if donor.elf.sections[i][2]&1 else 0),z,i)
+        objects.sizes.update(donor.sizes)
+        shifted=[(n,a+(delta if 0<=i<len(donor.elf.sections) and donor.elf.sections[i][2]&1 else 0),z,t,i)
+                 for n,a,z,t,i in donor.elf.symbol_entries]
+        elf.symbol_entries=list(dict.fromkeys(elf.symbol_entries+shifted))
+        elf.mapping_symbols=list(dict.fromkeys(elf.mapping_symbols+[(n,a+(delta if donor.elf.sections[i][2]&1 else 0),i)
+            for n,a,i in donor.elf.mapping_symbols]))
+        B=item['config']+delta
+        for parent in item['parents']:
+            for kind,lo,hi,register in parent['receivers']:
+                self.assertEqual(kind,'pc_literal')
+                StartupConfigurationCopy.put(objects,parent['address']+hi,struct.pack('<I',B))
+        issuer=next(a for n,a,z,t,i in elf.symbol_entries if static_role(n)==ISSUER)
+        self.assertEqual(issuer,0x200127a0+delta)
+        StartupConfigurationCopy.put(objects,0x10020ed0,struct.pack('<I',issuer))
+        proof=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        self.assertIn((B,14576),proof['protected_static_ranges'])
+        self.assertEqual(proof['issuer_retry']['owner'],(issuer,4))
+        self.assertEqual(proof['return']['SP'],0x20080000-88)
+        self.assertEqual(proof['validator']['validator']['function'],0x1001ea20)
+        self.assertEqual(set(proof['metadata_writes']),{(B+14576,4),(B+14580,4),(B+14584,1),
+            (B+14588,4),(B+14592,4),(B+14596,4)})
+        # Coherently stale publication receiver with every other producer
+        # still selecting relocated B. This is a data/pointer negative.
+        site=0x1002045c;match=re.search(r'#(0x[0-9a-f]+|[0-9]+)',rows[site].operands)
+        slot=((site+4)&~3)+int(match[1],0)
+        StartupConfigurationCopy.put(objects,slot,struct.pack('<I',item['config']))
+        with self.assertRaises(AssertionError):self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_supplied_owner_or_description_cannot_replace_same_invocation(self):
+        objects,rows,context=self.fixture()
+        with self.assertRaises(AssertionError):self.consume(objects,rows,dict(phase='returned',owner=True))
+        from config_actual_loader_return import checksum_refill_loader_return
+        with self.assertRaises(TypeError):checksum_refill_loader_return(objects,rows,context,dict(completed=True))
+
+
 if __name__=='__main__':unittest.main()

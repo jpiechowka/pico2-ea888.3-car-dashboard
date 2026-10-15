@@ -54,6 +54,12 @@ def _region(objects,name,instructions,label,proof):
 def loader_continuation(objects,name,instructions,frame,ancestor_protected):
     ancestor_protected=tuple(ancestor_protected)
     source=source_terminal(objects,name,instructions,frame,ancestor_protected)
+    return _checked_continuation(objects,name,instructions,frame,ancestor_protected,source)
+
+
+def _checked_continuation(objects,name,instructions,frame,ancestor_protected,source,_phase_protected=None):
+    # Only internally recomputed source enters this private shared matcher.
+    ancestor_protected=tuple(ancestor_protected)
     prepared=source['widget']['prepared'];base=prepared['config'];owner=base.storage
     parent=objects.elf.functions[name][0]&~1;extent=objects.elf.functions[name][1]
     start=source['proof']['function']+source['proof']['extent']
@@ -105,7 +111,8 @@ def loader_continuation(objects,name,instructions,frame,ancestor_protected):
         if target in starts:require(at in starts[target],'foreign continuation phase entry')
     issuer_owner=Storage('address','private cache identity issuer',issuer['objects'][0],4,4,frame.phase,True)
     require_disjoint((owner,issuer_owner,frame)+ancestor_protected)
-    saved=prepared['protected'][:-1];fault=prepared['fault'];protected=saved+(fault,)
+    saved=prepared['protected'][:-1] if _phase_protected is None else tuple(_phase_protected)
+    fault=prepared['fault'];protected=saved+(fault,)
     def writes(storage,items,guards):
         pairs=tuple((borrow(storage,o,n,frame.phase,writable=True),0,n) for o,n in items)
         require_writes(tuple(v for v,o,n in pairs),pairs,guards);return pairs
