@@ -6,6 +6,7 @@ import tempfile
 import os
 import subprocess
 import sys
+from contextlib import ExitStack
 from unittest.mock import patch
 import capture_target_bench as capture
 
@@ -199,6 +200,97 @@ pub const LEGACY_ROUNDING: bool = false;
                 capture.emitted_elf(stream(*records))
         with self.assertRaises(ValueError):
             capture.emitted_elf('invalid JSON')
+
+
+class CaptureMemoryQualification(unittest.TestCase):
+    def fixture(self):
+        from test_validation_policy import MemoryQualification
+        import check_memory_layout
+        elf,eav,stack=MemoryQualification.fixture(self)
+        return elf,eav,check_memory_layout._qualified_image(stack,elf,512,0x7fe00)
+
+    def test_actual_child_result_is_retained_and_rechecked_against_current_input(self):
+        elf,eav,record=self.fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+            def child(argv,**kwargs):
+                self.assertEqual(argv[-2],'--result-json');self.assertTrue(kwargs['check'])
+                Path(argv[-1]).write_text(json.dumps(record));return subprocess.CompletedProcess(argv,0)
+            with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child) as run:
+                evidence=capture.run_memory_gate(frozen,destination,eav)
+                self.assertEqual(evidence['record'],record)
+                self.assertEqual(capture.read_memory_gate(destination/'memory-layout.json',frozen,eav),evidence)
+                self.assertEqual(run.call_count,1)
+                with self.assertRaises(AssertionError):capture.read_memory_gate(destination/'memory-layout.json',frozen,eav+b'changed')
+                with self.assertRaises(ValueError):capture.run_memory_gate(frozen,destination,eav)
+
+    def test_nonzero_missing_and_intermediate_child_output_never_admit(self):
+        elf,eav,record=self.fixture()
+        for kind in ('nonzero','missing','intermediate','lost','stale'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as folder:
+                destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+                def child(argv,**kwargs):
+                    value=record['stack'] if kind=='intermediate' else dict(record)
+                    if kind=='lost':value['status']='IMAGE_PASS'
+                    if kind=='stale':value['elf_sha256']='0'*64
+                    if kind!='missing':Path(argv[-1]).write_text(json.dumps(value))
+                    if kind=='nonzero':raise subprocess.CalledProcessError(7,argv)
+                    return subprocess.CompletedProcess(argv,0)
+                with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child),\
+                     self.assertRaises((AssertionError,ValueError,FileNotFoundError,subprocess.CalledProcessError)):
+                    capture.run_memory_gate(frozen,destination,eav)
+
+    def test_real_nonzero_child_preserves_file_without_admitting_it(self):
+        elf,eav,record=self.fixture();real_run=subprocess.run
+        with tempfile.TemporaryDirectory() as folder:
+            destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+            def child(argv,**kwargs):
+                return real_run([sys.executable,'-c',
+                    'import pathlib,sys;pathlib.Path(sys.argv[1]).write_text(sys.argv[2]);sys.exit(7)',
+                    argv[-1],json.dumps(record)],check=kwargs['check'],timeout=10)
+            with patch.object(capture.subprocess,'run',side_effect=child),self.assertRaises(subprocess.CalledProcessError) as error:
+                capture.run_memory_gate(frozen,destination,eav)
+            self.assertEqual(error.exception.returncode,7)
+            self.assertEqual(json.loads((destination/'memory-layout.json').read_text()),record)
+
+    def test_actual_manifest_path_retains_qualifier_and_rejects_final_drift(self):
+        elf,eav,record=self.fixture()
+        for drift in (False,True):
+            with self.subTest(drift=drift),tempfile.TemporaryDirectory() as folder:
+                firmware=Path(folder);destination=firmware/'target/bench-captures/fixture'
+                emitted=destination/'build/firmware.elf';calls=[]
+                def build(*args):
+                    emitted.parent.mkdir();emitted.write_bytes(elf.data)
+                    return subprocess.CompletedProcess([],0,'messages')
+                def child(argv,**kwargs):
+                    if 'scripts/check_memory_layout.py' in argv:Path(argv[-1]).write_text(json.dumps(record))
+                    return subprocess.CompletedProcess(argv,0)
+                def clock(*args):
+                    calls.append('clock')
+                    if drift and len(calls)==2:
+                        changed=dict(record,hardware_qualified=True)
+                        (destination/'memory-layout.json').write_text(json.dumps(changed))
+                    return dict(source=b'clock source',metadata=b'clock metadata')
+                options=dict(benchmark=True,features=['demo'],optimization='3',custom_clock=None)
+                with ExitStack() as patches:
+                    for context in (patch.object(capture,'FIRMWARE',firmware),patch.object(capture,'ElfImage',return_value=elf),
+                        patch.object(capture,'check_clock_environment'),patch.object(capture,'compiler',return_value=('rustc','pinned')),
+                        patch.object(capture,'configuration',return_value={}),patch.object(capture,'inputs',return_value={'source':b'bytes'}),
+                        patch.object(capture,'fixed_json_tool',return_value=(['tool'],options)),
+                        patch.object(capture,'selected_config',return_value=('default',None)),
+                        patch.object(capture,'freeze_config',return_value=({},{})),patch.object(capture,'verify_selected_config'),
+                        patch.object(capture,'run_build',side_effect=build),patch.object(capture,'emitted_elf',return_value=emitted),
+                        patch.object(capture,'generated_clock',side_effect=clock),patch.object(capture,'firmware_package',return_value='id'),
+                        patch.object(capture,'embedded_config',return_value=eav),patch.object(capture.subprocess,'run',side_effect=child),
+                        patch.object(sys,'argv',['capture','fixture']),patch.dict(os.environ,{},clear=True)):
+                        patches.enter_context(context)
+                    if drift:
+                        with self.assertRaises(AssertionError):capture.main()
+                        self.assertFalse((destination/'manifest.json').exists())
+                    else:
+                        capture.main();manifest=json.loads((destination/'manifest.json').read_text())
+                        self.assertEqual(manifest['memory_layout'],record)
+                        self.assertEqual(manifest['memory_layout_json_sha256'],capture.hashlib.sha256((destination/'memory-layout.json').read_bytes()).hexdigest())
 
 
 if __name__ == '__main__':

@@ -11,6 +11,8 @@ fresh checkout does not depend on an ignored report or runtime approve switch.
 from dataclasses import dataclass,asdict
 import hashlib
 import re
+import struct
+import zlib
 from config_regions import View
 from validation import require
 
@@ -116,3 +118,39 @@ def read_stack_result(record,expected_policy,expected_headroom):
             isinstance(record['policies'],list) and len(record['policies'])==1,'stack consumer lost conditional policy/qualification')
     policy=read_policy(record['policies'][0],expected_policy)
     return qualified_stack_result(record['stack_bounds'],record['headroom'],policy)
+
+
+def current_image_policy(record,elf,expected_eav=None):
+    """Check an existing producer policy against current artifact/input bytes.
+
+    This consumer does not discover the used source or establish graph proof.
+    The source-reviewed stack producer must supply the actual policy; no scan
+    or caller approval can create one here. Capture additionally binds the
+    exact generated complete EAV, independently of its declared payload hash.
+    """
+    require(isinstance(record,dict) and all(k in record for k in
+        ('input_start','input_end','input_sha256','elf_sha256')),'missing current image platform policy')
+    policy=PlatformPolicy(record['input_start'],record['input_end'],record['input_sha256'],record['elf_sha256'])
+    read_policy(record,policy)
+    require(hashlib.sha256(elf.data).hexdigest()==policy.elf_sha256,'platform policy belongs to another ELF')
+    from config_stack import DiagnosticObjects
+    objects=DiagnosticObjects(elf,{})
+    extent=policy.input_end-policy.input_start
+    require(12<extent+12<=16384 and policy.input_start>=0x1000000c,'platform payload has no bounded EAV envelope')
+    start=policy.input_start-12
+    backing=[]
+    for section in elf.sections:
+        if not section[2]&2 or not section[5] or not (section[3]<policy.input_end and start<section[3]+section[5]):continue
+        require(0<=section[3]<section[3]+section[5]<=0x100000000,'platform input allocation wraps')
+        backing.append(section)
+    require(len(backing)==1 and backing[0][1]==1 and not backing[0][2]&1 and
+            backing[0][3]<=start<policy.input_end<=backing[0][3]+backing[0][5],
+            'platform input has aliased or writable backing')
+    raw=objects.read_only(policy.input_start-12,extent+12)
+    require(raw[:4]==b'EAV1' and struct.unpack_from('<HH',raw,4)==(4,extent) and
+            zlib.crc32(raw[:8]+raw[12:])==struct.unpack_from('<I',raw,8)[0],
+            'platform payload does not match its current complete EAV envelope')
+    require(hashlib.sha256(raw[12:]).hexdigest()==policy.input_sha256,'platform payload content changed')
+    if expected_eav is not None:
+        require(isinstance(expected_eav,bytes) and raw==expected_eav,'generated capture input differs from stack policy')
+    return policy
