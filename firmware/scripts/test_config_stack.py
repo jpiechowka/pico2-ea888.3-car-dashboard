@@ -6345,4 +6345,351 @@ class ChecksumRefillHandoff(unittest.TestCase):
         with self.assertRaises(AssertionError):checksum_refill_handoff(objects,rows,context)
 
 
+class ChecksumValidatorReturn(unittest.TestCase):
+    def fixture(self):
+        objects,rows,context=ChecksumRefillHandoff().fixture()
+        donor,name,more,supplied,call=ValidatorControls().fixture()
+        for filename in ('config-validator-result.json','config-validator-pointers.json','config-validator-controls.json'):
+            item=json.loads((Path(__file__).parent/'fixtures'/filename).read_text())
+            for index,address,encoded in item['segments']:
+                section=donor.elf.sections[index];count=len(bytes.fromhex(encoded));at=section[4]+address-section[3]
+                StartupConfigurationCopy.put(objects,address,donor.elf.data[at:at+count])
+        objects.elf.functions.update(donor.elf.functions);objects.sizes.update(donor.sizes)
+        objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+donor.elf.symbol_entries))
+        objects.elf.mapping_symbols=list(dict.fromkeys(objects.elf.mapping_symbols+donor.elf.mapping_symbols))
+        rows.update(more)
+        extra=json.loads((Path(__file__).parent/'fixtures'/'config-validator-traversal.json').read_text())
+        for index,address,encoded in extra['segments']:StartupConfigurationCopy.put(objects,address,bytes.fromhex(encoded))
+        objects.elf.functions.update({n:tuple(v) for n,v in extra['functions'].items()})
+        objects.sizes.update({int(a):n for a,n in extra['sizes'].items()})
+        objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+[tuple(v) for v in extra['symbol_entries']]))
+        rows.update({a:Instruction(a,bytes.fromhex(raw),op,operand) for a,raw,op,operand in extra['instructions']})
+        return objects,rows,SameBLoaderBoundary.rebound(objects,context)
+
+    def test_actual_checksum_refill_joins_complete_normal_Result_and_sole_restore_only(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_validator_return'),'missing actual checksum validator-return consumer')
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture();proof=checksum_refill_validator_return(objects,rows,context)
+        self.assertEqual(proof['phase'],'checksum_refill_validator_return_pending_diagnostics_and_loader_continuation')
+        self.assertEqual(proof['normal_return']['return_to'],0x100203e6)
+        self.assertEqual(proof['normal_return']['restored_SP'],0x20080000-544)
+        self.assertEqual(proof['normal_return']['original_r8'],0x20080000-544+112)
+        self.assertEqual(proof['initialized_inputs'],dict(views=1,widgets=8,sources=8))
+        self.assertEqual({a['kind'] for a in proof['normal_alternatives']},{'Err','Ok'})
+        self.assertTrue(proof['diagnostic_closure_pending']);self.assertTrue(proof['loader_continuation_pending'])
+        self.assertFalse(proof['hardware_qualified']);self.assertNotIn('acquired_owner',proof)
+
+    def test_exported_summary_and_supplied_context_cannot_replace_internal_recomputation(self):
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture()
+        with self.assertRaises(AssertionError):checksum_refill_validator_return(objects,rows,dict(mode='sizez',phase='default_validation',source_valid=True))
+        with self.assertRaises(TypeError):checksum_refill_validator_return(objects,rows,context,dict(completed=True))
+
+    def test_early_late_capture_and_Result_spill_records_still_need_actual_transports(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        for at,operand in ((0x1001ea2e,'r5, r1'),(0x1001ea76,'r5, [sp, #0x40]'),
+            (0x1001ebac,'r5, [sp, #0x40]'),(0x1001ea3e,'r5, [sp, #0x58]')):
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            changed=dict(rows);changed[at]=replace(rows[at],operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):checksum_refill_validator_return(objects,changed,context)
+
+    def test_live_edges_to_occupancy_and_ColorRole_selector_cannot_lose_their_source_phase(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        for at,operand in ((0x1001ef08,'r0, r0, [sp, #0x70]'),(0x1001f154,'r0, #0x10')):
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            changed=dict(rows);changed[at]=replace(rows[at],operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):checksum_refill_validator_return(objects,changed,context)
+
+    def test_child_output_cannot_reach_validator_saves_or_retained_original_fault(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        for offset in (216,328):
+            objects,rows,context=self.fixture()
+            candidates=[at for at,row in rows.items() if 0x1001ea20<=at<0x1001fdd8 and
+                (row.mnemonic,row.operands)==('add','r0, sp, #0x70')]
+            self.assertTrue(candidates);at=min(candidates)
+            changed=dict(rows);changed[at]=replace(rows[at],operands='r0, sp, #'+hex(offset))
+            with self.subTest(offset=offset),self.assertRaises(AssertionError):checksum_refill_validator_return(objects,changed,context)
+
+    def test_payload_tag_and_restore_must_preserve_paired_normal_return(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        for at,operand in ((0x1001eb7a,'r0, [r5]'),(0x1001fbae,'s1, [r5, #4]'),
+            (0x1002846c,'{r8, r9, r10}')):
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            changed=dict(rows);changed[at]=replace(rows[at],operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):checksum_refill_validator_return(objects,changed,context)
+
+    def test_missing_normal_child_paired_source_loop_and_return_cannot_complete(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        for label in ('missing_luminance','missing_text_return','source_Channel_pair','source_backedge','finite_flags'):
+            objects,rows,context=self.fixture();changed=dict(rows)
+            if label=='missing_luminance':changed.pop(0x1001b4b8+16)
+            elif label=='missing_text_return':changed.pop(0x10028d3c+4)
+            elif label=='source_Channel_pair':changed[0x1001f23e]=replace(rows[0x1001f23e],operands='r0, [sp, #0x20]')
+            elif label=='source_backedge':changed[0x1001f9c6]=replace(rows[0x1001f9c6],operands=hex(0x1001f848))
+            else:changed[0x10028d8a]=replace(rows[0x10028d8a],operands='r0, #0xff')
+            with self.subTest(case=label),self.assertRaises(AssertionError):checksum_refill_validator_return(objects,changed,context)
+
+    def test_child_cannot_read_range_padding_or_return_an_inactive_band(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        for at,operand in ((0x1002229c,'r2, [r0, #0x5]'),(0x1001c1e0,'r1, #0x5')):
+            objects,rows,context=self.fixture();changed=dict(rows)
+            changed[at]=replace(rows[at],operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):checksum_refill_validator_return(objects,changed,context)
+
+    def test_reachable_internal_padding_is_a_coherent_encoded_counterexample(self):
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture()
+        # The reviewed source Access branch skips NOP+data. Encode two actual
+        # Thumb16 B instructions: first enters the old pad; second leaves it.
+        # Bytes/semantic records agree; this is synthetic encoding, not a fresh
+        # LLVM decode or a linked executable build.
+        for at,target in ((0x1001f8c4,0x1001f8c6),(0x1001f8c6,0x1001f90e)):
+            delta=target-(at+4);self.assertEqual(delta%2,0);self.assertTrue(-2048<=delta<2048)
+            raw=struct.pack('<H',0xe000|((delta//2)&0x7ff))
+            StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,'b',hex(target))
+        self.assertEqual(objects.read_only(0x1001f8c4,4),bytes.fromhex('ffe722e0'))
+        with self.assertRaises(AssertionError):checksum_refill_validator_return(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_deeper_validator_child_is_physically_protected_after_before_call_accepts(self):
+        from config_refill_handoff import checksum_refill_handoff
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture();P=0x20080000-544;Q=P-320
+        objects.elf.sections.append((0,8,3,Q-64,0,8,0,0,4,0))
+        # Old boundary reaches Q only; actual normal memcpy reaches Q-72.
+        before=checksum_refill_handoff(objects,rows,context)
+        self.assertEqual(before['before_validator']['result'],(P+236,12))
+        with self.assertRaisesRegex(AssertionError,'physical frame intersects allocated section'):
+            checksum_refill_validator_return(objects,rows,context)
+
+    def test_independent_Reset_stack_readonly_object_and_nested_body_relocations(self):
+        from config_validator_return import checksum_refill_validator_return
+        from config_stack import canonical_symbol
+        from dataclasses import replace
+        for kind in ('stack','readonly_table','nested_body'):
+            objects,rows,context=self.fixture();elf=objects.elf;S=0x20080000
+            if kind=='stack':
+                S=0x2007f000
+                StartupConfigurationCopy.put(objects,elf.named['.vector_table'][3],struct.pack('<I',S))
+                elf.symbol_entries=[(n,S if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+            else:
+                # A fresh declared section, LOAD and bytes avoid borrowing
+                # unrelated fixture slack. B/ROOT/task/stack remain fixed.
+                new=0x10071002 if kind=='readonly_table' else 0x10070000
+                old,n=(0x10034c34,64) if kind=='readonly_table' else (0x1001b4b8,72)
+                content=objects.read_only(old,n);file_at=(len(elf.data)+3)&~3;index=len(elf.sections)
+                elf.data=elf.data.ljust(file_at,b'\0')+content
+                elf.sections.append((0,1,2 if kind=='readonly_table' else 6,new,file_at,n,0,0,2 if kind=='readonly_table' else 4,0))
+                elf.segments.append((1,file_at,new,new,n,n,4 if kind=='readonly_table' else 5,2 if kind=='readonly_table' else 4))
+                if kind=='readonly_table':
+                    StartupConfigurationCopy.put(objects,0x1001b4b8+68,struct.pack('<I',new))
+                    self.assertEqual(objects.read_only(new,n),content)
+                else:
+                    roles=[name for name,e in elf.functions.items() if e[0]&~1==old]
+                    self.assertTrue(roles)
+                    for name in roles:elf.functions[name]=(new|1,n,index)
+                    elf.symbol_entries=[(name,new|1,z,t,index) if name in roles else (name,a,z,t,i)
+                                        for name,a,z,t,i in elf.symbol_entries]
+                    elf.mapping_symbols.extend((('$t',new,index),('$d',new+64,index)))
+                    objects.sizes[new]=objects.sizes.pop(old)
+                    for at in tuple(rows):
+                        if old<=at<old+n:
+                            row=rows.pop(at);rows[new+at-old]=replace(row,address=new+at-old)
+                    for at in (0x1001b450,0x1001b458):
+                        delta=new-(at+4);self.assertEqual(delta%2,0);self.assertTrue(-(1<<24)<=delta<(1<<24))
+                        value=delta&0x1ffffff;s=(value>>24)&1;i1=(value>>23)&1;i2=(value>>22)&1
+                        j1=1^(i1^s);j2=1^(i2^s)
+                        raw=struct.pack('<HH',0xf000|(s<<10)|((value>>12)&0x3ff),
+                                        0xd000|(j1<<13)|(j2<<11)|((value>>1)&0x7ff))
+                        StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,'bl',hex(new))
+                    self.assertEqual(elf.functions[roles[0]][0]&~1,new)
+                    self.assertTrue(all('luminance' in canonical_symbol(name) for name in roles))
+            proof=checksum_refill_validator_return(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+            with self.subTest(kind=kind):
+                self.assertEqual(proof['normal_return']['restored_SP'],S-544)
+                self.assertEqual(proof['normal_return']['original_r8'],S-544+112)
+                self.assertEqual(proof['normal_return']['return_to'],0x100203e6)
+                self.assertEqual(proof['validator']['function'],0x1001ea20)
+                self.assertEqual(proof['normal_child_low'],S-544-320-72)
+                self.assertEqual(proof['normal_typed_call_count'],27)
+
+    def test_public_result_has_no_internal_mutable_View_or_context_capability(self):
+        from config_validator_return import checksum_refill_validator_return
+        from config_regions import View,Storage
+        from config_validator_access import ValidatorContext
+        objects,rows,context=self.fixture();proof=checksum_refill_validator_return(objects,rows,context)
+        def walk(value):
+            self.assertNotIsInstance(value,(View,Storage,ValidatorContext))
+            if isinstance(value,dict):
+                for item in value.values():walk(item)
+            elif isinstance(value,(tuple,list)):
+                for item in value:walk(item)
+        walk(proof)
+        self.assertFalse(proof['normal_return']['architectural_LR_preservation_claimed'])
+        self.assertFalse(proof['exception_absence_established'])
+
+    def test_guarded_activations_pair_nested_returns_and_stop_before_diagnostic_effects(self):
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture();proof=checksum_refill_validator_return(objects,rows,context)
+        closure=proof['guard_stopped_normal_activation_closure']
+        self.assertEqual(closure['return_to'],0x100203e6)
+        self.assertEqual(closure['scope'],'selected ordinary execution before any pending diagnostic cut')
+        contrasts=[n for n in closure['invocations'] if n['family']=='contrasts']
+        self.assertTrue(contrasts)
+        for parent in contrasts:
+            nested=[n for n in closure['invocations'] if n['parent']==parent['identity'] and n['family']=='luminance']
+            self.assertEqual({n['return_to']-parent['function'] for n in nested},{10,18})
+            self.assertEqual(len({n['return_token'] for n in nested}),2)
+        restores=[n for n in closure['invocations'] if n['family']=='text_restore']
+        self.assertTrue(restores)
+        self.assertTrue(all(n['entry_SP']+32==n['return_SP'] and n['transfer']=='tail' for n in restores))
+        self.assertTrue(closure['pending_diagnostic_cuts'])
+        for cut in closure['pending_diagnostic_cuts']:
+            self.assertEqual(cut['kind'],'pending_diagnostic_cut')
+            self.assertIsNone(cut['return_token'])
+            self.assertFalse(cut['machine_nonreturn_established'])
+
+    def test_disconnected_foreign_table_is_bound_but_cannot_be_activated_by_retarget(self):
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture();elf=objects.elf;at=0x10010000
+        raw=bytes.fromhex('dfe810f000007047')
+        index=next(i for i,s in enumerate(elf.sections) if s[2]&6==6 and s[3]<=at<at+len(raw)<=s[3]+s[5])
+        StartupConfigurationCopy.put(objects,at,raw)
+        elf.functions['foreign_fixture_table']=(at|1,len(raw),index)
+        elf.symbol_entries.append(('foreign_fixture_table',at|1,len(raw),2,index))
+        elf.mapping_symbols.extend((('$t',at,index),('$d',at+4,index),('$t',at+6,index)))
+        rows[at]=Instruction(at,raw[:4],'tbh','[pc, r0, lsl #1]')
+        rows[at+6]=Instruction(at+6,raw[6:],'bx','lr')
+        bound=SameBLoaderBoundary.rebound(objects,context)
+        proof=checksum_refill_validator_return(objects,rows,bound)
+        outside=[v for v in proof['computed_exclusions'] if v['site']==at]
+        self.assertEqual(len(outside),1)
+        self.assertEqual(outside[0]['status'],'outside_selected_guard_stopped_prefix')
+        self.assertEqual(outside[0]['raw'],'dfe810f0')
+        self.assertFalse(outside[0]['foreign_context_validated'])
+        # Coherent Thumb2 BL retarget from an activated contrast caller.
+        site=0x1001b450;delta=at-site-4;value=delta&0x1ffffff
+        s=(value>>24)&1;i1=(value>>23)&1;i2=(value>>22)&1
+        encoded=struct.pack('<HH',0xf000|(s<<10)|((value>>12)&0x3ff),
+            0xd000|((1^(i1^s))<<13)|((1^(i2^s))<<11)|((value>>1)&0x7ff))
+        StartupConfigurationCopy.put(objects,site,encoded);rows[site]=Instruction(site,encoded,'bl',hex(at))
+        with self.assertRaises(AssertionError):
+            checksum_refill_validator_return(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_normal_child_PC_and_parent_owned_tail_changes_cannot_become_pending_cuts(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        for at,operation,operand in ((0x1001c148+60,'bl',hex(0x10028d3c)),
+            (0x10028d3c,'pop.w','{r8, r9, r10}'),(0x1001b450,'bl',hex(0x1001b45c)),
+            (0x1001b4b8+12,'mov','pc, r4')):
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            changed=dict(rows);changed[at]=replace(rows[at],mnemonic=operation,operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):
+                checksum_refill_validator_return(objects,changed,context)
+
+    def test_active_parent_table_bytes_cannot_change_the_source_valid_tuple(self):
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture();at=0x1001f164+2
+        original=objects.read_only(at,1);StartupConfigurationCopy.put(objects,at,bytes([original[0]^1]))
+        # A data mutation leaves all decoded instruction bytes coherent; the
+        # current readonly table/source contract must reject its new target.
+        with self.assertRaises(AssertionError):
+            checksum_refill_validator_return(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_control_table_and_parent_owned_restoring_tail_relocate_by_current_relationships(self):
+        from config_validator_return import checksum_refill_validator_return
+        from config_stack import canonical_symbol
+        from dataclasses import replace
+        def branch(site,target,link):
+            value=(target-site-4)&0x1ffffff;s=(value>>24)&1;i1=(value>>23)&1;i2=(value>>22)&1
+            return struct.pack('<HH',0xf000|(s<<10)|((value>>12)&0x3ff),
+                (0xd000 if link else 0x9000)|((1^(i1^s))<<13)|((1^(i2^s))<<11)|((value>>1)&0x7ff))
+        for kind in ('control_table','text_restore','validator_restore'):
+            objects,rows,context=self.fixture();elf=objects.elf
+            if kind=='control_table':
+                names=[n for n in elf.functions if canonical_symbol(n).endswith('ControlAction10allowed_on')]
+                self.assertEqual(len(names),1);old=elf.functions[names[0]][0]&~1
+                partitions=((0,'$t'),(12,'$d'),(32,'$t'));new=0x10072000
+            else:
+                parent=0x1001c148+60 if kind=='text_restore' else 0x1001eb82
+                self.assertIn(parent,rows);old=int(rows[parent].operands.split('@',1)[0].split('<',1)[0].strip(),16)
+                names=[n for n,e in elf.functions.items() if e[0]&~1==old]
+                partitions=((0,'$t'),);new=0x10072100
+            self.assertTrue(names);n=elf.functions[names[0]][1];content=objects.read_only(old,n)
+            file_at=(len(elf.data)+3)&~3;index=len(elf.sections)
+            elf.data=elf.data.ljust(file_at,b'\0')+content
+            elf.sections.append((0,1,6,new,file_at,n,0,0,4,0));elf.segments.append((1,file_at,new,new,n,n,5,4))
+            for name in names:elf.functions[name]=(new|1,n,index)
+            elf.symbol_entries=[(name,new|1,z,t,index) if name in names else (name,a,z,t,i)
+                                for name,a,z,t,i in elf.symbol_entries]
+            elf.mapping_symbols.extend((label,new+off,index) for off,label in partitions)
+            if old in objects.sizes:objects.sizes[new]=objects.sizes.pop(old)
+            for at in tuple(rows):
+                if old<=at<old+n:
+                    row=rows.pop(at);operand=row.operands.split('@',1)[0].split('<',1)[0].strip()
+                    if row.mnemonic.startswith(('b','cb')):
+                        found=re.fullmatch(r'(0x[0-9a-f]+)',operand)
+                        if found:
+                            target=int(found[1],16);local=old<=target<old+n;target=target+new-old if local else target
+                            operand=hex(target)
+                            if not local:
+                                raw=branch(new+at-old,target,row.mnemonic=='bl')
+                                StartupConfigurationCopy.put(objects,new+at-old,raw);row=replace(row,raw=raw)
+                    rows[new+at-old]=replace(row,address=new+at-old,operands=operand)
+            for at,row in tuple(rows.items()):
+                if new<=at<new+n:continue
+                if row.mnemonic in ('bl','b.w') and row.operands.split('@',1)[0].split('<',1)[0].strip()==hex(old):
+                    raw=branch(at,new,row.mnemonic=='bl');StartupConfigurationCopy.put(objects,at,raw)
+                    rows[at]=Instruction(at,raw,row.mnemonic,hex(new))
+            proof=checksum_refill_validator_return(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+            nodes=proof['guard_stopped_normal_activation_closure']['invocations']
+            moved=[v for v in nodes if v['function']==new];self.assertTrue(moved)
+            with self.subTest(kind=kind):
+                if kind=='control_table':
+                    table=[v for v in proof['computed_exclusions'] if v['site']==new+8]
+                    self.assertEqual(table[0]['status'],'selected_current_source_targets')
+                    self.assertTrue(all(new<=v<new+n for v in table[0]['targets']))
+                else:
+                    self.assertTrue(all(v['transfer']=='tail' for v in moved))
+                    self.assertTrue(all(v['entry_SP']<v['return_SP'] for v in moved))
+
+    def test_preserved_flags_from_an_isolated_child_seam_cannot_replace_its_return_cells(self):
+        import config_validator_return as public
+        from unittest.mock import patch
+        from config_validator_children import _normal_body
+        from dataclasses import replace
+        objects,rows,context=self.fixture()
+        name=next(n for n,e in objects.elf.functions.items() if e[0]&~1==0x1001b44a)
+        original=_normal_body(objects,name,rows,'contrasts')
+        # Supplied/mocked component seam: keep a previously checked proof and
+        # its preservation claims while changing the nested return record.
+        # The enclosing activation still must consume actual SP/saved-PC.
+        changed=dict(rows);at=0x1001b4b8+62
+        changed[at]=replace(rows[at],mnemonic='bx',operands='lr')
+        actual=public._normal_body
+        def supplied(objects,name,records,family):
+            return original if family=='contrasts' else actual(objects,name,records,family)
+        with patch.object(public,'_normal_body',side_effect=supplied),self.assertRaisesRegex(
+            AssertionError,'exact SP/save step'):
+            public.checksum_refill_validator_return(objects,changed,context)
+
+    def test_decoded_Result_epoch_and_forged_source_binding_cannot_enter_guarded_default(self):
+        from config_validator_return import checksum_refill_validator_return
+        from dataclasses import replace
+        objects,rows,context=self.fixture();at=0x100203d8
+        self.assertEqual(rows[at].mnemonic,'add')
+        changed=dict(rows);changed[at]=replace(rows[at],operands='r4, sp, #0x70')
+        with self.assertRaises(AssertionError):checksum_refill_validator_return(objects,changed,context)
+        # The original source context is bound to the original bytes, so even
+        # an otherwise disconnected data-byte change cannot reuse that input.
+        StartupConfigurationCopy.put(objects,0x10010000,b'\x00\xbf')
+        with self.assertRaises(AssertionError):checksum_refill_validator_return(objects,rows,context)
+
+
 if __name__=='__main__':unittest.main()

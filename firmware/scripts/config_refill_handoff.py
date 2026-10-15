@@ -193,7 +193,7 @@ def _groups(source,frame,B,guards):
     return tuple(label for label,lo,n in _GROUPS)
 
 
-def checksum_refill_handoff(objects,instructions,source_context):
+def _checksum_refill_state(objects,instructions,source_context):
     boundary=first_boot_loader_boundary(objects,instructions,source_context)
     frame,guards,B,S=_geometry(objects,boundary)
     names=[n for n,e in objects.elf.functions.items() if canonical_symbol(n)==ROOT and e[0]&~1==boundary['loader_geometry']['function']]
@@ -244,7 +244,7 @@ def checksum_refill_handoff(objects,instructions,source_context):
     require(context.config.start==B and not context.config.writable and context.result.start==result.start,
         'before-validator epoch loses readonly Config or separate writable Result')
     diagnostics=(source['widget']['prepared']['capacity_failure'],)+tuple(source['widget']['diagnostics'].values())
-    return dict(phase='checksum_refill_pending_validator_and_diagnostic_closure',mode='sizez',
+    description=dict(phase='checksum_refill_pending_validator_and_diagnostic_closure',mode='sizez',
         source_context=boundary['history']['source_context'],fault=fault,widgets=widgets,sources=sources,source_groups=groups,
         checksum_alternative_observed_taken=False,other_loader_alternatives=('checksum success/visitor','other shared refill fault entries','decoded validation error/refill'),
         before_validator=dict(call=source['proof']['function']+call[0],target=call[2],frame=320,result=(result.start,12),
@@ -265,3 +265,10 @@ def checksum_refill_handoff(objects,instructions,source_context):
         source_qualification=boundary['source_qualification'],requires_M2_pre_init_source_reconciliation=True,
         requires_H8_consumed_input_closure=True,external_qualifications=boundary['external_qualifications'],
         exception_graph_limit=boundary['exception_graph_limit'],exception_absence_established=False,hardware_qualified=False)
+
+    return description,source,context,boundary
+
+
+def checksum_refill_handoff(objects,instructions,source_context):
+    """Readonly pending description; internal views never cross this API."""
+    return _checksum_refill_state(objects,instructions,source_context)[0]
