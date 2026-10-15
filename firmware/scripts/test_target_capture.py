@@ -6,7 +6,8 @@ import tempfile
 import os
 import subprocess
 import sys
-from contextlib import ExitStack
+import io
+from contextlib import ExitStack,redirect_stdout
 from unittest.mock import patch
 import capture_target_bench as capture
 
@@ -203,6 +204,9 @@ pub const LEGACY_ROUNDING: bool = false;
 
 
 class CaptureMemoryQualification(unittest.TestCase):
+    def setUp(self):
+        self.stdout=io.StringIO();self.enterContext(redirect_stdout(self.stdout))
+
     def fixture(self):
         from test_validation_policy import MemoryQualification
         import check_memory_layout

@@ -7,11 +7,13 @@ from unittest.mock import patch
 import check_vendor
 import check_memory_layout
 import hashlib
+import io
 import json
 import struct
 import tempfile
 import zlib
 from types import SimpleNamespace
+from contextlib import redirect_stdout
 
 
 class ValidationPolicy(unittest.TestCase):
@@ -38,6 +40,9 @@ class ValidationPolicy(unittest.TestCase):
 
 
 class MemoryQualification(unittest.TestCase):
+    def setUp(self):
+        self.stdout=io.StringIO();self.enterContext(redirect_stdout(self.stdout))
+
     def fixture(self):
         from config_platform import PlatformPolicy,qualified_stack_result
         payload=b'current payload';eav=b'EAV1'+struct.pack('<HH',4,len(payload))+bytes(4)+payload
@@ -62,6 +67,7 @@ class MemoryQualification(unittest.TestCase):
         self.assertEqual(result['status'],'CONDITIONAL_IMAGE_PASS')
         self.assertFalse(result['hardware_qualified'])
         self.assertEqual(check_memory_layout.read_image_result(result,elf,eav),result)
+        self.assertIn('CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false',self.stdout.getvalue())
 
     def test_missing_lost_stale_and_intermediate_stack_result_reject(self):
         from copy import deepcopy
