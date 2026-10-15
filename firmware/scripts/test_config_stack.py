@@ -4240,11 +4240,27 @@ class ValidatorPlatformFamilies(unittest.TestCase):
 
     def test_enclosing_image_wire_bound_is_checked_after_fitting_stack_record(self):
         import check_memory_layout
+        import capture_target_bench as capture
+        from unittest.mock import patch
+        import tempfile
         size=lambda value:len((json.dumps(value,sort_keys=True)+'\n').encode())
         _,_,small=self.image_fixture('sizes',1)
         elf,eav,stack=self.image_fixture('sizes',65500-size(small)+1)
         self.assertEqual(size(stack),65500)
         static,headroom=check_memory_layout.geometry(elf)
         with self.assertRaises(AssertionError):check_memory_layout._qualified_image(stack,elf,static,headroom,eav)
+        initial,eav,small=self.image_fixture('sizes',1)
+        static,headroom=check_memory_layout.geometry(initial)
+        small_image=check_memory_layout._qualified_image(small,initial,static,headroom,eav)
+        elf,eav,stack=self.image_fixture('sizes',65536-size(small_image)+1)
+        static,headroom=check_memory_layout.geometry(elf)
+        image=check_memory_layout._qualified_image(stack,elf,static,headroom,eav)
+        self.assertEqual(size(image),65536)
+        with tempfile.TemporaryDirectory() as directory,patch.object(capture,'ElfImage',return_value=elf):
+            path=Path(directory)/'boundary.json';wire=json.dumps(image,sort_keys=True)+'\n'
+            path.write_bytes(wire.encode())
+            self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav)['record'],image)
+            path.write_bytes((wire+' ').encode())
+            with self.assertRaises(ValueError):capture.read_memory_gate(path,'synthetic-validator.elf',eav)
 
 if __name__=='__main__':unittest.main()
