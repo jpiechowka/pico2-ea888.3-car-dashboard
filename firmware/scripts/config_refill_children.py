@@ -13,6 +13,7 @@ from config_refill_contracts import REFILL_GRAMMARS,REFILL_ROLES,CATALOG_DISPATC
 from config_regions import Storage,View,Argument,Region,Transfer,borrow,require_disjoint,require_writes,audit_coverage,_control
 from config_stack import canonical_symbol
 from validation import require
+from config_structural import _structural
 
 
 def _readonly(objects,address,extent,alignment):
@@ -54,6 +55,7 @@ def _function(objects,address,role):
     return extent,frame,name
 
 
+@_structural(2)
 def child_body(objects,name,instructions,outline_role=None,_ancestry=()):
     require(name in objects.elf.functions,'missing refill child')
     start=objects.elf.functions[name][0]&~1;require(start not in _ancestry,'refill outline cycle')
@@ -73,6 +75,7 @@ def child_body(objects,name,instructions,outline_role=None,_ancestry=()):
     return results[0]
 
 
+@_structural(2)
 def child_coverage(objects,name,instructions,context,outline_role=None):
     proof=child_body(objects,name,instructions,outline_role);start=proof['function'];contract=REFILL_GRAMMARS[proof['shape']]
     children={start+e[0]:e for e in proof['ordinary_edges']};rows=[];padding=[];edges=[]

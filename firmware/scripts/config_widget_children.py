@@ -17,6 +17,7 @@ from config_widget_contracts import GRAMMARS,ROLES
 from config_decoded_views import _outline as _views_outline
 from config_refill_children import child_body as _refill_body
 from validation import require
+from config_structural import _structural
 from config_logger import logger_body
 
 _CUSTOM={v:k for k,v in ROLES.items() if v.startswith('@outline:')}
@@ -46,6 +47,7 @@ def _outline(objects,name,rows,role,ancestry=()):
     return widget_body(objects,name,rows,role,ancestry)
 
 
+@_structural(2)
 def widget_body(objects,name,rows,outline_role=None,ancestry=()):
     role=outline_role or canonical_symbol(name)
     if outline_role is not None:

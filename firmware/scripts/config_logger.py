@@ -14,6 +14,7 @@ from config_stack import DEFMT_IDENTITIES,canonical_symbol,typed_function,_typed
 from config_finite import _complete_body
 from config_logger_contracts import LOGGER_GRAMMARS,LOGGER_ROLES,MANUAL_BUILTINS
 from validation import require
+from config_structural import _structural
 
 ENCODER='_RNvCs_9defmt_rtt11RTT_ENCODER.'
 LOCK_OWNER='_RNvNtCs_10embassy_rp21critical_section_impl10LOCK_OWNER.0'
@@ -56,6 +57,7 @@ def _logger_function(objects,target,role):
     return extent,8,semantic
 
 
+@_structural(2)
 def logger_body(objects,name,instructions,outline_role=None,_ancestry=()):
     """Complete finite bodies; every caller/state/default/guard edge stays open."""
     require(name in objects.elf.functions,'missing logger body')

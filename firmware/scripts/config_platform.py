@@ -11,6 +11,7 @@ fresh checkout does not depend on an ignored report or runtime approve switch.
 """
 from dataclasses import dataclass,asdict
 import hashlib
+from config_structural import _image_hash,_readonly_hash
 import json
 import re
 import struct
@@ -196,7 +197,7 @@ def reviewed_eav_policy(objects,payload,context,*,contradictory_effects,owned_de
             not payload.storage.writable and not payload.writable and payload.offset==12 and
             payload.extent==payload.storage.extent-12,'platform input lacks its recognized complete readonly EAV payload')
     raw=objects.read_only(payload.start,payload.extent)
-    return PlatformPolicy(payload.start,payload.start+payload.extent,hashlib.sha256(raw).hexdigest(),hashlib.sha256(objects.elf.data).hexdigest(),
+    return PlatformPolicy(payload.start,payload.start+payload.extent,_readonly_hash(objects,payload.start,payload.extent),_image_hash(objects),
         owned_dependencies=owned_dependencies,owned_family=_family_name(owned_dependencies))
 
 

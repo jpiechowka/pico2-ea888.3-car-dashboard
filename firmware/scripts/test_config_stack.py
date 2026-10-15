@@ -7715,6 +7715,145 @@ class ActualDecodedWidgets(unittest.TestCase):
         self.assertNotIn('acquired_owner',description)
 
 
+class WidgetStructuralInputs(unittest.TestCase):
+    def test_detached_structural_proofs_are_current_immutable_and_not_output_aliases(self):
+        from config_structural import _detached_inputs
+        from config_utf8 import utf8_body
+        objects,rows,source,output,frame=SourceBoundUTF8().fixture()
+        frozen,current=_detached_inputs(objects,rows)
+        expected=utf8_body(objects,rows);first=utf8_body(frozen,current)
+        self.assertEqual(first,expected)
+        first['objects'].clear()
+        self.assertEqual(utf8_body(frozen,current),expected)
+        self.assertEqual(frozen._counts[('config_utf8','utf8_body')],(1,1))
+        with self.assertRaises(TypeError):current[next(iter(current))]=next(iter(current.values()))
+        with self.assertRaises((TypeError,AttributeError)):frozen.elf.functions.clear()
+        with self.assertRaises(AttributeError):frozen.elf.data=b'changed'
+        StartupConfigurationCopy.put(objects,0x10033e22+0xc2,b'\0')
+        self.assertEqual(utf8_body(frozen,current),expected)
+        changed,changed_rows=_detached_inputs(objects,rows)
+        with self.assertRaisesRegex(AssertionError,'UTF8 width table'):utf8_body(changed,changed_rows)
+        with self.assertRaisesRegex(AssertionError,'another immutable input'):utf8_body(frozen,changed_rows)
+
+    def test_fresh_dynamic_UTF8_outputs_errors_and_protection_are_unchanged(self):
+        from config_structural import _detached_inputs
+        from config_utf8 import from_utf8_interface
+        from config_regions import Storage
+        from dataclasses import replace
+        objects,rows,source,output,frame=SourceBoundUTF8().fixture(b'hello')
+        frozen,current=_detached_inputs(objects,rows)
+        for length in (0,1,5):
+            selected=replace(source,length=type(source.length)(length,length))
+            self.assertEqual(from_utf8_interface(frozen,current,selected,output,frame,()),
+                from_utf8_interface(objects,rows,selected,output,frame,()))
+        overlap=Storage(frame.space,'prior prefix overlap',output.start,4,4,frame.phase,False)
+        with self.assertRaisesRegex(AssertionError,'overlap|intersects'):
+            from_utf8_interface(frozen,current,source,output,frame,(overlap,))
+        self.assertEqual(frozen._counts[('config_utf8','utf8_body')],(1,3))
+
+    def test_new_calls_rebind_rows_frames_metadata_tables_and_source_hashes(self):
+        from config_structural import _detached_inputs,_image_hash,_readonly_hash
+        from config_utf8 import utf8_body
+        from dataclasses import replace
+        for fault in ('row','bytes','frame','mapping','table','source'):
+            objects,rows,source,output,frame=SourceBoundUTF8().fixture()
+            frozen,current=_detached_inputs(objects,rows);expected=utf8_body(frozen,current)
+            image_hash=_image_hash(frozen);source_hash=_readonly_hash(frozen,source.payload.start,source.payload.extent)
+            start=expected['function']
+            if fault=='row':rows[start]=replace(rows[start],mnemonic='nop')
+            elif fault=='bytes':StartupConfigurationCopy.put(objects,start,b'\0\0')
+            elif fault=='frame':objects.sizes[start]+=8
+            elif fault=='mapping':objects.elf.mapping_symbols.append(('$d',start,objects.elf.functions[next(n for n,e in objects.elf.functions.items() if e[0]&~1==start)][2]))
+            elif fault=='table':StartupConfigurationCopy.put(objects,0x10033e22+0xc2,b'\0')
+            else:StartupConfigurationCopy.put(objects,source.payload.start,b'X')
+            fresh,new_rows=_detached_inputs(objects,rows)
+            self.assertEqual(utf8_body(frozen,current),expected)
+            self.assertEqual(_image_hash(frozen),image_hash)
+            self.assertEqual(_readonly_hash(frozen,source.payload.start,source.payload.extent),source_hash)
+            with self.subTest(fault=fault):
+                if fault=='source':
+                    self.assertEqual(utf8_body(fresh,new_rows),expected)
+                    self.assertNotEqual(_readonly_hash(fresh,source.payload.start,source.payload.extent),source_hash)
+                    self.assertNotEqual(_image_hash(fresh),image_hash)
+                else:
+                    with self.assertRaises(AssertionError):utf8_body(fresh,new_rows)
+
+    def test_context_keys_keywords_and_custom_provider_rechecks_are_preserved(self):
+        from config_structural import _detached_inputs
+        from config_helpers import helper_coverage
+        from config_utf8 import utf8_body
+        objects,rows,item=OrdinaryHelperBodies().fixture()
+        target=next(v for v in item['instances'] if v['role']=='deserialize_u16')
+        frozen,current=_detached_inputs(objects,rows)
+        proofs=[]
+        for label in ('first caller','second caller'):
+            context=(target['address'],label)
+            expected=helper_coverage(objects,target['name'],rows,context)
+            proof=helper_coverage(objects=frozen,name=target['name'],instructions=current,context=context)
+            self.assertEqual(proof,expected);proofs.append(proof)
+        self.assertNotEqual(proofs[0]['coverage']['context'],proofs[1]['coverage']['context'])
+        self.assertEqual(frozen._counts[('config_helpers','helper_coverage')],(2,0))
+        objects,rows,source,output,frame=SourceBoundUTF8().fixture()
+        class CustomObjects(config_stack.DiagnosticObjects):
+            reads=0
+            def read_only(self,*args):
+                self.reads+=1
+                return super().read_only(*args)
+        custom=CustomObjects(objects.elf,objects.sizes)
+        same,same_rows=_detached_inputs(custom,rows)
+        self.assertIs(same,custom);self.assertIs(same_rows,rows)
+        utf8_body(same,same_rows);before=custom.reads;utf8_body(same,same_rows)
+        self.assertGreater(custom.reads,before)
+
+    def test_f32_policy_reuse_keeps_fresh_cursor_count_and_output_protection(self):
+        from config_structural import _detached_inputs
+        from config_abstract import sequence_interface,Span
+        from config_platform import reviewed_eav_policy,TARGET,BOOT_CONTEXT
+        from config_regions import Storage,borrow
+        from dataclasses import replace
+        args=AbstractPrimitiveInterfaces().sequence('seq_f32',bytes(range(7)))
+        state,frame=args[3:5];output=borrow(Storage(frame.space,'RO8',184,8,4,frame.phase,True),0,8,frame.phase,True)
+        policy=reviewed_eav_policy(args[0],state.decoder.payload,dict(target=TARGET,core=0,security='secure',boot_context=BOOT_CONTEXT),contradictory_effects=())
+        frozen,rows=_detached_inputs(args[0],args[1])
+        for count,cursor in ((Span(0,2),Span(0,7)),(Span(0,0),Span(7,7)),(Span(1,1),Span(4,7))):
+            selected=replace(state,count=count,decoder=replace(state.decoder,cursor=cursor))
+            old=list(args);old[3]=selected;new=list(old);new[:2]=frozen,rows
+            self.assertEqual(sequence_interface(*new,output=output,platform_policy=policy),
+                sequence_interface(*old,output=output,platform_policy=policy))
+        new=list(args);new[:2]=frozen,rows
+        new[5]=tuple(new[5])+(Storage(frame.space,'prior prefix',output.start,4,4,frame.phase,False),)
+        with self.assertRaises(AssertionError):sequence_interface(*new,output=output,platform_policy=policy)
+        StartupConfigurationCopy.put(args[0],state.decoder.payload.start,b'X')
+        new=list(args);new[:2]=_detached_inputs(args[0],args[1])
+        with self.assertRaisesRegex(AssertionError,'policy'):sequence_interface(*new,output=output,platform_policy=policy)
+
+    def test_each_relocated_call_rebinds_current_helper_code_pools_and_typed_objects(self):
+        from config_structural import _detached_inputs
+        from config_helpers import helper_coverage
+        for code_shift,data_shift in ((0,0),(0x100000,0),(0,0x19000)):
+            objects,rows,item=OrdinaryHelperBodies().fixture(code_shift,data_shift)
+            frozen,current=_detached_inputs(objects,rows)
+            for instance in item['instances']:
+                role=instance['typed_role'];outline=role if role.startswith('@outline:') else None
+                context=(instance['address'],'independent code/pool/source relocation')
+                expected=helper_coverage(objects,instance['name'],rows,context,outline)
+                with self.subTest(code=code_shift,data=data_shift,role=role):
+                    self.assertEqual(helper_coverage(frozen,instance['name'],current,context,outline),expected)
+                    self.assertEqual(helper_coverage(frozen,instance['name'],current,context,outline),expected)
+
+    def test_all_seven_closed_structural_APIs_retain_current_private_group_records(self):
+        from config_structural import _detached_inputs,_APIS
+        from config_decoded_widgets import _current_group,_children
+        objects,rows,context,item=ActualDecodedWidgets.fixture()
+        expected=_current_group(objects,rows,context)
+        frozen,current=_detached_inputs(objects,rows)
+        actual=_current_group(frozen,current,context)
+        self.assertEqual(actual,expected)
+        self.assertEqual(_children(frozen,current,actual[1],actual[2]),actual[3])
+        self.assertEqual(set(frozen._counts),set(_APIS))
+        self.assertTrue(all(misses>0 and hits>0 for misses,hits in frozen._counts.values()))
+
+
 class WidgetConstructionAdapters(unittest.TestCase):
     def test_Band_tail_zero_and_aligned_copy_keep_zero_and_last_count_boundaries(self):
         from config_widget_children import band_tail_clear_interface,band_copy_interface,label_copy_interface

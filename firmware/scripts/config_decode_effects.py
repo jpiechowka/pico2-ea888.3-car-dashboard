@@ -8,7 +8,7 @@ Only the pinned emitted scalar/result ABIs below are supported. This is not an
 instruction evaluator, general postcard implementation or Config validator.
 """
 from dataclasses import dataclass,replace
-import hashlib
+from config_structural import _image_hash,_readonly_hash
 import struct
 from config_helpers import helper_body,helper_coverage,helper_frame,HELPER_SEMANTIC_ROLES
 from config_platform import PlatformPolicy
@@ -114,8 +114,8 @@ def decode_effect(objects,instructions,proof,state,frame,ancestor_protected,*,ou
     if semantic=='deserialize_seed_f32':
         require(isinstance(platform_policy,PlatformPolicy) and
                 (platform_policy.input_start,platform_policy.input_end)==(state.payload.start,state.payload.start+state.payload.extent) and
-                platform_policy.input_sha256==hashlib.sha256(payload).hexdigest() and
-                platform_policy.elf_sha256==hashlib.sha256(objects.elf.data).hexdigest(),
+                platform_policy.input_sha256==_readonly_hash(objects,state.payload.start,state.payload.extent) and
+                platform_policy.elf_sha256==_image_hash(objects),
                 'f32 decoder lost its current conditional platform/input prerequisite')
     else:require(platform_policy is None,'non-f32 decoder acquired an unrelated platform prerequisite')
     original=state;reads=[];writes=[];children=[];value=None;error=None;registers={};fields=()
@@ -205,8 +205,8 @@ def sequence_effect(objects,instructions,proof,state,frame,ancestor_protected,*,
         require_writes((state.header,decoder.header),((state.header,0,8),(decoder.header,0,8)),(_object(output,'RO8'),))
         require(isinstance(platform_policy,PlatformPolicy) and
                 (platform_policy.input_start,platform_policy.input_end)==(decoder.payload.start,decoder.payload.start+decoder.payload.extent) and
-                platform_policy.input_sha256==hashlib.sha256(objects.read_only(decoder.payload.start,decoder.payload.extent)).hexdigest() and
-                platform_policy.elf_sha256==hashlib.sha256(objects.elf.data).hexdigest(),'sequence lost its current conditional f32 prerequisite')
+                platform_policy.input_sha256==_readonly_hash(objects,decoder.payload.start,decoder.payload.extent) and
+                platform_policy.elf_sha256==_image_hash(objects),'sequence lost its current conditional f32 prerequisite')
         protected=protected+(_object(output,'RO8'),)
     else:require(output is None and platform_policy is None,'register sequence acquired another output/policy ABI')
     writes=[];children=[];registers={};fields=();tag=0;value=None;error=None

@@ -13,6 +13,7 @@ from config_roots import root_location,root_adapter
 from config_regions import Region,Transfer,Storage,View,Argument,borrow,require_disjoint,require_writes,audit_coverage,_control
 from config_stack import canonical_symbol,transfer_family
 from validation import require
+from config_structural import _structural
 from config_construction_contracts import CONSTRUCTION_GRAMMARS,CONSTRUCTION_SEMANTIC_ROLES
 
 # One matcher/coverage path; these closed construction families add no generic
@@ -51,6 +52,7 @@ def _helper_object(objects,address,descriptor):
     root_location(objects,address,descriptor['role']);return ()
 
 
+@_structural(2)
 def helper_body(objects,name,instructions,outline_role=None,_ancestry=()):
     require(name in objects.elf.functions,'missing small helper body')
     start=objects.elf.functions[name][0]&~1;require(start not in _ancestry,'small helper outline cycle')
@@ -75,6 +77,7 @@ def helper_body(objects,name,instructions,outline_role=None,_ancestry=()):
     return proof
 
 
+@_structural(2)
 def helper_coverage(objects,name,instructions,context,outline_role=None):
     """Reconcile complete matched helper inventories, retaining O5 obligations."""
     proof=helper_body(objects,name,instructions,outline_role);start=proof['function']

@@ -12,6 +12,7 @@ from config_regions import Storage,View,require_disjoint,require_writes,Region,T
 from config_stack import canonical_symbol
 from config_owner_entry import _direct_target
 from validation import require
+from config_structural import _structural
 from config_views_contracts import GRAMMARS
 
 UTF8='_RNvNtNtCs_4core3str8converts9from_utf8'
@@ -55,6 +56,7 @@ def _widths(objects,address,descriptor):
 def _no_child(*args):require(False,'unexpected UTF8 child/outline')
 
 
+@_structural(1)
 def utf8_body(objects,instructions):
     names=[n for n in objects.elf.functions if canonical_symbol(n)==UTF8]
     require(len(names)==1,'UTF8 has no unique current typed body');name=names[0]

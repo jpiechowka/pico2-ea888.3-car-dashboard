@@ -7,7 +7,7 @@ validator, source selector, generic ISA evaluator or whole graph admission.
 Existing exact helper APIs deliberately remain separate.
 """
 from dataclasses import dataclass,replace
-import hashlib
+from config_structural import _image_hash,_readonly_hash
 from config_decode_effects import DecoderState,SequenceState,_current,_object,_with_input,_decoder_dependency
 from config_helpers import helper_frame
 from config_platform import PlatformPolicy
@@ -51,8 +51,8 @@ class SequenceInterface:
 def _policy(objects,state,policy):
     require(isinstance(policy,PlatformPolicy) and
         (policy.input_start,policy.input_end)==(state.payload.start,state.payload.start+state.payload.extent) and
-        policy.input_sha256==hashlib.sha256(objects.read_only(state.payload.start,state.payload.extent)).hexdigest() and
-        policy.elf_sha256==hashlib.sha256(objects.elf.data).hexdigest(),'abstract f32 interface lost current conditional input policy')
+        policy.input_sha256==_readonly_hash(objects,state.payload.start,state.payload.extent) and
+        policy.elf_sha256==_image_hash(objects),'abstract f32 interface lost current conditional input policy')
 
 
 def _output(output,state,frame,protected):
