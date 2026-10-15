@@ -2753,6 +2753,104 @@ class DefaultWidgetLoop(unittest.TestCase):
             with self.subTest(fault=fault),self.assertRaises(AssertionError):
                 opaque_copy_interface(objects,records,target,src,dest,48,active,protected)
 
+class DefaultSourceTerminal(unittest.TestCase):
+    def fixture(self,code_shift=0,data_shift=0):
+        objects,records,root,frame=DefaultWidgetLoop.fixture(self,code_shift,data_shift)
+        donor,child_records,item=RefillChildInterfaces.fixture(self,'sizez',code_shift,data_shift)
+        raw=bytearray(objects.elf.data)
+        for index,original,encoded in item['segments']:
+            section=objects.elf.sections[index];source=donor.elf.sections[index]
+            address=original+(code_shift if section[2]&4 else data_shift);n=len(bytes.fromhex(encoded))
+            raw[section[4]+address-section[3]:section[4]+address-section[3]+n]=donor.elf.data[source[4]+address-source[3]:source[4]+address-source[3]+n]
+        objects.elf.functions.update(donor.elf.functions);objects.sizes.update(donor.sizes);records.update(child_records)
+        objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+donor.elf.symbol_entries))
+        extra=json.loads((Path(__file__).parent/'fixtures/config-default-sources.json').read_text())
+        for index,original,encoded in extra['segments']:
+            section=objects.elf.sections[index];address=original+(code_shift if section[2]&4 else data_shift)
+            offset=section[4]+address-section[3];raw[offset:offset+len(bytes.fromhex(encoded))]=bytes.fromhex(encoded)
+        objects.elf.functions.update({n:(v[0]+code_shift,v[1],v[2]) for n,v in extra['functions'].items()})
+        objects.sizes.update({int(a)+code_shift:v for a,v in extra['sizes'].items()})
+        for entry in extra['symbol_entries']:
+            entry=list(entry);entry[1]+=code_shift
+            if tuple(entry) not in objects.elf.symbol_entries:objects.elf.symbol_entries.append(tuple(entry))
+        for original in extra['pointer_cells']:
+            section=next(v for v in objects.elf.sections if v[2]&2 and v[3]<=original+code_shift<v[3]+v[5])
+            offset=section[4]+original+code_shift-section[3];value=struct.unpack_from('<I',raw,offset)[0]
+            target=next(v for v in objects.elf.sections if v[2]&2 and
+                v[3]-(0 if v[2]&1 else code_shift if v[2]&4 else data_shift)<=value<
+                v[3]-(0 if v[2]&1 else code_shift if v[2]&4 else data_shift)+v[5])
+            struct.pack_into('<I',raw,offset,value+(0 if target[2]&1 else code_shift if target[2]&4 else data_shift))
+        objects.elf.data=bytes(raw)
+        return objects,records,root,frame
+
+    def test_source_array_pairs_reset_and_terminal_validator_handoff(self):
+        import config_default_sources
+        for code,data in ((0,0),(0x2800,0x19000)):
+            objects,records,root,frame=self.fixture(code,data)
+            result=config_default_sources.source_terminal(objects,root,records,frame,())
+            self.assertEqual(tuple((r['id'],r['channel'],r['offset']) for r in result['iterations']),
+                ((5,0,32),(3,1,54),(1,2,76),(14,3,98),(2,4,120),(15,5,142),(4,6,164),(13,7,186)))
+            self.assertEqual(result['normal_exit_count'],8)
+            self.assertEqual(result['outgoing']['r8'],frame.start+112)
+            self.assertEqual(result['outgoing']['result'].start,frame.start+236)
+            self.assertNotEqual(result['outgoing']['r1'],result['widget']['prepared']['config'].start)
+            self.assertTrue(result['outgoing']['requires_specialized_validator_receiver_Result_preservation_and_graph'])
+            self.assertEqual(len(result['target_access_requirements']),10)
+            off=result['iterations'][0]
+            self.assertEqual(off['poll'],('Off',None))
+            self.assertEqual(off['opaque_poll_payload'],(2,4))
+            self.assertEqual(off['opaque_route_payload'],(6,10))
+            self.assertEqual(off['opaque_copy']['physical_activation_paths'],((8,),(72,)))
+            self.assertEqual(result['history_count'],8)
+            self.assertEqual(result['led_padding'],(1,5,9,11,15,19,25))
+
+    def test_source_reset_stride_copy_history_and_receiver_operands_are_closed(self):
+        import config_default_sources
+        for offset,operand in ((2,'r8, sp, #0x74'),(200,'r8, sp, #0x74'),(198,'r5, #0x18'),
+            (170,'r2, #0xb'),(286,'r0, #0x9'),(336,'r0, r1')):
+            objects,records,root,frame=self.fixture();start=(objects.elf.functions[root][0]&~1)+1068;at=start+offset
+            old=records[at];records[at]=Instruction(at,old.raw,old.mnemonic,operand)
+            with self.subTest(offset=offset),self.assertRaises(AssertionError):
+                config_default_sources.source_terminal(objects,root,records,frame,())
+
+    def test_source_ids_channel_controls_and_led_selectors_stay_typed(self):
+        import config_default_sources
+        for fault,address in (('ids',0x10020528),('channels',0x1002bf60),('controls',0x10020544),
+            ('led_kind',0x10035694),('led_padding',0x10035695)):
+            objects,records,root,frame=self.fixture();raw=bytearray(objects.elf.data)
+            section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5]);index=section[4]+address-section[3]
+            raw[index]^=1;objects.elf.data=bytes(raw)
+            if fault=='led_padding':
+                result=config_default_sources.source_terminal(objects,root,records,frame,())
+                self.assertTrue(result['outgoing']['requires_specialized_validator_receiver_Result_preservation_and_graph'])
+            else:
+                with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                    config_default_sources.source_terminal(objects,root,records,frame,())
+
+    def test_foreign_source_entry_or_interior_cannot_borrow_widget_handoff(self):
+        import config_default_sources
+        for offset in (0,18):
+            objects,records,root,frame=self.fixture();start=(objects.elf.functions[root][0]&~1)+1068
+            records[0x10060000]=Instruction(0x10060000,bytes(2),'b',hex(start+offset))
+            with self.subTest(offset=offset),self.assertRaises(AssertionError):
+                config_default_sources.source_terminal(objects,root,records,frame,())
+
+    def test_two_aligned_LED_object_does_not_satisfy_the_word_LDM_consumer(self):
+        import config_default_sources
+        objects,records,root,frame=self.fixture();raw=bytearray(objects.elf.data)
+        old,pool=0x10035694,0x10020eb8
+        section=next(v for v in objects.elf.sections if v[1]==1 and v[2]&7==2 and v[5]>512)
+        offset=raw[section[4]:section[4]+section[5]].find(bytes(128));self.assertGreaterEqual(offset,0)
+        new=section[3]+offset+((2-section[3]-offset)%4)
+        def index(address):
+            owner=next(v for v in objects.elf.sections if v[2]&2 and v[3]<=address<v[3]+v[5])
+            return owner[4]+address-owner[3]
+        source=bytes(raw[index(old):index(old)+26]);raw[index(new):index(new)+26]=source
+        struct.pack_into('<I',raw,index(pool),new);objects.elf.data=bytes(raw)
+        self.assertEqual(new%4,2)
+        with self.assertRaisesRegex(AssertionError,'alignment'):
+            config_default_sources.source_terminal(objects,root,records,frame,())
+
 class BoundedMixedSourceWindows(unittest.TestCase):
     def fixture(self):
         base=0x10001000;raw=bytes.fromhex('01e0aabbccdd7047');name='source_parent'
