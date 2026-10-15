@@ -20,6 +20,31 @@ _ONCE={'speed2_6':(20,24,26,30,32,34,38,42),
 _MODES={'speed2_2':('speed2',1288),'sizes_2':('sizes',696),'sizez_2':('sizez',456)}
 
 
+def _direct_target(row,family):
+    """One complete selected-LLVM operand, never a later hexadecimal token.
+
+    B/BL start with their target; CBZ/CBNZ first name a low register. The only
+    suffix is one nonempty LLVM <symbol> annotation, whose nested angle pairs
+    must remain inside that annotation. Apply decode_listing's LLVM comment
+    normalization to supplied records too. No additional transfer is authorized.
+    """
+    error='unresolved direct configuration claim ingress'
+    operand=row.operands
+    require(isinstance(operand,str) and not any(c in operand for c in '\r\n'),error)
+    prefix=r'r[0-7],[ \t]*' if family in ('cbz','cbnz') else ''
+    match=re.fullmatch(prefix+r'(0x[0-9a-f]{1,8})(?:[ \t]+(<.+>))?',operand.split('@',1)[0].strip())
+    require(match is not None,error)
+    annotation=match[2]
+    if annotation is not None:
+        depth=0
+        for index,char in enumerate(annotation):
+            if char=='<':depth+=1
+            elif char=='>':depth-=1
+            require(depth>0 or index==len(annotation)-1,error)
+        require(depth==0,error)
+    return int(match[1],16)
+
+
 def configuration_entry_boundary(objects,instructions):
     """Bind actual objects/calls and closed retry/success/failure alternatives.
 
@@ -51,10 +76,9 @@ def configuration_entry_boundary(objects,instructions):
     # Complete local grammars already retain the retry edges. No foreign direct
     # predecessor may bypass the load, claim, normal restore or failure prefix.
     for at,row in instructions.items():
-        if transfer_family(row.mnemonic.removesuffix('.w')) not in ('b','bl','cbz','cbnz'):continue
-        match=re.search(r'(?<![#\w])0x([0-9a-f]+)(?:\s|$)',row.operands.split('@',1)[0])
-        require(match is not None,'unresolved direct configuration claim ingress')
-        destination=int(match[1],16)
+        family=transfer_family(row.mnemonic.removesuffix('.w'))
+        if family not in ('b','bl','cbz','cbnz'):continue
+        destination=_direct_target(row,family)
         if start<=destination<end and not start<=at<end:
             require(at==caller and row.mnemonic=='bl' and destination==start,
                 'foreign direct ingress into configuration once boundary')

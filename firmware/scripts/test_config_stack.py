@@ -4896,6 +4896,52 @@ class ConfigurationEntryBoundary(unittest.TestCase):
                 with self.subTest(operation=operation,where=where),self.assertRaisesRegex(AssertionError,'foreign direct ingress'):
                     configuration_entry_boundary(objects,rows)
 
+    def test_direct_ingress_rejects_malformed_target_positions_and_suffixes(self):
+        from config_owner_entry import configuration_entry_boundary
+        from config_entry import boot_entry
+        operations=('b','bl','bne.w','bleq.w','cbz','cbnz','cbz.w','cbnz.w')
+        for operation in operations:
+            for fault in ('unresolved_annotation','extra_target','trailing_comma','trailing_text',
+                          'unclosed_annotation','multiple_annotations','overflow','newline'):
+                objects,rows,item=self.fixture();entry=boot_entry(objects,rows)
+                inside=entry['initialize']+20
+                source=entry['phases']['configuration_initialize']['ordinary_edges'][0][2]+200
+                outside=source+8
+                target=dict(unresolved_annotation=f'missing_target <{outside:#x} >',
+                    extra_target=f'{inside:#x}, {outside:#x}',trailing_comma=f'{outside:#x},',
+                    trailing_text=f'{outside:#x} garbage',unclosed_annotation=f'{outside:#x} <symbol',
+                    multiple_annotations=f'{outside:#x} <symbol> <other>',overflow='0x100000000',
+                    newline=f'{outside:#x} <symbol\nother>')[fault]
+                operand=('r0, ' if operation.startswith('cb') else '')+target
+                rows[source]=Instruction(source,b'\x00\xbf',operation,operand)
+                with self.subTest(operation=operation,fault=fault),self.assertRaisesRegex(AssertionError,
+                        'unresolved direct configuration claim ingress'):
+                    configuration_entry_boundary(objects,rows)
+        for register in ('r8','r15','pc','sp','R0','missing','r0, r1'):
+            objects,rows,item=self.fixture();entry=boot_entry(objects,rows)
+            source=entry['phases']['configuration_initialize']['ordinary_edges'][0][2]+200
+            rows[source]=Instruction(source,b'\x00\xbf','cbnz',register+', '+hex(source+8))
+            with self.subTest(register=register),self.assertRaisesRegex(AssertionError,
+                    'unresolved direct configuration claim ingress'):
+                configuration_entry_boundary(objects,rows)
+
+    def test_complete_direct_operands_keep_optional_annotations_and_conditional_forms(self):
+        from config_owner_entry import configuration_entry_boundary
+        from config_entry import boot_entry
+        for operation in ('b','bl','bne.w','bleq.w','cbz','cbnz','cbz.w','cbnz.w'):
+            for annotation in ('',' <symbol>',' <generic<type>::method+0x4>'):
+                objects,rows,item=self.fixture();entry=boot_entry(objects,rows)
+                source=entry['phases']['configuration_initialize']['ordinary_edges'][0][2]+200
+                prefix='r7, ' if operation.startswith('cb') else ''
+                rows[source]=Instruction(source,b'\x00\xbf',operation,prefix+hex(source+8)+annotation)
+                proof=configuration_entry_boundary(objects,rows)
+                self.assertEqual(proof['phase'],'once_loader_boundary_pending_startup')
+                # The same supported form must still check its actual target.
+                rows[source]=Instruction(source,b'\x00\xbf',operation,prefix+hex(entry['initialize']+20)+annotation)
+                with self.subTest(operation=operation,annotation=annotation),self.assertRaisesRegex(
+                        AssertionError,'foreign direct ingress'):
+                    configuration_entry_boundary(objects,rows)
+
     def test_coherent_once_store_retry_and_normal_return_mutations_fail_complete_source_shape(self):
         from config_owner_entry import configuration_entry_boundary
         from config_entry import boot_entry
