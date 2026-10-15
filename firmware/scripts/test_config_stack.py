@@ -4816,4 +4816,108 @@ class InitialConfiguration(unittest.TestCase):
         with patch.object(config_initial,'GROUPS',tuple(bad)),self.assertRaises(AssertionError):config_initial._partition()
 
 
+class ConfigurationEntryBoundary(unittest.TestCase):
+    def fixture(self,mode='sizez'):
+        objects,rows,item=EntryBodies().fixture(mode)
+        s=objects.elf.named['.data'];objects.elf.segments=[(1,s[4],s[3],0x10080000,s[5],s[5],7,8)]
+        return objects,rows,item
+
+    def relocated(self,mode,delta):
+        from config_entry import boot_entry
+        from config_entry_contracts import ENTRY_GRAMMARS
+        objects,rows,item=self.fixture(mode);elf=objects.elf;proof=boot_entry(objects,rows);raw=bytearray(elf.data)
+        def put(address,encoded):
+            s=next(s for s in elf.sections if s[1]==1 and s[3]<=address<address+len(encoded)<=s[3]+s[5])
+            offset=s[4]+address-s[3];raw[offset:offset+len(encoded)]=encoded
+        def mov_imm(operation,register,value):
+            first=(0xf240 if operation=='movw' else 0xf2c0)|((value>>12)&15)|(((value>>11)&1)<<10)
+            second=(((value>>8)&7)<<12)|(int(register[1:])<<8)|(value&255)
+            return struct.pack('<HH',first,second)
+        for phase,body in proof['phases'].items():
+            contract=ENTRY_GRAMMARS[body['shape']];static={i for i,v in enumerate(contract['objects']) if v['kind']=='entry_static'}
+            for offset,width,text in contract['instructions']:
+                p=re.search(r'@object([0-9]+)\.(low|high)',text)
+                if p is None or int(p[1]) not in static:continue
+                address=body['function']+offset;row=rows[address];register=row.operands.partition(',')[0]
+                original=body['objects'][int(p[1])];shift=0 if p[2]=='low' else 16
+                self.assertEqual(row.raw,mov_imm(row.mnemonic,register,(original>>shift)&0xffff))
+                value=((original+delta)>>shift)&0xffff;encoded=mov_imm(row.mnemonic,register,value);put(address,encoded)
+                rows[address]=Instruction(address,encoded,row.mnemonic,register+', #'+hex(value))
+            for offset,width,value in contract['data']:
+                if value.startswith('@object') and int(value[7:]) in static:
+                    put(body['function']+offset,struct.pack('<I',body['objects'][int(value[7:])]+delta))
+        elf.data=bytes(raw)
+        writable={i for i,s in enumerate(elf.sections) if s[2]&1}
+        elf.sections=[tuple(v+delta if i==3 and ix in writable else v for i,v in enumerate(s)) for ix,s in enumerate(elf.sections)]
+        elf.named={name:elf.sections[item['named'][name]] for name in elf.named}
+        elf.symbol_entries=[(n,a+(delta if ix in writable else 0),z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+        s=elf.named['.data'];elf.segments=[(1,s[4],s[3],0x10080000,s[5],s[5],7,8)]
+        return objects,rows,item
+
+    def test_actual_once_first_batch_and_loader_tail_keep_ownership_unresolved(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_owner_entry'),'missing finite actual entry/once/loader boundary')
+        from config_owner_entry import configuration_entry_boundary
+        for mode,frame in (('speed2',1288),('sizes',696),('sizez',456)):
+            objects,rows,item=self.fixture(mode);proof=configuration_entry_boundary(objects,rows)
+            self.assertEqual(proof['mode'],mode)
+            self.assertEqual(proof['phase'],'once_loader_boundary_pending_startup')
+            self.assertEqual(proof['loader']['frame'],frame)
+            self.assertEqual(proof['once']['taken_address'],proof['initial']['address']+14600)
+            self.assertEqual(proof['once']['success']['predicate'],('loaded_taken_zero','exclusive_store_succeeded'))
+            self.assertEqual(proof['once']['retry']['predicate'],'exclusive_store_failed')
+            self.assertTrue(proof['once']['already_taken']['requires_nonreturn_diagnostic_closure'])
+            self.assertEqual(proof['loader']['incoming_r0'],proof['once']['taken_address'])
+            self.assertNotEqual(proof['loader']['incoming_r0'],proof['initial']['address'])
+            self.assertEqual(proof['loader']['initialize_frame_live_on_tail'],0)
+            self.assertTrue(proof['requires_actual_startup_preservation_and_no_prior_Config_alias'])
+            self.assertTrue(proof['requires_specialized_loader_reconstruction_and_all_internal_effects'])
+            self.assertNotIn('acquired_owner',proof)
+
+    def test_independent_Config_and_task_storage_relocation_updates_every_selected_reference(self):
+        from config_owner_entry import configuration_entry_boundary
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,item=self.relocated(mode,0x4000);proof=configuration_entry_boundary(objects,rows)
+            self.assertTrue(all(v[3]==proof['initial']['address'] for v in proof['actual_Config_references']))
+            self.assertEqual(proof['loader']['incoming_r0'],proof['initial']['address']+14600)
+            self.assertEqual(proof['phase'],'once_loader_boundary_pending_startup')
+
+    def test_semantic_foreign_direct_entry_cannot_bypass_once_load_retry_or_restore(self):
+        from config_owner_entry import configuration_entry_boundary
+        from config_entry import boot_entry
+        for operation in ('b','bl','cbz','cbnz'):
+            for where in ('entry','store','restore','data'):
+                objects,rows,item=self.fixture();entry=boot_entry(objects,rows);start=entry['initialize']
+                target=start+dict(entry=0,store=20,restore=28,data=48)[where]
+                # Semantic-record target proof, not a newly decoded opcode.
+                source=entry['phases']['configuration_initialize']['ordinary_edges'][0][2]+200
+                operand=('r0, ' if operation.startswith('cb') else '')+hex(target)
+                rows[source]=Instruction(source,b'\x00\xbf',operation,operand)
+                with self.subTest(operation=operation,where=where),self.assertRaisesRegex(AssertionError,'foreign direct ingress'):
+                    configuration_entry_boundary(objects,rows)
+
+    def test_coherent_once_store_retry_and_normal_return_mutations_fail_complete_source_shape(self):
+        from config_owner_entry import configuration_entry_boundary
+        from config_entry import boot_entry
+        for offset,encoded,operation,operand in ((12,bytes.fromhex('0021'),'movs','r1, #0x0'),
+                (26,bytes.fromhex('f8d0'),'beq',None),
+                (28,bytes.fromhex('bde88080'),'pop.w','{r7, pc}')):
+            objects,rows,item=self.fixture();start=boot_entry(objects,rows)['initialize'];address=start+offset
+            s=next(s for s in objects.elf.sections if s[1]==1 and s[3]<=address<address+len(encoded)<=s[3]+s[5])
+            raw=bytearray(objects.elf.data);at=s[4]+address-s[3];raw[at:at+len(encoded)]=encoded;objects.elf.data=bytes(raw)
+            old=rows[address];rows[address]=Instruction(address,encoded,operation,old.operands if operand is None else operand)
+            with self.subTest(offset=offset),self.assertRaises(AssertionError):configuration_entry_boundary(objects,rows)
+
+    def test_wrong_loader_frame_and_stale_initial_taken_value_cannot_issue_a_boundary(self):
+        from config_owner_entry import configuration_entry_boundary
+        from config_entry import boot_entry
+        objects,rows,item=self.fixture();entry=boot_entry(objects,rows)
+        loader=next(e[2] for e in entry['phases']['configuration_initialize']['ordinary_edges'] if 'load_at_boot' in e[3])
+        objects.sizes[loader]+=8
+        with self.assertRaisesRegex(AssertionError,'loader tail/frame'):configuration_entry_boundary(objects,rows)
+        objects,rows,item=self.fixture();from config_initial import initial_configuration
+        initial=initial_configuration(objects);InitialConfiguration.change(objects,initial['address'],14600,b'\x01')
+        with self.assertRaisesRegex(AssertionError,'active constructor value'):configuration_entry_boundary(objects,rows)
+
+
 if __name__=='__main__':unittest.main()
