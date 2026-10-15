@@ -7674,8 +7674,394 @@ class DecodedWidgetAccess(unittest.TestCase):
                     sites=tuple((a+0x2000,*rest) for a,*rest in family.sites)))
 
 
+class ActualDecodedWidgets(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        objects,rows,context,item=ActualDecodedViews().fixture()
+        extra=json.loads((Path(__file__).parent/'fixtures/config-decoded-widgets.json').read_bytes())
+        for at,encoded in extra['segments']+extra['readonly']:
+            StartupConfigurationCopy.put(objects,at,bytes.fromhex(encoded))
+        for f in extra['functions']:
+            for name,address,extent,index in f['aliases']:objects.elf.functions[name]=(address,extent,index)
+            objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+[tuple(v) for v in f['symbols']]))
+            if f['frame'] is not None:objects.sizes[f['address']]=f['frame']
+            objects.elf.mapping_symbols.extend(tuple(v) for v in f['mapping'])
+        objects.elf.mapping_symbols=list(dict.fromkeys(objects.elf.mapping_symbols))
+        for row in extra['records']:
+            at=row['address'];rows[at]=Instruction(at,bytes.fromhex(row['bytes']),row['mnemonic'],row['operands'])
+        return objects,rows,SameBLoaderBoundary.rebound(objects,context),item
+
+    @staticmethod
+    def consume(objects,rows,context):
+        import config_decoded_widgets
+        return config_decoded_widgets.first_boot_decoded_widgets(objects,rows,context)
 
 
+    def test_private_Views_handoff_retains_actual_same_D_and_source_cursor(self):
+        from config_decoded_views import _first_boot_decoded_views_state
+        from config_abstract import Span,SequenceInterface
+        objects,rows,context,item=ActualDecodedViews().fixture()
+        description,state=_first_boot_decoded_views_state(objects,rows,context)
+        self.assertEqual(tuple(v.initialized_views for v in state.exits),tuple(range(9)))
+        for v in state.exits:
+            self.assertIsInstance(v.sequence,SequenceInterface)
+            self.assertEqual(v.sequence.count,Span(8,8))
+            self.assertEqual(v.sequence.header.start,state.context.headers['visitor_frame'].start+288)
+            self.assertEqual(v.sequence.decoder.header.start,state.context.frame.start+236)
+            self.assertEqual(v.sequence.decoder.payload,state.context.headers['root']['decoder_state'].payload)
+            # Two minimum one-byte u16s, boot u8, then Views length byte.
+            self.assertGreaterEqual(v.sequence.decoder.cursor.lower,4)
+        self.assertEqual(description['Widget_ready']['frontier'],0x1001c7f4)
+        self.assertNotIn('acquired_owner',description)
+
+
+class WidgetConstructionAdapters(unittest.TestCase):
+    def test_Band_tail_zero_and_aligned_copy_keep_zero_and_last_count_boundaries(self):
+        from config_widget_children import band_tail_clear_interface,band_copy_interface,label_copy_interface
+        from config_regions import Storage,borrow
+        from config_abstract import Span
+        from config_abstract_compare import InitializedPrefix
+        objects,rows,context,item=ActualDecodedWidgets.fixture()
+        frame=Storage('stack:Widget bounded copies','visitor',-1608,1608,8,'Widget copies',True)
+        tail=borrow(frame,1440,5,frame.phase,True)
+        for length,want in ((0,(0,5)),(1,(1,5)),(5,None)):
+            result=band_tail_clear_interface(objects,rows,0x1002924c,tail,Span(length,length),frame,())
+            self.assertEqual(result['zero_tail_relative'],want)
+            self.assertEqual(result['count_domain'],Span(5-length,5-length))
+        source=borrow(frame,940,48,frame.phase);target=borrow(frame,1000,48,frame.phase,True)
+        for count in (0,1,2,3):
+            initialized=InitializedPrefix(source,Span(count*16,count*16))
+            result=band_copy_interface(objects,rows,0x100299de,initialized,target,Span(count,count),frame,())
+            self.assertEqual(result['byte_count_domain'],Span(count*16,count*16))
+            self.assertEqual(result['physical_child_paths'],((16,),(72,)))
+            self.assertEqual(result['possible_writes'],((target,0,count*16),) if count else ())
+        labels=InitializedPrefix(borrow(frame,1188,5,frame.phase),Span(1,5))
+        result=label_copy_interface(objects,rows,0x100294e8,labels,tail,frame,())
+        self.assertEqual(result['byte_count_domain'],Span(1,5))
+        self.assertEqual(result['physical_child_paths'],((8,),(72,)))
+        self.assertTrue(result['preserves_existing_tail'])
+        self.assertTrue(result['requires_preceding_actual_tail_clear_and_validated_same_label'])
+
+    def test_Widget_copy_alias_count_and_wrong_scratch_epochs_reject(self):
+        from config_widget_children import band_copy_interface,band_tail_clear_interface
+        from config_regions import Storage,borrow
+        from config_abstract import Span
+        from config_abstract_compare import InitializedPrefix
+        objects,rows,context,item=ActualDecodedWidgets.fixture()
+        frame=Storage('stack:Widget copy negatives','visitor',-1608,1608,8,'Widget copies',True)
+        source=InitializedPrefix(borrow(frame,940,48,frame.phase),Span(48,48))
+        for offset,count in ((940,Span(3,3)),(1004,Span(3,3)),(1000,Span(4,4))):
+            with self.subTest(offset=offset,count=count),self.assertRaises(AssertionError):
+                band_copy_interface(objects,rows,0x100299de,source,borrow(frame,offset,48,frame.phase,True),count,frame,())
+        with self.assertRaises(AssertionError):
+            band_copy_interface(objects,rows,0x100299de,source,borrow(frame,1000,48,frame.phase,True),Span(2,2),frame,())
+        with self.assertRaises(AssertionError):
+            band_tail_clear_interface(objects,rows,0x1002924c,borrow(frame,1444,5,frame.phase,True),Span(0,5),frame,())
+
+    @staticmethod
+    def color_arguments(warning=False,count=(1,1),cursor=(0,0)):
+        from config_abstract import Span,SequenceInterface,DecoderInterface
+        from config_regions import Storage,borrow
+        objects,rows,context,item=ActualDecodedWidgets.fixture()
+        phase='Widget Color adapter';space='stack:Widget Color adapter'
+        owner=Storage(space,'caller locals',128,128,8,phase,True)
+        d=borrow(owner,48,8,phase,True);q=borrow(owner,32,8,phase,True)
+        source=Storage('address','embedded_eav',0x10032b1e,1157,1,phase,False)
+        state=SequenceInterface(q,DecoderInterface(d,borrow(source,12,1145,phase),Span(*cursor)),Span(*count))
+        size=24 if warning else 8;frame=Storage(space,'WarningColors' if warning else 'Color',-size,size,8,phase,True)
+        output=borrow(owner,0,6,phase,True) if warning else None
+        return objects,rows,state,frame,output
+
+    def test_Color_scalar_union_and_WarningColors_pair_keep_decrement_and_output(self):
+        from config_widget_children import widget_body,color_interface,warning_colors_interface,_name
+        from config_widget_contracts import ROLES
+        from config_abstract import Span
+        for warning in (False,True):
+            objects,rows,state,frame,output=self.color_arguments(warning,cursor=(0,1145))
+            proof=widget_body(objects,_name(objects,ROLES['warning_colors' if warning else 'color']),rows)
+            result=warning_colors_interface(objects,rows,proof,state,output,frame,()) if warning else color_interface(objects,rows,proof,state,frame,())
+            successes=[v for v in result['outcomes'] if v['kind']=='some']
+            self.assertEqual(len(successes),1)
+            self.assertTrue(all(v['count']==Span(0,0) for v in result['outcomes']))
+            self.assertEqual(successes[0]['tag'],1)
+            if warning:
+                self.assertEqual(successes[0]['value_domains'],((0,65535),(0,65535)))
+                self.assertEqual(successes[0]['possible_writes'],((output,0,6),))
+                self.assertEqual(result['physical_child_paths'],((24,8,24,16),))
+            else:
+                self.assertEqual(successes[0]['value_domain'],(0,65535))
+                self.assertEqual(result['physical_child_paths'],((8,24,16),))
+            self.assertEqual({v['error'] for v in result['outcomes'] if v['kind']=='error'},{4,5})
+
+    def test_Color_zero_count_keeps_cursor_and_WarningColors_does_not_initialize_payload(self):
+        from config_widget_children import widget_body,color_interface,warning_colors_interface,_name
+        from config_widget_contracts import ROLES
+        from config_abstract import Span
+        for warning in (False,True):
+            objects,rows,state,frame,output=self.color_arguments(warning,(0,0),(7,7))
+            proof=widget_body(objects,_name(objects,ROLES['warning_colors' if warning else 'color']),rows)
+            result=warning_colors_interface(objects,rows,proof,state,output,frame,()) if warning else color_interface(objects,rows,proof,state,frame,())
+            self.assertEqual([(v['kind'],v['tag'],v['count'],v['cursor']) for v in result['outcomes']],
+                [('none',0,Span(0,0),Span(7,7))])
+            self.assertEqual(result['outcomes'][0]['possible_writes'],((output,0,2),) if warning else ())
+
+    def test_explicit_String5_inner_append_preserves_capacity_and_error_no_write(self):
+        import config_construction,config_helpers
+        from config_regions import Storage,borrow
+        from config_abstract import Span
+        from config_abstract_compare import InitializedPrefix
+        objects,rows,item,instance,frame=ConstructionInterfaces().fixture('vec_extend_inner')
+        proof=config_helpers.helper_coverage(objects,instance['name'],rows,(instance['address'],'explicit String5 caller'))
+        owner=Storage(frame.space,'String5',128,12,4,frame.phase,True)
+        view=borrow(owner,0,12,frame.phase,True)
+        source=InitializedPrefix(borrow(Storage(frame.space,'validated UTF8 input',256,8,1,frame.phase,False),0,8,frame.phase),Span(0,6))
+        with self.assertRaises(AssertionError):config_construction.VecInterface(view,5,Span(0,0))
+        state=config_construction.String5Interface(view,Span(0,0))
+        result=config_construction.extend_string5_interface(objects,rows,proof,state,source,frame,())
+        self.assertEqual([(o['kind'],o['length']) for o in result['outcomes']],
+            [('success',Span(0,5)),('capacity_error',Span(0,0))])
+        self.assertEqual(result['outcomes'][1]['possible_writes'],())
+        self.assertEqual(result['capacity_incoming_stack_argument'],5)
+        self.assertEqual(result['conservative_activation_frames'],(24,))
+        self.assertTrue(result['requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join'])
+
+
+class WidgetFiniteReturns(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        from config_decoded_widgets import _current_group
+        objects,rows,source,item=ActualDecodedWidgets.fixture()
+        description,state,parents,children=_current_group(objects,rows,source)
+        return objects,rows,state,parents,children
+
+    def test_each_actual_child_returns_to_its_own_call_and_restored_tail_depth(self):
+        from config_decoded_widgets import _child_returns
+        objects,rows,state,parents,children=self.fixture()
+        result=_child_returns(rows,state,parents,children);V=state.context.headers['visitor_frame'].start
+        self.assertEqual(min(v['lowest_SP'] for v in result),V-144)
+        advanced=[v for v in result if v['function']==0x1001c270]
+        self.assertEqual(len(advanced),1)
+        self.assertEqual((advanced[0]['entry_SP'],advanced[0]['return_SP'],advanced[0]['lowest_SP']),
+            (V,V,V-144))
+        self.assertEqual(advanced[0]['return_PC'],0x1001c654+3420)
+        copy4=[v for v in result if v['function']==0x100299de]
+        self.assertEqual(len(copy4),1)
+        self.assertEqual((copy4[0]['return_SP'],copy4[0]['lowest_SP']),(V,V-72))
+        self.assertTrue(all(v['architectural_LR_preserved'] is False for v in result))
+        clears=[v for v in result if v['function']==0x1002924c]
+        self.assertEqual(len(clears),1)
+        self.assertEqual({a for a,pc,sp in clears[0]['returns']},{0x1002924c+190,0x1002924c+206})
+
+    def test_conditional_restore_retains_original_fallthrough_save_map(self):
+        from config_decoded_widgets import _child_returns
+        from dataclasses import replace
+        objects,rows,state,parents,children=self.fixture()
+        site=0x1002924c+192;changed=dict(rows)
+        # Deliberately stale semantic record/private proof injection. The full
+        # public literal matcher rejects it earlier. This isolates whether the
+        # conditional poplo's untaken path is actually visited by the solver.
+        changed[site]=replace(rows[site],mnemonic='add',operands='sp, #0x4')
+        with self.assertRaisesRegex(AssertionError,'unreviewed SP/save'):
+            _child_returns(changed,state,parents,children)
+
+    def test_zero_frame_restore_consumes_its_callers_pending_save_map(self):
+        from config_decoded_widgets import _child_returns
+        objects,rows,state,parents,children=self.fixture()
+        result=_child_returns(rows,state,parents,children)
+        restore=[v for v in result if v['function']==0x100287d8]
+        self.assertTrue(restore)
+        self.assertTrue(all(v['return_SP']-v['entry_SP']==24 for v in restore))
+        self.assertTrue(all(all(pc==v['return_PC'] and sp==v['return_SP'] for at,pc,sp in v['returns']) for v in restore))
+
+    def test_scratch_pop_cannot_replace_a_preserved_register_or_omit_tail_restore(self):
+        from config_decoded_widgets import _child_returns
+        from dataclasses import replace
+        objects,rows,state,parents,children=self.fixture()
+        for site,mnemonic,operands in ((0x1001b930+98,'pop','{r4, r3, r4, r5, r7, pc}'),
+            (0x100299de+152,'add','sp, #0x10')):
+            changed=dict(rows);changed[site]=replace(rows[site],mnemonic=mnemonic,operands=operands)
+            with self.subTest(site=hex(site)),self.assertRaises(AssertionError):
+                _child_returns(changed,state,parents,children)
+
+
+class WidgetAssemblyEffects(unittest.TestCase):
+    def test_early_lengths_keep_last_semantic_stores_pending_and_padding_opaque(self):
+        from config_decoded_widgets import _assembly_effects
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        result=_assembly_effects(objects,rows,state,parents,children,63,2)
+        self.assertEqual(result['Widget']['slot_interval'],(state.context.owner.start+14304,state.context.owner.start+14524))
+        self.assertEqual(result['Widget']['early_count'],dict(site=0x1001c654+4018,physical=64,logical=63))
+        self.assertEqual(result['Widget']['outstanding_after_count'],((180,219),))
+        self.assertEqual(result['Widget']['last_semantic_store'],0x1001c654+4158)
+        self.assertEqual(result['Widget']['checked_continuation'],0x1001c654+4164)
+        self.assertEqual(result['Widget']['opaque_padding'],((18,20),(30,32),(87,88),(219,220)))
+        self.assertEqual(result['Band']['early_count'],dict(site=0x1001c654+3092,physical=3,logical=2))
+        self.assertEqual(result['Band']['outstanding_after_count'],((11,16),))
+        self.assertEqual(result['Band']['last_semantic_store'],0x1001c654+3102)
+        self.assertEqual(result['Band']['checked_continuation'],0x1001c654+3104)
+        self.assertFalse(result['completed_prefix_issued'])
+        self.assertTrue(result['requires_same_decoded_source_package_and_ordinary_path'])
+
+    def test_capacity_indices_do_not_acquire_out_of_range_spare_slots(self):
+        from config_decoded_widgets import _assembly_effects
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        for i,j in ((64,0),(0,3),(-1,0),(0,-1),(True,0)):
+            with self.subTest(i=i,j=j),self.assertRaises(AssertionError):
+                _assembly_effects(objects,rows,state,parents,children,i,j)
+
+    def test_physical_protected_ancestor_cannot_alias_the_last_Widget_store(self):
+        from config_decoded_widgets import _assembly_effects
+        from config_regions import Storage
+        from dataclasses import replace
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        context=state.context;guards=context.headers['visitor']['protected']
+        shifted=Storage('address','foreign retained ancestor',context.owner.start+444+218,1,1,context.frame.phase,False)
+        headers=dict(context.headers);visitor=dict(headers['visitor']);visitor['protected']=guards+(shifted,);headers['visitor']=visitor
+        with self.assertRaisesRegex(AssertionError,'protected live storage'):
+            _assembly_effects(objects,rows,replace(state,context=replace(context,headers=headers)),parents,children,0,0)
+
+
+class WidgetBandSource(unittest.TestCase):
+    def test_full_Band_source_keeps_minimum_progress_and_prevalidation_domains(self):
+        from config_decoded_widgets import _band_candidate
+        from config_abstract import SequenceInterface,Span
+        from config_regions import borrow
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        frame=state.context.headers['visitor_frame'];before=state.exits[0].sequence.decoder
+        q=SequenceInterface(borrow(frame,1400,8,frame.phase,True),before,Span(4,4))
+        result=_band_candidate(objects,rows,state,parents,children,q)
+        self.assertEqual(result['normal_decoder'].cursor.lower,before.cursor.lower+10)
+        self.assertEqual(result['source_fields'],(('min','f32_bits',(0,0xffffffff)),
+            ('max','f32_bits',(0,0xffffffff)),('color','u16',(0,65535)),('label','UTF8_String5',(0,5))))
+        self.assertEqual(result['count_after_primitive_children'],Span(1,1))
+        self.assertEqual(result['logical_source_fields_consumed'],4)
+        self.assertEqual(result['normal_label_guard'],'length==0 OR (all bytes in32..126 AND at least one byte!=32)')
+        self.assertEqual({v['error'] for v in result['errors']},{4,5,8,14})
+        self.assertEqual(result['label_transport'],((1441,1420,11),(1420,1185,11)))
+        self.assertTrue(result['source_validity_before_config_validation'])
+        self.assertFalse(result['completed_Band_slot_issued'])
+        self.assertNotIn('acquired_owner',result)
+
+    def test_Band_cannot_reuse_Advanced_header_or_missing_fourth_source_field(self):
+        from config_decoded_widgets import _band_candidate
+        from config_abstract import SequenceInterface,Span
+        from config_regions import borrow
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        frame=state.context.headers['visitor_frame'];before=state.exits[0].sequence.decoder
+        for offset,count in ((1380,4),(1400,3),(1404,4)):
+            q=SequenceInterface(borrow(frame,offset,8,frame.phase,True),before,Span(count,count))
+            with self.subTest(offset=offset,count=count),self.assertRaises(AssertionError):
+                _band_candidate(objects,rows,state,parents,children,q)
+
+
+class WidgetSourcePackage(unittest.TestCase):
+    def test_grouped_prefix_preserves_wire_order_unknown_values_and_folded_counts(self):
+        from config_decoded_widgets import _widget_source_prefix
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        before=state.exits[0].sequence.decoder
+        result=_widget_source_prefix(objects,rows,state,parents,children,before)
+        self.assertEqual(result.decoder.cursor.lower,before.cursor.lower+69)
+        self.assertEqual(tuple(name for name,value in result.fields),
+            ('id','view','channel','placement','label','display','warning','gauge','colors'))
+        fields=dict(result.fields)
+        self.assertEqual(fields['id'],('u16',(0,65535)))
+        self.assertEqual(fields['view'],('u8',(0,255)))
+        self.assertEqual(fields['channel'],('Channel',(0,7)))
+        self.assertEqual(fields['placement'],(('col',(0,255)),('row',(0,255)),('span',(0,2))))
+        self.assertEqual(fields['warning']['f32_bits'],(0,0xffffffff))
+        self.assertEqual(fields['gauge']['f32_bits'],(0,0xffffffff))
+        self.assertEqual(fields['colors'],('Color16',16,(0,65535)))
+        counts=dict(result.physical_counts)
+        self.assertEqual(counts['Widget'],(10,9,8))
+        self.assertEqual(counts['Placement'],(3,2,1))
+        self.assertEqual(counts['Display'],(7,6,5,4,3,2,1))
+        self.assertEqual(counts['Warning'],(14,13,11,10,9,8,7,6,5,4,3,2,1,0))
+        self.assertEqual(counts['Gauge'],(3,2,1,0))
+        self.assertEqual(counts['WidgetColors'],tuple(range(15,-1,-1)))
+        self.assertEqual({error['error'] for error in result.errors},{4,5,6,8,14})
+        self.assertFalse(result.completed_source_Widget)
+
+    def test_Advanced_keeps_zero_to_three_Bands_and_parses_fourth_before_capacity(self):
+        from config_decoded_widgets import _advanced_source
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        before=state.exits[0].sequence.decoder
+        result=_advanced_source(objects,rows,state,parents,children,before)
+        self.assertEqual(tuple(v['Band_count'] for v in result['normal']),tuple(range(4)))
+        self.assertEqual(tuple(v['decoder'].cursor.lower-before.cursor.lower for v in result['normal']),(11,21,31,41))
+        self.assertEqual(result['physical_counts'],(7,6,5,4))
+        fourth=[v for v in result['errors'] if v['stage']=='Band capacity']
+        self.assertEqual(len(fourth),1)
+        self.assertGreaterEqual(fourth[0]['cursor'].lower,before.cursor.lower+41)
+        self.assertEqual(fourth[0]['completed_Band_source_prefix'],3)
+        self.assertTrue(any(v['stage']=='Band3.label UTF8' for v in result['errors']))
+        self.assertEqual(result['initializer_arguments'],('Boost',False))
+        self.assertEqual(result['source_enum_domains'],(('readout',0,9),('secondary',0,3),('peak_mode',0,2),('reference_mode',0,2)))
+        self.assertEqual(result['Band_capture_copies'],((1068,1000,48),(1000,1128,48),(1128,940,48)))
+        self.assertFalse(result['completed_Advanced_slot_issued'])
+
+    def test_children_must_preserve_live_high_float_source_carriers(self):
+        from config_decoded_widgets import _source_fp_preservation
+        from dataclasses import replace
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        checked=_source_fp_preservation(rows,children)
+        self.assertIn((0x1001c270,104),checked)
+        # Stale semantic-record/private proof injection only: public matching
+        # rejects the changed current body before this additional carrier join.
+        changed=dict(rows);site=0x1001c270+84
+        changed[site]=replace(rows[site],mnemonic='vmov',operands='s26, r0')
+        with self.assertRaisesRegex(AssertionError,'live float source carrier'):
+            _source_fp_preservation(changed,children)
+
+
+class WidgetScratchEffects(unittest.TestCase):
+    def test_all_stores_have_one_owned_family_and_top_pointer_is_not_written(self):
+        from config_decoded_widgets import _scratch_effects
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        result=_scratch_effects(objects,rows,state,parents,children)
+        self.assertEqual(result['selected_store_count'],230)
+        self.assertEqual(result['top_count_write'],(0x1001c654+4362,292,4))
+        self.assertEqual(result['next_Source_header_write'],(0x1001c654+4366,1500,8))
+        self.assertEqual(result['stable_decoder_end'],state.context.frame.start+240)
+        self.assertEqual(result['final_tail_origins'],(('label',600,27),('warning',688,23),('advanced',628,58)))
+        self.assertEqual(result['copied_opaque_bytes_claim_initialized'],False)
+        self.assertFalse(result['completed_prefix_issued'])
+
+    def test_Source_header_cannot_overwrite_a_retained_ancestor(self):
+        from config_decoded_widgets import _scratch_effects
+        from config_regions import Storage
+        from dataclasses import replace
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        context=state.context;frame=context.headers['visitor_frame']
+        overlap=Storage(frame.space,'retained source-header alias',frame.start+1504,1,1,frame.phase,False)
+        headers=dict(context.headers);visitor=dict(headers['visitor'])
+        visitor['protected']=visitor['protected']+(overlap,);headers['visitor']=visitor
+        with self.assertRaisesRegex(AssertionError,'protected live storage'):
+            _scratch_effects(objects,rows,replace(state,context=replace(context,headers=headers)),parents,children)
+
+
+class WidgetOrdinaryControl(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        from config_decoded_widgets import (_WidgetControlInput,_widget_source_prefix,_advanced_source,
+            _scratch_effects,_child_returns)
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        before=state.exits[0].sequence.decoder
+        source=_widget_source_prefix(objects,rows,state,parents,children,before)
+        advanced=_advanced_source(objects,rows,state,parents,children,source.decoder)
+        value=_WidgetControlInput(state,parents,children,source,advanced,
+            _scratch_effects(objects,rows,state,parents,children),_child_returns(rows,state,parents,children))
+        return objects,rows,value
+
+    def test_full_selected_successors_consume416_and_stop_before_actual_Source(self):
+        from config_decoded_widgets import _widget_control
+        objects,rows,value=self.fixture();result=_widget_control(objects,rows,value)
+        self.assertIn(0x1001c654+4376,result['stopped_frontiers'])
+        self.assertNotIn(0x1001c654+416,result['stopped_frontiers'])
+        successors={a:(target,following) for a,target,following in result['successors']}
+        self.assertEqual(successors[0x1001c654+4350],(None,0x1001c654+4352))
+        self.assertEqual(successors[0x1001c654+796],(None,0x1001c654+800))
+        self.assertFalse(result['pending_contexts_confer_state'])
+        self.assertTrue(all(not(416<=at-0x1001c654<4376) for at,target,reason in result['outside_shared_contexts']))
 
 
 if __name__=='__main__':unittest.main()

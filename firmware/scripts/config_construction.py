@@ -29,6 +29,21 @@ class VecInterface:
             'Vec lacks its aligned full header/capacity owner')
 
 
+@dataclass(frozen=True)
+class String5Interface:
+    """The decoded Band's explicit small-string epoch; not a general Vec."""
+    view:View
+    length:Span
+
+    def __post_init__(self):
+        require(isinstance(self.length,Span) and self.length.upper<=5 and isinstance(self.view,View) and
+            self.view.writable and self.view.start%4==0 and self.view.storage.alignment>=4 and self.view.extent==12,
+            'String5 loses its exact aligned length/header/capacity owner')
+
+    @property
+    def capacity(self):return 5
+
+
 def _frame(parent,semantic,size):
     return Storage(parent.space,parent.identity+':'+semantic,parent.start-size,size,8,parent.phase,True)
 
@@ -58,8 +73,24 @@ def extend_interface(objects,instructions,proof,state,source,frame,ancestor_prot
     success extends the prefix only, with no inferred contents. Capacity Err
     leaves the whole Vec unchanged; its ZST error has no readable payload.
     """
+    require(isinstance(state,VecInterface),'construction Vec API received another finite string context')
+    return _extend_interface(objects,instructions,proof,state,source,frame,ancestor_protected)
+
+
+def extend_string5_interface(objects,instructions,proof,state,source,frame,ancestor_protected):
+    """Actual direct inner24 call, with caller S+0 capacity5 still required."""
+    require(isinstance(state,String5Interface) and isinstance(proof,dict) and proof.get('semantic_role')=='vec_extend_inner',
+        'String5 requires the direct complete inner append family')
+    result=_extend_interface(objects,instructions,proof,state,source,frame,ancestor_protected)
+    result.update(capacity_incoming_stack_argument=5,requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join=True)
+    return result
+
+
+def _extend_interface(objects,instructions,proof,state,source,frame,ancestor_protected):
+    # Called only after one of the two explicit typed entry interfaces above.
+    # Their shared byte-copy/count equations do not widen VecInterface.
     proof=_current(objects,instructions,proof);semantic=proof['semantic_role']
-    require(isinstance(state,VecInterface) and semantic in ('vec_extend_inner','vec_extend14','vec_extend20','vec_extend24') and
+    require(semantic in ('vec_extend_inner','vec_extend14','vec_extend20','vec_extend24') and
         (semantic=='vec_extend_inner' or semantic=='vec_extend'+str(state.capacity)),
         'construction wrapper and Vec capacity differ')
     require(state.view.storage.space in (frame.space,'address') and state.view.storage.phase==frame.phase,

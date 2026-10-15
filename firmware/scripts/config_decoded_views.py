@@ -4,7 +4,7 @@ Uses private prefix state exactly once. Nothing accepts the public prefix
 summary as a capability, reinitializes mutated Config, or completes later
 visitor/canonical/loader/resource routes. All copies retain opaque padding.
 """
-from dataclasses import replace
+from dataclasses import dataclass,replace
 import re
 from config_abstract import Span,SequenceInterface,sequence_interface,decoder_interface
 from config_abstract_compare import InitializedPrefix
@@ -25,6 +25,22 @@ from config_views_contracts import GRAMMARS,ROLES,SHARED_PENDING,PENDING_VARINT_
 from validation import require
 
 _CUSTOM={v:k for k,v in ROLES.items() if v.startswith('@outline:')}
+
+
+@dataclass(frozen=True)
+class _ViewsExit:
+    sequence:SequenceInterface
+    initialized_views:int
+
+
+@dataclass(frozen=True)
+class _ViewsState:
+    prefix:dict
+    context:object
+    parents:tuple
+    children:dict
+    exits:tuple
+    control:dict
 
 
 def _outline(objects,name,rows,role,ancestry=()):
@@ -190,7 +206,7 @@ def _stage_effects(objects,rows,context,parents,children,index,decoder,string_be
 def _phase_outcomes(objects,rows,context,parents,children):
     V=parents[0]['function']-82;frame=context.headers['visitor_frame'];B=context.owner.start
     top=context.headers['visitor']['sequence_state'].header
-    errors=[];successes=[];iterations=[]
+    errors=[];successes=[];iterations=[];exits=[]
     def error(stage,code,cursor,index,cleared,boot=True,guard=None):
         errors.append(dict(stage=stage,error=code,r5=code,frontier=V+56,cursor=(cursor.lower,cursor.upper),
             top_Q_physical_count=10,initialized_views=index,views_cleared=cleared,boot_view_assigned=boot,
@@ -223,6 +239,7 @@ def _phase_outcomes(objects,rows,context,parents,children):
                         frontier=V+416,top_count=8,initial_active_bytes_preserved=175,
                         source_guard='N==i; preclear(N<=8 OR remaining<N)',
                         complete_UTF8_string_prefix=True,opaque_capacity_from=i,Widget_bytes_consumed=0))
+                    exits.append(_ViewsExit(SequenceInterface(top,current,Span(8,8)),i))
                     q=borrow(frame,880,8,frame.phase,True)
                     require_writes((q,),((q,0,8),),guards+(_object(current.header,'D'),))
                     element_seq=SequenceInterface(q,current,Span(2,2))
@@ -251,18 +268,12 @@ def _phase_outcomes(objects,rows,context,parents,children):
                         next_cursor=Span(before.cursor.lower,min(n,before.cursor.upper+14))
                     if next_cursor is None:break
                     current=replace(current,cursor=next_cursor)
-    return tuple(errors),tuple(successes),tuple(iterations)
+    return tuple(errors),tuple(successes),tuple(iterations),tuple(exits)
 
 
-def _child_returns(rows,context,parents,children):
-    """Finite SP/save equations for these matched families, per actual call.
-
-    Only the reviewed stack instructions below change the save map. Scalar
-    instructions are not executed. Every guarded successor is retained; a
-    completed BL must consume its own saved return token and original SP.
-    """
+def _views_return_profiles():
     builtin='_RNvNtCs_17compiler_builtins3mem6memcpy'
-    stacks={
+    return {
         '__aeabi_memcpy':{0,4},builtin:{0,4,8,634,636,640},UTF8:{0,4,356,360},
         'vec_extend14':{0,14},'vec_extend_inner':{0,4},
         'construction_restore_r11_low20':{0,4},'construction_prepare_slice':set(),
@@ -270,100 +281,34 @@ def _child_returns(rows,context,parents,children):
         'seq_u8':{4,22},'seq_decrement_tail_pop':set(),'slice_pop':{8,20},'is_zero_r0':set(),
         '@outline:decoded_varint_tag':set(),'@outline:decoded_remaining_length':set(),
         '@outline:decoded_utf8_to_vec14':set(),'@outline:decoded_copy19':set()}
-    completed={};nodes=[];active=[]
-    def walk(proof,entry,token,expected_sp,cells=(),lr=None,shuttle=None):
-        start=proof['function'];family=proof.get('semantic_role',proof['role'])
-        require(family in stacks,'Views has no authored child return family')
-        key=(start,entry,token,expected_sp,cells,lr,shuttle)
-        if key in completed:return completed[key]
-        require(start not in active,'Views child introduces an activation cycle');active.append(start)
-        body={a:r for a,r in rows.items() if start<=a<start+proof['extent']}
-        edges={start+e[0]:e for e in proof['ordinary_edges']}
-        require(not proof['indirect_sites'],'Views child adds an executable callback')
-        pending=[(start,entry,token if lr is None else lr,cells,shuttle)];seen=set();returns=[];minimum=entry
-        while pending:
-            at,sp,link,saved,reg2=pending.pop();state=(at,sp,link,saved,reg2)
-            if state in seen:continue
-            seen.add(state);require(at in body,'Views child successor enters data or outside its body')
-            row=body[at];op=row.mnemonic.removesuffix('.w');following=at+len(row.raw)
-            control,conditional=_control(row);memory=dict(saved);new_sp=sp;new_link=link;return_pc=None
-            stack_step=op.startswith(('push','pop')) or row.operands.startswith('sp,') or bool(re.fullmatch(r'r(?:8|11), \[sp(?:, #-4\]!|\], #4)',row.operands))
-            require(not stack_step or at-start in stacks[family],'Views child changes an unreviewed SP/save instruction')
-            if at-start in stacks[family]:
-                if op.startswith(('push','pop')):
-                    regs=row.operands[1:-1].split(', ')
-                    if op=='push':
-                        new_sp=sp-4*len(regs)
-                        for i,reg in enumerate(regs):
-                            cell=new_sp+4*i;require(cell not in memory,'Views nested save overwrites a live caller slot')
-                            memory[cell]=link if reg=='lr' else reg
-                    else:
-                        for i,reg in enumerate(regs):
-                            cell=sp+4*i;require(cell in memory,'Views restore consumes an unowned save slot');value=memory.pop(cell)
-                            if reg=='pc':return_pc=value
-                            elif reg=='lr':new_link=value
-                            elif reg in ('r2','r3'):
-                                require(family=='vec_extend14','Views restores scratch into another register family')
-                            else:require(value==reg,'Views restore consumes another caller register')
-                        new_sp=sp+4*len(regs)
-                elif op in ('add','sub'):
-                    count=int(row.operands.split('#')[1],0);new_sp=sp+(count if op=='add' else -count)
-                elif op=='str':
-                    new_sp=sp-4;require(new_sp not in memory,'Views high save overwrites its caller');memory[new_sp]=row.operands.split(',')[0]
-                else:
-                    require(op=='ldr' and memory.get(sp)==row.operands.split(',')[0],'Views postindexed restore loses its high register')
-                    del memory[sp];new_sp=sp+4
-            if family=='slice_pop' and at-start==30:reg2=link
-            elif family=='slice_pop' and at-start==36:new_link=reg2
-            elif row.operands.startswith('lr,') and not stack_step:new_link=('scratch',at)
-            minimum=min(minimum,new_sp);updated=tuple(sorted(memory.items()))
-            if at in edges:
-                off,operation,target,role,frame=edges[at]
-                require(control in ('bl','b') and not conditional,'Views child edge changes call/tail family')
-                child=children[target,role]
-                child_token=following if control=='bl' else token
-                expected=new_sp if control=='bl' else expected_sp
-                result=walk(child,new_sp,child_token,expected,updated,child_token if control=='bl' else new_link,reg2)
-                minimum=min(minimum,result['lowest_SP'])
-                if control=='b':returns.extend(result['returns']);continue
-                require(result['restored_cells']==updated,'Views child changes live ancestor save cells')
-                new_link=following
-            elif return_pc is not None or control=='bx':
-                require(control=='return' if return_pc is not None else row.operands=='lr','Views child has an unreviewed return consumer')
-                pc=return_pc if return_pc is not None else new_link
-                require(pc==token and new_sp==expected_sp,'Views child loses its saved return PC or caller SP')
-                returns.append((at,pc,new_sp));continue
-            elif control in ('b','cbz','cbnz'):
-                target=_direct_target(row,control);require(target in body,'Views child local branch escapes its matched body')
-                pending.append((target,new_sp,new_link,updated,reg2))
-                if not conditional:continue
-            else:require(control is None,'Views child contains an unclassified PC effect')
-            require(following in body,'Views child falls outside its complete body')
-            pending.append((following,new_sp,new_link,updated,reg2))
-        require(returns,'Views child has no completed saved-PC return')
-        # A tail restore can consume its parent's cells. Its final map is the
-        # caller's enclosing map, not necessarily the cells present at entry.
-        final_cells=tuple((a,v) for a,v in cells if a>=expected_sp)
-        result=dict(function=start,entry_SP=entry,return_PC=token,return_SP=expected_sp,
-            lowest_SP=minimum,returns=tuple(sorted(set(returns))),restored_cells=final_cells,
-            architectural_LR_preserved=False)
-        nodes.append(result);completed[key]=result;active.pop();return result
-    sp=context.headers['visitor_frame'].start
-    for parent in parents:
-        for off,op,target,role,frame in parent['ordinary_edges']:
-            require(op=='bl','Views parent changes its call phase')
-            walk(children[target,role],sp,parent['function']+off+4,sp)
+def _child_returns(rows,context,parents,children):
+    from config_finite_returns import _closed_child_returns
+    sp=context.headers['visitor_frame'].start;stacks=_views_return_profiles()
+    nodes=_closed_child_returns(rows,parents,children,sp,stacks,('vec_extend14',))
     require(nodes and min(n['lowest_SP'] for n in nodes)==sp-72,'Views physical child tail maximum differs')
-    return tuple(nodes)
+    return nodes
 
 
-def _closure(objects,rows,context,parents,children):
+def _closure(objects,rows,context,parents,children,*,_widget=None):
     """Closed selected invocation; later shared-error callers stay pending."""
     root=context.headers['root']['proof'];visitor=context.headers['visitor']['proof'];V=visitor['function'];R=root['function']
+    extension=None
+    if _widget is not None:
+        # Only the other authored fixed family can enlarge this private walk.
+        # No public caller supplies a cut set, guard list or control profile.
+        from config_decoded_widgets import _widget_control_profile
+        extension=_widget_control_profile(_widget,context,parents,children)
     proofs=[root,visitor,*context.regions,context.outer['proof'],*context.helpers.values(),*parents,*children.values()]
     proofs=list({(p['function'],p['extent']):p for p in proofs if p['function']!=V+54}.values())
     selected={at:row for p in proofs for at,row in rows.items() if p['function']<=at<p['function']+p['extent']}
-    cuts={V+54,V+56,V+416,context.headers['root']['checksum_failure']['function']}
+    cuts={V+54,V+56,V+(4376 if extension else 416),context.headers['root']['checksum_failure']['function']}
+    padding=set() if extension is None else {V+3506}
+    for at in padding:
+        row=selected.get(at);preceding=selected.get(at-2)
+        require(row is not None and row.raw==b'\x00\xbf' and row.mnemonic=='nop' and not row.operands and
+            preceding is not None and preceding.mnemonic=='b' and _direct_target(preceding,'b')==V+3486,
+            'Widget terminal padding loses its exact predecessor/raw instruction')
+        del selected[at]
     edges={p['function']+off:(op,target,role) for p in proofs for off,op,target,role,frame in p['ordinary_edges']}
     returns=[];successors=[]
     for at,row in selected.items():
@@ -375,15 +320,29 @@ def _closure(objects,rows,context,parents,children):
             successors.append((at,target,following if family=='bl' and at!=R+126 else None));continue
         if family in ('b','cbz','cbnz'):
             target=_direct_target(row,family)
+            if extension is not None and at in extension['excluded_taken']:
+                require(target==extension['excluded_taken'][at][0] and conditional,
+                    'Widget guarded branch differs from its source/count predecessor')
+                require(following in selected,'Widget excluded branch lacks the actual ordinary successor')
+                successors.append((at,None,following));continue
             require(target in selected or target in cuts,'Views selected branch leaves its exact frontier')
             successors.append((at,target,following if conditional else None))
+            if extension is not None and at in extension['excluded_fallthrough']:
+                require(conditional and target==extension['excluded_fallthrough'][at][0],
+                    'Widget error union loses its checked actual frontier')
+                continue
             if not conditional:continue
-        elif family=='return' or family=='bx' and row.operands=='lr':returns.append(at);continue
+        elif family=='return' or family=='bx' and row.operands=='lr':
+            returns.append(at)
+            if extension is not None and conditional:
+                require(following in selected,'Widget conditional child return loses its untaken save-map path')
+                successors.append((at,None,following))
+            continue
         else:require(family is None,'Views selected invocation has an unresolved PC effect')
         require(following in selected or following in cuts,'Views selected fallthrough leaves its exact frontier')
     # Selected local successors plus every child return are closed before any
     # outside context is classified. Exact later entry sites grant no state.
-    return_nodes=_child_returns(rows,context,parents,children)
+    return_nodes=_child_returns(rows,context,parents,children) if extension is None else extension['nested_returns']
     def pending_call(current,expected):
         """Current typed identity only; no later invocation is activated."""
         require(current.mnemonic=='bl','foreign Views shared-error call family differs')
@@ -457,17 +416,23 @@ def _closure(objects,rows,context,parents,children):
             elif family in ('bx','blx'):require(family=='bx' and not conditional and row.operands=='lr','Views has an unresolved parent indirect ingress')
             else:require(not row.mnemonic.startswith('rfe') and family in (None,'b','bl','cbz','cbnz','return'),
                 'Views parent has an unsupported implicit/exception PC effect')
-    require({at-V for at,target,reason in pending}==set(SHARED_PENDING),'Views pending shared contexts are missing or retargeted')
+    expected_pending={off for off in SHARED_PENDING if extension is None or V+off not in selected}
+    require({at-V for at,target,reason in pending}==expected_pending,'Views pending shared contexts are missing or retargeted')
     return dict(selected_instructions=len(selected),successors=tuple(successors),nested_returns=return_nodes,
         stopped_frontiers=tuple(sorted(cuts)),outside_shared_contexts=tuple(sorted(pending)),
         pending_contexts_confer_state=False,full_visitor_return_pending=True)
 
 
-def first_boot_decoded_views(objects,instructions,source_context):
+def _first_boot_decoded_views_state(objects,instructions,source_context):
+    """Derive once; only the actual private Q/D exits may feed Widgets.
+
+    The public description remains a readonly report, never a capability.
+    The returned state neither reinitializes Config nor acquires ownership.
+    """
     prefix,context=_first_boot_decoded_u16_state(objects,instructions,source_context)
     parents=_parent(objects,instructions,context);children=_children(objects,instructions,parents)
     locals_=_local_effects(context)
-    errors,successes,iterations=_phase_outcomes(objects,instructions,context,parents,children)
+    errors,successes,iterations,exits=_phase_outcomes(objects,instructions,context,parents,children)
     # The enlarged invocation must be checked independently of the public
     # prefix control summary. Deferred diagnostics/restores never become cuts
     # that pretend to prove a nonreturning machine edge.
@@ -476,7 +441,7 @@ def first_boot_decoded_views(objects,instructions,source_context):
     low=frame.start-72;_physical(objects,low,S,context.boundary['history']['preclaim']['startup']['copy']['stack_bottom'])
     task=next(v['interval'] for v in context.boundary['physical_protected'] if v['kind']=='Boot_task')
     require(not(task[0]<S and low<task[1]) and context.owner.start+14604<=low,'Views child physically aliases Config/Boot')
-    return dict(phase='first_boot_decoded_views_pending_widgets_remaining_visitor_canonical_and_loader_routes',mode='sizez',
+    description=dict(phase='first_boot_decoded_views_pending_widgets_remaining_visitor_canonical_and_loader_routes',mode='sizez',
         source_context=prefix['source_context'],prefix_errors=tuple(v for v in prefix['outcomes'] if v['error'] is not None),
         boot_view_domain=(0,255),group_errors=errors,successes=successes,iterations=iterations,control=closure,locals=locals_,
         Widget_ready=dict(frontier=context.headers['visitor']['proof']['function']+416,top_count=8,bytes_consumed=0),
@@ -491,3 +456,8 @@ def first_boot_decoded_views(objects,instructions,source_context):
         pending=('Widgets and remaining source groups','full visitor error/normal restore','D finalize and canonical Compare',
             'decoded validation and all other loader routes/modes','diagnostic/default sink/PANICKED graph',
             'acquired owner/publication/full resource and final H2 gates'))
+    return description,_ViewsState(prefix,context,parents,children,exits,closure)
+
+
+def first_boot_decoded_views(objects,instructions,source_context):
+    return _first_boot_decoded_views_state(objects,instructions,source_context)[0]
