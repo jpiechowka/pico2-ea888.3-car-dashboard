@@ -58,6 +58,74 @@ class MemoryQualification(unittest.TestCase):
         stack=qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),0x7fe00,policy)
         return elf,eav,stack
 
+    def owned_fixture(self):
+        # A deliberately synthetic full-image consumer fixture. Only the
+        # declared source producer is mocked; readers really check policy,
+        # geometry, exact instruction sites and current ELF/EAV identities.
+        from config_platform import PlatformPolicy,qualified_stack_result
+        from config_owned_access import OwnedAccess
+        from config_regions import Storage,borrow
+        from config_headers import ROOT
+        from config_entry import CONFIG
+        _,eav,_=self.fixture();advanced=0x10001000;loader=0x10002000
+        code=bytearray(0x1000+1200)
+        code[84:88]=bytes.fromhex('c4f83900')
+        config_anchor=loader+32;widget_anchor=loader+256
+        code[config_anchor+28-advanced:config_anchor+32-advanced]=bytes.fromhex('48f80010')
+        code[widget_anchor+670-advanced:widget_anchor+674-advanced]=bytes.fromhex('c4f85209')
+        data_offset=len(eav)+len(code);raw=eav+code+bytes(14604)
+        flash=(0,1,2,0x10000000,0,len(eav),0,0,1,0)
+        text=(0,1,6,advanced,len(eav),len(code),0,0,2,0)
+        data=(0,1,7,0x20000000,data_offset,14604,0,0,4,0)
+        bss=(0,8,3,0x2000390c,0,128,0,0,4,0)
+        uninit=(0,8,3,0x2000398c,0,256,0,0,4,0)
+        role='_RNvMs2_NtCs_16dashboard_config8advancedNtB5_15AdvancedDisplay11for_channel'
+        elf=SimpleNamespace(data=bytes(raw),sections=[flash,text,data,bss,uninit],segments=[],
+            named={'.data':data,'.bss':bss,'.uninit':uninit,'.end_block':flash},
+            symbols=dict(__euninit=0x20003a8c,__sheap=0x20003a90,_stack_end=0x20003a90,
+                _stack_start=0x20080000,SIO_IRQ_FIFO=0x2000398d,sio_fifo_ram=0x20003995),
+            functions={role:(advanced|1,104,1),ROOT:(loader|1,1200,1)},
+            symbol_entries=[(CONFIG,0x20000000,14604,1,2)])
+        frame=Storage('stack:configuration.default','loader',0,456,8,'default_refill',True)
+        guards=(Storage(frame.space,'loader:saved',352,104,4,frame.phase,False),
+            Storage(frame.space,'original fault',8,16,4,frame.phase,False))
+        slot=Storage('address','private unpublished ConfigSlot',0x20000000,14604,4,frame.phase,True)
+        dependencies=(OwnedAccess('configuration_versions',config_anchor,config_anchor+28,'default',
+            borrow(slot,0,14576,frame.phase,writable=True),frame,'r8',guards),
+            OwnedAccess('advanced_default_fields',advanced,advanced+84,'widget',
+            borrow(frame,236,64,frame.phase,writable=True),frame,'r4',guards))+tuple(
+            OwnedAccess('widget_colors',widget_anchor,widget_anchor+670,'widget'+str(i),
+                borrow(slot,444+220*i,220,frame.phase,writable=True),frame,'r4',guards,i) for i in range(8))
+        policy=PlatformPolicy(0x1000000c,0x10000000+len(eav),hashlib.sha256(eav[12:]).hexdigest(),
+            hashlib.sha256(elf.data).hexdigest(),owned_dependencies=dependencies,owned_family='sizez_default_refill')
+        headroom=0x20080000-0x20003a90
+        stack=qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy)
+        return elf,eav,stack
+
+    def test_actual_image_reader_preserves_owned_family_and_rejects_lost_context(self):
+        from copy import deepcopy
+        elf,eav,stack=self.owned_fixture()
+        with patch.object(check_memory_layout,'ElfImage',return_value=elf),\
+             patch.object(check_memory_layout,'check_stack_budget',return_value=stack),patch.object(check_memory_layout,'check_flash_lockout'):
+            record=check_memory_layout.check('synthetic-owned.elf')
+        self.assertEqual(check_memory_layout.read_image_result(json.loads(json.dumps(record)),elf,eav),record)
+        policy=record['stack']['policies'][0]
+        self.assertEqual((policy['schema'],policy['owned_family'],len(policy['owned_dependencies'])),(2,'sizez_default_refill',10))
+        for fault in ('missing','empty','one_lost','duplicate','old','receiver','pair','phase','operation','width'):
+            changed=deepcopy(record);p=changed['stack']['policies'][0]
+            if fault=='missing':p.pop('owned_dependencies')
+            elif fault=='empty':p['owned_dependencies']=[]
+            elif fault=='one_lost':p['owned_dependencies'].pop()
+            elif fault=='duplicate':p['owned_dependencies'][-1]=deepcopy(p['owned_dependencies'][-2])
+            elif fault=='old':p['scope']='h2-rp2350-secure-owned-access-v2'
+            elif fault=='receiver':p['owned_dependencies'][1]['receiver_start']+=4
+            elif fault=='pair':p['owned_dependencies'][-1]['loop_index']=0
+            elif fault=='phase':p['owned_dependencies'][0]['owner']['storage']['phase']='published'
+            elif fault=='operation':p['owned_dependencies'][0]['operation']='STREX'
+            else:p['owned_dependencies'][0]['width']=8
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                check_memory_layout.read_image_result(changed,elf,eav)
+
     def test_actual_memory_path_returns_record_only_after_all_checks(self):
         elf,eav,stack=self.fixture();events=[]
         with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\

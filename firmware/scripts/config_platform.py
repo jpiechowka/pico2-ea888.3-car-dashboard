@@ -1,7 +1,8 @@
 """Finite conditional platform scope for named RP2350 stack accounting.
 
-Version1 assumes a usable stack, normal fresh Secure Core0 IMAGE_DEF context,
-Secure UNALIGN_TRP=0 at relevant loads, and readable Normal embedded input.
+Version3 assumes a usable stack, normal fresh Secure Core0 IMAGE_DEF context,
+Secure UNALIGN_TRP=0 at relevant single accesses, readable Normal embedded
+input and effective Normal/write permission for the closed owned stores.
 These are external conditions, never host-established hardware facts. They do
 not waive source/body/ordinary/control/range/ownership/callback proof. Unknown
 effects cannot become assumptions. No established policy is supported here.
@@ -14,17 +15,20 @@ import re
 import struct
 import zlib
 from config_regions import View
+from config_owned_access import OwnedAccess,read_owned_access,current_owned_access
 from validation import require
 
 TARGET='thumbv8m.main-none-eabihf'
 BOOT_CONTEXT='fresh_normal_core0_image_def'
-SCOPE='h2-rp2350-secure-embedded-eav-v1'
-SCOPE_SHA256='f280d95716938fd66da3ee3a716acf604d35fec9b75c24807230ef3149bba69a'
+SCOPE='h2-rp2350-secure-owned-access-v3'
+SCOPE_SHA256='0f24a2283b80c56db836e71c021433ace3e7b5044a1eaa60ed2777cef9256a70'
+POLICY_SCHEMA=2
 ASSUMPTIONS=(
     'A valid usable stack is available.',
     'Executing Core0 is Secure in the normal fresh ROM IMAGE_DEF context; other entry modes are outside scope.',
-    'Secure CCR.UNALIGN_TRP remains zero throughout the relevant f32 single-LDR accesses.',
+    'Secure CCR.UNALIGN_TRP remains zero at every dependent ordinary single access.',
     'The complete bound embedded EAV payload remains readable Normal memory under effective MPU, security and XIP mapping.',
+    'Every internally bound owned STR footprint remains compatible Normal memory with effective write permission under MPU, security and interconnect mappings.',
 )
 BOUND_KEYS=('boot','constructor','runtime','dashboard')
 
@@ -35,7 +39,9 @@ class PlatformPolicy:
     input_end:int
     input_sha256:str
     elf_sha256:str
-    schema:int=1
+    owned_dependencies:tuple=()
+    owned_family:str='readonly_eav'
+    schema:int=POLICY_SCHEMA
     scope:str=SCOPE
     scope_sha256:str=SCOPE_SHA256
     status:str='assumed_external'
@@ -48,7 +54,7 @@ class PlatformPolicy:
     hardware_qualified:bool=False
 
     def __post_init__(self):
-        require(type(self.schema) is int and self.schema==1 and (self.scope,self.scope_sha256)==(SCOPE,SCOPE_SHA256),
+        require(type(self.schema) is int and self.schema==POLICY_SCHEMA and (self.scope,self.scope_sha256)==(SCOPE,SCOPE_SHA256),
                 'missing/stale platform scope declaration')
         require(self.status=='assumed_external' and self.hardware_qualified is False,'unresolved or unproved platform status')
         require(self.target==TARGET and type(self.core) is int and self.core==0 and self.security=='secure' and
@@ -58,16 +64,39 @@ class PlatformPolicy:
         require(all(isinstance(v,str) and re.fullmatch('[0-9a-f]{64}',v) for v in (self.input_sha256,self.elf_sha256)),
                 'platform input/artifact identity is missing')
         require(self.assumptions==ASSUMPTIONS and isinstance(self.assumptions,tuple),'platform assumptions changed or lost')
+        require(isinstance(self.owned_dependencies,tuple) and len(self.owned_dependencies)<=32 and
+            all(isinstance(v,OwnedAccess) for v in self.owned_dependencies),'untyped/unbounded owned platform dependencies')
+        require(not self.owned_dependencies or self.schema==2,'owned stores require the new platform declaration')
+        keys=tuple((v.role,v.activation,v.owner.storage.space,v.owner.storage.identity,v.owner.start) for v in self.owned_dependencies)
+        require(len(set(keys))==len(keys),'duplicate owned platform dependency/context')
+        if self.owned_family=='readonly_eav':require(not self.owned_dependencies,'readonly EAV family cannot authorize owned stores')
+        else:
+            require(self.owned_family=='sizez_default_refill' and len(self.owned_dependencies)==10,
+                'missing/unknown finite owned dependency family')
+            advanced=tuple(v for v in self.owned_dependencies if v.role=='advanced_default_fields')
+            configs=tuple(v for v in self.owned_dependencies if v.role=='configuration_versions')
+            widgets=tuple(v for v in self.owned_dependencies if v.role=='widget_colors')
+            require(len(advanced)==len(configs)==1 and len(widgets)==8 and
+                tuple(v.loop_index for v in widgets)==tuple(range(8)),
+                'owned default family loses a paired store/loop instance')
+            require(tuple(v.role for v in self.owned_dependencies)==
+                ('configuration_versions','advanced_default_fields')+('widget_colors',)*8,
+                'owned source-stage dependency order changed')
+            require(all(v.frame==configs[0].frame for v in self.owned_dependencies) and
+                all(v.owner.storage==configs[0].owner.storage for v in widgets),
+                'owned family mixes parent activations/private slots')
 
     def for_f32_load(self,cursor):
         require(type(cursor) is int and self.input_start<=cursor<cursor+4<=self.input_end,'f32 read exceeds bound platform input')
         return self
 
     def to_record(self):
-        record=asdict(self);record['assumptions']=list(self.assumptions);return record
+        record=asdict(self);record['assumptions']=list(self.assumptions)
+        record['owned_dependencies']=[v.to_record() for v in self.owned_dependencies]
+        return record
 
 
-def reviewed_eav_policy(objects,payload,context,*,contradictory_effects):
+def reviewed_eav_policy(objects,payload,context,*,contradictory_effects,owned_dependencies=()):
     """Called only with recognized source input and closed source-effect facts.
 
     The returned assumption does not establish their constructor/transport or
@@ -80,7 +109,8 @@ def reviewed_eav_policy(objects,payload,context,*,contradictory_effects):
             not payload.storage.writable and not payload.writable and payload.offset==12 and
             payload.extent==payload.storage.extent-12,'platform input lacks its recognized complete readonly EAV payload')
     raw=objects.read_only(payload.start,payload.extent)
-    return PlatformPolicy(payload.start,payload.start+payload.extent,hashlib.sha256(raw).hexdigest(),hashlib.sha256(objects.elf.data).hexdigest())
+    return PlatformPolicy(payload.start,payload.start+payload.extent,hashlib.sha256(raw).hexdigest(),hashlib.sha256(objects.elf.data).hexdigest(),
+        owned_dependencies=owned_dependencies,owned_family='sizez_default_refill' if owned_dependencies else 'readonly_eav')
 
 
 def read_policy(record,expected):
@@ -130,11 +160,16 @@ def current_image_policy(record,elf,expected_eav=None):
     """
     require(isinstance(record,dict) and all(k in record for k in
         ('input_start','input_end','input_sha256','elf_sha256')),'missing current image platform policy')
-    policy=PlatformPolicy(record['input_start'],record['input_end'],record['input_sha256'],record['elf_sha256'])
+    require(isinstance(record.get('owned_dependencies'),list) and len(record['owned_dependencies'])<=32,
+        'image policy lost its bounded owned dependencies')
+    dependencies=tuple(read_owned_access(v) for v in record['owned_dependencies'])
+    policy=PlatformPolicy(record['input_start'],record['input_end'],record['input_sha256'],record['elf_sha256'],
+        owned_dependencies=dependencies,owned_family=record.get('owned_family'))
     read_policy(record,policy)
     require(hashlib.sha256(elf.data).hexdigest()==policy.elf_sha256,'platform policy belongs to another ELF')
     from config_stack import DiagnosticObjects
     objects=DiagnosticObjects(elf,{})
+    for dependency in dependencies:current_owned_access(objects,dependency)
     extent=policy.input_end-policy.input_start
     require(12<extent+12<=16384 and policy.input_start>=0x1000000c,'platform payload has no bounded EAV envelope')
     start=policy.input_start-12

@@ -210,8 +210,9 @@ class CaptureMemoryQualification(unittest.TestCase):
     def fixture(self):
         from test_validation_policy import MemoryQualification
         import check_memory_layout
-        elf,eav,stack=MemoryQualification.fixture(self)
-        return elf,eav,check_memory_layout._qualified_image(stack,elf,512,0x7fe00)
+        elf,eav,stack=MemoryQualification.owned_fixture(MemoryQualification())
+        static,headroom=check_memory_layout.geometry(elf)
+        return elf,eav,check_memory_layout._qualified_image(stack,elf,static,headroom)
 
     def test_actual_child_result_is_retained_and_rechecked_against_current_input(self):
         elf,eav,record=self.fixture()
@@ -223,6 +224,7 @@ class CaptureMemoryQualification(unittest.TestCase):
             with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child) as run:
                 evidence=capture.run_memory_gate(frozen,destination,eav)
                 self.assertEqual(evidence['record'],record)
+                self.assertLessEqual((destination/'memory-layout.json').stat().st_size,65536)
                 self.assertEqual(capture.read_memory_gate(destination/'memory-layout.json',frozen,eav),evidence)
                 self.assertEqual(run.call_count,1)
                 with self.assertRaises(AssertionError):capture.read_memory_gate(destination/'memory-layout.json',frozen,eav+b'changed')
@@ -230,14 +232,16 @@ class CaptureMemoryQualification(unittest.TestCase):
 
     def test_nonzero_missing_and_intermediate_child_output_never_admit(self):
         elf,eav,record=self.fixture()
-        for kind in ('nonzero','missing','intermediate','lost','stale'):
+        for kind in ('nonzero','missing','intermediate','lost','stale','owned_lost','owned_changed','oversized'):
             with self.subTest(kind=kind),tempfile.TemporaryDirectory() as folder:
                 destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
                 def child(argv,**kwargs):
-                    value=record['stack'] if kind=='intermediate' else dict(record)
+                    value=json.loads(json.dumps(record['stack'] if kind=='intermediate' else record))
                     if kind=='lost':value['status']='IMAGE_PASS'
                     if kind=='stale':value['elf_sha256']='0'*64
-                    if kind!='missing':Path(argv[-1]).write_text(json.dumps(value))
+                    if kind=='owned_lost':value['stack']['policies'][0]['owned_dependencies'].pop()
+                    if kind=='owned_changed':value['stack']['policies'][0]['owned_dependencies'][1]['receiver_start']+=4
+                    if kind!='missing':Path(argv[-1]).write_text(json.dumps(value)+(' '*65537 if kind=='oversized' else ''))
                     if kind=='nonzero':raise subprocess.CalledProcessError(7,argv)
                     return subprocess.CompletedProcess(argv,0)
                 with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child),\
@@ -294,6 +298,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                     else:
                         capture.main();manifest=json.loads((destination/'manifest.json').read_text())
                         self.assertEqual(manifest['memory_layout'],record)
+                        self.assertEqual(len(manifest['memory_layout']['stack']['policies'][0]['owned_dependencies']),10)
                         self.assertEqual(manifest['memory_layout_json_sha256'],capture.hashlib.sha256((destination/'memory-layout.json').read_bytes()).hexdigest())
 
 

@@ -2496,6 +2496,142 @@ class ConditionalStackPolicy(unittest.TestCase):
             config_platform.qualified_stack_result(dict(bounds,constructor=32768),65536,policy)
 
 
+class OwnedPlatformDependencies(unittest.TestCase):
+    def fixture(self,role='advanced_default_fields'):
+        from config_regions import Storage,borrow
+        import config_owned_access
+        frame=Storage('stack:configuration.default','loader',0,456,8,'default_refill',True)
+        saved=Storage(frame.space,'loader:saved',352,104,4,frame.phase,False)
+        fault=Storage(frame.space,'original fault',8,16,4,frame.phase,False)
+        if role=='advanced_default_fields':
+            owner=borrow(frame,236,64,frame.phase,writable=True);register='r4';anchor=0x10010000;offset=84
+        else:
+            slot=Storage('address','private unpublished ConfigSlot',0x2000031c,14604,4,frame.phase,True)
+            owner=borrow(slot,0,14576,frame.phase,writable=True);register='r8';anchor=0x10020000;offset=28
+        return config_owned_access.OwnedAccess(role,anchor,anchor+offset,'default',owner,frame,register,(saved,fault))
+
+    def test_owned_records_keep_symbolic_stack_and_concrete_private_slot_distinct(self):
+        import config_owned_access
+        for role in ('advanced_default_fields','configuration_versions'):
+            value=self.fixture(role);record=value.to_record()
+            self.assertEqual(config_owned_access.read_owned_access(json.loads(json.dumps(record))),value)
+            self.assertEqual(record['operation'],'ordinary_single_STR')
+            self.assertEqual((record['direction'],record['width']),('write',4))
+            self.assertEqual(record['source_phase'],'default_refill')
+            self.assertEqual(record['site']-record['anchor'],84 if role=='advanced_default_fields' else 28)
+            self.assertEqual(record['owner']['storage']['space'],value.owner.storage.space)
+            self.assertNotIn('runtime_sp',record)
+
+    def test_owned_record_rejects_changed_role_operation_receiver_phase_and_guard(self):
+        import config_owned_access
+        from copy import deepcopy
+        for role in ('advanced_default_fields','configuration_versions'):
+            record=self.fixture(role).to_record()
+            for fault in ('role','operation','width','direction','site','phase','receiver','short','readonly','guard','saves','unknown_owner','extra'):
+                changed=deepcopy(record)
+                if fault=='role':changed['role']='arbitrary_store'
+                elif fault=='operation':changed['operation']='STM'
+                elif fault=='width':changed['width']=8
+                elif fault=='direction':changed['direction']='read'
+                elif fault=='site':changed['site']+=2
+                elif fault=='phase':changed['owner']['storage']['phase']='retired_label'
+                elif fault=='receiver':changed['receiver_register']='r0'
+                elif fault=='short':changed['owner']['extent']-=1
+                elif fault=='readonly':changed['owner']['writable']=False
+                elif fault=='guard':
+                    changed['protected'][1].update(space=changed['owner']['storage']['space'],
+                        start=changed['owner']['storage']['start']+changed['owner']['offset'],extent=4)
+                elif fault=='saves':changed['protected'].pop(0)
+                elif fault=='unknown_owner':changed['owner']['storage']['identity']='arbitrary raw output'
+                else:changed['approved']=True
+                with self.subTest(role=role,fault=fault),self.assertRaises(AssertionError):
+                    config_owned_access.read_owned_access(changed)
+
+    def test_policy_retains_exact_expected_dependency_tuple_and_rejects_loss(self):
+        import config_platform
+        from dataclasses import replace
+        from copy import deepcopy
+        objects,view,context=ConditionalStackPolicy.fixture(self)
+        config=self.fixture('configuration_versions');advanced=self.fixture()
+        from config_owned_access import OwnedAccess
+        from config_regions import borrow
+        dependencies=(config,advanced)+tuple(OwnedAccess('widget_colors',0x10022000,0x10022000+670,
+            'widget'+str(i),borrow(config.owner.storage,444+220*i,220,config.frame.phase,writable=True),
+            config.frame,'r4',config.protected,i) for i in range(8))
+        policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
+        self.assertEqual(policy.schema,2)
+        self.assertEqual(policy.owned_dependencies,dependencies)
+        record=policy.to_record()
+        self.assertEqual(config_platform.read_policy(json.loads(json.dumps(record)),policy),policy)
+        self.assertEqual(config_platform.compose_policy(policy,(policy,policy)),policy)
+        for fault in ('missing','empty','duplicate','extra','v1','phase','width','family'):
+            changed=deepcopy(record)
+            if fault=='missing':changed.pop('owned_dependencies')
+            elif fault=='empty':changed['owned_dependencies']=[]
+            elif fault=='duplicate':changed['owned_dependencies'].append(deepcopy(changed['owned_dependencies'][0]))
+            elif fault=='extra':changed['owned_dependencies'].append(dict(changed['owned_dependencies'][0],activation='unrelated'))
+            elif fault=='v1':changed['schema']=1
+            elif fault=='phase':changed['owned_dependencies'][0]['owner']['storage']['phase']='retired'
+            elif fault=='width':changed['owned_dependencies'][0]['width']=8
+            else:changed['owned_family']='readonly_eav'
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_platform.read_policy(changed,policy)
+        with self.assertRaises(AssertionError):config_platform.compose_policy(policy,(replace(policy,owned_dependencies=()),))
+        with self.assertRaises(AssertionError):replace(policy,owned_dependencies=dependencies+(dependencies[0],))
+        # An unresolved partial helper requirement is not a producer-owned fact.
+        for supplied in (dict(operation='single_word_store',site=dependencies[0].site,status='unresolved_object_store_policy'),None):
+            with self.subTest(supplied=supplied),self.assertRaises(AssertionError):
+                config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=(supplied,))
+
+    def test_current_owned_sites_bind_typed_functions_bytes_and_relocations(self):
+        import config_owned_access,config_default
+        from dataclasses import replace
+        for code,data in ((0,0),(0x2800,0x19000)):
+            objects,records,item=RefillChildInterfaces.fixture(self,'sizez',code,data)
+            instance=next(v for v in item['instances'] if v['shape']=='advanced_for_channel_z')
+            advanced=replace(self.fixture(),anchor=instance['address']+code,site=instance['address']+code+84)
+            self.assertEqual(config_owned_access.current_owned_access(objects,advanced),advanced)
+            objects2,records2,root,frame=DefaultPreparationInterfaces.fixture(self,code,data)
+            result=config_default.default_preparation(objects2,root,records2,frame,())
+            config=config_owned_access.OwnedAccess('configuration_versions',result['proof']['function'],
+                result['proof']['function']+28,'default',result['config'],frame,'r8',result['protected'])
+            self.assertEqual(config_owned_access.current_owned_access(objects2,config),config)
+            from config_regions import borrow
+            widgets=tuple(config_owned_access.OwnedAccess('widget_colors',result['continuation'],result['continuation']+670,
+                'widget'+str(i),borrow(result['config'].storage,444+220*i,220,frame.phase,writable=True),
+                frame,'r4',result['protected'],i) for i in range(8))
+            for widget in widgets:self.assertEqual(config_owned_access.current_owned_access(objects2,widget),widget)
+            for current,value in ((objects,advanced),(objects2,config),(objects2,widgets[0])):
+                section=next(s for s in current.elf.sections if s[2]&2 and s[3]<=value.site<value.site+4<=s[3]+s[5])
+                index=section[4]+value.site-section[3];raw=current.elf.data;mutant=bytearray(raw);mutant[index]^=1
+                current.elf.data=bytes(mutant)
+                with self.subTest(role=value.role,code=code),self.assertRaises(AssertionError):
+                    config_owned_access.current_owned_access(current,value)
+                current.elf.data=raw
+
+    def test_widget_roles_keep_all_eight_owner_index_and_receiver_pairs(self):
+        import config_owned_access
+        from config_regions import borrow
+        from dataclasses import replace
+        config=self.fixture('configuration_versions')
+        for i in range(8):
+            value=config_owned_access.OwnedAccess('widget_colors',0x10030000,0x10030000+670,'widget'+str(i),
+                borrow(config.owner.storage,444+220*i,220,config.frame.phase,writable=True),
+                config.frame,'r4',config.protected,i)
+            record=value.to_record()
+            self.assertEqual(config_owned_access.read_owned_access(record),value)
+            self.assertEqual(record['receiver_start']+0x952,value.owner.start+182)
+            for fault in ('index','offset','short','phase','receiver','float_receiver'):
+                changed=json.loads(json.dumps(record))
+                if fault=='index':changed['loop_index']=(i+1)%8
+                elif fault=='offset':changed['owner']['offset']+=4
+                elif fault=='short':changed['owner']['extent']=219
+                elif fault=='phase':changed['owner']['storage']['phase']='published'
+                elif fault=='receiver':changed['receiver_start']+=220
+                else:changed['receiver_start']=float(changed['receiver_start'])
+                with self.subTest(i=i,fault=fault),self.assertRaises(AssertionError):config_owned_access.read_owned_access(changed)
+            for invalid in (-1,8,True,None):
+                with self.subTest(index=invalid),self.assertRaises(AssertionError):replace(value,loop_index=invalid)
+
 class OrdinaryContexts(unittest.TestCase):
     def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self):
         from config_regions import Storage,require_disjoint
