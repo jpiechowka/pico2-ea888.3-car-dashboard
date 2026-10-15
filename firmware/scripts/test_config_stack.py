@@ -5946,4 +5946,181 @@ class FirstBootHistory(unittest.TestCase):
                 else:_state_writers(changed,bodies)
 
 
+class SameBLoaderBoundary(unittest.TestCase):
+    def fixture(self,mode='sizez',delta=0):
+        from config_build_source import make_source_context
+        objects,rows,context=FirstBootHistory().fixture(mode,delta);elf=objects.elf
+        item=next(v for v in json.loads((Path(__file__).parent/'fixtures/config-loader-boundary.json').read_text()) if v['mode']==mode)
+        for parent in item['parents']:
+            a=parent['address'];index=next(i for i,s in enumerate(elf.sections) if s[2]&4 and s[3]<=a<a+parent['extent']<=s[3]+s[5])
+            for name in parent['raw_roles']:
+                elf.functions[name]=(a|1,parent['extent'],index)
+            elf.mapping_symbols.extend((('$'+kind,a,index) for a,z,kind in parent['mapping']) )
+            objects.sizes[a]=parent['frame']
+        for at,encoded in item['segments']:StartupConfigurationCopy.put(objects,at,bytes.fromhex(encoded))
+        for v in item['records']:rows[v['address']]=Instruction(v['address'],bytes.fromhex(v['bytes']),v['mnemonic'],v['operands'])
+        if delta:
+            for parent in item['parents']:
+                for kind,lo,hi,register in parent['receivers']:
+                    if kind=='pc_literal':StartupConfigurationCopy.put(objects,parent['address']+hi,struct.pack('<I',item['config']+delta))
+                    else:
+                        for offset,operation,value in ((lo,'movw',(item['config']+delta)&0xffff),(hi,'movt',(item['config']+delta)>>16)):
+                            self.mov(objects,rows,parent['address']+offset,operation,register,value)
+        context=make_source_context(elf.data,context.attempt,context.build_options,dict(context.sources))
+        return objects,rows,context,item
+
+    @staticmethod
+    def mov(objects,rows,at,operation,register,value):
+        rd=14 if register=='lr' else int(register[1:]);first=(0xf240 if operation=='movw' else 0xf2c0)|((value>>12)&15)|(((value>>11)&1)<<10)
+        raw=struct.pack('<HH',first,(((value>>8)&7)<<12)|(rd<<8)|(value&255))
+        StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,operation,register+', #'+hex(value))
+
+    @staticmethod
+    def rebound(objects,context):
+        from config_build_source import make_source_context
+        return make_source_context(objects.elf.data,context.attempt,context.build_options,dict(context.sources))
+
+    def test_current_modes_derive_restored_SP_and_same_static_points_without_an_owner(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for mode,frame,entry,count in (('speed2',1288,72,34),('sizes',696,72,33),('sizez',456,88,41)):
+            for delta in (0,0x4000):
+                objects,rows,context,item=self.fixture(mode,delta);proof=first_boot_loader_boundary(objects,rows,context)
+                self.assertEqual(proof['phase'],'first_boot_loader_pending_consuming_phase_closure')
+                self.assertEqual(proof['loader_geometry']['entry_SP'],0x20080000-entry)
+                self.assertEqual(proof['loader_geometry']['frame'],(0x20080000-entry-frame,0x20080000-entry))
+                self.assertEqual(len(proof['static_producers']),count)
+                self.assertTrue(all(v['value']==item['config']+delta for v in proof['static_producers']))
+                self.assertFalse(proof['consuming_phase_closure']);self.assertNotIn('acquired_owner',proof)
+                self.assertFalse(proof['hardware_qualified'])
+
+    def test_new_root_frame_rejects_physical_section_LOAD_and_OBJECT_aliases(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for mode in ('speed2','sizes','sizez'):
+            for kind in ('section','LOAD','OBJECT'):
+                objects,rows,context,item=self.fixture(mode);address=0x20080000-400
+                if kind=='section':objects.elf.sections.append((0,8,3,address,0,8,0,0,4,0))
+                elif kind=='LOAD':objects.elf.segments.append((1,0,address,address,0,8,6,4))
+                else:
+                    # Metadata-only forged object in an allocated section:
+                    # unlike Storage.space names, physical addresses overlap.
+                    index=next(i for i,s in enumerate(objects.elf.sections) if s[2]&2)
+                    objects.elf.symbol_entries.append(('foreign_stack_object',address,8,17,index))
+                with self.subTest(mode=mode,kind=kind),self.assertRaises(AssertionError):first_boot_loader_boundary(objects,rows,context)
+
+    def test_actual_stack_bound_and_checked_metadata_extents_cannot_be_bypassed(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for kind in ('overflow_section','overflow_LOAD','overflow_OBJECT','stack_bottom'):
+            objects,rows,context,item=self.fixture()
+            if kind=='overflow_section':objects.elf.sections.append((0,8,3,0xfffffff0,0,32,0,0,4,0))
+            elif kind=='overflow_LOAD':objects.elf.segments.append((1,0,0xfffffff0,0xfffffff0,0,32,6,4))
+            elif kind=='overflow_OBJECT':objects.elf.symbol_entries.append(('overflow',0xfffffff0,32,17,2))
+            else:
+                # Root needs456 more bytes below its entry, beyond preclaim.
+                elf=objects.elf;old=elf.named['.uninit'];index=elf.sections.index(old);limit=0x2007ff80
+                new=tuple(limit-old[3] if i==5 else v for i,v in enumerate(old));elf.sections[index]=new;elf.named['.uninit']=new
+                elf.symbol_entries=[(n,limit if n in ('_stack_end','__euninit') else a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+                elf.segments=[tuple(new[5] if i==5 else v for i,v in enumerate(s)) if s[2]==old[3] else s for s in elf.segments]
+                from config_boot_history import first_boot_history
+                first_boot_history(objects,rows,context)  # The shorter prefix still fits.
+            with self.subTest(kind=kind),self.assertRaises(AssertionError):first_boot_loader_boundary(objects,rows,context)
+
+    def test_static_point_cannot_select_another_address_even_with_coherent_bytes(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,context,item=self.fixture(mode)
+            for parent in item['parents']:
+                for kind,lo,hi,register in parent['receivers'][:1]:
+                    if kind=='pc_literal':StartupConfigurationCopy.put(objects,parent['address']+hi,struct.pack('<I',item['config']+4))
+                    else:self.mov(objects,rows,parent['address']+lo,'movw',register,(item['config']+4)&0xffff)
+                    with self.subTest(mode=mode,parent=parent['role']),self.assertRaises(AssertionError):
+                        first_boot_loader_boundary(objects,rows,self.rebound(objects,context))
+                    # Rebuild each parent case so unrelated mismatches cannot
+                    # mask a validator/visitor point with an earlier root one.
+                    objects,rows,context,item=self.fixture(mode)
+
+    def test_root_prologue_frame_and_semantic_SP_changes_reject(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        from dataclasses import replace
+        for mode in ('speed2','sizes','sizez'):
+            for kind in ('frame','SP'):
+                objects,rows,context,item=self.fixture(mode);root=next(p for p in item['parents'] if 'load_at_boot' in p['role']);at=root['address']
+                if kind=='frame':objects.sizes[at]+=8
+                else:rows[at]=replace(rows[at],operands='{r0, r7, lr}')
+                with self.subTest(mode=mode,kind=kind),self.assertRaises(AssertionError):first_boot_loader_boundary(objects,rows,context)
+
+    def test_protected_shapes_keep_taken_padding_tasks_P_and_all_caller_cells(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,context,item=self.fixture(mode);proof=first_boot_loader_boundary(objects,rows,context)
+            self.assertEqual(proof['taken_state'],dict(address=item['config']+14600,width=1,value=1,source='same successful once transition'))
+            protected={v['kind']:v['interval'] for v in proof['physical_protected']}
+            self.assertEqual(protected['taken_and_enclosing_padding'],(item['config']+14600,item['config']+14604))
+            self.assertEqual(protected['executor_P'],(0x2007ffe8,0x2007fff0))
+            self.assertEqual(protected['retained_callers'],(proof['loader_geometry']['entry_SP'],0x20080000))
+            self.assertEqual(protected['Boot_task'][1]-protected['Boot_task'][0],48)
+            self.assertTrue(proof['initial_file_facts_not_live_reinitialization'])
+            self.assertEqual(proof['initial_fact_expiry'],'first relevant decode/refill/publication mutation')
+            self.assertFalse(proof['exception_absence_established']);self.assertTrue(proof['requires_H8_consumed_input_closure'])
+            self.assertTrue(proof['requires_M2_pre_init_source_reconciliation'])
+
+    def test_context_or_supplied_history_record_cannot_substitute_for_internal_recomputation(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        objects,rows,context,item=self.fixture()
+        for supplied in (None,dict(owner=True,history_complete=True,B=item['config']),context.to_record()):
+            with self.assertRaises(AssertionError):first_boot_loader_boundary(objects,rows,supplied)
+        with self.assertRaises(TypeError):first_boot_loader_boundary(objects,rows,context,history=dict(owner=True))
+
+    def test_independent_root_code_and_PC_pool_relocation_still_bind_same_B(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        from config_boot_history import first_boot_history
+        from config_headers import ROOT
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,context,item=self.fixture(mode);elf=objects.elf
+            history=first_boot_history(objects,rows,context);old=history['preclaim']['startup']['entry']['loader']['function']
+            name=next(n for n in elf.functions if config_stack.canonical_symbol(n)==ROOT)
+            pointer,extent,index=elf.functions[name];section=elf.sections[index];at=section[4]+old-section[3]
+            copied=elf.data[at:at+extent];new=0x10071000;file_at=(len(elf.data)+3)&~3
+            elf.data+=bytes(file_at-len(elf.data))+copied;new_index=len(elf.sections)
+            elf.sections.append((0,1,6,new,file_at,extent,0,0,4,0));elf.segments.append((1,file_at,new,new,extent,extent,5,4))
+            elf.functions[name]=(new|1,extent,new_index);objects.sizes[new]=objects.sizes.pop(old)
+            elf.symbol_entries=[(n,new|1,z,t,new_index) if n==name else (n,a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+            root=next(p for p in item['parents'] if p['role']==ROOT)
+            elf.mapping_symbols.extend(('$'+k,a+new-old,new_index) for a,z,k in root['mapping'])
+            for address,row in list(rows.items()):
+                if old<=address<old+extent:
+                    del rows[address];moved=address+new-old;rows[moved]=Instruction(moved,row.raw,row.mnemonic,row.operands)
+            tail=history['preclaim']['startup']['entry']['once']['success']['tail']
+            low,high=struct.unpack('<HH',StartupConfigurationCopy.branch_link(tail,new));raw=struct.pack('<HH',low,high&~0x4000)
+            StartupConfigurationCopy.put(objects,tail,raw);rows[tail]=Instruction(tail,raw,'b.w',hex(new))
+            proof=first_boot_loader_boundary(objects,rows,self.rebound(objects,context))
+            self.assertEqual(proof['loader_geometry']['function'],new)
+            self.assertTrue(all(v['value']==item['config'] for v in proof['static_producers']))
+        # Move one consumed PC pool independently of code/B. This is coherent
+        # synthetic opcode+bytes, not a fresh linked or decoded image.
+        objects,rows,context,item=self.fixture();root=next(p for p in item['parents'] if 'load_at_boot' in p['role'])
+        _,offset,pool,register=root['receivers'][0];site=root['address']+offset;pool=root['address']+pool+4
+        immediate=pool-((site+4)&~3);raw=struct.pack('<HH',0xf8df,(8<<12)|immediate)
+        StartupConfigurationCopy.put(objects,site,raw);StartupConfigurationCopy.put(objects,pool,struct.pack('<I',item['config']))
+        rows[site]=Instruction(site,raw,'ldr.w','r8, [pc, #'+hex(immediate)+']')
+        proof=first_boot_loader_boundary(objects,rows,self.rebound(objects,context))
+        self.assertTrue(any(v.get('pool')==pool for v in proof['static_producers']))
+
+    def test_physical_allocation_adjacency_is_valid_but_partial_overlap_is_not(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for offset in (-8,0,1):
+            objects,rows,context,item=self.fixture();low=0x20080000-88-456
+            objects.elf.sections.append((0,8,3,low+offset,0,8,0,0,1,0))
+            if offset==-8:
+                self.assertEqual(first_boot_loader_boundary(objects,rows,context)['loader_geometry']['frame'][0],low)
+            else:
+                with self.assertRaisesRegex(AssertionError,'physical frame intersects'):first_boot_loader_boundary(objects,rows,context)
+
+    def test_LOAD_file_bytes_cannot_exceed_the_declared_memory_extent(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        objects,rows,context,item=self.fixture()
+        objects.elf.segments.append((1,0,0x10090000,0x10090000,8,4,5,4))
+        with self.assertRaisesRegex(AssertionError,'LOAD file/memory extent'):
+            first_boot_loader_boundary(objects,rows,context)
+
+
 if __name__=='__main__':unittest.main()
