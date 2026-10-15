@@ -2057,6 +2057,107 @@ class ConstructionInterfaces(unittest.TestCase):
             with self.subTest(override=override),self.assertRaises(AssertionError):config_helpers.helper_body(objects,name,records,override)
 
 
+class DefaultPreparationInterfaces(unittest.TestCase):
+    def fixture(self,code_shift=0,data_shift=0):
+        from dataclasses import replace
+        objects,records,root,visitor,frame,child=OrdinaryHeaderConstructors.fixture(self,code_shift,data_shift)
+        donor,item=LoggerObjects.fixture(self,'sizez',code_shift,data_shift,fixture_file='config-default-preparation.json')
+        data=bytearray(objects.elf.data)
+        for index,original,encoded in item['segments']:
+            source=donor.elf.sections[index];dest=objects.elf.sections[index]
+            shift=0 if dest[2]&1 else code_shift if dest[2]&4 else data_shift
+            at=original+shift;extent=len(bytes.fromhex(encoded));a=source[4]+at-source[3];b=dest[4]+at-dest[3]
+            data[b:b+extent]=donor.elf.data[a:a+extent]
+        def position(address):
+            section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<address+4<=s[3]+s[5])
+            return section[4]+address-section[3]
+        for original in item['relocations']:
+            owner=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=original+(code_shift if s[2]&4 else data_shift)<s[3]+s[5])
+            at=original+(code_shift if owner[2]&4 else data_shift);offset=position(at);value=struct.unpack_from('<I',data,offset)[0]
+            target=next(s for s in objects.elf.sections if s[2]&2 and
+                s[3]-(0 if s[2]&1 else code_shift if s[2]&4 else data_shift)<=value&~1<
+                s[3]-(0 if s[2]&1 else code_shift if s[2]&4 else data_shift)+s[5])
+            struct.pack_into('<I',data,offset,value+(0 if target[2]&1 else code_shift if target[2]&4 else data_shift))
+        objects.elf.data=bytes(data);objects.elf.functions.update(donor.elf.functions)
+        objects.elf.symbol_entries.extend(donor.elf.symbol_entries);objects.sizes.update(donor.sizes)
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address']+code_shift;operand=op[1] if len(op)>1 else ''
+            if config_stack.transfer_family(op[0].removesuffix('.w')) in ('b','bl','cbz','cbnz'):
+                operand=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operand)
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],operand)
+        return objects,records,root,replace(frame,phase='default_refill')
+
+    def test_view_child_and_widget_handoff_keep_distinct_fault_result_and_retired_epochs(self):
+        import config_default
+        for code,data in ((0,0),(0x2800,0x19000)):
+            objects,records,root,frame=self.fixture(code,data)
+            result=config_default.default_preparation(objects,root,records,frame,())
+            self.assertEqual(result['config'].extent,14576)
+            self.assertEqual(result['view']['initialized_name'].length.lower,8)
+            self.assertEqual((result['view']['count'],result['view']['element_offset'],result['view']['name_capacity']),(1,248,14))
+            self.assertEqual(result['widget_handoff']['channels'],(0,7,6,2,1,3,4,5))
+            self.assertEqual((result['widget_handoff']['signed_offset'],result['widget_handoff']['count']),(-1760,0))
+            self.assertEqual((result['fault'].start,result['fault'].extent),(frame.start+8,16))
+            self.assertEqual(result['capacity_failure']['root']['location_role'],'view_capacity')
+            self.assertEqual(result['capacity_failure']['error_payload_bytes'],0)
+            self.assertEqual(result['capacity_failure']['argument_address'],frame.start+351)
+            self.assertEqual(result['conservative_activation_frames'],(456,48,16,24))
+            access=result['target_access_requirements'][0]
+            self.assertEqual((access['address'],access['width'],access['unaligned']),
+                (result['config'].start+14570,4,True))
+            self.assertEqual(access['status'],'unresolved_object_store_policy')
+            self.assertTrue(result['requires_incoming_typed_fault_exclusive_slot_and_all_remaining_phases'])
+            self.assertNotIn('validated_config',result)
+
+    def test_result_pointer_tag_view_offset_and_channel_pair_mutations_reject(self):
+        import config_default
+        for site,operand in ((0x1001ff10,'r9, sp, #0x74'),(0x1001ff14,'r2, #0x9'),
+            (0x1001ff2e,'r0, #0x2'),(0x1001ff76,'r0, r8, #0xfc'),(0x1001ffb2,'r0, #0xc')):
+            objects,records,root,frame=self.fixture();row=records[site]
+            records[site]=Instruction(site,row.raw,row.mnemonic,operand)
+            with self.subTest(site=site),self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,())
+
+    def test_view_literal_channel_array_and_static_identity_are_actual_data(self):
+        import config_default,config_entry
+        for address in (0x1002bfc8,0x100200e8,0x100200ec,0x100200f0):
+            objects,records,root,frame=self.fixture();section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+            data=bytearray(objects.elf.data);data[section[4]+address-section[3]]^=1;objects.elf.data=bytes(data)
+            with self.subTest(address=address),self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,())
+        objects,records,root,frame=self.fixture();entry=next(v for v in objects.elf.symbol_entries if config_entry.static_role(v[0])==config_entry.CONFIG)
+        objects.elf.symbol_entries[objects.elf.symbol_entries.index(entry)]=('different_static',*entry[1:])
+        with self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,())
+
+    def test_interior_ingress_and_changed_capacity_diagnostic_reject(self):
+        import config_default
+        objects,records,root,frame=self.fixture();site=0x10020e76;row=records[site]
+        records[site]=Instruction(site,row.raw,'b','0x1001ff10')
+        with self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,())
+        objects,records,root,frame=self.fixture();site=0x1002099a;row=records[site]
+        records[site]=Instruction(site,row.raw,row.mnemonic,'r2, r7, #0x60')
+        with self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,())
+
+    def test_live_carrier_or_saved_cell_cannot_alias_result_and_local_copies(self):
+        import config_default
+        from config_regions import Storage
+        for start in (112,236,352):
+            objects,records,root,frame=self.fixture();guard=Storage(frame.space,'live parent carrier',start,4,4,frame.phase,False)
+            with self.subTest(start=start),self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,(guard,))
+
+    def test_unrelated_float_bits_stay_unknown_but_parent_ingress_cannot_bypass_the_group(self):
+        import config_default
+        objects,records,root,frame=self.fixture();address=0x100200c4
+        section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+        data=bytearray(objects.elf.data);data[section[4]+address-section[3]]^=1;objects.elf.data=bytes(data)
+        result=config_default.default_preparation(objects,root,records,frame,())
+        self.assertIn(address,result['readonly_float_pools'])
+        for operation,operand,raw in (('mov','pc, r4',b'\0\0\0\0'),('bxeq','r4',b'\0\0\0\0'),
+            ('bxns','r4',b'\0\0\0\0'),('svcne','#0x1',b'\0\0\0\0'),
+            ('ldmdb','r4!, {r0, pc}',b'\0\0\0\0'),('tbb','[pc, r0]',struct.pack('<HH',0xe8df,0xf000))):
+            objects,records,root,frame=self.fixture();at=(objects.elf.functions[root][0]&~1)+18
+            records[at]=Instruction(at,raw,operation,operand)
+            with self.subTest(operation=operation),self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,())
+
+
 class AbstractCanonicalInterfaces(unittest.TestCase):
     def compare(self):
         import config_abstract,config_abstract_compare
