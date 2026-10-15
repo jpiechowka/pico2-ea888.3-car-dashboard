@@ -160,8 +160,8 @@ def root_visitor_headers(objects,name,instructions,frame,ancestor_protected):
                 requires_parent_entry_all_ingress_source_effects_and_coverage=True)
 
 
-def next_u16_effect(objects,name,instructions,state,frame,ancestor_protected):
-    """Exact outer next<Result<u16>> ABI, distinct from SeqAccess<Option<u16>>."""
+def _next_u16_binding(objects,name,instructions,frame,ancestor_protected):
+    """One shared complete wrapper/inner binding for exact and abstract users."""
     start,extent=_parent(objects,name,NEXT_U16,frame,8);ancestor_protected=tuple(ancestor_protected)
     require_disjoint((frame,)+ancestor_protected)
     contract=dict(extent=56,frame=8,mapping=[(0,56,'t')],instructions=NEXT_ROWS,objects=[],data=[])
@@ -176,7 +176,13 @@ def next_u16_effect(objects,name,instructions,state,frame,ancestor_protected):
     child=helper_coverage(objects,names[0],instructions,(target,'outer next',start))
     child_frame=Storage(frame.space,frame.identity+':inner-seq',frame.start-8,8,8,frame.phase,True)
     saved=Storage(frame.space,frame.identity+':saved',frame.start,8,4,frame.phase,False)
-    sequence=sequence_effect(objects,instructions,child,state,child_frame,ancestor_protected+(saved,))
+    return proof,coverage,child,child_frame,ancestor_protected+(saved,)
+
+
+def next_u16_effect(objects,name,instructions,state,frame,ancestor_protected):
+    """Exact outer next<Result<u16>> ABI, distinct from SeqAccess<Option<u16>>."""
+    proof,coverage,child,child_frame,protected=_next_u16_binding(objects,name,instructions,frame,ancestor_protected)
+    sequence=sequence_effect(objects,instructions,child,state,child_frame,protected)
     if sequence['tag']==1:
         value=sequence['value'];error=None;packed=(value<<16)|0xe00
     else:
@@ -188,6 +194,31 @@ def next_u16_effect(objects,name,instructions,state,frame,ancestor_protected):
                 normal_preserves=sequence['normal_preserves'],
                 requires_machine_source_phase_arguments_lifetime_and_parent_coverage=True)
 
+
+
+def _next_u16_interface(objects,name,instructions,state,frame,ancestor_protected):
+    from config_abstract import sequence_interface
+    proof,coverage,child,child_frame,protected=_next_u16_binding(objects,name,instructions,frame,ancestor_protected)
+    sequence=sequence_interface(objects,instructions,child,state,child_frame,protected)
+    stable=(_object(borrow(state.header.storage,state.header.offset,4,frame.phase),'Q.D pointer'),
+        _object(borrow(state.decoder.header.storage,state.decoder.header.offset+4,4,frame.phase),'D.end'))
+    outcomes=[]
+    for inner in sequence['outcomes']:
+        require_writes((state.header,state.decoder.header),inner['possible_writes'],stable)
+        require(all((view.start+offset,n) in ((state.header.start+4,4),(state.decoder.header.start,4))
+            for view,offset,n in inner['possible_writes']),'outer abstract next exceeds Q.count/D.cursor cells')
+        if inner['kind']=='some':
+            require(inner['value_kind']=='u16' and inner['value_domain']==(0,65535),'outer abstract u16 domain differs')
+            error=None;packed=dict(tag=0,value_domain=(0,65535),shift=16,constant=0xe00)
+        else:
+            error=14 if inner['kind']=='none' else inner['error']
+            require(error in (4,5,14),'outer abstract error domain differs')
+            packed=(error<<8)|1
+        outcomes.append(dict(inner=inner,state=inner['state'],error=error,packed_r0=packed,
+            value_domain=inner['value_domain'],possible_writes=inner['possible_writes']))
+    return dict(proof=proof,coverage=coverage,sequence=sequence,outcomes=tuple(outcomes),
+        normal_preserves=sequence['normal_preserves'],
+        conservative_activation_frames=(8,)+sequence['conservative_activation_frames'])
 
 def root_first_u16(objects,name,instructions,frame,ancestor_protected):
     """Construct D/Q, then prove only the first next return to the visitor."""

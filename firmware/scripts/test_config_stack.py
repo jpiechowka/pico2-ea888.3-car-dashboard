@@ -6928,4 +6928,206 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
         with self.assertRaises(TypeError):checksum_refill_loader_return(objects,rows,context,dict(completed=True))
 
 
+
+
+class ActualDecodedU16Prefix(unittest.TestCase):
+    def fixture(self,delta=0):
+        objects,rows,context,item=SameBLoaderBoundary().fixture('sizez',delta);elf=objects.elf
+        donor,more,root,visitor,frame,child=OrdinaryFirstFieldBridge().fixture()
+        # Preserve the already admitted entry/static-producer bytes and their
+        # actual pools while adding only the readonly header/helper fixture.
+        pools={}
+        for at,row in rows.items():
+            m=re.search(r'\[pc, #(0x[0-9a-f]+|[0-9]+)\]',row.operands)
+            if row.mnemonic in ('ldr','ldr.w') and m:
+                slot=((at+4)&~3)+int(m[1],0);pools[slot]=objects.read_only(slot,4)
+        for file in ('config-headers.json','config-small-helpers.json'):
+            fixture=json.loads((Path(__file__).parent/'fixtures'/file).read_text())[0]
+            for index,at,encoded in fixture['segments']:
+                StartupConfigurationCopy.put(objects,at,bytes.fromhex(encoded))
+        for at,row in rows.items():StartupConfigurationCopy.put(objects,at,row.raw)
+        for at,value in pools.items():StartupConfigurationCopy.put(objects,at,value)
+        combined=dict(more);combined.update(rows);rows=combined
+        elf.functions.update(donor.elf.functions);objects.sizes.update(donor.sizes)
+        elf.symbol_entries=list(dict.fromkeys(elf.symbol_entries+donor.elf.symbol_entries))
+        elf.mapping_symbols=list(dict.fromkeys(elf.mapping_symbols+donor.elf.mapping_symbols))
+        return objects,rows,SameBLoaderBoundary.rebound(objects,context),item
+
+    @staticmethod
+    def consume(objects,rows,context):
+        from config_decoded_prefix import first_boot_decoded_u16_prefix
+        return first_boot_decoded_u16_prefix(objects,rows,context)
+
+    def test_unknown_u16s_have_paired_prefix_counts_cursors_and_preserved_remainder(self):
+        objects,rows,context,item=self.fixture();result=self.consume(objects,rows,context)
+        self.assertEqual(result['phase'],'first_boot_decoded_u16_prefix_pending_remaining_visitor_canonical_and_loader_routes')
+        exits=sorted(result['outcomes'],key=lambda v:v['completed_fields']);self.assertEqual(len(exits),3)
+        self.assertEqual([(v['completed_fields'],v['count'],v['cursor'],v['error']) for v in exits],
+            [(0,(12,12),(3,3),5),(1,(11,11),(4,6),5),(2,(11,11),(2,6),None)])
+        self.assertEqual([v['frontier'] for v in exits],[0x1001c68a,0x1001c68a,0x1001c6a6])
+        success=exits[-1];self.assertEqual(success['field_domains'],(('version',(0,65535)),('catalogue_version',(0,65535))))
+        self.assertEqual(success['initial_facts_retired'],((14570,14572),(14572,14574)))
+        self.assertEqual(success['initial_active_bytes_preserved'],180) # taken1 replaces one of185 before decode; two u16 retire4.
+        self.assertEqual(result['initial_collection_lengths'],(0,0));self.assertFalse(result['hardware_qualified'])
+        self.assertNotIn('acquired_owner',result);self.assertNotIn('validated_config',result)
+        self.assertEqual(result['nested_return_sites'][0]['destination'],0x1001c670)
+        self.assertEqual(result['nested_return_sites'][1]['destination'],0x1001c686)
+        self.assertEqual(result['deepest_child_SP'],0x20080000-544-1608-8-8-24-16)
+
+    def test_source_context_and_same_B_producers_cannot_be_supplied_or_substituted(self):
+        objects,rows,context,item=self.fixture()
+        for fake in (None,dict(owner=True,phase='decoded'),context.to_record()):
+            with self.subTest(fake=type(fake).__name__),self.assertRaises(AssertionError):self.consume(objects,rows,fake)
+        # Existing actual static-point binding catches a coherent alternate B.
+        StartupConfigurationCopy.put(objects,0x10020d74,struct.pack('<I',item['config']+4))
+        with self.assertRaises(AssertionError):self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_field_store_error_guard_and_nested_return_changes_reject(self):
+        for at,operation,operands in ((0x1001c67e,'str','r0, [r4, r1]'),
+            (0x1001c686,'lsls','r1, r0, #0x1e'),(0x1001c680,'add','r0, sp, #0x124'),
+            (0x1001bdb2,'pop','{r4, pc}'),(0x1001bda8,'and.w','r0, r2, r0, lsr #7')):
+            objects,rows,context,item=self.fixture();row=rows[at];rows[at]=Instruction(at,row.raw,operation,operands)
+            with self.subTest(at=hex(at)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_foreign_interior_computed_and_implicit_PC_cannot_enter_selected_prefix(self):
+        for operation,operands in (('b','0x1001c67e'),('tbb','[pc, r0]'),('mov','pc, r4'),('bxns','r4'),('svcne','#0x0')):
+            objects,rows,context,item=self.fixture();at=0x1001c6a8 if operation!='tbb' else 0x1001c690
+            rows[at]=Instruction(at,bytes.fromhex('dfe800f0') if operation=='tbb' else bytes(2),operation,operands)
+            with self.subTest(operation=operation),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_nested_physical_stack_and_protected_suffix_cannot_alias_an_object(self):
+        for address in (0x20080000-2200,0x20080000-544-1608-52):
+            objects,rows,context,item=self.fixture();index=next(i for i,s in enumerate(objects.elf.sections) if s[2]&2)
+            objects.elf.symbol_entries.append(('physical_child_alias',address,4,17,index))
+            with self.subTest(address=hex(address)),self.assertRaisesRegex(AssertionError,'physical'):
+                self.consume(objects,rows,context)
+
+        objects,rows,context,item=self.fixture()
+        low=0x20080000-544-1608-56;index=next(i for i,s in enumerate(objects.elf.sections) if s[2]&2)
+        objects.elf.symbol_entries.append(('adjacent_below_child',low-4,4,17,index))
+        self.assertEqual(self.consume(objects,rows,context)['deepest_child_SP'],low)
+
+    def test_independent_B_and_Reset_SP_relocation_reaches_new_public_consumer(self):
+        objects,rows,context,item=self.fixture(0x4000);B=item['config']+0x4000
+        result=self.consume(objects,rows,context);self.assertEqual(result['config'],(B,14604))
+        self.assertEqual(result['possible_field_writes'],((B+14570,2),(B+14572,2)))
+        sp=0x2007f800;StartupConfigurationCopy.put(objects,objects.elf.named['.vector_table'][3],struct.pack('<I',sp))
+        objects.elf.symbol_entries=[(n,sp if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in objects.elf.symbol_entries]
+        moved=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        self.assertEqual(moved['root_frame'],(sp-544,456));self.assertEqual(moved['visitor_frame'],(sp-2152,1608))
+        self.assertEqual(moved['config'],result['config']);self.assertEqual(moved['possible_field_writes'],result['possible_field_writes'])
+
+
+    def test_independent_root_code_and_consumed_B_pool_relocation(self):
+        from config_headers import ROOT
+        from config_stack import canonical_symbol
+        objects,rows,context,item=self.fixture();elf=objects.elf
+        name=next(n for n in elf.functions if canonical_symbol(n)==ROOT);pointer,extent,index=elf.functions[name]
+        old=pointer&~1;new=0x10071000;file_at=(len(elf.data)+3)&~3;section=elf.sections[index]
+        raw=elf.data[section[4]+old-section[3]:section[4]+old-section[3]+extent]
+        elf.data+=bytes(file_at-len(elf.data))+raw;newindex=len(elf.sections)
+        elf.sections.append((0,1,6,new,file_at,extent,0,0,4,0));elf.segments.append((1,file_at,new,new,extent,extent,5,4))
+        elf.functions[name]=(new|1,extent,newindex);objects.sizes[new]=objects.sizes.pop(old)
+        elf.symbol_entries=[(n,new|1,z,t,newindex) if n==name else (n,a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+        elf.mapping_symbols.extend((n,a+new-old,newindex) for n,a,i in list(elf.mapping_symbols) if i==index and old<=a<old+extent)
+        for at,row in list(rows.items()):
+            if not old<=at<old+extent:continue
+            del rows[at];site=at+new-old;op=row.operands;encoded=row.raw
+            family=config_stack.transfer_family(row.mnemonic.removesuffix('.w'))
+            if family in ('b','bl','cbz','cbnz'):
+                m=re.search(r'0x([0-9a-f]+)',op);target=int(m[1],16)
+                if old<=target<old+extent:target+=new-old
+                elif family in ('b','bl'):
+                    encoded=StartupConfigurationCopy.branch_link(site,target)
+                    if family=='b':lo,hi=struct.unpack('<HH',encoded);encoded=struct.pack('<HH',lo,hi&~0x4000)
+                op=op[:m.start()]+hex(target)+op[m.end():]
+            rows[site]=Instruction(site,encoded,row.mnemonic,op);StartupConfigurationCopy.put(objects,site,encoded)
+        # Actual once tail follows relocated root, with B/Reset/visitor fixed.
+        oldtail=next(at for at,r in rows.items() if r.mnemonic=='b.w' and re.match(re.escape(hex(old))+r'(?:\s|$)',r.operands) is not None)
+        lo,hi=struct.unpack('<HH',StartupConfigurationCopy.branch_link(oldtail,new));encoded=struct.pack('<HH',lo,hi&~0x4000)
+        StartupConfigurationCopy.put(objects,oldtail,encoded);rows[oldtail]=Instruction(oldtail,encoded,'b.w',hex(new))
+        result=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        self.assertEqual(result['guarded_CRC_success'][0],new+114)
+        self.assertEqual(result['config'],(item['config'],14604));self.assertEqual(result['visitor_frame'],(0x2007f798,1608))
+        # Move visitor's actually consumed B pool independently of both code
+        # and object. This coherent encoding still selects the same typed B.
+        site=0x1001c674;row=rows[site];m=re.search(r'#(0x[0-9a-f]+|[0-9]+)',row.operands)
+        oldpool=((site+4)&~3)+int(m[1],0);pool=oldpool+4;immediate=pool-((site+4)&~3)
+        encoded=struct.pack('<HH',0xf8df,0x4000|immediate)
+        StartupConfigurationCopy.put(objects,site,encoded);StartupConfigurationCopy.put(objects,pool,struct.pack('<I',item['config']))
+        rows[site]=Instruction(site,encoded,'ldr.w','r4, [pc, #'+hex(immediate)+']')
+        moved=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        self.assertEqual(moved['possible_field_writes'],result['possible_field_writes'])
+
+    def test_abstract_outer_adapter_keeps_none_error_and_unknown_success_ABIs_distinct(self):
+        from dataclasses import replace
+        from config_abstract import DecoderInterface,SequenceInterface,Span
+        from config_headers import root_visitor_headers,_next_u16_interface,NEXT_U16
+        from config_regions import Storage
+        objects,rows,root,visitor,frame,child=OrdinaryFirstFieldBridge().fixture()
+        headers=root_visitor_headers(objects,root,rows,frame,());before=headers['visitor']['sequence_state'];d=before.decoder
+        state=SequenceInterface(before.header,DecoderInterface(d.header,d.payload,Span(d.payload.extent,d.payload.extent)),Span(0,0))
+        name=next(n for n in objects.elf.functions if config_stack.canonical_symbol(n)==NEXT_U16)
+        nested=Storage(frame.space,'abstract wrapper',child.start-8,8,8,frame.phase,True)
+        none=_next_u16_interface(objects,name,rows,state,nested,headers['visitor']['protected'])['outcomes']
+        self.assertEqual([(v['error'],v['packed_r0'],v['state'].count) for v in none],[(14,0xe01,Span(0,0))])
+        state=replace(state,count=Span(1,1));error=_next_u16_interface(objects,name,rows,state,nested,headers['visitor']['protected'])['outcomes']
+        self.assertEqual([(v['error'],v['packed_r0'],v['state'].count) for v in error],[(4,0x401,Span(0,0))])
+        state=replace(state,decoder=replace(state.decoder,cursor=Span(0,0)))
+        result=_next_u16_interface(objects,name,rows,state,nested,headers['visitor']['protected'])['outcomes']
+        self.assertEqual({v['error'] for v in result},{None,5})
+        self.assertEqual(next(v['value_domain'] for v in result if v['error'] is None),(0,65535))
+
+
+    def test_current_D_end_Q_pointer_count_and_initial_epoch_cannot_be_forged(self):
+        for at,operation,operands in ((0x1001fedc,'strd','r8, r1, [sp, #236]'),
+            (0x1001c664,'movs','r1, #0xc'),(0x1001c666,'strd','r1, r0, [sp, #288]'),
+            (0x1001c66a,'add','r0, sp, #0x124')):
+            objects,rows,context,item=self.fixture();row=rows[at];rows[at]=Instruction(at,row.raw,operation,operands)
+            with self.subTest(at=hex(at)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+        objects,rows,context,item=self.fixture();StartupConfigurationCopy.put(objects,item['config']+14600,b'\x01')
+        with self.assertRaisesRegex(AssertionError,'initial Config active constructor'):
+            self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_changed_payload_and_CRC_do_not_choose_a_concrete_version(self):
+        import zlib
+        for payload in (b'\0\0',b'\xff\xff\x03\xff\xff\x03'):
+            objects,rows,context,item=self.fixture();address=0x10032b1e;blob=bytearray(objects.read_only(address,1157))
+            blob[12:12+len(payload)]=payload;crc=zlib.crc32(blob[:8]+blob[12:]);struct.pack_into('<I',blob,8,crc)
+            StartupConfigurationCopy.put(objects,address,bytes(blob));StartupConfigurationCopy.put(objects,0x100200bc,struct.pack('<I',crc^0xffffffff))
+            result=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+            success=next(v for v in result['outcomes'] if v['error'] is None)
+            self.assertEqual(success['field_domains'],(('version',(0,65535)),('catalogue_version',(0,65535))))
+            self.assertEqual(success['cursor'],(2,6));self.assertFalse(result['CRC_success_observed_taken'])
+
+
+    def test_coherent_store_and_return_image_changes_reject_after_source_rebinding(self):
+        for at,raw,op,operands in ((0x1001c67e,bytes.fromhex('6050'),'str','r0, [r4, r1]'),
+            (0x1001bdb2,bytes.fromhex('10bd'),'pop','{r4, pc}')):
+            objects,rows,context,item=self.fixture();old=objects.elf.data
+            StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,op,operands)
+            self.assertNotEqual(objects.elf.data,old)
+            bound=SameBLoaderBoundary.rebound(objects,context)
+            with self.subTest(at=hex(at)),self.assertRaisesRegex(AssertionError,'payload (source/return/selector instruction differs|reference/cell/ABI/default/return operands differ)'):
+                self.consume(objects,rows,bound)
+
+
+    def test_short_current_payload_exhaustion_pairs_error_count_and_completed_prefix(self):
+        import zlib
+        objects,rows,context,item=self.fixture();address=0x10032b1e
+        blob=bytearray(objects.read_only(address,13));struct.pack_into('<H',blob,6,1)
+        crc=zlib.crc32(blob[:8]+blob[12:]);struct.pack_into('<I',blob,8,crc)
+        StartupConfigurationCopy.put(objects,address,bytes(blob));StartupConfigurationCopy.put(objects,0x100200bc,struct.pack('<I',crc^0xffffffff))
+        SameBLoaderBoundary.mov(objects,rows,0x1001fe76,'movw','r0',1)
+        SameBLoaderBoundary.mov(objects,rows,0x1001fef8,'movw','r0',1)
+        raw=bytes.fromhex('0cf20d00');StartupConfigurationCopy.put(objects,0x1001fed8,raw)
+        rows[0x1001fed8]=Instruction(0x1001fed8,raw,'addw','r0, r12, #0xd')
+        result=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        exits=sorted(result['outcomes'],key=lambda v:v['completed_fields'])
+        self.assertEqual([(v['completed_fields'],v['error'],v['count'],v['cursor'],len(v['calls'])) for v in exits],
+            [(0,4,(12,12),(1,1),1),(1,4,(11,11),(1,1),2)])
+        self.assertEqual([v['writes'] for v in exits],[(),((item['config']+14570,2),)])
+        self.assertTrue(all(v['frontier']==0x1001c68a for v in exits))
+
+
 if __name__=='__main__':unittest.main()
