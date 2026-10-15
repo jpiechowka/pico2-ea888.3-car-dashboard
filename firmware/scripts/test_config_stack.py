@@ -1660,6 +1660,61 @@ class OrdinaryHeaderConstructors(unittest.TestCase):
                 else:config_headers.visitor_sequence_header(objects,visitor,records,child,boot['decoder_state'],boot['protected'])
 
 
+class OrdinaryFirstFieldBridge(unittest.TestCase):
+    def fixture(self):
+        objects,records,root,visitor,frame,child=OrdinaryHeaderConstructors.fixture(self)
+        donor,other,item=OrdinaryHelperBodies.fixture(self)
+        data=bytearray(objects.elf.data)
+        for index,address,encoded in item['segments']:
+            blob=bytes.fromhex(encoded);section=objects.elf.sections[index];offset=section[4]+address-section[3]
+            data[offset:offset+len(blob)]=blob
+        objects.elf.data=bytes(data);objects.elf.functions.update(donor.elf.functions)
+        objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+donor.elf.symbol_entries))
+        objects.sizes.update(donor.sizes);records.update(other)
+        return objects,records,root,visitor,frame,child
+
+    def test_actual_first_next_return_updates_same_D_Q_and_exact_wrapper_ABI(self):
+        import config_headers
+        objects,records,root,visitor,frame,child=self.fixture()
+        result=config_headers.root_first_u16(objects,root,records,frame,())
+        returned=result['first_return']
+        self.assertEqual((returned['value'],returned['error'],returned['registers']),(4,None,{'r0':0x40e00}))
+        self.assertEqual((returned['state'].count,returned['state'].decoder.cursor),(12,1))
+        self.assertEqual(result['state_coordinate'],'after_first_next_return')
+
+    def test_none_and_error_keep_outer_result_distinct_from_inner_sequence(self):
+        import config_headers
+        from dataclasses import replace
+        from config_regions import Storage
+        objects,records,root,visitor,frame,child=self.fixture()
+        before=config_headers.root_visitor_headers(objects,root,records,frame,())
+        sequence=before['visitor']['sequence_state']
+        name=next(n for n in objects.elf.functions if config_stack.canonical_symbol(n)==config_headers.NEXT_U16)
+        active=Storage(frame.space,'next_u16',child.start-8,8,8,frame.phase,True)
+        for count,cursor,error,packed in ((0,0,14,0xe01),(1,sequence.decoder.payload.extent,4,0x401)):
+            state=replace(sequence,count=count,decoder=replace(sequence.decoder,cursor=cursor))
+            result=config_headers.next_u16_effect(objects,name,records,state,active,before['visitor']['protected'])
+            self.assertEqual((result['error'],result['registers']),(error,{'r0':packed}))
+            self.assertEqual(result['state'].count,max(0,count-1))
+        from config_regions import borrow
+        base=0x10070000;offset=len(objects.elf.data);objects.elf.data+=b'\x80\x80\x80'
+        objects.elf.sections.append((0,1,2,base,offset,3,0,0,1,0))
+        owner=Storage('address','bounded-malformed-input',base,3,1,frame.phase,False)
+        state=replace(sequence,count=1,decoder=replace(sequence.decoder,payload=borrow(owner,0,3,frame.phase),cursor=0))
+        result=config_headers.next_u16_effect(objects,name,records,state,active,before['visitor']['protected'])
+        self.assertEqual((result['error'],result['registers'],result['state'].count,result['state'].decoder.cursor),
+                         (5,{'r0':0x501},0,3))
+
+    def test_changed_wrapper_tag_mask_or_nested_decoder_body_rejects(self):
+        import config_headers
+        for fault in ('tag_mask','decoder'):
+            objects,records,root,visitor,frame,child=self.fixture()
+            if fault=='tag_mask':site=0x1001bd9e;mnemonic,operands='addne.w','r1, r2, #0xf00'
+            else:site=0x1001b844;mnemonic,operands='and','r0, r1, #0x3f'
+            row=records[site];records[site]=Instruction(site,row.raw,mnemonic,operands)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_headers.root_first_u16(objects,root,records,frame,())
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow

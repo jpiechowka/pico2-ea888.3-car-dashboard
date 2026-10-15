@@ -9,9 +9,10 @@ all table/indirect ingress and complete ordinary coverage remain required.
 import re
 import struct
 import zlib
-from config_decode_effects import DecoderState,SequenceState,_object
-from config_finite import _literal_body
-from config_regions import Storage,borrow,require_disjoint,require_writes
+from config_decode_effects import DecoderState,SequenceState,sequence_effect,_object
+from config_finite import _literal_body,_complete_body
+from config_helpers import helper_coverage,_helper_function,HELPER_SEMANTIC_ROLES
+from config_regions import Storage,Region,Transfer,borrow,require_disjoint,require_writes,audit_coverage
 from config_stack import canonical_symbol,typed_function,transfer_family
 from llvm_stack import mapping_ranges
 from validation import require
@@ -19,6 +20,13 @@ from validation import require
 ROOT='_RNvMNtNtCs_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot'
 VISITOR='_RINvXs_NtCs_16dashboard_config15decode_in_placeNtB5_10ConfigSeedNtNtCs_10serde_core2de7Visitor9visit_seqINtNtNtCs_8postcard2de12deserializer9SeqAccessNtNtB25_7flavors5SliceEEB7_'
 NEXT_U16='_RINvNtCs_16dashboard_config15decode_in_place4nexttINtNtNtCs_8postcard2de12deserializer9SeqAccessNtNtB12_7flavors5SliceEEB4_'
+SEQ_U16=HELPER_SEMANTIC_ROLES['seq_u16']
+NEXT_ROWS=((0,2,'push {r7, lr}'),(2,2,'mov r7, sp'),(4,4,'bl @role:'+SEQ_U16),
+    (8,4,'movw r1, #0xffff'),(12,2,'uxth r3, r0'),(14,4,'bic.w r2, r0, r1'),(18,2,'cmp r3, #0x2'),
+    (20,2,'it eq'),(22,4,'andeq r2, r0, #0xff0000'),(26,2,'lsls r1, r0, #0x1f'),(28,4,'movw r1, #0xe01'),
+    (32,2,'it ne'),(34,4,'addne.w r1, r2, #0xe00'),(38,4,'mov.w r2, #0xff00'),(42,2,'cmp r3, #0x2'),
+    (44,4,'and.w r0, r2, r0, lsr #8'),(48,2,'it eq'),(50,2,'addeq r1, r0, #0x1'),
+    (52,2,'mov r0, r1'),(54,2,'pop {r7, pc}'))
 
 ROOT_ROWS=(
     (0,2,'push {r4, r5, r6, r7, lr}'),(2,2,'add r7, sp, #0xc'),(4,4,'push.w {r7, r8, r9, r10, r11}'),
@@ -148,4 +156,48 @@ def root_visitor_headers(objects,name,instructions,frame,ancestor_protected):
     visitor=visitor_sequence_header(objects,names[0],instructions,child,root['decoder_state'],root['protected'])
     return dict(root=root,visitor=visitor,visitor_frame=child,state_coordinate='before_first_next_call',
                 retained_parent_frames=(456,1608),requires_first_consumer_effect_before_exit=True,
+                requires_parent_entry_all_ingress_source_effects_and_coverage=True)
+
+
+def next_u16_effect(objects,name,instructions,state,frame,ancestor_protected):
+    """Exact outer next<Result<u16>> ABI, distinct from SeqAccess<Option<u16>>."""
+    start,extent=_parent(objects,name,NEXT_U16,frame,8);ancestor_protected=tuple(ancestor_protected)
+    require_disjoint((frame,)+ancestor_protected)
+    contract=dict(extent=56,frame=8,mapping=[(0,56,'t')],instructions=NEXT_ROWS,objects=[],data=[])
+    proof=_complete_body(objects,name,instructions,NEXT_U16,'next_u16',contract,_no_object,_no_object,function_consumer=_helper_function)
+    edges=proof['ordinary_edges'];require(len(edges)==1 and edges[0][0]==4 and edges[0][3]==SEQ_U16,'outer next child ABI differs')
+    target=edges[0][2];names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target and canonical_symbol(n)==SEQ_U16]
+    require(len(names)==1,'outer next has no exact inner sequence')
+    context=(start,'complete outer next','u16 source constructor still required')
+    region=Region(context,'helper',start,start+56,tuple(start+o for o,w,t in NEXT_ROWS),(),
+        (Transfer(start+4,'bl','call',target,'typed inner sequence',SEQ_U16),Transfer(start+54,'pop','return',None,'restored outer next')))
+    coverage=audit_coverage(objects,name,instructions,context,(region,),_function_consumer=_helper_function)
+    child=helper_coverage(objects,names[0],instructions,(target,'outer next',start))
+    child_frame=Storage(frame.space,frame.identity+':inner-seq',frame.start-8,8,8,frame.phase,True)
+    saved=Storage(frame.space,frame.identity+':saved',frame.start,8,4,frame.phase,False)
+    sequence=sequence_effect(objects,instructions,child,state,child_frame,ancestor_protected+(saved,))
+    if sequence['tag']==1:
+        value=sequence['value'];error=None;packed=(value<<16)|0xe00
+    else:
+        value=None;error=14 if sequence['tag']==0 else sequence['error']
+        require(error in (4,5,14),'outer next error exceeds its exact child/source domain');packed=(error<<8)|1
+    return dict(proof=proof,coverage=coverage,state=sequence['state'],sequence=sequence,registers={'r0':packed},
+                value=value,error=error,writes=sequence['writes'],input_reads=sequence['input_reads'],
+                conservative_activation_frames=(8,)+sequence['conservative_activation_frames'],
+                normal_preserves=sequence['normal_preserves'],
+                requires_machine_source_phase_arguments_lifetime_and_parent_coverage=True)
+
+
+def root_first_u16(objects,name,instructions,frame,ancestor_protected):
+    """Construct D/Q, then prove only the first next return to the visitor."""
+    headers=root_visitor_headers(objects,name,instructions,frame,ancestor_protected)
+    visitor=headers['visitor'];edges=visitor['proof']['ordinary_edges']
+    require(len(edges)==1 and edges[0][0]==24 and edges[0][3]==NEXT_U16,'first field call/argument bridge differs')
+    target=edges[0][2];names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target and canonical_symbol(n)==NEXT_U16]
+    require(len(names)==1,'first next target is ambiguous')
+    active=Storage(frame.space,'next_u16',headers['visitor_frame'].start-8,8,8,frame.phase,True)
+    returned=next_u16_effect(objects,names[0],instructions,visitor['sequence_state'],active,visitor['protected'])
+    return dict(headers=headers,first_return=returned,state_coordinate='after_first_next_return',
+                continuation=visitor['call_site']+4,retained_activation_frames=(456,1608)+returned['conservative_activation_frames'],
+                requires_actual_Config_field_store_and_all_parent_success_error_continuations=True,
                 requires_parent_entry_all_ingress_source_effects_and_coverage=True)
