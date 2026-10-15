@@ -10,6 +10,7 @@ import re
 import struct
 import zlib
 from config_decode_effects import DecoderState,SequenceState,sequence_effect,_object
+from config_entry import CONFIG,entry_object
 from config_finite import _literal_body,_complete_body
 from config_helpers import helper_coverage,_helper_function,HELPER_SEMANTIC_ROLES
 from config_regions import Storage,Region,Transfer,borrow,require_disjoint,require_writes,audit_coverage
@@ -201,3 +202,82 @@ def root_first_u16(objects,name,instructions,frame,ancestor_protected):
                 continuation=visitor['call_site']+4,retained_activation_frames=(456,1608)+returned['conservative_activation_frames'],
                 requires_actual_Config_field_store_and_all_parent_success_error_continuations=True,
                 requires_parent_entry_all_ingress_source_effects_and_coverage=True)
+
+
+# Source ConfigSeed::visit_seq assigns these two fields, in this order. These
+# are field-store witnesses, not a Rust layout oracle or Config validity test.
+U16_FIELDS=(('version',14570),('catalogue_version',14572))
+
+
+def _u16_field_regions(objects,name,instructions,frame):
+    start,_=_parent(objects,name,VISITOR,frame,1608)
+    first=((0,2,'lsls r1, r0, #0x1f'),(2,2,'bne @self+1a'),
+        (4,4,'ldr.w r4, [pc, @object0.pc_slot]'),(8,2,'lsrs r0, r0, #0x10'),
+        (10,4,'movw r1, #0x38ea'),(14,2,'strh r0, [r4, r1]'),
+        (16,2,'add r0, sp, #0x120'),(18,4,'bl @role:'+NEXT_U16))
+    guard=((0,2,'lsls r1, r0, #0x1f'),(2,2,'beq @self+16'))
+    second=((0,2,'lsrs r0, r0, #0x10'),(2,4,'movw r1, #0x38ec'),
+        (6,2,'strh r0, [r4, r1]'),(8,2,'add r0, sp, #0x120'))
+    error=((0,2,'lsrs r5, r0, #0x8'),(2,2,'mov r0, r5'))
+    proofs=[]
+    for offset,extent,rows,descriptors in ((28,22,first,[dict(kind='entry_static',role=CONFIG)]),
+        (50,4,guard,[]),(72,10,second,[]),(54,4,error,[])):
+        contract=dict(extent=extent,instructions=rows,objects=descriptors,data=[])
+        proof=_literal_body(objects,name,instructions,VISITOR,'two_u16_fields:'+str(offset),contract,
+                            entry_object,_no_object,window=start+offset)
+        # The shared error anchor has additional later-field predecessors to
+        # MOV r0,r5. This proves its bytes/destination only, never their state.
+        if offset!=54:_direct_ingress(instructions,start+offset,start+offset+extent)
+        proofs.append(proof)
+    return tuple(proofs)
+
+
+def root_u16_fields(objects,name,instructions,frame,ancestor_protected):
+    """Two unpublished source assignments; stop before boot_view executes.
+
+    Initial static bytes/identity are checked, but exclusive take/initialized
+    ConfigSlot ownership must still compose with entry and source construction.
+    Child writes are only Q/D; their current preserved-register contract keeps
+    the actual r4 destination across the second wrapper call. Errors enter the
+    separately bound shared suffix; its remaining restore/default path is owed.
+    """
+    first=root_first_u16(objects,name,instructions,frame,ancestor_protected)
+    headers=first['headers'];visitor=headers['visitor'];active=headers['visitor_frame']
+    start=visitor['proof']['function'];visitor_names=[n for n,e in objects.elf.functions.items()
+        if e[0]&~1==start and canonical_symbol(n)==VISITOR]
+    require(len(visitor_names)==1,'scalar field visitor target is ambiguous')
+    regions=_u16_field_regions(objects,visitor_names[0],instructions,active)
+    address=regions[0]['objects'][0]
+    owner=Storage('address','partial_ConfigSlot',address,14604,4,frame.phase,True)
+    state=first['first_return']['state'];returned=first['first_return'];fields=[];writes=[];returns=[returned]
+    # Full live destination must be separate from immutable source and the
+    # caller's saved cells; each actual field write has its exact smaller view.
+    protected=visitor['protected']+(_object(state.header,'live-Q'),
+        _object(state.decoder.header,'live-D'),_object(state.decoder.payload,'immutable-input'))
+    require_disjoint((owner,)+protected)
+    for ordinal,(field,offset) in enumerate(U16_FIELDS):
+        if returned['error'] is not None:break
+        value=returned['value'];require(type(value) is int and 0<=value<=65535,'u16 source value differs')
+        view=borrow(owner,offset,2,frame.phase,writable=True)
+        require_writes((view,),((view,0,2),),protected)
+        fields.append(dict(field=field,offset=offset,extent=2,value=value,
+                           phase='partial_decoded_unpublished',destination=view))
+        writes.append((view,0,struct.pack('<H',value)))
+        if ordinal==0:
+            edge=regions[0]['ordinary_edges']
+            require(len(edge)==1 and edge[0][0]==18 and edge[0][3]==NEXT_U16,'second u16 call edge differs')
+            target=edge[0][2];names=[n for n,e in objects.elf.functions.items()
+                if e[0]&~1==target and canonical_symbol(n)==NEXT_U16]
+            require(len(names)==1,'second u16 wrapper target is ambiguous')
+            child=Storage(frame.space,'next_catalogue_version',active.start-8,8,8,frame.phase,True)
+            returned=next_u16_effect(objects,names[0],instructions,state,child,visitor['protected'])
+            require('r4' in returned['normal_preserves'],'second u16 call does not preserve Config destination')
+            state=returned['state'];returns.append(returned)
+    failed=returned['error'] is not None
+    return dict(first_bridge=first,regions=regions,field_returns=tuple(returns),fields=tuple(fields),writes=tuple(writes),state=state,
+        error=returned['error'],continuation=start+(54 if failed else 82),
+        state_coordinate='before_shared_error_suffix' if failed else 'before_boot_view_call',
+        source_field_order=tuple(f for f,o in U16_FIELDS),
+        requires_shared_error_restore_default_and_remaining_success_continuations=True,
+        requires_exclusive_initialized_Config_source_owner_and_all_remaining_phases=True,
+        requires_parent_entry_all_ingress_source_effects_and_coverage=True)

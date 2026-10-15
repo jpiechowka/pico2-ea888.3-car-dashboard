@@ -1715,6 +1715,71 @@ class OrdinaryFirstFieldBridge(unittest.TestCase):
             with self.subTest(fault=fault),self.assertRaises(AssertionError):config_headers.root_first_u16(objects,root,records,frame,())
 
 
+class OrdinaryScalarFields(unittest.TestCase):
+    def fixture(self):
+        objects,records,root,visitor,frame,child=OrdinaryFirstFieldBridge.fixture(self)
+        donor,item=LoggerObjects.fixture(self,'sizez',fixture_file='config-entry-bodies.json')
+        import config_entry
+        entry=next(e for e in donor.elf.symbol_entries if config_entry.static_role(e[0])==config_entry.CONFIG)
+        index,address,size=entry[4],entry[1],entry[2];section=objects.elf.sections[index]
+        source=donor.elf.sections[index];data=bytearray(objects.elf.data)
+        offset=section[4]+address-section[3];other=source[4]+address-source[3]
+        data[offset:offset+size]=donor.elf.data[other:other+size];objects.elf.data=bytes(data)
+        objects.elf.symbol_entries.append(entry)
+        return objects,records,root,visitor,frame,child
+
+    def test_two_source_ordered_fields_remain_partial_and_unpublished(self):
+        import config_headers
+        objects,records,root,visitor,frame,child=self.fixture()
+        result=config_headers.root_u16_fields(objects,root,records,frame,())
+        self.assertEqual([(f['field'],f['offset'],f['extent']) for f in result['fields']],
+                         [('version',14570,2),('catalogue_version',14572,2)])
+        self.assertEqual(result['fields'][0]['value'],4)
+        self.assertEqual((result['state'].count,result['state'].decoder.cursor),(11,2))
+        self.assertEqual(result['state_coordinate'],'before_boot_view_call')
+        self.assertTrue(result['requires_exclusive_initialized_Config_source_owner_and_all_remaining_phases'])
+        self.assertNotIn('validated_config',result)
+
+    def test_store_width_field_offset_source_register_and_call_argument_mutations_reject(self):
+        import config_headers
+        for site,mnemonic,operands in ((0x1001c67e,'str','r0, [r4, r1]'),
+            (0x1001c67a,'movw','r1, #0x38ec'),(0x1001c6a2,'strh','r1, [r4, r1]'),
+            (0x1001c680,'add','r0, sp, #0x124')):
+            objects,records,root,visitor,frame,child=self.fixture();row=records[site]
+            records[site]=Instruction(site,row.raw,mnemonic,operands)
+            with self.subTest(site=site),self.assertRaises(AssertionError):config_headers.root_u16_fields(objects,root,records,frame,())
+
+    def test_named_destination_not_arbitrary_writable_memory_or_aliased_stack(self):
+        import config_headers,config_entry
+        for fault in ('identity','taken','extent'):
+            objects,records,root,visitor,frame,child=self.fixture()
+            entry=next(e for e in objects.elf.symbol_entries if config_entry.static_role(e[0])==config_entry.CONFIG)
+            if fault=='taken':
+                data=bytearray(objects.elf.data);section=objects.elf.sections[entry[4]]
+                data[section[4]+entry[1]-section[3]+14600]=1;objects.elf.data=bytes(data)
+            else:
+                altered=list(entry);altered[0 if fault=='identity' else 2]='other' if fault=='identity' else 14600
+                objects.elf.symbol_entries[objects.elf.symbol_entries.index(entry)]=tuple(altered)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_headers.root_u16_fields(objects,root,records,frame,())
+
+    def test_each_decode_error_stops_before_store_or_next_field_without_publishing(self):
+        import config_headers,zlib
+        for prefix,fields,count in ((b'\x80\x80\x80',0,12),(b'\x04\x80\x80\x80',1,11)):
+            objects,records,root,visitor,frame,child=self.fixture();data=bytearray(objects.elf.data)
+            def position(address):
+                section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+                return section[4]+address-section[3]
+            at=position(0x10032b1e);data[at+12:at+12+len(prefix)]=prefix
+            raw=data[at:at+1157];checksum=zlib.crc32(raw[:8]+raw[12:])
+            struct.pack_into('<I',data,at+8,checksum);struct.pack_into('<I',data,position(0x100200bc),checksum^0xffffffff)
+            objects.elf.data=bytes(data)
+            result=config_headers.root_u16_fields(objects,root,records,frame,())
+            self.assertEqual((len(result['fields']),result['error'],result['state'].count,result['state'].decoder.cursor),
+                             (fields,5,count,len(prefix)))
+            self.assertEqual(result['state_coordinate'],'before_shared_error_suffix')
+            self.assertTrue(result['requires_shared_error_restore_default_and_remaining_success_continuations'])
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow
