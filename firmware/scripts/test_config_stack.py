@@ -2058,6 +2058,24 @@ class ConstructionInterfaces(unittest.TestCase):
 
 
 class DefaultPreparationInterfaces(unittest.TestCase):
+    def test_payload_borrow_keeps_protected_enclosing_suffix_and_rejects_crossing(self):
+        from config_default import default_preparation
+        from config_regions import Storage,borrow,require_writes
+        for offset in (14576,14600,14601,14575):
+            objects,rows,name,frame=self.fixture();B=0x2000031c
+            guard=Storage('address','retained enclosing suffix',B+offset,14604-offset,1,frame.phase,False)
+            if offset==14575:
+                with self.assertRaises(AssertionError):default_preparation(objects,name,rows,frame,(guard,))
+            else:
+                try:proof=default_preparation(objects,name,rows,frame,(guard,))
+                except AssertionError:proof=None
+                with self.subTest(offset=offset):self.assertIsNotNone(proof,'a contained readonly enclosing suffix must not reject disjoint Config payload')
+                if proof is not None:
+                    self.assertEqual(proof['config'].storage.extent,14604)
+                    self.assertIn(guard,proof['protected'])
+                    wide=borrow(proof['config'].storage,0,14604,frame.phase,writable=True)
+                    with self.assertRaises(AssertionError):require_writes((wide,),((wide,offset-1,2),),(guard,))
+
     def fixture(self,code_shift=0,data_shift=0):
         from dataclasses import replace
         objects,records,root,visitor,frame,child=OrdinaryHeaderConstructors.fixture(self,code_shift,data_shift)
@@ -6168,6 +6186,123 @@ class SameBLoaderBoundary(unittest.TestCase):
                 # Rebinding avoids rejecting earlier merely for stale ELF SHA.
                 with self.subTest(mode=mode,changed=changed),self.assertRaisesRegex(AssertionError,'vector SP'):
                     first_boot_loader_boundary(objects,rows,self.rebound(objects,context))
+
+
+class ChecksumRefillHandoff(unittest.TestCase):
+    def fixture(self):
+        from llvm_stack import mapping_ranges
+        objects,rows,context,item=SameBLoaderBoundary().fixture();elf=objects.elf
+        donor,more,name,frame=DefaultSourceTerminal().fixture()
+        # Compose already reviewed literal fixtures by physical address. The
+        # unchanged entry/static-point fixture supplies startup and initial B.
+        # Sparse fixtures must contribute only declared bytes, never their
+        # zero-filled section holes over other already reviewed objects.
+        for filename in ('config-headers.json','config-construction.json','config-default-preparation.json',
+            'config-refill-children.json','config-default-widget.json','config-default-sources.json'):
+            data=json.loads((Path(__file__).parent/'fixtures'/filename).read_text())
+            selected=next(v for v in data if v['mode']=='sizez') if isinstance(data,list) else data
+            for segment in selected['segments']:
+                index,address,encoded=segment
+                section=donor.elf.sections[index];n=len(bytes.fromhex(encoded));at=section[4]+address-section[3]
+                StartupConfigurationCopy.put(objects,address,donor.elf.data[at:at+n])
+        for n,(a,z,index) in donor.elf.functions.items():
+            if not any((a&~1)<=at<(a&~1)+z for at in more):continue
+            for lo,hi,kind in mapping_ranges(donor.elf,n):
+                if kind=='d':StartupConfigurationCopy.put(objects,lo,donor.read_only(lo,hi-lo))
+        for at,row in more.items():StartupConfigurationCopy.put(objects,at,row.raw)
+        # The handoff binds the future validator's receiver prefix only.
+        # Retain existing complete Result fixture bytes as input evidence;
+        # later Result/visitor effects are not invoked by this producer.
+        extra=json.loads((Path(__file__).parent/'fixtures/config-validator-result.json').read_text())
+        for index,address,encoded in extra['segments']:StartupConfigurationCopy.put(objects,address,bytes.fromhex(encoded))
+        for v in extra['records']:more[v['address']]=Instruction(v['address'],bytes.fromhex(v['bytes']),v['mnemonic'],v['operands'])
+        # Restore actual selected point dependencies if an unused donor hole
+        # overlapped them; every retained point uses the same original bytes.
+        for at,encoded in item['segments']:StartupConfigurationCopy.put(objects,at,bytes.fromhex(encoded))
+        elf.functions.update(donor.elf.functions);objects.sizes.update(donor.sizes)
+        elf.symbol_entries=list(dict.fromkeys(elf.symbol_entries+donor.elf.symbol_entries))
+        elf.mapping_symbols=list(dict.fromkeys(elf.mapping_symbols+donor.elf.mapping_symbols))
+        rows.update(more)
+        return objects,rows,SameBLoaderBoundary.rebound(objects,context)
+
+    def test_public_checksum_alternative_reaches_complete_normal_refill_before_validator_only(self):
+        from config_refill_handoff import checksum_refill_handoff
+        objects,rows,context=self.fixture();proof=checksum_refill_handoff(objects,rows,context)
+        self.assertEqual(proof['phase'],'checksum_refill_pending_validator_and_diagnostic_closure')
+        self.assertEqual(proof['widgets'],tuple((i,c,444+220*i) for i,c in enumerate((0,7,6,2,1,3,4,5))))
+        self.assertEqual(proof['sources'],tuple((i,x,32+22*i) for i,x in enumerate((5,3,1,14,2,15,4,13))))
+        self.assertEqual(set(proof['source_groups']),{'fuel','sources','warnings','controls','views','widgets','warning_colors','history','led','version','catalogue_version','reduced_motion','boot_view'})
+        P=0x20080000-88-456
+        self.assertEqual(proof['before_validator']['result'],(P+236,12))
+        self.assertEqual(proof['before_validator']['r8'],P+112)
+        self.assertEqual(proof['before_validator']['config'],(0x2000031c,14576))
+        self.assertEqual(proof['before_validator']['phase'],'default_validation')
+        self.assertTrue(proof['before_validator']['readonly_Config'])
+        self.assertFalse(proof['checksum_alternative_observed_taken']);self.assertNotIn('acquired_owner',proof)
+        self.assertTrue(proof['diagnostic_closure_pending']);self.assertFalse(proof['hardware_qualified'])
+        self.assertEqual(len(proof['pending_diagnostics']),4)
+        self.assertGreater(len(proof['floating_carrier_preserving_child_bodies']),0)
+        self.assertTrue(proof['target_access_requirements_unresolved'])
+
+    def test_independent_Reset_S_and_Overview_object_pool_relocation_keep_B_code_fixed(self):
+        from config_refill_handoff import checksum_refill_handoff
+        objects,rows,context=self.fixture();elf=objects.elf
+        # Independent lower Reset stack with unchanged B/task/code/LR.
+        S=0x2007f000
+        StartupConfigurationCopy.put(objects,elf.named['.vector_table'][3],struct.pack('<I',S))
+        elf.symbol_entries=[(n,S if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+        # Move only the source Overview object and update its actually consumed
+        # PC pool word, without moving code/pools or unrelated readonly objects.
+        at=0x1001ff02+32;row=rows[at]
+        displacement=int(re.search(r'#(0x[0-9a-f]+|[0-9]+)',row.operands)[1],0)
+        pool=((at+4)&~3)+displacement;old=struct.unpack('<I',objects.read_only(pool,4))[0]
+        section=elf.named['.rodata'];new=section[3]+section[5]-32
+        self.assertEqual(objects.read_only(old,8),b'Overview')
+        StartupConfigurationCopy.put(objects,new,b'Overview');StartupConfigurationCopy.put(objects,pool,struct.pack('<I',new))
+        proof=checksum_refill_handoff(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        P=S-544
+        self.assertEqual(proof['before_validator']['result'],(P+236,12))
+        self.assertEqual(proof['before_validator']['r8'],P+112)
+        self.assertEqual(proof['before_validator']['config'],(0x2000031c,14576))
+        self.assertEqual(proof['before_validator']['phase'],'default_validation')
+        self.assertTrue(proof['before_validator']['readonly_Config'])
+        self.assertEqual(proof['fault']['retained'],(P+8,16))
+        self.assertEqual(proof['child_stack_low'],P-144)
+        self.assertEqual(proof['before_validator']['receiver_prefix'],(0x1001ea20,22))
+
+    def test_foreign_checksum_fault_entry_and_wrong_child_output_reject(self):
+        from config_refill_handoff import checksum_refill_handoff
+        from dataclasses import replace
+        cases=((0x1001ff02+36,'r0, r8'),(0x1001ffb8+0x2a-2,'r0, r8'))
+        # Operand-only records intentionally test finite semantic matching,
+        # never claim a new LLVM decode or an executable mutant image.
+        for at,operand in cases:
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            changed=dict(rows);changed[at]=replace(rows[at],operands=operand)
+            with self.subTest(site=hex(at)),self.assertRaises(AssertionError):checksum_refill_handoff(objects,changed,context)
+        objects,rows,context=self.fixture()
+        # An additional semantic branch record into the fault interior does not
+        # acquire the source CRC guard by merely residing in the same parent.
+        at=0x1001ff02+1500
+        rows[at]=Instruction(at,bytes.fromhex('00e0'),'b',hex(0x1001ff00))
+        with self.assertRaisesRegex(AssertionError,'foreign checksum-fault ingress'):checksum_refill_handoff(objects,rows,context)
+
+    def test_fault_loop_and_reset_semantic_changes_cannot_manufacture_a_handoff(self):
+        from config_refill_handoff import checksum_refill_handoff
+        from dataclasses import replace
+        for at,operand in ((0x1001ff00,'r0, [sp, #0xc]'),(0x1001ff34,'r5, r4, [sp, #20]'),
+            (0x10020286,'r0, #0x1'),(0x10020358,'r8, sp, #0x74')):
+            objects,rows,context=self.fixture();self.assertIn(at,rows)
+            changed=dict(rows);changed[at]=replace(rows[at],operands=operand)
+            with self.subTest(at=hex(at)),self.assertRaises(AssertionError):checksum_refill_handoff(objects,changed,context)
+
+    def test_deeper_child_stack_cannot_alias_allocated_memory_below_root(self):
+        from config_refill_handoff import checksum_refill_handoff
+        from config_loader_boundary import first_boot_loader_boundary
+        objects,rows,context=self.fixture();low=0x20080000-88-456
+        objects.elf.sections.append((0,8,3,low-120,0,8,0,0,4,0))
+        first_boot_loader_boundary(objects,rows,context)
+        with self.assertRaises(AssertionError):checksum_refill_handoff(objects,rows,context)
 
 
 if __name__=='__main__':unittest.main()

@@ -120,7 +120,11 @@ def default_preparation(objects,name,instructions,frame,ancestor_protected):
     protected=ancestor_protected+(saved,)
     owner=Storage('address','private unpublished ConfigSlot',proof['objects'][0],14604,4,frame.phase,True)
     config=borrow(owner,0,14576,frame.phase,writable=True)
-    require_disjoint((owner,)+protected)
+    # The enclosing slot also owns metadata/taken/padding which this phase
+    # cannot mutate. A readonly suffix guard may legitimately be contained
+    # in that enclosing allocation; compare the actual mutable Config borrow.
+    payload=Storage(owner.space,owner.identity+':Config payload',owner.start,14576,4,frame.phase,True)
+    require_disjoint((payload,)+protected)
     literal=Storage('address','default Overview',proof['objects'][2],8,1,frame.phase,False)
     source=InitializedPrefix(borrow(literal,0,8,frame.phase),Span(8,8))
     result_view=borrow(frame,112,24,frame.phase,writable=True)
