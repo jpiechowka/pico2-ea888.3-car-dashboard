@@ -55,7 +55,7 @@ def _current(objects,instructions,proof):
     return current
 
 
-def _decoder_child(objects,instructions,proof,frame,state,protected,**kwargs):
+def _decoder_dependency(objects,instructions,proof,frame):
     # Only these reviewed parent/outline/decoder edges may compose effects.
     interfaces={'deserialize_u16':('slice_pop',None),'take_varint_u32':('slice_pop',None),
                 'seq_u8':('slice_pop','seq_decrement_tail_pop'),'seq_bool':('slice_pop','seq_decrement_tail_pop'),
@@ -76,6 +76,11 @@ def _decoder_child(objects,instructions,proof,frame,state,protected,**kwargs):
     require(len(names)==1,'decoder pop has no unique typed target')
     child=helper_coverage(objects,names[0],instructions,(target,'fixed decoder pop',proof['function']))
     child_frame=Storage(frame.space,frame.identity+':pop',frame.start-child['frame'],child['frame'],8,frame.phase,True)
+    return child,child_frame
+
+
+def _decoder_child(objects,instructions,proof,frame,state,protected,**kwargs):
+    child,child_frame=_decoder_dependency(objects,instructions,proof,frame)
     return decode_effect(objects,instructions,child,state,child_frame,protected,**kwargs)
 
 

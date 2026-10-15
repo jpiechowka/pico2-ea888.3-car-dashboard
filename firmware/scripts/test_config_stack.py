@@ -1780,6 +1780,100 @@ class OrdinaryScalarFields(unittest.TestCase):
             self.assertTrue(result['requires_shared_error_restore_default_and_remaining_success_continuations'])
 
 
+class AbstractPrimitiveInterfaces(unittest.TestCase):
+    def decoder(self,semantic,raw=b'\x00\x01\x02'):
+        import config_abstract
+        args=list(OrdinaryDecodeEffects.fixture(self,semantic,raw))
+        args[3]=config_abstract.DecoderInterface(args[3].header,args[3].payload,config_abstract.Span(0,len(raw)))
+        return args
+
+    def sequence(self,semantic,raw=b'\x00\x01\x02'):
+        import config_abstract
+        args=list(OrdinarySequenceEffects.fixture(self,semantic,raw,2))
+        source=args[3]
+        decoder=config_abstract.DecoderInterface(source.decoder.header,source.decoder.payload,config_abstract.Span(0,len(raw)))
+        args[3]=config_abstract.SequenceInterface(source.header,decoder,config_abstract.Span(0,2))
+        return args
+
+    def test_unknown_scalars_union_all_guarded_outcomes_without_reading_value_bytes(self):
+        import config_abstract
+        signatures=[]
+        for raw in (b'\x00\x00\x00',b'\xff\xff\xff'):
+            result=config_abstract.decoder_interface(*self.decoder('deserialize_u16',raw))
+            self.assertEqual({o['kind'] for o in result['outcomes']},{'success','error4','error5'})
+            success=next(o for o in result['outcomes'] if o['kind']=='success')
+            self.assertEqual((success['value_kind'],success['value_domain']),('u16',(0,65535)))
+            self.assertNotIn('value',success)
+            signatures.append([(o['kind'],o['cursor']) for o in result['outcomes']])
+            self.assertTrue(result['requires_actual_stage_receiver_transport_and_complete_parent_graph'])
+        self.assertEqual(signatures[0],signatures[1])
+
+    def test_sequence_retains_none_some_and_both_bool_errors_as_paired_alternatives(self):
+        import config_abstract
+        result=config_abstract.sequence_interface(*self.sequence('seq_bool'))
+        self.assertEqual({o['kind'] for o in result['outcomes']},{'none','some','error4','error6'})
+        for outcome in result['outcomes']:
+            self.assertEqual(outcome['count'],config_abstract.Span(0,0) if outcome['kind']=='none' else config_abstract.Span(0,1))
+            if outcome['kind']=='some':self.assertEqual(outcome['value_domain'],(0,1))
+        self.assertEqual(result['conservative_activation_frames'],(8,16))
+
+    def test_remaining_fixed_primitive_families_keep_unknown_widths_and_result_initialization(self):
+        import config_abstract
+        from config_regions import Storage,borrow
+        args=self.decoder('take_varint_u32',bytes(5));frame=args[4]
+        output=borrow(Storage(frame.space,'R8',144,8,4,frame.phase,True),0,8,frame.phase,writable=True)
+        result=config_abstract.decoder_interface(*args,output=output)
+        self.assertEqual(result['conservative_activation_frames'],(32,16))
+        for alternative in result['outcomes']:
+            self.assertEqual(alternative['initialized_result_fields'],((0,1),(4,4)) if alternative['kind']=='success' else ((0,1),(1,1)))
+        with self.assertRaises(AssertionError):config_abstract.decoder_interface(*args,output=args[3].header)
+        for semantic,domain,frames in (('seq_u8',(0,255),(8,16)),('seq_u16',(0,65535),(8,24,16))):
+            result=config_abstract.sequence_interface(*self.sequence(semantic))
+            self.assertEqual(next(o['value_domain'] for o in result['outcomes'] if o['kind']=='some'),domain)
+            self.assertEqual(result['conservative_activation_frames'],frames)
+
+    def test_f32_union_preserves_policy_on_none_error_and_success_without_alignment4(self):
+        import config_abstract,config_platform
+        from config_regions import Storage,borrow
+        args=self.sequence('seq_f32',bytes(range(7)));state,frame=args[3:5]
+        output=borrow(Storage(frame.space,'RO8',184,8,4,frame.phase,True),0,8,frame.phase,writable=True)
+        policy=config_platform.reviewed_eav_policy(args[0],state.decoder.payload,dict(target=config_platform.TARGET,
+            core=0,security='secure',boot_context=config_platform.BOOT_CONTEXT),contradictory_effects=())
+        with self.assertRaises(AssertionError):config_abstract.sequence_interface(*args,output=output)
+        result=config_abstract.sequence_interface(*args,output=output,platform_policy=policy)
+        self.assertEqual({o['kind'] for o in result['outcomes']},{'none','some','error4'})
+        self.assertEqual(result['platform_policy'],policy)
+        some=next(o for o in result['outcomes'] if o['kind']=='some')
+        self.assertEqual(some['cursor'],config_abstract.Span(4,7))
+        self.assertEqual(some['initialized_result_fields'],((0,4),(4,4)))
+        args[0].elf.data+=b'changed'
+        with self.assertRaises(AssertionError):config_abstract.sequence_interface(*args,output=output,platform_policy=policy)
+
+    def test_grouped_effects_protect_full_headers_outputs_and_save_cells(self):
+        import config_abstract
+        from config_regions import Storage,borrow
+        for source in ('D_end','Q_save'):
+            args=self.decoder('slice_pop') if source=='D_end' else self.sequence('seq_u8')
+            state,frame=args[3:5]
+            owner=Storage(frame.space,'alias',frame.start-4 if source=='D_end' else frame.start,8,4,frame.phase,True)
+            if source=='D_end':args[3]=config_abstract.DecoderInterface(borrow(owner,0,8,frame.phase,writable=True),state.payload,state.cursor)
+            else:args[3]=config_abstract.SequenceInterface(borrow(owner,0,8,frame.phase,writable=True),state.decoder,config_abstract.Span(0,0))
+            with self.subTest(source=source),self.assertRaises(AssertionError):
+                (config_abstract.decoder_interface if source=='D_end' else config_abstract.sequence_interface)(*args)
+
+    def test_current_child_mutation_and_invalid_domains_reject(self):
+        import config_abstract
+        for lower,upper in ((-1,2),(0,True),(3,2)):
+            with self.assertRaises(AssertionError):config_abstract.Span(lower,upper)
+        args=self.decoder('deserialize_u16');row=args[1][0x1001b844]
+        args[1][row.address]=Instruction(row.address,row.raw,'and','r0, r1, #0x3f')
+        with self.assertRaises(AssertionError):config_abstract.decoder_interface(*args)
+
+    def test_exact_helper_does_not_silently_accept_abstract_state(self):
+        import config_decode_effects
+        with self.assertRaises(AssertionError):config_decode_effects.decode_effect(*self.decoder('slice_pop'))
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow
