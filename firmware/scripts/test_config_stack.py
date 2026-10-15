@@ -6758,6 +6758,30 @@ class ActualChecksumLoaderReturn(unittest.TestCase):
             rows[at]=replace(rows[at],operands=operand)
             with self.subTest(site=hex(at)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
 
+    def test_coherent_stoich_load_image_and_record_change_rejects_the_actual_transport(self):
+        from config_build_source import validate_source_context
+        objects,rows,context=self.fixture()
+        positive=self.consume(objects,rows,context)
+        self.assertEqual(positive['phase'],'checksum_refill_loader_return_pending_diagnostics_and_other_loader_routes')
+        original=objects.elf.data;at=0x10020404;old=rows[at]
+        # Thumb16 LDR (SP-relative): Rt1, imm8 scaled by4. Both image and
+        # record change P240 (meaningful Ok f32) -> neighboring P244.
+        # This is manually encoded coherent synthetic evidence, no decoder.
+        self.assertEqual((old.mnemonic,old.operands),('ldr','r1, [sp, #0xf0]'))
+        self.assertEqual(old.raw,struct.pack('<H',0x9800|(1<<8)|(240//4)))
+        changed=struct.pack('<H',0x9800|(1<<8)|(244//4))
+        StartupConfigurationCopy.put(objects,at,changed)
+        rows[at]=Instruction(at,changed,'ldr','r1, [sp, #0xf4]')
+        self.assertEqual(objects.read_only(at,2),rows[at].raw)
+        rebound=SameBLoaderBoundary.rebound(objects,context)
+        self.assertEqual(validate_source_context(rebound,objects.elf),rebound)
+        with self.assertRaisesRegex(AssertionError,'^payload reference/cell/ABI/default/return operands differ$'):
+            self.consume(objects,rows,rebound)
+        section=next(s for s in objects.elf.sections if s[3]<=at<at+2<=s[3]+s[5])
+        offset=section[4]+at-section[3]
+        self.assertEqual(original[offset:offset+2],old.raw)
+        self.assertNotEqual(original,objects.elf.data)
+
     def test_issuer_compare_retry_overflow_and_publication_pair_are_current_operands(self):
         from dataclasses import replace
         for at,operand in ((0x10020434,'r0, r2'),(0x1002043c,'r0, '+hex(0x1002044a)),
