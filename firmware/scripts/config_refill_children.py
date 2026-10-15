@@ -189,6 +189,34 @@ def period_interface(objects,instructions,proof,channel,frame,ancestor_protected
     return _result(proof,(8,),outcomes=tuple(dict(channel=c,period_ms=values[c]) for c in domain),possible_writes=())
 
 
+def opaque_copy_interface(objects,instructions,target,source,destination,count,frame,protected):
+    """Reviewed restored-tail copy; copied padding remains opaque bytes."""
+    require(isinstance(source,View) and not source.writable and isinstance(destination,View) and destination.writable and
+        type(count) is int and 0<count==source.extent<=destination.extent and isinstance(frame,Storage) and
+        frame.space.startswith('stack:') and frame.writable and frame.alignment>=8 and frame.start%8==0 and
+        source.storage==frame and source.storage.phase==destination.storage.phase==frame.phase,
+        'opaque copy lacks paired current caller-local source/views/count')
+    protected=tuple(protected)
+    live_source=Storage(source.storage.space,'opaque source',source.start,count,1,frame.phase,False)
+    require_writes((destination,),((destination,0,count),),protected+(live_source,))
+    copies=[];roles=('__aeabi_memcpy','_RNvNtCs_17compiler_builtins3mem6memcpy')
+    for ordinal,role in enumerate(roles):
+        names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target and canonical_symbol(n)==role]
+        require(len(names)==1,'memcpy child is not uniquely typed');bound=logger_body(objects,names[0],instructions);copies.append(bound)
+        require(bound['frame']==(8 if ordinal==0 else 72),'memcpy conservative frame differs')
+        child=Storage(frame.space,frame.identity+':copy'+str(ordinal),frame.start-bound['frame'],bound['frame'],4,frame.phase,True)
+        for retained in protected+(live_source,):require_disjoint((child,retained))
+        saves=Storage(child.space,child.identity+':complete child frame',child.start,child.extent,4,frame.phase,False)
+        require_writes((destination,),((destination,0,destination.extent),),protected+(saves,))
+        if ordinal==0:
+            edges=bound['ordinary_edges'];require(len(edges)==1 and edges[0][3]==roles[1],'memcpy restored tail differs');target=edges[0][2]
+        else:require(not bound['ordinary_edges'] and not bound['indirect_sites'],'memcpy has unresolved child/callback')
+    return dict(children=tuple(copies),possible_writes=((destination,0,count),),
+        conservative_activation_frames=(8,72),physical_activation_paths=((8,),(72,)),restored_tail_storage=True,
+        normal_preserves=tuple('r'+str(i) for i in range(4,12))+('sp',),
+        initialized_semantic_bytes_not_inferred=True,requires_actual_parent_pointer_count_transport=True)
+
+
 def advanced_interface(objects,instructions,proof,channel,afr,output,frame,ancestor_protected):
     proof=_current(objects,instructions,proof);require(proof['shape']=='advanced_for_channel_z','not the AdvancedDisplay constructor')
     channels=_domain(channel,'Channel',7);flags=_domain(afr,'bool',1);protected=_layout(proof,frame,ancestor_protected)
@@ -196,28 +224,17 @@ def advanced_interface(objects,instructions,proof,channel,afr,output,frame,ances
     bands=borrow(frame,0,48,frame.phase,writable=True);require_writes((bands,),((bands,0,48),),protected)
     # Complete wrapper and builtin bodies are required, including the wrapper's
     # restored tail. Conservative accounting retains both8 and72 metadata.
-    copy_roles=('__aeabi_memcpy','_RNvNtCs_17compiler_builtins3mem6memcpy');copies=[]
+    copy_role='__aeabi_memcpy'
     outline=proof['ordinary_edges'];require(len(outline)==1 and outline[0][0]==72,'AdvancedDisplay copy interface differs')
     names=[n for n,e in objects.elf.functions.items() if e[0]&~1==outline[0][2]];require(len(names)==1,'ambiguous bands48 outline')
     copy=child_body(objects,names[0],instructions,'@outline:advanced_copy_bands48')
-    edges=copy['ordinary_edges'];require(len(edges)==1 and edges[0][3]==copy_roles[0],'bands48 copy tail differs')
-    target=edges[0][2]
-    for ordinal,role in enumerate(copy_roles):
-        names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target and canonical_symbol(n)==role]
-        require(len(names)==1,'memcpy child is not uniquely typed');bound=logger_body(objects,names[0],instructions);copies.append(bound)
-        require(bound['frame']==(8 if ordinal==0 else 72),'memcpy conservative frame differs')
-        child_frame=Storage(frame.space,frame.identity+':copy'+str(ordinal),frame.start-bound['frame'],bound['frame'],4,frame.phase,True)
-        require_disjoint((child_frame,)+protected+(Storage(frame.space,'live initialized Bands',bands.start,48,4,frame.phase,False),))
-        child_save=Storage(child_frame.space,child_frame.identity+':complete prologue',child_frame.start,child_frame.extent,4,frame.phase,False)
-        require_writes((output,),((output,0,64),),protected+(child_save,))
-        if ordinal==0:
-            edges=bound['ordinary_edges'];require(len(edges)==1 and edges[0][3]==copy_roles[1],'memcpy restored tail differs');target=edges[0][2]
-        else:require(not bound['ordinary_edges'] and not bound['indirect_sites'],'memcpy has unresolved child/callback')
+    edges=copy['ordinary_edges'];require(len(edges)==1 and edges[0][3]==copy_role,'bands48 copy tail differs')
+    copied=opaque_copy_interface(objects,instructions,edges[0][2],borrow(frame,0,48,frame.phase),output,48,frame,protected)
     outcomes=tuple(dict(channel=c,afr=a,readout=9 if c==7 and a else 7 if c==7 else 6 if c==6 else 2 if c==0 else 0)
         for c in channels for a in flags)
     return _result(proof,(72,8,72),outcomes=outcomes,possible_writes=((output,0,61),),initialized_ranges=((0,61),),
         physical_activation_paths=((72,8),(72,72)),restored_tail_storage=True,
-        local_band_ranges=((0,16),(16,16),(32,16)),copy_children=tuple(copies),
+        local_band_ranges=((0,16),(16,16),(32,16)),copy_children=copied['children'],
         target_access_requirements=(dict(operation='single_word_store',site=proof['function']+84,
             owner=output,coordinate_space=output.storage.space,phase=frame.phase,address=output.start+57,width=4,unaligned=True,
             owner_role='AdvancedDisplay.secondary/peak/reference/band_count',status='unresolved_object_store_policy'),))

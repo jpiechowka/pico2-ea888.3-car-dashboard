@@ -34,8 +34,12 @@ def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,
     else:
         require(parent<=start<start+extent<=parent+parent_extent,'root window exceeds declared caller')
         mapping=[(max(start,a),min(start+extent,b),k) for a,b,k in caller_mapping if a<start+extent and start<b]
-        require(all(k=='t' for a,b,k in mapping) and sum(b-a for a,b,k in mapping)==extent,
-                'root window is not wholly mapped Thumb code')
+        if 'mapping' in contract:
+            require(mapping==[(start+a,start+b,k) for a,b,k in contract['mapping']],
+                'bounded source code/data partition differs')
+        else:
+            require(all(k=='t' for a,b,k in mapping) and sum(b-a for a,b,k in mapping)==extent,
+                    'root window is not wholly mapped Thumb code')
     raw=objects.read_only(start,extent);rows=sorted((r for a,r in instructions.items() if start<=a<start+extent),key=lambda r:r.address)
     require(len(rows)==len(contract['instructions']),'payload instruction inventory differs')
     code={a for lo,hi,k in mapping if k=='t' for a in range(lo,hi)};covered=set();producers={};edges=[];indirect=[];external_values={}

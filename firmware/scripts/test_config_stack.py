@@ -2649,6 +2649,140 @@ class OwnedPlatformDependencies(unittest.TestCase):
                     if reader=='policy':config_platform.read_policy(changed['policies'][0],expected)
                     else:config_platform.read_stack_result(changed,expected,stack['headroom'])
 
+class DefaultWidgetLoop(unittest.TestCase):
+    def fixture(self,code_shift=0,data_shift=0):
+        objects,records,root,frame=DefaultPreparationInterfaces.fixture(self,code_shift,data_shift)
+        donor,item=LoggerObjects.fixture(self,'sizez',code_shift,data_shift,fixture_file='config-default-widget.json')
+        data=bytearray(objects.elf.data)
+        for index,original,encoded in item['segments']:
+            source=donor.elf.sections[index];dest=objects.elf.sections[index]
+            shift=0 if dest[2]&1 else code_shift if dest[2]&4 else data_shift
+            at=original+shift;n=len(bytes.fromhex(encoded));a=source[4]+at-source[3];b=dest[4]+at-dest[3]
+            data[b:b+n]=donor.elf.data[a:a+n]
+        for original in item['relocations']:
+            section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=original+(code_shift if s[2]&4 else data_shift)<s[3]+s[5])
+            at=original+(code_shift if section[2]&4 else data_shift);index=section[4]+at-section[3]
+            value=struct.unpack_from('<I',data,index)[0]
+            target=next(s for s in objects.elf.sections if s[2]&2 and
+                s[3]-(0 if s[2]&1 else code_shift if s[2]&4 else data_shift)<=value&~1<
+                s[3]-(0 if s[2]&1 else code_shift if s[2]&4 else data_shift)+s[5])
+            struct.pack_into('<I',data,index,value+(0 if target[2]&1 else code_shift if target[2]&4 else data_shift))
+        objects.elf.data=bytes(data);objects.elf.functions.update(donor.elf.functions);objects.sizes.update(donor.sizes)
+        objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+donor.elf.symbol_entries))
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address']+code_shift;operand=op[1] if len(op)>1 else ''
+            if config_stack.transfer_family(op[0].removesuffix('.w')) in ('b','bl','cbz','cbnz'):
+                operand=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operand)
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],operand)
+        return objects,records,root,frame
+
+    def test_paired_widget_phase_keeps_eight_indices_epochs_and_failure_edges(self):
+        import config_default_widget
+        for code,data in ((0,0),(0x2800,0x19000)):
+            objects,records,root,frame=self.fixture(code,data)
+            result=config_default_widget.widget_loop(objects,root,records,frame,())
+            self.assertEqual(tuple((v['index'],v['channel'],v['offset']) for v in result['iterations']),
+                ((0,0,444),(1,7,664),(2,6,884),(3,2,1104),(4,1,1324),(5,3,1544),(6,4,1764),(7,5,1984)))
+            self.assertEqual(result['normal_exit_count'],8)
+            self.assertEqual(set(result['diagnostics']),{'label_capacity','warning_capacity','widget_count'})
+            self.assertEqual(len(result['target_access_requirements']),10)
+            for iteration in result['iterations']:
+                self.assertEqual(iteration['initialized_label'].view.start,iteration['widget'].start+156)
+                self.assertEqual(iteration['initialized_warning'].view.start,iteration['widget'].start+36)
+                self.assertEqual(iteration['initialized_label'].length.lower,iteration['source_case']['length'])
+                self.assertEqual(tuple((v.start-frame.start,v.extent) for v in
+                    iteration['opaque_copies'][3]['retained_scratch_epochs']),((84,28),(182,24)))
+                self.assertEqual(iteration['opaque_copies'][3]['physical_activation_paths'],((8,),(72,)))
+            self.assertEqual(result['diagnostics']['label_capacity']['error_payload_bytes'],0)
+            self.assertEqual(result['diagnostics']['warning_capacity']['argument_address'],frame.start+351)
+            self.assertTrue(result['requires_actual_incoming_exclusive_slot_fault_SP_and_whole_parent_graph'])
+
+    def test_loop_guard_stride_receiver_copy_and_selector_operands_cannot_drift(self):
+        import config_default_widget
+        for offset,operand in ((0x2ce,'r0, r11, #0xdb'),(0x28,'r2, r5'),(0x18e,'r2, #0x41'),
+            (0x7e,'r8, [sp, #0x3c]'),(0x1b0,'r0, [r4, #0x977]'),(0x2ca,'r0, [r4, #0x975]')):
+            objects,records,root,frame=self.fixture();start=(objects.elf.functions[root][0]&~1)+340;at=start+offset
+            old=records[at];records[at]=Instruction(at,old.raw,old.mnemonic,operand)
+            with self.subTest(offset=offset),self.assertRaises(AssertionError):config_default_widget.widget_loop(objects,root,records,frame,())
+
+    def test_foreign_entry_data_ingress_and_published_phase_are_not_prepared_state(self):
+        import config_default_widget
+        from dataclasses import replace
+        for fault in ('entry','table_data','prior_data','phase'):
+            objects,records,root,frame=self.fixture();start=(objects.elf.functions[root][0]&~1)+340
+            if fault=='phase':frame=replace(frame,phase='published')
+            else:
+                target=start+({'entry':0,'table_data':134,'prior_data':256}[fault]);at=0x10060000
+                records[at]=Instruction(at,bytes(2),'b',hex(target))
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_default_widget.widget_loop(objects,root,records,frame,())
+
+    def test_paired_label_and_limit_tables_reject_while_numeric_payload_stays_abstract(self):
+        import config_default_widget
+        for fault in ('labels','length','limit','numeric'):
+            objects,records,root,frame=self.fixture();raw=bytearray(objects.elf.data)
+            at={'labels':0x1003c464,'length':0x1002c008,'limit':0x1002bfa0,'numeric':0x1002c38c}[fault]
+            section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=at<s[3]+s[5]);index=section[4]+at-section[3]
+            if fault=='labels':raw[index:index+4]=raw[index+28:index+32]
+            else:raw[index]^=1
+            objects.elf.data=bytes(raw)
+            if fault=='numeric':
+                result=config_default_widget.widget_loop(objects,root,records,frame,())
+                self.assertTrue(result['requires_actual_incoming_exclusive_slot_fault_SP_and_whole_parent_graph'])
+            else:
+                with self.subTest(fault=fault),self.assertRaises(AssertionError):config_default_widget.widget_loop(objects,root,records,frame,())
+
+    def test_shared_copy_preserves_live_output_and_parent_guards_across_restored_tail(self):
+        from config_refill_children import opaque_copy_interface
+        from config_regions import Storage,borrow
+        from dataclasses import replace
+        fixture=RefillChildInterfaces()
+        objects,records,proof,frame,output=fixture.args('sizez','advanced_for_channel_z')
+        source=borrow(frame,0,48,frame.phase);target=objects.elf.functions['__aeabi_memcpy'][0]&~1
+        result=opaque_copy_interface(objects,records,target,source,output,48,frame,())
+        self.assertEqual(result['physical_activation_paths'],((8,),(72,)))
+        self.assertTrue(result['initialized_semantic_bytes_not_inferred'])
+        guard=Storage(frame.space,'live ancestor',frame.start-64,4,4,frame.phase,False)
+        for fault in ('deep_guard','overlap','readonly','wrong_count','foreign_source','unaligned_SP'):
+            src,dest,active,protected=source,output,frame,()
+            if fault=='deep_guard':protected=(guard,)
+            elif fault=='overlap':dest=borrow(frame,0,48,frame.phase,writable=True)
+            elif fault=='readonly':dest=replace(dest,writable=False)
+            elif fault=='wrong_count':src=borrow(frame,0,49,frame.phase)
+            elif fault=='foreign_source':src=borrow(Storage('address','unbound bytes',0x20000000,48,4,frame.phase,False),0,48,frame.phase)
+            else:active=Storage(frame.space,'wrongSP',frame.start+4,frame.extent,4,frame.phase,True)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                opaque_copy_interface(objects,records,target,src,dest,48,active,protected)
+
+class BoundedMixedSourceWindows(unittest.TestCase):
+    def fixture(self):
+        base=0x10001000;raw=bytes.fromhex('01e0aabbccdd7047');name='source_parent'
+        elf=SimpleNamespace(data=raw,sections=[(0,1,6,base,0,8,0,0,2,0)],functions={name:(base|1,8,0)},
+            mapping_symbols=[('$t',base,0),('$d',base+2,0),('$t.1',base+6,0)])
+        objects=config_stack.DiagnosticObjects(elf,{base:8})
+        records={base:Instruction(base,raw[:2],'b',hex(base+6)),base+6:Instruction(base+6,raw[6:],'bx','lr')}
+        contract=dict(extent=8,mapping=[[0,2,'t'],[2,6,'d'],[6,8,'t']],
+            instructions=[(0,2,'b @self+6'),(6,2,'bx lr')],objects=[],data=[(2,4,'aabbccdd')])
+        return objects,name,records,contract,base
+
+    def test_explicit_bounded_partition_covers_exact_current_code_and_data(self):
+        from config_finite import _literal_body
+        objects,name,records,contract,base=self.fixture()
+        proof=_literal_body(objects,name,records,name,'mixed source phase',contract,None,None,window=base)
+        self.assertEqual((proof['function'],proof['extent']),(base,8))
+
+    def test_old_terminal_windows_do_not_inherit_mixed_permission_or_uncovered_data(self):
+        from config_finite import _literal_body
+        from copy import deepcopy
+        for fault in ('terminal','partition','missing_data','overlap_data','data_code'):
+            objects,name,records,contract,base=self.fixture();contract=deepcopy(contract)
+            if fault=='terminal':contract.pop('mapping')
+            elif fault=='partition':contract['mapping'][1][1]=4
+            elif fault=='missing_data':contract['data']=[]
+            elif fault=='overlap_data':contract['data'].append((2,4,'aabbccdd'))
+            else:records[base+2]=Instruction(base+2,bytes.fromhex('aabb'),'nop','')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                _literal_body(objects,name,records,name,'mixed source phase',contract,None,None,window=base)
+
 class OrdinaryContexts(unittest.TestCase):
     def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self):
         from config_regions import Storage,require_disjoint
