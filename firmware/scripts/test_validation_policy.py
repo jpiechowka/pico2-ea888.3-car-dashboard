@@ -16,6 +16,17 @@ from types import SimpleNamespace
 from contextlib import redirect_stdout
 
 
+def supplied_stack_record(bounds,headroom,policy,elf,source_context=None):
+    """Explicit synthetic stage facts for strict real readers, not analysis."""
+    from config_platform import _execution_receipt
+    if source_context is None:
+        source_context=MemoryQualification.source_context(MemoryQualification(),elf)
+    elf.fixture_source_context=source_context
+    return dict(schema=2,status='CONDITIONAL_STACK_PASS',platform_policy='assumed_external',hardware_qualified=False,
+        stack_bounds=dict(bounds),headroom=headroom,policies=[policy.to_record()],
+        execution_scope=_execution_receipt(policy,source_context,elf).to_record())
+
+
 class ValidationPolicy(unittest.TestCase):
     def test_configuration_stack_budget_has_exact_64k_boundary(self):
         for headroom in (-1, 0, 32768, 65535):
@@ -55,7 +66,7 @@ class MemoryQualification(unittest.TestCase):
             symbols=dict(__euninit=0x20000200,__sheap=0x20000200,_stack_end=0x20000200,
                          _stack_start=0x20080000,SIO_IRQ_FIFO=0x20000101,sio_fifo_ram=0x20000109))
         policy=PlatformPolicy(0x1000000c,0x10000000+len(eav),hashlib.sha256(payload).hexdigest(),hashlib.sha256(elf.data).hexdigest())
-        stack=qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),0x7fe00,policy)
+        stack=supplied_stack_record(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),0x7fe00,policy,elf)
         return elf,eav,stack
 
     def owned_fixture(self):
@@ -99,7 +110,7 @@ class MemoryQualification(unittest.TestCase):
         policy=PlatformPolicy(0x1000000c,0x10000000+len(eav),hashlib.sha256(eav[12:]).hexdigest(),
             hashlib.sha256(elf.data).hexdigest(),owned_dependencies=dependencies,owned_family='sizez_default_refill')
         headroom=0x20080000-0x20003a90
-        stack=qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy)
+        stack=supplied_stack_record(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy,elf)
         return elf,eav,stack
 
     def test_actual_image_reader_preserves_owned_family_and_rejects_lost_context(self):
@@ -107,8 +118,8 @@ class MemoryQualification(unittest.TestCase):
         elf,eav,stack=self.owned_fixture()
         with patch.object(check_memory_layout,'ElfImage',return_value=elf),\
              patch.object(check_memory_layout,'check_stack_budget',return_value=stack),patch.object(check_memory_layout,'check_flash_lockout'):
-            record=check_memory_layout.check('synthetic-owned.elf')
-        self.assertEqual(check_memory_layout.read_image_result(json.loads(json.dumps(record)),elf,eav),record)
+            record=check_memory_layout.check('synthetic-owned.elf',source_context=elf.fixture_source_context)
+        self.assertEqual(check_memory_layout.read_image_result(json.loads(json.dumps(record)),elf,eav,elf.fixture_source_context),record)
         policy=record['stack']['policies'][0]
         self.assertEqual((policy['schema'],policy['owned_family'],len(policy['owned_dependencies'])),(5,'sizez_default_refill',10))
         for fault in ('missing','empty','one_lost','duplicate','old','receiver','pair','phase','operation','width'):
@@ -124,17 +135,17 @@ class MemoryQualification(unittest.TestCase):
             elif fault=='operation':p['owned_dependencies'][0]['operation']='STREX'
             else:p['owned_dependencies'][0]['width']=8
             with self.subTest(fault=fault),self.assertRaises(AssertionError):
-                check_memory_layout.read_image_result(changed,elf,eav)
+                check_memory_layout.read_image_result(changed,elf,eav,elf.fixture_source_context)
 
     def test_actual_memory_path_returns_record_only_after_all_checks(self):
         elf,eav,stack=self.fixture();events=[]
         with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
              patch.object(check_memory_layout,'check_flash_lockout',side_effect=lambda e:events.append('flash')):
-            result=check_memory_layout.check('fixture.elf')
+            result=check_memory_layout.check('fixture.elf',source_context=elf.fixture_source_context)
         self.assertEqual(events,['flash'])
         self.assertEqual(result['status'],'CONDITIONAL_IMAGE_PASS')
         self.assertFalse(result['hardware_qualified'])
-        self.assertEqual(check_memory_layout.read_image_result(result,elf,eav),result)
+        self.assertEqual(check_memory_layout.read_image_result(result,elf,eav,elf.fixture_source_context),result)
         self.assertIn('CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false',self.stdout.getvalue())
 
     def test_missing_lost_stale_and_intermediate_stack_result_reject(self):
@@ -147,28 +158,30 @@ class MemoryQualification(unittest.TestCase):
         for value in cases:
             with self.subTest(value=value),patch.object(check_memory_layout,'ElfImage',return_value=elf),\
                  patch.object(check_memory_layout,'check_stack_budget',return_value=value),patch.object(check_memory_layout,'check_flash_lockout'):
-                with self.assertRaises(AssertionError):check_memory_layout.check('fixture.elf')
+                with self.assertRaises(AssertionError):check_memory_layout.check('fixture.elf',source_context=elf.fixture_source_context)
 
     def test_failed_later_gate_does_not_return_ready_record(self):
         elf,eav,stack=self.fixture()
         with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
              patch.object(check_memory_layout,'check_flash_lockout',side_effect=AssertionError('flash failed')):
-            with self.assertRaisesRegex(AssertionError,'flash failed'):check_memory_layout.check('fixture.elf')
+            with self.assertRaisesRegex(AssertionError,'flash failed'):check_memory_layout.check('fixture.elf',source_context=elf.fixture_source_context)
 
     def test_cli_writes_only_complete_success_and_refuses_stale_output(self):
         elf,eav,stack=self.fixture()
         with tempfile.TemporaryDirectory() as folder:
             target=Path(folder)/'result.json'
+            from config_build_source import write_source_context
+            source=Path(folder)/'source-context.json';write_source_context(source,elf.fixture_source_context)
             with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
                  patch.object(check_memory_layout,'check_flash_lockout',side_effect=AssertionError('late failure')):
-                with self.assertRaises(AssertionError):check_memory_layout.main(['fixture.elf','--result-json',str(target)])
+                with self.assertRaises(AssertionError):check_memory_layout.main(['fixture.elf','--result-json',str(target),'--source-context',str(source)])
             self.assertFalse(target.exists())
             with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
                  patch.object(check_memory_layout,'check_flash_lockout'):
-                check_memory_layout.main(['fixture.elf','--result-json',str(target)])
+                check_memory_layout.main(['fixture.elf','--result-json',str(target),'--source-context',str(source)])
             self.assertEqual(json.loads(target.read_text())['status'],'CONDITIONAL_IMAGE_PASS')
             with patch.object(check_memory_layout,'check') as gate,self.assertRaises(AssertionError):
-                check_memory_layout.main(['fixture.elf','--result-json',str(target)])
+                check_memory_layout.main(['fixture.elf','--result-json',str(target),'--source-context',str(source)])
             gate.assert_not_called()
 
     def test_input_policy_rejects_partial_allocated_alias_and_wrapped_owner(self):
@@ -179,20 +192,20 @@ class MemoryQualification(unittest.TestCase):
                 owner=list(elf.sections[-1]);owner[5]=0xffffffff;elf.sections[-1]=tuple(owner)
             with self.subTest(fault=fault),patch.object(check_memory_layout,'ElfImage',return_value=elf),\
                  patch.object(check_memory_layout,'check_stack_budget',return_value=stack),patch.object(check_memory_layout,'check_flash_lockout'),\
-                 self.assertRaises(AssertionError):check_memory_layout.check('fixture.elf')
+                 self.assertRaises(AssertionError):check_memory_layout.check('fixture.elf',source_context=elf.fixture_source_context)
 
     def test_reader_rejects_stack_only_record_and_changed_image_input_or_status(self):
         from copy import deepcopy
         elf,eav,stack=self.fixture()
         with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
              patch.object(check_memory_layout,'check_flash_lockout'):
-            result=check_memory_layout.check('fixture.elf')
+            result=check_memory_layout.check('fixture.elf',source_context=elf.fixture_source_context)
         bad=deepcopy(result);bad['stack']['platform_policy']='established'
         for value in (None,stack,bad,dict(result,status='IMAGE_PASS'),dict(result,headroom=65536)):
-            with self.subTest(value=value),self.assertRaises(AssertionError):check_memory_layout.read_image_result(value,elf,eav)
-        with self.assertRaises(AssertionError):check_memory_layout.read_image_result(result,elf,eav+b'changed')
+            with self.subTest(value=value),self.assertRaises(AssertionError):check_memory_layout.read_image_result(value,elf,eav,elf.fixture_source_context)
+        with self.assertRaises(AssertionError):check_memory_layout.read_image_result(result,elf,eav+b'changed',elf.fixture_source_context)
         elf.data+=b'changed'
-        with self.assertRaises(AssertionError):check_memory_layout.read_image_result(result,elf,eav)
+        with self.assertRaises(AssertionError):check_memory_layout.read_image_result(result,elf,eav,elf.fixture_source_context)
 
     def source_context(self,elf):
         from config_build_source import SOURCE_PATHS,make_source_context
@@ -215,9 +228,11 @@ class MemoryQualification(unittest.TestCase):
         import check_stack_budget
         with self.assertRaisesRegex(AssertionError,'different current ELF'):
             check_stack_budget.check(elf,0x7fe00,source_context=wrong)
-        # Source-independent existing routes are retained, but this JSON
-        # alone is not represented as source-history or ownership evidence.
-        self.assertEqual(check_memory_layout.read_image_result(record,elf,eav),record)
+        # Only the narrower access reader remains source independent.
+        with self.assertRaisesRegex(AssertionError,'explicit source'):
+            check_memory_layout.read_image_result(record,elf,eav)
+        from config_platform import current_image_policy
+        self.assertEqual(current_image_policy(stack['policies'][0],elf,eav).to_record(),stack['policies'][0])
 
     def test_CLI_requires_explicit_source_path_and_rejects_bad_pair_before_output(self):
         from config_build_source import write_source_context
@@ -231,7 +246,7 @@ class MemoryQualification(unittest.TestCase):
                 if explicit:args+=['--source-context',str(source)]
                 with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(
                         check_memory_layout,'check_stack_budget',return_value=stack),patch.object(check_memory_layout,'check_flash_lockout'):
-                    if explicit and bad:
+                    if not explicit or bad:
                         with self.assertRaises(AssertionError):check_memory_layout.main(args)
                         self.assertFalse(output.exists())
                     else:

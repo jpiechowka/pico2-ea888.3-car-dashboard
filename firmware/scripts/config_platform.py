@@ -220,26 +220,41 @@ def compose_policy(expected,children):
     return expected
 
 
-def qualified_stack_result(bounds,headroom,policy):
-    """Common post-analysis boundary; callers still must close all source paths."""
-    require(isinstance(policy,PlatformPolicy),'stack result has no resolved conditional scope')
-    require(isinstance(bounds,dict) and set(bounds)==set(BOUND_KEYS) and
-            all(type(v) is int and 0<=v<0x100000000 for v in bounds.values()) and
-            type(headroom) is int and 0<headroom<=0x80000,'invalid stack result bounds/headroom')
+def _stack_numbers(bounds,headroom):
+    require(type(bounds) is dict and set(bounds)==set(BOUND_KEYS) and
+        all(type(v) is int and 0<=v<0x100000000 for v in bounds.values()) and
+        type(headroom) is int and 0<headroom<=0x80000,'invalid stack result bounds/headroom')
     from check_stack_budget import budgets
     budgets(*(bounds[k] for k in BOUND_KEYS),headroom)
-    return _bounded_record(dict(schema=1,status='CONDITIONAL_STACK_PASS',platform_policy='assumed_external',hardware_qualified=False,
-                stack_bounds=dict(bounds),headroom=headroom,policies=[policy.to_record()]))
 
 
-def read_stack_result(record,expected_policy,expected_headroom):
-    require(isinstance(record,dict) and set(record)=={'schema','status','platform_policy','hardware_qualified','stack_bounds','headroom','policies'} and
-            type(record['schema']) is int and record['schema']==1 and record['status']=='CONDITIONAL_STACK_PASS' and
-            record['platform_policy']=='assumed_external' and record['hardware_qualified'] is False and
-            type(record['headroom']) is int and type(expected_headroom) is int and record['headroom']==expected_headroom and
-            isinstance(record['policies'],list) and len(record['policies'])==1,'stack consumer lost conditional policy/qualification')
+def qualified_stack_result(bounds,headroom,policy,*,ordinary_result=None):
+    """Fail closed until the actual complete named graph producer exists.
+
+    No successful prefix, public receipt, constants or supplied stage dictionary
+    is the complete internal ordinary/resource analysis required by this gate.
+    The current check_stack_budget.check still returns no complete result.
+    """
+    require(type(policy) is PlatformPolicy,'stack result has no resolved conditional scope')
+    _stack_numbers(bounds,headroom)
+    require(False,'complete internal named ordinary graph/resource producer remains unavailable')
+
+
+def read_stack_result(record,expected_policy,expected_headroom,*,source_context=None,elf=None):
+    """Check a producer record without constructing private completion state."""
+    require(type(record) is dict and set(record)=={'schema','status','platform_policy','hardware_qualified',
+        'stack_bounds','headroom','policies','execution_scope'} and type(record['schema']) is int and record['schema']==2,
+        'stack consumer lost execution scope or schema2')
+    require(record['status']=='CONDITIONAL_STACK_PASS' and record['platform_policy']=='assumed_external' and
+        record['hardware_qualified'] is False and type(record['headroom']) is int and type(expected_headroom) is int and
+        record['headroom']==expected_headroom and type(record['policies']) is list and len(record['policies'])==1,
+        'stack consumer lost conditional policy/qualification')
     policy=read_policy(record['policies'][0],expected_policy)
-    return qualified_stack_result(record['stack_bounds'],record['headroom'],policy)
+    receipt=read_execution_scope(record['execution_scope'],policy,source_context,elf=elf)
+    _stack_numbers(record['stack_bounds'],record['headroom'])
+    return _bounded_record(dict(schema=2,status='CONDITIONAL_STACK_PASS',platform_policy='assumed_external',hardware_qualified=False,
+        stack_bounds=dict(record['stack_bounds']),headroom=record['headroom'],policies=[policy.to_record()],
+        execution_scope=receipt.to_record()))
 
 
 def current_image_policy(record,elf,expected_eav=None):

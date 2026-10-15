@@ -44,12 +44,13 @@ def geometry(elf):
 
 
 def _qualified_image(stack,elf,static_ram,headroom,expected_eav=None,source_context=None):
-    if source_context is not None:inspect_source_context(source_context,elf)
+    require(source_context is not None,"schema2 image requires explicit source context")
+    inspect_source_context(source_context,elf)
     require(isinstance(stack,dict) and isinstance(stack.get('policies'),list) and len(stack['policies'])==1,
             'full image gate has no retained stack policy')
     policy=current_image_policy(stack['policies'][0],elf,expected_eav)
-    checked=read_stack_result(stack,policy,headroom)
-    return _bounded_record(dict(schema=1,gate='full_memory_layout',status='CONDITIONAL_IMAGE_PASS',
+    checked=read_stack_result(stack,policy,headroom,source_context=source_context,elf=elf)
+    return _bounded_record(dict(schema=2,gate='full_memory_layout',status='CONDITIONAL_IMAGE_PASS',
         platform_policy='assumed_external',hardware_qualified=False,
         elf_sha256=hashlib.sha256(elf.data).hexdigest(),static_ram_bytes=static_ram,headroom=headroom,stack=checked))
 
@@ -57,10 +58,9 @@ def _qualified_image(stack,elf,static_ram,headroom,expected_eav=None,source_cont
 def read_image_result(record,elf,expected_eav=None,source_context=None):
     """Validate the unchanged full-gate image record.
 
-    Explicit source context is separate recorded-pairing evidence. This image
-    JSON alone is not self-contained source-history or ownership evidence.
-    Source-independent existing callers retain their prior behavior; any
-    caller claiming source history must supply and consume the context.
+    Schema2 requires the explicit recorded source pairing and nested execution1
+    receipt. Image JSON alone is not source-history or ownership evidence.
+    The separate access-policy reader retains its source-independent contract.
     """
     require(isinstance(record,dict) and isinstance(record.get('stack'),dict),'missing full image gate result')
     static_ram,headroom=geometry(elf)
@@ -74,7 +74,8 @@ def read_image_result(record,elf,expected_eav=None,source_context=None):
 
 def check(path,source_context=None):
     elf = ElfImage(path)
-    if source_context is not None:inspect_source_context(source_context,elf)
+    require(source_context is not None,"schema2 image requires explicit source context")
+    inspect_source_context(source_context,elf)
     sections,named,symbols=elf.sections,elf.named,elf.symbols
     ram_start,ram_end=0x20000000,0x20080000
     static_ram,headroom=geometry(elf)
@@ -94,7 +95,8 @@ def check(path,source_context=None):
     check_flash_lockout(elf)
     result=_qualified_image(stack,elf,static_ram,headroom,source_context=source_context)
     print(f"static RAM {static_ram} B; core 0 headroom {headroom} B; boundaries verified; "
-          "CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false")
+          "CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false; named ordinary/callback paths only; "
+          "NMI/HardFault routing/stack and architectural entry/nesting unresolved; reset requires fresh qualified epoch")
     return result
 
 

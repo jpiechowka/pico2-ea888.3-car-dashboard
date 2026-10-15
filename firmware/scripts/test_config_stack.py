@@ -2483,22 +2483,29 @@ class ConditionalStackPolicy(unittest.TestCase):
 
     def test_policy_propagates_nested_and_serialized_results_without_qualifying_hardware(self):
         import config_platform
-        objects,view,context=self.fixture();policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+        from test_validation_policy import MemoryQualification,supplied_stack_record
+        elf,eav,base=MemoryQualification().fixture();source=elf.fixture_source_context
+        policy=config_platform.current_image_policy(base['policies'][0],elf,eav)
         nested=config_platform.compose_policy(policy,(policy,config_platform.compose_policy(policy,(policy,))))
-        result=config_platform.qualified_stack_result(dict(boot=4096,constructor=12000,runtime=13000,dashboard=18000),65536,nested)
-        encoded=json.loads(json.dumps(result));read=config_platform.read_stack_result(encoded,policy,65536)
+        result=supplied_stack_record(dict(boot=4096,constructor=12000,runtime=13000,dashboard=18000),65536,nested,elf,source)
+        encoded=json.loads(json.dumps(result));read=config_platform.read_stack_result(encoded,policy,65536,source_context=source,elf=elf)
         self.assertEqual(read['status'],'CONDITIONAL_STACK_PASS')
         self.assertEqual(read['platform_policy'],'assumed_external')
         self.assertIs(read['hardware_qualified'],False)
-        with self.assertRaises(AssertionError):config_platform.read_stack_result(encoded,policy,65536.0)
+        self.assertEqual(read['execution_scope']['schema'],1)
+        with self.assertRaises(AssertionError):config_platform.read_stack_result(encoded,policy,65536.0,source_context=source,elf=elf)
         for child in (None,{}):
             with self.assertRaises(AssertionError):config_platform.compose_policy(policy,(policy,child))
 
+
     def test_consumer_rejects_lost_qualifiers_or_changed_identity_and_keeps_budget_gate(self):
         import config_platform
-        objects,view,context=self.fixture();policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
+        from test_validation_policy import MemoryQualification,supplied_stack_record
+        from dataclasses import replace
+        elf,eav,base=MemoryQualification().fixture();source=elf.fixture_source_context
+        policy=config_platform.current_image_policy(base['policies'][0],elf,eav)
         bounds=dict(boot=4096,constructor=12000,runtime=13000,dashboard=18000)
-        result=config_platform.qualified_stack_result(bounds,65536,policy)
+        result=supplied_stack_record(bounds,65536,policy,elf,source)
         for fault in ('status','platform_policy','hardware_qualified','policies','headroom'):
             record=json.loads(json.dumps(result))
             if fault=='status':record[fault]='PASS'
@@ -2506,12 +2513,13 @@ class ConditionalStackPolicy(unittest.TestCase):
             elif fault=='policies':record[fault]=[]
             elif fault=='headroom':record[fault]+=8
             else:record.pop(fault)
-            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_platform.read_stack_result(record,policy,65536)
-        altered=bytearray(objects.elf.data);altered[-1]^=1;objects.elf.data=bytes(altered)
-        changed=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=())
-        with self.assertRaises(AssertionError):config_platform.read_stack_result(result,changed,65536)
-        with self.assertRaises(AssertionError):
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_platform.read_stack_result(record,policy,65536,source_context=source,elf=elf)
+        changed=replace(policy,elf_sha256='0'*64)
+        with self.assertRaises(AssertionError):config_platform.read_stack_result(result,changed,65536,source_context=source,elf=elf)
+        with self.assertRaisesRegex(AssertionError,'constructor stack'):
             config_platform.qualified_stack_result(dict(bounds,constructor=32768),65536,policy)
+
 
 
 class OwnedPlatformDependencies(unittest.TestCase):
@@ -2665,7 +2673,8 @@ class OwnedPlatformDependencies(unittest.TestCase):
                 else:changed['policies'][0]['owned_dependencies'][2]['loop_index']=0.0
                 with self.subTest(fault=fault,reader=reader),self.assertRaises(AssertionError):
                     if reader=='policy':config_platform.read_policy(changed['policies'][0],expected)
-                    else:config_platform.read_stack_result(changed,expected,stack['headroom'])
+                    else:config_platform.read_stack_result(changed,expected,stack['headroom'],source_context=elf.fixture_source_context,elf=elf)
+
 
 class DefaultWidgetLoop(unittest.TestCase):
     def fixture(self,code_shift=0,data_shift=0):
@@ -4182,28 +4191,21 @@ class ValidatorPlatformFamilies(unittest.TestCase):
 
     def test_exact_wire_bound_is_preserved_at_actual_stack_result_boundary(self):
         import config_platform
-        from dataclasses import replace
-        from config_regions import Storage
-        objects,view,context=ConditionalStackPolicy.fixture(self)
-        def policy(padding):
-            deps=self.dependencies('sizes');first=deps[0];c=first.contexts[0]
-            extra=Storage(c.frame.space,'bound-'+('x'*padding),c.frame.start+184,4,4,c.phase,False)
-            first=replace(first,contexts=(replace(c,protected=c.protected+(extra,)),first.contexts[1]))
-            return config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=(first,)+deps[1:])
-        small=policy(1);size=lambda value:len((json.dumps(value,sort_keys=True)+'\n').encode())
-        padding=65500-size(small.to_record())+1
-        try:near=policy(padding)
-        except AssertionError as error:self.fail('wire-compatible policy rejected before enclosing record: '+str(error))
-        self.assertEqual(size(near.to_record()),65500)
-        with self.assertRaises(AssertionError):
-            config_platform.qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),65536,near)
+        size=lambda value:len((json.dumps(value,sort_keys=True)+'\n').encode())
+        _,_,small=self.image_fixture('sizes',1)
+        elf,eav,near=self.image_fixture('sizes',65500-size(small['policies'][0])+1)
+        self.assertEqual(size(near['policies'][0]),65500)
+        policy=config_platform.current_image_policy(near['policies'][0],elf,eav)
+        with self.assertRaisesRegex(AssertionError,'oversized'):
+            config_platform.read_stack_result(near,policy,near['headroom'],source_context=elf.fixture_source_context,elf=elf)
+
 
 
     def image_fixture(self,mode,padding=0):
         # Supplied stage facts only. The image/capture consumers are real; the
         # missing complete source/validator/graph producer is never inferred.
-        from test_validation_policy import MemoryQualification
-        from config_platform import PlatformPolicy,qualified_stack_result
+        from test_validation_policy import MemoryQualification,supplied_stack_record
+        from config_platform import PlatformPolicy
         from config_owned_access import read_owned_access
         from config_validator_access import ValidatorFamily
         from config_led_access import LedFamily
@@ -4262,40 +4264,44 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         policy=PlatformPolicy(0x1000000c,0x10000000+len(eav),hashlib.sha256(eav[12:]).hexdigest(),
             hashlib.sha256(elf.data).hexdigest(),owned_dependencies=legacy+tuple(validators)+tuple(leds)+tuple(widgets),owned_family=mode+'_configuration')
         _,headroom=check_memory_layout.geometry(elf)
-        stack=qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy)
+        stack=supplied_stack_record(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy,elf)
         return elf,eav,stack
+
 
     def test_actual_image_and_capture_readers_preserve_v5_with_supplied_stage_facts(self):
         import check_memory_layout,capture_target_bench as capture
+        from test_target_capture import CaptureMemoryQualification
         from unittest.mock import patch
         from contextlib import redirect_stdout
         from copy import deepcopy
         import io,tempfile,subprocess,sys
         real_run=subprocess.run
         for mode in ('speed2','sizes','sizez'):
-            elf,eav,stack=self.image_fixture(mode);output=io.StringIO()
+            elf,eav,stack=self.image_fixture(mode);source=elf.fixture_source_context;output=io.StringIO()
             with patch.object(check_memory_layout,'ElfImage',return_value=elf),\
                  patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
                  patch.object(check_memory_layout,'check_flash_lockout'),redirect_stdout(output):
-                record=check_memory_layout.check('synthetic-validator.elf')
+                record=check_memory_layout.check('synthetic-validator.elf',source_context=source)
             self.assertIn('CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false',output.getvalue())
-            self.assertEqual(check_memory_layout.read_image_result(json.loads(json.dumps(record)),elf,eav),record)
+            self.assertEqual(check_memory_layout.read_image_result(json.loads(json.dumps(record)),elf,eav,source),record)
             with tempfile.TemporaryDirectory() as directory,patch.object(capture,'ElfImage',return_value=elf):
-                path=Path(directory)/'memory-layout.json';path.write_text(json.dumps(record,sort_keys=True)+'\n')
-                self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav)['record'],record)
-                path.unlink()
-                supplied=Path(directory)/'supplied-stage-record.json'
+                destination=Path(directory);source,source_path,record=CaptureMemoryQualification.bound_context(destination,elf,record)
+                frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+                path=destination/'memory-layout.json';path.write_text(json.dumps(record,sort_keys=True)+'\n')
+                self.assertEqual(capture.read_memory_gate(path,frozen,eav,source)['record'],record)
+                path.unlink();supplied=destination/'supplied-stage-record.json'
                 supplied.write_text(json.dumps(record,sort_keys=True)+'\n',encoding='utf-8')
                 def writer(argv,**kwargs):
                     self.assertEqual(argv.count('--result-json'),1)
+                    self.assertEqual(Path(argv[argv.index('--source-context')+1]),source_path.resolve())
                     output=argv[argv.index('--result-json')+1]
                     self.assertEqual(Path(output),path.resolve())
-                    # The real gate uses a file. A full v6 record can exceed
-                    # Windows' command-line limit without exceeding65536.
+                    # Supplied stage output uses a real file/child; no linked
+                    # producer or source/ownership completion is inferred.
                     return real_run([sys.executable,'-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_bytes(pathlib.Path(sys.argv[2]).read_bytes())',
                         output,str(supplied)],check=kwargs['check'],timeout=10)
                 with patch.object(capture.subprocess,'run',side_effect=writer):
-                    self.assertEqual(capture.run_memory_gate(Path('synthetic-validator.elf'),Path(directory),eav)['record'],record)
+                    self.assertEqual(capture.run_memory_gate(frozen,destination,eav,source,source_path)['record'],record)
                 for fault in ('lost','duplicate','context','old','hardware','width_float','nonreturn_intermediate'):
                     bad=deepcopy(record);policy=bad['stack']['policies'][0]
                     if fault=='lost':policy['owned_dependencies'].pop()
@@ -4313,7 +4319,8 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                     else:bad=bad['stack']
                     path.write_text(json.dumps(bad))
                     with self.subTest(mode=mode,fault=fault),self.assertRaises((AssertionError,ValueError)):
-                        capture.read_memory_gate(path,'synthetic-validator.elf',eav)
+                        capture.read_memory_gate(path,frozen,eav,source)
+
 
     def test_enclosing_image_wire_bound_is_checked_after_fitting_stack_record(self):
         import check_memory_layout
@@ -4325,20 +4332,31 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         elf,eav,stack=self.image_fixture('sizes',65500-size(small)+1)
         self.assertEqual(size(stack),65500)
         static,headroom=check_memory_layout.geometry(elf)
-        with self.assertRaises(AssertionError):check_memory_layout._qualified_image(stack,elf,static,headroom,eav)
+        with self.assertRaisesRegex(AssertionError,'oversized'):
+            check_memory_layout._qualified_image(stack,elf,static,headroom,eav,elf.fixture_source_context)
         initial,eav,small=self.image_fixture('sizes',1)
         static,headroom=check_memory_layout.geometry(initial)
-        small_image=check_memory_layout._qualified_image(small,initial,static,headroom,eav)
+        small_image=check_memory_layout._qualified_image(small,initial,static,headroom,eav,initial.fixture_source_context)
         elf,eav,stack=self.image_fixture('sizes',65536-size(small_image)+1)
         static,headroom=check_memory_layout.geometry(elf)
-        image=check_memory_layout._qualified_image(stack,elf,static,headroom,eav)
+        image=check_memory_layout._qualified_image(stack,elf,static,headroom,eav,elf.fixture_source_context)
         self.assertEqual(size(image),65536)
         with tempfile.TemporaryDirectory() as directory,patch.object(capture,'ElfImage',return_value=elf):
             path=Path(directory)/'boundary.json';wire=json.dumps(image,sort_keys=True)+'\n'
             path.write_bytes(wire.encode())
-            self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav)['record'],image)
+            self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav,elf.fixture_source_context)['record'],image)
             path.write_bytes((wire+' ').encode())
-            with self.assertRaises(ValueError):capture.read_memory_gate(path,'synthetic-validator.elf',eav)
+            with self.assertRaises(ValueError):capture.read_memory_gate(path,'synthetic-validator.elf',eav,elf.fixture_source_context)
+            # Duplicate-key attribution needs a fitting record, not the
+            # already-full boundary envelope that rejects before JSON parse.
+            small_wire=json.dumps(small_image,sort_keys=True)+'\n'
+            with patch.object(capture,'ElfImage',return_value=initial):
+                path.write_bytes(small_wire.encode())
+                self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav,initial.fixture_source_context)['record'],small_image)
+                path.write_bytes(small_wire.replace('"schema": 2','"schema": 2, "schema": 2',1).encode())
+                with self.assertRaisesRegex(ValueError,'duplicate'):
+                    capture.read_memory_gate(path,'synthetic-validator.elf',eav,initial.fixture_source_context)
+
 
 class ValidatorResultBoundary(unittest.TestCase):
     def fixture(self,phase='default_validation',shift=0):

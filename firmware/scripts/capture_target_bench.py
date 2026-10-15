@@ -40,6 +40,8 @@ def read_memory_gate(path,frozen,config_bytes,source_context=None):
 
 
 def run_memory_gate(frozen,destination,config_bytes,source_context=None,source_context_path=None):
+    if source_context is None or source_context_path is None:
+        raise ValueError('schema2 image requires an explicit source context and owned sidecar before launching child')
     path=destination/'memory-layout.json'
     if path.exists():raise ValueError('image result path already exists')
     if (source_context is None)!=(source_context_path is None):
@@ -405,7 +407,7 @@ def main():
         if selection[1] is not None:
             archive.writestr('build-config/selected.eav', selection[1])
     hashes={name:hashlib.sha256(data).hexdigest() for name,data in before.items()}
-    record=dict(schema=1,scope='Build artifact only; hardware not executed',rustc=version,rustc_path=rustc,
+    record=dict(schema=2,scope='Build artifact only; hardware not executed',rustc=version,rustc_path=rustc,
                 command=command,emitted_executable=str(elf),cargo_config=config,
                 explicit_environment={key: environment[key] for key in
                                       ['CARGO_PROFILE_RELEASE_STRIP','CARGO_PROFILE_RELEASE_OPT_LEVEL','RUSTC','DASHBOARD_CONFIG',*CUSTOM_KEYS] if key in environment},

@@ -212,29 +212,44 @@ class CaptureMemoryQualification(unittest.TestCase):
         import check_memory_layout
         elf,eav,stack=MemoryQualification.owned_fixture(MemoryQualification())
         static,headroom=check_memory_layout.geometry(elf)
-        return elf,eav,check_memory_layout._qualified_image(stack,elf,static,headroom)
+        return elf,eav,check_memory_layout._qualified_image(stack,elf,static,headroom,source_context=elf.fixture_source_context)
+
+    @staticmethod
+    def bound_context(destination,elf,record):
+        # Rebind supplied stage facts to the actual attempt's explicit source.
+        from dataclasses import replace
+        from config_build_source import write_source_context
+        from config_platform import current_image_policy,_execution_receipt
+        value=replace(elf.fixture_source_context,attempt=destination.name)
+        path=destination/'source-context.json';write_source_context(path,value)
+        record=json.loads(json.dumps(record))
+        policy=current_image_policy(record['stack']['policies'][0],elf)
+        record['stack']['execution_scope']=_execution_receipt(policy,value,elf).to_record()
+        return value,path,record
 
     def test_actual_child_result_is_retained_and_rechecked_against_current_input(self):
         elf,eav,record=self.fixture()
         with tempfile.TemporaryDirectory() as folder:
             destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+            source,path,record=self.bound_context(destination,elf,record)
             def child(argv,**kwargs):
-                self.assertEqual(argv[-2],'--result-json');self.assertTrue(kwargs['check'])
+                self.assertEqual(Path(argv[argv.index('--source-context')+1]),path.resolve());self.assertTrue(kwargs['check'])
                 Path(argv[argv.index('--result-json')+1]).write_text(json.dumps(record));return subprocess.CompletedProcess(argv,0)
             with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child) as run:
-                evidence=capture.run_memory_gate(frozen,destination,eav)
+                evidence=capture.run_memory_gate(frozen,destination,eav,source,path)
                 self.assertEqual(evidence['record'],record)
                 self.assertLessEqual((destination/'memory-layout.json').stat().st_size,65536)
-                self.assertEqual(capture.read_memory_gate(destination/'memory-layout.json',frozen,eav),evidence)
+                self.assertEqual(capture.read_memory_gate(destination/'memory-layout.json',frozen,eav,source),evidence)
                 self.assertEqual(run.call_count,1)
-                with self.assertRaises(AssertionError):capture.read_memory_gate(destination/'memory-layout.json',frozen,eav+b'changed')
-                with self.assertRaises(ValueError):capture.run_memory_gate(frozen,destination,eav)
+                with self.assertRaises(AssertionError):capture.read_memory_gate(destination/'memory-layout.json',frozen,eav+b'changed',source)
+                with self.assertRaises(ValueError):capture.run_memory_gate(frozen,destination,eav,source,path)
 
     def test_nonzero_missing_and_intermediate_child_output_never_admit(self):
         elf,eav,record=self.fixture()
         for kind in ('nonzero','missing','intermediate','lost','stale','owned_lost','owned_changed','oversized'):
             with self.subTest(kind=kind),tempfile.TemporaryDirectory() as folder:
                 destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+                source,path,record=self.bound_context(destination,elf,record)
                 def child(argv,**kwargs):
                     value=json.loads(json.dumps(record['stack'] if kind=='intermediate' else record))
                     if kind=='lost':value['status']='IMAGE_PASS'
@@ -246,18 +261,19 @@ class CaptureMemoryQualification(unittest.TestCase):
                     return subprocess.CompletedProcess(argv,0)
                 with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child),\
                      self.assertRaises((AssertionError,ValueError,FileNotFoundError,subprocess.CalledProcessError)):
-                    capture.run_memory_gate(frozen,destination,eav)
+                    capture.run_memory_gate(frozen,destination,eav,source,path)
 
     def test_real_nonzero_child_preserves_file_without_admitting_it(self):
         elf,eav,record=self.fixture();real_run=subprocess.run
         with tempfile.TemporaryDirectory() as folder:
             destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+            source,path,record=self.bound_context(destination,elf,record)
             def child(argv,**kwargs):
                 return real_run([sys.executable,'-c',
                     'import pathlib,sys;pathlib.Path(sys.argv[1]).write_text(sys.argv[2]);sys.exit(7)',
                     argv[argv.index('--result-json')+1],json.dumps(record)],check=kwargs['check'],timeout=10)
-            with patch.object(capture.subprocess,'run',side_effect=child),self.assertRaises(subprocess.CalledProcessError) as error:
-                capture.run_memory_gate(frozen,destination,eav)
+            with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child),self.assertRaises(subprocess.CalledProcessError) as error:
+                capture.run_memory_gate(frozen,destination,eav,source,path)
             self.assertEqual(error.exception.returncode,7)
             self.assertEqual(json.loads((destination/'memory-layout.json').read_text()),record)
 
@@ -285,7 +301,11 @@ class CaptureMemoryQualification(unittest.TestCase):
                         context_path=Path(argv[argv.index('--source-context')+1])
                         self.assertEqual(context_path,destination/'source-context.json')
                         self.assertNotEqual(context_path,Path(argv[argv.index('--result-json')+1]))
-                        self.assertEqual(dict(load_source_context(context_path,elf).sources),before_sources)
+                        parsed=load_source_context(context_path,elf)
+                        self.assertEqual(dict(parsed.sources),before_sources)
+                        from config_platform import current_image_policy,_execution_receipt
+                        policy=current_image_policy(record['stack']['policies'][0],elf)
+                        record['stack']['execution_scope']=_execution_receipt(policy,parsed,elf).to_record()
                         Path(argv[argv.index('--result-json')+1]).write_text(json.dumps(record))
                     return subprocess.CompletedProcess(argv,0)
                 def clock(*args):
@@ -322,7 +342,11 @@ class CaptureMemoryQualification(unittest.TestCase):
                         self.assertFalse((destination/'manifest.json').exists())
                     else:
                         capture.main();manifest=json.loads((destination/'manifest.json').read_text())
+                        self.assertEqual(manifest['schema'],2)
                         self.assertEqual(manifest['memory_layout'],record)
+                        self.assertEqual(manifest['memory_layout']['stack']['execution_scope']['schema'],1)
+                        self.assertNotIn('execution_scope',manifest)
+                        self.assertNotIn('execution_scope',manifest['memory_layout'])
                         source_path=destination/'source-context.json'
                         self.assertTrue(source_path.is_file(),'capture omitted its admitted pre-gate source context')
                         context=load_source_context(source_path,elf,'fixture',(destination/'build-options.json').read_bytes())
@@ -344,6 +368,8 @@ class CaptureMemoryQualification(unittest.TestCase):
                 if fault=='semantics':before[SOURCE_PATHS[1]]+=b' pub fn leak() { CONFIGURATION.take(); }'
                 value=make_source_context(elf.data,'other' if fault=='attempt' else destination.name,b'{}',before)
                 path=destination/'source-context.json';write_source_context(path,value)
+                from config_platform import current_image_policy,_execution_receipt
+                record['stack']['execution_scope']=_execution_receipt(current_image_policy(record['stack']['policies'][0],elf),value,elf).to_record()
                 if fault=='changed_bytes':path.write_bytes(path.read_bytes()+b'not JSON')
                 def child(argv,**kwargs):
                     self.assertEqual(Path(argv[argv.index('--source-context')+1]),path)
@@ -366,6 +392,8 @@ class CaptureMemoryQualification(unittest.TestCase):
             before={name:(capture.REPO/name).read_bytes() for name in SOURCE_PATHS}
             value=make_source_context(elf.data,destination.name,b'{}',before)
             source=destination/'source-context.json';write_source_context(source,value)
+            from config_platform import current_image_policy,_execution_receipt
+            record['stack']['execution_scope']=_execution_receipt(current_image_policy(record['stack']['policies'][0],elf),value,elf).to_record()
             code=("import sys;from pathlib import Path;from types import SimpleNamespace;"
                 "sys.path.insert(0,sys.argv[1]);from config_build_source import load_source_context,inspect_source_context;"
                 "elf=SimpleNamespace(data=Path(sys.argv[2]).read_bytes());"
