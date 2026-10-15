@@ -49,6 +49,7 @@ def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,
                 row.raw==raw[offset:offset+width],'payload current bytes/coverage differ')
         covered|=points;require(row.mnemonic==mnemonic,'payload source/return/selector instruction differs')
         actual=row.operands.split('@',1)[0].strip();producer=re.search(r'@object([0-9]+)\.(low|high)',expected)
+        parent_local=re.search(r'@parent\+([0-9a-f]+)',expected)
         local=re.search(r'@self\+([0-9a-f]+)',expected);pool_producer=re.search(r'@object([0-9]+)\.pc_slot',expected)
         target_role=expected if expected.startswith(('@role:','@outline:')) else None
         if producer:
@@ -67,6 +68,16 @@ def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,
             value=struct.unpack('<I',objects.read_only(pool,4))[0]
             require(ordinal not in external_values,'duplicate root PC object producer')
             external_values[ordinal]=value;actual=match[1]+', [pc, '+pool_producer[0]+']'
+        elif parent_local:
+            target=parent+int(parent_local[1],16);destination=instructions.get(target)
+            require(window is not None and parent<=target<parent+parent_extent and destination is not None and
+                destination.address==target and len(destination.raw) in (2,4) and
+                any(k=='t' and a<=target<target+len(destination.raw)<=b for a,b,k in caller_mapping) and
+                objects.read_only(target,len(destination.raw))==destination.raw,
+                'payload parent-relative target is not a current mapped instruction in its typed parent')
+            match=re.search(r'0x([0-9a-f]+)(?:\s|$)',actual)
+            require(match is not None and int(match[1],16)==target,'payload parent-relative destination differs')
+            actual=actual[:match.start()]+parent_local[0]
         elif local:
             match=re.search(r'0x([0-9a-f]+)(?:\s|$)',actual)
             require(match is not None and int(match[1],16)==start+int(local[1],16),'payload case/predecessor destination differs')

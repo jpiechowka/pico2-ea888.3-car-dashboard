@@ -7155,4 +7155,303 @@ class ActualDecodedU16Prefix(unittest.TestCase):
                 self.consume(objects,rows,current)
 
 
+class ActualDecodedViews(unittest.TestCase):
+    def fixture(self):
+        objects,rows,context,item=ActualDecodedU16Prefix().fixture()
+        extra=json.loads((Path(__file__).parent/'fixtures/config-decoded-views.json').read_text())
+        for at,raw in extra['segments']:StartupConfigurationCopy.put(objects,at,bytes.fromhex(raw))
+        for f in extra['functions']:
+            for name,address,extent,index in f['aliases']:
+                objects.elf.functions[name]=(address,extent,index)
+            objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+[tuple(v) for v in f['symbols']]))
+            if f['frame'] is not None:objects.sizes[f['address']]=f['frame']
+            objects.elf.mapping_symbols.extend(tuple(v) for v in f['mapping'])
+        for row in extra['records']:
+            at=row['address'];rows[at]=Instruction(at,bytes.fromhex(row['bytes']),row['mnemonic'],row['operands'])
+        return objects,rows,SameBLoaderBoundary.rebound(objects,context),item
+
+    @staticmethod
+    def consume(objects,rows,context):
+        from config_decoded_views import first_boot_decoded_views
+        return first_boot_decoded_views(objects,rows,context)
+
+    def test_actual_group_keeps_prefix_errors_and_stops_Widget_ready(self):
+        objects,rows,context,item=self.fixture();result=self.consume(objects,rows,context)
+        self.assertEqual(result['phase'],'first_boot_decoded_views_pending_widgets_remaining_visitor_canonical_and_loader_routes')
+        self.assertEqual([(v['completed_fields'],v['frontier']) for v in result['prefix_errors']],[(0,0x1001c68a),(1,0x1001c68a)])
+        self.assertEqual(result['boot_view_domain'],(0,255));self.assertEqual(result['Widget_ready']['frontier'],0x1001c7f4)
+        self.assertEqual(result['Widget_ready']['top_count'],8)
+        self.assertEqual({v['initialized_views'] for v in result['successes']},set(range(9)))
+        self.assertFalse(result['hardware_qualified']);self.assertNotIn('acquired_owner',result)
+        self.assertTrue(all(v['frontier']==0x1001c68c for v in result['group_errors']))
+
+    def test_parent_publication_stride_and_outline_flags_mutations_reject(self):
+        for at,operation,operands in ((0x1001c7d8,'str.w','r9, [r4, #0xf8]'),
+            (0x1001c7dc,'add.w','r8, r8, #0x14'),(0x1001c7d4,'strb.w','r0, [r8, #0x1]'),
+            (0x10028778,'cmp','r0, #0x0')):
+            objects,rows,context,item=self.fixture();old=rows[at];rows[at]=Instruction(at,old.raw,operation,operands)
+            with self.subTest(at=hex(at)),self.assertRaises(AssertionError):self.consume(objects,rows,context)
+
+    def test_public_summary_or_reinitialized_source_cannot_authorize_the_group(self):
+        objects,rows,context,item=self.fixture()
+        for fake in (dict(phase='before_boot_view',complete=True),None,context.to_record()):
+            with self.assertRaises(AssertionError):self.consume(objects,rows,fake)
+        StartupConfigurationCopy.put(objects,item['config']+14600,b'\x01')
+        with self.assertRaises(AssertionError):self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+
+    @staticmethod
+    def move_function(objects,rows,role,new):
+        elf=objects.elf;names=[n for n in elf.functions if config_stack.canonical_symbol(n)==role]
+        if len(names)!=1:raise AssertionError('test function role')
+        name=names[0];pointer,extent,index=elf.functions[name];old=pointer&~1
+        raw=objects.read_only(old,extent);file_at=(len(elf.data)+3)&~3;newindex=len(elf.sections)
+        elf.data+=bytes(file_at-len(elf.data))+raw;elf.sections.append((0,1,6,new,file_at,extent,0,0,4,0))
+        elf.segments.append((1,file_at,new,new,extent,extent,5,4));elf.functions[name]=(new|1,extent,newindex)
+        if old in objects.sizes:objects.sizes[new]=objects.sizes.pop(old)
+        elf.symbol_entries=[(n,new|1,z,t,newindex) if n==name else (n,a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+        elf.mapping_symbols.extend((n,a+new-old,newindex) for n,a,i in list(elf.mapping_symbols) if i==index and old<=a<old+extent)
+        for at,row in list(rows.items()):
+            moving=old<=at<old+extent;site=at+new-old if moving else at;args=row.operands;encoded=row.raw
+            family=config_stack.transfer_family(row.mnemonic.removesuffix('.w'));changed=moving
+            if family in ('b','bl','cbz','cbnz'):
+                m=re.search(r'0x([0-9a-f]+)',args);target=int(m[1],16);internal=old<=target<old+extent
+                if internal:target+=new-old;changed=True
+                if changed:
+                    if moving!=internal:
+                        if family not in ('b','bl') or row.mnemonic not in ('b.w','bl'):raise AssertionError('test external branch encoding')
+                        encoded=StartupConfigurationCopy.branch_link(site,target)
+                        if family=='b':lo,hi=struct.unpack('<HH',encoded);encoded=struct.pack('<HH',lo,hi&~0x4000)
+                    args=args[:m.start()]+hex(target)+args[m.end():]
+            if changed:
+                if moving:del rows[at]
+                rows[site]=Instruction(site,encoded,row.mnemonic,args);StartupConfigurationCopy.put(objects,site,encoded)
+        return old,new
+
+    def test_independent_UTF8_code_table_and_visitor_parent_relocation(self):
+        from config_utf8 import UTF8
+        from config_headers import VISITOR
+        objects,rows,context,item=self.fixture()
+        self.move_function(objects,rows,UTF8,0x10071000)
+        table=0x10074003;data=objects.read_only(0x10033e22,256);off=len(objects.elf.data)
+        objects.elf.data+=data;objects.elf.sections.append((0,1,2,table,off,256,0,0,1,0))
+        SameBLoaderBoundary.mov(objects,rows,0x10071000+26,'movw','r8',table&0xffff)
+        SameBLoaderBoundary.mov(objects,rows,0x10071000+34,'movt','r8',table>>16)
+        moved=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        utf8=[v for v in moved['control']['nested_returns'] if v['function']==0x10071000]
+        self.assertTrue(utf8);self.assertTrue(all(v['return_SP']==0x2007f798 for v in utf8))
+        self.move_function(objects,rows,VISITOR,0x10076000)
+        result=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        self.assertEqual(result['Widget_ready']['frontier'],0x10076000+416)
+        self.assertTrue(all(v['frontier']==0x10076000+56 for v in result['group_errors']))
+        self.assertEqual({at-0x10076000 for at,target,why in result['control']['outside_shared_contexts']},
+            {at-0x1001c654 for at,target,why in moved['control']['outside_shared_contexts']})
+
+    def test_independent_B_and_stack_keep_exact_element_metadata_and_deepest_child(self):
+        # Reuse actual initial/static relocation, then add this group's own
+        # functions and bytes. No public boundary description supplies B.
+        moved,more,bound,moveditem=ActualDecodedU16Prefix().fixture(0x4000)
+        extra=json.loads((Path(__file__).parent/'fixtures/config-decoded-views.json').read_text())
+        for at,raw in extra['segments']:StartupConfigurationCopy.put(moved,at,bytes.fromhex(raw))
+        for f in extra['functions']:
+            for name,address,extent,index in f['aliases']:moved.elf.functions[name]=(address,extent,index)
+            moved.elf.symbol_entries=list(dict.fromkeys(moved.elf.symbol_entries+[tuple(v) for v in f['symbols']]))
+            if f['frame'] is not None:moved.sizes[f['address']]=f['frame']
+            moved.elf.mapping_symbols.extend(tuple(v) for v in f['mapping'])
+        for r in extra['records']:
+            more[r['address']]=Instruction(r['address'],bytes.fromhex(r['bytes']),r['mnemonic'],r['operands'])
+        B=moveditem['config']+0x4000
+        # Both visitor pool consumers must reload the actual independently B.
+        StartupConfigurationCopy.put(moved,0x1001c654+3508,struct.pack('<I',B))
+        sp=0x2007f800;StartupConfigurationCopy.put(moved,moved.elf.named['.vector_table'][3],struct.pack('<I',sp))
+        moved.elf.symbol_entries=[(n,sp if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in moved.elf.symbol_entries]
+        result=self.consume(moved,more,SameBLoaderBoundary.rebound(moved,bound))
+        self.assertEqual(result['deepest_child_SP'],sp-544-1608-72)
+        eighth=[v for v in result['iterations'] if v['index']==7][0]
+        self.assertEqual(eighth['Config_writes'],((B+416,1),(B+417,19),(B+436,1),(B+244,4)))
+        self.assertFalse(any(v['Config_writes'] for v in result['iterations'] if v['index']==8))
+
+    def test_all_error_epochs_counts_capacity_guards_and_publication_are_paired(self):
+        objects,rows,context,item=self.fixture();result=self.consume(objects,rows,context)
+        errors=result['group_errors'];self.assertEqual({v['error'] for v in errors},{4,5,8,14})
+        self.assertTrue(all(v['top_Q_physical_count']==10 for v in errors))
+        # The long payload cannot exhaust at boot_view. A separate shortened
+        # actual source fixture below covers that paired error alternative.
+        early=[v for v in errors if v['stage']=='boot_view'];self.assertFalse(early)
+        self.assertTrue(all(v['initial_active_bytes_preserved']==180 and not v['boot_view_assigned'] for v in early))
+        preclear=[v for v in errors if v['stage']=='Views pre-clear capacity']
+        self.assertTrue(all(not v['views_cleared'] and v['guard']=='N>8 AND remaining>=N' for v in preclear))
+        post=[v for v in errors if v['stage'] in ('View UTF8','View String14 capacity')]
+        self.assertTrue(post);self.assertTrue(all(v['views_cleared'] and v['no_rollback'] and v['unfinished_element_not_published'] for v in post))
+        self.assertTrue(all(v['initial_active_bytes_preserved']==175 for v in post))
+        self.assertTrue(any(v['stage']=='View precommit capacity' and v['initialized_views']==8 for v in errors))
+        for iteration in result['iterations']:
+            self.assertEqual(iteration['stage_copies'],((1065,1000,19),(1000,940,19)))
+            self.assertEqual(iteration['scratch_epochs'],((1064,1072,'varint Result8'),(1064,1076,'UTF8 Result12'),(1064,1084,'String14 Vec')))
+            if iteration['index']<8:self.assertEqual(iteration['publication'],0x1001c654+388)
+        self.assertFalse(result['control']['pending_contexts_confer_state'])
+        self.assertTrue(result['shared_error_suffix_pending']);self.assertTrue(result['full_visitor_return_pending'])
+
+    def test_coherent_foreign_shared_context_interior_and_fallthrough_reject(self):
+        from config_build_source import validate_source_context
+        V=0x1001c654
+        # Existing later-field branch, manually encoded after source rebinding.
+        for target in (V+200,V+142):
+            objects,rows,context,item=self.fixture();site=V+424
+            raw=BoundedParentTargets.conditional_branch(site,target,0)
+            StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'beq.w',hex(target))
+            current=SameBLoaderBoundary.rebound(objects,context);validate_source_context(current,objects.elf)
+            with self.subTest(target=hex(target)),self.assertRaisesRegex(AssertionError,'foreign (Views|direct ingress)'):
+                self.consume(objects,rows,current)
+        objects,rows,context,item=self.fixture();site=V+4186;raw=bytes.fromhex('00bf')
+        StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'nop','')
+        with self.assertRaisesRegex(AssertionError,'unselected fallthrough enters Views'):
+            self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+        # Keep the allowed branch address/target but change its predecessor:
+        # neither an address anchor nor the destination grants context/state.
+        objects,rows,context,item=self.fixture();site=V+420;old=rows[site]
+        raw=bytes.fromhex('aff30080');StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'nop.w','')
+        with self.assertRaisesRegex(AssertionError,'foreign Views shared-error predecessor'):
+            self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_coherent_group_store_and_child_return_mutations_reject_for_ABI(self):
+        for at,raw,operation,operands in ((0x1001c7d8,bytes.fromhex('c4f8f890'),'str.w','r9, [r4, #0xf8]'),
+            (0x10016cdc,bytes.fromhex('f0bc'),'pop','{r4, r5, r6, r7}'),
+            (0x10028ce6+10,bytes.fromhex('cdf82c04'),'str.w','r0, [sp, #0x42c]')):
+            objects,rows,context,item=self.fixture();StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,operation,operands)
+            with self.subTest(site=hex(at)),self.assertRaisesRegex(AssertionError,'payload (source/return/selector instruction differs|reference/cell/ABI/default/return operands differ)'):
+                self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+    def test_short_actual_payload_keeps_boot_and_View_exhaustion_paired(self):
+        import zlib
+        for n in (3,4,6):
+            objects,rows,context,item=self.fixture();address=0x10032b1e
+            blob=bytearray(objects.read_only(address,12+n));struct.pack_into('<H',blob,6,n)
+            crc=zlib.crc32(blob[:8]+blob[12:]);struct.pack_into('<I',blob,8,crc)
+            StartupConfigurationCopy.put(objects,address,blob);StartupConfigurationCopy.put(objects,0x100200bc,struct.pack('<I',crc^0xffffffff))
+            SameBLoaderBoundary.mov(objects,rows,0x1001fe76,'movw','r0',n)
+            SameBLoaderBoundary.mov(objects,rows,0x1001fef8,'movw','r0',n)
+            raw=struct.pack('<HH',0xf20c,12+n);StartupConfigurationCopy.put(objects,0x1001fed8,raw)
+            rows[0x1001fed8]=Instruction(0x1001fed8,raw,'addw','r0, r12, #'+hex(12+n))
+            result=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+            early=[v for v in result['group_errors'] if v['stage']=='boot_view']
+            self.assertTrue(early);self.assertTrue(all(v['cursor']==(n,n) and not v['boot_view_assigned'] and
+                v['initial_active_bytes_preserved']==180 for v in early))
+            self.assertTrue(all(v['cursor'][1]<=n for v in result['group_errors']))
+            if n==3:self.assertFalse(result['successes'])
+            else:
+                self.assertEqual({v['initialized_views'] for v in result['successes']},set(range(1+(n-4)//2)))
+                self.assertTrue(any(v['stage']=='View id' and v['error']==4 for v in result['group_errors']))
+
+    def test_deeper_memcpy_stack_overlap_rejects_and_lower_adjacency_accepts(self):
+        low=0x20080000-544-1608-72
+        for address,reject in ((low,True),(low+4,True),(low-4,False)):
+            objects,rows,context,item=self.fixture();index=next(i for i,s in enumerate(objects.elf.sections) if s[2]&2)
+            objects.elf.symbol_entries.append(('Views_child_overlap',address,4,17,index))
+            if reject:
+                with self.subTest(address=hex(address)),self.assertRaisesRegex(AssertionError,'physical'):
+                    self.consume(objects,rows,context)
+            else:self.assertEqual(self.consume(objects,rows,context)['deepest_child_SP'],low)
+
+    def test_data_only_encoded_View_variants_preserve_abstract_union(self):
+        import zlib
+        # Encoded inputs are diagnostic witnesses; the consumer never chooses
+        # one scalar execution or claims that a resealed CRC edge ran.
+        variants=(b'\0\0\xff\0',b'\0\0\0\x01\x01\x01\xff',
+            b'\0\0\0\x01\x01\x02\xc2',b'\0\0\0\x01\x01\x0f'+b'a'*15,
+            b'\0\0\0\x09'+b'\0\0'*9)
+        for prefix in variants:
+            objects,rows,context,item=self.fixture();address=0x10032b1e;blob=bytearray(objects.read_only(address,1157))
+            blob[12:12+len(prefix)]=prefix;crc=zlib.crc32(blob[:8]+blob[12:]);struct.pack_into('<I',blob,8,crc)
+            StartupConfigurationCopy.put(objects,address,blob);StartupConfigurationCopy.put(objects,0x100200bc,struct.pack('<I',crc^0xffffffff))
+            result=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+            self.assertEqual(result['boot_view_domain'],(0,255));self.assertEqual({v['initialized_views'] for v in result['successes']},set(range(9)))
+            self.assertTrue({8,14}<={v['error'] for v in result['group_errors']})
+
+
+class SourceBoundUTF8(unittest.TestCase):
+    def fixture(self,raw=b'hello',residue=0):
+        from config_abstract import Span
+        from config_regions import Storage,borrow
+        from config_utf8 import UTF8Slice
+        objects,rows,context,item=ActualDecodedViews().fixture()
+        address=0x10071000+residue;file_at=len(objects.elf.data);data=raw or b'\0'
+        objects.elf.data+=data;objects.elf.sections.append((0,1,2,address,file_at,len(data),0,0,1,0))
+        source=Storage('address','test initialized bytes',address,len(data),1,'utf8_test',False)
+        parent=Storage('stack:utf8','caller',0x2007e000,1608,8,'utf8_test',True)
+        frame=Storage(parent.space,'utf8',parent.start-24,24,8,parent.phase,True)
+        return objects,rows,UTF8Slice(borrow(source,0,len(data),source.phase),Span(0,0),Span(len(raw),len(raw))),borrow(parent,1064,12,parent.phase,True),frame
+
+    @staticmethod
+    def consume(objects,rows,source,output,frame):
+        from config_utf8 import from_utf8_interface
+        return from_utf8_interface(objects,rows,source,output,frame,())
+
+    def test_empty_and_unknown_nonempty_results_keep_source_pair_and_inactive_None_distinct(self):
+        for raw in (b'',b'a',b'a'*7,b'a'*8,b'a'*9,b'a'*15,b'a'*16,b'\0',b'\xc2\x80',b'\xed\xa0\x80',b'\xf4\x8f\xbf\xbf',b'\xff'):
+            for residue in range(4):
+                with self.subTest(raw=raw,residue=residue):
+                    objects,rows,source,output,frame=self.fixture(raw,residue);result=self.consume(objects,rows,source,output,frame)
+                    self.assertEqual(result['success']['source'],source)
+                    self.assertEqual(bool(result['errors']),bool(raw))
+                    self.assertEqual(result['return']['SP'],frame.start+24)
+                    self.assertEqual(result['return']['saved_PC'],(frame.start+20,frame.start+24))
+                    if raw:
+                        none=next(v for v in result['errors'] if v['option_tag']==0)
+                        self.assertIsNone(none['error_length']);self.assertNotIn(9,none['active_output_offsets'])
+                    self.assertEqual(result['write_footprint'],((output.start+4,8),(output.start,4)))
+
+    def test_width_table_and_actual_word_read_or_return_mutations_reject(self):
+        for site,operation,operands in ((0x10016b7c,'subs.w','r12, r2, #0x6'),
+            (0x10016bc4,'ldr','r5, [r1, #0x4]'),(0x10016cdc,'pop','{r4, r5, r6, r7, lr}')):
+            objects,rows,source,output,frame=self.fixture();old=rows[site];rows[site]=Instruction(site,old.raw,operation,operands)
+            with self.subTest(site=hex(site)),self.assertRaises(AssertionError):self.consume(objects,rows,source,output,frame)
+        objects,rows,source,output,frame=self.fixture();StartupConfigurationCopy.put(objects,0x10033e22+0xc2,b'\0')
+        with self.assertRaisesRegex(AssertionError,'UTF8 width table'):self.consume(objects,rows,source,output,frame)
+
+    def test_misaligned_short_or_physically_aliased_output_rejects(self):
+        from config_regions import borrow,Storage
+        for kind in ('misaligned','short','frame_alias','cross_space'):
+            objects,rows,source,output,frame=self.fixture()
+            if kind=='misaligned':output=borrow(output.storage,1065,12,frame.phase,True)
+            elif kind=='short':output=borrow(output.storage,1064,8,frame.phase,True)
+            elif kind=='frame_alias':frame=Storage(frame.space,'bad child',output.start,24,8,frame.phase,True)
+            else:frame=Storage('stack:other','hidden same address',output.start,24,8,frame.phase,True)
+            with self.subTest(kind=kind),self.assertRaises(AssertionError):self.consume(objects,rows,source,output,frame)
+
+
+class BoundedParentTargets(unittest.TestCase):
+    @staticmethod
+    def conditional_branch(site,target,condition=3):
+        disp=target-site-4
+        if disp%2 or not -(1<<20)<=disp<(1<<20):raise ValueError('Thumb conditional target')
+        bits=disp&((1<<21)-1)
+        return struct.pack('<HH',0xf000|((bits>>20)&1)<<10|condition<<6|((bits>>12)&63),
+            0x8000|((bits>>19)&1)<<13|((bits>>18)&1)<<11|((bits>>1)&2047))
+
+    @staticmethod
+    def match(objects,rows,offset=4188):
+        from config_finite import _literal_body
+        from config_headers import VISITOR
+        name=next(n for n in objects.elf.functions if config_stack.canonical_symbol(n)==VISITOR)
+        parent=objects.elf.functions[name][0]&~1
+        def no_child(*args):raise AssertionError('unexpected parent-target child')
+        contract=dict(extent=4,instructions=((0,4,'blo.w @parent+'+format(offset,'x')),),objects=[])
+        return _literal_body(objects,name,rows,VISITOR,'bounded parent branch test',contract,no_child,no_child,window=parent+264)
+
+    def test_same_parent_cross_window_target_binds_current_instruction(self):
+        objects,rows,context,item=ActualDecodedViews().fixture()
+        self.assertEqual(self.match(objects,rows)['function'],0x1001c75c)
+        self.assertEqual(self.conditional_branch(0x1001c75c,0x1001d6b0),bytes.fromhex('c0f0a887'))
+
+    def test_wrong_parent_offset_extent_data_or_instruction_interior_rejects(self):
+        for target,expected in ((0x10016b74,4188),(0x1001c654+4194,4188),
+            (0x1001c654+7128,7128),(0x1001c654+3508,3508),(0x1001c654+4192,4192)):
+            objects,rows,context,item=ActualDecodedViews().fixture();site=0x1001c75c
+            raw=self.conditional_branch(site,target);StartupConfigurationCopy.put(objects,site,raw)
+            rows[site]=Instruction(site,raw,'blo.w',hex(target))
+            with self.subTest(target=hex(target)),self.assertRaisesRegex(AssertionError,'parent-relative'):
+                self.match(objects,rows,expected)
+
+
 if __name__=='__main__':unittest.main()

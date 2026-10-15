@@ -5,6 +5,7 @@ stops before the shared error suffix or boot_view, never before a purported
 whole visitor return. The public description cannot authorize a later phase.
 Physical and source qualifications are inherited, not discharged by this API.
 """
+from dataclasses import dataclass
 import re
 import struct
 from config_abstract import Span,DecoderInterface,SequenceInterface
@@ -191,7 +192,20 @@ def _direct_family(row):
     return f if f in ('b','bl','cbz','cbnz') else None
 
 
-def first_boot_decoded_u16_prefix(objects,instructions,source_context):
+@dataclass(frozen=True)
+class _PrefixState:
+    boundary:dict
+    frame:Storage
+    guards:tuple
+    owner:Storage
+    headers:dict
+    regions:tuple
+    outer:dict
+    helpers:dict
+    success:tuple
+
+
+def _first_boot_decoded_u16_state(objects,instructions,source_context):
     boundary=first_boot_loader_boundary(objects,instructions,source_context)
     frame,guards,owner,S=_geometry(objects,boundary);B=owner.start
     name=_name(objects,ROOT,boundary['loader_geometry']['function'])
@@ -224,7 +238,7 @@ def first_boot_decoded_u16_prefix(objects,instructions,source_context):
     require((initial['address'],initial['extent'],initial['active_bytes'],initial['opaque_bytes'],
         initial['initial_collection_lengths'])==(B,14604,185,14419,(0,0)),
         'decoded prefix loses copied initialized active/opaque source state')
-    initial_live=set(active_bytes)-{14600};outcomes=[];pending=[(state,(),(),outer)]
+    initial_live=set(active_bytes)-{14600};outcomes=[];success=[];pending=[(state,(),(),outer)]
     for ordinal,(field,offset) in enumerate(U16_FIELDS):
         next_pending=[]
         for before,fields,retired,bound in pending:
@@ -246,12 +260,13 @@ def first_boot_decoded_u16_prefix(objects,instructions,source_context):
                         initial_facts_retired=expired,initial_active_bytes_preserved=len(initial_live-expired_bytes),
                         initialized_remainder_preserved=True,initial_collection_lengths=(0,0),
                         writes=tuple((B+o,2) for f,o in U16_FIELDS[:len(assigned)])))
+                    if error is None:success.append((after,assigned,expired))
                 else:
                     second=_next_u16_interface(objects,wname,instructions,after,nested,visitor['protected'])
                     require('r4' in second['normal_preserves'],'second wrapper changes actual Config r4')
                     next_pending.append((after,assigned,expired,second))
         pending=next_pending
-    return dict(phase='first_boot_decoded_u16_prefix_pending_remaining_visitor_canonical_and_loader_routes',mode='sizez',
+    description=dict(phase='first_boot_decoded_u16_prefix_pending_remaining_visitor_canonical_and_loader_routes',mode='sizez',
         config=(B,14604),root_frame=(frame.start,456),visitor_frame=(vf,1608),decoder=(D.header.start,8),sequence=(state.header.start,8),
         guarded_CRC_success=(headers['root']['proof']['function']+114,'equal complement then fallthrough to D and visitor'),
         CRC_success_observed_taken=False,outcomes=tuple(outcomes),control=control,nested_return_sites=returns,
@@ -266,3 +281,9 @@ def first_boot_decoded_u16_prefix(objects,instructions,source_context):
         pending=('shared error suffix/visitor restore','boot_view and all remaining visitor groups','finalize and complete canonical Compare',
             'decoded validator and all other loader alternatives','diagnostic/default Formatter/sink/PANICKED closure',
             'complete same-B loader before acquired owner','full graph and resource gates'))
+    return description,_PrefixState(boundary,frame,guards,owner,headers,regions,outer,helpers,tuple(success))
+
+
+def first_boot_decoded_u16_prefix(objects,instructions,source_context):
+    """Readonly restricted prefix; later consumers use the private producer."""
+    return _first_boot_decoded_u16_state(objects,instructions,source_context)[0]
