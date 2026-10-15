@@ -31,7 +31,22 @@ async fn main(spawner: Spawner) {
 }
 """
 _ATTRIBUTE=('#','[','embassy_executor','::','main',']')
-_TOKEN=re.compile(r'//[^\r\n]*|"(?:\\.|[^"\\])*"|\'[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|::|->|[^\s]')
+_TOKEN=re.compile(r'[A-Za-z_][A-Za-z0-9_]*|[0-9]+|::|->|[^\s]')
+_LIFETIME=re.compile(r"'[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _cooked_string(text,start):
+    # The authored fragments need ordinary strings and cooked C strings,
+    # with only these simple escapes. Preserve a whole literal as one token;
+    # unsupported escapes and unterminated forms fail before matching names.
+    at=start+1
+    while at<len(text):
+        if text[at]=='"':return at+1
+        if text[at]=='\\':
+            require(at+1<len(text) and text[at+1] in "nrt0\\'\"",'unsupported or incomplete cooked-string escape')
+            at+=2
+        else:at+=1
+    require(False,'unterminated cooked source string')
 
 
 def _tokens(raw):
@@ -39,14 +54,30 @@ def _tokens(raw):
     try:text=raw.decode('utf-8')
     except UnicodeDecodeError:raise AssertionError('source member is not UTF-8') from None
     require(not any(ord(c)<32 and c not in '\r\n\t' for c in text),'source contains an unsupported control byte')
-    # These exact fragments have no block comments. Rejecting rather than
-    # partially removing nested comments keeps this finite lexer fail closed.
-    tokens=[]
-    for value in _TOKEN.findall(text):
-        if value.startswith('//'):continue
-        tokens.append(value)
-    require(not any(tokens[i:i+2] in (['/','*'],['*','/']) for i in range(len(tokens)-1)),
-        'block comments require an explicitly reviewed source lexer')
+    # Sequential consumption makes comment/literal contents indivisible.
+    # Raw r/br/cr strings, raw identifiers, character/byte-character literals
+    # and block comments are unsupported by this finite fragment contract.
+    # Reject them at their introducer, before content can become declarations.
+    tokens=[];at=0
+    while at<len(text):
+        if text[at].isspace():at+=1;continue
+        if text.startswith('//',at):
+            end=text.find('\n',at);at=len(text) if end<0 else end+1;continue
+        require(not text.startswith(('/*','*/'),at),'block comments require an explicitly reviewed source lexer')
+        if text[at]=='"':
+            end=_cooked_string(text,at);tokens.append(text[at:end]);at=end;continue
+        if text[at]=="'":
+            lifetime=_LIFETIME.match(text,at)
+            require(lifetime is not None and (lifetime.end()==len(text) or text[lifetime.end()]!="'"),
+                'character literals or malformed lifetimes are unsupported')
+            tokens.append(lifetime[0]);at=lifetime.end();continue
+        token=_TOKEN.match(text,at);require(token is not None,'unsupported source token')
+        value=token[0];end=token.end()
+        require(not (value in ('r','br','cr') and end<len(text) and text[end] in '#"'),
+            'raw strings/identifiers require an explicitly reviewed source lexer')
+        require(not (value.isidentifier() and end<len(text) and text[end]=='"' and value not in ('b','c')),
+            'unsupported cooked-string prefix')
+        tokens.append(value);at=end
     return tuple(tokens)
 
 

@@ -5658,6 +5658,49 @@ class FirstBootSourceContract(unittest.TestCase):
         for value in ({},dict(self.sources(),extra=b'ignored'),dict(self.sources(),**{'main.rs':'text'})):
             with self.subTest(value=tuple(value)),self.assertRaises(AssertionError):first_boot_source_contract(value)
 
+    def test_raw_string_cannot_supply_private_external_module_identity(self):
+        from config_boot_source import first_boot_source_contract
+        documents=self.sources()
+        spoof=b'const SPOOF: &str = r#" "; mod view_config; const END: &str = " "#;\n'
+        inline=(b'pub mod view_config {\n'+documents['view_config.rs'].replace(
+            b'static CONFIGURATION:',b'pub static CONFIGURATION:')+b'\n}')
+        documents['main.rs']=documents['main.rs'].replace(b'mod view_config;',spoof+inline)
+        with self.assertRaises(AssertionError):first_boot_source_contract(documents)
+
+    def test_literal_contents_cannot_supply_executor_import_or_boot_main(self):
+        from config_boot_source import first_boot_source_contract
+        for target in ('import','main'):
+            documents=self.sources();text=documents['main.rs'].decode()
+            if target=='import':
+                old='use embassy_executor::{Executor, Spawner};'
+                fake=old;replacement='use other::{Executor, Spawner};'
+            else:
+                begin=text.index('#[embassy_executor::main]');end=text.index('\n}',begin)+2
+                old=text[begin:end];fake=old
+                replacement='async fn alternate(spawner: Spawner) { publish(spawner); }'
+            text=text.replace(old,'const SPOOF: &str = r#" "; '+fake+' const END: &str = " "#;\n'+replacement)
+            documents['main.rs']=text.encode()
+            with self.subTest(target=target),self.assertRaises(AssertionError):first_boot_source_contract(documents)
+
+    def test_unsupported_raw_families_and_malformed_literals_fail_before_matching(self):
+        from config_boot_source import first_boot_source_contract
+        literals=[prefix+'#'*count+'"ignored"'+'#'*count
+            for prefix in ('r','br','cr') for count in (0,1,2,255,256)]
+        literals+=['r###"unterminated','br#"wrong"##','cr##"wrong"#',
+            '"unterminated','"dangling\\','"unsupported\\q"',"'x'","b'x'","'\\"]
+        for literal in literals:
+            documents=self.sources();documents['main.rs']+=('\nconst UNSUPPORTED: &str = '+literal+';\n').encode()
+            with self.subTest(literal=literal[:45]),self.assertRaises(AssertionError):first_boot_source_contract(documents)
+
+    def test_cooked_literals_comments_and_legitimate_lifetimes_stay_atomic(self):
+        from config_boot_source import first_boot_source_contract
+        documents=self.sources()
+        documents['main.rs']+=(b'\n// r###"mod view_config; malformed literal and }\n'
+            b'const TEXT: &str = "r#\\\" \\"; mod view_config; } \\"#";\n'
+            b'fn borrow_text<\'a>(value: &\'a str) -> &\'a str { value }\n'
+            b'fn lifetime_placeholder(value: &\'_ str) {}\n')
+        self.assertEqual(first_boot_source_contract(documents)['ordered_boot_operations'],('initialize','enqueue_Dashboard'))
+
 
 class BuildSourceContextInput(unittest.TestCase):
     def context(self):
