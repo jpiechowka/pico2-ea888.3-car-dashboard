@@ -1563,6 +1563,103 @@ class OrdinarySerializeEffects(unittest.TestCase):
         with self.assertRaises(AssertionError):config_serialize_effects.serialize_effect(objects,records,proof,state,threatened,frame,())
 
 
+class OrdinaryHeaderConstructors(unittest.TestCase):
+    def fixture(self,code_shift=0,data_shift=0):
+        from config_regions import Storage
+        objects,item=LoggerObjects.fixture(self,'sizez',code_shift,data_shift,fixture_file='config-headers.json')
+        objects.elf.mapping_symbols=[(n,a+code_shift,i) for n,a,i in item['mapping_symbols']]
+        records={}
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address']+code_shift;operands=op[1] if len(op)>1 else ''
+            if config_stack.transfer_family(op[0].removesuffix('.w')) in ('b','bl','cbz','cbnz'):
+                operands=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operands)
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],operands)
+        data=bytearray(objects.elf.data);pool=0x10020d74+code_shift
+        section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=pool<pool+4<=s[3]+s[5])
+        offset=section[4]+pool-section[3];struct.pack_into('<I',data,offset,struct.unpack_from('<I',data,offset)[0]+data_shift)
+        objects.elf.data=bytes(data)
+        root=next(n for n in objects.elf.functions if 'ConfigSlot12load_at_boot' in n)
+        visitor=next(n for n in objects.elf.functions if '10ConfigSeed' in n)
+        frame=Storage('stack:header','load_at_boot',0,456,8,'decode',True)
+        child=Storage(frame.space,'ConfigSeed',-1608,1608,8,frame.phase,True)
+        return objects,records,root,visitor,frame,child
+
+    def test_current_D_words_and_child_Q_count_bind_source_payload_and_actual_owner(self):
+        import config_headers
+        objects,records,root,visitor,frame,child=self.fixture()
+        boot=config_headers.root_decoder_header(objects,root,records,frame,())
+        state=boot['decoder_state']
+        self.assertEqual((state.header.offset,state.header.extent,state.payload.start,state.payload.extent,state.cursor),
+                         (236,8,0x10032b2a,1145,0))
+        nested=config_headers.visitor_sequence_header(objects,visitor,records,child,state,boot['protected'])
+        self.assertEqual((nested['sequence_state'].header.offset,nested['sequence_state'].count),(288,13))
+        self.assertEqual(nested['sequence_state'].decoder,state)
+        self.assertEqual((boot['state_coordinate'],nested['state_coordinate']),('before_call','before_call'))
+        self.assertTrue(boot['requires_first_consumer_effect_before_exit'])
+        self.assertTrue(nested['requires_first_consumer_effect_before_exit'])
+        self.assertTrue(boot['checksum_failure_requires_fault_mapping_and_default_successor'])
+        self.assertTrue(boot['requires_parent_entry_all_ingress_source_effects_and_coverage'])
+
+    def test_code_and_EAV_relocations_do_not_change_constructor_meaning(self):
+        import config_headers
+        objects,records,root,visitor,frame,child=self.fixture(0x2800,0x19000)
+        boot=config_headers.root_decoder_header(objects,root,records,frame,())
+        nested=config_headers.visitor_sequence_header(objects,visitor,records,child,boot['decoder_state'],boot['protected'])
+        self.assertEqual(nested['sequence_state'].decoder.payload.start,0x10032b2a+0x19000)
+
+    def test_actual_root_call_constructs_its_child_frame_and_same_D_pointer(self):
+        import config_headers
+        objects,records,root,visitor,frame,child=self.fixture()
+        bridge=config_headers.root_visitor_headers(objects,root,records,frame,())
+        self.assertEqual(bridge['visitor_frame'],child)
+        self.assertEqual(bridge['visitor']['sequence_state'].decoder,bridge['root']['decoder_state'])
+        self.assertEqual(bridge['state_coordinate'],'before_first_next_call')
+        start=objects.elf.functions[root][0]&~1
+        records[start+0x100]=Instruction(start+0x100,bytes(2),'b',hex(start+120))
+        with self.assertRaises(AssertionError):config_headers.root_visitor_headers(objects,root,records,frame,())
+
+    def test_changed_valid_envelope_bytes_rebind_crc_without_hash_allowlist(self):
+        import config_headers
+        import zlib
+        objects,records,root,visitor,frame,child=self.fixture();data=bytearray(objects.elf.data)
+        def offset(address):
+            section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+            return section[4]+address-section[3]
+        eav=offset(0x10032b1e);data[eav+100]^=1
+        raw=data[eav:eav+1157];checksum=zlib.crc32(raw[:8]+raw[12:])
+        struct.pack_into('<I',data,eav+8,checksum);struct.pack_into('<I',data,offset(0x100200bc),checksum^0xffffffff)
+        objects.elf.data=bytes(data)
+        result=config_headers.root_decoder_header(objects,root,records,frame,())
+        self.assertEqual(result['decoder_state'].payload.extent,1145)
+        self.assertTrue(result['requires_parent_entry_all_ingress_source_effects_and_coverage'])
+
+    def test_changed_EAV_crc_pool_or_frame_cannot_materialize_valid_D(self):
+        import config_headers
+        from config_regions import Storage
+        for fault in ('eav','polynomial','checksum_pool','frame'):
+            objects,records,root,visitor,frame,child=self.fixture()
+            if fault=='frame':frame=Storage(frame.space,frame.identity,0,448,8,frame.phase,True)
+            else:
+                site={'eav':0x10032b2a,'polynomial':0x100200b8,'checksum_pool':0x100200bc}[fault]
+                section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=site<s[3]+s[5]);offset=section[4]+site-section[3]
+                data=bytearray(objects.elf.data);data[offset]^=1;objects.elf.data=bytes(data)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_headers.root_decoder_header(objects,root,records,frame,())
+
+    def test_D_end_register_Q_field_count_or_layout_mutations_reject(self):
+        import config_headers
+        for fault in ('D_end','Q_count','Q_offset','Q_pointer'):
+            objects,records,root,visitor,frame,child=self.fixture()
+            boot=config_headers.root_decoder_header(objects,root,records,frame,())
+            if fault=='D_end':site=0x1001fedc;operation,operands='strd','r8, r1, [sp, #236]'
+            elif fault=='Q_count':site=0x1001c664;operation,operands='movs','r1, #0xc'
+            elif fault=='Q_offset':site=0x1001c666;operation,operands='strd','r0, r1, [sp, #292]'
+            else:site=0x1001c66a;operation,operands='add','r0, sp, #0x124'
+            row=records[site];records[site]=Instruction(site,row.raw,operation,operands)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                if fault=='D_end':config_headers.root_decoder_header(objects,root,records,frame,())
+                else:config_headers.visitor_sequence_header(objects,visitor,records,child,boot['decoder_state'],boot['protected'])
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow
