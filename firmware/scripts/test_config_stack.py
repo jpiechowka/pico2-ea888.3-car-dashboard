@@ -2632,6 +2632,23 @@ class OwnedPlatformDependencies(unittest.TestCase):
             for invalid in (-1,8,True,None):
                 with self.subTest(index=invalid),self.assertRaises(AssertionError):replace(value,loop_index=invalid)
 
+    def test_direct_policy_and_stack_readers_reject_numeric_and_boolean_aliases(self):
+        import config_platform
+        from test_validation_policy import MemoryQualification
+        from copy import deepcopy
+        elf,eav,stack=MemoryQualification.owned_fixture(MemoryQualification())
+        expected=config_platform.current_image_policy(stack['policies'][0],elf,eav)
+        for fault in ('width','owner_mutability','frame_mutability','loop_index'):
+            for reader in ('policy','stack'):
+                changed=deepcopy(stack);entry=changed['policies'][0]['owned_dependencies'][0]
+                if fault=='width':entry['width']=4.0
+                elif fault=='owner_mutability':entry['owner']['writable']=1
+                elif fault=='frame_mutability':entry['frame']['writable']=1
+                else:changed['policies'][0]['owned_dependencies'][2]['loop_index']=0.0
+                with self.subTest(fault=fault,reader=reader),self.assertRaises(AssertionError):
+                    if reader=='policy':config_platform.read_policy(changed['policies'][0],expected)
+                    else:config_platform.read_stack_result(changed,expected,stack['headroom'])
+
 class OrdinaryContexts(unittest.TestCase):
     def test_one_shot_allocations_keep_overlap_and_duplicate_identity_checks(self):
         from config_regions import Storage,require_disjoint

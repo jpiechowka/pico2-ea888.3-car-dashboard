@@ -116,6 +116,10 @@ def reviewed_eav_policy(objects,payload,context,*,contradictory_effects,owned_de
 def read_policy(record,expected):
     require(isinstance(expected,PlatformPolicy) and isinstance(record,dict),'absent/unresolved platform prerequisite')
     wanted=expected.to_record()
+    require(set(record)==set(wanted) and isinstance(record.get('owned_dependencies'),list) and
+        len(record['owned_dependencies'])==len(expected.owned_dependencies),'platform reader lost its exact dependency tuple')
+    dependencies=tuple(read_owned_access(v) for v in record['owned_dependencies'])
+    require(dependencies==expected.owned_dependencies,'platform dependency context differs')
     require(set(record)==set(wanted) and type(record.get('schema')) is int and type(record.get('core')) is int and
             type(record.get('input_start')) is int and type(record.get('input_end')) is int and
             record.get('hardware_qualified') is False and record==wanted,'platform qualifier or current target/input identity differs')
