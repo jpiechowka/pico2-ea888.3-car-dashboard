@@ -51,7 +51,8 @@ def _leaf(objects,name,rows,label):
     return proof
 
 
-def _region(objects,name,rows,parent,config,item,children):
+def _source_contract(objects,name,rows,parent,config,item):
+    """Bind a fixed source window's parent transfers and typed literal slots."""
     start=parent+item['offset'];operations=[];caller_mapping=mapping_ranges(objects.elf,name);pools=[]
     for offset,width,text in item['instructions']:
         text=re.sub(r'@parent\+([0-9a-f]+)',lambda m:hex(parent+int(m[1],16)),text)
@@ -76,6 +77,13 @@ def _region(objects,name,rows,parent,config,item,children):
             text=operation+' '+actual;pools.append((at,slot,value,descriptor['kind']))
         operations.append((offset,width,text))
     contract=dict(extent=item['extent'],instructions=operations,objects=())
+    for key in ('mapping','data'):
+        if key in item:contract[key]=item[key]
+    return start,contract,tuple(pools)
+
+
+def _region(objects,name,rows,parent,config,item,children):
+    start,contract,pools=_source_contract(objects,name,rows,parent,config,item)
     def outline(objects,child,records,role,ancestry):
         require(role.startswith('@outline:') and role[9:] in CHILDREN,'unreviewed validator outline interface')
         label=role[9:];proof=_leaf(objects,child,records,label);children[label]=proof;return proof

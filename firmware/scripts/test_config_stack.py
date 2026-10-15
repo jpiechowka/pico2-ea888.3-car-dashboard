@@ -4583,4 +4583,118 @@ class ValidatorPointerRegions(unittest.TestCase):
             validator_pointer_regions(objects,name,rows,context,call)
 
 
+class ValidatorControls(unittest.TestCase):
+    @staticmethod
+    def patch(objects,rows,address,encoded,operation=None,operand=None):
+        s=next(s for s in objects.elf.sections if s[1]==1 and s[2]&2 and s[3]<=address<address+len(encoded)<=s[3]+s[5])
+        raw=bytearray(objects.elf.data);at=s[4]+address-s[3];raw[at:at+len(encoded)]=encoded;objects.elf.data=bytes(raw)
+        if operation is not None:rows[address]=Instruction(address,encoded,operation,operand)
+        assert objects.read_only(address,len(encoded))==encoded
+
+    def fixture(self,phase='default_validation',shift=0):
+        objects,name,rows,context,call=ValidatorPointerRegions().fixture(phase,shift)
+        item=json.loads((Path(__file__).parent/'fixtures/config-validator-controls.json').read_text())
+        def relocated(a):return a+shift if 0x10000000<=a<0x10200000 else a
+        elf=objects.elf;raw=bytearray(elf.data)
+        for index,address,encoded in item['segments']:
+            s=elf.sections[index];at=s[4]+relocated(address)-s[3]
+            raw[at:at+len(bytes.fromhex(encoded))]=bytes.fromhex(encoded)
+        # This previously unconsumed FIRST data-pool pointer is now typed.
+        s=next(s for s in elf.sections if s[2]&2 and s[3]<=relocated(0x1001bde8)<s[3]+s[5])
+        struct.pack_into('<I',raw,s[4]+relocated(0x1001bde8)-s[3],relocated(0x1003c3a0))
+        elf.data=bytes(raw)
+        for n,(a,z,index) in item['functions'].items():elf.functions[n]=(relocated(a),z,index)
+        objects.sizes.update({relocated(int(a)):z for a,z in item['sizes'].items()})
+        elf.symbol_entries.extend((n,relocated(a),z,info,index) for n,a,z,info,index in item['symbol_entries'])
+        for row in item['records']:
+            a=relocated(row['address']);operand=re.sub(r'0x[0-9a-f]+',lambda m:hex(relocated(int(m[0],16))),row['operands'])
+            rows[a]=Instruction(a,bytes.fromhex(row['bytes']),row['mnemonic'],operand)
+        return objects,name,rows,context,call
+
+    def test_current_control_source_arguments_and_capture_effects_remain_paired(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_validator_controls'),'missing finite controls argument/effect consumer')
+        from config_validator_controls import validator_controls
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                objects,name,rows,context,call=self.fixture(phase,shift)
+                proof=validator_controls(objects,name,rows,context,call)
+                self.assertEqual(len(proof['regions']),3)
+                self.assertEqual(proof['loops']['pages'],(0,1,2))
+                self.assertEqual(proof['loops']['buttons'],(0,1,2,3))
+                self.assertEqual(proof['loops']['tap_hold'],((0,False),(2,True)))
+                self.assertEqual(proof['children']['action_allowed']['source_action_indices'],tuple(range(19)))
+                self.assertEqual(proof['children']['control_error_capture']['source_error_bytes'],(0,1,2,3,5,6,7,8))
+                self.assertEqual(proof['children']['control_error_capture']['code_map'],(5,7,7,7,7,3,3))
+                self.assertIn('flags',proof['children']['control_error_capture']['clobbers'])
+                self.assertEqual(proof['capture_cells'],dict(valid=95,first=76,capture=88))
+                self.assertEqual(proof['child_stack_alternatives'],((8,0),(16,)))
+                self.assertEqual(tuple(len(t['targets']) for t in proof['typed_tables']),(19,4))
+                self.assertEqual(proof['typed_tables'][1]['targets'],tuple(a+shift for a in (0x1001eb38,0x1001eb3a,0x1001eb46,0x1001eb40)))
+                self.assertTrue(proof['requires_actual_private_Config_source_and_loop_entry'])
+                self.assertTrue(proof['requires_whole_parent_control_coverage_and_platform_policy'])
+
+    def test_coherent_capture_arguments_and_first_stores_cannot_borrow_other_cells(self):
+        from config_validator_controls import validator_controls
+        for address,encoded,operation,operand in (
+            (0x1001eba6,bytes.fromhex('0fa9'),'add','r1, sp, #0x3c'),
+            (0x1001bdda,bytes.fromhex('4a81'),'strh','r2, [r1, #0xa]')):
+            objects,name,rows,context,call=self.fixture()
+            self.patch(objects,rows,address,encoded,operation,operand)
+            with self.subTest(address=hex(address)),self.assertRaisesRegex(AssertionError,'operands differ'):
+                validator_controls(objects,name,rows,context,call)
+
+    def test_action_rotation_padding_and_ErrorCode_tables_remain_exact(self):
+        from config_validator_controls import validator_controls
+        for address,encoded in ((0x1000ff1b,b'\x15'),(0x1001eb34,b'\x03'),(0x1003c3a0,b'\x07')):
+            objects,name,rows,context,call=self.fixture();self.patch(objects,rows,address,encoded)
+            with self.subTest(address=hex(address)),self.assertRaisesRegex(AssertionError,'mapped bytes|ErrorCode map'):
+                validator_controls(objects,name,rows,context,call)
+
+    def test_error_code_object_relocates_independently_of_the_caller_and_child(self):
+        from config_validator_controls import validator_controls
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                objects,name,rows,context,call=self.fixture(phase,shift);elf=objects.elf
+                raw=bytearray(elf.data);new=0x10070001;at=len(raw);raw.extend(bytes.fromhex('05070707070303'))
+                elf.sections.append((0,1,2,new,at,7,0,0,1,0));elf.data=bytes(raw)
+                self.patch(objects,rows,0x1001bde8+shift,struct.pack('<I',new))
+                proof=validator_controls(objects,name,rows,context,call)
+                self.assertEqual(proof['children']['control_error_capture']['objects'][0],new)
+
+    def test_semantic_foreign_entries_cannot_bypass_controls_loop_or_capture_arguments(self):
+        from config_validator_controls import validator_controls
+        for operation in ('b','bl','cbz','cbnz'):
+            for source in (0x10000050,0x1001ed02):
+                objects,name,rows,context,call=self.fixture()
+                # Semantic records only; no claim of a newly decoded branch.
+                operand=('r0, ' if operation.startswith('cb') else '')+'0x1001eba6'
+                raw=rows[source].raw if source in rows else b'\x00\xbf'
+                rows[source]=Instruction(source,raw,operation,operand)
+                with self.subTest(operation=operation,source=hex(source)),self.assertRaisesRegex(AssertionError,'foreign direct ingress'):
+                    validator_controls(objects,name,rows,context,call)
+
+    def test_child_frame_and_zero_outline_identity_are_closed(self):
+        from config_validator_controls import validator_controls,_child
+        for address,frame in ((0x1000fefc,16),(0x1001bdb4,8),(0x10028926,8)):
+            objects,name,rows,context,call=self.fixture();objects.sizes[address]=frame
+            with self.subTest(address=hex(address)),self.assertRaises(AssertionError):
+                validator_controls(objects,name,rows,context,call)
+        objects,name,rows,context,call=self.fixture()
+        ordinary=next(n for n,e in objects.elf.functions.items() if e[0]&~1==0x1000fefc)
+        with self.assertRaisesRegex(AssertionError,'outline borrows ordinary'):
+            _child(objects,ordinary,rows,'zero_to_bool',{})
+
+    def test_capture_effects_preserve_return_state_and_invalidate_predicates(self):
+        from config_validator_controls import validator_controls
+        objects,name,rows,context,call=self.fixture();proof=validator_controls(objects,name,rows,context,call)
+        capture=proof['children']['control_error_capture']
+        self.assertEqual(tuple((view.offset,offset,size) for view,offset,size in capture['writes']),
+            ((76,0,2),(76,4,1),(76,6,1),(76,7,1),(76,8,2),(76,10,1),(95,0,1)))
+        self.assertIn('sp',capture['preserves']);self.assertEqual(capture['returns'],255)
+        for child in proof['children'].values():self.assertIn('flags',child['clobbers'])
+        self.assertEqual(proof['children']['action_allowed']['padding_index_excluded'],19)
+        self.assertNotIn(4,capture['source_error_bytes'])
+
+
 if __name__=='__main__':unittest.main()
