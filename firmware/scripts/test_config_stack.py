@@ -4465,4 +4465,111 @@ class ValidatorLocalWrites(unittest.TestCase):
                 validator_local_writes(objects,name,rows,context,call)
 
 
+class ValidatorPointerRegions(unittest.TestCase):
+    def fixture(self,phase='default_validation',shift=0):
+        objects,name,rows,context,call=ValidatorResultBoundary().fixture(phase,shift)
+        item=json.loads((Path(__file__).parent/'fixtures/config-validator-pointers.json').read_text())
+        def relocated(a):return a+shift if 0x10000000<=a<0x10200000 else a
+        elf=objects.elf;raw=bytearray(elf.data)
+        for index,address,encoded in item['segments']:
+            section=elf.sections[index];at=section[4]+relocated(address)-section[3]
+            raw[at:at+len(bytes.fromhex(encoded))]=bytes.fromhex(encoded)
+        elf.data=bytes(raw)
+        for n,(a,z,index) in item['functions'].items():elf.functions[n]=(relocated(a),z,index)
+        objects.sizes.update({relocated(int(a)):z for a,z in item['sizes'].items()})
+        elf.symbol_entries.extend((n,relocated(a),z,info,index) for n,a,z,info,index in item['symbol_entries'])
+        for row in item['records']:
+            a=relocated(row['address']);operand=re.sub(r'0x[0-9a-f]+',lambda m:hex(relocated(int(m[0],16))),row['operands'])
+            rows[a]=Instruction(a,bytes.fromhex(row['bytes']),row['mnemonic'],operand)
+        return objects,name,rows,context,call
+
+    def test_current_source_regions_bind_distinct_pointer_owners_and_child_effects(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_validator_pointers'),
+            'missing grouped validator pointer source regions')
+        from config_validator_pointers import validator_pointer_regions
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                objects,name,rows,context,call=self.fixture(phase,shift)
+                proof=validator_pointer_regions(objects,name,rows,context,call)
+                self.assertEqual(len(proof['pointer_writes']),55)
+                self.assertEqual(proof['families']['edges']['owner_offsets'],(104,107))
+                self.assertEqual(proof['families']['occupied']['owner_offsets'],(104,112))
+                self.assertEqual(proof['families']['page_array']['owner_offsets'],(120,123))
+                self.assertEqual(proof['families']['result']['view'],context.result)
+                self.assertIn('r4',proof['children']['band_capture']['clobbers'])
+                self.assertTrue(proof['requires_actual_source_typed_parent_entry_and_full_graph'])
+                self.assertTrue(proof['platform_requirements_unresolved'])
+
+    def test_semantic_foreign_CBZ_ingress_cannot_bypass_a_capture_outline(self):
+        from config_validator_pointers import validator_pointer_regions
+        objects,name,rows,context,call=self.fixture()
+        # Semantic-record ingress fixture, not a coherent decoded opcode.
+        rows[0x10000050]=Instruction(0x10000050,b'\x00\xb1','cbz','r0, 0x1001f784')
+        with self.assertRaisesRegex(AssertionError,'foreign direct ingress'):
+            validator_pointer_regions(objects,name,rows,context,call)
+
+    def test_coherent_capture_load_cannot_borrow_the_Result_spill(self):
+        from config_validator_pointers import validator_pointer_regions
+        for address,operation,operand,encoded in (
+            (0x1001fb34,'ldr','r5, [sp, #0x3c]',bytes.fromhex('0f9d')),
+            (0x1002823c,'movs','r7, #0x0',bytes.fromhex('0027'))):
+            objects,name,rows,context,call=self.fixture();s=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+            raw=bytearray(objects.elf.data);at=s[4]+address-s[3];raw[at:at+2]=encoded
+            objects.elf.data=bytes(raw);rows[address]=Instruction(address,encoded,operation,operand)
+            self.assertEqual(objects.read_only(address,2),encoded)
+            with self.subTest(address=hex(address)),self.assertRaisesRegex(AssertionError,'operands differ'):
+                validator_pointer_regions(objects,name,rows,context,call)
+
+    def test_warning_literal_source_role_cannot_change_with_coherent_data(self):
+        from config_validator_pointers import validator_pointer_regions
+        objects,name,rows,context,call=self.fixture();slot=0x1001fd54
+        s=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=slot<s[3]+s[5]);at=s[4]+slot-s[3]
+        raw=bytearray(objects.elf.data);raw[at:at+4]=bytes.fromhex('ff053400');objects.elf.data=bytes(raw)
+        with self.assertRaisesRegex(AssertionError,'literal source role'):
+            validator_pointer_regions(objects,name,rows,context,call)
+
+    def test_independent_warning_pool_placement_preserves_the_paired_scalar_role(self):
+        from config_validator_pointers import validator_pointer_regions
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                objects,name,rows,context,call=self.fixture(phase,shift)
+                elf=objects.elf;new=0x1001fdb4+shift;load=0x1001f9fe+shift;old=0x1001fd54+shift
+                def offset(a):
+                    s=next(s for s in elf.sections if s[2]&2 and s[3]<=a<s[3]+s[5]);return s[4]+a-s[3]
+                raw=bytearray(elf.data);literal=objects.read_only(old,4);raw[offset(new):offset(new)+4]=literal
+                immediate=new-((load+4)&~3);self.assertTrue(0<=immediate<=1020 and immediate%4==0)
+                encoded=struct.pack('<H',0x4a00|(immediate//4));raw[offset(load):offset(load)+2]=encoded
+                elf.data=bytes(raw);rows[load]=Instruction(load,encoded,'ldr','r2, [pc, #'+hex(immediate)+']')
+                proof=validator_pointer_regions(objects,name,rows,context,call)
+                self.assertIn((load,new,0x3305ff,'scalar'),proof['regions']['widget_variants_and_root_warning']['pools'])
+
+    def test_leaf_frame_and_outline_identity_changes_are_not_unknown_child_allowances(self):
+        from config_validator_pointers import validator_pointer_regions
+        for at,frame in ((0x1001bdec,16),(0x1001c1f8,8),(0x1002892e,8),(0x10028b16,8)):
+            objects,name,rows,context,call=self.fixture();objects.sizes[at]=frame
+            with self.subTest(child=hex(at)),self.assertRaises(AssertionError):
+                validator_pointer_regions(objects,name,rows,context,call)
+
+    def test_other_semantic_foreign_branch_entries_and_shared_interiors_reject(self):
+        from config_validator_pointers import validator_pointer_regions
+        for operation in ('b','bl','cbnz'):
+            for target in (0x1001f780,0x1001f784,0x1001fa52,0x1001fb34):
+                objects,name,rows,context,call=self.fixture()
+                operand=('r0, ' if operation=='cbnz' else '')+hex(target)
+                rows[0x10000050]=Instruction(0x10000050,b'\x00\xbf',operation,operand)
+                with self.subTest(operation=operation,target=hex(target)),self.assertRaisesRegex(AssertionError,'foreign direct ingress'):
+                    validator_pointer_regions(objects,name,rows,context,call)
+
+    def test_child_pushes_do_not_overwrite_another_supplied_live_allocation(self):
+        from dataclasses import replace
+        from config_regions import Storage
+        from config_validator_pointers import validator_pointer_regions
+        objects,name,rows,context,call=self.fixture();q=context.frame
+        below=Storage(q.space,'separate protected allocation below this frame',q.start-8,8,8,q.phase,False)
+        context=replace(context,protected=context.protected+(below,))
+        with self.assertRaisesRegex(AssertionError,'overlap'):
+            validator_pointer_regions(objects,name,rows,context,call)
+
+
 if __name__=='__main__':unittest.main()
