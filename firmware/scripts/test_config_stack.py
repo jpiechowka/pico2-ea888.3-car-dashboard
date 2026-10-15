@@ -3873,3 +3873,69 @@ class FieldSuffix(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class LoaderContinuation(unittest.TestCase):
+    def fixture(self,code_shift=0,data_shift=0):
+        objects,records,root,frame=DefaultSourceTerminal.fixture(self,code_shift,data_shift)
+        item=json.loads((Path(__file__).parent/'fixtures/config-loader-continuation.json').read_text())
+        data=bytearray(objects.elf.data)
+        def index(address):
+            s=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+            return s[4]+address-s[3]
+        for ix,address,encoded in item['segments']:
+            s=objects.elf.sections[ix];shift=0 if s[2]&1 else code_shift if s[2]&4 else data_shift
+            raw=bytes.fromhex(encoded);at=index(address+shift);data[at:at+len(raw)]=raw
+        for address,offset,kind in item['pointers']:
+            ix=next(i for i,s in enumerate(objects.elf.sections) if s[2]&2 and
+                s[3]-(0 if s[2]&1 else code_shift if s[2]&4 else data_shift)<=address<
+                s[3]-(0 if s[2]&1 else code_shift if s[2]&4 else data_shift)+s[5])
+            s=objects.elf.sections[ix];at=index(address+(0 if s[2]&1 else code_shift if s[2]&4 else data_shift))+offset
+            value=struct.unpack_from('<I',data,at)[0]
+            struct.pack_into('<I',data,at,value+(code_shift if kind=='code' else data_shift if kind=='data' else 0))
+        objects.elf.data=bytes(data)
+        objects.elf.functions.update({n:(v[0]+code_shift,v[1],v[2]) for n,v in item['functions'].items()})
+        objects.sizes.update({int(a)+code_shift:v for a,v in item['sizes'].items()})
+        for entry in item['symbol_entries']:
+            n,a,z,info,ix=entry;s=objects.elf.sections[ix]
+            row=(n,a+(0 if s[2]&1 else code_shift if s[2]&4 else data_shift),z,info,ix)
+            if row not in objects.elf.symbol_entries:objects.elf.symbol_entries.append(row)
+        for r in item['records']:
+            at=r['address']+code_shift;op=r['text'].split(None,1)
+            records[at]=Instruction(at,bytes.fromhex(r['bytes']),op[0],op[1] if len(op)>1 else '')
+        return objects,records,root,frame
+
+    def test_continuation_binds_distinct_result_epochs_and_paired_publication(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_loader_continuation'),'missing finite continuation consumer')
+        import config_loader_continuation
+        for code,data in ((0,0),(0x2800,0x19000)):
+            objects,records,root,frame=self.fixture(code,data)
+            result=config_loader_continuation.loader_continuation(objects,root,records,frame,())
+            self.assertEqual(tuple((c['phase'],c['result'].offset,c['r8']) for c in result['validator_contexts']),
+                (('fallback',236,frame.start+112),('decoded',112,result['config'].start)))
+            self.assertEqual(result['valid_result_tags'],(0,1,2))
+            self.assertEqual(result['excluded_non2_sentinel'],65535)
+            self.assertEqual(tuple(p['fault'] for p in result['publication_predecessors']),('Some(original fault)','None'))
+            self.assertEqual(result['return_interface']['restored_bytes'],456)
+            self.assertEqual(result['return_interface']['r0'],'issued previous identity or zero; not Config pointer')
+            self.assertTrue(result['requires_complete_validator_typed_fault_and_boot_graph'])
+            self.assertEqual(len(result['target_access_requirements']),10)
+
+    def test_continuation_operand_epochs_fault_reconstruction_and_return_are_closed(self):
+        import config_loader_continuation
+        for address,operand in ((0x100203e6,'r0, [sp, #0x70]'),(0x10020414,'r0, r1, #0x0'),
+            (0x1002046c,'sp, #0x164'),(0x10020e34,'r0, sp, #0xec'),
+            (0x10020e5c,'r0, [r10, r1]'),(0x10020e70,'r5, r1'),(0x1002846c,'{r8, r9, r10}')):
+            objects,records,root,frame=self.fixture();old=records[address]
+            records[address]=Instruction(address,old.raw,old.mnemonic,operand)
+            with self.subTest(address=hex(address)),self.assertRaises(AssertionError):
+                config_loader_continuation.loader_continuation(objects,root,records,frame,())
+
+    def test_foreign_continuation_ingress_does_not_borrow_another_phase(self):
+        import config_loader_continuation
+        for address in (0x100203e6,0x100203f0,0x10020424,0x1002045c,0x10020e58):
+            objects,records,root,frame=self.fixture()
+            records[0x10060000]=Instruction(0x10060000,bytes(2),'b',hex(address))
+            with self.subTest(address=hex(address)),self.assertRaises(AssertionError):
+                config_loader_continuation.loader_continuation(objects,root,records,frame,())
