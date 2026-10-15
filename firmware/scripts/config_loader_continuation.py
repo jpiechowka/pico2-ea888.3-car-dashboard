@@ -90,10 +90,15 @@ def loader_continuation(objects,name,instructions,frame,ancestor_protected):
     # ingress is excluded here by the existing bounded parent classification;
     # the full source/entry/computed successor closure is still owed upstream.
     ranges=[(p['function'],p['function']+p['extent']) for key,p in proofs.items() if key!='restore']
-    ranges.extend(((failure_start,failure_start+30),(issuer['window'],issuer['continuation'])))
+    identity_failure=issuer['failure_suffix']
+    zero_edges=[issuer['window']+offset for offset,operation,target in issuer['branch_edges']
+        if target==identity_failure['window'] and operation in ('beq','beq.w')]
+    require(len(zero_edges)==1,'issuer expect loses its unique matched previous-zero predecessor')
+    ranges.extend(((failure_start,failure_start+30),(issuer['window'],issuer['continuation']),
+        (identity_failure['window'],identity_failure['window']+identity_failure['extent'])))
     for lo,hi in ranges:_ingress(instructions,parent,extent,lo,hi)
     starts={start:set(),decoded:set(),publication:{issuer['window']+46},
-        issuer['window']:{decoded+62},failure_start:{start+6}}
+        issuer['window']:{decoded+62},failure_start:{start+6},identity_failure['window']:{zero_edges[0]}}
     for at,row in instructions.items():
         if transfer_family(row.mnemonic.removesuffix('.w')) not in ('b','bl','cbz','cbnz'):continue
         target=_destination(row)

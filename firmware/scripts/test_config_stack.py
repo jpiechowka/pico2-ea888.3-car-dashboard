@@ -3872,7 +3872,6 @@ class FieldSuffix(unittest.TestCase):
                 config_stack._field_case(objects,records,base+0x200,'Controls',outlines)
 
 
-if __name__=='__main__':unittest.main()
 
 
 class LoaderContinuation(unittest.TestCase):
@@ -3939,3 +3938,17 @@ class LoaderContinuation(unittest.TestCase):
             records[0x10060000]=Instruction(0x10060000,bytes(2),'b',hex(address))
             with self.subTest(address=hex(address)),self.assertRaises(AssertionError):
                 config_loader_continuation.loader_continuation(objects,root,records,frame,())
+
+
+    def test_issuer_expect_start_and_interior_require_actual_zero_predecessor(self):
+        import config_loader_continuation
+        for site in (0x10060000,0x1001feee):
+            for destination in (0x100209c8,0x100209cc,0x100209d0,0x100209d2):
+                objects,records,root,frame=self.fixture()
+                if site in records:old=records[site];raw=old.raw
+                else:raw=bytes(2)
+                records[site]=Instruction(site,raw,'b',hex(destination))
+                with self.subTest(source=hex(site),target=hex(destination)),self.assertRaises(AssertionError):
+                    config_loader_continuation.loader_continuation(objects,root,records,frame,())
+
+if __name__=='__main__':unittest.main()
