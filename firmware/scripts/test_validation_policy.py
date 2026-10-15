@@ -238,5 +238,78 @@ class MemoryQualification(unittest.TestCase):
                         check_memory_layout.main(args);self.assertEqual(json.loads(output.read_bytes())['gate'],'full_memory_layout')
 
 
+class NamedOrdinaryExecution(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        from config_platform import current_image_policy
+        policy_test=MemoryQualification()
+        elf,eav,stack=policy_test.fixture()
+        return elf,current_image_policy(stack['policies'][0],elf,eav),policy_test.source_context(elf)
+
+    def test_receipt_binds_current_ELF_input_and_exact_source_attempt(self):
+        import config_platform as platform
+        from dataclasses import replace
+        elf,policy,source=self.fixture()
+        receipt=platform._execution_receipt(policy,source,elf)
+        record=receipt.to_record()
+        self.assertEqual(platform.read_execution_scope(record,policy,source,elf=elf),receipt)
+        self.assertEqual(record['schema'],1)
+        self.assertEqual(record['scope_sha256'],'b55723348ef4ffab36786a763f1c0d8035a516a416bb79aa30e2cae6143fd9eb')
+        self.assertEqual(record['exception_graph_limit'],['NMI','HardFault','reset_reentry'])
+        self.assertFalse(record['unconditional_owner'])
+        self.assertFalse(record['exception_safe_completion'])
+        with self.assertRaisesRegex(AssertionError,'execution scope.*identity'):
+            platform.read_execution_scope(record,policy,replace(source,attempt=source.attempt+'-other'),elf=elf)
+        # Normative execution1 table, independently stated here. Hashes bind
+        # this actual current fixture, not placeholder admission constants.
+        self.assertEqual(record,dict(schema=1,kind='named_ordinary_execution',scope='h2-named-ordinary-continuation-v1',
+            scope_sha256='b55723348ef4ffab36786a763f1c0d8035a516a416bb79aa30e2cae6143fd9eb',
+            domain='named_ordinary_and_callback_paths',elf_sha256=hashlib.sha256(elf.data).hexdigest(),
+            input_sha256=hashlib.sha256(elf.data[12:12+len(b'current payload')]).hexdigest(),
+            source_context_sha256=hashlib.sha256(source.to_bytes()).hexdigest(),all_observers_compatible=False,
+            exception_absence_established=False,exception_safe_completion=False,unconditional_owner=False,hardware_qualified=False,
+            exception_graph_limit=['NMI','HardFault','reset_reentry'],pending_exception_frontier=[
+                'routing_and_stack_selection_unproved','architectural_entry_memory_and_nested_transitions_unproved',
+                'reset_reentry_requires_fresh_qualified_epoch'],external_qualifications=[
+                'exact expected physical entry and successful ordinary accesses',
+                'interrupt/DMA/core quiescence and exclusive-memory behavior conditional, not measured',
+                'deprecated Rust pre_init source issue remains Maintenance M2; emitted byte proof does not define Rust pre-init'],
+            requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=True))
+
+    def test_strict_receipt_rejects_lost_frontier_schema_aliases_and_stronger_use(self):
+        import config_platform as platform
+        from copy import deepcopy
+        elf,policy,source=self.fixture();receipt=platform._execution_receipt(policy,source,elf)
+        record=receipt.to_record()
+        for fault in ('schema_bool','schema_float','missing','extra','scope','domain','elf','input','source',
+                      'frontier_order','frontier_lost','exception_limit','hardware','observers','exception','owner','H8','M2'):
+            bad=deepcopy(record)
+            if fault=='schema_bool':bad['schema']=True
+            elif fault=='schema_float':bad['schema']=1.0
+            elif fault=='missing':bad.pop('pending_exception_frontier')
+            elif fault=='extra':bad['approved']=True
+            elif fault in ('elf','input','source'):bad[{'elf':'elf_sha256','input':'input_sha256','source':'source_context_sha256'}[fault]]='0'*64
+            elif fault=='scope':bad['scope_sha256']='0'*64
+            elif fault=='domain':bad['domain']='all_observers'
+            elif fault=='frontier_order':bad['pending_exception_frontier'].reverse()
+            elif fault=='frontier_lost':bad['pending_exception_frontier'].pop()
+            elif fault=='exception_limit':bad['exception_graph_limit'].pop()
+            else:bad[{'hardware':'hardware_qualified','observers':'all_observers_compatible','exception':'exception_safe_completion',
+                      'owner':'unconditional_owner','H8':'requires_H8_consumed_input_closure','M2':'requires_M2_pre_init_source_reconciliation'}[fault]]=False if fault in ('H8','M2') else True
+            with self.subTest(fault=fault),self.assertRaisesRegex(AssertionError,'execution scope'):
+                platform.read_execution_scope(bad,policy,source,elf=elf)
+        with self.assertRaisesRegex(AssertionError,'exception-safe'):
+            platform.require_exception_safe_execution(receipt)
+        with self.assertRaisesRegex(AssertionError,'global ownership'):
+            platform.require_global_execution_owner(receipt)
+        # Even a forged typed instance is revalidated before canonical hashing.
+        from config_build_source import SourceContext
+        forged=object.__new__(SourceContext)
+        for key,value in source.__dict__.items():object.__setattr__(forged,key,value)
+        object.__setattr__(forged,'sources',())
+        with self.assertRaisesRegex(AssertionError,'ordered source'):
+            platform.read_execution_scope(record,policy,forged,elf=elf)
+
+
 if __name__ == '__main__':
     unittest.main()

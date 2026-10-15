@@ -288,3 +288,83 @@ def current_image_policy(record,elf,expected_eav=None):
     if expected_eav is not None:
         require(isinstance(expected_eav,bytes) and raw==expected_eav,'generated capture input differs from stack policy')
     return policy
+
+
+# Separate execution namespace: this does not consume the reserved access
+# versions or change any PlatformPolicy permission. A receipt is identity and
+# qualification metadata, never an ordinary continuation/completion proof.
+EXECUTION_SCOPE='h2-named-ordinary-continuation-v1'
+EXECUTION_SCOPE_SHA256='b55723348ef4ffab36786a763f1c0d8035a516a416bb79aa30e2cae6143fd9eb'
+EXECUTION_DOMAIN='named_ordinary_and_callback_paths'
+EXCEPTION_FRONTIER=(
+    'routing_and_stack_selection_unproved',
+    'architectural_entry_memory_and_nested_transitions_unproved',
+    'reset_reentry_requires_fresh_qualified_epoch',
+)
+
+
+@dataclass(frozen=True)
+class ExecutionReceipt:
+    """Checked public descriptor; it cannot authorize or resume an analysis."""
+    elf_sha256:str
+    input_sha256:str
+    source_context_sha256:str
+
+    def __post_init__(self):
+        require(all(type(v) is str and re.fullmatch('[0-9a-f]{64}',v) for v in
+            (self.elf_sha256,self.input_sha256,self.source_context_sha256)),
+            'execution scope identity is not a bounded digest')
+
+    def to_record(self):
+        from config_boot_history import _EXTERNAL
+        return dict(schema=1,kind='named_ordinary_execution',scope=EXECUTION_SCOPE,scope_sha256=EXECUTION_SCOPE_SHA256,
+            domain=EXECUTION_DOMAIN,elf_sha256=self.elf_sha256,input_sha256=self.input_sha256,
+            source_context_sha256=self.source_context_sha256,all_observers_compatible=False,
+            exception_absence_established=False,exception_safe_completion=False,unconditional_owner=False,hardware_qualified=False,
+            exception_graph_limit=['NMI','HardFault','reset_reentry'],pending_exception_frontier=list(EXCEPTION_FRONTIER),
+            external_qualifications=list(_EXTERNAL),requires_H8_consumed_input_closure=True,
+            requires_M2_pre_init_source_reconciliation=True)
+
+
+def _execution_receipt(policy,source_context,elf):
+    """Format current metadata only, separately from the private producer.
+
+    Validate the exact typed source context/current ELF before its canonical
+    digest. A bound source pair or policy still proves no source semantics,
+    completed Widget, compiler-consumed inputs, graph or final stack pass.
+    """
+    from config_build_source import validate_source_context
+    require(type(policy) is PlatformPolicy,'execution scope lacks a typed current platform policy')
+    fresh=current_image_policy(policy.to_record(),elf)
+    require(fresh==policy,'execution scope platform identity differs')
+    source_context=validate_source_context(source_context,elf)
+    return ExecutionReceipt(policy.elf_sha256,policy.input_sha256,hashlib.sha256(source_context.to_bytes()).hexdigest())
+
+
+def read_execution_scope(record,policy,source_context,*,elf):
+    """Return a receipt only; do not manufacture private completion from JSON."""
+    receipt=_execution_receipt(policy,source_context,elf);wanted=receipt.to_record()
+    require(type(record) is dict and set(record)==set(wanted),
+        'execution scope record has missing or extra fields')
+    require(type(record['schema']) is int and record['schema']==1 and
+        all(type(record[k]) is str for k,v in wanted.items() if type(v) is str) and
+        all(record[k] is v for k,v in wanted.items() if type(v) is bool) and
+        all(type(record[k]) is list and all(type(v) is str for v in record[k]) for k,v in wanted.items() if type(v) is list),
+        'execution scope types or qualifications differ')
+    require(record==wanted,'execution scope declaration/frontier or current identity differs')
+    _bounded_record(record)
+    return receipt
+
+
+def require_exception_safe_execution(receipt):
+    """Fixed stronger-use boundary; no caller-selected approval or upgrade."""
+    require(type(receipt) is ExecutionReceipt,'exception-safe consumer lacks checked execution metadata')
+    require(receipt.to_record()['exception_safe_completion'] is True,
+        'named ordinary receipt cannot authorize exception-safe completion')
+
+
+def require_global_execution_owner(receipt):
+    """Reject global/asynchronous use before any bounds or state is consumed."""
+    require(type(receipt) is ExecutionReceipt,'global ownership consumer lacks checked execution metadata')
+    require(receipt.to_record()['unconditional_owner'] is True,
+        'named ordinary receipt cannot authorize global ownership')
