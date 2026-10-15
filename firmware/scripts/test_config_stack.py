@@ -4374,5 +4374,44 @@ class ValidatorResultBoundary(unittest.TestCase):
         new=old+1;at=offset(new);data[at:at+6]=source;struct.pack_into('<I',data,pool,new);objects.elf.data=bytes(data)
         with self.assertRaises(AssertionError):validator_result_boundary(objects,name,rows,context,call)
 
+    def test_independent_even_range_and_consumed_PC_pool_relocation_accept(self):
+        from config_validator_result import validator_result_boundary
+        from llvm_stack import mapping_ranges
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                for move_pool in (False,True):
+                    objects,name,rows,context,call=self.fixture(phase,shift);elf=objects.elf
+                    def offset(address):
+                        s=next(s for s in elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+                        return s[4]+address-s[3]
+                    original_pool=0x1001f1e0+shift;original=struct.unpack_from('<I',elf.data,offset(original_pool))[0]
+                    literal=objects.read_only(original,6);new_range=0x10070002
+                    self.assertEqual(new_range%2,0);self.assertNotEqual(original,new_range)
+                    # Fresh uniquely backed readonly data; its position does
+                    # not track code, the original pool or the common shift.
+                    data=bytearray(elf.data);index=len(elf.sections);file_offset=len(data)
+                    data.extend(literal);elf.sections.append((0,1,2,new_range,file_offset,6,0,0,2,0))
+                    elf.mapping_symbols.append(('$d',new_range,index))
+                    pool=(0x1001f1c0+shift) if move_pool else original_pool
+                    if move_pool:
+                        self.assertNotEqual(pool,original_pool)
+                        self.assertTrue(any(k=='d' and lo<=pool<pool+4<=hi for lo,hi,k in mapping_ranges(elf,name)))
+                        at=0x1001ea60+shift;pc=(at+4)&~3;immediate=pool-pc
+                        self.assertTrue(0<=immediate<=0xfff)
+                        encoded=struct.pack('<HH',0xf8df,immediate)  # Thumb LDR.W R0,[PC,#imm12].
+                        before=rows[at];self.assertNotEqual(encoded,before.raw)
+                        data[offset(at):offset(at)+4]=encoded
+                        rows[at]=Instruction(at,encoded,'ldr.w','r0, [pc, #'+hex(immediate)+']')
+                        self.assertEqual(pc+(struct.unpack('<HH',encoded)[1]&0xfff),pool)
+                    struct.pack_into('<I',data,offset(pool),new_range);elf.data=bytes(data)
+                    self.assertEqual(objects.read_only(new_range,6),literal)
+                    self.assertEqual(struct.unpack('<I',objects.read_only(pool,4))[0],new_range)
+                    result=validator_result_boundary(objects,name,rows,context,call)
+                    with self.subTest(phase=phase,code_shift=shift,moved_pool=move_pool):
+                        self.assertEqual(result['proofs']['entry']['function'],0x1001ea20+shift)
+                        self.assertEqual(result['proofs']['entry']['objects'][1],new_range)
+                        self.assertEqual(result['normal_return']['return_to'],call+4)
+                        self.assertTrue(result['requires_complete_typed_Config_and_exclusive_Result_owner'])
+
 
 if __name__=='__main__':unittest.main()
