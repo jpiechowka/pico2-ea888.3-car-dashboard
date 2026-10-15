@@ -289,20 +289,38 @@ def _child_returns(rows,context,parents,children):
     return nodes
 
 
-def _closure(objects,rows,context,parents,children,*,_widget=None):
-    """Closed selected invocation; later shared-error callers stay pending."""
+@dataclass(frozen=True)
+class _ControlSelection:
+    context:object
+    children:dict
+    proofs:tuple
+    selected:dict
+    edges:dict
+    cuts:frozenset
+    widget:bool
+
+
+@dataclass(frozen=True)
+class _StructuralControl:
+    """Raw fixed-body coverage only; no reached source or active cut state."""
+    selection:_ControlSelection
+    raw_successors:tuple
+    raw_returns:tuple
+    nested_returns:tuple
+    outside_shared_contexts:tuple
+    unentered_outgoing:tuple
+
+
+def _control_selection(objects,rows,context,parents,children):
     root=context.headers['root']['proof'];visitor=context.headers['visitor']['proof'];V=visitor['function'];R=root['function']
-    extension=None
-    if _widget is not None:
-        # Only the other authored fixed family can enlarge this private walk.
-        # No public caller supplies a cut set, guard list or control profile.
-        from config_decoded_widgets import _widget_control_profile
-        extension=_widget_control_profile(_widget,context,parents,children)
+    widget=tuple((p['function']-V,p['shape']) for p in parents if p['shape'].startswith('decoded_widgets_'))
+    require(not widget or widget==((416,'decoded_widgets_416'),(3516,'decoded_widgets_3516'),(6994,'decoded_widgets_6994')),
+        'Widget structural selection has another fixed window family')
     proofs=[root,visitor,*context.regions,context.outer['proof'],*context.helpers.values(),*parents,*children.values()]
     proofs=list({(p['function'],p['extent']):p for p in proofs if p['function']!=V+54}.values())
     selected={at:row for p in proofs for at,row in rows.items() if p['function']<=at<p['function']+p['extent']}
-    cuts={V+54,V+56,V+(4376 if extension else 416),context.headers['root']['checksum_failure']['function']}
-    padding=set() if extension is None else {V+3506}
+    cuts={V+54,V+56,V+(4376 if widget else 416),context.headers['root']['checksum_failure']['function']}
+    padding={V+3506} if widget else set()
     for at in padding:
         row=selected.get(at);preceding=selected.get(at-2)
         require(row is not None and row.raw==b'\x00\xbf' and row.mnemonic=='nop' and not row.operands and
@@ -310,7 +328,13 @@ def _closure(objects,rows,context,parents,children,*,_widget=None):
             'Widget terminal padding loses its exact predecessor/raw instruction')
         del selected[at]
     edges={p['function']+off:(op,target,role) for p in proofs for off,op,target,role,frame in p['ordinary_edges']}
-    returns=[];successors=[]
+    return _ControlSelection(context,children,tuple(proofs),selected,edges,frozenset(cuts),bool(widget))
+
+
+def _selected_successors(selection,extension=None):
+    context=selection.context;V=context.headers['visitor']['proof']['function'];R=context.headers['root']['proof']['function']
+    selected,edges,cuts=selection.selected,selection.edges,selection.cuts
+    returns=[];successors=[];dormant=[]
     for at,row in selected.items():
         family,conditional=_control(row);following=at+len(row.raw)
         if at in edges:
@@ -325,6 +349,12 @@ def _closure(objects,rows,context,parents,children,*,_widget=None):
                     'Widget guarded branch differs from its source/count predecessor')
                 require(following in selected,'Widget excluded branch lacks the actual ordinary successor')
                 successors.append((at,None,following));continue
+            if selection.widget and extension is None and at==V+4350:
+                require(conditional and target==V+4402 and following in selected,
+                    'Widget dormant outgoing edge differs from its fixed source window')
+                # Raw matched structure only.4402 is neither an active cut nor
+                # an admitted state; the active profile must exclude this edge.
+                dormant.append((at,target));successors.append((at,target,following));continue
             require(target in selected or target in cuts,'Views selected branch leaves its exact frontier')
             successors.append((at,target,following if conditional else None))
             if extension is not None and at in extension['excluded_fallthrough']:
@@ -334,15 +364,18 @@ def _closure(objects,rows,context,parents,children,*,_widget=None):
             if not conditional:continue
         elif family=='return' or family=='bx' and row.operands=='lr':
             returns.append(at)
-            if extension is not None and conditional:
+            if selection.widget and conditional:
                 require(following in selected,'Widget conditional child return loses its untaken save-map path')
                 successors.append((at,None,following))
             continue
         else:require(family is None,'Views selected invocation has an unresolved PC effect')
         require(following in selected or following in cuts,'Views selected fallthrough leaves its exact frontier')
-    # Selected local successors plus every child return are closed before any
-    # outside context is classified. Exact later entry sites grant no state.
-    return_nodes=_child_returns(rows,context,parents,children) if extension is None else extension['nested_returns']
+    return tuple(successors),tuple(returns),tuple(dormant)
+
+
+def _foreign_ingress(objects,rows,selection):
+    context=selection.context;V=context.headers['visitor']['proof']['function'];R=context.headers['root']['proof']['function']
+    proofs,selected,children=selection.proofs,selection.selected,selection.children
     def pending_call(current,expected):
         """Current typed identity only; no later invocation is activated."""
         require(current.mnemonic=='bl','foreign Views shared-error call family differs')
@@ -416,10 +449,37 @@ def _closure(objects,rows,context,parents,children,*,_widget=None):
             elif family in ('bx','blx'):require(family=='bx' and not conditional and row.operands=='lr','Views has an unresolved parent indirect ingress')
             else:require(not row.mnemonic.startswith('rfe') and family in (None,'b','bl','cbz','cbnz','return'),
                 'Views parent has an unsupported implicit/exception PC effect')
-    expected_pending={off for off in SHARED_PENDING if extension is None or V+off not in selected}
+    expected_pending={off for off in SHARED_PENDING if not selection.widget or V+off not in selected}
     require({at-V for at,target,reason in pending}==expected_pending,'Views pending shared contexts are missing or retargeted')
-    return dict(selected_instructions=len(selected),successors=tuple(successors),nested_returns=return_nodes,
-        stopped_frontiers=tuple(sorted(cuts)),outside_shared_contexts=tuple(sorted(pending)),
+    return tuple(sorted(pending))
+
+
+def _widget_structural_control(objects,rows,state,parents,children,returns):
+    require(type(state) is _ViewsState,'Widget structure lacks the actual private Views predecessor')
+    selection=_control_selection(objects,rows,state.context,state.parents+parents,children)
+    require(selection.widget,'Widget structure has no matched fixed windows')
+    successors,raw_returns,dormant=_selected_successors(selection)
+    require(returns and all(v['returns'] and all(pc==v['return_PC'] and sp==v['return_SP']
+        for at,pc,sp in v['returns']) and not v['architectural_LR_preserved'] for v in returns),
+        'Widget structure loses its current conditional child-return relation')
+    pending=_foreign_ingress(objects,rows,selection)
+    return _StructuralControl(selection,successors,raw_returns,state.control['nested_returns']+returns,pending,dormant)
+
+
+def _closure(objects,rows,context,parents,children,*,_widget=None):
+    """Closed selected invocation; later shared-error callers stay pending."""
+    extension=None
+    if _widget is not None:
+        from config_decoded_widgets import _widget_control_profile
+        extension=_widget_control_profile(_widget,context,parents,children)
+    selection=_control_selection(objects,rows,context,parents,children)
+    require(selection.widget==(extension is not None),'active Widget selection lacks its actual source/count profile')
+    successors,returns,dormant=_selected_successors(selection,extension)
+    require(not dormant,'unentered structural edges cannot authorize an active invocation')
+    return_nodes=_child_returns(rows,context,parents,children) if extension is None else extension['nested_returns']
+    pending=_foreign_ingress(objects,rows,selection)
+    return dict(selected_instructions=len(selection.selected),successors=successors,nested_returns=return_nodes,
+        stopped_frontiers=tuple(sorted(selection.cuts)),outside_shared_contexts=pending,
         pending_contexts_confer_state=False,full_visitor_return_pending=True)
 
 
