@@ -50,6 +50,20 @@ def _source_bytes(objects,source,frame):
     return source.data
 
 
+def _memcmp_dependency(objects,instructions,proof,frame):
+    """Shared complete builtin binding; source/caller protection stays explicit."""
+    dependencies=[e for e in proof['ordinary_edges'] if e[3]=='memcmp']
+    require(len(dependencies)==1,'Compare memcmp dependency differs')
+    target=dependencies[0][2]
+    names=[n for n,e in objects.elf.functions.items() if n=='memcmp' and e[0]&~1==target]
+    require(len(names)==1,'Compare has no exact memcmp target')
+    builtin=logger_body(objects,names[0],instructions)
+    require(builtin['role']=='memcmp' and builtin['frame']==32 and builtin['extent']==116 and
+            not builtin['ordinary_edges'] and not builtin['indirect_sites'],'Compare builtin summary differs')
+    child_frame=Storage(frame.space,frame.identity+':memcmp',frame.start-32,32,8,frame.phase,True)
+    return builtin,child_frame
+
+
 def compare_effect(objects,instructions,proof,state,source,frame,ancestor_protected):
     """One try_extend operation. A failed later operation never rolls back C."""
     proof=_current(objects,instructions,proof)
@@ -64,15 +78,7 @@ def compare_effect(objects,instructions,proof,state,source,frame,ancestor_protec
     # even a word which this particular operation would not update on Err.
     require_writes((state.header,),((state.header,0,8),),protected)
     require_disjoint((frame,_object(source.view,'serialized-input')))
-    dependencies=[e for e in proof['ordinary_edges'] if e[3]=='memcmp']
-    require(len(dependencies)==1,'Compare memcmp dependency differs')
-    target=dependencies[0][2]
-    names=[n for n,e in objects.elf.functions.items() if n=='memcmp' and e[0]&~1==target]
-    require(len(names)==1,'Compare has no exact memcmp target')
-    builtin=logger_body(objects,names[0],instructions)
-    require(builtin['role']=='memcmp' and builtin['frame']==32 and builtin['extent']==116 and
-            not builtin['ordinary_edges'] and not builtin['indirect_sites'],'Compare builtin summary differs')
-    child_frame=Storage(frame.space,frame.identity+':memcmp',frame.start-32,32,8,frame.phase,True)
+    builtin,child_frame=_memcmp_dependency(objects,instructions,proof,frame)
     require_disjoint((child_frame,)+active['protected'])
     require_disjoint((child_frame,_object(source.view,'serialized-input')))
     require_writes((state.header,),((state.header,0,8),),(child_frame,))

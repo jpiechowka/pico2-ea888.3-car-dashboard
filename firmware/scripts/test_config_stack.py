@@ -1874,6 +1874,90 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
         with self.assertRaises(AssertionError):config_decode_effects.decode_effect(*self.decoder('slice_pop'))
 
 
+class AbstractCanonicalInterfaces(unittest.TestCase):
+    def compare(self):
+        import config_abstract,config_abstract_compare
+        args=list(OrdinaryCompareEffects.fixture(self,b'abcdef',b'abc'))
+        state=args[3];source=args[4]
+        args[3]=config_abstract_compare.CompareInterface(state.header,state.payload,config_abstract.Span(0,state.payload.extent))
+        args[4]=config_abstract_compare.InitializedPrefix(source.view,config_abstract.Span(0,3))
+        return args
+
+    def serialize(self,semantic):
+        import config_abstract,config_abstract_compare
+        source=OrdinarySerializeEffects.fixture(self,semantic,b'abcdef','u8',8,0)
+        args=list(source[:4]+source[5:])
+        state=args[3];args[3]=config_abstract_compare.CompareInterface(state.header,state.payload,config_abstract.Span(0,state.payload.extent))
+        return args
+
+    def test_unknown_compare_bytes_retain_match_mismatch_and_short_guarded_exits(self):
+        import config_abstract_compare
+        args=self.compare();result=config_abstract_compare.compare_interface(*args)
+        self.assertEqual({o['kind'] for o in result['outcomes']},{'success','error2'})
+        self.assertEqual(result['conservative_activation_frames'],(24,32))
+        self.assertTrue(result['requires_actual_stage_receiver_transport_and_complete_parent_graph'])
+        self.assertFalse(any('data' in o for o in result['outcomes']))
+
+    def test_scalar_families_keep_all_prefix_lengths_without_executing_values(self):
+        import config_abstract,config_abstract_compare
+        for semantic,kind,bits,maximum in (('serialize_u8','u8',8,1),('serialize_u16','u16',16,3),
+            ('varint_usize','usize',32,5),('varint_u32_small','u32',7,1),('serialize_f32','f32_bits',32,4)):
+            args=self.serialize(semantic);value=config_abstract_compare.ScalarInterface(kind,config_abstract.Span(0,(1<<bits)-1))
+            result=config_abstract_compare.serialize_interface(*args[:4],value,*args[4:])
+            self.assertEqual(result['encoded_length'].upper,maximum)
+            self.assertEqual({o['kind'] for o in result['outcomes']},{'success','error2'})
+            self.assertNotIn('encoded',result)
+
+    def test_specialized_u32_and_wrong_width_cannot_borrow_an_abstract_type_name(self):
+        import config_abstract,config_abstract_compare
+        args=self.serialize('varint_u32_small')
+        for kind,upper in (('u32',128),('u16',127)):
+            value=config_abstract_compare.ScalarInterface(kind,config_abstract.Span(0,upper))
+            with self.subTest(kind=kind),self.assertRaises(AssertionError):config_abstract_compare.serialize_interface(*args[:4],value,*args[4:])
+
+    def test_string_prefix_and_body_failures_keep_paired_partial_progress(self):
+        import config_abstract,config_abstract_compare
+        from config_regions import Storage,borrow
+        args=self.serialize('serialize_str');frame=args[4]
+        view=borrow(Storage(frame.space,'typed-string',176,20,1,frame.phase,True),0,20,frame.phase)
+        source=config_abstract_compare.InitializedPrefix(view,config_abstract.Span(0,20))
+        result=config_abstract_compare.serialize_interface(*args[:4],source,*args[4:])
+        self.assertEqual({o['phase'] for o in result['outcomes']},{'prefix_failed','body_failed','complete'})
+        body=next(o for o in result['outcomes'] if o['phase']=='body_failed')
+        self.assertGreaterEqual(body['state'].cursor.lower,1)
+        self.assertEqual(result['conservative_activation_frames'],(24,24,24,32))
+
+    def test_source_and_header_must_survive_helper_and_memcmp_prologues(self):
+        import config_abstract,config_abstract_compare
+        from config_regions import Storage,borrow
+        for fault in ('C_end','source'):
+            args=self.compare();state,source,frame=args[3:6]
+            if fault=='C_end':
+                owner=Storage(frame.space,'bad-C',frame.start-4,8,4,frame.phase,True)
+                args[3]=config_abstract_compare.CompareInterface(borrow(owner,0,8,frame.phase,writable=True),state.payload,state.cursor)
+            else:
+                owner=Storage(frame.space,'bad-source',frame.start-32,3,1,frame.phase,True)
+                args[4]=config_abstract_compare.InitializedPrefix(borrow(owner,0,3,frame.phase),config_abstract.Span(0,3))
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_abstract_compare.compare_interface(*args)
+
+    def test_declared_policy_survives_nested_prefix_and_body_and_cannot_become_stale(self):
+        import config_abstract,config_abstract_compare,config_platform
+        from dataclasses import replace
+        from config_regions import Storage,borrow
+        args=self.serialize('serialize_str');state,frame=args[3:5]
+        policy=config_platform.reviewed_eav_policy(args[0],state.payload,dict(target=config_platform.TARGET,
+            core=0,security='secure',boot_context=config_platform.BOOT_CONTEXT),contradictory_effects=())
+        args[3]=replace(state,platform_policy=policy)
+        source=config_abstract_compare.InitializedPrefix(borrow(Storage(frame.space,'string',176,20,1,frame.phase,True),
+            0,20,frame.phase),config_abstract.Span(0,20))
+        result=config_abstract_compare.serialize_interface(*args[:4],source,*args[4:])
+        self.assertEqual(result['platform_policy'],policy)
+        self.assertTrue(all(o['state'].platform_policy==policy for o in result['outcomes']))
+        self.assertTrue(all(child['platform_policy']==policy for child in result['children']))
+        args[0].elf.data+=b'changed'
+        with self.assertRaises(AssertionError):config_abstract_compare.serialize_interface(*args[:4],source,*args[4:])
+
+
 class ConditionalStackPolicy(unittest.TestCase):
     def fixture(self):
         from config_regions import Storage,borrow
