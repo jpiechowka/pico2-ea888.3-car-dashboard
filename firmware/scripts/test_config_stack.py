@@ -5786,4 +5786,164 @@ class BuildSourceContextInput(unittest.TestCase):
             with self.assertRaises(FileExistsError):write_source_context(path,value)
 
 
+class FirstBootHistory(unittest.TestCase):
+    def fixture(self,mode='sizez',delta=0):
+        from config_build_source import make_source_context,SOURCE_PATHS
+        objects,rows,item=PreclaimConfigurationPreservation().fixture(mode,delta)
+        documents=FirstBootSourceContract().sources()
+        context=make_source_context(objects.elf.data,'supplied-history-fixture',b'{}',
+            {path:documents[Path(path).name] for path in SOURCE_PATHS})
+        return objects,rows,context
+
+    def test_same_rooted_invocation_closes_ordinary_diagnostics_but_not_loader_or_owner(self):
+        from config_boot_history import first_boot_history
+        for mode,attempts in (('speed2',4),('sizes',1),('sizez',1)):
+            for delta in (0,0x4000):
+                objects,rows,context=self.fixture(mode,delta);proof=first_boot_history(objects,rows,context)
+                self.assertEqual(proof['phase'],'first_boot_history_pending_specialized_loader_effects')
+                self.assertEqual(proof['scope'],'selected ordinary Reset invocation through first successful once claim')
+                self.assertEqual(len(proof['publication_attempts']),attempts)
+                self.assertEqual({v['kind'] for v in proof['diagnostics']},{'Busy','resumed','already_taken'})
+                self.assertTrue(all(v['status']=='source_infeasible_in_selected_ordinary_history' for v in proof['diagnostics']))
+                self.assertEqual(proof['source_qualification'],'deprecated_Rust_pre_init_emitted_machine_only')
+                self.assertFalse(proof['hardware_qualified']);self.assertNotIn('acquired_owner',proof)
+                self.assertTrue(proof['requires_complete_same_B_loader_effects'])
+
+    def test_source_bytes_and_exact_ELF_pairing_are_required_not_source_or_owner_flags(self):
+        from config_boot_history import first_boot_history
+        from config_build_source import make_source_context,SOURCE_PATHS
+        objects,rows,context=self.fixture()
+        for value in (None,context.to_record(),dict(source_success=True,owner=True)):
+            with self.subTest(value=type(value)),self.assertRaises(AssertionError):first_boot_history(objects,rows,value)
+        sources={path:raw for path,raw in context.sources};sources[SOURCE_PATHS[1]]=sources[SOURCE_PATHS[1]].replace(
+            b'static CONFIGURATION:',b'pub static CONFIGURATION:')
+        bad=make_source_context(objects.elf.data,context.attempt,context.build_options,sources)
+        with self.assertRaises(AssertionError):first_boot_history(objects,rows,bad)
+        objects.elf.data+=b'changed'
+        with self.assertRaisesRegex(AssertionError,'different current ELF'):first_boot_history(objects,rows,context)
+
+    def test_return_addresses_are_bound_to_selected_calls_and_once_restores_before_tail(self):
+        from config_boot_history import first_boot_history
+        for mode,count in (('speed2',2),('sizes',2),('sizez',5)):
+            objects,rows,context=self.fixture(mode);proof=first_boot_history(objects,rows,context)
+            returns=proof['selected_returns'];self.assertEqual(len(returns),count)
+            self.assertTrue(all(v['continuation']==v['call_site']+4 for v in returns))
+            for value in returns:
+                self.assertEqual(value['LR_value'],value['continuation']|1)
+                self.assertEqual(value['return_SP'],value['entry_SP'])
+                if value['phase']=='callback_install':self.assertIsNone(value['saved_LR'])
+                else:self.assertEqual(value['saved_LR'],(value['entry_SP']-4,value['entry_SP']))
+            self.assertEqual(proof['once_return_transport']['continuation'],proof['boot_initialize_call']+4)
+            self.assertEqual(proof['once_return_transport']['LR_value'],(proof['boot_initialize_call']+4)|1)
+            self.assertEqual(proof['once_return_transport']['restored_SP'],0x20080000-(88 if mode=='sizez' else 72))
+            self.assertTrue(proof['once_return_transport']['restored_before_specialized_tail'])
+            self.assertTrue(proof['nonreturn_prefix']['main_cortex_and_run_have_no_return_before_claim'])
+            self.assertTrue(proof['nonreturn_prefix']['Reset_UDF_not_reached_by_selected_prefix'])
+
+    def test_all_publication_attempts_and_callback_or_guard_semantic_changes_reject(self):
+        from config_boot_history import first_boot_history
+        from config_preclaim import preclaim_configuration_preservation
+        from dataclasses import replace
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,context=self.fixture(mode);p=preclaim_configuration_preservation(objects,rows)
+            phases=p['startup']['entry']['entry']['phases']
+            sites=p['publication_attempts']+(phases['boot_poll']['function']+18,p['callback'][0],p['claim']['store'])
+            for site in sites:
+                changed=dict(rows);old=rows[site]
+                # Supplied semantic-record mutation with unchanged raw bytes;
+                # this checks operand/control contracts, not fresh decoding.
+                changed[site]=replace(old,operands='pc, r0',mnemonic='mov')
+                with self.subTest(mode=mode,site=hex(site)),self.assertRaises(AssertionError):
+                    first_boot_history(objects,changed,context)
+
+    def test_outside_shared_calls_get_contextual_exclusion_not_global_caller_permission(self):
+        from config_boot_history import first_boot_history
+        from config_preclaim import preclaim_configuration_preservation
+        objects,rows,context=self.fixture();p=preclaim_configuration_preservation(objects,rows)
+        target=p['startup']['entry']['entry']['phases']['raw_spawn']['function']
+        outside=p['startup']['entry']['loader']['function']+200
+        rows[outside]=Instruction(outside,b'\x00\xbf','bl',hex(target))
+        proof=first_boot_history(objects,rows,context)
+        self.assertEqual(proof['outside_shared_invocations'][0]['site'],outside)
+        self.assertEqual(proof['outside_shared_invocations'][0]['status'],'outside_closed_selected_prefix')
+        self.assertEqual(proof['callback_expiry'],'before next shared dequeue')
+        self.assertTrue(proof['later_invocations_require_separate_context'])
+
+    def test_unconsumed_address_data_does_not_create_or_authorize_a_callback(self):
+        from config_boot_history import first_boot_history
+        from config_build_source import make_source_context
+        objects,rows,context=self.fixture()
+        objects.elf.data+=struct.pack('<I',0x10000001)  # outside allocated/selected bytes
+        context=make_source_context(objects.elf.data,context.attempt,context.build_options,dict(context.sources))
+        proof=first_boot_history(objects,rows,context)
+        self.assertEqual(proof['callback_binding']['scope'],'same first detached Boot node only')
+        self.assertFalse(proof['callback_binding']['global_whitelist'])
+
+    def test_exception_and_input_qualifications_remain_explicit_without_new_assumption(self):
+        from config_boot_history import first_boot_history
+        objects,rows,context=self.fixture();proof=first_boot_history(objects,rows,context)
+        self.assertEqual(proof['exception_graph_limit'],('NMI','HardFault','reset_reentry'))
+        self.assertFalse(proof['exception_absence_established'])
+        self.assertTrue(proof['requires_H8_consumed_input_closure'])
+        self.assertTrue(proof['requires_M2_pre_init_source_reconciliation'])
+        self.assertEqual(len(proof['external_qualifications']),3)
+        self.assertIn('conditional, not measured',proof['external_qualifications'][1])
+
+    def test_guard_family_cannot_exit_without_a_correlated_successful_exclusive(self):
+        from copy import deepcopy
+        from config_boot_history import first_boot_history,_family
+        objects,rows,context=self.fixture('speed2');proof=first_boot_history(objects,rows,context)
+        body=proof['preclaim']['startup']['entry']['entry']['phases']['run'];inventory=deepcopy(proof['successors'])
+        # Internal proof-record fault injection, not a supplied public history
+        # input or fresh decoded code: make the claim retry escape directly.
+        changed=[]
+        for item in inventory:
+            if item['phase']=='run' and item['site']==body['function']+34:
+                item=dict(item,successors=(body['function']+36,body['function']+36))
+            changed.append(item)
+        with self.assertRaisesRegex(AssertionError,'exit lacks exclusive success'):
+            _family(rows,body,changed,('run','sole_zero_slot_claim'),((0,36),),0,36,
+                {26:('source_false','same complete Boot pool zero; no earlier claimant',20),34:('exclusive',28,32)},
+                proof['selected_returns'],True)
+
+    def test_each_selected_return_and_once_restore_keep_their_exact_PC_transport(self):
+        from dataclasses import replace
+        from config_boot_history import first_boot_history
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,context=self.fixture(mode);proof=first_boot_history(objects,rows,context)
+            sites=tuple(v['return_site'] for v in proof['selected_returns'])+(proof['once_return_transport']['restore'],)
+            for at in sites:
+                changed=dict(rows);changed[at]=replace(rows[at],mnemonic='bx',operands='r4')
+                with self.subTest(mode=mode,at=hex(at)),self.assertRaises(AssertionError):
+                    first_boot_history(objects,changed,context)
+
+    def test_callback_load_and_initialized_completion_cannot_change_source(self):
+        from dataclasses import replace
+        from config_boot_history import first_boot_history
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,context=self.fixture(mode);proof=first_boot_history(objects,rows,context)
+            initialize=proof['preclaim']['startup']['entry']['entry']['phases']['boot_initializer']
+            completion=initialize['function']+(14 if mode=='speed2' else 6)
+            for at,operand in ((proof['callback_binding']['site']-2,'r1, [r2, #0x24]'),
+                (completion,'r0, #0x1' if mode=='speed2' else 'r1, #0x1')):
+                changed=dict(rows);changed[at]=replace(rows[at],operands=operand)
+                with self.subTest(mode=mode,at=hex(at)),self.assertRaises(AssertionError):
+                    first_boot_history(objects,changed,context)
+
+    def test_internal_write_envelopes_cannot_corrupt_saved_LR_or_initialized_completion(self):
+        from copy import deepcopy
+        from config_boot_history import first_boot_history,_edges,_save_protection,_state_writers
+        objects,rows,context=self.fixture();proof=first_boot_history(objects,rows,context)
+        p=proof['preclaim'];bodies,_=_edges(p);end=proof['protected_save_intervals']['boot_poll'][1]
+        for fault in ('saved_LR','completion'):
+            changed=deepcopy(p)
+            value=dict(phase='configuration_initialize',instruction=bodies['configuration_initialize']['function']+12,
+                scope='before',interval=(end-4,end))
+            if fault=='completion':value.update(interval=(p['task'][0]+44,p['task'][0]+45),phase='run')
+            changed['writes']=changed['writes']+(value,)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                if fault=='saved_LR':_save_protection(changed,bodies)
+                else:_state_writers(changed,bodies)
+
+
 if __name__=='__main__':unittest.main()
