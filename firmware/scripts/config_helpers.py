@@ -13,6 +13,13 @@ from config_roots import root_location,root_adapter
 from config_regions import Region,Transfer,Storage,View,Argument,borrow,require_disjoint,require_writes,audit_coverage,_control
 from config_stack import canonical_symbol,transfer_family
 from validation import require
+from config_construction_contracts import CONSTRUCTION_GRAMMARS,CONSTRUCTION_SEMANTIC_ROLES
+
+# One matcher/coverage path; these closed construction families add no generic
+# selector, object policy or unknown child allowance.
+HELPER_GRAMMARS.update(CONSTRUCTION_GRAMMARS)
+HELPER_SEMANTIC_ROLES.update(CONSTRUCTION_SEMANTIC_ROLES)
+HELPER_ROLES.update({role:semantic for semantic,role in CONSTRUCTION_SEMANTIC_ROLES.items()})
 
 # (complete maximum frame, saved-cell start, exact optional scratch subview).
 # Adding a body never manufactures a frame/effect contract by default.
@@ -23,6 +30,9 @@ FRAME_LAYOUTS={
     'varint_u32_small':(24,8,(3,5)),'serialize_f32':(16,8,(4,4)),'seq_f32':(24,8,(0,8)),
     'range_to_inclusive_index_mut':(16,0,None),'array5_index_mut':(8,0,None),
     'deserialize_u16':(24,0,None),'deserialize_seed_f32':(8,0,None),
+    'vec_extend_inner':(24,0,None),'vec_extend14':(16,8,(0,8)),
+    'vec_extend20':(16,8,(0,8)),'vec_extend24':(16,8,(0,8)),
+    'string_try14':(48,24,(0,24)),
 }
 
 

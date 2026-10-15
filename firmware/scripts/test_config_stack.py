@@ -1905,6 +1905,158 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
             self.assertTrue(all(o['state'].count==o['count'] and o['state'].decoder.cursor==o['cursor'] for o in result['outcomes']))
 
 
+class ConstructionInterfaces(unittest.TestCase):
+    def fixture(self,semantic='vec_extend14',shift=0):
+        from config_regions import Storage
+        objects,item=LoggerObjects.fixture(self,'sizez',shift,0x19000 if shift else 0,fixture_file='config-construction.json')
+        objects.elf.mapping_symbols=[(n,a+shift,i) for n,a,i in item['mapping_symbols']]
+        records={}
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address']+shift;operand=op[1] if len(op)>1 else ''
+            if config_stack.transfer_family(op[0].removesuffix('.w')) in ('b','bl','cbz','cbnz'):
+                operand=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+shift),operand)
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],operand)
+        instance=next(v for v in item['instances'] if v['role']==semantic)
+        frame=Storage('stack:construction','active:'+semantic,-instance['frame'],instance['frame'],8,'refill',True) if instance['frame'] else None
+        return objects,records,item,instance,frame
+
+    def arguments(self,capacity=14,length=(0,0),source_length=(0,8)):
+        from config_abstract import Span
+        from config_abstract_compare import InitializedPrefix
+        from config_construction import VecInterface
+        from config_regions import Storage,borrow
+        owner=Storage('stack:construction','Vec',128,((4+capacity+3)//4)*4,4,'refill',True)
+        state=VecInterface(borrow(owner,0,owner.extent,owner.phase,writable=True),capacity,Span(*length))
+        source=InitializedPrefix(borrow(Storage(owner.space,'input',256,32,1,owner.phase,False),0,32,owner.phase),Span(*source_length))
+        return state,source
+
+    def test_all_construction_bodies_and_parent_outlines_have_complete_coverage(self):
+        import config_helpers
+        for shift in (0,0x2800):
+            objects,records,item,_,_=self.fixture(shift=shift)
+            for instance in item['instances']:
+                outline=instance['typed_role'] if instance['typed_role'].startswith('@outline:') else None
+                proof=config_helpers.helper_coverage(objects,instance['name'],records,
+                    (instance['address']+shift,'construction','supplied parent'),outline)
+                self.assertEqual((proof['extent'],proof['frame']),(instance['extent'],instance['frame']))
+                if outline:self.assertEqual(proof['requires_parent_outline_abi'],outline)
+
+    def test_unknown_append_unions_keep_prefix_count_capacity_and_no_write_error(self):
+        import config_construction,config_helpers
+        from config_abstract import Span
+        for capacity in (14,20,24):
+            args=self.fixture('vec_extend'+str(capacity));objects,records,item,instance,frame=args
+            proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'extend','actual parent owed'))
+            state,source=self.arguments(capacity,(2,4),(1,capacity))
+            result=config_construction.extend_interface(objects,records,proof,state,source,frame,())
+            self.assertEqual([(o['kind'],o['length']) for o in result['outcomes']],[('success',Span(3,capacity)),('capacity_error',Span(2,4))])
+            self.assertEqual(result['outcomes'][1]['possible_writes'],())
+            self.assertEqual(result['conservative_activation_frames'],(16,24))
+            self.assertTrue(all(o['state'].length==o['length'] for o in result['outcomes']))
+            self.assertTrue(result['requires_actual_stage_receiver_transport_and_complete_parent_graph'])
+
+    def test_capacity_error_and_zero_append_do_not_initialize_slack(self):
+        import config_construction,config_helpers
+        from config_abstract import Span
+        objects,records,item,instance,frame=self.fixture()
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'extend','source owner'))
+        for length,count,expected in (((14,14),(1,1),['capacity_error']),((3,3),(0,0),['success','capacity_error'])):
+            state,source=self.arguments(length=length,source_length=count)
+            result=config_construction.extend_interface(objects,records,proof,state,source,frame,())
+            self.assertEqual([o['kind'] for o in result['outcomes']],expected)
+            self.assertTrue(all(not o['possible_writes'] for o in result['outcomes']))
+            self.assertTrue(all(o['length']==Span(*length) for o in result['outcomes']))
+
+    def test_header_full_owner_source_and_deeper_save_aliases_reject(self):
+        import config_construction,config_helpers
+        from dataclasses import replace
+        from config_regions import Storage,borrow
+        objects,records,item,instance,frame=self.fixture()
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'extend','alias negatives'))
+        for start in (-4,-24,-40):
+            state,source=self.arguments();owner=replace(state.view.storage,start=start)
+            bad=replace(state,view=borrow(owner,0,owner.extent,owner.phase,writable=True))
+            with self.subTest(start=start),self.assertRaises(AssertionError):config_construction.extend_interface(objects,records,proof,bad,source,frame,())
+        state,source=self.arguments();source=replace(source,view=borrow(state.view.storage,4,16,'refill'))
+        with self.assertRaises(AssertionError):config_construction.extend_interface(objects,records,proof,state,source,frame,())
+        state,source=self.arguments();protected=(Storage(frame.space,'live carrier',132,4,4,frame.phase,False),)
+        with self.assertRaises(AssertionError):config_construction.extend_interface(objects,records,proof,state,source,frame,protected)
+
+    def test_try_from_keeps_tag_only_error_and_separate_opaque_success_transport(self):
+        import config_construction,config_helpers
+        from config_regions import Storage,borrow
+        objects,records,item,instance,frame=self.fixture('string_try14');_,source=self.arguments(source_length=(0,24))
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'try_from','typed str caller owed'))
+        output=borrow(Storage(frame.space,'Result<String14>',128,24,4,frame.phase,True),0,24,frame.phase,writable=True)
+        result=config_construction.string_interface(objects,records,proof,source,output,frame,())
+        self.assertEqual([o['kind'] for o in result['outcomes']],['success','capacity_error'])
+        self.assertEqual(result['conservative_activation_frames'],(48,16,24))
+        self.assertEqual(result['outcomes'][0]['opaque_copy'],(4,20))
+        self.assertEqual(result['outcomes'][0]['semantic_string_header'],(4,4))
+        self.assertEqual(result['outcomes'][0]['initialized_prefix'].length.upper,14)
+        self.assertEqual(result['outcomes'][1]['possible_writes'],((output,0,4),))
+        self.assertNotIn('initialized_prefix',result['outcomes'][1])
+        self.assertTrue(result['requires_source_valid_str'])
+
+    def test_try_result_and_source_must_survive_local_scratch_and_every_child_prologue(self):
+        import config_construction,config_helpers
+        from dataclasses import replace
+        from config_regions import Storage,borrow
+        objects,records,item,instance,frame=self.fixture('string_try14');_,source=self.arguments()
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'try_from','protected cells'))
+        output=borrow(Storage(frame.space,'Result',128,24,4,frame.phase,True),0,24,frame.phase,writable=True)
+        for start in (-48,-64,-88):
+            bad=borrow(replace(output.storage,start=start),0,24,frame.phase,writable=True)
+            with self.subTest(start=start),self.assertRaises(AssertionError):config_construction.string_interface(objects,records,proof,source,bad,frame,())
+        with self.assertRaises(AssertionError):config_construction.string_interface(objects,records,proof,
+            replace(source,view=borrow(output.storage,4,20,frame.phase)),output,frame,())
+
+    def test_changed_capacity_outgoing_cell_copy_count_and_restore_register_reject(self):
+        import config_helpers
+        for semantic,offset,operand in (('vec_extend14',8,'r2, #0xf'),('construction_prepare_slice',2,'r2, [sp, #0x4]'),
+            ('vec_extend_inner',10,'r6, [r7, #0xc]'),('string_try14',34,'r0, r8, #0x8'),
+            ('construction_restore_r11_low20',0,'r8, [sp], #4')):
+            objects,records,item,instance,frame=self.fixture(semantic);at=instance['address']+offset;row=records[at]
+            records[at]=Instruction(at,row.raw,row.mnemonic,operand)
+            outline=instance['typed_role'] if instance['typed_role'].startswith('@outline:') else None
+            with self.subTest(semantic=semantic),self.assertRaises(AssertionError):config_helpers.helper_body(objects,instance['name'],records,outline)
+
+    def test_construction_fact_constructors_reject_unbound_capacity_or_length(self):
+        from config_abstract import Span
+        from dataclasses import replace
+        state,source=self.arguments()
+        for change in (dict(capacity=15),dict(length=Span(0,15)),dict(view=replace(state.view,extent=19))):
+            with self.assertRaises(AssertionError):replace(state,**change)
+
+    def test_wrapper_capacity_sum_overflow_and_stale_inventory_reject(self):
+        import config_construction,config_helpers
+        from config_abstract import Span
+        from config_abstract_compare import InitializedPrefix
+        from config_regions import Storage,borrow
+        objects,records,item,instance,frame=self.fixture()
+        proof=config_helpers.helper_coverage(objects,instance['name'],records,(instance['address'],'extend','bounded sum'))
+        state,source=self.arguments(20)
+        with self.assertRaises(AssertionError):config_construction.extend_interface(objects,records,proof,state,source,frame,())
+        # A huge source prefix is structurally bounded but makes the machine
+        # addition wrap; reject before a capacity comparison can authorize it.
+        state,_=self.arguments(length=(1,1))
+        huge=Storage(frame.space,'huge-source',-0x100000000,0xffffffff,1,frame.phase,False)
+        source=InitializedPrefix(borrow(huge,0,huge.extent,frame.phase),Span(0xffffffff,0xffffffff))
+        with self.assertRaisesRegex(AssertionError,'sum may wrap'):
+            config_construction.extend_interface(objects,records,proof,state,source,frame,())
+        state,source=self.arguments();stale=dict(proof,ordinary_edges=())
+        with self.assertRaises(AssertionError):config_construction.extend_interface(objects,records,stale,state,source,frame,())
+
+    def test_anonymous_constructor_cannot_borrow_ordinary_identity(self):
+        import config_helpers
+        objects,records,item,instance,frame=self.fixture('string_try14')
+        name='OUTLINED_FUNCTION_999999';old=instance['name']
+        objects.elf.functions[name]=objects.elf.functions.pop(old)
+        objects.elf.symbol_entries=[(name if v[0]==old else v[0],*v[1:]) for v in objects.elf.symbol_entries]
+        for override in (None,instance['typed_role'],'@outline:construction_unknown'):
+            with self.subTest(override=override),self.assertRaises(AssertionError):config_helpers.helper_body(objects,name,records,override)
+
+
 class AbstractCanonicalInterfaces(unittest.TestCase):
     def compare(self):
         import config_abstract,config_abstract_compare
