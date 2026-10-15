@@ -99,4 +99,3 @@ def _closed_child_returns(rows,parents,children,sp,stacks,scratch_restores):
             require(op=='bl','Views parent changes its call phase')
             walk(children[target,role],sp,parent['function']+off+4,sp)
     return tuple(nodes)
-

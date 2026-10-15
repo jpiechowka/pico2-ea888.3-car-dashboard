@@ -78,11 +78,12 @@ def extend_interface(objects,instructions,proof,state,source,frame,ancestor_prot
 
 
 def extend_string5_interface(objects,instructions,proof,state,source,frame,ancestor_protected):
-    """Actual direct inner24 call, with caller S+0 capacity5 still required."""
+    """Actual inner24 call: caller r2=5 and S+0 is the paired source length."""
     require(isinstance(state,String5Interface) and isinstance(proof,dict) and proof.get('semantic_role')=='vec_extend_inner',
         'String5 requires the direct complete inner append family')
     result=_extend_interface(objects,instructions,proof,state,source,frame,ancestor_protected)
-    result.update(capacity_incoming_stack_argument=5,requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join=True)
+    result.update(capacity_r2_argument=5,incoming_stack_source_length=source.length,
+        requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join=True)
     return result
 
 

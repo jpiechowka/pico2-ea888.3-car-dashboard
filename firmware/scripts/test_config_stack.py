@@ -7821,7 +7821,9 @@ class WidgetConstructionAdapters(unittest.TestCase):
         self.assertEqual([(o['kind'],o['length']) for o in result['outcomes']],
             [('success',Span(0,5)),('capacity_error',Span(0,0))])
         self.assertEqual(result['outcomes'][1]['possible_writes'],())
-        self.assertEqual(result['capacity_incoming_stack_argument'],5)
+        self.assertEqual(result.get('capacity_r2_argument'),5)
+        self.assertEqual(result.get('incoming_stack_source_length'),source.length)
+        self.assertNotIn('capacity_incoming_stack_argument',result)
         self.assertEqual(result['conservative_activation_frames'],(24,))
         self.assertTrue(result['requires_Band_UTF8_ASCII_nonempty_spaces_and_tail_zero_join'])
 
