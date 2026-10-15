@@ -1,8 +1,8 @@
 """Finite conditional platform scope for named RP2350 stack accounting.
 
-Version3 assumes a usable stack, normal fresh Secure Core0 IMAGE_DEF context,
+Version4 assumes a usable stack, normal fresh Secure Core0 IMAGE_DEF context,
 Secure UNALIGN_TRP=0 at relevant single accesses, readable Normal embedded
-input and effective Normal/write permission for the closed owned stores.
+input and effective Normal read/write permission for the closed owned accesses.
 These are external conditions, never host-established hardware facts. They do
 not waive source/body/ordinary/control/range/ownership/callback proof. Unknown
 effects cannot become assumptions. No established policy is supported here.
@@ -11,26 +11,95 @@ fresh checkout does not depend on an ignored report or runtime approve switch.
 """
 from dataclasses import dataclass,asdict
 import hashlib
+import json
 import re
 import struct
 import zlib
 from config_regions import View
 from config_owned_access import OwnedAccess,read_owned_access,current_owned_access
+from config_validator_access import ValidatorFamily,read_validator_family,current_validator_family,EXPECTED_ROLES
 from validation import require
 
 TARGET='thumbv8m.main-none-eabihf'
 BOOT_CONTEXT='fresh_normal_core0_image_def'
-SCOPE='h2-rp2350-secure-owned-access-v3'
-SCOPE_SHA256='0f24a2283b80c56db836e71c021433ace3e7b5044a1eaa60ed2777cef9256a70'
-POLICY_SCHEMA=2
+SCOPE='h2-rp2350-secure-owned-access-v4'
+SCOPE_SHA256='36881eb967833a9599cc72487f8156bb1a4bb2c8722cd100679e20c519af4dfa'
+POLICY_SCHEMA=3
 ASSUMPTIONS=(
     'A valid usable stack is available.',
     'Executing Core0 is Secure in the normal fresh ROM IMAGE_DEF context; other entry modes are outside scope.',
     'Secure CCR.UNALIGN_TRP remains zero at every dependent ordinary single access.',
     'The complete bound embedded EAV payload remains readable Normal memory under effective MPU, security and XIP mapping.',
-    'Every internally bound owned STR footprint remains compatible Normal memory with effective write permission under MPU, security and interconnect mappings.',
+    'Every internally bound closed LDR/STR/LDRH/STRH footprint remains compatible Normal memory with effective permission matching its read/write direction under MPU, security and interconnect mappings.',
 )
 BOUND_KEYS=('boot','constructor','runtime','dashboard')
+
+
+def _bounded_record(record):
+    # Exactly the memory CLI's sorted compact JSON plus terminating LF. This
+    # checks the enclosing record too; a fitting child policy is insufficient.
+    require(len((json.dumps(record,sort_keys=True)+'\n').encode('utf-8'))<=65536,
+        'oversized conditional result/dependency record')
+    return record
+
+
+def _read_dependency(record):
+    require(isinstance(record,dict),'untyped conditional access dependency')
+    if 'kind' in record:
+        require(record['kind']=='validator_access_family','unknown conditional access dependency tag')
+        return read_validator_family(record)
+    return read_owned_access(record)
+
+
+def _family_name(dependencies):
+    validators=tuple(v for v in dependencies if isinstance(v,ValidatorFamily))
+    if validators:
+        require(len({v.mode for v in validators})==1,'conditional set mixes validator modes')
+        return validators[0].mode+'_configuration'
+    return 'sizez_default_refill' if dependencies else 'readonly_eav'
+
+
+def _legacy_default(dependencies):
+    require(len(dependencies)==10 and all(isinstance(v,OwnedAccess) for v in dependencies),
+        'missing inherited default dependency family')
+    advanced=tuple(v for v in dependencies if v.role=='advanced_default_fields')
+    configs=tuple(v for v in dependencies if v.role=='configuration_versions')
+    widgets=tuple(v for v in dependencies if v.role=='widget_colors')
+    require(len(advanced)==len(configs)==1 and len(widgets)==8 and
+        tuple(v.loop_index for v in widgets)==tuple(range(8)),
+        'owned default family loses a paired store/loop instance')
+    require(tuple(v.role for v in dependencies)==('configuration_versions','advanced_default_fields')+('widget_colors',)*8,
+        'owned source-stage dependency order changed')
+    require(all(v.frame==configs[0].frame for v in dependencies) and
+        all(v.owner.storage==configs[0].owner.storage for v in widgets),
+        'owned family mixes parent activations/private slots')
+    keys=tuple((v.role,v.activation,v.owner.storage.space,v.owner.storage.identity,v.owner.start) for v in dependencies)
+    require(len(set(keys))==len(keys),'duplicate owned platform dependency/context')
+
+
+def _dependency_set(family,dependencies):
+    if family=='readonly_eav':
+        require(not dependencies,'readonly EAV family cannot authorize owned accesses');return
+    if family=='sizez_default_refill':_legacy_default(dependencies);return
+    require(family in tuple(mode+'_configuration' for mode in EXPECTED_ROLES),'unknown conditional dependency family')
+    mode=family.removesuffix('_configuration');legacy=dependencies[:10] if mode=='sizez' else ()
+    validators=dependencies[10:] if mode=='sizez' else dependencies
+    if legacy:_legacy_default(legacy)
+    require(all(isinstance(v,ValidatorFamily) and v.mode==mode for v in validators) and
+        tuple(v.role for v in validators)==EXPECTED_ROLES[mode],
+        'conditional validator set loses/injects/duplicates a source family')
+    first=validators[0]
+    def shared(contexts):
+        # The source phases can carry different extra protected locals. Retain
+        # each exact list while requiring the same caller, Config and Result.
+        return tuple((c.mode,c.phase,c.caller,c.frame,c.config,c.result) for c in contexts)
+    require(all(v.parent==first.parent and shared(v.contexts)==shared(first.contexts) for v in validators),
+        'conditional validator families mix activation/Config/output contexts')
+    if legacy:
+        a=legacy[0];b=first.contexts[0]
+        require((a.frame.space,a.frame.identity,a.frame.start,a.frame.extent,a.owner.storage.start)==
+            (b.caller.space,b.caller.identity,b.caller.start,b.caller.extent,b.config.start),
+            'default and validator dependencies name different actual parent/Config')
 
 
 @dataclass(frozen=True)
@@ -65,26 +134,10 @@ class PlatformPolicy:
                 'platform input/artifact identity is missing')
         require(self.assumptions==ASSUMPTIONS and isinstance(self.assumptions,tuple),'platform assumptions changed or lost')
         require(isinstance(self.owned_dependencies,tuple) and len(self.owned_dependencies)<=32 and
-            all(isinstance(v,OwnedAccess) for v in self.owned_dependencies),'untyped/unbounded owned platform dependencies')
-        require(not self.owned_dependencies or self.schema==2,'owned stores require the new platform declaration')
-        keys=tuple((v.role,v.activation,v.owner.storage.space,v.owner.storage.identity,v.owner.start) for v in self.owned_dependencies)
-        require(len(set(keys))==len(keys),'duplicate owned platform dependency/context')
-        if self.owned_family=='readonly_eav':require(not self.owned_dependencies,'readonly EAV family cannot authorize owned stores')
-        else:
-            require(self.owned_family=='sizez_default_refill' and len(self.owned_dependencies)==10,
-                'missing/unknown finite owned dependency family')
-            advanced=tuple(v for v in self.owned_dependencies if v.role=='advanced_default_fields')
-            configs=tuple(v for v in self.owned_dependencies if v.role=='configuration_versions')
-            widgets=tuple(v for v in self.owned_dependencies if v.role=='widget_colors')
-            require(len(advanced)==len(configs)==1 and len(widgets)==8 and
-                tuple(v.loop_index for v in widgets)==tuple(range(8)),
-                'owned default family loses a paired store/loop instance')
-            require(tuple(v.role for v in self.owned_dependencies)==
-                ('configuration_versions','advanced_default_fields')+('widget_colors',)*8,
-                'owned source-stage dependency order changed')
-            require(all(v.frame==configs[0].frame for v in self.owned_dependencies) and
-                all(v.owner.storage==configs[0].owner.storage for v in widgets),
-                'owned family mixes parent activations/private slots')
+            all(isinstance(v,(OwnedAccess,ValidatorFamily)) for v in self.owned_dependencies),
+            'untyped/unbounded owned platform dependencies')
+        _dependency_set(self.owned_family,self.owned_dependencies)
+        _bounded_record(self.to_record())
 
     def for_f32_load(self,cursor):
         require(type(cursor) is int and self.input_start<=cursor<cursor+4<=self.input_end,'f32 read exceeds bound platform input')
@@ -110,7 +163,7 @@ def reviewed_eav_policy(objects,payload,context,*,contradictory_effects,owned_de
             payload.extent==payload.storage.extent-12,'platform input lacks its recognized complete readonly EAV payload')
     raw=objects.read_only(payload.start,payload.extent)
     return PlatformPolicy(payload.start,payload.start+payload.extent,hashlib.sha256(raw).hexdigest(),hashlib.sha256(objects.elf.data).hexdigest(),
-        owned_dependencies=owned_dependencies,owned_family='sizez_default_refill' if owned_dependencies else 'readonly_eav')
+        owned_dependencies=owned_dependencies,owned_family=_family_name(owned_dependencies))
 
 
 def read_policy(record,expected):
@@ -118,7 +171,7 @@ def read_policy(record,expected):
     wanted=expected.to_record()
     require(set(record)==set(wanted) and isinstance(record.get('owned_dependencies'),list) and
         len(record['owned_dependencies'])==len(expected.owned_dependencies),'platform reader lost its exact dependency tuple')
-    dependencies=tuple(read_owned_access(v) for v in record['owned_dependencies'])
+    dependencies=tuple(_read_dependency(v) for v in record['owned_dependencies'])
     require(dependencies==expected.owned_dependencies,'platform dependency context differs')
     require(set(record)==set(wanted) and type(record.get('schema')) is int and type(record.get('core')) is int and
             type(record.get('input_start')) is int and type(record.get('input_end')) is int and
@@ -140,8 +193,8 @@ def qualified_stack_result(bounds,headroom,policy):
             type(headroom) is int and 0<headroom<=0x80000,'invalid stack result bounds/headroom')
     from check_stack_budget import budgets
     budgets(*(bounds[k] for k in BOUND_KEYS),headroom)
-    return dict(schema=1,status='CONDITIONAL_STACK_PASS',platform_policy='assumed_external',hardware_qualified=False,
-                stack_bounds=dict(bounds),headroom=headroom,policies=[policy.to_record()])
+    return _bounded_record(dict(schema=1,status='CONDITIONAL_STACK_PASS',platform_policy='assumed_external',hardware_qualified=False,
+                stack_bounds=dict(bounds),headroom=headroom,policies=[policy.to_record()]))
 
 
 def read_stack_result(record,expected_policy,expected_headroom):
@@ -166,14 +219,19 @@ def current_image_policy(record,elf,expected_eav=None):
         ('input_start','input_end','input_sha256','elf_sha256')),'missing current image platform policy')
     require(isinstance(record.get('owned_dependencies'),list) and len(record['owned_dependencies'])<=32,
         'image policy lost its bounded owned dependencies')
-    dependencies=tuple(read_owned_access(v) for v in record['owned_dependencies'])
+    dependencies=tuple(_read_dependency(v) for v in record['owned_dependencies'])
     policy=PlatformPolicy(record['input_start'],record['input_end'],record['input_sha256'],record['elf_sha256'],
         owned_dependencies=dependencies,owned_family=record.get('owned_family'))
     read_policy(record,policy)
     require(hashlib.sha256(elf.data).hexdigest()==policy.elf_sha256,'platform policy belongs to another ELF')
     from config_stack import DiagnosticObjects
-    objects=DiagnosticObjects(elf,{})
-    for dependency in dependencies:current_owned_access(objects,dependency)
+    sizes={}
+    if any(isinstance(v,ValidatorFamily) for v in dependencies):
+        from check_stack_budget import frames
+        sizes=frames(elf.section_bytes('.stack_sizes'))
+    objects=DiagnosticObjects(elf,sizes)
+    for dependency in dependencies:
+        (current_validator_family if isinstance(dependency,ValidatorFamily) else current_owned_access)(objects,dependency)
     extent=policy.input_end-policy.input_start
     require(12<extent+12<=16384 and policy.input_start>=0x1000000c,'platform payload has no bounded EAV envelope')
     start=policy.input_start-12

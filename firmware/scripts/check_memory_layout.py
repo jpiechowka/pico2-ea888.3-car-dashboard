@@ -12,7 +12,7 @@ from elf_image import ElfImage
 from validation import require
 from check_flash_lockout import check as check_flash_lockout
 from check_stack_budget import check as check_stack_budget
-from config_platform import current_image_policy,read_stack_result
+from config_platform import current_image_policy,read_stack_result,_bounded_record
 
 MIN_CORE0_HEADROOM = 65536
 
@@ -47,9 +47,9 @@ def _qualified_image(stack,elf,static_ram,headroom,expected_eav=None):
             'full image gate has no retained stack policy')
     policy=current_image_policy(stack['policies'][0],elf,expected_eav)
     checked=read_stack_result(stack,policy,headroom)
-    return dict(schema=1,gate='full_memory_layout',status='CONDITIONAL_IMAGE_PASS',
+    return _bounded_record(dict(schema=1,gate='full_memory_layout',status='CONDITIONAL_IMAGE_PASS',
         platform_policy='assumed_external',hardware_qualified=False,
-        elf_sha256=hashlib.sha256(elf.data).hexdigest(),static_ram_bytes=static_ram,headroom=headroom,stack=checked)
+        elf_sha256=hashlib.sha256(elf.data).hexdigest(),static_ram_bytes=static_ram,headroom=headroom,stack=checked))
 
 
 def read_image_result(record,elf,expected_eav=None):

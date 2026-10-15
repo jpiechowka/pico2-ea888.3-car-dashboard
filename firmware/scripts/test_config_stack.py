@@ -2559,7 +2559,7 @@ class OwnedPlatformDependencies(unittest.TestCase):
             'widget'+str(i),borrow(config.owner.storage,444+220*i,220,config.frame.phase,writable=True),
             config.frame,'r4',config.protected,i) for i in range(8))
         policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
-        self.assertEqual(policy.schema,2)
+        self.assertEqual(policy.schema,3)
         self.assertEqual(policy.owned_dependencies,dependencies)
         record=policy.to_record()
         self.assertEqual(config_platform.read_policy(json.loads(json.dumps(record)),policy),policy)
@@ -3950,5 +3950,301 @@ class LoaderContinuation(unittest.TestCase):
                 records[site]=Instruction(site,raw,'b',hex(destination))
                 with self.subTest(source=hex(site),target=hex(destination)),self.assertRaises(AssertionError):
                     config_loader_continuation.loader_continuation(objects,root,records,frame,())
+
+
+
+class ValidatorPlatformFamilies(unittest.TestCase):
+    def fixture(self,role,mode):
+        from config_validator_access import ValidatorContext,ValidatorFamily
+        from config_regions import Storage,borrow
+        item=next(v for v in json.loads((Path(__file__).parent/'fixtures/config-validator-accesses.json').read_text())['instances']
+            if (v['role'],v['mode'])==(role,mode))
+        child,caller,outputs={'speed2':(296,1288,(156,996)),'sizes':(288,696,(100,408)),'sizez':(320,456,(236,112))}[mode]
+        contexts=[]
+        for phase,offset in zip(('default_validation','decoded_validation'),outputs):
+            parent=Storage('stack:configuration.default','loader',0,caller,8,phase,True)
+            frame=Storage(parent.space,'validator',-child,child,8,phase,True)
+            slot=Storage('address','private unpublished ConfigSlot',{'speed2':0x2000064c,'sizes':0x20000388,'sizez':0x2000031c}[mode],14604,4,phase,True)
+            saves=Storage(frame.space,'validator:saved',frame.start+(200 if mode=='speed2' else 184 if mode=='sizes' else 216),
+                child-(200 if mode=='speed2' else 184 if mode=='sizes' else 216),4,phase,False)
+            contexts.append(ValidatorContext(mode,phase,parent,frame,borrow(slot,0,14576,phase),
+                borrow(parent,offset,12,phase,writable=True),(saves,)))
+        return ValidatorFamily(role,mode,{'speed2':0x10036830,'sizes':0x100277dc,'sizez':0x1001ea20}[mode],tuple((v['site'],v['encoding'],v['offset'],v['outlined']) for v in item['sites']),tuple(contexts))
+
+    def test_v4_all25_roles_keep_both_epochs_and_strict_roundtrip(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_validator_access'),'missing closed validator dependency families')
+        from config_validator_access import read_validator_family
+        items=json.loads((Path(__file__).parent/'fixtures/config-validator-accesses.json').read_text())['instances']
+        self.assertEqual(sum(len(i['sites']) for i in items),25)
+        for item in items:
+            value=self.fixture(item['role'],item['mode']);record=value.to_record()
+            self.assertEqual(read_validator_family(json.loads(json.dumps(record))),value)
+            self.assertEqual(tuple(c.phase for c in value.contexts),('default_validation','decoded_validation'))
+            self.assertEqual(len(record['contexts']),2)
+            self.assertNotIn('runtime_sp',record)
+
+    def test_page_and_widget_footprints_stay_paired_without_instance_expansion(self):
+        for mode in ('speed2','sizes','sizez'):
+            pages=self.fixture('control_buttons',mode)
+            base={'speed2':0x2000064c,'sizes':0x20000388,'sizez':0x2000031c}[mode]
+            for i in range(3):
+                expected=((base+213+10*i,base+217+10*i),(base+217+10*i,base+221+10*i))
+                self.assertEqual(tuple(sorted(pages.footprints('default_validation',i,3))),expected)
+            widgets=self.fixture('widget_placement',mode)
+            self.assertEqual(widgets.footprints('decoded_validation',63,64),((base+14519,base+14521),))
+            self.assertLess(len(json.dumps(widgets.to_record())),10000)
+            for index,count in ((0,0),(64,64),(0,65),(-1,64),(True,64)):
+                with self.subTest(mode=mode,index=index,count=count),self.assertRaises(AssertionError):
+                    widgets.footprints('decoded_validation',index,count)
+
+    def test_validator_reader_rejects_role_width_numeric_alias_epoch_and_owner_substitution(self):
+        from config_validator_access import read_validator_family
+        from copy import deepcopy
+        record=self.fixture('y_action_pairs','speed2').to_record()
+        for fault in ('role','mode','width_float','direction','epoch','first_for_result','frame','protected','cross_config','cross_caller','extra'):
+            bad=deepcopy(record)
+            if fault=='role':bad['role']='arbitrary_halfword'
+            elif fault=='mode':bad['mode']='sizez'
+            elif fault=='width_float':bad['width']=2.0
+            elif fault=='direction':bad['direction']='read'
+            elif fault=='epoch':bad['contexts'][1]=deepcopy(bad['contexts'][0])
+            elif fault=='first_for_result':bad['contexts'][0]['result']['storage']=deepcopy(bad['contexts'][0]['frame'])
+            elif fault=='frame':bad['contexts'][0]['frame']['extent']=288
+            elif fault=='protected':bad['contexts'][0]['protected']=[]
+            elif fault=='cross_config':bad['contexts'][1]['config']['storage']['start']+=4
+            elif fault=='cross_caller':
+                c=bad['contexts'][1]
+                for v in (c['caller'],c['frame'],c['result']['storage'],*c['protected']):v['start']+=8
+            else:bad['approved']=True
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):read_validator_family(bad)
+
+
+    def dependencies(self,mode):
+        roles={'speed2':('first_reads','result_writes','control_buttons','first_halfwords','y_action_pairs','widget_placement'),
+            'sizes':('first_word','control_buttons','widget_placement'),'sizez':('first_word','control_buttons','widget_placement')}
+        values=tuple(self.fixture(role,mode) for role in roles[mode])
+        if mode!='sizez':return values
+        from config_owned_access import OwnedAccess
+        from config_regions import borrow
+        config=OwnedPlatformDependencies.fixture(self,'configuration_versions')
+        advanced=OwnedPlatformDependencies.fixture(self,'advanced_default_fields')
+        return (config,advanced)+tuple(OwnedAccess('widget_colors',0x10022000,0x10022000+670,
+            'widget'+str(i),borrow(config.owner.storage,444+220*i,220,config.frame.phase,writable=True),
+            config.frame,'r4',config.protected,i) for i in range(8))+values
+
+    def artifact(self,mode):
+        # Deliberately metadata/site-only synthetic ELF; unfilled body bytes
+        # grant no validator grammar, source, ownership or graph acceptance.
+        from config_entry import CONFIG
+        from config_validator_access import LAYOUTS
+        parent={'speed2':0x10036830,'sizes':0x100277dc,'sizez':0x1001ea20}[mode]
+        base={'speed2':0x2000064c,'sizes':0x20000388,'sizez':0x2000031c}[mode]
+        items=[v for v in json.loads((Path(__file__).parent/'fixtures/config-validator-accesses.json').read_text())['instances'] if v['mode']==mode]
+        end=max([parent+LAYOUTS[mode][6]]+[v['site']+8 for r in items for v in r['sites']]);raw=bytearray(end-parent)
+        for r in items:
+            for v in r['sites']:raw[v['site']-parent:v['site']-parent+4]=bytes.fromhex(v['encoding'])
+        functions={'_RNvNtCs_16dashboard_config8validate12validate_ref':(parent|1,LAYOUTS[mode][6],0)}
+        sizes={parent:LAYOUTS[mode][0]}
+        if mode=='sizez':
+            outline=0x10029084;raw[outline-parent:outline-parent+10]=bytes.fromhex('8df85600cdf852107047')
+            functions['OUTLINED_FUNCTION_310']=(outline|1,10,0);sizes[outline]=0
+        text=(0,1,6,parent,0,len(raw),0,0,2,0);data=(0,1,7,base,len(raw),14604,0,0,4,0)
+        elf=SimpleNamespace(data=bytes(raw)+bytes(14604),sections=[text,data],functions=functions,
+            symbol_entries=[(CONFIG,base,14604,1,1)],named={'.data':data},mapping_symbols=[('$t',parent,0)])
+        return config_stack.DiagnosticObjects(elf,sizes)
+
+    def test_v4_policy_retains_exact_closed_family_sets_and_rejects_stale_or_lost_qualifiers(self):
+        import config_platform
+        self.assertEqual((config_platform.POLICY_SCHEMA,config_platform.SCOPE,config_platform.SCOPE_SHA256),
+            (3,'h2-rp2350-secure-owned-access-v4','36881eb967833a9599cc72487f8156bb1a4bb2c8722cd100679e20c519af4dfa'))
+        from copy import deepcopy
+        objects,view,context=ConditionalStackPolicy.fixture(self)
+        for mode,count in (('speed2',6),('sizes',3),('sizez',13)):
+            dependencies=self.dependencies(mode)
+            policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
+            self.assertEqual(policy.owned_family,mode+'_configuration')
+            self.assertEqual(len(policy.owned_dependencies),count)
+            self.assertEqual(config_platform.read_policy(json.loads(json.dumps(policy.to_record())),policy),policy)
+            for fault in ('old','lost','duplicate','injected','hardware','width_float'):
+                bad=deepcopy(policy.to_record())
+                if fault=='old':bad.update(schema=2,scope='h2-rp2350-secure-owned-access-v3')
+                elif fault=='lost':bad['owned_dependencies'].pop()
+                elif fault=='duplicate':bad['owned_dependencies'][-1]=deepcopy(bad['owned_dependencies'][-2])
+                elif fault=='injected':bad['owned_dependencies'].append(deepcopy(bad['owned_dependencies'][-1]))
+                elif fault=='hardware':bad['hardware_qualified']=True
+                else:bad['owned_dependencies'][-1]['width']=2.0
+                with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):config_platform.read_policy(bad,policy)
+
+    def test_current_artifact_rebinds_all25_sites_and_exact_zero_growth_outline(self):
+        import config_validator_access
+        self.assertTrue(callable(getattr(config_validator_access,'current_validator_family',None)),
+            'missing current-artifact validator family consumer')
+        for mode in ('speed2','sizes','sizez'):
+            objects=self.artifact(mode)
+            for value in self.dependencies(mode):
+                if not isinstance(value,config_validator_access.ValidatorFamily):continue
+                self.assertEqual(config_validator_access.current_validator_family(objects,value),value)
+                for site,raw,offset,outline in value.sites:
+                    old=objects.elf.data;bad=bytearray(old);bad[site-value.parent]^=1;objects.elf.data=bytes(bad)
+                    with self.subTest(mode=mode,role=value.role,site=hex(site)),self.assertRaises(AssertionError):
+                        config_validator_access.current_validator_family(objects,value)
+                    objects.elf.data=old
+            if mode=='sizez':
+                value=self.fixture('first_word',mode);old=objects.elf.data;bad=bytearray(old);bad[0x10029084-value.parent]^=1;objects.elf.data=bytes(bad)
+                with self.assertRaises(AssertionError):config_validator_access.current_validator_family(objects,value)
+
+    def test_validator_sites_relocate_with_parent_metadata_and_mapping(self):
+        from config_validator_access import current_validator_family,ValidatorFamily
+        from dataclasses import replace
+        for mode in ('speed2','sizes','sizez'):
+            objects=self.artifact(mode);delta=0x1000
+            text=list(objects.elf.sections[0]);text[3]+=delta;objects.elf.sections[0]=tuple(text)
+            objects.elf.functions={n:(a+delta,size,section) for n,(a,size,section) in objects.elf.functions.items()}
+            objects.elf.mapping_symbols=[(n,a+delta,section) for n,a,section in objects.elf.mapping_symbols]
+            objects.sizes={a+delta:size for a,size in objects.sizes.items()}
+            for old in self.dependencies(mode):
+                if not isinstance(old,ValidatorFamily):continue
+                value=replace(old,parent=old.parent+delta,sites=tuple((a+delta,raw,o,x) for a,raw,o,x in old.sites))
+                self.assertEqual(current_validator_family(objects,value),value)
+                with self.assertRaises(AssertionError):current_validator_family(objects,old)
+
+    def test_validator_current_metadata_and_typed_record_cannot_be_substituted(self):
+        from config_validator_access import current_validator_family,read_validator_family
+        from copy import deepcopy
+        for fault in ('frame','extent','data_mapping','config_extent','outline_frame','outline_extent'):
+            objects=self.artifact('sizez');value=self.fixture('first_word','sizez')
+            if fault=='frame':objects.sizes[value.parent]=288
+            elif fault=='extent':
+                name=next(n for n in objects.elf.functions if 'validate_ref' in n)
+                a,size,section=objects.elf.functions[name];objects.elf.functions[name]=(a,size-2,section)
+            elif fault=='data_mapping':objects.elf.mapping_symbols=[('$d',value.parent,0)]
+            elif fault=='config_extent':
+                name,a,size,kind,section=objects.elf.symbol_entries[0];objects.elf.symbol_entries=[(name,a,size-4,kind,section)]
+            elif fault=='outline_frame':objects.sizes[0x10029084]=8
+            else:
+                a,size,section=objects.elf.functions['OUTLINED_FUNCTION_310']
+                objects.elf.functions['OUTLINED_FUNCTION_310']=(a,size-2,section)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):current_validator_family(objects,value)
+        record=self.fixture('y_action_pairs','speed2').to_record()
+        for fault in ('bool_site','float_offset','float_capture','bool_writable','unknown_operation','missing_transport','protected_overlap'):
+            bad=deepcopy(record)
+            if fault=='bool_site':bad['sites'][0]['site']=True
+            elif fault=='float_offset':bad['sites'][0]['offset']=1.0
+            elif fault=='float_capture':bad['transport']['capture_offset']=96.0
+            elif fault=='bool_writable':bad['contexts'][0]['config']['storage']['writable']=1
+            elif fault=='unknown_operation':bad['operation']='ordinary_multiple_STRD'
+            elif fault=='missing_transport':bad['transport'].pop('output')
+            else:
+                c=bad['contexts'][0];guard=deepcopy(c['protected'][0])
+                guard.update(start=c['frame']['start']+169,extent=2,alignment=1);c['protected'].append(guard)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):read_validator_family(bad)
+
+
+    def test_exact_wire_bound_is_preserved_at_actual_stack_result_boundary(self):
+        import config_platform
+        from dataclasses import replace
+        from config_regions import Storage
+        objects,view,context=ConditionalStackPolicy.fixture(self)
+        def policy(padding):
+            deps=self.dependencies('sizes');first=deps[0];c=first.contexts[0]
+            extra=Storage(c.frame.space,'bound-'+('x'*padding),c.frame.start+184,4,4,c.phase,False)
+            first=replace(first,contexts=(replace(c,protected=c.protected+(extra,)),first.contexts[1]))
+            return config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=(first,)+deps[1:])
+        small=policy(1);size=lambda value:len((json.dumps(value,sort_keys=True)+'\n').encode())
+        padding=65500-size(small.to_record())+1
+        try:near=policy(padding)
+        except AssertionError as error:self.fail('wire-compatible policy rejected before enclosing record: '+str(error))
+        self.assertEqual(size(near.to_record()),65500)
+        with self.assertRaises(AssertionError):
+            config_platform.qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),65536,near)
+
+
+    def image_fixture(self,mode,padding=0):
+        # Supplied stage facts only. The image/capture consumers are real; the
+        # missing complete source/validator/graph producer is never inferred.
+        from test_validation_policy import MemoryQualification
+        from config_platform import PlatformPolicy,qualified_stack_result
+        from config_owned_access import read_owned_access
+        from config_validator_access import ValidatorFamily
+        from dataclasses import replace
+        from config_regions import Storage
+        import check_memory_layout
+        import hashlib
+        elf,eav,old=MemoryQualification.owned_fixture(MemoryQualification())
+        prototype=self.artifact(mode);code=prototype.elf.sections[0];index=len(elf.sections);offset=len(elf.data)
+        elf.data+=prototype.elf.data[:code[5]];section=list(code);section[4]=offset;elf.sections.append(tuple(section))
+        elf.functions.update({n:(v[0],v[1],index) for n,v in prototype.elf.functions.items()})
+        elf.mapping_symbols=[('$t',elf.sections[1][3],1),('$t',code[3],index)]
+        metadata=bytearray()
+        for address,size in prototype.sizes.items():
+            metadata+=struct.pack('<I',address)
+            while True:
+                byte=size&127;size>>=7;metadata.append(byte|(128 if size else 0))
+                if not size:break
+        elf.section_bytes=lambda name:bytes(metadata) if name=='.stack_sizes' else b''
+        validators=[]
+        for value in self.dependencies(mode):
+            if not isinstance(value,ValidatorFamily):continue
+            contexts=[]
+            for c in value.contexts:
+                contexts.append(replace(c,config=replace(c.config,storage=replace(c.config.storage,start=0x20000000))))
+            validators.append(replace(value,contexts=tuple(contexts)))
+        if padding:
+            first=validators[0];c=first.contexts[0];local={'speed2':200,'sizes':184,'sizez':216}[mode]
+            extra=Storage(c.frame.space,'bound-'+('x'*padding),c.frame.start+local,4,4,c.phase,False)
+            validators[0]=replace(first,contexts=(replace(c,protected=c.protected+(extra,)),first.contexts[1]))
+        legacy=tuple(read_owned_access(v) for v in old['policies'][0]['owned_dependencies']) if mode=='sizez' else ()
+        policy=PlatformPolicy(0x1000000c,0x10000000+len(eav),hashlib.sha256(eav[12:]).hexdigest(),
+            hashlib.sha256(elf.data).hexdigest(),owned_dependencies=legacy+tuple(validators),owned_family=mode+'_configuration')
+        _,headroom=check_memory_layout.geometry(elf)
+        stack=qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy)
+        return elf,eav,stack
+
+    def test_actual_image_and_capture_readers_preserve_v4_with_supplied_stage_facts(self):
+        import check_memory_layout,capture_target_bench as capture
+        from unittest.mock import patch
+        from contextlib import redirect_stdout
+        from copy import deepcopy
+        import io,tempfile,subprocess,sys
+        real_run=subprocess.run
+        for mode in ('speed2','sizes','sizez'):
+            elf,eav,stack=self.image_fixture(mode);output=io.StringIO()
+            with patch.object(check_memory_layout,'ElfImage',return_value=elf),\
+                 patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
+                 patch.object(check_memory_layout,'check_flash_lockout'),redirect_stdout(output):
+                record=check_memory_layout.check('synthetic-validator.elf')
+            self.assertIn('CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false',output.getvalue())
+            self.assertEqual(check_memory_layout.read_image_result(json.loads(json.dumps(record)),elf,eav),record)
+            with tempfile.TemporaryDirectory() as directory,patch.object(capture,'ElfImage',return_value=elf):
+                path=Path(directory)/'memory-layout.json';path.write_text(json.dumps(record,sort_keys=True)+'\n')
+                self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav)['record'],record)
+                path.unlink()
+                def writer(argv,**kwargs):
+                    return real_run([sys.executable,'-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_text(sys.argv[2],encoding="utf-8")',
+                        argv[-1],json.dumps(record,sort_keys=True)+'\n'],check=kwargs['check'],timeout=10)
+                with patch.object(capture.subprocess,'run',side_effect=writer):
+                    self.assertEqual(capture.run_memory_gate(Path('synthetic-validator.elf'),Path(directory),eav)['record'],record)
+                for fault in ('lost','duplicate','context','old','hardware','width_float','nonreturn_intermediate'):
+                    bad=deepcopy(record);policy=bad['stack']['policies'][0]
+                    if fault=='lost':policy['owned_dependencies'].pop()
+                    elif fault=='duplicate':policy['owned_dependencies'].append(deepcopy(policy['owned_dependencies'][-1]))
+                    elif fault=='context':policy['owned_dependencies'][-1]['contexts'][1]=deepcopy(policy['owned_dependencies'][-1]['contexts'][0])
+                    elif fault=='old':policy.update(schema=2,scope='h2-rp2350-secure-owned-access-v3')
+                    elif fault=='hardware':bad['hardware_qualified']=True
+                    elif fault=='width_float':policy['owned_dependencies'][-1]['width']=2.0
+                    else:bad=bad['stack']
+                    path.write_text(json.dumps(bad))
+                    with self.subTest(mode=mode,fault=fault),self.assertRaises((AssertionError,ValueError)):
+                        capture.read_memory_gate(path,'synthetic-validator.elf',eav)
+
+    def test_enclosing_image_wire_bound_is_checked_after_fitting_stack_record(self):
+        import check_memory_layout
+        size=lambda value:len((json.dumps(value,sort_keys=True)+'\n').encode())
+        _,_,small=self.image_fixture('sizes',1)
+        elf,eav,stack=self.image_fixture('sizes',65500-size(small)+1)
+        self.assertEqual(size(stack),65500)
+        static,headroom=check_memory_layout.geometry(elf)
+        with self.assertRaises(AssertionError):check_memory_layout._qualified_image(stack,elf,static,headroom,eav)
 
 if __name__=='__main__':unittest.main()

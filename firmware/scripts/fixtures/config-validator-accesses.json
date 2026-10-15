@@ -1,0 +1,231 @@
+{
+  "provenance": {
+    "scope_sha256": "36881eb967833a9599cc72487f8156bb1a4bb2c8722cd100679e20c519af4dfa",
+    "candidate_sha256": "61e7d9716e92a5df2daaf111d7803b9c7d41a4d93733fda4eda2134e463861b6",
+    "limits": "Current25 reviewed operation bytes only; no producer/ownership/loop/graph proof. Y_action_pairs role supersedes candidate tentative owner under v4."
+  },
+  "instances": [
+    {
+      "role": "first_word",
+      "mode": "sizes",
+      "sites": [
+        {
+          "site": 268600730,
+          "encoding": "cdf84a10",
+          "offset": 6,
+          "outlined": false
+        },
+        {
+          "site": 268600952,
+          "encoding": "cdf84a10",
+          "offset": 6,
+          "outlined": false
+        },
+        {
+          "site": 268601188,
+          "encoding": "c0f80620",
+          "offset": 6,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "first_word",
+      "mode": "sizez",
+      "sites": [
+        {
+          "site": 268565076,
+          "encoding": "c0f80620",
+          "offset": 6,
+          "outlined": false
+        },
+        {
+          "site": 268603528,
+          "encoding": "cdf85210",
+          "offset": 6,
+          "outlined": true
+        }
+      ]
+    },
+    {
+      "role": "first_reads",
+      "mode": "speed2",
+      "sites": [
+        {
+          "site": 268660284,
+          "encoding": "ddf85630",
+          "offset": 2,
+          "outlined": false
+        },
+        {
+          "site": 268660290,
+          "encoding": "ddf85a20",
+          "offset": 6,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "result_writes",
+      "mode": "speed2",
+      "sites": [
+        {
+          "site": 268660294,
+          "encoding": "c0f80230",
+          "offset": 2,
+          "outlined": false
+        },
+        {
+          "site": 268660298,
+          "encoding": "c0f80620",
+          "offset": 6,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "control_buttons",
+      "mode": "speed2",
+      "sites": [
+        {
+          "site": 268659582,
+          "encoding": "d1f8d540",
+          "offset": 0,
+          "outlined": false
+        },
+        {
+          "site": 268659586,
+          "encoding": "d1f8d990",
+          "offset": 4,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "control_buttons",
+      "mode": "sizes",
+      "sites": [
+        {
+          "site": 268597616,
+          "encoding": "d0f8d910",
+          "offset": 4,
+          "outlined": false
+        },
+        {
+          "site": 268597620,
+          "encoding": "d0f8d500",
+          "offset": 0,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "control_buttons",
+      "mode": "sizez",
+      "sites": [
+        {
+          "site": 268561394,
+          "encoding": "d0f8d510",
+          "offset": 0,
+          "outlined": false
+        },
+        {
+          "site": 268561398,
+          "encoding": "d0f8d900",
+          "offset": 4,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "first_halfwords",
+      "mode": "speed2",
+      "sites": [
+        {
+          "site": 268658962,
+          "encoding": "adf85d10",
+          "offset": 9,
+          "outlined": false
+        },
+        {
+          "site": 268660266,
+          "encoding": "adf85d20",
+          "offset": 9,
+          "outlined": false
+        },
+        {
+          "site": 268664796,
+          "encoding": "a0f80710",
+          "offset": 7,
+          "outlined": false
+        },
+        {
+          "site": 268664884,
+          "encoding": "a0f80710",
+          "offset": 7,
+          "outlined": false
+        },
+        {
+          "site": 268665534,
+          "encoding": "a0f80710",
+          "offset": 7,
+          "outlined": false
+        },
+        {
+          "site": 268665602,
+          "encoding": "a1f80720",
+          "offset": 7,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "y_action_pairs",
+      "mode": "speed2",
+      "sites": [
+        {
+          "site": 268659342,
+          "encoding": "adf8a9c0",
+          "offset": 1,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "widget_placement",
+      "mode": "speed2",
+      "sites": [
+        {
+          "site": 268662044,
+          "encoding": "b0f8d700",
+          "offset": 215,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "widget_placement",
+      "mode": "sizes",
+      "sites": [
+        {
+          "site": 268598548,
+          "encoding": "b0f8d700",
+          "offset": 215,
+          "outlined": false
+        }
+      ]
+    },
+    {
+      "role": "widget_placement",
+      "mode": "sizez",
+      "sites": [
+        {
+          "site": 268562424,
+          "encoding": "b0f8d7a0",
+          "offset": 215,
+          "outlined": false
+        }
+      ]
+    }
+  ]
+}
