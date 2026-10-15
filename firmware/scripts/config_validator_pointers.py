@@ -139,8 +139,8 @@ must still be consumed by the enclosing producer before stack admission.
         child=Storage(q.space,q.identity+':'+label,q.start-proof['frame'],proof['frame'],8,q.phase,True)
         for live in (q,context.result.storage,context.config.storage)+context.protected:require_disjoint((child,live))
         proof.update(owned_frame=child,parent_SP_required=True,save_bytes=proof['frame'])
-    children['first_capture'].update(clobbers=('r0','r1','lr'),first_alias='r0=[Q88]',writes=((first,10,1),),parent_SP_required=True)
-    children['band_capture'].update(clobbers=('r0','r1','r2','r3','r4','lr'),first_alias='r3=[Q88]',writes=((first,10,1),),
+    children['first_capture'].update(clobbers=('r0','r1','lr','flags'),first_alias='r0=[Q88]',writes=((first,10,1),),parent_SP_required=True)
+    children['band_capture'].update(clobbers=('r0','r1','r2','r3','r4','lr','flags'),first_alias='r3=[Q88]',writes=((first,10,1),),
         requires_actual_initialized_Widget_at_Q180=True,parent_SP_required=True)
     children['placement_rect'].update(clobbers=('r1','r2','r3','lr','flags'),writes=((rect,0,10),),
         alternatives=(dict(tag=0,writes=((rect,0,2),),inactive=(2,10)),dict(tag=1,writes=((rect,0,10),))),

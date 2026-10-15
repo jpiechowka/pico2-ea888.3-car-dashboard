@@ -4509,6 +4509,17 @@ class ValidatorPointerRegions(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'foreign direct ingress'):
             validator_pointer_regions(objects,name,rows,context,call)
 
+    def test_capture_leaf_effects_invalidate_condition_predicates(self):
+        from config_validator_pointers import validator_pointer_regions
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                objects,name,rows,context,call=self.fixture(phase,shift)
+                proof=validator_pointer_regions(objects,name,rows,context,call)
+                for role,site,register in (('first_capture',0x10028930,'r1'),('band_capture',0x1002823c,'r4')):
+                    self.assertEqual((rows[site+shift].mnemonic,rows[site+shift].operands),('movs',register+', #0x0'))
+                    with self.subTest(phase=phase,shift=shift,role=role):
+                        self.assertIn('flags',proof['children'][role]['clobbers'])
+
     def test_coherent_capture_load_cannot_borrow_the_Result_spill(self):
         from config_validator_pointers import validator_pointer_regions
         for address,operation,operand,encoded in (
