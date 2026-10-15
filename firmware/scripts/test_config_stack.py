@@ -4966,4 +4966,252 @@ class ConfigurationEntryBoundary(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'active constructor value'):configuration_entry_boundary(objects,rows)
 
 
+class StartupConfigurationCopy(unittest.TestCase):
+    def fixture(self,mode='sizez',delta=0):
+        base=ConfigurationEntryBoundary()
+        objects,rows,item=base.relocated(mode,delta) if delta else base.fixture(mode);elf=objects.elf
+        part=next(v for v in json.loads((Path(__file__).parent/'fixtures/config-startup.json').read_text()) if v['mode']==mode)
+        # Synthetic metadata namespace, not a reparsed linked ELF. Reserve a
+        # real 52-byte ELF header prefix so e_entry and section bytes coexist.
+        prefix=bytes.fromhex(part['header']);elf.data=prefix+elf.data
+        elf.sections=[tuple(v+52 if i==4 else v for i,v in enumerate(s)) for s in elf.sections]
+        elf.named={name:elf.sections[item['named'][name]] for name in elf.named}
+        elf.named.update({name:elf.sections[index] for name,index in part['named'].items()})
+        raw=bytearray(elf.data)
+        for ix,address,encoded in part['segments']:
+            s=elf.sections[ix];at=s[4]+address-s[3];raw[at:at+len(bytes.fromhex(encoded))]=bytes.fromhex(encoded)
+        elf.data=bytes(raw)
+        elf.functions.update({n:tuple(v) for n,v in part['functions'].items()})
+        writable={i for i,s in enumerate(elf.sections) if s[2]&1}
+        symbols=[(n,a+(delta if ix in writable else 0),z,t,ix) for n,a,z,t,ix in part['symbol_entries']]
+        elf.symbol_entries.extend(v for v in symbols if v not in elf.symbol_entries)
+        elf.mapping_symbols.extend(tuple(v) for v in part['mapping_symbols'] if tuple(v) not in elf.mapping_symbols)
+        objects.sizes.update({int(a):v for a,v in part['sizes'].items()})
+        for v in part['records']:rows[v['address']]=Instruction(v['address'],bytes.fromhex(v['bytes']),v['mnemonic'],v['operands'])
+        if delta:
+            reset=elf.functions['Reset'][0]&~1
+            for offset,name in zip((4,6,18,20),('__sbss','__ebss','__sdata','__edata')):
+                row=rows[reset+offset];imm=int(row.operands.split('#',1)[1].split(']',1)[0],0)
+                slot=((row.address+4)&~3)+imm
+                self.put(objects,slot,struct.pack('<I',next(a for n,a,z,t,ix in elf.symbol_entries if n==name)))
+        sidata=next(a for n,a,z,t,ix in elf.symbol_entries if n=='__sidata')
+        elf.segments=[]
+        for s in elf.sections:
+            if not s[2]&2:continue
+            physical=sidata if s==elf.named['.data'] else s[3]
+            flags=4|(2 if s[2]&1 else 0)|(1 if s[2]&4 else 0)
+            elf.segments.append((1,s[4],s[3],physical,s[5] if s[1]==1 else 0,s[5],flags,s[8]))
+        return objects,rows,item
+
+    @staticmethod
+    def put(objects,address,encoded):
+        elf=objects.elf
+        sections=[s for s in elf.sections if s[1]==1 and s[3]<=address<address+len(encoded)<=s[3]+s[5]]
+        if len(sections)!=1:raise AssertionError('test write lacks unique section')
+        s=sections[0];at=s[4]+address-s[3];data=bytearray(elf.data);data[at:at+len(encoded)]=encoded;elf.data=bytes(data)
+
+    def move_source(self,objects,rows,delta):
+        elf=objects.elf;old=next(a for n,a,z,t,ix in elf.symbol_entries if n=='__sidata');new=old+delta
+        elf.symbol_entries=[(n,new if n=='__sidata' else a,z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+        elf.segments=[tuple(v+delta if i==3 and s[2]==elf.named['.data'][3] else v for i,v in enumerate(s)) for s in elf.segments]
+        reset=elf.functions['Reset'][0]&~1;row=rows[reset+22]
+        immediate=int(row.operands.split('#',1)[1].split(']',1)[0],0);slot=((row.address+4)&~3)+immediate
+        self.put(objects,slot,struct.pack('<I',new))
+
+    @staticmethod
+    def branch_link(at,target):
+        offset=target-at-4
+        if offset%2 or not -(1<<24)<=offset<(1<<24):raise AssertionError('test BL range')
+        value=offset&0x1ffffff;s=(value>>24)&1;i1=(value>>23)&1;i2=(value>>22)&1
+        return struct.pack('<HH',0xf000|(s<<10)|((value>>12)&1023),
+            0xd000|((1^i1^s)<<13)|((1^i2^s)<<11)|((value>>1)&2047))
+
+    def move_hook(self,objects,rows,address=0x10071000):
+        elf=objects.elf;old,extent,index=elf.functions['__pre_init'];old&=~1;s=elf.sections[index]
+        at=s[4]+old-s[3];code=elf.data[at:at+extent];newrows={}
+        for at,row in list(rows.items()):
+            if not old<=at<old+extent:continue
+            operand=row.operands.split('@',1)[0].split('<',1)[0].strip()
+            if row.mnemonic.startswith(('b','cb')) and row.mnemonic!='bx':
+                prefix,comma,target=operand.rpartition(', ')
+                target=int(target if comma else operand,16);self.assertTrue(old<=target<old+extent)
+                operand=(prefix+', ' if comma else '')+hex(target+address-old)
+            newrows[address+at-old]=Instruction(address+at-old,row.raw,row.mnemonic,operand);del rows[at]
+        file_at=(len(elf.data)+3)&~3;elf.data+=bytes(file_at-len(elf.data))+code;index=len(elf.sections)
+        elf.sections.append((0,1,6,address,file_at,extent,0,0,4,0))
+        elf.functions['__pre_init']=(address|1,extent,index)
+        elf.symbol_entries=[(n,address|1,z,t,index) if n=='__pre_init' else (n,a,z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+        elf.mapping_symbols.append(('$t',address,index))
+        if extent==60:elf.mapping_symbols.append(('$d',address+48,index))
+        elf.segments.append((1,file_at,address,address,extent,extent,5,4));rows.update(newrows)
+        objects.sizes[address]=objects.sizes.pop(old)
+        reset=elf.functions['Reset'][0]&~1;row=rows[reset]
+        original=int(row.operands.split('@',1)[0].split('<',1)[0].strip(),16)
+        self.assertEqual(row.raw,self.branch_link(reset,original))
+        encoded=self.branch_link(reset,address);self.put(objects,reset,encoded)
+        rows[reset]=Instruction(reset,encoded,'bl',hex(address))
+
+    def move_Reset(self,objects,rows,address=0x10070000):
+        # Independent complete code + external-pool placement. The new section
+        # is a synthetic coherent namespace; no new linked/decoded ELF claim.
+        elf=objects.elf;old=elf.functions['Reset'][0]&~1
+        start,extent,index=elf.functions['Reset'];s=elf.sections[index];file_start=s[4]+old-s[3]
+        code=bytearray(elf.data[file_start:file_start+62]);pools=[];newrows={}
+        for at,row in list(rows.items()):
+            if not old<=at<old+62:continue
+            offset=at-old;operand=row.operands.split('@',1)[0].split('<',1)[0].strip();encoded=row.raw
+            if row.mnemonic=='ldr' and '[pc,' in operand:
+                register=operand.partition(',')[0];immediate=int(operand.split('#',1)[1].split(']',1)[0],0)
+                slot=((at+4)&~3)+immediate
+                s=next(s for s in elf.sections if s[1]==1 and s[3]<=slot<slot+4<=s[3]+s[5])
+                value=elf.data[s[4]+slot-s[3]:s[4]+slot-s[3]+4];pools.append(value)
+                newslot=address+80+4*(len(pools)-1);imm=newslot-((address+offset+4)&~3)
+                encoded=struct.pack('<H',0x4800|(int(register[1:])<<8)|(imm//4))
+                operand=register+', [pc, #'+hex(imm)+']'
+            elif row.mnemonic=='bl':
+                target=int(operand,16);self.assertEqual(encoded,self.branch_link(at,target));encoded=self.branch_link(address+offset,target)
+            elif row.mnemonic.startswith('b'):
+                target=int(operand,16);self.assertTrue(old<=target<old+62);operand=hex(target+address-old)
+            code[offset:offset+len(encoded)]=encoded
+            newrows[address+offset]=Instruction(address+offset,encoded,row.mnemonic,operand)
+            del rows[at]
+        self.assertEqual(len(pools),6)
+        body=bytes(code)+bytes(18)+b''.join(pools);file_at=(len(elf.data)+3)&~3
+        elf.data+=bytes(file_at-len(elf.data))+body;index=len(elf.sections)
+        elf.sections.append((0,1,6,address,file_at,len(body),0,0,4,0))
+        elf.functions['Reset']=(address|1,62,index)
+        elf.symbol_entries=[(n,address|1,z,t,index) if n=='Reset' else (n,a,z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+        elf.mapping_symbols.extend((('$t',address,index),('$d',address+80,index)))
+        elf.segments.append((1,file_at,address,address,len(body),len(body),5,4));rows.update(newrows)
+        vector=elf.named['.vector_table'][3];self.put(objects,vector+4,struct.pack('<I',address|1))
+        data=bytearray(elf.data);struct.pack_into('<I',data,24,address|1);elf.data=bytes(data)
+
+    def test_independent_Reset_external_pool_and_data_LMA_relocations_preserve_the_bridge(self):
+        from config_startup import startup_configuration_copy
+        for mode in ('speed2','sizes','sizez'):
+            for move in ('Reset','source','RAM','hook','both','all'):
+                objects,rows,item=self.fixture(mode,0x4000 if move in ('RAM','all') else 0)
+                if move in ('hook','all'):self.move_hook(objects,rows)
+                if move in ('source','both','all'):self.move_source(objects,rows,0x100000)
+                if move in ('Reset','both','all'):self.move_Reset(objects,rows)
+                proof=startup_configuration_copy(objects,rows)
+                self.assertEqual(proof['phase'],'machine_copy_at_main_pending_application_owner')
+                self.assertTrue(proof['requires_M2_pre_init_source_reconciliation'])
+                if move in ('Reset','both','all'):
+                    self.assertEqual(proof['reset']['function'],0x10070000)
+                    self.assertEqual(proof['reset']['external_literals'][0][1],0x10070050)
+                if move in ('source','both','all'):
+                    self.assertGreaterEqual(proof['copy']['source'][0],0x10100000)
+
+    def test_copy_literals_and_complete_Reset_instructions_cannot_be_skipped_or_retargeted(self):
+        from config_startup import startup_configuration_copy
+        for fault in ('source_pool','destination_pool','changed_zero_store','changed_copy_load','skip_hook','extra_frame'):
+            objects,rows,item=self.fixture();reset=objects.elf.functions['Reset'][0]&~1
+            if fault.endswith('pool'):
+                row=rows[reset+(22 if fault=='source_pool' else 18)]
+                imm=int(row.operands.split('#',1)[1].split(']',1)[0],0);slot=((row.address+4)&~3)+imm
+                self.put(objects,slot,struct.pack('<I',0x10000000 if fault=='source_pool' else 0x20000004))
+            elif fault=='extra_frame':objects.sizes[reset]=8
+            else:
+                offset,encoded,op,args=dict(changed_zero_store=(14,'01c0','stm','r0!, {r0}'),
+                    changed_copy_load=(28,'04c9','ldm','r1!, {r2}'),skip_hook=(0,'00f000b8','b.w',hex(reset+4)))[fault]
+                at=reset+offset;self.put(objects,at,bytes.fromhex(encoded));rows[at]=Instruction(at,bytes.fromhex(encoded),op,args)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):startup_configuration_copy(objects,rows)
+
+    def test_mapping_load_vector_and_saved_stack_boundaries_are_not_caller_assertions(self):
+        from config_startup import startup_configuration_copy
+        for fault in ('pool_code','physical_alias','load_short','source_offset','source_wrap','vector','header',
+                      'pre_init_stack','data_alias','bss_alignment'):
+            objects,rows,item=self.fixture();elf=objects.elf;data=elf.named['.data']
+            if fault=='pool_code':
+                reset=elf.functions['Reset'][0]&~1;index=elf.functions['Reset'][2]
+                elf.mapping_symbols=[(n,a,ix) for n,a,ix in elf.mapping_symbols if not (ix==index and reset+62<=a<=reset+88)]
+            elif fault in ('physical_alias','load_short','source_offset','source_wrap'):
+                ix=next(i for i,s in enumerate(elf.segments) if s[2]==data[3]);segment=list(elf.segments[ix])
+                if fault=='physical_alias':elf.segments.append((1,segment[1],0x10090000,segment[3]+4,8,8,4,4))
+                elif fault=='load_short':segment[4]-=4
+                elif fault=='source_offset':segment[1]+=4
+                else:segment[3]=0xfffffff0
+                elf.segments[ix]=tuple(segment)
+            elif fault=='vector':self.put(objects,elf.named['.vector_table'][3]+4,struct.pack('<I',0x10000143))
+            elif fault=='header':
+                raw=bytearray(elf.data);struct.pack_into('<I',raw,24,0x10000143);elf.data=bytes(raw)
+            elif fault=='pre_init_stack':elf.sections.append((0,8,3,0x2007fffc,0,4,0,0,4,0))
+            elif fault=='data_alias':elf.sections.append((0,8,3,data[3]+4,0,4,0,0,4,0))
+            else:
+                elf.symbol_entries=[(n,a+2 if n=='__sbss' else a,z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):startup_configuration_copy(objects,rows)
+
+    def test_complete_hook_frame_restore_and_fixed_MMIO_literals_remain_exact(self):
+        from config_startup import startup_configuration_copy
+        for fault in ('hook_frame','hook_restore','hook_pool','Reset_bool_frame'):
+            objects,rows,item=self.fixture();elf=objects.elf;hook=elf.functions['__pre_init'][0]&~1
+            if fault=='hook_frame':objects.sizes[hook]=16
+            elif fault=='Reset_bool_frame':objects.sizes[elf.functions['Reset'][0]&~1]=False
+            elif fault=='hook_pool':self.put(objects,hook+48,struct.pack('<I',0xd0000178))
+            else:
+                # POP {r7,pc} -> BX LR: a real two-byte instruction which does
+                # not restore the eight-byte hook activation.
+                self.put(objects,hook+46,bytes.fromhex('7047'))
+                rows[hook+46]=Instruction(hook+46,bytes.fromhex('7047'),'bx','lr')
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):startup_configuration_copy(objects,rows)
+
+    def test_whole_data_destination_cannot_gain_a_second_virtual_load_outside_Config(self):
+        from config_startup import startup_configuration_copy
+        objects,rows,item=self.fixture();elf=objects.elf;data=elf.named['.data']
+        # This four-byte alias is outside Config, so the initial-value object's
+        # narrower backing check deliberately does not discharge the copy range.
+        segment=next(s for s in elf.segments if s[2]==data[3])
+        elf.segments.append((1,segment[1],data[3]+data[5]-4,0x10090000,4,4,6,4))
+        with self.assertRaisesRegex(AssertionError,'competing virtual load overlaps initialized data'):
+            startup_configuration_copy(objects,rows)
+
+    def test_main_target_and_live_initial_active_bytes_are_rechecked_by_composition(self):
+        from config_startup import startup_configuration_copy
+        from config_initial import initial_configuration
+        for fault in ('main_target','initial_cache'):
+            objects,rows,item=self.fixture();elf=objects.elf
+            if fault=='initial_cache':
+                initial=initial_configuration(objects)
+                InitialConfiguration.change(objects,initial['address'],14584,b'\x00')
+            else:
+                at=(elf.functions['Reset'][0]&~1)+56;target=elf.functions['__pre_init'][0]&~1
+                encoded=self.branch_link(at,target);self.put(objects,at,encoded)
+                rows[at]=Instruction(at,encoded,'bl',hex(target))
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):startup_configuration_copy(objects,rows)
+        objects,rows,item=self.fixture();initial=initial_configuration(objects)
+        InitialConfiguration.change(objects,initial['address'],300,b'\xa5')
+        proof=startup_configuration_copy(objects,rows)
+        self.assertEqual(proof['phase'],'machine_copy_at_main_pending_application_owner')
+        self.assertNotIn('acquired_owner',proof)
+
+    def test_foreign_semantic_direct_entries_cannot_skip_machine_copy_or_hook(self):
+        from config_startup import startup_configuration_copy
+        for phase in ('Reset','__pre_init','main'):
+            for interior in (0,2):
+                objects,rows,item=self.fixture();source=objects.elf.functions['Reset'][0]&~1
+                source=next(a for n,(a,z,ix) in objects.elf.functions.items() if 'load_at_boot' in n)&~1;source+=200
+                target=(objects.elf.functions[phase][0]&~1)+interior
+                rows[source]=Instruction(source,b'\x00\xbf','bne.w',hex(target))
+                with self.subTest(phase=phase,interior=interior),self.assertRaisesRegex(
+                        AssertionError,'foreign direct ingress bypasses startup'):
+                    startup_configuration_copy(objects,rows)
+
+    def test_current_copy_to_main_composes_the_same_once_Config_without_source_theorem(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_startup'),'missing admitted finite Reset copy bridge')
+        from config_startup import startup_configuration_copy
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,item=self.fixture(mode);proof=startup_configuration_copy(objects,rows)
+            self.assertEqual(proof['mode'],mode)
+            self.assertEqual(proof['phase'],'machine_copy_at_main_pending_application_owner')
+            self.assertEqual(proof['copy']['Config_address'],proof['entry']['initial']['address'])
+            self.assertEqual(proof['reset']['frame'],0);self.assertEqual(proof['pre_init']['frame'],8)
+            self.assertEqual(proof['copy']['step'],4)
+            self.assertEqual(proof['source_qualification'],'deprecated_Rust_pre_init_emitted_machine_only')
+            self.assertTrue(proof['requires_M2_pre_init_source_reconciliation'])
+            self.assertTrue(proof['requires_first_batch_source_alias_and_specialized_loader_closure'])
+            self.assertFalse(proof['hardware_qualified']);self.assertNotIn('acquired_owner',proof)
+
+
 if __name__=='__main__':unittest.main()
