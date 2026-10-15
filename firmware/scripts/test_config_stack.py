@@ -2158,6 +2158,169 @@ class DefaultPreparationInterfaces(unittest.TestCase):
             with self.subTest(operation=operation),self.assertRaises(AssertionError):config_default.default_preparation(objects,root,records,frame,())
 
 
+class RefillChildInterfaces(unittest.TestCase):
+    def fixture(self,mode,code_shift=0,data_shift=0):
+        objects,item=LoggerObjects.fixture(self,mode,code_shift,data_shift,fixture_file='config-refill-children.json')
+        objects.elf.mapping_symbols=[(n,a+code_shift,i) for n,a,i in item['mapping_symbols']]
+        records={};data=bytearray(objects.elf.data)
+        for row in item['records']:
+            op=row['text'].split(None,1);at=row['address']+code_shift;operand=op[1] if len(op)>1 else ''
+            if config_stack.transfer_family(op[0].removesuffix('.w')) in ('b','bl','cbz','cbnz'):
+                operand=re.sub(r'0x([0-9a-f]+)',lambda m:hex(int(m[1],16)+code_shift),operand)
+            records[at]=Instruction(at,bytes.fromhex(row['bytes']),op[0],operand)
+        def place(at,raw):
+            section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=at<at+len(raw)<=s[3]+s[5])
+            index=section[4]+at-section[3];data[index:index+len(raw)]=raw
+        for pool in item['pool_objects']:
+            target=objects.elf.sections[pool['target_section']]
+            place(pool['pool']+code_shift,struct.pack('<I',pool['value']+(code_shift if target[2]&4 else data_shift)))
+        for pair in item['mov_objects']:
+            target=objects.elf.sections[pair['target_section']];value=pair['value']+(code_shift if target[2]&4 else data_shift)
+            for site,half in ((pair['low'],value&65535),(pair['high'],value>>16)):
+                at=site+code_shift;row=records[at];first,second=struct.unpack('<HH',row.raw)
+                raw=struct.pack('<HH',(first&~0x040f)|((half>>12)&15)|((half>>1)&0x400),
+                    (second&~0x70ff)|((half&0x700)<<4)|(half&255))
+                records[at]=Instruction(at,raw,row.mnemonic,row.operands.split(',')[0]+', #'+hex(half));place(at,raw)
+        objects.elf.data=bytes(data)
+        return objects,records,item
+
+    def args(self,mode,shape):
+        import config_refill_children
+        from config_regions import Storage,borrow
+        objects,records,item=self.fixture(mode);instance=next(v for v in item['instances'] if v['shape']==shape)
+        proof=config_refill_children.child_coverage(objects,instance['name'],records,(instance['address'],'refill child','caller owed'))
+        size=proof['frame'];frame=Storage('stack:refill-child',shape,-size,size,4 if size==52 else 8,'refill',True)
+        extent=36 if shape.startswith('catalog') else 64
+        output=borrow(Storage(frame.space,'output',128,extent,4,frame.phase,True),0,extent,frame.phase,writable=True)
+        return objects,records,proof,frame,output
+
+    def test_six_complete_families_preserve_tables_lr_pools_padding_and_outline_context(self):
+        import config_refill_children
+        for mode in ('sizes','sizez'):
+            for shift,data in ((0,0),(0x2800,0x19000)):
+                objects,records,item=self.fixture(mode,shift,data)
+                for instance in item['instances']:
+                    role=instance['role'];outline=role if role.startswith('@outline:') else None
+                    proof=config_refill_children.child_coverage(objects,instance['name'],records,
+                        (instance['address']+shift,'refill child','source origin still owed'),outline)
+                    self.assertEqual(proof['shape'],instance['shape'])
+                    if outline:self.assertEqual(proof['requires_parent_frame_and_abi'],instance['shape'])
+
+    def test_definition_union_keeps_all_source_variants_paired_strings_and_inactive_payloads(self):
+        import config_refill_children
+        from config_regions import Argument
+        for mode,shape in (('sizes','catalog_definition_s'),('sizez','catalog_definition_z')):
+            objects,records,proof,frame,output=self.args(mode,shape)
+            result=config_refill_children.definition_interface(objects,records,proof,Argument('DefinitionId',None,0,8,frozenset(range(16))),output,frame,())
+            self.assertEqual(len(result['outcomes']),16)
+            self.assertEqual(result['possible_writes'],((output,0,35),))
+            disabled=result['outcomes'][0];self.assertEqual(disabled['initialized_ranges'],((0,25),(30,5)))
+            empty=disabled['strings'][2];self.assertEqual((empty['length'],empty['pointers']),(0,(1,)))
+            self.assertTrue(all(p['length']==len(bytes.fromhex(p['utf8_hex'])) for o in result['outcomes'] for p in o['strings']))
+            self.assertTrue(result['requires_actual_typed_origin_receiver_transport_and_parent_graph'])
+
+    def test_enum_kind_domain_and_full_output_save_aliases_reject(self):
+        import config_refill_children
+        from config_regions import Argument,borrow
+        from dataclasses import replace
+        objects,records,proof,frame,output=self.args('sizez','catalog_definition_z')
+        for kind,bits,domain in (('u8',8,(0,)),('DefinitionId',8,(16,)),('DefinitionId',16,(0,))):
+            with self.subTest(kind=kind,domain=domain),self.assertRaises(AssertionError):
+                config_refill_children.definition_interface(objects,records,proof,Argument(kind,None,0,bits,frozenset(domain)),output,frame,())
+        arg=Argument('DefinitionId',None,0,8,frozenset((0,)))
+        bad=borrow(replace(output.storage,start=-52),0,36,frame.phase,writable=True)
+        with self.assertRaises(AssertionError):config_refill_children.definition_interface(objects,records,proof,arg,bad,frame,())
+        with self.assertRaises(AssertionError):config_refill_children.definition_interface(objects,records,proof,arg,output,replace(frame,start=-56),())
+
+    def test_period_pairs_source_channel_with_typed_readonly_table(self):
+        import config_refill_children
+        from config_regions import Argument
+        objects,records,proof,frame,output=self.args('sizez','minimum_period_z')
+        result=config_refill_children.period_interface(objects,records,proof,Argument('Channel',None,0,8,frozenset(range(8))),frame,())
+        self.assertEqual([(o['channel'],o['period_ms']) for o in result['outcomes']],list(enumerate((500,1500,1000,1000,1000,1000,500,500))))
+        self.assertEqual(result['possible_writes'],())
+        with self.assertRaises(AssertionError):config_refill_children.period_interface(objects,records,proof,Argument('Channel',None,0,8,frozenset((8,))),frame,())
+
+    def test_advanced_output_bands_and_readout_alternatives_keep_full_copy_chain_and_store_obligation(self):
+        import config_refill_children
+        from config_regions import Argument
+        objects,records,proof,frame,output=self.args('sizez','advanced_for_channel_z')
+        result=config_refill_children.advanced_interface(objects,records,proof,Argument('Channel',None,0,8,frozenset(range(8))),
+            Argument('bool',None,0,8,frozenset((0,1))),output,frame,())
+        self.assertEqual(result['conservative_activation_frames'],(72,8,72))
+        self.assertEqual(result['physical_activation_paths'],((72,8),(72,72)))
+        self.assertTrue(result['restored_tail_storage'])
+        self.assertEqual(result['initialized_ranges'],((0,61),))
+        self.assertEqual(result['local_band_ranges'],((0,16),(16,16),(32,16)))
+        self.assertEqual({(o['channel'],o['afr'],o['readout']) for o in result['outcomes'] if o['channel']==7},{(7,0,7),(7,1,9)})
+        self.assertEqual(result['target_access_requirements'][0]['address'],output.start+57)
+        self.assertEqual(result['target_access_requirements'][0]['status'],'unresolved_object_store_policy')
+
+    def test_advanced_bool_domain_and_child_copy_or_parent_spill_context_cannot_change(self):
+        import config_refill_children
+        from config_regions import Argument
+        objects,records,proof,frame,output=self.args('sizez','advanced_for_channel_z')
+        with self.assertRaises(AssertionError):config_refill_children.advanced_interface(objects,records,proof,
+            Argument('Channel',None,0,8,frozenset((7,))),Argument('bool',None,0,8,frozenset((2,))),output,frame,())
+        objects,records,item=self.fixture('sizez');instance=next(v for v in item['instances'] if v['shape']=='refill_store_parent_word_and_advanced_false')
+        at=instance['address']+2;row=records[at];records[at]=Instruction(at,row.raw,row.mnemonic,'r0, [sp, #0x28]')
+        with self.assertRaises(AssertionError):config_refill_children.child_body(objects,instance['name'],records,instance['role'])
+        objects,records,proof,frame,output=self.args('sizez','advanced_for_channel_z');name='__aeabi_memcpy'
+        at=objects.elf.functions[name][0]&~1;row=records[at];records[at]=Instruction(at,row.raw,'push','{r4, r7, lr}')
+        with self.assertRaises(AssertionError):config_refill_children.advanced_interface(objects,records,proof,
+            Argument('Channel',None,0,8,frozenset((0,))),Argument('bool',None,0,8,frozenset((0,))),output,frame,())
+
+    def test_advanced_output_and_live_parent_guard_survive_deeper_builtin_frames(self):
+        import config_refill_children
+        from dataclasses import replace
+        from config_regions import Argument,Storage,borrow
+        channel=Argument('Channel',None,0,8,frozenset((0,)));afr=Argument('bool',None,0,8,frozenset((0,)))
+        for fault in ('output','guard'):
+            objects,records,proof,frame,output=self.args('sizez','advanced_for_channel_z');protected=()
+            if fault=='output':output=borrow(replace(output.storage,start=frame.start-64),0,64,frame.phase,writable=True)
+            else:protected=(Storage(frame.space,'retained caller object',frame.start-48,4,4,frame.phase,False),)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                config_refill_children.advanced_interface(objects,records,proof,channel,afr,output,frame,protected)
+
+    def test_catalog_table_source_bytes_and_lr_destination_remain_typed(self):
+        import config_refill_children
+        from config_refill_contracts import REFILL_GRAMMARS
+        for fault in ('table','source','lr'):
+            objects,records,item=self.fixture('sizez');instance=next(v for v in item['instances'] if v['shape']=='catalog_definition_z')
+            proof=config_refill_children.child_body(objects,instance['name'],records)
+            if fault=='lr':
+                row=next(r for a,r in records.items() if instance['address']<=a<instance['address']+772 and r.operands.startswith('lr, [pc,'))
+                records[row.address]=Instruction(row.address,row.raw,row.mnemonic,row.operands.replace('lr,','r4,',1))
+            else:
+                at=instance['address']+48 if fault=='table' else proof['objects'][0]
+                section=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=at<s[3]+s[5]);data=bytearray(objects.elf.data)
+                data[section[4]+at-section[3]]^=1;objects.elf.data=bytes(data)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):config_refill_children.child_body(objects,instance['name'],records)
+        from unittest.mock import patch
+        objects,records,item=self.fixture('sizez');instance=next(v for v in item['instances'] if v['shape']=='catalog_definition_z')
+        wrong=dict(config_refill_children.CATALOG_DISPATCH['catalog_definition_z']);wrong['target_offsets']=list(wrong['target_offsets'])
+        wrong['target_offsets'][0]=wrong['target_offsets'][1]
+        with patch.dict(config_refill_children.CATALOG_DISPATCH,{'catalog_definition_z':wrong}),self.assertRaises(AssertionError):
+            config_refill_children.child_coverage(objects,instance['name'],records,(instance['address'],'catalog','incorrect target vector'))
+
+    def test_readonly_source_ownership_rejects_partial_alias_and_overflow_and_preserves_adjacency(self):
+        import config_refill_children
+        from config_refill_contracts import REFILL_GRAMMARS
+        for fault in ('partial','overflow','adjacent'):
+            objects,records,item=self.fixture('sizez');instance=next(v for v in item['instances'] if v['shape']=='catalog_definition_z')
+            proof=config_refill_children.child_body(objects,instance['name'],records);address=proof['objects'][0]
+            descriptor=REFILL_GRAMMARS[proof['shape']]['objects'][0]
+            old=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<address+descriptor['extent']<=s[3]+s[5])
+            section=list(old)
+            if fault=='overflow':section[5]=0xffffffff;objects.elf.sections[objects.elf.sections.index(old)]=tuple(section)
+            else:
+                section[3]=address+(descriptor['extent'] if fault=='adjacent' else 2);section[5]=1
+                objects.elf.sections.append(tuple(section))
+            if fault=='adjacent':config_refill_children._object(objects,address,descriptor)
+            else:
+                with self.subTest(fault=fault),self.assertRaises(AssertionError):config_refill_children._object(objects,address,descriptor)
+
+
 class AbstractCanonicalInterfaces(unittest.TestCase):
     def compare(self):
         import config_abstract,config_abstract_compare

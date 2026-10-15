@@ -94,7 +94,7 @@ def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,
     require(covered==data,'unbound payload mapped data bytes')
     pool_reads=set()
     for row in rows:
-        actual=row.operands.split('@',1)[0].strip();match=re.fullmatch(r'r[0-9]+, \[pc, #(0x[0-9a-f]+|[0-9]+)\]',actual)
+        actual=row.operands.split('@',1)[0].strip();match=re.fullmatch(r'(?:r[0-9]+|lr), \[pc, #(0x[0-9a-f]+|[0-9]+)\]',actual)
         if match and window is None:
             pool=((row.address+4)&~3)+int(match[1],0)
             require(row.mnemonic.startswith('ldr') and
