@@ -7130,4 +7130,29 @@ class ActualDecodedU16Prefix(unittest.TestCase):
         self.assertTrue(all(v['frontier']==0x1001c68a for v in exits))
 
 
+    def test_unselected_fallthrough_cannot_bypass_second_field_success_guard(self):
+        from config_build_source import validate_source_context
+        site=0x1001c698;target=0x100289f0
+        # Manually encoded Thumb32 NOP, BNE.W and BL, not new decoder output.
+        # BNE T3: cond1/imm6=0xc/imm11=0x1aa -> same outline target.
+        cases=((bytes.fromhex('aff30080'),'nop.w',''),
+            (bytes.fromhex('4cf0aa81'),'bne.w',hex(target)),
+            (StartupConfigurationCopy.branch_link(site,target),'bl',hex(target)))
+        for raw,operation,operands in cases:
+            objects,rows,context,item=self.fixture();old=rows[site]
+            self.assertEqual((old.raw,old.mnemonic),(bytes.fromhex('0cf0aab9'),'b.w'))
+            self.assertEqual(self.consume(objects,rows,context)['phase'],
+                'first_boot_decoded_u16_prefix_pending_remaining_visitor_canonical_and_loader_routes')
+            # The mutation replaces actual image bytes and their record. It
+            # must be rejected after a valid current-source rebind, not for a
+            # stale ELF hash, stale listing, or altered selected-store bytes.
+            original=objects.elf.data;StartupConfigurationCopy.put(objects,site,raw)
+            rows[site]=Instruction(site,raw,operation,operands)
+            self.assertEqual(objects.read_only(site,4),raw);self.assertNotEqual(objects.elf.data,original)
+            current=SameBLoaderBoundary.rebound(objects,context);validate_source_context(current,objects.elf)
+            with self.subTest(operation=operation),self.assertRaisesRegex(AssertionError,
+                '^unselected fallthrough enters decoded selected window$'):
+                self.consume(objects,rows,current)
+
+
 if __name__=='__main__':unittest.main()

@@ -146,6 +146,16 @@ def _selected_control(objects,rows,boundary,headers,regions,outer,helpers):
         name=_name(objects,role);a=objects.elf.functions[name][0]&~1;extent=objects.elf.functions[name][1];parents.append((a,a+extent))
     for at,row in rows.items():
         if at in selected:continue
+        # Reconcile incoming sequential edges too, including a conditional
+        # branch/return's not-taken path and any ordinary call's return path.
+        # This does not execute the unselected suffix or prove its effects.
+        following=at+len(row.raw)
+        if any(a<=following<b for a,b in ranges):
+            require(len(row.raw) in (2,4) and objects.read_only(at,len(row.raw))==row.raw,
+                'decoded ingress predecessor current bytes/width differ')
+            family,conditional=_control(row)
+            require(not conditional and family in ('b','bx','return','tbb','tbh'),
+                'unselected fallthrough enters decoded selected window')
         within=any(a<=at<b for a,b in parents)
         if within:
             family,conditional=_control(row)
