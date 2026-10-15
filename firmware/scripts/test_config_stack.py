@@ -4414,4 +4414,55 @@ class ValidatorResultBoundary(unittest.TestCase):
                         self.assertTrue(result['requires_complete_typed_Config_and_exclusive_Result_owner'])
 
 
+class ValidatorLocalWrites(unittest.TestCase):
+    def test_fixed_local_envelope_preserves_unique_capture_and_result_pointer_spill(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_validator_writes'),
+            'missing grouped current validator local-write proof')
+        from config_validator_writes import validator_local_writes
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                objects,name,rows,context,call=ValidatorResultBoundary().fixture(phase,shift)
+                result=validator_local_writes(objects,name,rows,context,call)
+                self.assertEqual(len(result['local_writes']),128)
+                self.assertEqual(len(result['unresolved_pointer_writes']),56)
+                self.assertEqual(result['spill_writers'],((0x1001ea76+shift,60,64),))
+                self.assertEqual(result['capture_writers'],((0x1001ea3e+shift,88,92),))
+                self.assertTrue(all(0<=start<end<=216 for site,start,end in result['local_ranges']))
+                self.assertTrue(result['requires_all_child_SP_R7_and_pointer_effects'])
+
+    def test_local_base_map_rejects_load_outputs_aliasing_SP_or_second_R7(self):
+        from config_validator_writes import validator_local_writes
+        for operation,operand in (('ldr.w','sp, [sp, #0x4]'),('ldrd','r0, r7, [r7, #4]')):
+            objects,name,rows,context,call=ValidatorResultBoundary().fixture();parent=objects.elf.functions[name][0]&~1
+            at=next(a for a,row in sorted(rows.items()) if parent+450<=a<parent+4478 and not parent+928<=a<parent+942 and len(row.raw)==4 and row.mnemonic==operation)
+            row=rows[at];rows[at]=Instruction(at,row.raw,operation,operand)
+            with self.subTest(operation=operation),self.assertRaises(AssertionError):
+                validator_local_writes(objects,name,rows,context,call)
+
+    def test_coherent_stack_stores_cannot_overwrite_saves_capture_or_spill(self):
+        from config_validator_writes import validator_local_writes
+        for destination in (216,60,88):
+            objects,name,rows,context,call=ValidatorResultBoundary().fixture();parent=objects.elf.functions[name][0]&~1
+            at=next(a for a,row in sorted(rows.items()) if parent+88<=a<parent+304 and row.mnemonic=='str' and
+                len(row.raw)==2 and '[sp' in row.operands)
+            encoded=struct.pack('<H',0x9000|(destination//4));row=Instruction(at,encoded,'str','r0, [sp, #'+hex(destination)+']')
+            s=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=at<s[3]+s[5]);offset=s[4]+at-s[3]
+            raw=bytearray(objects.elf.data);raw[offset:offset+2]=encoded;objects.elf.data=bytes(raw);rows[at]=row
+            self.assertEqual(objects.read_only(at,2),row.raw)
+            with self.subTest(destination=destination),self.assertRaisesRegex(AssertionError,'escapes locals|overwrites its exclusive'):
+                validator_local_writes(objects,name,rows,context,call)
+
+    def test_unknown_effect_alignment_and_base_writeback_are_not_opaque_arithmetic(self):
+        from config_validator_writes import validator_local_writes
+        cases=(('str','r0, [sp, #0x1]'),('str','r0, [sp], #0x4'),('strt','r0, [sp, #0x4]'),
+            ('mov','r13, r0'),('push','{r0}'),('str','r0, [r7, #-216]!'))
+        for operation,operand in cases:
+            objects,name,rows,context,call=ValidatorResultBoundary().fixture();parent=objects.elf.functions[name][0]&~1
+            at=next(a for a,row in sorted(rows.items()) if parent+88<=a<parent+304 and row.mnemonic=='str')
+            rows[at]=Instruction(at,rows[at].raw,operation,operand)
+            with self.subTest(operation=operation,operand=operand),self.assertRaises(AssertionError):
+                validator_local_writes(objects,name,rows,context,call)
+
+
 if __name__=='__main__':unittest.main()
