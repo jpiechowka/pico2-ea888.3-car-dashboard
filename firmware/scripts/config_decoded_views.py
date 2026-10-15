@@ -21,7 +21,7 @@ from config_refill_children import opaque_copy_interface
 from config_regions import Storage,borrow,require_writes,require_disjoint,_control
 from config_stack import canonical_symbol
 from config_utf8 import UTF8Slice,from_utf8_interface,utf8_body,UTF8
-from config_views_contracts import GRAMMARS,ROLES,SHARED_PENDING
+from config_views_contracts import GRAMMARS,ROLES,SHARED_PENDING,PENDING_VARINT_TRANSPORT
 from validation import require
 
 _CUSTOM={v:k for k,v in ROLES.items() if v.startswith('@outline:')}
@@ -384,6 +384,33 @@ def _closure(objects,rows,context,parents,children):
     # Selected local successors plus every child return are closed before any
     # outside context is classified. Exact later entry sites grant no state.
     return_nodes=_child_returns(rows,context,parents,children)
+    def pending_call(current,expected):
+        """Current typed identity only; no later invocation is activated."""
+        require(current.mnemonic=='bl','foreign Views shared-error call family differs')
+        target=_direct_target(current,'bl')
+        if expected in ('bl @child:tag','bl @child:varint_u32'):
+            role=ROLES['outline92_current_varint_tag' if expected=='bl @child:tag' else 'varint_u32']
+            matches=[p for p in children.values() if p['role']==role]
+            require(len(matches)==1 and target==matches[0]['function'],
+                'foreign Views shared-error ordinary target differs')
+        elif expected=='bl @pending:f32_seed':
+            role=HELPER_SEMANTIC_ROLES['deserialize_seed_f32'];name=_name(objects,role)
+            wanted=objects.elf.functions[name][0]&~1
+            _helper_function(objects,wanted,role)
+            require(target==wanted,'foreign Views shared-error ordinary target differs')
+        else:
+            require(expected=='bl @pending:varint_from_r8','unreviewed pending Views call identity')
+            names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target]
+            require(len(names)==1 and re.fullmatch(r'OUTLINED_FUNCTION_[0-9]+',names[0]),
+                'pending Views varint transport lacks its exact outline origin')
+            def no_object(*args):require(False,'unexpected pending Views transport object')
+            proof=_complete_body(objects,names[0],rows,'@pending:varint_from_r8','pending_varint_from_r8',
+                PENDING_VARINT_TRANSPORT,no_object,_outline,function_consumer=_helper_function)
+            varint=[p for p in children.values() if p['role']==ROLES['varint_u32']]
+            require(len(varint)==1 and len(proof['ordinary_edges'])==1 and
+                proof['ordinary_edges'][0][2]==varint[0]['function'],
+                'pending Views varint transport selects another current child')
+        return expected
     intervals=tuple((p['function'],p['function']+p['extent']) for p in proofs)
     complete={p['function'] for p in [context.outer['proof'],*context.helpers.values(),*children.values()]}
     entry={R:context.boundary['history']['preclaim']['startup']['entry']['once']['success']['tail'],V:R+126}
@@ -410,7 +437,8 @@ def _closure(objects,rows,context,parents,children):
                     require(current is not None and len(current.raw)==width and objects.read_only(current.address,width)==current.raw,
                         'foreign Views context has stale or missing bytes')
                     actual=current.mnemonic+' '+current.operands.split('@',1)[0].split('<',1)[0].strip()
-                    actual=re.sub(r'0x([0-9a-f]+)',lambda m:'@parent+'+format(int(m[1],16)-V,'x') if V<=int(m[1],16)<V+7128 else m[0],actual)
+                    if text.startswith(('bl @child:','bl @pending:')):actual=pending_call(current,text)
+                    else:actual=re.sub(r'0x([0-9a-f]+)',lambda m:'@parent+'+format(int(m[1],16)-V,'x') if V<=int(m[1],16)<V+7128 else m[0],actual)
                     require(actual==text,'foreign Views shared-error predecessor differs')
                 pending.append((at,target,'unvisited later invocation; no state/return/owner'))
     # Full ROOT/Visitor computed/implicit audit uses their actual declared

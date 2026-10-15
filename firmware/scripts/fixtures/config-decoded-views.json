@@ -289,6 +289,35 @@
           3
         ]
       ]
+    },
+    {
+      "address": 268603620,
+      "extent": 6,
+      "frame": 0,
+      "aliases": [
+        [
+          "OUTLINED_FUNCTION_320",
+          268603621,
+          6,
+          3
+        ]
+      ],
+      "mapping": [
+        [
+          "$t",
+          268603620,
+          3
+        ]
+      ],
+      "symbols": [
+        [
+          "OUTLINED_FUNCTION_320",
+          268603621,
+          6,
+          2,
+          3
+        ]
+      ]
     }
   ],
   "segments": [
@@ -335,6 +364,10 @@
     [
       268602494,
       "0b460092011d7047"
+    ],
+    [
+      268603620,
+      "4146f2f7e3bb"
     ]
   ],
   "records": [
@@ -3025,6 +3058,18 @@
       "bytes": "7047",
       "mnemonic": "bx",
       "operands": "lr"
+    },
+    {
+      "address": 268603620,
+      "bytes": "4146",
+      "mnemonic": "mov",
+      "operands": "r1, r8"
+    },
+    {
+      "address": 268603622,
+      "bytes": "f2f7e3bb",
+      "mnemonic": "b.w",
+      "operands": "0x1001b8b0"
     }
   ]
 }

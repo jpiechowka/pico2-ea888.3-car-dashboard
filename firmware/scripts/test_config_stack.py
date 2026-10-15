@@ -7311,7 +7311,7 @@ class ActualDecodedViews(unittest.TestCase):
         # neither an address anchor nor the destination grants context/state.
         objects,rows,context,item=self.fixture();site=V+420;old=rows[site]
         raw=bytes.fromhex('aff30080');StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'nop.w','')
-        with self.assertRaisesRegex(AssertionError,'foreign Views shared-error predecessor'):
+        with self.assertRaisesRegex(AssertionError,'^foreign Views shared-error call family differs$'):
             self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
 
     def test_coherent_group_store_and_child_return_mutations_reject_for_ABI(self):
@@ -7369,6 +7369,29 @@ class ActualDecodedViews(unittest.TestCase):
             self.assertTrue({8,14}<={v['error'] for v in result['group_errors']})
 
 
+    def test_pending_tag_and_varint_current_targets_relocate_independently(self):
+        from config_helpers import HELPER_SEMANTIC_ROLES
+        for role in ('OUTLINED_FUNCTION_92',HELPER_SEMANTIC_ROLES['take_varint_u32'],
+            'OUTLINED_FUNCTION_320',HELPER_SEMANTIC_ROLES['deserialize_seed_f32']):
+            with self.subTest(role=role):
+                objects,rows,context,item=self.fixture()
+                self.move_function(objects,rows,role,0x10071000)
+                result=self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+                self.assertEqual(len(result['control']['outside_shared_contexts']),43)
+                self.assertFalse(result['control']['pending_contexts_confer_state'])
+                self.assertEqual(result['Widget_ready']['frontier'],0x1001c654+416)
+
+
+    def test_pending_relocated_tag_and_varint_wrong_targets_reject(self):
+        from config_helpers import HELPER_SEMANTIC_ROLES
+        for role,offset in (('OUTLINED_FUNCTION_92',420),(HELPER_SEMANTIC_ROLES['take_varint_u32'],416)):
+            objects,rows,context,item=self.fixture();old,new=self.move_function(objects,rows,role,0x10071000)
+            site=0x1001c654+offset;raw=StartupConfigurationCopy.branch_link(site,old)
+            StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'bl',hex(old))
+            with self.subTest(role=role),self.assertRaisesRegex(AssertionError,'^foreign Views shared-error ordinary target differs$'):
+                self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,context))
+
+
 class SourceBoundUTF8(unittest.TestCase):
     def fixture(self,raw=b'hello',residue=0):
         from config_abstract import Span
@@ -7418,6 +7441,38 @@ class SourceBoundUTF8(unittest.TestCase):
             elif kind=='frame_alias':frame=Storage(frame.space,'bad child',output.start,24,8,frame.phase,True)
             else:frame=Storage('stack:other','hidden same address',output.start,24,8,frame.phase,True)
             with self.subTest(kind=kind),self.assertRaises(AssertionError):self.consume(objects,rows,source,output,frame)
+
+
+    def edge_fixture(self,address,extent,offset,length):
+        from config_abstract import Span
+        from config_regions import Storage,borrow
+        from config_utf8 import UTF8Slice
+        objects,rows,source,output,frame=self.fixture(b'x'*extent)
+        i=next(i for i,s in enumerate(objects.elf.sections) if s[3]==source.payload.start)
+        section=objects.elf.sections[i];objects.elf.sections[i]=section[:3]+(address,)+section[4:]
+        owner=Storage('address','edge immutable initialized bytes',address,extent,1,frame.phase,False)
+        return objects,rows,lambda:UTF8Slice(borrow(owner,0,extent,frame.phase),Span(*offset),Span(*length)),output,frame
+
+    def test_unrepresentable_pointer_and_endpoint_reject_at_shared_adapter(self):
+        cases=((0xffffffff,1,(1,1),(0,0)),(0xffffffff,1,(0,0),(1,1)),
+            (0xfffffffc,4,(0,4),(0,0)))
+        for address,extent,offset,length in cases:
+            objects,rows,source,output,frame=self.edge_fixture(address,extent,offset,length)
+            with self.subTest(address=hex(address),offset=offset,length=length),self.assertRaisesRegex(AssertionError,'UTF8.*(pointer|endpoint)'):
+                self.consume(objects,rows,source(),output,frame)
+
+    def test_adjacent_empty_and_dependent_upper_domains_remain_representable(self):
+        for address,extent,offset,length in ((0xfffffffe,1,(1,1),(0,0)),
+            (0xffffffff,1,(0,0),(0,0)),(0xfffffffe,2,(0,0),(0,1)),
+            (0xfffffffe,1,(0,0),(1,1)),(0xfffffff8,7,(0,7),(0,7))):
+            objects,rows,make,output,frame=self.edge_fixture(address,extent,offset,length);source=make()
+            with self.subTest(address=hex(address),offset=offset,length=length):
+                result=self.consume(objects,rows,source,output,frame)
+                self.assertEqual(result['success']['source'],source)
+                self.assertEqual(bool(result['errors']),bool(length[1]))
+                # The last domain has impossible independent corner(7,7),
+                # but every dependent p/n pair ends at or before0xffffffff.
+                self.assertLess(source.payload.start+min(extent,offset[1]+length[1]),0x100000000)
 
 
 class BoundedParentTargets(unittest.TestCase):

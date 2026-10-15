@@ -37,6 +37,13 @@ class UTF8Slice:
             self.offset.upper+self.length.lower<=self.payload.extent and
             self.offset.lower+self.length.upper<=self.payload.extent,
             'UTF8 lacks a bounded initialized nonnull paired slice')
+        # Each offset is feasible with length.lower. The largest dependent
+        # endpoint is clipped by the allocation, not the impossible product
+        # corner offset.upper+length.upper. Empty one-past pointers also have
+        # to fit the actual32-bit Result word without wrapping to null.
+        require(0<self.payload.start+self.offset.lower<=self.payload.start+self.offset.upper<0x100000000 and
+            self.payload.start+min(self.payload.extent,self.offset.upper+self.length.upper)<0x100000000,
+            'UTF8 derived pointer or endpoint is not representable without wrapping')
 
 
 def _widths(objects,address,descriptor):
