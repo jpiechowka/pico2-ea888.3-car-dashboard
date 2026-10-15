@@ -8,6 +8,7 @@ Only the pinned emitted scalar/result ABIs below are supported. This is not an
 instruction evaluator, general postcard implementation or Config validator.
 """
 from dataclasses import dataclass,replace
+import hashlib
 from config_structural import _image_hash,_readonly_hash
 import struct
 from config_helpers import helper_body,helper_coverage,helper_frame,HELPER_SEMANTIC_ROLES
@@ -114,7 +115,7 @@ def decode_effect(objects,instructions,proof,state,frame,ancestor_protected,*,ou
     if semantic=='deserialize_seed_f32':
         require(isinstance(platform_policy,PlatformPolicy) and
                 (platform_policy.input_start,platform_policy.input_end)==(state.payload.start,state.payload.start+state.payload.extent) and
-                platform_policy.input_sha256==_readonly_hash(objects,state.payload.start,state.payload.extent) and
+                platform_policy.input_sha256==hashlib.sha256(payload).hexdigest() and
                 platform_policy.elf_sha256==_image_hash(objects),
                 'f32 decoder lost its current conditional platform/input prerequisite')
     else:require(platform_policy is None,'non-f32 decoder acquired an unrelated platform prerequisite')

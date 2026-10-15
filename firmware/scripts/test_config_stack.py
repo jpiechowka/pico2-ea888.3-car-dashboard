@@ -7715,6 +7715,57 @@ class ActualDecodedWidgets(unittest.TestCase):
         self.assertNotIn('acquired_owner',description)
 
 
+class WidgetPayloadBinding(unittest.TestCase):
+    @staticmethod
+    def fixture(provider='ordinary',changed_first=False):
+        from config_decode_effects import decode_effect
+        from config_platform import reviewed_eav_policy,TARGET,BOOT_CONTEXT
+        from config_structural import _detached_inputs
+        from config_regions import Storage,borrow
+        args=list(OrdinaryDecodeEffects().fixture('deserialize_seed_f32',bytes.fromhex('0100c07f')))
+        original=args[0];payload=args[3].payload
+        policy=reviewed_eav_policy(original,payload,dict(target=TARGET,core=0,security='secure',boot_context=BOOT_CONTEXT),contradictory_effects=())
+        if provider=='custom':
+            class ChangingObjects(config_stack.DiagnosticObjects):
+                payload_reads=0
+                def read_only(self,address,length):
+                    raw=super().read_only(address,length)
+                    if (address,length)==(payload.start,payload.extent):
+                        self.payload_reads+=1
+                        if changed_first and self.payload_reads==1:return bytes.fromhex('78563412')
+                    return raw
+            args[0]=ChangingObjects(original.elf,original.sizes)
+        elif provider=='detached':args[:2]=_detached_inputs(original,args[1])
+        frame=args[4];owner=Storage(frame.space,'R8',144,8,4,frame.phase,True)
+        output=borrow(owner,0,8,frame.phase,True)
+        return args,policy,output
+
+    def test_custom_changed_first_valid_second_payload_cannot_authenticate_consumed_bits(self):
+        from config_decode_effects import decode_effect
+        args,policy,output=self.fixture('custom',changed_first=True)
+        # Image/policy B remains unchanged. The first consumed buffer is A;
+        # the provider would return B on a second payload read. Only A's
+        # digest may authenticate the bits/output derived from that buffer.
+        with self.assertRaisesRegex(AssertionError,'f32 decoder lost.*input prerequisite'):
+            decode_effect(*args,output=output,platform_policy=policy)
+        self.assertEqual(args[0].payload_reads,1)
+
+    def test_stable_ordinary_custom_and_detached_payloads_keep_exact_bits_and_writes(self):
+        from config_decode_effects import decode_effect
+        expected=None
+        for provider in ('ordinary','custom','detached'):
+            args,policy,output=self.fixture(provider)
+            result=decode_effect(*args,output=output,platform_policy=policy)
+            with self.subTest(provider=provider):
+                self.assertEqual((result['value'],result['state'].cursor,result['platform_policy']),(0x7fc00001,4,policy))
+                self.assertEqual(result['input_reads'],((args[3].payload.start,4),))
+                self.assertEqual(tuple((offset,raw) for view,offset,raw in result['writes'] if view==output),
+                    ((4,bytes.fromhex('0100c07f')),(0,b'\0')))
+                if expected is None:expected=result
+                else:self.assertEqual(result,expected)
+                if provider=='custom':self.assertEqual(args[0].payload_reads,1)
+
+
 class WidgetStructuralInputs(unittest.TestCase):
     def test_detached_structural_proofs_are_current_immutable_and_not_output_aliases(self):
         from config_structural import _detached_inputs
