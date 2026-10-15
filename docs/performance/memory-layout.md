@@ -23,7 +23,7 @@ unchanged Core0/Core1 stack reserves of 8192/4096 bytes. Both guards apply;
 the linker assertion itself remains 32 KiB. `scripts/check_memory_layout.py` reads the actual ELF sections and
 symbols, checks all allocated RAM against those boundaries, and confirms the
 boot footer stays in FLASH. The check failed on the original diagnostic ELF
-and passes after the fix. CI runs it on nine target matrix entries, covering stock, traced Demo/Vehicle,
+and passes after the fix. CI runs it on twelve target matrix entries, covering stock, traced Demo/Vehicle,
 280/70, legacy overclocks and serial/full-outline variants; the exact matrix
 is in `.github/workflows/ci.yml`.
 
@@ -33,6 +33,27 @@ Reproduce from `firmware` with `CARGO_PROFILE_RELEASE_STRIP=none`:
 cargo build --locked -p dashboard-pico2 --release
 python scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
 ```
+
+Captures also freeze an explicit `source-context.json` before the image gate.
+It contains the two captured Boot/private Config source members, bound to the
+frozen ELF, capture attempt and exact build-options bytes. To check that input
+alongside the image gates, pass it explicitly:
+
+```text
+python scripts/check_memory_layout.py <capture>/pico2.elf --source-context <capture>/source-context.json --result-json <new-result.json>
+```
+
+The existing command without this option retains its source-independent
+behavior. The checker never searches beside the ELF or reads current checkout
+source as a fallback. Each source member is limited to 65536 UTF-8 bytes and
+the separate context to 262144 bytes; the memory-result limit stays 65536.
+The memory JSON contains no source text and is not self-contained source-history
+or ownership evidence. Consumers claiming the source check need the explicit
+context and its compact identity from the capture manifest. This establishes
+recorded source pairing and the selected source semantics, not complete
+compiler-consumed-input provenance, Config ownership or hardware qualification.
+The remaining source/alias/diagnostic/loader graph and Maintenance M2 startup
+qualification still apply.
 
 The trace plus 300 MHz diagnostic build used 373264 bytes of static RAM and
 left 151024 bytes before the core 0 stack top. These numbers vary with features

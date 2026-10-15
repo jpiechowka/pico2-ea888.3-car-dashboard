@@ -19,11 +19,12 @@ from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler
 from source_inventory import shared_inputs
 from elf_image import ElfImage
 from check_memory_layout import read_image_result
+from config_build_source import make_source_context,write_source_context,load_source_context,inspect_source_context
 
 CUSTOM_KEYS = ('DASHBOARD_CPU_HZ', 'DASHBOARD_SPI_HZ', 'DASHBOARD_VSEL_MV')
 
 
-def read_memory_gate(path,frozen,config_bytes):
+def read_memory_gate(path,frozen,config_bytes,source_context=None):
     """Retain a full successful image result, bound to this immutable input."""
     with path.open('rb') as stream:raw=stream.read(65537)
     if len(raw)>65536:raise ValueError('oversized image gate result')
@@ -34,16 +35,24 @@ def read_memory_gate(path,frozen,config_bytes):
             result[key]=value
         return result
     record=json.loads(raw,object_pairs_hook=unique)
-    checked=read_image_result(record,ElfImage(frozen),config_bytes)
+    checked=read_image_result(record,ElfImage(frozen),config_bytes,source_context=source_context)
     return dict(record=checked,sha256=hashlib.sha256(raw).hexdigest())
 
 
-def run_memory_gate(frozen,destination,config_bytes):
+def run_memory_gate(frozen,destination,config_bytes,source_context=None,source_context_path=None):
     path=destination/'memory-layout.json'
     if path.exists():raise ValueError('image result path already exists')
-    subprocess.run([sys.executable,'scripts/check_memory_layout.py',str(frozen),
-                    '--result-json',str(path.resolve())],cwd=FIRMWARE,check=True)
-    return read_memory_gate(path,frozen,config_bytes)
+    if (source_context is None)!=(source_context_path is None):
+        raise ValueError('explicit source context and its owned path must be supplied together')
+    command=[sys.executable,'scripts/check_memory_layout.py',str(frozen)]
+    if source_context is not None:
+        current=load_source_context(source_context_path,ElfImage(frozen),destination.name,source_context.build_options)
+        if current!=source_context:raise ValueError('source sidecar differs from the owned attempt')
+        inspect_source_context(current,ElfImage(frozen))
+        command.extend(['--source-context',str(source_context_path.resolve())])
+    command.extend(['--result-json',str(path.resolve())])
+    subprocess.run(command,cwd=FIRMWARE,check=True)
+    return read_memory_gate(path,frozen,config_bytes,source_context)
 
 
 def check_clock_environment(environment):
@@ -359,7 +368,13 @@ def main():
     frozen=destination/'pico2.elf'
     elf_bytes=elf.read_bytes()
     frozen.write_bytes(elf_bytes)
-    memory_evidence=run_memory_gate(frozen,destination,config_bytes)
+    source_context=make_source_context(elf_bytes,destination.name,attempt_bytes,before)
+    source_context_path=destination/'source-context.json'
+    write_source_context(source_context_path,source_context)
+    source_context_bytes=source_context_path.read_bytes()
+    source_context_record=dict(path='source-context.json',sha256=hashlib.sha256(source_context_bytes).hexdigest(),
+                               binding=source_context.binding())
+    memory_evidence=run_memory_gate(frozen,destination,config_bytes,source_context,source_context_path)
     for flags in [[], ['-O']]:
         subprocess.run([sys.executable,*flags,'scripts/test_flash_lockout.py',str(frozen)],cwd=FIRMWARE,check=True)
     if before!=inputs() or config!=configuration() or (rustc,version)!=compiler(FIRMWARE):
@@ -373,12 +388,16 @@ def main():
         raise ValueError('immutable build attempt changed during capture')
     if clock_evidence != generated_clock(build.stdout,destination/'build',firmware_package(build.stdout),options):
         raise ValueError('clock generation changed during capture')
-    if memory_evidence!=read_memory_gate(destination/'memory-layout.json',frozen,config_bytes):
+    if (destination/'build-options.json').read_bytes()!=attempt_bytes or source_context_path.read_bytes()!=source_context_bytes or load_source_context(
+            source_context_path,ElfImage(frozen),destination.name,attempt_bytes)!=source_context:
+        raise ValueError('captured source sidecar changed during the gate')
+    if memory_evidence!=read_memory_gate(destination/'memory-layout.json',frozen,config_bytes,source_context):
         raise ValueError('conditional image result changed during capture')
     (destination/'clock_profile.rs').write_bytes(clock_evidence['source'])
     (destination/'clock_profile.json').write_bytes(clock_evidence['metadata'])
     with zipfile.ZipFile(destination/'source.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,content in before.items(): archive.writestr(name,content)
+        archive.writestr('build-config/source-context.json',source_context_bytes)
         archive.writestr('build-config/dashboard.eav', config_bytes)
         archive.writestr('build-config/build-options.json', attempt_bytes)
         archive.writestr('build-config/clock_profile.rs',clock_evidence['source'])
@@ -393,7 +412,8 @@ def main():
                 options_command=options_command,build_options=options,
                 build_options_sha256=hashlib.sha256(attempt_bytes).hexdigest(),
                 generated_clock={k:v for k,v in clock_evidence.items() if k not in ('source','metadata')},
-                dashboard_config=config_record,memory_layout=memory_evidence['record'],
+                dashboard_config=config_record,source_context=source_context_record,
+                memory_layout=memory_evidence['record'],
                 memory_layout_json_sha256=memory_evidence['sha256'],
                 sha256=hashes,elf_sha256=hashlib.sha256(elf_bytes).hexdigest())
     (destination/'manifest.json').write_text(json.dumps(record,indent=2)+'\n',encoding='utf-8')

@@ -244,7 +244,10 @@ def constructor_frames(functions, sizes):
     return sum(sizes[address] for address in matches)
 
 
-def check(elf, headroom):
+def check(elf, headroom, source_context=None):
+    if source_context is not None:
+        from config_build_source import inspect_source_context
+        inspect_source_context(source_context,elf)
     require('.stack_sizes' in elf.named, 'build with -Z emit-stack-sizes')
     section = elf.named['.stack_sizes']
     require(section[1] == 1 and not section[2] & 2, 'stack metadata must not be allocated')

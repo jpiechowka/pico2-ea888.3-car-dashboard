@@ -194,6 +194,49 @@ class MemoryQualification(unittest.TestCase):
         elf.data+=b'changed'
         with self.assertRaises(AssertionError):check_memory_layout.read_image_result(result,elf,eav)
 
+    def source_context(self,elf):
+        from config_build_source import SOURCE_PATHS,make_source_context
+        root=Path(__file__).resolve().parents[2]
+        return make_source_context(elf.data,'supplied-source-fixture',b'{}',
+            {name:(root/name).read_bytes() for name in SOURCE_PATHS})
+
+    def test_explicit_source_context_flows_through_memory_stack_and_result_reader(self):
+        elf,eav,stack=self.fixture();value=self.source_context(elf)
+        with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(
+                check_memory_layout,'check_stack_budget',return_value=stack) as child,patch.object(check_memory_layout,'check_flash_lockout'):
+            record=check_memory_layout.check('supplied.elf',source_context=value)
+        child.assert_called_once_with(elf,0x7fe00,source_context=value)
+        self.assertEqual(check_memory_layout.read_image_result(record,elf,eav,source_context=value),record)
+        self.assertNotIn('source_context',record)  # unchanged memory schema
+        from dataclasses import replace
+        wrong=replace(value,elf_sha256='0'*64)
+        with self.assertRaisesRegex(AssertionError,'different current ELF'):
+            check_memory_layout.read_image_result(record,elf,eav,source_context=wrong)
+        import check_stack_budget
+        with self.assertRaisesRegex(AssertionError,'different current ELF'):
+            check_stack_budget.check(elf,0x7fe00,source_context=wrong)
+        # Source-independent existing routes are retained, but this JSON
+        # alone is not represented as source-history or ownership evidence.
+        self.assertEqual(check_memory_layout.read_image_result(record,elf,eav),record)
+
+    def test_CLI_requires_explicit_source_path_and_rejects_bad_pair_before_output(self):
+        from config_build_source import write_source_context
+        from dataclasses import replace
+        elf,eav,stack=self.fixture();value=self.source_context(elf)
+        for explicit,bad in ((True,False),(True,True),(False,True)):
+            with self.subTest(explicit=explicit,bad=bad),tempfile.TemporaryDirectory() as folder:
+                source=Path(folder)/'source-context.json';output=Path(folder)/'memory.json'
+                write_source_context(source,replace(value,elf_sha256='0'*64) if bad else value)
+                args=['fixture.elf','--result-json',str(output)]
+                if explicit:args+=['--source-context',str(source)]
+                with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(
+                        check_memory_layout,'check_stack_budget',return_value=stack),patch.object(check_memory_layout,'check_flash_lockout'):
+                    if explicit and bad:
+                        with self.assertRaises(AssertionError):check_memory_layout.main(args)
+                        self.assertFalse(output.exists())
+                    else:
+                        check_memory_layout.main(args);self.assertEqual(json.loads(output.read_bytes())['gate'],'full_memory_layout')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from elf_image import ElfImage
 from validation import require
+from config_build_source import inspect_source_context,load_source_context
 from check_flash_lockout import check as check_flash_lockout
 from check_stack_budget import check as check_stack_budget
 from config_platform import current_image_policy,read_stack_result,_bounded_record
@@ -42,7 +43,8 @@ def geometry(elf):
     return aligned_end-ram_start,ram_end-aligned_end
 
 
-def _qualified_image(stack,elf,static_ram,headroom,expected_eav=None):
+def _qualified_image(stack,elf,static_ram,headroom,expected_eav=None,source_context=None):
+    if source_context is not None:inspect_source_context(source_context,elf)
     require(isinstance(stack,dict) and isinstance(stack.get('policies'),list) and len(stack['policies'])==1,
             'full image gate has no retained stack policy')
     policy=current_image_policy(stack['policies'][0],elf,expected_eav)
@@ -52,11 +54,17 @@ def _qualified_image(stack,elf,static_ram,headroom,expected_eav=None):
         elf_sha256=hashlib.sha256(elf.data).hexdigest(),static_ram_bytes=static_ram,headroom=headroom,stack=checked))
 
 
-def read_image_result(record,elf,expected_eav=None):
-    """Validate a full-gate record, never an intermediate stack-only result."""
+def read_image_result(record,elf,expected_eav=None,source_context=None):
+    """Validate the unchanged full-gate image record.
+
+    Explicit source context is separate recorded-pairing evidence. This image
+    JSON alone is not self-contained source-history or ownership evidence.
+    Source-independent existing callers retain their prior behavior; any
+    caller claiming source history must supply and consume the context.
+    """
     require(isinstance(record,dict) and isinstance(record.get('stack'),dict),'missing full image gate result')
     static_ram,headroom=geometry(elf)
-    wanted=_qualified_image(record['stack'],elf,static_ram,headroom,expected_eav)
+    wanted=_qualified_image(record['stack'],elf,static_ram,headroom,expected_eav,source_context)
     require(set(record)==set(wanted) and type(record.get('schema')) is int and
             type(record.get('static_ram_bytes')) is int and type(record.get('headroom')) is int and
             record.get('hardware_qualified') is False and record==wanted,
@@ -64,12 +72,13 @@ def read_image_result(record,elf,expected_eav=None):
     return wanted
 
 
-def check(path):
+def check(path,source_context=None):
     elf = ElfImage(path)
+    if source_context is not None:inspect_source_context(source_context,elf)
     sections,named,symbols=elf.sections,elf.named,elf.symbols
     ram_start,ram_end=0x20000000,0x20080000
     static_ram,headroom=geometry(elf)
-    stack=check_stack_budget(elf,headroom)
+    stack=check_stack_budget(elf,headroom,source_context=source_context) if source_context is not None else check_stack_budget(elf,headroom)
     flash_start, journal_start = 0x10000000, 0x101FE000
     require(flash_start <= named[".end_block"][3] < journal_start, "boot info outside program flash")
     # Physical LOAD addresses include the flash copy of RAM .data/ram_func.
@@ -83,7 +92,7 @@ def check(path):
     for name, addr in handlers.items():
         require(ram_start <= (addr & ~1) < ram_end, f"lockout handler executes outside RAM: {name} at {addr:#x}")
     check_flash_lockout(elf)
-    result=_qualified_image(stack,elf,static_ram,headroom)
+    result=_qualified_image(stack,elf,static_ram,headroom,source_context=source_context)
     print(f"static RAM {static_ram} B; core 0 headroom {headroom} B; boundaries verified; "
           "CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false")
     return result
@@ -92,9 +101,11 @@ def check(path):
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf');parser.add_argument('--result-json',type=Path)
+    parser.add_argument('--source-context',type=Path,help='explicit captured source input; never discovered beside ELF')
     args=parser.parse_args(argv)
     if args.result_json is not None:require(not args.result_json.exists(),'image result path already exists')
-    result=check(args.elf)
+    source_context=load_source_context(args.source_context,ElfImage(args.elf)) if args.source_context is not None else None
+    result=check(args.elf,source_context=source_context) if source_context is not None else check(args.elf)
     # No record is created before the complete gate returns successfully.
     if args.result_json is not None:
         with args.result_json.open('x',encoding='utf-8',newline='\n') as stream:json.dump(result,stream,sort_keys=True);stream.write('\n')

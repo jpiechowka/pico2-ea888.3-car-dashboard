@@ -5579,4 +5579,168 @@ class PreclaimConfigurationPreservation(unittest.TestCase):
             with self.subTest(fault=fault),self.assertRaises(AssertionError):preclaim_configuration_preservation(objects,rows)
 
 
+class FirstBootSourceContract(unittest.TestCase):
+    def sources(self):
+        # Source-only supplied fixtures. Acceptance here does not establish
+        # any relationship to an ELF or a compiler-consumed input set.
+        root=Path(__file__).resolve().parents[1]/'pico2'/'src'
+        return {name:(root/name).read_bytes() for name in ('main.rs','view_config.rs')}
+
+    def test_exact_current_private_module_and_synchronous_boot_contract(self):
+        from config_boot_source import first_boot_source_contract
+        proof=first_boot_source_contract(self.sources())
+        self.assertEqual(proof['kind'],'first_boot_source_semantics_only')
+        self.assertEqual(proof['ordered_boot_operations'],('initialize','enqueue_Dashboard'))
+        self.assertEqual(proof['Config_visibility'],'private_static_single_take_immutable_return')
+        self.assertTrue(proof['requires_checked_build_source_ELF_binding'])
+        self.assertTrue(proof['requires_actual_machine_and_first_batch_composition'])
+        self.assertNotIn('acquired_owner',proof)
+
+    def test_private_module_cannot_add_an_escape_or_mutable_return(self):
+        from config_boot_source import first_boot_source_contract
+        for old,new in (('static CONFIGURATION:','pub static CONFIGURATION:'),
+            ("-> &'static BootConfig","-> &'static mut BootConfig"),
+            ('CONFIGURATION.take().load_at_boot(EMBEDDED)','CONFIGURATION.take().load_at_boot(other())'),
+            ('#[inline(never)]','#[inline(always)]')):
+            documents=self.sources();text=documents['view_config.rs'].decode();self.assertIn(old,text)
+            documents['view_config.rs']=text.replace(old,new).encode()
+            with self.subTest(change=new),self.assertRaises(AssertionError):first_boot_source_contract(documents)
+        for extra in ('pub fn leak() { CONFIGURATION.take(); }','pub use CONFIGURATION as EXPOSED;',
+                      'mod extra;','#[cfg(feature="other")] fn initialize() {}'):
+            documents=self.sources();documents['view_config.rs']+=extra.encode()
+            with self.subTest(extra=extra),self.assertRaises(AssertionError):first_boot_source_contract(documents)
+
+    def test_boot_body_cannot_escape_spawn_poll_or_reorder_before_initialize(self):
+        from config_boot_source import first_boot_source_contract
+        original='let configuration = view_config::initialize();'
+        for change in ('let configuration = view_config::initialize().await;',
+                       'publish(spawner); '+original,'poll_some_task(); '+original,
+                       'let configuration = other::initialize();',
+                       'spawner.spawn(other_task().unwrap()); '+original):
+            documents=self.sources();text=documents['main.rs'].decode();self.assertIn(original,text)
+            documents['main.rs']=text.replace(original,change).encode()
+            with self.subTest(change=change),self.assertRaises(AssertionError):first_boot_source_contract(documents)
+
+    def test_alternate_or_redirected_source_declarations_are_not_ignored(self):
+        from config_boot_source import first_boot_source_contract
+        for old,new in (('mod view_config;','#[path="other.rs"] mod view_config;'),
+                        ('mod view_config;','pub mod view_config;'),
+                        ('#[embassy_executor::main]','#[cfg(feature="other")] #[embassy_executor::main]'),
+                        ('#[embassy_executor::main]','#[embassy_executor::main(pool_size=2)]'),
+                        ('use embassy_executor::{Executor, Spawner};','use other::{Executor, Spawner};')):
+            documents=self.sources();text=documents['main.rs'].decode();self.assertIn(old,text)
+            documents['main.rs']=text.replace(old,new).encode()
+            with self.subTest(change=new),self.assertRaises(AssertionError):first_boot_source_contract(documents)
+        documents=self.sources();documents['main.rs']+=b'\n#[cfg(feature="other")] fn main() {}'
+        with self.assertRaises(AssertionError):first_boot_source_contract(documents)
+
+    def test_nested_declarations_cannot_borrow_top_level_source_identity(self):
+        from config_boot_source import first_boot_source_contract
+        for target in ('module','boot_main','executor_import'):
+            documents=self.sources();main=documents['main.rs'].decode()
+            if target=='module':main=main.replace('mod view_config;',
+                'mod hidden { const X: u8=0; mod view_config; } use hidden::view_config;')
+            elif target=='executor_import':main=main.replace('use embassy_executor::{Executor, Spawner};',
+                'mod hidden { const X: u8=0; use embassy_executor::{Executor, Spawner}; } use hidden::*;')
+            else:
+                begin=main.index('#[embassy_executor::main]');end=main.index('\n}',begin)+2
+                main=main[:begin]+'mod hidden { const X: u8=0; '+main[begin:end]+' }'+main[end:]
+            documents['main.rs']=main.encode()
+            with self.subTest(target=target),self.assertRaises(AssertionError):first_boot_source_contract(documents)
+
+    def test_comments_whitespace_and_literal_contents_have_distinct_semantics(self):
+        from config_boot_source import first_boot_source_contract
+        documents=self.sources()
+        documents={name:raw.replace(b'\r\n',b'\n').replace(b'let configuration',b'// no call or owner\n let configuration') for name,raw in documents.items()}
+        self.assertEqual(first_boot_source_contract(documents)['ordered_boot_operations'],('initialize','enqueue_Dashboard'))
+        documents=self.sources();documents['view_config.rs']=documents['view_config.rs'].replace(b'"/dashboard.eav"',b'"/other.eav"')
+        with self.assertRaises(AssertionError):first_boot_source_contract(documents)
+        for value in ({},dict(self.sources(),extra=b'ignored'),dict(self.sources(),**{'main.rs':'text'})):
+            with self.subTest(value=tuple(value)),self.assertRaises(AssertionError):first_boot_source_contract(value)
+
+
+class BuildSourceContextInput(unittest.TestCase):
+    def context(self):
+        from config_build_source import make_source_context
+        sources=FirstBootSourceContract().sources()
+        before={'firmware/pico2/src/'+name:raw for name,raw in sources.items()}
+        return make_source_context(b'ELF fixture','fixture-attempt',b'{"optimization":"z"}',before)
+
+    def test_strict_roundtrip_binds_exact_ELF_attempt_options_and_source_bytes(self):
+        from config_build_source import parse_source_context,validate_source_context
+        value=self.context();raw=value.to_bytes();elf=SimpleNamespace(data=b'ELF fixture')
+        checked=parse_source_context(raw,elf,'fixture-attempt',b'{"optimization":"z"}')
+        self.assertEqual(checked,value)
+        self.assertEqual(validate_source_context(checked,elf).documents(),FirstBootSourceContract().sources())
+        self.assertNotIn('source_success',checked.to_record())
+        for attempt,options,blob in (('other',b'{"optimization":"z"}',b'ELF fixture'),
+            ('fixture-attempt',b'{ "optimization":"z"}',b'ELF fixture'),
+            ('fixture-attempt',b'{"optimization":"z"}',b'other ELF')):
+            with self.subTest(attempt=attempt,options=options),self.assertRaises(AssertionError):
+                parse_source_context(raw,SimpleNamespace(data=blob),attempt,options)
+
+    def test_missing_extra_duplicate_and_wrong_type_or_hash_records_reject(self):
+        from config_build_source import parse_source_context
+        value=self.context();record=value.to_record();elf=SimpleNamespace(data=b'ELF fixture')
+        for change in ('schema_bool','extra','missing','elf','options_hash','source_hash','source_length',
+                       'source_float','extra_source','duplicate_source','source_type','kind','attempt'):
+            bad=json.loads(json.dumps(record))
+            if change=='schema_bool':bad['schema']=True
+            elif change=='extra':bad['owner']=True
+            elif change=='missing':del bad['sources']
+            elif change=='elf':bad['elf_sha256']='0'*64
+            elif change=='options_hash':bad['build_options']['sha256']='0'*64
+            elif change=='source_hash':bad['sources'][0]['sha256']='0'*64
+            elif change=='source_length':bad['sources'][0]['length']+=1
+            elif change=='source_float':bad['sources'][0]['length']=float(bad['sources'][0]['length'])
+            elif change=='extra_source':bad['sources'].append(dict(bad['sources'][0],path='other.rs'))
+            elif change=='duplicate_source':bad['sources'][1]=bad['sources'][0]
+            elif change=='source_type':bad['sources'][0]['utf8']=[]
+            elif change=='kind':bad['kind']='proved_source_owner'
+            else:bad['attempt']='../other'
+            with self.subTest(change=change),self.assertRaises(AssertionError):
+                parse_source_context(json.dumps(bad).encode(),elf)
+        raw=value.to_bytes();dup=raw.replace(b'"schema":1',b'"schema":1,"schema":1')
+        self.assertNotEqual(raw,dup)
+        with self.assertRaises(AssertionError):parse_source_context(dup,elf)
+        with self.assertRaises(AssertionError):parse_source_context(b'\xff',elf)
+        with self.assertRaises(AssertionError):parse_source_context(None,elf)
+
+    def test_exact_source_and_serialized_input_caps_are_independent_of_memory_results(self):
+        from config_build_source import make_source_context,parse_source_context
+        before={'firmware/pico2/src/main.rs':b' '*65536,'firmware/pico2/src/view_config.rs':b'v'}
+        value=make_source_context(b'ELF fixture','fixture',b'{}',before)
+        raw=value.to_bytes();elf=SimpleNamespace(data=b'ELF fixture')
+        self.assertEqual(len(parse_source_context(raw,elf).documents()['main.rs']),65536)
+        padded=raw+b' '*(262144-len(raw))
+        self.assertEqual(parse_source_context(padded,elf),value)
+        with self.assertRaises(AssertionError):parse_source_context(padded+b' ',elf)
+        before['firmware/pico2/src/main.rs']+=b' '
+        with self.assertRaises(AssertionError):make_source_context(b'ELF fixture','fixture',b'{}',before)
+        before['firmware/pico2/src/main.rs']=b'\xff'
+        with self.assertRaises(AssertionError):make_source_context(b'ELF fixture','fixture',b'{}',before)
+
+    def test_source_semantics_are_recomputed_not_supplied_by_the_context(self):
+        from config_build_source import inspect_source_context,make_source_context
+        value=self.context();elf=SimpleNamespace(data=b'ELF fixture')
+        self.assertEqual(inspect_source_context(value,elf)['kind'],'first_boot_source_semantics_only')
+        before={'firmware/pico2/src/'+name:raw for name,raw in value.documents().items()}
+        before['firmware/pico2/src/view_config.rs']+=b' pub fn leak() { CONFIGURATION.take(); }'
+        bad=make_source_context(elf.data,'fixture-attempt',value.build_options,before)
+        with self.assertRaises(AssertionError):inspect_source_context(bad,elf)
+        with self.assertRaises(AssertionError):inspect_source_context(value.to_record(),elf)
+        with self.assertRaises(AssertionError):inspect_source_context(None,elf)
+
+    def test_exclusive_sidecar_read_has_no_implicit_checkout_or_adjacent_fallback(self):
+        import tempfile
+        from config_build_source import write_source_context,load_source_context
+        value=self.context();elf=SimpleNamespace(data=b'ELF fixture')
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'sources.json'
+            with self.assertRaises(FileNotFoundError):load_source_context(path,elf)
+            write_source_context(path,value)
+            self.assertEqual(load_source_context(path,elf,'fixture-attempt',value.build_options),value)
+            with self.assertRaises(FileExistsError):write_source_context(path,value)
+
+
 if __name__=='__main__':unittest.main()
