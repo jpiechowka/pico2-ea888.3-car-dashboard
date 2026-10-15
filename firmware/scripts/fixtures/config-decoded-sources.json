@@ -1,0 +1,5263 @@
+{
+  "provenance": {
+    "elf": "firmware\\target\\bench-captures\\helper-task2-demo-stock-sizez-fixedpad9\\pico2.elf",
+    "elf_sha256": "55070b3fefd8092588abfe4d7e47515b1aa8cb55b034c07e2e9835dd41a31520",
+    "sketch_sha256": "c3319095dd4be780a7e0d3776982eb35cd28a04d92cc645a8713c1e17a630ed0",
+    "scope": "Selected admitted Source fixture bytes/rows only; no semantic proof or new decoder"
+  },
+  "functions": [
+    {
+      "address": 268551764,
+      "extent": 7128,
+      "frame": 1608,
+      "aliases": [
+        [
+          "_RINvXs_NtCshxbT6mSCLYQ_16dashboard_config15decode_in_placeNtB5_10ConfigSeedNtNtCsaZE6Mx8XMRU_10serde_core2de7Visitor9visit_seqINtNtNtCsi4xenv6KiXo_8postcard2de12deserializer9SeqAccessNtNtB25_7flavors5SliceEEB7_",
+          268551765,
+          7128,
+          3
+        ]
+      ],
+      "symbols": [
+        [
+          "_RINvXs_NtCshxbT6mSCLYQ_16dashboard_config15decode_in_placeNtB5_10ConfigSeedNtNtCsaZE6Mx8XMRU_10serde_core2de7Visitor9visit_seqINtNtNtCsi4xenv6KiXo_8postcard2de12deserializer9SeqAccessNtNtB25_7flavors5SliceEEB7_",
+          268551765,
+          7128,
+          2,
+          3
+        ]
+      ],
+      "mapping": [
+        [
+          "$t",
+          268551764,
+          3
+        ],
+        [
+          "$d",
+          268555272,
+          3
+        ],
+        [
+          "$t",
+          268555280,
+          3
+        ],
+        [
+          "$d",
+          268557620,
+          3
+        ],
+        [
+          "$t",
+          268557624,
+          3
+        ],
+        [
+          "$d",
+          268558888,
+          3
+        ]
+      ]
+    },
+    {
+      "address": 268547328,
+      "extent": 754,
+      "frame": 72,
+      "aliases": [
+        [
+          "_RINvYINtNtNtCsi4xenv6KiXo_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaZE6Mx8XMRU_10serde_core2de9SeqAccess12next_elementNtNtCshxbT6mSCLYQ_16dashboard_config5model13ChannelSourceEB2j_",
+          268547329,
+          754,
+          3
+        ]
+      ],
+      "symbols": [
+        [
+          "_RINvYINtNtNtCsi4xenv6KiXo_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaZE6Mx8XMRU_10serde_core2de9SeqAccess12next_elementNtNtCshxbT6mSCLYQ_16dashboard_config5model13ChannelSourceEB2j_",
+          268547329,
+          754,
+          2,
+          3
+        ]
+      ],
+      "mapping": [
+        [
+          "$t",
+          268547328,
+          3
+        ],
+        [
+          "$d",
+          268547406,
+          3
+        ],
+        [
+          "$t",
+          268547412,
+          3
+        ]
+      ]
+    },
+    {
+      "address": 268602774,
+      "extent": 8,
+      "frame": 0,
+      "aliases": [
+        [
+          "OUTLINED_FUNCTION_242",
+          268602775,
+          8,
+          3
+        ]
+      ],
+      "symbols": [
+        [
+          "OUTLINED_FUNCTION_242",
+          268602775,
+          8,
+          2,
+          3
+        ]
+      ],
+      "mapping": [
+        [
+          "$t",
+          268602774,
+          3
+        ]
+      ]
+    },
+    {
+      "address": 268600962,
+      "extent": 6,
+      "frame": 0,
+      "aliases": [
+        [
+          "OUTLINED_FUNCTION_75",
+          268600963,
+          6,
+          3
+        ]
+      ],
+      "symbols": [
+        [
+          "OUTLINED_FUNCTION_75",
+          268600963,
+          6,
+          2,
+          3
+        ]
+      ],
+      "mapping": [
+        [
+          "$t",
+          268600962,
+          3
+        ]
+      ]
+    },
+    {
+      "address": 268602180,
+      "extent": 8,
+      "frame": 0,
+      "aliases": [
+        [
+          "OUTLINED_FUNCTION_183",
+          268602181,
+          8,
+          3
+        ]
+      ],
+      "symbols": [
+        [
+          "OUTLINED_FUNCTION_183",
+          268602181,
+          8,
+          2,
+          3
+        ]
+      ],
+      "mapping": [
+        [
+          "$t",
+          268602180,
+          3
+        ]
+      ]
+    }
+  ],
+  "segments": [
+    [
+      268551904,
+      "9df82954d2e7"
+    ],
+    [
+      268551934,
+      "0e25c4e7"
+    ],
+    [
+      268556140,
+      "fdf7c8febdf868240bf0e6f9479240f0f9809df86a54fef783bf"
+    ],
+    [
+      268556174,
+      "0df23c51a7f18c0c78c9624678c20b888978917013800df5a561acaa91e8790090a979c20df2145090e87c000df5a0607cc190e87c00a7f1a0010df2ec407cc190e87c00a7f1b4010df59b607cc190e87c00a7f1c8010df2c4407cc190e87c00a7f1dc010df596607cc190e87c00a7f1f0017cc1479802283ef47aaf6da9bce83c000df5d0780df5bc7a0df5a87b0df5947908463cc0bcf8002002809cf80220ddf8e0c0827040469ce87c007cc0ddf8e4c063a89ce87c007cc0ddf8f4c050469ce87c007cc0ddf8e8c059a89ce87c007cc0ddf8f0c058469ce87c007cc0ddf8ecc04fa89ce87c007cc0ddf8f8c048469ce87c007cc0dff8a0691322379886f822004798308406f123000bf026fe4598f08606f1380098e83e003ec063a914224498a6f84c0006f14e000bf016fe4398a6f8620006f164009ae83e003ec059a914224298a6f8780006f17a000bf005fe4198a6f88e0006f190009be83e003ec04fa914224098a6f8a40006f1a6000bf0f4fd3f98a6f8ba0006f1bc0099e83e003ec0469800283ef4f3ae489c0df585602146fa94fdf7c5ff0af025ff12d0ddf82c1401200125012903d0002940f022830025fb900df585600bf00bfa0af013ff40f09e809df829144ff00070c9b240ea010500f04071b1f1007f3bd1f248054041e0479802283ef4c3aea7f1640181a8fdf7bffdbdf804220bf0ddf8459203d19df80652fef77bbe459802283ef4b0aea7f164019da8fdf7acfdbdf874220bf0caf8449203d19df87652fef768be449802283ef49daea7f16401baa8fdf799fdbdf8e8220bf0b7f8439246d19df8ea52fef755beb5f1007f3ef48aae000ed149fe2888bf0d4005f04070b0f1007f3ef446aedff82408c0f8d050469801283ef477ae46982146023849900df58560fdf748ff0af0a8fe3ef45caeddf82c0402283ef666ae002800f0d880012840f03d810120faa9cde9fa400df58560fef73df80af02fff00f03c81ddf82c64002808bf0e2600f0f8820325c0e0439802283ef447aea7f16401dca8fdf743fdbdf870230bf061f8429222d19df87253fef7ffbdddf82c64012e00f27582faa8fdf7aafe0af027fc18bf00f07f4111444fea11413ff452afc00700f06582adf828148df82a54bdf82904000240ea066046e7429802283ef415aea7f16401eba8fdf711fdbdf8ac230bf02ff8419203d19df8ae53fef7cdbd419802283ef402aea7f16401faa8fdf7fefcbdf8e8230bf01cf8409203d19df8ea53fef7babd409802283ef4efada7f164010df58560fdf7eafcbdf828240bf008f83f9203d19df82a54fef7a6bd3f9802283ef4dbad81a8142200f102089da802303390baa802303490dca800f10209eba8841cfaa8023035900df58560811cc9a832900bf0b7fc9df86a04a7f17805f11c1322379028460bf0adfc0df54f7a4146142250460bf0a6fc0df5327b3399142258460bf09ffc349996a8142233900bf099fc7aa84946142234900bf093fc0df593682146142240460bf08cfc0df55679359914220bf06afa4798022879d1379dfef752bd0225dff83c16300e4c77c871300a0df5856481f81c9081ed028a81ed039a81ed04aa81ed05ba81ed060a0e710d60a1f8050048a92046fdf787febdf828049df82a5402283ef42eadc0073ef464adbdf82c049df82b14dff8e83543f6be02985245ea012043f6bc015852"
+    ],
+    [
+      268557496,
+      "0820faa9cde9fa400df58560fdf700ff0af0f2fd34d19df82c54fef7dbbc4ecd0df23c504ec029880180a97881700df5a5609ae86e006ec09be86e000df214506ec0339c0df5a06094e86e006ec0349c0df2ec4094e86e006ec098e86e000df59b606ec099e86e000df2c4406ec0329e0df5966096e83e003ec02ce5"
+    ],
+    [
+      268557624,
+      "01287ef4e0acfb9d002d3ef4dcacddf8e8830df5806090ed0b8a0df585600bf0c5f90af00bfd3ef4bfacddf82c0401281fd000287ef4c7ac4ff000091be0"
+    ],
+    [
+      268557738,
+      "4ff00109012d3ef4a5ac0df585600bf094f90af0dafc3ef48eacddf82c04012868d000287ef496ac002464e0"
+    ],
+    [
+      268557982,
+      "0124022d3ef42cace81e4146fb900df58560fdf7fefc0af05efc3ef412acddf82c546db1012d7ef41bac0df585604146fdf718fe0af04ffc3ef403acddf82c640df58560faa9fdf7f0fd0af0e2fc3ff4efae01287ef404ac0df58060faa990ed0b9a0df58560fdf7e0fd0af0d2fc3ff4dfae01287ef4f4ab0df58060faa990ed0baa0df58560fdf7d0fd0af0c2fc3ff4cfae01287ef4e4ab0df58060faa990ed0bba0df58560fdf7c0fd0af0b2fc3ff4bfae00283ef4d4ab0df5806090ed0b0a44e6"
+    ],
+    [
+      268558210,
+      "0e21e7e4"
+    ],
+    [
+      268558420,
+      "3546fef719bb"
+    ],
+    [
+      268557620,
+      "ff000002"
+    ],
+    [
+      268558888,
+      "1c030020"
+    ],
+    [
+      268547328,
+      "f0b503af2de9000f89b00df035fe34d00d680138486007a82946049500f0c8f90df039fc00f09a80ddf82090b9f10f0f00f2a38007a80df058fa0df02cfc00f08d80089e052e00f29880dfe806f07603344a1857012607a8cde9075600f0d6f9c0f30721c207c0b28a4608bf4ff00e0a022808bf8a4692b35fe0022074e00220cde9075007a800f034f90cf0b1fe18bf00f07f4111444fea114a0ad0c00700f0208107a800f025f981b2022939d14fea104aff263de00120cde9075007a800f018f90cf095fe18bf00f07f4111444fea11418a4618bf4ff00e0ac00710d1d0463ee00220cde9075007a800f08ff9c1b2c0f3072a022906d1ff2611e005261ce00391022619e0c00700f0ee8007a800f07df981b20a0ac1b2022971d1ff26924608e0c10700f0dd804ff6ff710426884350440390ff2ed04612d007a80df0d5f90df0a9fb0ad0ddf820b0bbf10b0f14d807a80df0caf90df09efb09d19df81d804ff6ff7084f80280208009b00df009b8ddf82080b8f1030f02d94ff00e08efe707a80df0b2f90df086fbe7d008980228f3d8d0b301283bd10220cdf80080cde9075007a800f0a5f80cf022fe18bf00f07f4111444fea1148d2d0c007ddd007a800f097f80cf014fe18bf00f07f4111444fea114163d0c007cfd0adf81a10adf818809df81b00bdf8191041ea00405ffa88f1ddf8008041ea0020029001200ae0c007039270d0032694e70290002002e0002002900220019001202946059007a800f0c6f80df037fb08d19df81d10002008444ff6ff7560f3174518e0089888b1012854d1284600f06df8010cc20718bf010a4ff47f4202ea104018bf0020e7d1012200e0024650fa81f042ea0045a9b24ff6ff70814202d14fea154870e7022900913ff47aaf04a800f033f80cf0b0fd18bf00f07f4111444fea114101d188465ee7c0073ff469af009b42464fea1548022b3ff455af039884f8149084f813b0a274218284f80ba0a67284f802802380e0600298c4f806000198a080280ee07043e74ff00e0ae4e64ff00e0a04e70e219de7"
+    ],
+    [
+      268602774,
+      "9df81c0001287047"
+    ],
+    [
+      268600962,
+      "bde8000ff0bd"
+    ],
+    [
+      268602180,
+      "4ff6ff7082427047"
+    ]
+  ],
+  "readonly": [],
+  "records": [
+    {
+      "address": 268551904,
+      "bytes": "9df82954",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x429]"
+    },
+    {
+      "address": 268551908,
+      "bytes": "d2e7",
+      "mnemonic": "b",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x5c"
+    },
+    {
+      "address": 268551934,
+      "bytes": "0e25",
+      "mnemonic": "movs",
+      "operands": "r5, #0xe"
+    },
+    {
+      "address": 268551936,
+      "bytes": "c4e7",
+      "mnemonic": "b",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x78"
+    },
+    {
+      "address": 268556140,
+      "bytes": "fdf7c8fe",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x2270"
+    },
+    {
+      "address": 268556144,
+      "bytes": "bdf86824",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x468]"
+    },
+    {
+      "address": 268556148,
+      "bytes": "0bf0e6f9",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb3cc"
+    },
+    {
+      "address": 268556152,
+      "bytes": "4792",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0x11c]"
+    },
+    {
+      "address": 268556154,
+      "bytes": "40f0f980",
+      "mnemonic": "bne.w",
+      "operands": "0x1001d970 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x131c> @ imm = #0x1f2"
+    },
+    {
+      "address": 268556158,
+      "bytes": "9df86a54",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x46a]"
+    },
+    {
+      "address": 268556162,
+      "bytes": "fef783bf",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x10fa"
+    },
+    {
+      "address": 268556174,
+      "bytes": "0df23c51",
+      "mnemonic": "addw",
+      "operands": "r1, sp, #0x53c"
+    },
+    {
+      "address": 268556178,
+      "bytes": "a7f18c0c",
+      "mnemonic": "sub.w",
+      "operands": "r12, r7, #0x8c"
+    },
+    {
+      "address": 268556182,
+      "bytes": "78c9",
+      "mnemonic": "ldm",
+      "operands": "r1!, {r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556184,
+      "bytes": "6246",
+      "mnemonic": "mov",
+      "operands": "r2, r12"
+    },
+    {
+      "address": 268556186,
+      "bytes": "78c2",
+      "mnemonic": "stm",
+      "operands": "r2!, {r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556188,
+      "bytes": "0b88",
+      "mnemonic": "ldrh",
+      "operands": "r3, [r1]"
+    },
+    {
+      "address": 268556190,
+      "bytes": "8978",
+      "mnemonic": "ldrb",
+      "operands": "r1, [r1, #0x2]"
+    },
+    {
+      "address": 268556192,
+      "bytes": "9170",
+      "mnemonic": "strb",
+      "operands": "r1, [r2, #0x2]"
+    },
+    {
+      "address": 268556194,
+      "bytes": "1380",
+      "mnemonic": "strh",
+      "operands": "r3, [r2]"
+    },
+    {
+      "address": 268556196,
+      "bytes": "0df5a561",
+      "mnemonic": "add.w",
+      "operands": "r1, sp, #0x528"
+    },
+    {
+      "address": 268556200,
+      "bytes": "acaa",
+      "mnemonic": "add",
+      "operands": "r2, sp, #0x2b0"
+    },
+    {
+      "address": 268556202,
+      "bytes": "91e87900",
+      "mnemonic": "ldm.w",
+      "operands": "r1, {r0, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556206,
+      "bytes": "90a9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x240"
+    },
+    {
+      "address": 268556208,
+      "bytes": "79c2",
+      "mnemonic": "stm",
+      "operands": "r2!, {r0, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556210,
+      "bytes": "0df21450",
+      "mnemonic": "addw",
+      "operands": "r0, sp, #0x514"
+    },
+    {
+      "address": 268556214,
+      "bytes": "90e87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r0, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556218,
+      "bytes": "0df5a060",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x500"
+    },
+    {
+      "address": 268556222,
+      "bytes": "7cc1",
+      "mnemonic": "stm",
+      "operands": "r1!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556224,
+      "bytes": "90e87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r0, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556228,
+      "bytes": "a7f1a001",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0xa0"
+    },
+    {
+      "address": 268556232,
+      "bytes": "0df2ec40",
+      "mnemonic": "addw",
+      "operands": "r0, sp, #0x4ec"
+    },
+    {
+      "address": 268556236,
+      "bytes": "7cc1",
+      "mnemonic": "stm",
+      "operands": "r1!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556238,
+      "bytes": "90e87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r0, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556242,
+      "bytes": "a7f1b401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0xb4"
+    },
+    {
+      "address": 268556246,
+      "bytes": "0df59b60",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x4d8"
+    },
+    {
+      "address": 268556250,
+      "bytes": "7cc1",
+      "mnemonic": "stm",
+      "operands": "r1!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556252,
+      "bytes": "90e87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r0, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556256,
+      "bytes": "a7f1c801",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0xc8"
+    },
+    {
+      "address": 268556260,
+      "bytes": "0df2c440",
+      "mnemonic": "addw",
+      "operands": "r0, sp, #0x4c4"
+    },
+    {
+      "address": 268556264,
+      "bytes": "7cc1",
+      "mnemonic": "stm",
+      "operands": "r1!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556266,
+      "bytes": "90e87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r0, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556270,
+      "bytes": "a7f1dc01",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0xdc"
+    },
+    {
+      "address": 268556274,
+      "bytes": "0df59660",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x4b0"
+    },
+    {
+      "address": 268556278,
+      "bytes": "7cc1",
+      "mnemonic": "stm",
+      "operands": "r1!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556280,
+      "bytes": "90e87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r0, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556284,
+      "bytes": "a7f1f001",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0xf0"
+    },
+    {
+      "address": 268556288,
+      "bytes": "7cc1",
+      "mnemonic": "stm",
+      "operands": "r1!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556290,
+      "bytes": "4798",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x11c]"
+    },
+    {
+      "address": 268556292,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268556294,
+      "bytes": "3ef47aaf",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x110c"
+    },
+    {
+      "address": 268556298,
+      "bytes": "6da9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x1b4"
+    },
+    {
+      "address": 268556300,
+      "bytes": "bce83c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12!, {r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556304,
+      "bytes": "0df5d078",
+      "mnemonic": "add.w",
+      "operands": "r8, sp, #0x1a0"
+    },
+    {
+      "address": 268556308,
+      "bytes": "0df5bc7a",
+      "mnemonic": "add.w",
+      "operands": "r10, sp, #0x178"
+    },
+    {
+      "address": 268556312,
+      "bytes": "0df5a87b",
+      "mnemonic": "add.w",
+      "operands": "r11, sp, #0x150"
+    },
+    {
+      "address": 268556316,
+      "bytes": "0df59479",
+      "mnemonic": "add.w",
+      "operands": "r9, sp, #0x128"
+    },
+    {
+      "address": 268556320,
+      "bytes": "0846",
+      "mnemonic": "mov",
+      "operands": "r0, r1"
+    },
+    {
+      "address": 268556322,
+      "bytes": "3cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556324,
+      "bytes": "bcf80020",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [r12]"
+    },
+    {
+      "address": 268556328,
+      "bytes": "0280",
+      "mnemonic": "strh",
+      "operands": "r2, [r0]"
+    },
+    {
+      "address": 268556330,
+      "bytes": "9cf80220",
+      "mnemonic": "ldrb.w",
+      "operands": "r2, [r12, #0x2]"
+    },
+    {
+      "address": 268556334,
+      "bytes": "ddf8e0c0",
+      "mnemonic": "ldr.w",
+      "operands": "r12, [sp, #0xe0]"
+    },
+    {
+      "address": 268556338,
+      "bytes": "8270",
+      "mnemonic": "strb",
+      "operands": "r2, [r0, #0x2]"
+    },
+    {
+      "address": 268556340,
+      "bytes": "4046",
+      "mnemonic": "mov",
+      "operands": "r0, r8"
+    },
+    {
+      "address": 268556342,
+      "bytes": "9ce87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556346,
+      "bytes": "7cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556348,
+      "bytes": "ddf8e4c0",
+      "mnemonic": "ldr.w",
+      "operands": "r12, [sp, #0xe4]"
+    },
+    {
+      "address": 268556352,
+      "bytes": "63a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x18c"
+    },
+    {
+      "address": 268556354,
+      "bytes": "9ce87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556358,
+      "bytes": "7cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556360,
+      "bytes": "ddf8f4c0",
+      "mnemonic": "ldr.w",
+      "operands": "r12, [sp, #0xf4]"
+    },
+    {
+      "address": 268556364,
+      "bytes": "5046",
+      "mnemonic": "mov",
+      "operands": "r0, r10"
+    },
+    {
+      "address": 268556366,
+      "bytes": "9ce87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556370,
+      "bytes": "7cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556372,
+      "bytes": "ddf8e8c0",
+      "mnemonic": "ldr.w",
+      "operands": "r12, [sp, #0xe8]"
+    },
+    {
+      "address": 268556376,
+      "bytes": "59a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x164"
+    },
+    {
+      "address": 268556378,
+      "bytes": "9ce87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556382,
+      "bytes": "7cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556384,
+      "bytes": "ddf8f0c0",
+      "mnemonic": "ldr.w",
+      "operands": "r12, [sp, #0xf0]"
+    },
+    {
+      "address": 268556388,
+      "bytes": "5846",
+      "mnemonic": "mov",
+      "operands": "r0, r11"
+    },
+    {
+      "address": 268556390,
+      "bytes": "9ce87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556394,
+      "bytes": "7cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556396,
+      "bytes": "ddf8ecc0",
+      "mnemonic": "ldr.w",
+      "operands": "r12, [sp, #0xec]"
+    },
+    {
+      "address": 268556400,
+      "bytes": "4fa8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x13c"
+    },
+    {
+      "address": 268556402,
+      "bytes": "9ce87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556406,
+      "bytes": "7cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556408,
+      "bytes": "ddf8f8c0",
+      "mnemonic": "ldr.w",
+      "operands": "r12, [sp, #0xf8]"
+    },
+    {
+      "address": 268556412,
+      "bytes": "4846",
+      "mnemonic": "mov",
+      "operands": "r0, r9"
+    },
+    {
+      "address": 268556414,
+      "bytes": "9ce87c00",
+      "mnemonic": "ldm.w",
+      "operands": "r12, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556418,
+      "bytes": "7cc0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r2, r3, r4, r5, r6}"
+    },
+    {
+      "address": 268556420,
+      "bytes": "dff8a069",
+      "mnemonic": "ldr.w",
+      "operands": "r6, [pc, #0x9a0]        @ 0x1001e228 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1bd4>"
+    },
+    {
+      "address": 268556424,
+      "bytes": "1322",
+      "mnemonic": "movs",
+      "operands": "r2, #0x13"
+    },
+    {
+      "address": 268556426,
+      "bytes": "3798",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0xdc]"
+    },
+    {
+      "address": 268556428,
+      "bytes": "86f82200",
+      "mnemonic": "strb.w",
+      "operands": "r0, [r6, #0x22]"
+    },
+    {
+      "address": 268556432,
+      "bytes": "4798",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x11c]"
+    },
+    {
+      "address": 268556434,
+      "bytes": "3084",
+      "mnemonic": "strh",
+      "operands": "r0, [r6, #0x20]"
+    },
+    {
+      "address": 268556436,
+      "bytes": "06f12300",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0x23"
+    },
+    {
+      "address": 268556440,
+      "bytes": "0bf026fe",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xbc4c"
+    },
+    {
+      "address": 268556444,
+      "bytes": "4598",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x114]"
+    },
+    {
+      "address": 268556446,
+      "bytes": "f086",
+      "mnemonic": "strh",
+      "operands": "r0, [r6, #0x36]"
+    },
+    {
+      "address": 268556448,
+      "bytes": "06f13800",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0x38"
+    },
+    {
+      "address": 268556452,
+      "bytes": "98e83e00",
+      "mnemonic": "ldm.w",
+      "operands": "r8, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556456,
+      "bytes": "3ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556458,
+      "bytes": "63a9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x18c"
+    },
+    {
+      "address": 268556460,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268556462,
+      "bytes": "4498",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x110]"
+    },
+    {
+      "address": 268556464,
+      "bytes": "a6f84c00",
+      "mnemonic": "strh.w",
+      "operands": "r0, [r6, #0x4c]"
+    },
+    {
+      "address": 268556468,
+      "bytes": "06f14e00",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0x4e"
+    },
+    {
+      "address": 268556472,
+      "bytes": "0bf016fe",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xbc2c"
+    },
+    {
+      "address": 268556476,
+      "bytes": "4398",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x10c]"
+    },
+    {
+      "address": 268556478,
+      "bytes": "a6f86200",
+      "mnemonic": "strh.w",
+      "operands": "r0, [r6, #0x62]"
+    },
+    {
+      "address": 268556482,
+      "bytes": "06f16400",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0x64"
+    },
+    {
+      "address": 268556486,
+      "bytes": "9ae83e00",
+      "mnemonic": "ldm.w",
+      "operands": "r10, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556490,
+      "bytes": "3ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556492,
+      "bytes": "59a9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x164"
+    },
+    {
+      "address": 268556494,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268556496,
+      "bytes": "4298",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x108]"
+    },
+    {
+      "address": 268556498,
+      "bytes": "a6f87800",
+      "mnemonic": "strh.w",
+      "operands": "r0, [r6, #0x78]"
+    },
+    {
+      "address": 268556502,
+      "bytes": "06f17a00",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0x7a"
+    },
+    {
+      "address": 268556506,
+      "bytes": "0bf005fe",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xbc0a"
+    },
+    {
+      "address": 268556510,
+      "bytes": "4198",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x104]"
+    },
+    {
+      "address": 268556512,
+      "bytes": "a6f88e00",
+      "mnemonic": "strh.w",
+      "operands": "r0, [r6, #0x8e]"
+    },
+    {
+      "address": 268556516,
+      "bytes": "06f19000",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0x90"
+    },
+    {
+      "address": 268556520,
+      "bytes": "9be83e00",
+      "mnemonic": "ldm.w",
+      "operands": "r11, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556524,
+      "bytes": "3ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556526,
+      "bytes": "4fa9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x13c"
+    },
+    {
+      "address": 268556528,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268556530,
+      "bytes": "4098",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x100]"
+    },
+    {
+      "address": 268556532,
+      "bytes": "a6f8a400",
+      "mnemonic": "strh.w",
+      "operands": "r0, [r6, #0xa4]"
+    },
+    {
+      "address": 268556536,
+      "bytes": "06f1a600",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0xa6"
+    },
+    {
+      "address": 268556540,
+      "bytes": "0bf0f4fd",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xbbe8"
+    },
+    {
+      "address": 268556544,
+      "bytes": "3f98",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0xfc]"
+    },
+    {
+      "address": 268556546,
+      "bytes": "a6f8ba00",
+      "mnemonic": "strh.w",
+      "operands": "r0, [r6, #0xba]"
+    },
+    {
+      "address": 268556550,
+      "bytes": "06f1bc00",
+      "mnemonic": "add.w",
+      "operands": "r0, r6, #0xbc"
+    },
+    {
+      "address": 268556554,
+      "bytes": "99e83e00",
+      "mnemonic": "ldm.w",
+      "operands": "r9, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556558,
+      "bytes": "3ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268556560,
+      "bytes": "4698",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x118]"
+    },
+    {
+      "address": 268556562,
+      "bytes": "0028",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268556564,
+      "bytes": "3ef4f3ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x121a"
+    },
+    {
+      "address": 268556568,
+      "bytes": "489c",
+      "mnemonic": "ldr",
+      "operands": "r4, [sp, #0x120]"
+    },
+    {
+      "address": 268556570,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268556574,
+      "bytes": "2146",
+      "mnemonic": "mov",
+      "operands": "r1, r4"
+    },
+    {
+      "address": 268556576,
+      "bytes": "fa94",
+      "mnemonic": "str",
+      "operands": "r4, [sp, #0x3e8]"
+    },
+    {
+      "address": 268556578,
+      "bytes": "fdf7c5ff",
+      "mnemonic": "bl",
+      "operands": "0x1001b8b0 <<postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>::try_take_varint_u32> @ imm = #-0x2076"
+    },
+    {
+      "address": 268556582,
+      "bytes": "0af025ff",
+      "mnemonic": "bl",
+      "operands": "0x10028774 <OUTLINED_FUNCTION_92> @ imm = #0xae4a"
+    },
+    {
+      "address": 268556586,
+      "bytes": "12d0",
+      "mnemonic": "beq",
+      "operands": "0x1001d952 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x12fe> @ imm = #0x24"
+    },
+    {
+      "address": 268556588,
+      "bytes": "ddf82c14",
+      "mnemonic": "ldr.w",
+      "operands": "r1, [sp, #0x42c]"
+    },
+    {
+      "address": 268556592,
+      "bytes": "0120",
+      "mnemonic": "movs",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268556594,
+      "bytes": "0125",
+      "mnemonic": "movs",
+      "operands": "r5, #0x1"
+    },
+    {
+      "address": 268556596,
+      "bytes": "0129",
+      "mnemonic": "cmp",
+      "operands": "r1, #0x1"
+    },
+    {
+      "address": 268556598,
+      "bytes": "03d0",
+      "mnemonic": "beq",
+      "operands": "0x1001d940 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x12ec> @ imm = #0x6"
+    },
+    {
+      "address": 268556600,
+      "bytes": "0029",
+      "mnemonic": "cmp",
+      "operands": "r1, #0x0"
+    },
+    {
+      "address": 268556602,
+      "bytes": "40f02283",
+      "mnemonic": "bne.w",
+      "operands": "0x1001df82 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x192e> @ imm = #0x644"
+    },
+    {
+      "address": 268556606,
+      "bytes": "0025",
+      "mnemonic": "movs",
+      "operands": "r5, #0x0"
+    },
+    {
+      "address": 268556608,
+      "bytes": "fb90",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x3ec]"
+    },
+    {
+      "address": 268556610,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268556614,
+      "bytes": "0bf00bfa",
+      "mnemonic": "bl",
+      "operands": "0x10028d60 <OUTLINED_FUNCTION_234> @ imm = #0xb416"
+    },
+    {
+      "address": 268556618,
+      "bytes": "0af013ff",
+      "mnemonic": "bl",
+      "operands": "0x10028774 <OUTLINED_FUNCTION_92> @ imm = #0xae26"
+    },
+    {
+      "address": 268556622,
+      "bytes": "40f09e80",
+      "mnemonic": "bne.w",
+      "operands": "0x1001da8e <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x143a> @ imm = #0x13c"
+    },
+    {
+      "address": 268556626,
+      "bytes": "9df82914",
+      "mnemonic": "ldrb.w",
+      "operands": "r1, [sp, #0x429]"
+    },
+    {
+      "address": 268556630,
+      "bytes": "4ff00070",
+      "mnemonic": "mov.w",
+      "operands": "r0, #0x2000000"
+    },
+    {
+      "address": 268556634,
+      "bytes": "c9b2",
+      "mnemonic": "uxtb",
+      "operands": "r1, r1"
+    },
+    {
+      "address": 268556636,
+      "bytes": "40ea0105",
+      "mnemonic": "orr.w",
+      "operands": "r5, r0, r1"
+    },
+    {
+      "address": 268556640,
+      "bytes": "00f04071",
+      "mnemonic": "and",
+      "operands": "r1, r0, #0x3000000"
+    },
+    {
+      "address": 268556644,
+      "bytes": "b1f1007f",
+      "mnemonic": "cmp.w",
+      "operands": "r1, #0x2000000"
+    },
+    {
+      "address": 268556648,
+      "bytes": "3bd1",
+      "mnemonic": "bne",
+      "operands": "0x1001d9e2 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x138e> @ imm = #0x76"
+    },
+    {
+      "address": 268556650,
+      "bytes": "f248",
+      "mnemonic": "ldr",
+      "operands": "r0, [pc, #0x3c8]        @ 0x1001dd34 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x16e0>"
+    },
+    {
+      "address": 268556652,
+      "bytes": "0540",
+      "mnemonic": "ands",
+      "operands": "r5, r0"
+    },
+    {
+      "address": 268556654,
+      "bytes": "41e0",
+      "mnemonic": "b",
+      "operands": "0x1001d9f4 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x13a0> @ imm = #0x82"
+    },
+    {
+      "address": 268556656,
+      "bytes": "4798",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x11c]"
+    },
+    {
+      "address": 268556658,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268556660,
+      "bytes": "3ef4c3ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x127a"
+    },
+    {
+      "address": 268556664,
+      "bytes": "a7f16401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0x64"
+    },
+    {
+      "address": 268556668,
+      "bytes": "81a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x204"
+    },
+    {
+      "address": 268556670,
+      "bytes": "fdf7bffd",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x2482"
+    },
+    {
+      "address": 268556674,
+      "bytes": "bdf80422",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x204]"
+    },
+    {
+      "address": 268556678,
+      "bytes": "0bf0ddf8",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb1ba"
+    },
+    {
+      "address": 268556682,
+      "bytes": "4592",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0x114]"
+    },
+    {
+      "address": 268556684,
+      "bytes": "03d1",
+      "mnemonic": "bne",
+      "operands": "0x1001d996 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1342> @ imm = #0x6"
+    },
+    {
+      "address": 268556686,
+      "bytes": "9df80652",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x206]"
+    },
+    {
+      "address": 268556690,
+      "bytes": "fef77bbe",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x130a"
+    },
+    {
+      "address": 268556694,
+      "bytes": "4598",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x114]"
+    },
+    {
+      "address": 268556696,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268556698,
+      "bytes": "3ef4b0ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x12a0"
+    },
+    {
+      "address": 268556702,
+      "bytes": "a7f16401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0x64"
+    },
+    {
+      "address": 268556706,
+      "bytes": "9da8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x274"
+    },
+    {
+      "address": 268556708,
+      "bytes": "fdf7acfd",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x24a8"
+    },
+    {
+      "address": 268556712,
+      "bytes": "bdf87422",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x274]"
+    },
+    {
+      "address": 268556716,
+      "bytes": "0bf0caf8",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb194"
+    },
+    {
+      "address": 268556720,
+      "bytes": "4492",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0x110]"
+    },
+    {
+      "address": 268556722,
+      "bytes": "03d1",
+      "mnemonic": "bne",
+      "operands": "0x1001d9bc <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1368> @ imm = #0x6"
+    },
+    {
+      "address": 268556724,
+      "bytes": "9df87652",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x276]"
+    },
+    {
+      "address": 268556728,
+      "bytes": "fef768be",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x1330"
+    },
+    {
+      "address": 268556732,
+      "bytes": "4498",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x110]"
+    },
+    {
+      "address": 268556734,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268556736,
+      "bytes": "3ef49dae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x12c6"
+    },
+    {
+      "address": 268556740,
+      "bytes": "a7f16401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0x64"
+    },
+    {
+      "address": 268556744,
+      "bytes": "baa8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x2e8"
+    },
+    {
+      "address": 268556746,
+      "bytes": "fdf799fd",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x24ce"
+    },
+    {
+      "address": 268556750,
+      "bytes": "bdf8e822",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x2e8]"
+    },
+    {
+      "address": 268556754,
+      "bytes": "0bf0b7f8",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb16e"
+    },
+    {
+      "address": 268556758,
+      "bytes": "4392",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0x10c]"
+    },
+    {
+      "address": 268556760,
+      "bytes": "46d1",
+      "mnemonic": "bne",
+      "operands": "0x1001da68 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1414> @ imm = #0x8c"
+    },
+    {
+      "address": 268556762,
+      "bytes": "9df8ea52",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x2ea]"
+    },
+    {
+      "address": 268556766,
+      "bytes": "fef755be",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x1356"
+    },
+    {
+      "address": 268556770,
+      "bytes": "b5f1007f",
+      "mnemonic": "cmp.w",
+      "operands": "r5, #0x2000000"
+    },
+    {
+      "address": 268556774,
+      "bytes": "3ef48aae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x12ec"
+    },
+    {
+      "address": 268556778,
+      "bytes": "000e",
+      "mnemonic": "lsrs",
+      "operands": "r0, r0, #0x18"
+    },
+    {
+      "address": 268556780,
+      "bytes": "d149",
+      "mnemonic": "ldr",
+      "operands": "r1, [pc, #0x344]        @ 0x1001dd34 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x16e0>"
+    },
+    {
+      "address": 268556782,
+      "bytes": "fe28",
+      "mnemonic": "cmp",
+      "operands": "r0, #0xfe"
+    },
+    {
+      "address": 268556784,
+      "bytes": "88bf",
+      "mnemonic": "it",
+      "operands": "hi"
+    },
+    {
+      "address": 268556786,
+      "bytes": "0d40",
+      "mnemonic": "andhi",
+      "operands": "r5, r1"
+    },
+    {
+      "address": 268556788,
+      "bytes": "05f04070",
+      "mnemonic": "and",
+      "operands": "r0, r5, #0x3000000"
+    },
+    {
+      "address": 268556792,
+      "bytes": "b0f1007f",
+      "mnemonic": "cmp.w",
+      "operands": "r0, #0x2000000"
+    },
+    {
+      "address": 268556796,
+      "bytes": "3ef446ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x1374"
+    },
+    {
+      "address": 268556800,
+      "bytes": "dff82408",
+      "mnemonic": "ldr.w",
+      "operands": "r0, [pc, #0x824]        @ 0x1001e228 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1bd4>"
+    },
+    {
+      "address": 268556804,
+      "bytes": "c0f8d050",
+      "mnemonic": "str.w",
+      "operands": "r5, [r0, #0xd0]"
+    },
+    {
+      "address": 268556808,
+      "bytes": "4698",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x118]"
+    },
+    {
+      "address": 268556810,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268556812,
+      "bytes": "3ef477ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1312"
+    },
+    {
+      "address": 268556816,
+      "bytes": "4698",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x118]"
+    },
+    {
+      "address": 268556818,
+      "bytes": "2146",
+      "mnemonic": "mov",
+      "operands": "r1, r4"
+    },
+    {
+      "address": 268556820,
+      "bytes": "0238",
+      "mnemonic": "subs",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268556822,
+      "bytes": "4990",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x124]"
+    },
+    {
+      "address": 268556824,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268556828,
+      "bytes": "fdf748ff",
+      "mnemonic": "bl",
+      "operands": "0x1001b8b0 <<postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>::try_take_varint_u32> @ imm = #-0x2170"
+    },
+    {
+      "address": 268556832,
+      "bytes": "0af0a8fe",
+      "mnemonic": "bl",
+      "operands": "0x10028774 <OUTLINED_FUNCTION_92> @ imm = #0xad50"
+    },
+    {
+      "address": 268556836,
+      "bytes": "3ef45cae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6e0 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x8c> @ imm = #-0x1348"
+    },
+    {
+      "address": 268556840,
+      "bytes": "ddf82c04",
+      "mnemonic": "ldr.w",
+      "operands": "r0, [sp, #0x42c]"
+    },
+    {
+      "address": 268556844,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268556846,
+      "bytes": "3ef666ae",
+      "mnemonic": "bhi.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1334"
+    },
+    {
+      "address": 268556850,
+      "bytes": "0028",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268556852,
+      "bytes": "00f0d880",
+      "mnemonic": "beq.w",
+      "operands": "0x1001dbe8 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1594> @ imm = #0x1b0"
+    },
+    {
+      "address": 268556856,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268556858,
+      "bytes": "40f03d81",
+      "mnemonic": "bne.w",
+      "operands": "0x1001dcb8 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1664> @ imm = #0x27a"
+    },
+    {
+      "address": 268556862,
+      "bytes": "0120",
+      "mnemonic": "movs",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268556864,
+      "bytes": "faa9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x3e8"
+    },
+    {
+      "address": 268556866,
+      "bytes": "cde9fa40",
+      "mnemonic": "strd",
+      "operands": "r4, r0, [sp, #1000]"
+    },
+    {
+      "address": 268556870,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268556874,
+      "bytes": "fef73df8",
+      "mnemonic": "bl",
+      "operands": "0x1001bac8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<f32>> @ imm = #-0x1f86"
+    },
+    {
+      "address": 268556878,
+      "bytes": "0af02fff",
+      "mnemonic": "bl",
+      "operands": "0x100288b0 <OUTLINED_FUNCTION_119> @ imm = #0xae5e"
+    },
+    {
+      "address": 268556882,
+      "bytes": "00f03c81",
+      "mnemonic": "beq.w",
+      "operands": "0x1001dcce <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x167a> @ imm = #0x278"
+    },
+    {
+      "address": 268556886,
+      "bytes": "ddf82c64",
+      "mnemonic": "ldr.w",
+      "operands": "r6, [sp, #0x42c]"
+    },
+    {
+      "address": 268556890,
+      "bytes": "0028",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268556892,
+      "bytes": "08bf",
+      "mnemonic": "it",
+      "operands": "eq"
+    },
+    {
+      "address": 268556894,
+      "bytes": "0e26",
+      "mnemonic": "moveq",
+      "operands": "r6, #0xe"
+    },
+    {
+      "address": 268556896,
+      "bytes": "00f0f882",
+      "mnemonic": "beq.w",
+      "operands": "0x1001e054 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1a00> @ imm = #0x5f0"
+    },
+    {
+      "address": 268556900,
+      "bytes": "0325",
+      "mnemonic": "movs",
+      "operands": "r5, #0x3"
+    },
+    {
+      "address": 268556902,
+      "bytes": "c0e0",
+      "mnemonic": "b",
+      "operands": "0x1001dbea <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1596> @ imm = #0x180"
+    },
+    {
+      "address": 268556904,
+      "bytes": "4398",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x10c]"
+    },
+    {
+      "address": 268556906,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268556908,
+      "bytes": "3ef447ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1372"
+    },
+    {
+      "address": 268556912,
+      "bytes": "a7f16401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0x64"
+    },
+    {
+      "address": 268556916,
+      "bytes": "dca8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x370"
+    },
+    {
+      "address": 268556918,
+      "bytes": "fdf743fd",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x257a"
+    },
+    {
+      "address": 268556922,
+      "bytes": "bdf87023",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x370]"
+    },
+    {
+      "address": 268556926,
+      "bytes": "0bf061f8",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb0c2"
+    },
+    {
+      "address": 268556930,
+      "bytes": "4292",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0x108]"
+    },
+    {
+      "address": 268556932,
+      "bytes": "22d1",
+      "mnemonic": "bne",
+      "operands": "0x1001dacc <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1478> @ imm = #0x44"
+    },
+    {
+      "address": 268556934,
+      "bytes": "9df87253",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x372]"
+    },
+    {
+      "address": 268556938,
+      "bytes": "fef7ffbd",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x1402"
+    },
+    {
+      "address": 268556942,
+      "bytes": "ddf82c64",
+      "mnemonic": "ldr.w",
+      "operands": "r6, [sp, #0x42c]"
+    },
+    {
+      "address": 268556946,
+      "bytes": "012e",
+      "mnemonic": "cmp",
+      "operands": "r6, #0x1"
+    },
+    {
+      "address": 268556948,
+      "bytes": "00f27582",
+      "mnemonic": "bhi.w",
+      "operands": "0x1001df82 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x192e> @ imm = #0x4ea"
+    },
+    {
+      "address": 268556952,
+      "bytes": "faa8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x3e8"
+    },
+    {
+      "address": 268556954,
+      "bytes": "fdf7aafe",
+      "mnemonic": "bl",
+      "operands": "0x1001b7f2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u16>> @ imm = #-0x22ac"
+    },
+    {
+      "address": 268556958,
+      "bytes": "0af027fc",
+      "mnemonic": "bl",
+      "operands": "0x100282f0 <OUTLINED_FUNCTION_21> @ imm = #0xa84e"
+    },
+    {
+      "address": 268556962,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268556964,
+      "bytes": "00f07f41",
+      "mnemonic": "andne",
+      "operands": "r1, r0, #0xff000000"
+    },
+    {
+      "address": 268556968,
+      "bytes": "1144",
+      "mnemonic": "add",
+      "operands": "r1, r2"
+    },
+    {
+      "address": 268556970,
+      "bytes": "4fea1141",
+      "mnemonic": "lsr.w",
+      "operands": "r1, r1, #0x10"
+    },
+    {
+      "address": 268556974,
+      "bytes": "3ff452af",
+      "mnemonic": "beq.w",
+      "operands": "0x1001d956 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1302> @ imm = #-0x15c"
+    },
+    {
+      "address": 268556978,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268556980,
+      "bytes": "00f06582",
+      "mnemonic": "beq.w",
+      "operands": "0x1001df82 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x192e> @ imm = #0x4ca"
+    },
+    {
+      "address": 268556984,
+      "bytes": "adf82814",
+      "mnemonic": "strh.w",
+      "operands": "r1, [sp, #0x428]"
+    },
+    {
+      "address": 268556988,
+      "bytes": "8df82a54",
+      "mnemonic": "strb.w",
+      "operands": "r5, [sp, #0x42a]"
+    },
+    {
+      "address": 268556992,
+      "bytes": "bdf82904",
+      "mnemonic": "ldrh.w",
+      "operands": "r0, [sp, #0x429]"
+    },
+    {
+      "address": 268556996,
+      "bytes": "0002",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x8"
+    },
+    {
+      "address": 268556998,
+      "bytes": "40ea0660",
+      "mnemonic": "orr.w",
+      "operands": "r0, r0, r6, lsl #24"
+    },
+    {
+      "address": 268557002,
+      "bytes": "46e7",
+      "mnemonic": "b",
+      "operands": "0x1001d95a <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1306> @ imm = #-0x174"
+    },
+    {
+      "address": 268557004,
+      "bytes": "4298",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x108]"
+    },
+    {
+      "address": 268557006,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557008,
+      "bytes": "3ef415ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x13d6"
+    },
+    {
+      "address": 268557012,
+      "bytes": "a7f16401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0x64"
+    },
+    {
+      "address": 268557016,
+      "bytes": "eba8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x3ac"
+    },
+    {
+      "address": 268557018,
+      "bytes": "fdf711fd",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x25de"
+    },
+    {
+      "address": 268557022,
+      "bytes": "bdf8ac23",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x3ac]"
+    },
+    {
+      "address": 268557026,
+      "bytes": "0bf02ff8",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb05e"
+    },
+    {
+      "address": 268557030,
+      "bytes": "4192",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0x104]"
+    },
+    {
+      "address": 268557032,
+      "bytes": "03d1",
+      "mnemonic": "bne",
+      "operands": "0x1001daf2 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x149e> @ imm = #0x6"
+    },
+    {
+      "address": 268557034,
+      "bytes": "9df8ae53",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x3ae]"
+    },
+    {
+      "address": 268557038,
+      "bytes": "fef7cdbd",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x1466"
+    },
+    {
+      "address": 268557042,
+      "bytes": "4198",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x104]"
+    },
+    {
+      "address": 268557044,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557046,
+      "bytes": "3ef402ae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x13fc"
+    },
+    {
+      "address": 268557050,
+      "bytes": "a7f16401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0x64"
+    },
+    {
+      "address": 268557054,
+      "bytes": "faa8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x3e8"
+    },
+    {
+      "address": 268557056,
+      "bytes": "fdf7fefc",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x2604"
+    },
+    {
+      "address": 268557060,
+      "bytes": "bdf8e823",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x3e8]"
+    },
+    {
+      "address": 268557064,
+      "bytes": "0bf01cf8",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb038"
+    },
+    {
+      "address": 268557068,
+      "bytes": "4092",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0x100]"
+    },
+    {
+      "address": 268557070,
+      "bytes": "03d1",
+      "mnemonic": "bne",
+      "operands": "0x1001db18 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x14c4> @ imm = #0x6"
+    },
+    {
+      "address": 268557072,
+      "bytes": "9df8ea53",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x3ea]"
+    },
+    {
+      "address": 268557076,
+      "bytes": "fef7babd",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x148c"
+    },
+    {
+      "address": 268557080,
+      "bytes": "4098",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x100]"
+    },
+    {
+      "address": 268557082,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557084,
+      "bytes": "3ef4efad",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1422"
+    },
+    {
+      "address": 268557088,
+      "bytes": "a7f16401",
+      "mnemonic": "sub.w",
+      "operands": "r1, r7, #0x64"
+    },
+    {
+      "address": 268557092,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268557096,
+      "bytes": "fdf7eafc",
+      "mnemonic": "bl",
+      "operands": "0x1001b500 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>> @ imm = #-0x262c"
+    },
+    {
+      "address": 268557100,
+      "bytes": "bdf82824",
+      "mnemonic": "ldrh.w",
+      "operands": "r2, [sp, #0x428]"
+    },
+    {
+      "address": 268557104,
+      "bytes": "0bf008f8",
+      "mnemonic": "bl",
+      "operands": "0x10028b44 <OUTLINED_FUNCTION_183> @ imm = #0xb010"
+    },
+    {
+      "address": 268557108,
+      "bytes": "3f92",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0xfc]"
+    },
+    {
+      "address": 268557110,
+      "bytes": "03d1",
+      "mnemonic": "bne",
+      "operands": "0x1001db40 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x14ec> @ imm = #0x6"
+    },
+    {
+      "address": 268557112,
+      "bytes": "9df82a54",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x42a]"
+    },
+    {
+      "address": 268557116,
+      "bytes": "fef7a6bd",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x14b4"
+    },
+    {
+      "address": 268557120,
+      "bytes": "3f98",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0xfc]"
+    },
+    {
+      "address": 268557122,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557124,
+      "bytes": "3ef4dbad",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x144a"
+    },
+    {
+      "address": 268557128,
+      "bytes": "81a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x204"
+    },
+    {
+      "address": 268557130,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268557132,
+      "bytes": "00f10208",
+      "mnemonic": "add.w",
+      "operands": "r8, r0, #0x2"
+    },
+    {
+      "address": 268557136,
+      "bytes": "9da8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x274"
+    },
+    {
+      "address": 268557138,
+      "bytes": "0230",
+      "mnemonic": "adds",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557140,
+      "bytes": "3390",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xcc]"
+    },
+    {
+      "address": 268557142,
+      "bytes": "baa8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x2e8"
+    },
+    {
+      "address": 268557144,
+      "bytes": "0230",
+      "mnemonic": "adds",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557146,
+      "bytes": "3490",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xd0]"
+    },
+    {
+      "address": 268557148,
+      "bytes": "dca8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x370"
+    },
+    {
+      "address": 268557150,
+      "bytes": "00f10209",
+      "mnemonic": "add.w",
+      "operands": "r9, r0, #0x2"
+    },
+    {
+      "address": 268557154,
+      "bytes": "eba8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x3ac"
+    },
+    {
+      "address": 268557156,
+      "bytes": "841c",
+      "mnemonic": "adds",
+      "operands": "r4, r0, #0x2"
+    },
+    {
+      "address": 268557158,
+      "bytes": "faa8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x3e8"
+    },
+    {
+      "address": 268557160,
+      "bytes": "0230",
+      "mnemonic": "adds",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557162,
+      "bytes": "3590",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xd4]"
+    },
+    {
+      "address": 268557164,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268557168,
+      "bytes": "811c",
+      "mnemonic": "adds",
+      "operands": "r1, r0, #0x2"
+    },
+    {
+      "address": 268557170,
+      "bytes": "c9a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x324"
+    },
+    {
+      "address": 268557172,
+      "bytes": "3290",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xc8]"
+    },
+    {
+      "address": 268557174,
+      "bytes": "0bf0b7fc",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xb96e"
+    },
+    {
+      "address": 268557178,
+      "bytes": "9df86a04",
+      "mnemonic": "ldrb.w",
+      "operands": "r0, [sp, #0x46a]"
+    },
+    {
+      "address": 268557182,
+      "bytes": "a7f17805",
+      "mnemonic": "sub.w",
+      "operands": "r5, r7, #0x78"
+    },
+    {
+      "address": 268557186,
+      "bytes": "f11c",
+      "mnemonic": "adds",
+      "operands": "r1, r6, #0x3"
+    },
+    {
+      "address": 268557188,
+      "bytes": "1322",
+      "mnemonic": "movs",
+      "operands": "r2, #0x13"
+    },
+    {
+      "address": 268557190,
+      "bytes": "3790",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xdc]"
+    },
+    {
+      "address": 268557192,
+      "bytes": "2846",
+      "mnemonic": "mov",
+      "operands": "r0, r5"
+    },
+    {
+      "address": 268557194,
+      "bytes": "0bf0adfc",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xb95a"
+    },
+    {
+      "address": 268557198,
+      "bytes": "0df54f7a",
+      "mnemonic": "add.w",
+      "operands": "r10, sp, #0x33c"
+    },
+    {
+      "address": 268557202,
+      "bytes": "4146",
+      "mnemonic": "mov",
+      "operands": "r1, r8"
+    },
+    {
+      "address": 268557204,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268557206,
+      "bytes": "5046",
+      "mnemonic": "mov",
+      "operands": "r0, r10"
+    },
+    {
+      "address": 268557208,
+      "bytes": "0bf0a6fc",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xb94c"
+    },
+    {
+      "address": 268557212,
+      "bytes": "0df5327b",
+      "mnemonic": "add.w",
+      "operands": "r11, sp, #0x2c8"
+    },
+    {
+      "address": 268557216,
+      "bytes": "3399",
+      "mnemonic": "ldr",
+      "operands": "r1, [sp, #0xcc]"
+    },
+    {
+      "address": 268557218,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268557220,
+      "bytes": "5846",
+      "mnemonic": "mov",
+      "operands": "r0, r11"
+    },
+    {
+      "address": 268557222,
+      "bytes": "0bf09ffc",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xb93e"
+    },
+    {
+      "address": 268557226,
+      "bytes": "3499",
+      "mnemonic": "ldr",
+      "operands": "r1, [sp, #0xd0]"
+    },
+    {
+      "address": 268557228,
+      "bytes": "96a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x258"
+    },
+    {
+      "address": 268557230,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268557232,
+      "bytes": "3390",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xcc]"
+    },
+    {
+      "address": 268557234,
+      "bytes": "0bf099fc",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xb932"
+    },
+    {
+      "address": 268557238,
+      "bytes": "7aa8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1e8"
+    },
+    {
+      "address": 268557240,
+      "bytes": "4946",
+      "mnemonic": "mov",
+      "operands": "r1, r9"
+    },
+    {
+      "address": 268557242,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268557244,
+      "bytes": "3490",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xd0]"
+    },
+    {
+      "address": 268557246,
+      "bytes": "0bf093fc",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xb926"
+    },
+    {
+      "address": 268557250,
+      "bytes": "0df59368",
+      "mnemonic": "add.w",
+      "operands": "r8, sp, #0x498"
+    },
+    {
+      "address": 268557254,
+      "bytes": "2146",
+      "mnemonic": "mov",
+      "operands": "r1, r4"
+    },
+    {
+      "address": 268557256,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268557258,
+      "bytes": "4046",
+      "mnemonic": "mov",
+      "operands": "r0, r8"
+    },
+    {
+      "address": 268557260,
+      "bytes": "0bf08cfc",
+      "mnemonic": "bl",
+      "operands": "0x100294e8 <__aeabi_memcpy> @ imm = #0xb918"
+    },
+    {
+      "address": 268557264,
+      "bytes": "0df55679",
+      "mnemonic": "add.w",
+      "operands": "r9, sp, #0x358"
+    },
+    {
+      "address": 268557268,
+      "bytes": "3599",
+      "mnemonic": "ldr",
+      "operands": "r1, [sp, #0xd4]"
+    },
+    {
+      "address": 268557270,
+      "bytes": "1422",
+      "mnemonic": "movs",
+      "operands": "r2, #0x14"
+    },
+    {
+      "address": 268557272,
+      "bytes": "0bf06afa",
+      "mnemonic": "bl",
+      "operands": "0x100290b0 <OUTLINED_FUNCTION_314> @ imm = #0xb4d4"
+    },
+    {
+      "address": 268557276,
+      "bytes": "4798",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x11c]"
+    },
+    {
+      "address": 268557278,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557280,
+      "bytes": "79d1",
+      "mnemonic": "bne",
+      "operands": "0x1001dcd6 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1682> @ imm = #0xf2"
+    },
+    {
+      "address": 268557282,
+      "bytes": "379d",
+      "mnemonic": "ldr",
+      "operands": "r5, [sp, #0xdc]"
+    },
+    {
+      "address": 268557284,
+      "bytes": "fef752bd",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x155c"
+    },
+    {
+      "address": 268557288,
+      "bytes": "0225",
+      "mnemonic": "movs",
+      "operands": "r5, #0x2"
+    },
+    {
+      "address": 268557290,
+      "bytes": "dff83c16",
+      "mnemonic": "ldr.w",
+      "operands": "r1, [pc, #0x63c]        @ 0x1001e228 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1bd4>"
+    },
+    {
+      "address": 268557294,
+      "bytes": "300e",
+      "mnemonic": "lsrs",
+      "operands": "r0, r6, #0x18"
+    },
+    {
+      "address": 268557296,
+      "bytes": "4c77",
+      "mnemonic": "strb",
+      "operands": "r4, [r1, #0x1d]"
+    },
+    {
+      "address": 268557298,
+      "bytes": "c871",
+      "mnemonic": "strb",
+      "operands": "r0, [r1, #0x7]"
+    },
+    {
+      "address": 268557300,
+      "bytes": "300a",
+      "mnemonic": "lsrs",
+      "operands": "r0, r6, #0x8"
+    },
+    {
+      "address": 268557302,
+      "bytes": "0df58564",
+      "mnemonic": "add.w",
+      "operands": "r4, sp, #0x428"
+    },
+    {
+      "address": 268557306,
+      "bytes": "81f81c90",
+      "mnemonic": "strb.w",
+      "operands": "r9, [r1, #0x1c]"
+    },
+    {
+      "address": 268557310,
+      "bytes": "81ed028a",
+      "mnemonic": "vstr",
+      "operands": "s16, [r1, #8]"
+    },
+    {
+      "address": 268557314,
+      "bytes": "81ed039a",
+      "mnemonic": "vstr",
+      "operands": "s18, [r1, #12]"
+    },
+    {
+      "address": 268557318,
+      "bytes": "81ed04aa",
+      "mnemonic": "vstr",
+      "operands": "s20, [r1, #16]"
+    },
+    {
+      "address": 268557322,
+      "bytes": "81ed05ba",
+      "mnemonic": "vstr",
+      "operands": "s22, [r1, #20]"
+    },
+    {
+      "address": 268557326,
+      "bytes": "81ed060a",
+      "mnemonic": "vstr",
+      "operands": "s0, [r1, #24]"
+    },
+    {
+      "address": 268557330,
+      "bytes": "0e71",
+      "mnemonic": "strb",
+      "operands": "r6, [r1, #0x4]"
+    },
+    {
+      "address": 268557332,
+      "bytes": "0d60",
+      "mnemonic": "str",
+      "operands": "r5, [r1]"
+    },
+    {
+      "address": 268557334,
+      "bytes": "a1f80500",
+      "mnemonic": "strh.w",
+      "operands": "r0, [r1, #0x5]"
+    },
+    {
+      "address": 268557338,
+      "bytes": "48a9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x120"
+    },
+    {
+      "address": 268557340,
+      "bytes": "2046",
+      "mnemonic": "mov",
+      "operands": "r0, r4"
+    },
+    {
+      "address": 268557342,
+      "bytes": "fdf787fe",
+      "mnemonic": "bl",
+      "operands": "0x1001b930 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::appearance::WarningColors>> @ imm = #-0x22f2"
+    },
+    {
+      "address": 268557346,
+      "bytes": "bdf82804",
+      "mnemonic": "ldrh.w",
+      "operands": "r0, [sp, #0x428]"
+    },
+    {
+      "address": 268557350,
+      "bytes": "9df82a54",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x42a]"
+    },
+    {
+      "address": 268557354,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268557356,
+      "bytes": "3ef42ead",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x15a4"
+    },
+    {
+      "address": 268557360,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268557362,
+      "bytes": "3ef464ad",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1538"
+    },
+    {
+      "address": 268557366,
+      "bytes": "bdf82c04",
+      "mnemonic": "ldrh.w",
+      "operands": "r0, [sp, #0x42c]"
+    },
+    {
+      "address": 268557370,
+      "bytes": "9df82b14",
+      "mnemonic": "ldrb.w",
+      "operands": "r1, [sp, #0x42b]"
+    },
+    {
+      "address": 268557374,
+      "bytes": "dff8e835",
+      "mnemonic": "ldr.w",
+      "operands": "r3, [pc, #0x5e8]        @ 0x1001e228 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1bd4>"
+    },
+    {
+      "address": 268557378,
+      "bytes": "43f6be02",
+      "mnemonic": "movw",
+      "operands": "r2, #0x38be"
+    },
+    {
+      "address": 268557382,
+      "bytes": "9852",
+      "mnemonic": "strh",
+      "operands": "r0, [r3, r2]"
+    },
+    {
+      "address": 268557384,
+      "bytes": "45ea0120",
+      "mnemonic": "orr.w",
+      "operands": "r0, r5, r1, lsl #8"
+    },
+    {
+      "address": 268557388,
+      "bytes": "43f6bc01",
+      "mnemonic": "movw",
+      "operands": "r1, #0x38bc"
+    },
+    {
+      "address": 268557392,
+      "bytes": "5852",
+      "mnemonic": "strh",
+      "operands": "r0, [r3, r1]"
+    },
+    {
+      "address": 268557496,
+      "bytes": "0820",
+      "mnemonic": "movs",
+      "operands": "r0, #0x8"
+    },
+    {
+      "address": 268557498,
+      "bytes": "faa9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x3e8"
+    },
+    {
+      "address": 268557500,
+      "bytes": "cde9fa40",
+      "mnemonic": "strd",
+      "operands": "r4, r0, [sp, #1000]"
+    },
+    {
+      "address": 268557504,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268557508,
+      "bytes": "fdf700ff",
+      "mnemonic": "bl",
+      "operands": "0x1001bac8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<f32>> @ imm = #-0x2200"
+    },
+    {
+      "address": 268557512,
+      "bytes": "0af0f2fd",
+      "mnemonic": "bl",
+      "operands": "0x100288b0 <OUTLINED_FUNCTION_119> @ imm = #0xabe4"
+    },
+    {
+      "address": 268557516,
+      "bytes": "34d1",
+      "mnemonic": "bne",
+      "operands": "0x1001dd38 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x16e4> @ imm = #0x68"
+    },
+    {
+      "address": 268557518,
+      "bytes": "9df82c54",
+      "mnemonic": "ldrb.w",
+      "operands": "r5, [sp, #0x42c]"
+    },
+    {
+      "address": 268557522,
+      "bytes": "fef7dbbc",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x164a"
+    },
+    {
+      "address": 268557526,
+      "bytes": "4ecd",
+      "mnemonic": "ldm",
+      "operands": "r5!, {r1, r2, r3, r6}"
+    },
+    {
+      "address": 268557528,
+      "bytes": "0df23c50",
+      "mnemonic": "addw",
+      "operands": "r0, sp, #0x53c"
+    },
+    {
+      "address": 268557532,
+      "bytes": "4ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r6}"
+    },
+    {
+      "address": 268557534,
+      "bytes": "2988",
+      "mnemonic": "ldrh",
+      "operands": "r1, [r5]"
+    },
+    {
+      "address": 268557536,
+      "bytes": "0180",
+      "mnemonic": "strh",
+      "operands": "r1, [r0]"
+    },
+    {
+      "address": 268557538,
+      "bytes": "a978",
+      "mnemonic": "ldrb",
+      "operands": "r1, [r5, #0x2]"
+    },
+    {
+      "address": 268557540,
+      "bytes": "8170",
+      "mnemonic": "strb",
+      "operands": "r1, [r0, #0x2]"
+    },
+    {
+      "address": 268557542,
+      "bytes": "0df5a560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x528"
+    },
+    {
+      "address": 268557546,
+      "bytes": "9ae86e00",
+      "mnemonic": "ldm.w",
+      "operands": "r10, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557550,
+      "bytes": "6ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557552,
+      "bytes": "9be86e00",
+      "mnemonic": "ldm.w",
+      "operands": "r11, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557556,
+      "bytes": "0df21450",
+      "mnemonic": "addw",
+      "operands": "r0, sp, #0x514"
+    },
+    {
+      "address": 268557560,
+      "bytes": "6ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557562,
+      "bytes": "339c",
+      "mnemonic": "ldr",
+      "operands": "r4, [sp, #0xcc]"
+    },
+    {
+      "address": 268557564,
+      "bytes": "0df5a060",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x500"
+    },
+    {
+      "address": 268557568,
+      "bytes": "94e86e00",
+      "mnemonic": "ldm.w",
+      "operands": "r4, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557572,
+      "bytes": "6ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557574,
+      "bytes": "349c",
+      "mnemonic": "ldr",
+      "operands": "r4, [sp, #0xd0]"
+    },
+    {
+      "address": 268557576,
+      "bytes": "0df2ec40",
+      "mnemonic": "addw",
+      "operands": "r0, sp, #0x4ec"
+    },
+    {
+      "address": 268557580,
+      "bytes": "94e86e00",
+      "mnemonic": "ldm.w",
+      "operands": "r4, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557584,
+      "bytes": "6ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557586,
+      "bytes": "98e86e00",
+      "mnemonic": "ldm.w",
+      "operands": "r8, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557590,
+      "bytes": "0df59b60",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x4d8"
+    },
+    {
+      "address": 268557594,
+      "bytes": "6ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557596,
+      "bytes": "99e86e00",
+      "mnemonic": "ldm.w",
+      "operands": "r9, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557600,
+      "bytes": "0df2c440",
+      "mnemonic": "addw",
+      "operands": "r0, sp, #0x4c4"
+    },
+    {
+      "address": 268557604,
+      "bytes": "6ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r5, r6}"
+    },
+    {
+      "address": 268557606,
+      "bytes": "329e",
+      "mnemonic": "ldr",
+      "operands": "r6, [sp, #0xc8]"
+    },
+    {
+      "address": 268557608,
+      "bytes": "0df59660",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x4b0"
+    },
+    {
+      "address": 268557612,
+      "bytes": "96e83e00",
+      "mnemonic": "ldm.w",
+      "operands": "r6, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268557616,
+      "bytes": "3ec0",
+      "mnemonic": "stm",
+      "operands": "r0!, {r1, r2, r3, r4, r5}"
+    },
+    {
+      "address": 268557618,
+      "bytes": "2ce5",
+      "mnemonic": "b",
+      "operands": "0x1001d78e <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x113a> @ imm = #-0x5a8"
+    },
+    {
+      "address": 268557624,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268557626,
+      "bytes": "7ef4e0ac",
+      "mnemonic": "bne.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1640"
+    },
+    {
+      "address": 268557630,
+      "bytes": "fb9d",
+      "mnemonic": "ldr",
+      "operands": "r5, [sp, #0x3ec]"
+    },
+    {
+      "address": 268557632,
+      "bytes": "002d",
+      "mnemonic": "cmp",
+      "operands": "r5, #0x0"
+    },
+    {
+      "address": 268557634,
+      "bytes": "3ef4dcac",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1648"
+    },
+    {
+      "address": 268557638,
+      "bytes": "ddf8e883",
+      "mnemonic": "ldr.w",
+      "operands": "r8, [sp, #0x3e8]"
+    },
+    {
+      "address": 268557642,
+      "bytes": "0df58060",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x400"
+    },
+    {
+      "address": 268557646,
+      "bytes": "90ed0b8a",
+      "mnemonic": "vldr",
+      "operands": "s16, [r0, #44]"
+    },
+    {
+      "address": 268557650,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268557654,
+      "bytes": "0bf0c5f9",
+      "mnemonic": "bl",
+      "operands": "0x100290e4 <OUTLINED_FUNCTION_320> @ imm = #0xb38a"
+    },
+    {
+      "address": 268557658,
+      "bytes": "0af00bfd",
+      "mnemonic": "bl",
+      "operands": "0x10028774 <OUTLINED_FUNCTION_92> @ imm = #0xaa16"
+    },
+    {
+      "address": 268557662,
+      "bytes": "3ef4bfac",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6e0 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x8c> @ imm = #-0x1682"
+    },
+    {
+      "address": 268557666,
+      "bytes": "ddf82c04",
+      "mnemonic": "ldr.w",
+      "operands": "r0, [sp, #0x42c]"
+    },
+    {
+      "address": 268557670,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268557672,
+      "bytes": "1fd0",
+      "mnemonic": "beq",
+      "operands": "0x1001ddaa <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1756> @ imm = #0x3e"
+    },
+    {
+      "address": 268557674,
+      "bytes": "0028",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268557676,
+      "bytes": "7ef4c7ac",
+      "mnemonic": "bne.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1672"
+    },
+    {
+      "address": 268557680,
+      "bytes": "4ff00009",
+      "mnemonic": "mov.w",
+      "operands": "r9, #0x0"
+    },
+    {
+      "address": 268557684,
+      "bytes": "1be0",
+      "mnemonic": "b",
+      "operands": "0x1001ddae <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x175a> @ imm = #0x36"
+    },
+    {
+      "address": 268557738,
+      "bytes": "4ff00109",
+      "mnemonic": "mov.w",
+      "operands": "r9, #0x1"
+    },
+    {
+      "address": 268557742,
+      "bytes": "012d",
+      "mnemonic": "cmp",
+      "operands": "r5, #0x1"
+    },
+    {
+      "address": 268557744,
+      "bytes": "3ef4a5ac",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x16b6"
+    },
+    {
+      "address": 268557748,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268557752,
+      "bytes": "0bf094f9",
+      "mnemonic": "bl",
+      "operands": "0x100290e4 <OUTLINED_FUNCTION_320> @ imm = #0xb328"
+    },
+    {
+      "address": 268557756,
+      "bytes": "0af0dafc",
+      "mnemonic": "bl",
+      "operands": "0x10028774 <OUTLINED_FUNCTION_92> @ imm = #0xa9b4"
+    },
+    {
+      "address": 268557760,
+      "bytes": "3ef48eac",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6e0 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x8c> @ imm = #-0x16e4"
+    },
+    {
+      "address": 268557764,
+      "bytes": "ddf82c04",
+      "mnemonic": "ldr.w",
+      "operands": "r0, [sp, #0x42c]"
+    },
+    {
+      "address": 268557768,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268557770,
+      "bytes": "68d0",
+      "mnemonic": "beq",
+      "operands": "0x1001de9e <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x184a> @ imm = #0xd0"
+    },
+    {
+      "address": 268557772,
+      "bytes": "0028",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268557774,
+      "bytes": "7ef496ac",
+      "mnemonic": "bne.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x16d4"
+    },
+    {
+      "address": 268557778,
+      "bytes": "0024",
+      "mnemonic": "movs",
+      "operands": "r4, #0x0"
+    },
+    {
+      "address": 268557780,
+      "bytes": "64e0",
+      "mnemonic": "b",
+      "operands": "0x1001dea0 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x184c> @ imm = #0xc8"
+    },
+    {
+      "address": 268557982,
+      "bytes": "0124",
+      "mnemonic": "movs",
+      "operands": "r4, #0x1"
+    },
+    {
+      "address": 268557984,
+      "bytes": "022d",
+      "mnemonic": "cmp",
+      "operands": "r5, #0x2"
+    },
+    {
+      "address": 268557986,
+      "bytes": "3ef42cac",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x17a8"
+    },
+    {
+      "address": 268557990,
+      "bytes": "e81e",
+      "mnemonic": "subs",
+      "operands": "r0, r5, #0x3"
+    },
+    {
+      "address": 268557992,
+      "bytes": "4146",
+      "mnemonic": "mov",
+      "operands": "r1, r8"
+    },
+    {
+      "address": 268557994,
+      "bytes": "fb90",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x3ec]"
+    },
+    {
+      "address": 268557996,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268558000,
+      "bytes": "fdf7fefc",
+      "mnemonic": "bl",
+      "operands": "0x1001b8b0 <<postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>::try_take_varint_u32> @ imm = #-0x2604"
+    },
+    {
+      "address": 268558004,
+      "bytes": "0af05efc",
+      "mnemonic": "bl",
+      "operands": "0x10028774 <OUTLINED_FUNCTION_92> @ imm = #0xa8bc"
+    },
+    {
+      "address": 268558008,
+      "bytes": "3ef412ac",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6e0 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x8c> @ imm = #-0x17dc"
+    },
+    {
+      "address": 268558012,
+      "bytes": "ddf82c54",
+      "mnemonic": "ldr.w",
+      "operands": "r5, [sp, #0x42c]"
+    },
+    {
+      "address": 268558016,
+      "bytes": "6db1",
+      "mnemonic": "cbz",
+      "operands": "r5, 0x1001dede <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x188a> @ imm = #0x1a"
+    },
+    {
+      "address": 268558018,
+      "bytes": "012d",
+      "mnemonic": "cmp",
+      "operands": "r5, #0x1"
+    },
+    {
+      "address": 268558020,
+      "bytes": "7ef41bac",
+      "mnemonic": "bne.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x17ca"
+    },
+    {
+      "address": 268558024,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268558028,
+      "bytes": "4146",
+      "mnemonic": "mov",
+      "operands": "r1, r8"
+    },
+    {
+      "address": 268558030,
+      "bytes": "fdf718fe",
+      "mnemonic": "bl",
+      "operands": "0x1001bb02 <<core::marker::PhantomData<f32> as serde_core::de::DeserializeSeed>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>> @ imm = #-0x23d0"
+    },
+    {
+      "address": 268558034,
+      "bytes": "0af04ffc",
+      "mnemonic": "bl",
+      "operands": "0x10028774 <OUTLINED_FUNCTION_92> @ imm = #0xa89e"
+    },
+    {
+      "address": 268558038,
+      "bytes": "3ef403ac",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6e0 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x8c> @ imm = #-0x17fa"
+    },
+    {
+      "address": 268558042,
+      "bytes": "ddf82c64",
+      "mnemonic": "ldr.w",
+      "operands": "r6, [sp, #0x42c]"
+    },
+    {
+      "address": 268558046,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268558050,
+      "bytes": "faa9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x3e8"
+    },
+    {
+      "address": 268558052,
+      "bytes": "fdf7f0fd",
+      "mnemonic": "bl",
+      "operands": "0x1001bac8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<f32>> @ imm = #-0x2420"
+    },
+    {
+      "address": 268558056,
+      "bytes": "0af0e2fc",
+      "mnemonic": "bl",
+      "operands": "0x100288b0 <OUTLINED_FUNCTION_119> @ imm = #0xa9c4"
+    },
+    {
+      "address": 268558060,
+      "bytes": "3ff4efae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001dcce <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x167a> @ imm = #-0x222"
+    },
+    {
+      "address": 268558064,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268558066,
+      "bytes": "7ef404ac",
+      "mnemonic": "bne.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x17f8"
+    },
+    {
+      "address": 268558070,
+      "bytes": "0df58060",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x400"
+    },
+    {
+      "address": 268558074,
+      "bytes": "faa9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x3e8"
+    },
+    {
+      "address": 268558076,
+      "bytes": "90ed0b9a",
+      "mnemonic": "vldr",
+      "operands": "s18, [r0, #44]"
+    },
+    {
+      "address": 268558080,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268558084,
+      "bytes": "fdf7e0fd",
+      "mnemonic": "bl",
+      "operands": "0x1001bac8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<f32>> @ imm = #-0x2440"
+    },
+    {
+      "address": 268558088,
+      "bytes": "0af0d2fc",
+      "mnemonic": "bl",
+      "operands": "0x100288b0 <OUTLINED_FUNCTION_119> @ imm = #0xa9a4"
+    },
+    {
+      "address": 268558092,
+      "bytes": "3ff4dfae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001dcce <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x167a> @ imm = #-0x242"
+    },
+    {
+      "address": 268558096,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268558098,
+      "bytes": "7ef4f4ab",
+      "mnemonic": "bne.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1818"
+    },
+    {
+      "address": 268558102,
+      "bytes": "0df58060",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x400"
+    },
+    {
+      "address": 268558106,
+      "bytes": "faa9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x3e8"
+    },
+    {
+      "address": 268558108,
+      "bytes": "90ed0baa",
+      "mnemonic": "vldr",
+      "operands": "s20, [r0, #44]"
+    },
+    {
+      "address": 268558112,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268558116,
+      "bytes": "fdf7d0fd",
+      "mnemonic": "bl",
+      "operands": "0x1001bac8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<f32>> @ imm = #-0x2460"
+    },
+    {
+      "address": 268558120,
+      "bytes": "0af0c2fc",
+      "mnemonic": "bl",
+      "operands": "0x100288b0 <OUTLINED_FUNCTION_119> @ imm = #0xa984"
+    },
+    {
+      "address": 268558124,
+      "bytes": "3ff4cfae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001dcce <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x167a> @ imm = #-0x262"
+    },
+    {
+      "address": 268558128,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268558130,
+      "bytes": "7ef4e4ab",
+      "mnemonic": "bne.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1838"
+    },
+    {
+      "address": 268558134,
+      "bytes": "0df58060",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x400"
+    },
+    {
+      "address": 268558138,
+      "bytes": "faa9",
+      "mnemonic": "add",
+      "operands": "r1, sp, #0x3e8"
+    },
+    {
+      "address": 268558140,
+      "bytes": "90ed0bba",
+      "mnemonic": "vldr",
+      "operands": "s22, [r0, #44]"
+    },
+    {
+      "address": 268558144,
+      "bytes": "0df58560",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x428"
+    },
+    {
+      "address": 268558148,
+      "bytes": "fdf7c0fd",
+      "mnemonic": "bl",
+      "operands": "0x1001bac8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<f32>> @ imm = #-0x2480"
+    },
+    {
+      "address": 268558152,
+      "bytes": "0af0b2fc",
+      "mnemonic": "bl",
+      "operands": "0x100288b0 <OUTLINED_FUNCTION_119> @ imm = #0xa964"
+    },
+    {
+      "address": 268558156,
+      "bytes": "3ff4bfae",
+      "mnemonic": "beq.w",
+      "operands": "0x1001dcce <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x167a> @ imm = #-0x282"
+    },
+    {
+      "address": 268558160,
+      "bytes": "0028",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268558162,
+      "bytes": "3ef4d4ab",
+      "mnemonic": "beq.w",
+      "operands": "0x1001c6fe <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0xaa> @ imm = #-0x1858"
+    },
+    {
+      "address": 268558166,
+      "bytes": "0df58060",
+      "mnemonic": "add.w",
+      "operands": "r0, sp, #0x400"
+    },
+    {
+      "address": 268558170,
+      "bytes": "90ed0b0a",
+      "mnemonic": "vldr",
+      "operands": "s0, [r0, #44]"
+    },
+    {
+      "address": 268558174,
+      "bytes": "44e6",
+      "mnemonic": "b",
+      "operands": "0x1001dbea <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1596> @ imm = #-0x378"
+    },
+    {
+      "address": 268558210,
+      "bytes": "0e21",
+      "mnemonic": "movs",
+      "operands": "r1, #0xe"
+    },
+    {
+      "address": 268558212,
+      "bytes": "e7e4",
+      "mnemonic": "b",
+      "operands": "0x1001d956 <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x1302> @ imm = #-0x632"
+    },
+    {
+      "address": 268558420,
+      "bytes": "3546",
+      "mnemonic": "mov",
+      "operands": "r5, r6"
+    },
+    {
+      "address": 268558422,
+      "bytes": "fef719bb",
+      "mnemonic": "b.w",
+      "operands": "0x1001c68c <<dashboard_config::decode_in_place::ConfigSeed as serde_core::de::Visitor>::visit_seq::<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice>>+0x38> @ imm = #-0x19ce"
+    },
+    {
+      "address": 268547328,
+      "bytes": "f0b5",
+      "mnemonic": "push",
+      "operands": "{r4, r5, r6, r7, lr}"
+    },
+    {
+      "address": 268547330,
+      "bytes": "03af",
+      "mnemonic": "add",
+      "operands": "r7, sp, #0xc"
+    },
+    {
+      "address": 268547332,
+      "bytes": "2de9000f",
+      "mnemonic": "push.w",
+      "operands": "{r8, r9, r10, r11}"
+    },
+    {
+      "address": 268547336,
+      "bytes": "89b0",
+      "mnemonic": "sub",
+      "operands": "sp, #0x24"
+    },
+    {
+      "address": 268547338,
+      "bytes": "0df035fe",
+      "mnemonic": "bl",
+      "operands": "0x10029178 <OUTLINED_FUNCTION_338> @ imm = #0xdc6a"
+    },
+    {
+      "address": 268547342,
+      "bytes": "34d0",
+      "mnemonic": "beq",
+      "operands": "0x1001b57a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x7a> @ imm = #0x68"
+    },
+    {
+      "address": 268547344,
+      "bytes": "0d68",
+      "mnemonic": "ldr",
+      "operands": "r5, [r1]"
+    },
+    {
+      "address": 268547346,
+      "bytes": "0138",
+      "mnemonic": "subs",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268547348,
+      "bytes": "4860",
+      "mnemonic": "str",
+      "operands": "r0, [r1, #0x4]"
+    },
+    {
+      "address": 268547350,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547352,
+      "bytes": "2946",
+      "mnemonic": "mov",
+      "operands": "r1, r5"
+    },
+    {
+      "address": 268547354,
+      "bytes": "0495",
+      "mnemonic": "str",
+      "operands": "r5, [sp, #0x10]"
+    },
+    {
+      "address": 268547356,
+      "bytes": "00f0c8f9",
+      "mnemonic": "bl",
+      "operands": "0x1001b8b0 <<postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>::try_take_varint_u32> @ imm = #0x390"
+    },
+    {
+      "address": 268547360,
+      "bytes": "0df039fc",
+      "mnemonic": "bl",
+      "operands": "0x10028d96 <OUTLINED_FUNCTION_242> @ imm = #0xd872"
+    },
+    {
+      "address": 268547364,
+      "bytes": "00f09a80",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b65c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x15c> @ imm = #0x134"
+    },
+    {
+      "address": 268547368,
+      "bytes": "ddf82090",
+      "mnemonic": "ldr.w",
+      "operands": "r9, [sp, #0x20]"
+    },
+    {
+      "address": 268547372,
+      "bytes": "b9f10f0f",
+      "mnemonic": "cmp.w",
+      "operands": "r9, #0xf"
+    },
+    {
+      "address": 268547376,
+      "bytes": "00f2a380",
+      "mnemonic": "bhi.w",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #0x146"
+    },
+    {
+      "address": 268547380,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547382,
+      "bytes": "0df058fa",
+      "mnemonic": "bl",
+      "operands": "0x100289ea <OUTLINED_FUNCTION_154> @ imm = #0xd4b0"
+    },
+    {
+      "address": 268547386,
+      "bytes": "0df02cfc",
+      "mnemonic": "bl",
+      "operands": "0x10028d96 <OUTLINED_FUNCTION_242> @ imm = #0xd858"
+    },
+    {
+      "address": 268547390,
+      "bytes": "00f08d80",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b65c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x15c> @ imm = #0x11a"
+    },
+    {
+      "address": 268547394,
+      "bytes": "089e",
+      "mnemonic": "ldr",
+      "operands": "r6, [sp, #0x20]"
+    },
+    {
+      "address": 268547396,
+      "bytes": "052e",
+      "mnemonic": "cmp",
+      "operands": "r6, #0x5"
+    },
+    {
+      "address": 268547398,
+      "bytes": "00f29880",
+      "mnemonic": "bhi.w",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #0x130"
+    },
+    {
+      "address": 268547402,
+      "bytes": "dfe806f0",
+      "mnemonic": "tbb",
+      "operands": "[pc, r6]"
+    },
+    {
+      "address": 268547412,
+      "bytes": "0126",
+      "mnemonic": "movs",
+      "operands": "r6, #0x1"
+    },
+    {
+      "address": 268547414,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547416,
+      "bytes": "cde90756",
+      "mnemonic": "strd",
+      "operands": "r5, r6, [sp, #28]"
+    },
+    {
+      "address": 268547420,
+      "bytes": "00f0d6f9",
+      "mnemonic": "bl",
+      "operands": "0x1001b90c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u8>> @ imm = #0x3ac"
+    },
+    {
+      "address": 268547424,
+      "bytes": "c0f30721",
+      "mnemonic": "ubfx",
+      "operands": "r1, r0, #0x8, #0x8"
+    },
+    {
+      "address": 268547428,
+      "bytes": "c207",
+      "mnemonic": "lsls",
+      "operands": "r2, r0, #0x1f"
+    },
+    {
+      "address": 268547430,
+      "bytes": "c0b2",
+      "mnemonic": "uxtb",
+      "operands": "r0, r0"
+    },
+    {
+      "address": 268547432,
+      "bytes": "8a46",
+      "mnemonic": "mov",
+      "operands": "r10, r1"
+    },
+    {
+      "address": 268547434,
+      "bytes": "08bf",
+      "mnemonic": "it",
+      "operands": "eq"
+    },
+    {
+      "address": 268547436,
+      "bytes": "4ff00e0a",
+      "mnemonic": "moveq.w",
+      "operands": "r10, #0xe"
+    },
+    {
+      "address": 268547440,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268547442,
+      "bytes": "08bf",
+      "mnemonic": "it",
+      "operands": "eq"
+    },
+    {
+      "address": 268547444,
+      "bytes": "8a46",
+      "mnemonic": "moveq",
+      "operands": "r10, r1"
+    },
+    {
+      "address": 268547446,
+      "bytes": "92b3",
+      "mnemonic": "cbz",
+      "operands": "r2, 0x1001b5de <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0xde> @ imm = #0x64"
+    },
+    {
+      "address": 268547448,
+      "bytes": "5fe0",
+      "mnemonic": "b",
+      "operands": "0x1001b63a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x13a> @ imm = #0xbe"
+    },
+    {
+      "address": 268547450,
+      "bytes": "0220",
+      "mnemonic": "movs",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268547452,
+      "bytes": "74e0",
+      "mnemonic": "b",
+      "operands": "0x1001b668 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x168> @ imm = #0xe8"
+    },
+    {
+      "address": 268547454,
+      "bytes": "0220",
+      "mnemonic": "movs",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268547456,
+      "bytes": "cde90750",
+      "mnemonic": "strd",
+      "operands": "r5, r0, [sp, #28]"
+    },
+    {
+      "address": 268547460,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547462,
+      "bytes": "00f034f9",
+      "mnemonic": "bl",
+      "operands": "0x1001b7f2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u16>> @ imm = #0x268"
+    },
+    {
+      "address": 268547466,
+      "bytes": "0cf0b1fe",
+      "mnemonic": "bl",
+      "operands": "0x100282f0 <OUTLINED_FUNCTION_21> @ imm = #0xcd62"
+    },
+    {
+      "address": 268547470,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547472,
+      "bytes": "00f07f41",
+      "mnemonic": "andne",
+      "operands": "r1, r0, #0xff000000"
+    },
+    {
+      "address": 268547476,
+      "bytes": "1144",
+      "mnemonic": "add",
+      "operands": "r1, r2"
+    },
+    {
+      "address": 268547478,
+      "bytes": "4fea114a",
+      "mnemonic": "lsr.w",
+      "operands": "r10, r1, #0x10"
+    },
+    {
+      "address": 268547482,
+      "bytes": "0ad0",
+      "mnemonic": "beq",
+      "operands": "0x1001b5b2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0xb2> @ imm = #0x14"
+    },
+    {
+      "address": 268547484,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268547486,
+      "bytes": "00f02081",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b7e2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x2e2> @ imm = #0x240"
+    },
+    {
+      "address": 268547490,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547492,
+      "bytes": "00f025f9",
+      "mnemonic": "bl",
+      "operands": "0x1001b7f2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u16>> @ imm = #0x24a"
+    },
+    {
+      "address": 268547496,
+      "bytes": "81b2",
+      "mnemonic": "uxth",
+      "operands": "r1, r0"
+    },
+    {
+      "address": 268547498,
+      "bytes": "0229",
+      "mnemonic": "cmp",
+      "operands": "r1, #0x2"
+    },
+    {
+      "address": 268547500,
+      "bytes": "39d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b622 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x122> @ imm = #0x72"
+    },
+    {
+      "address": 268547502,
+      "bytes": "4fea104a",
+      "mnemonic": "lsr.w",
+      "operands": "r10, r0, #0x10"
+    },
+    {
+      "address": 268547506,
+      "bytes": "ff26",
+      "mnemonic": "movs",
+      "operands": "r6, #0xff"
+    },
+    {
+      "address": 268547508,
+      "bytes": "3de0",
+      "mnemonic": "b",
+      "operands": "0x1001b632 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x132> @ imm = #0x7a"
+    },
+    {
+      "address": 268547510,
+      "bytes": "0120",
+      "mnemonic": "movs",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268547512,
+      "bytes": "cde90750",
+      "mnemonic": "strd",
+      "operands": "r5, r0, [sp, #28]"
+    },
+    {
+      "address": 268547516,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547518,
+      "bytes": "00f018f9",
+      "mnemonic": "bl",
+      "operands": "0x1001b7f2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u16>> @ imm = #0x230"
+    },
+    {
+      "address": 268547522,
+      "bytes": "0cf095fe",
+      "mnemonic": "bl",
+      "operands": "0x100282f0 <OUTLINED_FUNCTION_21> @ imm = #0xcd2a"
+    },
+    {
+      "address": 268547526,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547528,
+      "bytes": "00f07f41",
+      "mnemonic": "andne",
+      "operands": "r1, r0, #0xff000000"
+    },
+    {
+      "address": 268547532,
+      "bytes": "1144",
+      "mnemonic": "add",
+      "operands": "r1, r2"
+    },
+    {
+      "address": 268547534,
+      "bytes": "4fea1141",
+      "mnemonic": "lsr.w",
+      "operands": "r1, r1, #0x10"
+    },
+    {
+      "address": 268547538,
+      "bytes": "8a46",
+      "mnemonic": "mov",
+      "operands": "r10, r1"
+    },
+    {
+      "address": 268547540,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547542,
+      "bytes": "4ff00e0a",
+      "mnemonic": "movne.w",
+      "operands": "r10, #0xe"
+    },
+    {
+      "address": 268547546,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268547548,
+      "bytes": "10d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b600 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x100> @ imm = #0x20"
+    },
+    {
+      "address": 268547550,
+      "bytes": "d046",
+      "mnemonic": "mov",
+      "operands": "r8, r10"
+    },
+    {
+      "address": 268547552,
+      "bytes": "3ee0",
+      "mnemonic": "b",
+      "operands": "0x1001b660 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x160> @ imm = #0x7c"
+    },
+    {
+      "address": 268547554,
+      "bytes": "0220",
+      "mnemonic": "movs",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268547556,
+      "bytes": "cde90750",
+      "mnemonic": "strd",
+      "operands": "r5, r0, [sp, #28]"
+    },
+    {
+      "address": 268547560,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547562,
+      "bytes": "00f08ff9",
+      "mnemonic": "bl",
+      "operands": "0x1001b90c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u8>> @ imm = #0x31e"
+    },
+    {
+      "address": 268547566,
+      "bytes": "c1b2",
+      "mnemonic": "uxtb",
+      "operands": "r1, r0"
+    },
+    {
+      "address": 268547568,
+      "bytes": "c0f3072a",
+      "mnemonic": "ubfx",
+      "operands": "r10, r0, #0x8, #0x8"
+    },
+    {
+      "address": 268547572,
+      "bytes": "0229",
+      "mnemonic": "cmp",
+      "operands": "r1, #0x2"
+    },
+    {
+      "address": 268547574,
+      "bytes": "06d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b606 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x106> @ imm = #0xc"
+    },
+    {
+      "address": 268547576,
+      "bytes": "ff26",
+      "mnemonic": "movs",
+      "operands": "r6, #0xff"
+    },
+    {
+      "address": 268547578,
+      "bytes": "11e0",
+      "mnemonic": "b",
+      "operands": "0x1001b620 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x120> @ imm = #0x22"
+    },
+    {
+      "address": 268547580,
+      "bytes": "0526",
+      "mnemonic": "movs",
+      "operands": "r6, #0x5"
+    },
+    {
+      "address": 268547582,
+      "bytes": "1ce0",
+      "mnemonic": "b",
+      "operands": "0x1001b63a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x13a> @ imm = #0x38"
+    },
+    {
+      "address": 268547584,
+      "bytes": "0391",
+      "mnemonic": "str",
+      "operands": "r1, [sp, #0xc]"
+    },
+    {
+      "address": 268547586,
+      "bytes": "0226",
+      "mnemonic": "movs",
+      "operands": "r6, #0x2"
+    },
+    {
+      "address": 268547588,
+      "bytes": "19e0",
+      "mnemonic": "b",
+      "operands": "0x1001b63a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x13a> @ imm = #0x32"
+    },
+    {
+      "address": 268547590,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268547592,
+      "bytes": "00f0ee80",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b7e8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x2e8> @ imm = #0x1dc"
+    },
+    {
+      "address": 268547596,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547598,
+      "bytes": "00f07df9",
+      "mnemonic": "bl",
+      "operands": "0x1001b90c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u8>> @ imm = #0x2fa"
+    },
+    {
+      "address": 268547602,
+      "bytes": "81b2",
+      "mnemonic": "uxth",
+      "operands": "r1, r0"
+    },
+    {
+      "address": 268547604,
+      "bytes": "0a0a",
+      "mnemonic": "lsrs",
+      "operands": "r2, r1, #0x8"
+    },
+    {
+      "address": 268547606,
+      "bytes": "c1b2",
+      "mnemonic": "uxtb",
+      "operands": "r1, r0"
+    },
+    {
+      "address": 268547608,
+      "bytes": "0229",
+      "mnemonic": "cmp",
+      "operands": "r1, #0x2"
+    },
+    {
+      "address": 268547610,
+      "bytes": "71d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b700 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x200> @ imm = #0xe2"
+    },
+    {
+      "address": 268547612,
+      "bytes": "ff26",
+      "mnemonic": "movs",
+      "operands": "r6, #0xff"
+    },
+    {
+      "address": 268547614,
+      "bytes": "9246",
+      "mnemonic": "mov",
+      "operands": "r10, r2"
+    },
+    {
+      "address": 268547616,
+      "bytes": "08e0",
+      "mnemonic": "b",
+      "operands": "0x1001b634 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x134> @ imm = #0x10"
+    },
+    {
+      "address": 268547618,
+      "bytes": "c107",
+      "mnemonic": "lsls",
+      "operands": "r1, r0, #0x1f"
+    },
+    {
+      "address": 268547620,
+      "bytes": "00f0dd80",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b7e2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x2e2> @ imm = #0x1ba"
+    },
+    {
+      "address": 268547624,
+      "bytes": "4ff6ff71",
+      "mnemonic": "movw",
+      "operands": "r1, #0xffff"
+    },
+    {
+      "address": 268547628,
+      "bytes": "0426",
+      "mnemonic": "movs",
+      "operands": "r6, #0x4"
+    },
+    {
+      "address": 268547630,
+      "bytes": "8843",
+      "mnemonic": "bics",
+      "operands": "r0, r1"
+    },
+    {
+      "address": 268547632,
+      "bytes": "5044",
+      "mnemonic": "add",
+      "operands": "r0, r10"
+    },
+    {
+      "address": 268547634,
+      "bytes": "0390",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0xc]"
+    },
+    {
+      "address": 268547636,
+      "bytes": "ff2e",
+      "mnemonic": "cmp",
+      "operands": "r6, #0xff"
+    },
+    {
+      "address": 268547638,
+      "bytes": "d046",
+      "mnemonic": "mov",
+      "operands": "r8, r10"
+    },
+    {
+      "address": 268547640,
+      "bytes": "12d0",
+      "mnemonic": "beq",
+      "operands": "0x1001b660 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x160> @ imm = #0x24"
+    },
+    {
+      "address": 268547642,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547644,
+      "bytes": "0df0d5f9",
+      "mnemonic": "bl",
+      "operands": "0x100289ea <OUTLINED_FUNCTION_154> @ imm = #0xd3aa"
+    },
+    {
+      "address": 268547648,
+      "bytes": "0df0a9fb",
+      "mnemonic": "bl",
+      "operands": "0x10028d96 <OUTLINED_FUNCTION_242> @ imm = #0xd752"
+    },
+    {
+      "address": 268547652,
+      "bytes": "0ad0",
+      "mnemonic": "beq",
+      "operands": "0x1001b65c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x15c> @ imm = #0x14"
+    },
+    {
+      "address": 268547654,
+      "bytes": "ddf820b0",
+      "mnemonic": "ldr.w",
+      "operands": "r11, [sp, #0x20]"
+    },
+    {
+      "address": 268547658,
+      "bytes": "bbf10b0f",
+      "mnemonic": "cmp.w",
+      "operands": "r11, #0xb"
+    },
+    {
+      "address": 268547662,
+      "bytes": "14d8",
+      "mnemonic": "bhi",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #0x28"
+    },
+    {
+      "address": 268547664,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547666,
+      "bytes": "0df0caf9",
+      "mnemonic": "bl",
+      "operands": "0x100289ea <OUTLINED_FUNCTION_154> @ imm = #0xd394"
+    },
+    {
+      "address": 268547670,
+      "bytes": "0df09efb",
+      "mnemonic": "bl",
+      "operands": "0x10028d96 <OUTLINED_FUNCTION_242> @ imm = #0xd73c"
+    },
+    {
+      "address": 268547674,
+      "bytes": "09d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b670 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x170> @ imm = #0x12"
+    },
+    {
+      "address": 268547676,
+      "bytes": "9df81d80",
+      "mnemonic": "ldrb.w",
+      "operands": "r8, [sp, #0x1d]"
+    },
+    {
+      "address": 268547680,
+      "bytes": "4ff6ff70",
+      "mnemonic": "movw",
+      "operands": "r0, #0xffff"
+    },
+    {
+      "address": 268547684,
+      "bytes": "84f80280",
+      "mnemonic": "strb.w",
+      "operands": "r8, [r4, #0x2]"
+    },
+    {
+      "address": 268547688,
+      "bytes": "2080",
+      "mnemonic": "strh",
+      "operands": "r0, [r4]"
+    },
+    {
+      "address": 268547690,
+      "bytes": "09b0",
+      "mnemonic": "add",
+      "operands": "sp, #0x24"
+    },
+    {
+      "address": 268547692,
+      "bytes": "0df009b8",
+      "mnemonic": "b.w",
+      "operands": "0x10028682 <OUTLINED_FUNCTION_75> @ imm = #0xd012"
+    },
+    {
+      "address": 268547696,
+      "bytes": "ddf82080",
+      "mnemonic": "ldr.w",
+      "operands": "r8, [sp, #0x20]"
+    },
+    {
+      "address": 268547700,
+      "bytes": "b8f1030f",
+      "mnemonic": "cmp.w",
+      "operands": "r8, #0x3"
+    },
+    {
+      "address": 268547704,
+      "bytes": "02d9",
+      "mnemonic": "bls",
+      "operands": "0x1001b680 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x180> @ imm = #0x4"
+    },
+    {
+      "address": 268547706,
+      "bytes": "4ff00e08",
+      "mnemonic": "mov.w",
+      "operands": "r8, #0xe"
+    },
+    {
+      "address": 268547710,
+      "bytes": "efe7",
+      "mnemonic": "b",
+      "operands": "0x1001b660 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x160> @ imm = #-0x22"
+    },
+    {
+      "address": 268547712,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547714,
+      "bytes": "0df0b2f9",
+      "mnemonic": "bl",
+      "operands": "0x100289ea <OUTLINED_FUNCTION_154> @ imm = #0xd364"
+    },
+    {
+      "address": 268547718,
+      "bytes": "0df086fb",
+      "mnemonic": "bl",
+      "operands": "0x10028d96 <OUTLINED_FUNCTION_242> @ imm = #0xd70c"
+    },
+    {
+      "address": 268547722,
+      "bytes": "e7d0",
+      "mnemonic": "beq",
+      "operands": "0x1001b65c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x15c> @ imm = #-0x32"
+    },
+    {
+      "address": 268547724,
+      "bytes": "0898",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x20]"
+    },
+    {
+      "address": 268547726,
+      "bytes": "0228",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268547728,
+      "bytes": "f3d8",
+      "mnemonic": "bhi",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #-0x1a"
+    },
+    {
+      "address": 268547730,
+      "bytes": "d0b3",
+      "mnemonic": "cbz",
+      "operands": "r0, 0x1001b70a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x20a> @ imm = #0x74"
+    },
+    {
+      "address": 268547732,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268547734,
+      "bytes": "3bd1",
+      "mnemonic": "bne",
+      "operands": "0x1001b710 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x210> @ imm = #0x76"
+    },
+    {
+      "address": 268547736,
+      "bytes": "0220",
+      "mnemonic": "movs",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268547738,
+      "bytes": "cdf80080",
+      "mnemonic": "str.w",
+      "operands": "r8, [sp]"
+    },
+    {
+      "address": 268547742,
+      "bytes": "cde90750",
+      "mnemonic": "strd",
+      "operands": "r5, r0, [sp, #28]"
+    },
+    {
+      "address": 268547746,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547748,
+      "bytes": "00f0a5f8",
+      "mnemonic": "bl",
+      "operands": "0x1001b7f2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u16>> @ imm = #0x14a"
+    },
+    {
+      "address": 268547752,
+      "bytes": "0cf022fe",
+      "mnemonic": "bl",
+      "operands": "0x100282f0 <OUTLINED_FUNCTION_21> @ imm = #0xcc44"
+    },
+    {
+      "address": 268547756,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547758,
+      "bytes": "00f07f41",
+      "mnemonic": "andne",
+      "operands": "r1, r0, #0xff000000"
+    },
+    {
+      "address": 268547762,
+      "bytes": "1144",
+      "mnemonic": "add",
+      "operands": "r1, r2"
+    },
+    {
+      "address": 268547764,
+      "bytes": "4fea1148",
+      "mnemonic": "lsr.w",
+      "operands": "r8, r1, #0x10"
+    },
+    {
+      "address": 268547768,
+      "bytes": "d2d0",
+      "mnemonic": "beq",
+      "operands": "0x1001b660 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x160> @ imm = #-0x5c"
+    },
+    {
+      "address": 268547770,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268547772,
+      "bytes": "ddd0",
+      "mnemonic": "beq",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #-0x46"
+    },
+    {
+      "address": 268547774,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547776,
+      "bytes": "00f097f8",
+      "mnemonic": "bl",
+      "operands": "0x1001b7f2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u16>> @ imm = #0x12e"
+    },
+    {
+      "address": 268547780,
+      "bytes": "0cf014fe",
+      "mnemonic": "bl",
+      "operands": "0x100282f0 <OUTLINED_FUNCTION_21> @ imm = #0xcc28"
+    },
+    {
+      "address": 268547784,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547786,
+      "bytes": "00f07f41",
+      "mnemonic": "andne",
+      "operands": "r1, r0, #0xff000000"
+    },
+    {
+      "address": 268547790,
+      "bytes": "1144",
+      "mnemonic": "add",
+      "operands": "r1, r2"
+    },
+    {
+      "address": 268547792,
+      "bytes": "4fea1141",
+      "mnemonic": "lsr.w",
+      "operands": "r1, r1, #0x10"
+    },
+    {
+      "address": 268547796,
+      "bytes": "63d0",
+      "mnemonic": "beq",
+      "operands": "0x1001b79e <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x29e> @ imm = #0xc6"
+    },
+    {
+      "address": 268547798,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268547800,
+      "bytes": "cfd0",
+      "mnemonic": "beq",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #-0x62"
+    },
+    {
+      "address": 268547802,
+      "bytes": "adf81a10",
+      "mnemonic": "strh.w",
+      "operands": "r1, [sp, #0x1a]"
+    },
+    {
+      "address": 268547806,
+      "bytes": "adf81880",
+      "mnemonic": "strh.w",
+      "operands": "r8, [sp, #0x18]"
+    },
+    {
+      "address": 268547810,
+      "bytes": "9df81b00",
+      "mnemonic": "ldrb.w",
+      "operands": "r0, [sp, #0x1b]"
+    },
+    {
+      "address": 268547814,
+      "bytes": "bdf81910",
+      "mnemonic": "ldrh.w",
+      "operands": "r1, [sp, #0x19]"
+    },
+    {
+      "address": 268547818,
+      "bytes": "41ea0040",
+      "mnemonic": "orr.w",
+      "operands": "r0, r1, r0, lsl #16"
+    },
+    {
+      "address": 268547822,
+      "bytes": "5ffa88f1",
+      "mnemonic": "uxtb.w",
+      "operands": "r1, r8"
+    },
+    {
+      "address": 268547826,
+      "bytes": "ddf80080",
+      "mnemonic": "ldr.w",
+      "operands": "r8, [sp]"
+    },
+    {
+      "address": 268547830,
+      "bytes": "41ea0020",
+      "mnemonic": "orr.w",
+      "operands": "r0, r1, r0, lsl #8"
+    },
+    {
+      "address": 268547834,
+      "bytes": "0290",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x8]"
+    },
+    {
+      "address": 268547836,
+      "bytes": "0120",
+      "mnemonic": "movs",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268547838,
+      "bytes": "0ae0",
+      "mnemonic": "b",
+      "operands": "0x1001b716 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x216> @ imm = #0x14"
+    },
+    {
+      "address": 268547840,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268547842,
+      "bytes": "0392",
+      "mnemonic": "str",
+      "operands": "r2, [sp, #0xc]"
+    },
+    {
+      "address": 268547844,
+      "bytes": "70d0",
+      "mnemonic": "beq",
+      "operands": "0x1001b7e8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x2e8> @ imm = #0xe0"
+    },
+    {
+      "address": 268547846,
+      "bytes": "0326",
+      "mnemonic": "movs",
+      "operands": "r6, #0x3"
+    },
+    {
+      "address": 268547848,
+      "bytes": "94e7",
+      "mnemonic": "b",
+      "operands": "0x1001b634 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x134> @ imm = #-0xd8"
+    },
+    {
+      "address": 268547850,
+      "bytes": "0290",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x8]"
+    },
+    {
+      "address": 268547852,
+      "bytes": "0020",
+      "mnemonic": "movs",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268547854,
+      "bytes": "02e0",
+      "mnemonic": "b",
+      "operands": "0x1001b716 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x216> @ imm = #0x4"
+    },
+    {
+      "address": 268547856,
+      "bytes": "0020",
+      "mnemonic": "movs",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268547858,
+      "bytes": "0290",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x8]"
+    },
+    {
+      "address": 268547860,
+      "bytes": "0220",
+      "mnemonic": "movs",
+      "operands": "r0, #0x2"
+    },
+    {
+      "address": 268547862,
+      "bytes": "0190",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x4]"
+    },
+    {
+      "address": 268547864,
+      "bytes": "0120",
+      "mnemonic": "movs",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268547866,
+      "bytes": "2946",
+      "mnemonic": "mov",
+      "operands": "r1, r5"
+    },
+    {
+      "address": 268547868,
+      "bytes": "0590",
+      "mnemonic": "str",
+      "operands": "r0, [sp, #0x14]"
+    },
+    {
+      "address": 268547870,
+      "bytes": "07a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x1c"
+    },
+    {
+      "address": 268547872,
+      "bytes": "00f0c6f8",
+      "mnemonic": "bl",
+      "operands": "0x1001b8b0 <<postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>::try_take_varint_u32> @ imm = #0x18c"
+    },
+    {
+      "address": 268547876,
+      "bytes": "0df037fb",
+      "mnemonic": "bl",
+      "operands": "0x10028d96 <OUTLINED_FUNCTION_242> @ imm = #0xd66e"
+    },
+    {
+      "address": 268547880,
+      "bytes": "08d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b73c <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x23c> @ imm = #0x10"
+    },
+    {
+      "address": 268547882,
+      "bytes": "9df81d10",
+      "mnemonic": "ldrb.w",
+      "operands": "r1, [sp, #0x1d]"
+    },
+    {
+      "address": 268547886,
+      "bytes": "0020",
+      "mnemonic": "movs",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268547888,
+      "bytes": "0844",
+      "mnemonic": "add",
+      "operands": "r0, r1"
+    },
+    {
+      "address": 268547890,
+      "bytes": "4ff6ff75",
+      "mnemonic": "movw",
+      "operands": "r5, #0xffff"
+    },
+    {
+      "address": 268547894,
+      "bytes": "60f31745",
+      "mnemonic": "bfi",
+      "operands": "r5, r0, #16, #8"
+    },
+    {
+      "address": 268547898,
+      "bytes": "18e0",
+      "mnemonic": "b",
+      "operands": "0x1001b76e <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x26e> @ imm = #0x30"
+    },
+    {
+      "address": 268547900,
+      "bytes": "0898",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x20]"
+    },
+    {
+      "address": 268547902,
+      "bytes": "88b1",
+      "mnemonic": "cbz",
+      "operands": "r0, 0x1001b764 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x264> @ imm = #0x22"
+    },
+    {
+      "address": 268547904,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268547906,
+      "bytes": "54d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b7ee <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x2ee> @ imm = #0xa8"
+    },
+    {
+      "address": 268547908,
+      "bytes": "2846",
+      "mnemonic": "mov",
+      "operands": "r0, r5"
+    },
+    {
+      "address": 268547910,
+      "bytes": "00f06df8",
+      "mnemonic": "bl",
+      "operands": "0x1001b824 <<u16 as serde_core::de::Deserialize>::deserialize::<&mut postcard::de::deserializer::Deserializer<postcard::de::flavors::Slice>>> @ imm = #0xda"
+    },
+    {
+      "address": 268547914,
+      "bytes": "010c",
+      "mnemonic": "lsrs",
+      "operands": "r1, r0, #0x10"
+    },
+    {
+      "address": 268547916,
+      "bytes": "c207",
+      "mnemonic": "lsls",
+      "operands": "r2, r0, #0x1f"
+    },
+    {
+      "address": 268547918,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547920,
+      "bytes": "010a",
+      "mnemonic": "lsrne",
+      "operands": "r1, r0, #0x8"
+    },
+    {
+      "address": 268547922,
+      "bytes": "4ff47f42",
+      "mnemonic": "mov.w",
+      "operands": "r2, #0xff00"
+    },
+    {
+      "address": 268547926,
+      "bytes": "02ea1040",
+      "mnemonic": "and.w",
+      "operands": "r0, r2, r0, lsr #16"
+    },
+    {
+      "address": 268547930,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547932,
+      "bytes": "0020",
+      "mnemonic": "movne",
+      "operands": "r0, #0x0"
+    },
+    {
+      "address": 268547934,
+      "bytes": "e7d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b730 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x230> @ imm = #-0x32"
+    },
+    {
+      "address": 268547936,
+      "bytes": "0122",
+      "mnemonic": "movs",
+      "operands": "r2, #0x1"
+    },
+    {
+      "address": 268547938,
+      "bytes": "00e0",
+      "mnemonic": "b",
+      "operands": "0x1001b766 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x266> @ imm = #0x0"
+    },
+    {
+      "address": 268547940,
+      "bytes": "0246",
+      "mnemonic": "mov",
+      "operands": "r2, r0"
+    },
+    {
+      "address": 268547942,
+      "bytes": "50fa81f0",
+      "mnemonic": "uxtab",
+      "operands": "r0, r0, r1"
+    },
+    {
+      "address": 268547946,
+      "bytes": "42ea0045",
+      "mnemonic": "orr.w",
+      "operands": "r5, r2, r0, lsl #16"
+    },
+    {
+      "address": 268547950,
+      "bytes": "a9b2",
+      "mnemonic": "uxth",
+      "operands": "r1, r5"
+    },
+    {
+      "address": 268547952,
+      "bytes": "4ff6ff70",
+      "mnemonic": "movw",
+      "operands": "r0, #0xffff"
+    },
+    {
+      "address": 268547956,
+      "bytes": "8142",
+      "mnemonic": "cmp",
+      "operands": "r1, r0"
+    },
+    {
+      "address": 268547958,
+      "bytes": "02d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b77e <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x27e> @ imm = #0x4"
+    },
+    {
+      "address": 268547960,
+      "bytes": "4fea1548",
+      "mnemonic": "lsr.w",
+      "operands": "r8, r5, #0x10"
+    },
+    {
+      "address": 268547964,
+      "bytes": "70e7",
+      "mnemonic": "b",
+      "operands": "0x1001b660 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x160> @ imm = #-0x120"
+    },
+    {
+      "address": 268547966,
+      "bytes": "0229",
+      "mnemonic": "cmp",
+      "operands": "r1, #0x2"
+    },
+    {
+      "address": 268547968,
+      "bytes": "0091",
+      "mnemonic": "str",
+      "operands": "r1, [sp]"
+    },
+    {
+      "address": 268547970,
+      "bytes": "3ff47aaf",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #-0x10c"
+    },
+    {
+      "address": 268547974,
+      "bytes": "04a8",
+      "mnemonic": "add",
+      "operands": "r0, sp, #0x10"
+    },
+    {
+      "address": 268547976,
+      "bytes": "00f033f8",
+      "mnemonic": "bl",
+      "operands": "0x1001b7f2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<u16>> @ imm = #0x66"
+    },
+    {
+      "address": 268547980,
+      "bytes": "0cf0b0fd",
+      "mnemonic": "bl",
+      "operands": "0x100282f0 <OUTLINED_FUNCTION_21> @ imm = #0xcb60"
+    },
+    {
+      "address": 268547984,
+      "bytes": "18bf",
+      "mnemonic": "it",
+      "operands": "ne"
+    },
+    {
+      "address": 268547986,
+      "bytes": "00f07f41",
+      "mnemonic": "andne",
+      "operands": "r1, r0, #0xff000000"
+    },
+    {
+      "address": 268547990,
+      "bytes": "1144",
+      "mnemonic": "add",
+      "operands": "r1, r2"
+    },
+    {
+      "address": 268547992,
+      "bytes": "4fea1141",
+      "mnemonic": "lsr.w",
+      "operands": "r1, r1, #0x10"
+    },
+    {
+      "address": 268547996,
+      "bytes": "01d1",
+      "mnemonic": "bne",
+      "operands": "0x1001b7a2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x2a2> @ imm = #0x2"
+    },
+    {
+      "address": 268547998,
+      "bytes": "8846",
+      "mnemonic": "mov",
+      "operands": "r8, r1"
+    },
+    {
+      "address": 268548000,
+      "bytes": "5ee7",
+      "mnemonic": "b",
+      "operands": "0x1001b660 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x160> @ imm = #-0x144"
+    },
+    {
+      "address": 268548002,
+      "bytes": "c007",
+      "mnemonic": "lsls",
+      "operands": "r0, r0, #0x1f"
+    },
+    {
+      "address": 268548004,
+      "bytes": "3ff469af",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b67a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x17a> @ imm = #-0x12e"
+    },
+    {
+      "address": 268548008,
+      "bytes": "009b",
+      "mnemonic": "ldr",
+      "operands": "r3, [sp]"
+    },
+    {
+      "address": 268548010,
+      "bytes": "4246",
+      "mnemonic": "mov",
+      "operands": "r2, r8"
+    },
+    {
+      "address": 268548012,
+      "bytes": "4fea1548",
+      "mnemonic": "lsr.w",
+      "operands": "r8, r5, #0x10"
+    },
+    {
+      "address": 268548016,
+      "bytes": "022b",
+      "mnemonic": "cmp",
+      "operands": "r3, #0x2"
+    },
+    {
+      "address": 268548018,
+      "bytes": "3ff455af",
+      "mnemonic": "beq.w",
+      "operands": "0x1001b660 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x160> @ imm = #-0x156"
+    },
+    {
+      "address": 268548022,
+      "bytes": "0398",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0xc]"
+    },
+    {
+      "address": 268548024,
+      "bytes": "84f81490",
+      "mnemonic": "strb.w",
+      "operands": "r9, [r4, #0x14]"
+    },
+    {
+      "address": 268548028,
+      "bytes": "84f813b0",
+      "mnemonic": "strb.w",
+      "operands": "r11, [r4, #0x13]"
+    },
+    {
+      "address": 268548032,
+      "bytes": "a274",
+      "mnemonic": "strb",
+      "operands": "r2, [r4, #0x12]"
+    },
+    {
+      "address": 268548034,
+      "bytes": "2182",
+      "mnemonic": "strh",
+      "operands": "r1, [r4, #0x10]"
+    },
+    {
+      "address": 268548036,
+      "bytes": "84f80ba0",
+      "mnemonic": "strb.w",
+      "operands": "r10, [r4, #0xb]"
+    },
+    {
+      "address": 268548040,
+      "bytes": "a672",
+      "mnemonic": "strb",
+      "operands": "r6, [r4, #0xa]"
+    },
+    {
+      "address": 268548042,
+      "bytes": "84f80280",
+      "mnemonic": "strb.w",
+      "operands": "r8, [r4, #0x2]"
+    },
+    {
+      "address": 268548046,
+      "bytes": "2380",
+      "mnemonic": "strh",
+      "operands": "r3, [r4]"
+    },
+    {
+      "address": 268548048,
+      "bytes": "e060",
+      "mnemonic": "str",
+      "operands": "r0, [r4, #0xc]"
+    },
+    {
+      "address": 268548050,
+      "bytes": "0298",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x8]"
+    },
+    {
+      "address": 268548052,
+      "bytes": "c4f80600",
+      "mnemonic": "str.w",
+      "operands": "r0, [r4, #0x6]"
+    },
+    {
+      "address": 268548056,
+      "bytes": "0198",
+      "mnemonic": "ldr",
+      "operands": "r0, [sp, #0x4]"
+    },
+    {
+      "address": 268548058,
+      "bytes": "a080",
+      "mnemonic": "strh",
+      "operands": "r0, [r4, #0x4]"
+    },
+    {
+      "address": 268548060,
+      "bytes": "280e",
+      "mnemonic": "lsrs",
+      "operands": "r0, r5, #0x18"
+    },
+    {
+      "address": 268548062,
+      "bytes": "e070",
+      "mnemonic": "strb",
+      "operands": "r0, [r4, #0x3]"
+    },
+    {
+      "address": 268548064,
+      "bytes": "43e7",
+      "mnemonic": "b",
+      "operands": "0x1001b66a <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x16a> @ imm = #-0x17a"
+    },
+    {
+      "address": 268548066,
+      "bytes": "4ff00e0a",
+      "mnemonic": "mov.w",
+      "operands": "r10, #0xe"
+    },
+    {
+      "address": 268548070,
+      "bytes": "e4e6",
+      "mnemonic": "b",
+      "operands": "0x1001b5b2 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0xb2> @ imm = #-0x238"
+    },
+    {
+      "address": 268548072,
+      "bytes": "4ff00e0a",
+      "mnemonic": "mov.w",
+      "operands": "r10, #0xe"
+    },
+    {
+      "address": 268548076,
+      "bytes": "04e7",
+      "mnemonic": "b",
+      "operands": "0x1001b5f8 <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0xf8> @ imm = #-0x1f8"
+    },
+    {
+      "address": 268548078,
+      "bytes": "0e21",
+      "mnemonic": "movs",
+      "operands": "r1, #0xe"
+    },
+    {
+      "address": 268548080,
+      "bytes": "9de7",
+      "mnemonic": "b",
+      "operands": "0x1001b72e <<postcard::de::deserializer::SeqAccess<postcard::de::flavors::Slice> as serde_core::de::SeqAccess>::next_element::<dashboard_config::model::ChannelSource>+0x22e> @ imm = #-0xc6"
+    },
+    {
+      "address": 268602774,
+      "bytes": "9df81c00",
+      "mnemonic": "ldrb.w",
+      "operands": "r0, [sp, #0x1c]"
+    },
+    {
+      "address": 268602778,
+      "bytes": "0128",
+      "mnemonic": "cmp",
+      "operands": "r0, #0x1"
+    },
+    {
+      "address": 268602780,
+      "bytes": "7047",
+      "mnemonic": "bx",
+      "operands": "lr"
+    },
+    {
+      "address": 268600962,
+      "bytes": "bde8000f",
+      "mnemonic": "pop.w",
+      "operands": "{r8, r9, r10, r11}"
+    },
+    {
+      "address": 268600966,
+      "bytes": "f0bd",
+      "mnemonic": "pop",
+      "operands": "{r4, r5, r6, r7, pc}"
+    },
+    {
+      "address": 268602180,
+      "bytes": "4ff6ff70",
+      "mnemonic": "movw",
+      "operands": "r0, #0xffff"
+    },
+    {
+      "address": 268602184,
+      "bytes": "8242",
+      "mnemonic": "cmp",
+      "operands": "r2, r0"
+    },
+    {
+      "address": 268602186,
+      "bytes": "7047",
+      "mnemonic": "bx",
+      "operands": "lr"
+    }
+  ]
+}

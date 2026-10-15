@@ -1,6 +1,6 @@
 """Shared closed child save/return equations for matched parser families.
 
-Only fixed authored stack profiles supplied by the two internal consumers are
+Only fixed authored stack profiles supplied by the internal consumers are
 used. No scalar opcode is executed, no unknown PC effect is admitted, and
 every complete body must already have its current literal contract checked.
 This does not prove caller source effects, observer compatibility or ownership.
@@ -83,6 +83,19 @@ def _closed_child_returns(rows,parents,children,sp,stacks,scratch_restores):
                 target=_direct_target(row,control);require(target in body,'finite child child local branch escapes its matched body')
                 pending.append((target,new_sp,new_link,updated,reg2))
                 if not conditional:continue
+            elif control=='tbb':
+                # One exact authored aggregate family. This consumes its
+                # already current complete literal/table proof, never an
+                # arbitrary caller target list. Source argument/arm effects
+                # remain separate from these all-six saved-PC equations.
+                from config_source_children import CHANNEL_SOURCE,ACCESS_TARGET_OFFSETS
+                targets=tuple(start+off for off in ACCESS_TARGET_OFFSETS)
+                require(family==CHANNEL_SOURCE and proof['shape']=='ChannelSource' and at==start+74 and
+                    row.operands=='[pc, r6]' and not conditional and proof.get('access_targets')==targets and
+                    proof.get('guarded_access_index_domain')==(0,5) and all(t in body for t in targets),
+                    'finite child loses the guarded Source Access table relation')
+                pending.extend((t,new_sp,new_link,updated,reg2) for t in targets)
+                continue
             else:require(control is None,'finite child child contains an unclassified PC effect')
             require(following in body,'finite child child falls outside its complete body')
             pending.append((following,new_sp,new_link,updated,reg2))
