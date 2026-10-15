@@ -6122,5 +6122,52 @@ class SameBLoaderBoundary(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'LOAD file/memory extent'):
             first_boot_loader_boundary(objects,rows,context)
 
+    def test_Reset_SP_relocation_with_fixed_B_code_and_task_shifts_loader_intervals(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for mode in ('speed2','sizes','sizez'):
+            for shift in (0x800,0x1000):
+                objects,rows,context,item=self.fixture(mode);elf=objects.elf
+                old=first_boot_loader_boundary(objects,rows,context);original=elf.data
+                functions=dict(elf.functions);instructions=dict(rows)
+                vector=elf.named['.vector_table'][3];section=elf.named['.vector_table'];file_at=section[4]+vector-section[3]
+                sp=0x20080000-shift
+                StartupConfigurationCopy.put(objects,vector,struct.pack('<I',sp))
+                elf.symbol_entries=[(n,sp if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+                proof=first_boot_loader_boundary(objects,rows,self.rebound(objects,context))
+                expected=bytearray(original);struct.pack_into('<I',expected,file_at,sp)
+                self.assertEqual(elf.data,bytes(expected));self.assertEqual(elf.functions,functions);self.assertEqual(rows,instructions)
+                self.assertEqual(proof['enclosing_allocation'],old['enclosing_allocation'])
+                self.assertEqual(proof['taken_state'],old['taken_state'])
+                self.assertEqual(proof['static_producers'],old['static_producers'])
+                before=old['loader_geometry'];after=proof['loader_geometry']
+                self.assertEqual(after['entry_SP'],before['entry_SP']-shift)
+                for name in ('frame','saves','locals'):
+                    self.assertEqual(after[name],tuple(v-shift for v in before[name]))
+                for name in ('function','extent','root_frame_bytes','LR_value','once_frame_retained_bytes'):
+                    self.assertEqual(after[name],before[name])
+                self.assertEqual(proof['retained_save_constituents'],tuple((name,(lo-shift,hi-shift)) for name,(lo,hi) in old['retained_save_constituents']))
+                prior={v['kind']:v['interval'] for v in old['physical_protected']}
+                current={v['kind']:v['interval'] for v in proof['physical_protected']}
+                for name in ('executor_P','retained_callers'):
+                    self.assertEqual(current[name],tuple(v-shift for v in prior[name]))
+                for name in ('Boot_task','taken_and_enclosing_padding'):self.assertEqual(current[name],prior[name])
+                self.assertEqual(proof['history']['preclaim']['executor'],(sp-24,8))
+                self.assertEqual(proof['history']['once_return_transport']['LR_value'],old['history']['once_return_transport']['LR_value'])
+                self.assertEqual(proof['history']['selected_returns'],tuple(dict(v,entry_SP=v['entry_SP']-shift,
+                    return_SP=v['return_SP']-shift,saved_LR=None if v['saved_LR'] is None else tuple(a-shift for a in v['saved_LR'])) for v in old['history']['selected_returns']))
+                self.assertEqual(proof['phase'],'first_boot_loader_pending_consuming_phase_closure')
+                self.assertNotIn('acquired_owner',proof);self.assertFalse(proof['consuming_phase_closure'])
+
+    def test_Reset_SP_inconsistent_vector_or_symbol_rejects_with_current_source_context(self):
+        from config_loader_boundary import first_boot_loader_boundary
+        for mode in ('speed2','sizes','sizez'):
+            for changed in ('vector_only','symbol_only'):
+                objects,rows,context,item=self.fixture(mode);elf=objects.elf;sp=0x2007f800
+                if changed=='vector_only':StartupConfigurationCopy.put(objects,elf.named['.vector_table'][3],struct.pack('<I',sp))
+                else:elf.symbol_entries=[(n,sp if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in elf.symbol_entries]
+                # Rebinding avoids rejecting earlier merely for stale ELF SHA.
+                with self.subTest(mode=mode,changed=changed),self.assertRaisesRegex(AssertionError,'vector SP'):
+                    first_boot_loader_boundary(objects,rows,self.rebound(objects,context))
+
 
 if __name__=='__main__':unittest.main()
