@@ -1873,6 +1873,37 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
         import config_decode_effects
         with self.assertRaises(AssertionError):config_decode_effects.decode_effect(*self.decoder('slice_pop'))
 
+    def test_narrow_cursor_and_count_endpoints_keep_exact_paired_exit_spans(self):
+        import config_abstract,config_platform
+        from dataclasses import replace
+        from config_regions import Storage,borrow
+        cases=(('slice_pop',8,8,{'error4':(8,8)}),('slice_pop',7,7,{'success':(8,8)}),
+            ('deserialize_u16',8,8,{'error4':(8,8)}),('deserialize_u16',7,7,{'success':(8,8),'error4':(8,8)}),
+            ('deserialize_u16',5,5,{'success':(6,8),'error5':(8,8)}),
+            ('deserialize_u16',5,6,{'success':(6,8),'error4':(8,8),'error5':(8,8)}),
+            ('take_varint_u32',3,3,{'success':(4,8),'error5':(8,8)}),
+            ('take_varint_u32',4,4,{'success':(5,8),'error4':(8,8)}),
+            ('deserialize_seed_f32',8,8,{'error4':(8,8)}),('deserialize_seed_f32',7,7,{'error4':(7,7)}),
+            ('deserialize_seed_f32',5,5,{'error4':(5,5)}),('deserialize_seed_f32',4,4,{'success':(8,8)}))
+        for semantic,lower,upper,expected in cases:
+            args=self.decoder(semantic,bytes(8));args[3]=replace(args[3],cursor=config_abstract.Span(lower,upper));kwargs={}
+            if semantic in ('take_varint_u32','deserialize_seed_f32'):
+                frame=args[4];kwargs['output']=borrow(Storage(frame.space,'R8',144,8,4,frame.phase,True),0,8,frame.phase,writable=True)
+            if semantic=='deserialize_seed_f32':
+                kwargs['platform_policy']=config_platform.reviewed_eav_policy(args[0],args[3].payload,
+                    dict(target=config_platform.TARGET,core=0,security='secure',boot_context=config_platform.BOOT_CONTEXT),contradictory_effects=())
+            result=config_abstract.decoder_interface(*args,**kwargs)
+            with self.subTest(semantic=semantic,cursor=(lower,upper)):
+                self.assertEqual({o['kind']:(o['cursor'].lower,o['cursor'].upper) for o in result['outcomes']},expected)
+                self.assertTrue(all(o['state'].cursor==o['cursor'] for o in result['outcomes']))
+        for count,kind,after in ((0,'none',0),(0xffffffff,'error4',0xfffffffe)):
+            args=self.sequence('seq_u16',bytes(8))
+            args[3]=replace(args[3],count=config_abstract.Span(count,count),decoder=replace(args[3].decoder,cursor=config_abstract.Span(8,8)))
+            result=config_abstract.sequence_interface(*args)
+            self.assertEqual([(o['kind'],o['count'],o['cursor']) for o in result['outcomes']],
+                             [(kind,config_abstract.Span(after,after),config_abstract.Span(8,8))])
+            self.assertTrue(all(o['state'].count==o['count'] and o['state'].decoder.cursor==o['cursor'] for o in result['outcomes']))
+
 
 class AbstractCanonicalInterfaces(unittest.TestCase):
     def compare(self):
