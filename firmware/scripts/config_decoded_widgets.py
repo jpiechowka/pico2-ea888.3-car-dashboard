@@ -138,9 +138,10 @@ def _nested_frame(context,size,label):
 
 
 def _primitive_guards(context,q):
+    from config_source_handoff import _source_carrier_cells
     top=context.headers['visitor']['sequence_state'].header
     frame=context.headers['visitor_frame'];widget=borrow(frame,1360,8,frame.phase,True)
-    return context.headers['visitor']['protected']+tuple(_object(v,label) for v,label in
+    return context.headers['visitor']['protected']+_source_carrier_cells(context)+tuple(_object(v,label) for v,label in
         ((top,'live top Q'),(widget,'live folded Widget Q')) if q!=v)
 
 
@@ -567,6 +568,8 @@ def _scratch_effects(objects,rows,state,parents,children):
     V=context.headers['visitor']['proof']['function'];top=context.headers['visitor']['sequence_state'].header
     decoder=context.headers['visitor']['sequence_state'].decoder;D=decoder.header
     guards=context.headers['visitor']['protected']+(_object(D,'live complete D'),_object(decoder.payload,'immutable source'))
+    from config_source_handoff import _source_carrier_cells
+    carrier_guards=_source_carrier_cells(context)
     widget_q=_object(borrow(frame,1360,8,phase),'folded Widget Q')
     fixed=[]
     for site,offset,size in LOCAL_STORES+FIXED_ALIAS_STORES:
@@ -581,7 +584,7 @@ def _scratch_effects(objects,rows,state,parents,children):
         require({b for site,offset,n in writes for b in range(offset,offset+n)}==set(range(size)),
             'Widget inline transport omits bytes from its captured source tail')
         require_writes((target,),tuple((target,offset,n) for site,offset,n in writes),
-            guards+(_object(top,'top Q'),widget_q,_object(source,'live same source tail')))
+            guards+carrier_guards+(_object(top,'top Q'),widget_q,_object(source,'live same source tail')))
         copied.append((origin,destination,size,tuple(V+site for site,offset,n in writes)))
     # Four byte-preserving Advanced copies lie between the initializer/source
     # package and the final destination tail. Full wrapper/builtin normal
@@ -597,7 +600,7 @@ def _scratch_effects(objects,rows,state,parents,children):
         else:require(edge[3]=='__aeabi_memcpy','Widget captured tail uses another primitive')
         child_copies.append((site,origin,destination,size,opaque_copy_interface(objects,rows,target,
             borrow(frame,origin,size,phase),borrow(frame,destination,size,phase,True),size,frame,
-            guards+(_object(top,'top Q'),widget_q))))
+            guards+carrier_guards+(_object(top,'top Q'),widget_q))))
     # The actual fixed3-slot loop writes0/4/12 then advances by16 until48;
     # this clears complete EMPTY bands. Its copied source-prefix is separate.
     final=borrow(frame,1000,48,phase,True)
@@ -822,7 +825,8 @@ def _assembly_effects(objects,rows,state,parents,children,index,band_index):
     V=context.headers['visitor']['proof']['function'];B=context.owner.start
     require(tuple(p['function'] for p in parents)==tuple(V+n for n in (416,3516,6994)),
         'Widget assembly uses another current parent/window')
-    guards=tuple(context.headers['visitor']['protected'])+tuple(_object(v,label) for v,label in
+    from config_source_handoff import _source_carrier_cells
+    guards=tuple(context.headers['visitor']['protected'])+_source_carrier_cells(context)+tuple(_object(v,label) for v,label in
         ((context.headers['visitor']['sequence_state'].header,'live top Q'),
          (context.headers['visitor']['sequence_state'].decoder.header,'live D'),
          (context.headers['visitor']['sequence_state'].decoder.payload,'immutable input')))
