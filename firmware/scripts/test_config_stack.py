@@ -4263,4 +4263,116 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             path.write_bytes((wire+' ').encode())
             with self.assertRaises(ValueError):capture.read_memory_gate(path,'synthetic-validator.elf',eav)
 
+class ValidatorResultBoundary(unittest.TestCase):
+    def fixture(self,phase='default_validation',shift=0):
+        from dataclasses import replace
+        import re
+        item=json.loads((Path(__file__).parent/'fixtures/config-validator-result.json').read_text())
+        def relocated(a):return a+shift if 0x10000000<=a<0x10200000 else a
+        def section(s):s=list(s);s[3]=relocated(s[3]);return tuple(s)
+        sections=list(map(section,item['sections']))
+        raw=bytearray(max(s[4]+s[5] for s in sections if s[2]&2 and s[1]!=8))
+        for i,address,encoded in item['segments']:
+            s=sections[i];at=s[4]+relocated(address)-s[3];raw[at:at+len(bytes.fromhex(encoded))]=bytes.fromhex(encoded)
+        for address in item['pointers']:
+            s=next(s for s in sections if s[2]&2 and s[3]<=relocated(address)<s[3]+s[5])
+            at=s[4]+relocated(address)-s[3];value=struct.unpack_from('<I',raw,at)[0]
+            struct.pack_into('<I',raw,at,relocated(value))
+        elf=SimpleNamespace(data=bytes(raw),sections=sections,named={n:section(s) for n,s in item['named'].items()},
+            functions={n:(relocated(a),z,ix) for n,(a,z,ix) in item['functions'].items()},
+            symbol_entries=[(n,relocated(a),z,info,ix) for n,a,z,info,ix in item['symbol_entries']],
+            mapping_symbols=[(n,relocated(a),ix) for n,a,ix in item['mapping_symbols']])
+        objects=config_stack.DiagnosticObjects(elf,{relocated(int(a)):z for a,z in item['sizes'].items()})
+        rows={}
+        for row in item['records']:
+            a=relocated(row['address']);operand=re.sub(r'0x[0-9a-f]+',lambda m:hex(relocated(int(m[0],16))),row['operands'])
+            rows[a]=Instruction(a,bytes.fromhex(row['bytes']),row['mnemonic'],operand)
+        name=next(n for n,e in elf.functions.items() if e[0]&~1==0x1001ea20+shift)
+        contexts=ValidatorPlatformFamilies().fixture('first_word','sizez').contexts
+        context=contexts[0 if phase=='default_validation' else 1]
+        return objects,name,rows,context,(0x100203e2 if phase=='default_validation' else 0x10020e36)+shift
+
+    def test_result_boundary_has_no_untyped_output_or_implicit_return_pointer(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_validator_result'),
+            'missing finite validator Result/carrier boundary')
+        from config_validator_result import validator_result_boundary
+        for phase in ('default_validation','decoded_validation'):
+            for shift in (0,0x2800):
+                objects,name,rows,context,call=self.fixture(phase,shift)
+                result=validator_result_boundary(objects,name,rows,context,call)
+                self.assertFalse(result['early_carrier']['spill_initialized'])
+                self.assertEqual(result['normal_return']['restored_bytes'],320)
+                self.assertEqual(result['normal_return']['return_to'],call+4)
+                self.assertEqual(result['normal_return']['r0'],'not a Result pointer ABI')
+                self.assertEqual(result['save_layout']['registers']['r8'],284)
+                self.assertEqual(result['save_layout']['registers']['return'],316)
+                self.assertEqual(result['first'].start,context.frame.start+76)
+                self.assertEqual(result['spill'].start,context.frame.start+60)
+                error,success=result['alternatives']
+                self.assertEqual(error['requires_completed_first_Some_tags'],(0,1))
+                self.assertEqual(success['inactive_or_padding'],((2,4),(8,12)))
+                self.assertEqual(result['error_copy']['physical_activation_paths'],((8,),(72,)))
+                self.assertTrue(result['requires_all_visitor_first_capture_spill_valid_save_and_ancestor_preservation'])
+                self.assertTrue(result['platform_requirements_unresolved'])
+
+    def test_wrong_call_epoch_carrier_spill_success_store_and_restore_reject(self):
+        from config_validator_result import validator_result_boundary
+        from dataclasses import replace
+        for fault in ('early_r5','spill','late_reload','success_output','restore','epoch','config','ancestor_prologue'):
+            objects,name,rows,context,call=self.fixture();parent=objects.elf.functions[name][0]&~1
+            if fault=='epoch':call=0x10020e36
+            elif fault=='config':context=replace(context,config=replace(context.config,storage=replace(context.config.storage,start=context.config.start+4)))
+            elif fault=='ancestor_prologue':
+                from config_regions import Storage
+                guard=Storage(context.frame.space,'unexpected live ancestor',context.frame.start+220,4,4,context.phase,False)
+                context=replace(context,protected=context.protected+(guard,))
+            else:
+                at={'early_r5':parent+14,'spill':parent+86,'late_reload':parent+396,
+                    'success_output':parent+4494,'restore':0x1002846c}[fault]
+                row=rows[at]
+                operation,operand={'early_r5':('mov','r5, r1'),'spill':('str','r5, [sp, #0x40]'),
+                    'late_reload':('ldr','r5, [sp, #0x40]'),'success_output':('vstr','s0, [r5, #8]'),
+                    'restore':('pop.w','{r8, r9, r10}') }[fault]
+                rows[at]=Instruction(at,row.raw,operation,operand)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                validator_result_boundary(objects,name,rows,context,call)
+
+    def test_coherent_register_slot_store_and_restore_mutants_do_not_use_stale_byte_rejection(self):
+        from config_validator_result import validator_result_boundary
+        cases=((0x1001ea2e,'0d46','mov','r5, r1'),
+            (0x1001ea76,'1095','str','r5, [sp, #0x40]'),
+            (0x1001ebac,'109d','ldr','r5, [sp, #0x40]'),
+            (0x1001fbae,'85ed020a','vstr','s0, [r5, #8]'),
+            (0x1002846c,'bde80007','pop.w','{r8, r9, r10}'),
+            (0x100203e0,'2846','mov','r0, r5'))
+        for at,encoded,operation,operand in cases:
+            objects,name,rows,context,call=self.fixture();raw=bytes.fromhex(encoded)
+            s=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=at<at+len(raw)<=s[3]+s[5])
+            offset=s[4]+at-s[3];data=bytearray(objects.elf.data);data[offset:offset+len(raw)]=raw;objects.elf.data=bytes(data)
+            rows[at]=Instruction(at,raw,operation,operand)
+            self.assertEqual(objects.read_only(at,len(raw)),rows[at].raw)
+            with self.subTest(site=hex(at)),self.assertRaisesRegex(AssertionError,'operands differ'):
+                validator_result_boundary(objects,name,rows,context,call)
+
+    def test_foreign_start_and_interior_ingress_cannot_borrow_output_or_nonreturn_suffix(self):
+        from config_validator_result import validator_result_boundary
+        for source in (0x1001ea84,0x10060000):
+            for target in (0x1001ea2e,0x1001eb66,0x1001eb70,0x1001eb7a,0x1001ebac,0x1001edc0,0x1001edc8,0x1001fbae):
+                objects,name,rows,context,call=self.fixture()
+                rows[source]=Instruction(source,rows[source].raw if source in rows else bytes(2),'b',hex(target))
+                with self.subTest(source=hex(source),target=hex(target)),self.assertRaises(AssertionError):
+                    validator_result_boundary(objects,name,rows,context,call)
+
+    def test_hold_range_keeps_actual_u16_reference_alignment(self):
+        from config_validator_result import validator_result_boundary
+        objects,name,rows,context,call=self.fixture();data=bytearray(objects.elf.data)
+        def offset(address):
+            s=next(s for s in objects.elf.sections if s[2]&2 and s[3]<=address<s[3]+s[5])
+            return s[4]+address-s[3]
+        pool=offset(0x1001f1e0);old=struct.unpack_from('<I',data,pool)[0];source=objects.read_only(old,6)
+        new=old+1;at=offset(new);data[at:at+6]=source;struct.pack_into('<I',data,pool,new);objects.elf.data=bytes(data)
+        with self.assertRaises(AssertionError):validator_result_boundary(objects,name,rows,context,call)
+
+
 if __name__=='__main__':unittest.main()
