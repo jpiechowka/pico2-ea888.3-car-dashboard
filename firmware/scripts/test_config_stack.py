@@ -4697,4 +4697,123 @@ class ValidatorControls(unittest.TestCase):
         self.assertNotIn(4,capture['source_error_bytes'])
 
 
+class InitialConfiguration(unittest.TestCase):
+    @staticmethod
+    def change(objects,address,offset,encoded):
+        elf=objects.elf;s=elf.named['.data'];raw=bytearray(elf.data);at=s[4]+address-s[3]+offset
+        raw[at:at+len(encoded)]=encoded;elf.data=bytes(raw)
+
+    def fixture(self,mode='sizez',ram_shift=0):
+        objects,records,item=EntryBodies().fixture(mode)
+        # Supplied section/segment fixture. The actual ELF headers are checked
+        # separately; these records do not establish live-RAM initialization.
+        from config_entry import CONFIG,static_role
+        elf=objects.elf
+        if ram_shift:
+            elf.sections=[tuple(v+ram_shift if i==3 and s[2]&1 else v for i,v in enumerate(s)) for s in elf.sections]
+            elf.named={name:elf.sections[item['named'][name]] for name in elf.named}
+            elf.symbol_entries=[(n,a+(ram_shift if elf.sections[ix][2]&1 else 0),z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+        s=elf.named['.data'];elf.segments=[(1,s[4],s[3],0x10080000,s[5],s[5],7,8)]
+        address=next(a for n,a,z,t,ix in elf.symbol_entries if static_role(n)==CONFIG)
+        return objects,address
+
+    def test_exact_masked_load_image_is_not_an_acquired_live_Config(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_initial'),'missing admitted masked initial-value contract')
+        from config_initial import initial_configuration
+        for mode in ('speed2','sizes','sizez'):
+            for shift in (0,0x4000):
+                objects,address=self.fixture(mode,shift);proof=initial_configuration(objects)
+                self.assertEqual(proof['address'],address)
+                self.assertEqual((proof['extent'],proof['active_bytes'],proof['opaque_bytes']),(14604,185,14419))
+                self.assertEqual(proof['phase'],'initial_load_image_only')
+                self.assertEqual(len(proof['groups']),15)
+                self.assertEqual(proof['initial_collection_lengths'],(0,0))
+                self.assertTrue(proof['requires_actual_startup_copy_and_live_preservation'])
+                self.assertTrue(proof['requires_actual_successful_once_and_exclusive_source_owner'])
+                self.assertTrue(proof['must_not_reuse_after_any_decode_or_refill_write'])
+                self.assertNotIn('acquired_owner',proof)
+
+    def test_each_active_byte_rejects_a_different_even_if_type_valid_initial_value(self):
+        from config_initial import initial_configuration,_partition
+        objects,address=self.fixture();original=objects.elf.data
+        active,names=_partition();self.assertEqual(len(active),185)
+        for offset,value in active.items():
+            objects.elf.data=original;self.change(objects,address,offset,bytes([value^1]))
+            with self.subTest(offset=offset),self.assertRaisesRegex(AssertionError,'active constructor value'):
+                initial_configuration(objects)
+        # Explicit valid-but-stale examples: length1, negative zero, cacheSome,
+        # history121 and the alternate initial-status values still reject.
+        for offset,encoded in ((244,b'\x01\0\0\0'),(440,b'\x01\0\0\0'),(14576,b'\0\0\0\x80'),
+                (14580,b'\x01\0\0\0'),(14528,b'y\0'),(14584,b'\0'),(14584,b'\x02')):
+            objects.elf.data=original;self.change(objects,address,offset,encoded)
+            with self.subTest(offset=offset,encoded=encoded),self.assertRaisesRegex(AssertionError,'active constructor value'):
+                initial_configuration(objects)
+
+    def test_all_named_opaque_bytes_can_change_without_creating_live_elements_or_ownership(self):
+        from config_initial import initial_configuration
+        from config_initial_contract import OPAQUE
+        for mode in ('speed2','sizes','sizez'):
+            objects,address=self.fixture(mode);before=initial_configuration(objects)
+            for lo,hi in OPAQUE:self.change(objects,address,lo,bytes([0xa5])*(hi-lo))
+            after=initial_configuration(objects)
+            self.assertEqual(after['initial_collection_lengths'],(0,0));self.assertEqual(after['active_bytes'],185)
+            self.assertNotEqual(before['elf_sha256'],after['elf_sha256'])
+            self.assertTrue(after['must_not_reuse_after_any_decode_or_refill_write'])
+            self.assertEqual(after['phase'],'initial_load_image_only')
+
+    def test_typed_owner_metadata_and_declared_backing_cannot_be_aliased_or_truncated(self):
+        from config_initial import initial_configuration
+        from config_entry import CONFIG,static_role
+        for fault in ('duplicate','alias','size','type','section','alignment','overlap','wrap'):
+            objects,address=self.fixture();elf=objects.elf;ix=next(i for i,v in enumerate(elf.symbol_entries) if static_role(v[0])==CONFIG)
+            entry=list(elf.symbol_entries[ix])
+            if fault=='duplicate':elf.symbol_entries.append(tuple(entry))
+            elif fault=='alias':elf.symbol_entries.append(('other_object',address+10,4,1,entry[4]))
+            elif fault=='size':entry[2]-=4
+            elif fault=='type':entry[3]=2
+            elif fault=='section':entry[4]=0
+            elif fault=='alignment':entry[1]+=2
+            elif fault=='overlap':elf.sections.append((0,8,3,address+7,0,8,0,0,1,0))
+            else:
+                s=list(elf.sections[entry[4]]);s[5]=0xffffffff;elf.sections[entry[4]]=tuple(s);elf.named['.data']=tuple(s)
+            elf.symbol_entries[ix]=tuple(entry)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):initial_configuration(objects)
+
+    def test_load_backing_is_unique_complete_current_and_strictly_numeric(self):
+        from config_initial import initial_configuration
+        for fault in ('absent','duplicate','partial','offset','file_short','virtual_wrap','physical_wrap','flags','bool'):
+            objects,address=self.fixture();elf=objects.elf;segment=list(elf.segments[0])
+            if fault=='absent':elf.segments=[]
+            elif fault=='duplicate':elf.segments.append(tuple(segment))
+            elif fault=='partial':elf.segments.append((1,0,address+5,0x10000000,1,1,7,1))
+            elif fault=='offset':segment[1]+=4
+            elif fault=='file_short':segment[4]=address-segment[2]+14603
+            elif fault=='virtual_wrap':segment[5]=0xffffffff
+            elif fault=='physical_wrap':segment[3]=0xfffffff0
+            elif fault=='flags':segment[6]=3
+            else:segment[7]=True
+            if fault not in ('absent','duplicate','partial'):elf.segments=[tuple(segment)]
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):initial_configuration(objects)
+
+    def test_prewrite_image_record_cannot_make_a_later_active_mutation_match(self):
+        from config_initial import initial_configuration
+        objects,address=self.fixture();proof=initial_configuration(objects)
+        self.change(objects,address,14570,b'\x04\0')
+        with self.assertRaisesRegex(AssertionError,'active constructor value'):initial_configuration(objects)
+        self.assertTrue(proof['must_not_reuse_after_any_decode_or_refill_write'])
+        self.assertTrue(proof['requires_first_batch_caller_specialized_loader_and_alias_closure'])
+        self.assertTrue(proof['requires_complete_validated_outcome_before_publication'])
+
+    def test_fixed_partition_cannot_omit_overlap_or_inject_an_active_group(self):
+        import config_initial
+        from unittest.mock import patch
+        groups=config_initial.GROUPS;opaque=config_initial.OPAQUE
+        for changed in (groups[:-1],groups[:-1]+(groups[0],),groups+(("injected",1,1,0,((0,'00'),)),)):
+            with patch.object(config_initial,'GROUPS',changed),self.assertRaises(AssertionError):config_initial._partition()
+        with patch.object(config_initial,'OPAQUE',((0,1),)+opaque),self.assertRaises(AssertionError):config_initial._partition()
+        bad=list(groups);name,base,count,stride,fields=bad[0];bad[0]=(name,base,True,stride,fields)
+        with patch.object(config_initial,'GROUPS',tuple(bad)),self.assertRaises(AssertionError):config_initial._partition()
+
+
 if __name__=='__main__':unittest.main()
