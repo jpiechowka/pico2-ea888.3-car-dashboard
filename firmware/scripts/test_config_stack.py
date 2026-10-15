@@ -2559,7 +2559,7 @@ class OwnedPlatformDependencies(unittest.TestCase):
             'widget'+str(i),borrow(config.owner.storage,444+220*i,220,config.frame.phase,writable=True),
             config.frame,'r4',config.protected,i) for i in range(8))
         policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
-        self.assertEqual(policy.schema,3)
+        self.assertEqual(policy.schema,4)
         self.assertEqual(policy.owned_dependencies,dependencies)
         record=policy.to_record()
         self.assertEqual(config_platform.read_policy(json.loads(json.dumps(record)),policy),policy)
@@ -4020,18 +4020,19 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             with self.subTest(fault=fault),self.assertRaises(AssertionError):read_validator_family(bad)
 
 
-    def dependencies(self,mode):
+    def dependencies(self,mode,include_led=True):
         roles={'speed2':('first_reads','result_writes','control_buttons','first_halfwords','y_action_pairs','widget_placement'),
             'sizes':('first_word','control_buttons','widget_placement'),'sizez':('first_word','control_buttons','widget_placement')}
         values=tuple(self.fixture(role,mode) for role in roles[mode])
-        if mode!='sizez':return values
+        led=LedPlatformFamilies.dependencies(LedPlatformFamilies(),mode) if include_led else ()
+        if mode!='sizez':return values+led
         from config_owned_access import OwnedAccess
         from config_regions import borrow
         config=OwnedPlatformDependencies.fixture(self,'configuration_versions')
         advanced=OwnedPlatformDependencies.fixture(self,'advanced_default_fields')
         return (config,advanced)+tuple(OwnedAccess('widget_colors',0x10022000,0x10022000+670,
             'widget'+str(i),borrow(config.owner.storage,444+220*i,220,config.frame.phase,writable=True),
-            config.frame,'r4',config.protected,i) for i in range(8))+values
+            config.frame,'r4',config.protected,i) for i in range(8))+values+led
 
     def artifact(self,mode):
         # Deliberately metadata/site-only synthetic ELF; unfilled body bytes
@@ -4052,15 +4053,25 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         text=(0,1,6,parent,0,len(raw),0,0,2,0);data=(0,1,7,base,len(raw),14604,0,0,4,0)
         elf=SimpleNamespace(data=bytes(raw)+bytes(14604),sections=[text,data],functions=functions,
             symbol_entries=[(CONFIG,base,14604,1,1)],named={'.data':data},mapping_symbols=[('$t',parent,0)])
+        # Merge the new LED metadata/site fixture into this same synthetic
+        # text allocation; no complete source/LED/validator body is implied.
+        led=LedPlatformFamilies.artifact(LedPlatformFamilies(),mode)
+        led_text=led.elf.sections[0];start=min(parent,led_text[3]);finish=max(parent+len(raw),led_text[3]+led_text[5])
+        merged=bytearray(finish-start);merged[parent-start:parent-start+len(raw)]=raw
+        for family in LedPlatformFamilies.dependencies(LedPlatformFamilies(),mode):
+            for at,encoded,offset,epoch in family.sites:merged[at-start:at-start+4]=bytes.fromhex(encoded)
+        text=(0,1,6,start,0,len(merged),0,0,2,0);data=(0,1,7,base,len(merged),14604,0,0,4,0)
+        elf.data=bytes(merged)+bytes(14604);elf.sections=[text,data];elf.named={'.data':data}
+        elf.functions.update(led.elf.functions);elf.mapping_symbols=[('$t',start,0)];sizes.update(led.sizes)
         return config_stack.DiagnosticObjects(elf,sizes)
 
-    def test_v4_policy_retains_exact_closed_family_sets_and_rejects_stale_or_lost_qualifiers(self):
+    def test_v5_policy_retains_exact_closed_family_sets_and_rejects_stale_or_lost_qualifiers(self):
         import config_platform
         self.assertEqual((config_platform.POLICY_SCHEMA,config_platform.SCOPE,config_platform.SCOPE_SHA256),
-            (3,'h2-rp2350-secure-owned-access-v4','36881eb967833a9599cc72487f8156bb1a4bb2c8722cd100679e20c519af4dfa'))
+            (4,'h2-rp2350-secure-owned-access-v5','06a1ff14d9a17278c60e9ba5fd594c5e3195b904a3a0fdbce5d88f4d99e4871f'))
         from copy import deepcopy
         objects,view,context=ConditionalStackPolicy.fixture(self)
-        for mode,count in (('speed2',6),('sizes',3),('sizez',13)):
+        for mode,count in (('speed2',7),('sizes',4),('sizez',16)):
             dependencies=self.dependencies(mode)
             policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
             self.assertEqual(policy.owned_family,mode+'_configuration')
@@ -4068,7 +4079,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             self.assertEqual(config_platform.read_policy(json.loads(json.dumps(policy.to_record())),policy),policy)
             for fault in ('old','lost','duplicate','injected','hardware','width_float'):
                 bad=deepcopy(policy.to_record())
-                if fault=='old':bad.update(schema=2,scope='h2-rp2350-secure-owned-access-v3')
+                if fault=='old':bad.update(schema=3,scope='h2-rp2350-secure-owned-access-v4')
                 elif fault=='lost':bad['owned_dependencies'].pop()
                 elif fault=='duplicate':bad['owned_dependencies'][-1]=deepcopy(bad['owned_dependencies'][-2])
                 elif fault=='injected':bad['owned_dependencies'].append(deepcopy(bad['owned_dependencies'][-1]))
@@ -4086,12 +4097,12 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 if not isinstance(value,config_validator_access.ValidatorFamily):continue
                 self.assertEqual(config_validator_access.current_validator_family(objects,value),value)
                 for site,raw,offset,outline in value.sites:
-                    old=objects.elf.data;bad=bytearray(old);bad[site-value.parent]^=1;objects.elf.data=bytes(bad)
+                    old=objects.elf.data;bad=bytearray(old);bad[site-objects.elf.sections[0][3]]^=1;objects.elf.data=bytes(bad)
                     with self.subTest(mode=mode,role=value.role,site=hex(site)),self.assertRaises(AssertionError):
                         config_validator_access.current_validator_family(objects,value)
                     objects.elf.data=old
             if mode=='sizez':
-                value=self.fixture('first_word',mode);old=objects.elf.data;bad=bytearray(old);bad[0x10029084-value.parent]^=1;objects.elf.data=bytes(bad)
+                value=self.fixture('first_word',mode);old=objects.elf.data;bad=bytearray(old);bad[0x10029084-objects.elf.sections[0][3]]^=1;objects.elf.data=bytes(bad)
                 with self.assertRaises(AssertionError):config_validator_access.current_validator_family(objects,value)
 
     def test_validator_sites_relocate_with_parent_metadata_and_mapping(self):
@@ -4167,6 +4178,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         from config_platform import PlatformPolicy,qualified_stack_result
         from config_owned_access import read_owned_access
         from config_validator_access import ValidatorFamily
+        from config_led_access import LedFamily
         from dataclasses import replace
         from config_regions import Storage
         import check_memory_layout
@@ -4194,14 +4206,23 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             first=validators[0];c=first.contexts[0];local={'speed2':200,'sizes':184,'sizez':216}[mode]
             extra=Storage(c.frame.space,'bound-'+('x'*padding),c.frame.start+local,4,4,c.phase,False)
             validators[0]=replace(first,contexts=(replace(c,protected=c.protected+(extra,)),first.contexts[1]))
+        leds=[]
+        for value in self.dependencies(mode):
+            if not isinstance(value,LedFamily):continue
+            contexts=[]
+            for c in value.contexts:
+                config=replace(c.config,storage=replace(c.config.storage,start=0x20000000))
+                owner=replace(c.owner,storage=config.storage) if c.owner.storage.space=='address' else c.owner
+                contexts.append(replace(c,config=config,owner=owner))
+            leds.append(replace(value,contexts=tuple(contexts)))
         legacy=tuple(read_owned_access(v) for v in old['policies'][0]['owned_dependencies']) if mode=='sizez' else ()
         policy=PlatformPolicy(0x1000000c,0x10000000+len(eav),hashlib.sha256(eav[12:]).hexdigest(),
-            hashlib.sha256(elf.data).hexdigest(),owned_dependencies=legacy+tuple(validators),owned_family=mode+'_configuration')
+            hashlib.sha256(elf.data).hexdigest(),owned_dependencies=legacy+tuple(validators)+tuple(leds),owned_family=mode+'_configuration')
         _,headroom=check_memory_layout.geometry(elf)
         stack=qualified_stack_result(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy)
         return elf,eav,stack
 
-    def test_actual_image_and_capture_readers_preserve_v4_with_supplied_stage_facts(self):
+    def test_actual_image_and_capture_readers_preserve_v5_with_supplied_stage_facts(self):
         import check_memory_layout,capture_target_bench as capture
         from unittest.mock import patch
         from contextlib import redirect_stdout
@@ -4229,8 +4250,8 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                     bad=deepcopy(record);policy=bad['stack']['policies'][0]
                     if fault=='lost':policy['owned_dependencies'].pop()
                     elif fault=='duplicate':policy['owned_dependencies'].append(deepcopy(policy['owned_dependencies'][-1]))
-                    elif fault=='context':policy['owned_dependencies'][-1]['contexts'][1]=deepcopy(policy['owned_dependencies'][-1]['contexts'][0])
-                    elif fault=='old':policy.update(schema=2,scope='h2-rp2350-secure-owned-access-v3')
+                    elif fault=='context':policy['owned_dependencies'][-1]['contexts'][0]['epoch']='retired'
+                    elif fault=='old':policy.update(schema=3,scope='h2-rp2350-secure-owned-access-v4')
                     elif fault=='hardware':bad['hardware_qualified']=True
                     elif fault=='width_float':policy['owned_dependencies'][-1]['width']=2.0
                     else:bad=bad['stack']
@@ -5212,6 +5233,214 @@ class StartupConfigurationCopy(unittest.TestCase):
             self.assertTrue(proof['requires_M2_pre_init_source_reconciliation'])
             self.assertTrue(proof['requires_first_batch_source_alias_and_specialized_loader_closure'])
             self.assertFalse(proof['hardware_qualified']);self.assertNotIn('acquired_owner',proof)
+
+
+class LedPlatformFamilies(unittest.TestCase):
+    def fixture(self,role,mode):
+        from config_led_access import LedContext,LedFamily,SITE_SHAPES
+        from config_regions import Storage,borrow
+        parents={('result_words','speed2'):0x1003fbfc,('result_words','sizes'):0x100225c2,
+            ('result_words','sizez'):0x1001b9ca,('pattern_words','sizez'):0x1001c654,
+            ('normal_config_words','sizez'):0x1001c654}
+        contexts=[];epochs=('normal','warning') if mode=='sizez' and role!='normal_config_words' else ('settings',)
+        for epoch in epochs:
+            phase='decoded_led_'+epoch;extent={'speed2':1288,'sizes':696,'sizez':456}[mode]
+            loader=Storage('stack:configuration.default','loader',0,extent,8,phase,True)
+            config=Storage('address','private unpublished ConfigSlot',{'speed2':0x2000064c,'sizes':0x20000388,'sizez':0x2000031c}[mode],14604,4,phase,True)
+            visitor=Storage(loader.space,'Config visitor',-1608,1608,8,phase,True) if mode=='sizez' else None
+            if mode=='sizez':
+                frame=Storage(loader.space,'LED pattern',-1656,48,8,phase,True) if role=='result_words' else visitor
+                owner=borrow(config,14544,10,phase,writable=True) if role=='normal_config_words' else borrow(visitor,1064,10,phase,writable=role=='result_words')
+                saved=Storage(loader.space,'visitor saves',-96,96,8,phase,False)
+                protected=(saved,)
+                if role=='result_words':protected+=(Storage(loader.space,'LED pattern saves',-1640,32,8,phase,False),)
+            else:
+                frame=Storage(loader.space,'LED aggregate',-80,80,8,phase,True)
+                owner=borrow(loader,996 if mode=='speed2' else 408,26,phase,writable=True)
+                protected=(Storage(loader.space,'LED aggregate saves',-36,36,4,phase,False),)
+            protected+=(Storage(loader.space,'loader saves',extent-104,104,4,phase,False),)
+            contexts.append(LedContext(mode,epoch,loader,frame,borrow(config,0,14576,phase),owner,protected))
+        parent=parents[role,mode]
+        sites=tuple((parent+offset,raw,field,epoch) for offset,raw,field,epoch in SITE_SHAPES[role,mode])
+        return LedFamily(role,mode,parent,sites,tuple(contexts))
+
+    def dependencies(self,mode):
+        roles=('result_words','pattern_words','normal_config_words') if mode=='sizez' else ('result_words',)
+        return tuple(self.fixture(role,mode) for role in roles)
+
+    def test_all12_LED_sites_keep_exact_modes_owners_epochs_and_strict_roundtrip(self):
+        import importlib.util
+        self.assertIsNotNone(importlib.util.find_spec('config_led_access'),'missing closed decoded LED dependency consumer')
+        from config_led_access import read_led_family
+        expected={'speed2':2,'sizes':2,'sizez':8};total=0
+        for mode,count in expected.items():
+            values=self.dependencies(mode);self.assertEqual(sum(len(v.sites) for v in values),count);total+=count
+            for value in values:
+                record=value.to_record();self.assertEqual(read_led_family(json.loads(json.dumps(record))),value)
+                self.assertEqual(record['width'],4)
+                self.assertEqual(record['source_phase'],'decoded_LED_source_success_still_requires_actual_producer')
+                self.assertNotIn('source_proved',record)
+                for context in value.contexts:
+                    self.assertTrue(value.footprints(context.epoch))
+        self.assertEqual(total,12)
+
+
+    def test_LED_reader_rejects_wrong_mode_width_output_epoch_and_padding_aliases(self):
+        from config_led_access import read_led_family
+        from copy import deepcopy
+        for role,mode in (('result_words','speed2'),('result_words','sizez'),('pattern_words','sizez'),('normal_config_words','sizez')):
+            record=self.fixture(role,mode).to_record()
+            for fault in ('width_float','site_bool','offset_float','direction','mode','duplicate','lost_epoch','owner',
+                          'frame','save','protected_overlap','writable_bool','padding','error','unknown'):
+                bad=deepcopy(record);c=bad['contexts'][0]
+                if fault=='width_float':bad['width']=4.0
+                elif fault=='site_bool':bad['sites'][0]['site']=True
+                elif fault=='offset_float':bad['sites'][0]['offset']=float(bad['sites'][0]['offset'])
+                elif fault=='direction':bad['direction']='write' if role=='pattern_words' else 'read'
+                elif fault=='mode':bad['mode']='sizes' if mode=='sizez' else 'sizez'
+                elif fault=='duplicate':bad['sites'][-1]=deepcopy(bad['sites'][0])
+                elif fault=='lost_epoch':bad['contexts'].pop()
+                elif fault=='owner':c['owner']['offset']+=10 if role=='normal_config_words' else 4
+                elif fault=='frame':c['frame']['extent']+=8
+                elif fault=='save':c['protected'].pop()
+                elif fault=='protected_overlap':
+                    owner=c['owner'];s=owner['storage'];c['protected'].append(dict(s,identity='overlap',
+                        start=s['start']+owner['offset']+2,extent=4,alignment=1,writable=False))
+                elif fault=='writable_bool':c['owner']['writable']=int(c['owner']['writable'])
+                elif fault=='padding':bad['opaque_payload_padding'][0]=5.0
+                elif fault=='error':bad['source_outcome']='anything_except_error_tag'
+                else:bad['source_proved']=True
+                with self.subTest(role=role,mode=mode,fault=fault),self.assertRaises(AssertionError):read_led_family(bad)
+
+    def test_LED_source_fields_and_reused_result_epochs_cannot_form_cross_products(self):
+        from dataclasses import replace
+        for role in ('result_words','pattern_words','normal_config_words'):
+            value=self.fixture(role,'sizez')
+            for epoch in ('error','missing','retired','aggregate'):
+                with self.subTest(role=role,epoch=epoch),self.assertRaises(AssertionError):value.footprints(epoch)
+            if role=='normal_config_words':
+                self.assertEqual(value.footprints('settings'),((0x2000031c+14546,0x2000031c+14550),(0x2000031c+14550,0x2000031c+14554)))
+            else:
+                self.assertEqual(tuple(sorted(value.footprints('normal'))),((-542,-538),(-538,-534)))
+                self.assertEqual(tuple(sorted(value.footprints('warning'))),((-542,-538),(-538,-534)))
+                with self.assertRaises(AssertionError):replace(value,contexts=(value.contexts[1],value.contexts[0]))
+                c=value.contexts[1]
+                other=replace(c.owner,storage=replace(c.owner.storage,identity='another numeric visitor owner'))
+                with self.assertRaises(AssertionError):replace(value,contexts=(value.contexts[0],replace(c,owner=other)))
+                c=value.contexts[1];owner=replace(c.owner,storage=replace(c.owner.storage,start=c.owner.storage.start-8))
+                with self.assertRaises(AssertionError):replace(value,contexts=(value.contexts[0],replace(c,owner=owner)))
+        for mode,offset in (('speed2',996),('sizes',408)):
+            value=self.fixture('result_words',mode);c=value.contexts[0]
+            self.assertEqual(value.footprints('settings'),((offset+2,offset+6),(offset+6,offset+10)))
+            with self.assertRaises(AssertionError):replace(value,contexts=(replace(c,owner=replace(c.owner,extent=12)),))
+
+    def artifact(self,mode):
+        # Metadata and consumed-site bytes only; no complete LED producer body.
+        from config_led_access import _PARENTS
+        from config_entry import CONFIG
+        values=self.dependencies(mode);start=min(v.parent for v in values);end=max(v.parent+_PARENTS[v.role,v.mode][1] for v in values)
+        data=bytearray(end-start);functions={};sizes={}
+        for value in values:
+            role,extent,frame=_PARENTS[value.role,value.mode];functions[role]=(value.parent|1,extent,0);sizes[value.parent]=frame
+            for at,raw,offset,epoch in value.sites:data[at-start:at-start+4]=bytes.fromhex(raw)
+        base=values[0].contexts[0].config.start
+        text=(0,1,6,start,0,len(data),0,0,2,0);slot=(0,1,7,base,len(data),14604,0,0,4,0)
+        elf=SimpleNamespace(data=bytes(data)+bytes(14604),sections=[text,slot],functions=functions,
+            symbol_entries=[(CONFIG,base,14604,1,1)],named={'.data':slot},mapping_symbols=[('$t',start,0)])
+        return config_stack.DiagnosticObjects(elf,sizes)
+
+    def test_current_LED_consumer_rebinds_all12_sites_and_rejects_metadata_or_bytes(self):
+        from config_led_access import current_led_family
+        for mode in ('speed2','sizes','sizez'):
+            objects=self.artifact(mode);start=objects.elf.sections[0][3]
+            for value in self.dependencies(mode):
+                self.assertEqual(current_led_family(objects,value),value)
+                for at,raw,offset,epoch in value.sites:
+                    old=objects.elf.data;changed=bytearray(old);changed[at-start]^=1;objects.elf.data=bytes(changed)
+                    with self.subTest(mode=mode,role=value.role,site=hex(at)),self.assertRaisesRegex(AssertionError,'LED operation bytes'):
+                        current_led_family(objects,value)
+                    objects.elf.data=old
+            for fault in ('frame','extent','mapping','Config'):
+                objects=self.artifact(mode);value=self.dependencies(mode)[0]
+                if fault=='frame':objects.sizes[value.parent]+=8
+                elif fault=='extent':
+                    name=next(n for n,v in objects.elf.functions.items() if v[0]&~1==value.parent);a,z,ix=objects.elf.functions[name]
+                    objects.elf.functions[name]=(a,z-2,ix)
+                elif fault=='mapping':objects.elf.mapping_symbols=[('$d',start,0)]
+                else:
+                    n,a,z,t,ix=objects.elf.symbol_entries[0];objects.elf.symbol_entries=[(n,a,z-4,t,ix)]
+                with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):current_led_family(objects,value)
+
+    def test_v5_configuration_policy_cannot_drop_new_LED_families(self):
+        import config_platform
+        objects,view,context=ConditionalStackPolicy.fixture(self)
+        for mode in ('speed2','sizes','sizez'):
+            legacy=ValidatorPlatformFamilies.dependencies(ValidatorPlatformFamilies(),mode,include_led=False)
+            with self.subTest(mode=mode),self.assertRaises(AssertionError):
+                config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=legacy)
+
+
+    def test_LED_code_and_owner_relocations_keep_sites_and_lifetimes_paired(self):
+        from config_led_access import current_led_family
+        from dataclasses import replace
+        for mode in ('speed2','sizes','sizez'):
+            for movement in ('code','owner','both'):
+                objects=self.artifact(mode);elf=objects.elf;code_delta=0x2000 if movement!='owner' else 0
+                owner_delta=0x4000 if movement!='code' else 0
+                code=list(elf.sections[0]);data=list(elf.sections[1]);code[3]+=code_delta;data[3]+=owner_delta
+                elf.sections=[tuple(code),tuple(data)];elf.named={'.data':tuple(data)}
+                elf.functions={n:(a+code_delta,z,ix) for n,(a,z,ix) in elf.functions.items()}
+                elf.mapping_symbols=[(n,a+code_delta,ix) for n,a,ix in elf.mapping_symbols]
+                elf.symbol_entries=[(n,a+owner_delta,z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+                objects.sizes={a+code_delta:z for a,z in objects.sizes.items()}
+                for old in self.dependencies(mode):
+                    contexts=[]
+                    for c in old.contexts:
+                        config=replace(c.config,storage=replace(c.config.storage,start=c.config.start+owner_delta))
+                        owner=replace(c.owner,storage=config.storage) if c.owner.storage.space=='address' else c.owner
+                        contexts.append(replace(c,config=config,owner=owner))
+                    value=replace(old,parent=old.parent+code_delta,
+                        sites=tuple((a+code_delta,raw,o,e) for a,raw,o,e in old.sites),contexts=tuple(contexts))
+                    with self.subTest(mode=mode,movement=movement,role=value.role):
+                        self.assertEqual(current_led_family(objects,value),value)
+                        with self.assertRaises(AssertionError):current_led_family(objects,old)
+
+    def test_v5_LED_dependencies_cannot_mix_same_width_owners_or_visitor_lineage(self):
+        import config_platform
+        from config_led_access import LedFamily
+        from dataclasses import replace
+        objects,view,context=ConditionalStackPolicy.fixture(self)
+        for mode in ('speed2','sizes','sizez'):
+            dependencies=ValidatorPlatformFamilies.dependencies(ValidatorPlatformFamilies(),mode)
+            for fault in ('Config','loader','old_scope')+ (('visitor','parent') if mode=='sizez' else ()):
+                if fault=='old_scope':
+                    policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
+                    bad=policy.to_record();bad.update(schema=3,scope='h2-rp2350-secure-owned-access-v4',
+                        scope_sha256='36881eb967833a9599cc72487f8156bb1a4bb2c8722cd100679e20c519af4dfa')
+                    with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):config_platform.read_policy(bad,policy)
+                    continue
+                values=list(dependencies);index=next(i for i,v in enumerate(values) if isinstance(v,LedFamily) and
+                    (v.role=='pattern_words' if fault in ('visitor','parent') else True))
+                family=values[index];contexts=[]
+                for c in family.contexts:
+                    if fault=='Config':
+                        config=replace(c.config,storage=replace(c.config.storage,start=c.config.start+4))
+                        owner=replace(c.owner,storage=config.storage) if c.owner.storage.space=='address' else c.owner
+                        c=replace(c,config=config,owner=owner)
+                    elif fault=='loader':
+                        loader=replace(c.loader,identity='another loader')
+                        owner=replace(c.owner,storage=loader) if c.owner.storage==c.loader else c.owner
+                        c=replace(c,loader=loader,owner=owner)
+                    elif fault=='visitor':
+                        frame=replace(c.frame,identity='another visitor')
+                        c=replace(c,frame=frame,owner=replace(c.owner,storage=frame))
+                    contexts.append(c)
+                changed=replace(family,contexts=tuple(contexts))
+                if fault=='parent':changed=replace(changed,parent=changed.parent+0x1000,
+                    sites=tuple((a+0x1000,raw,o,e) for a,raw,o,e in changed.sites))
+                values[index]=changed
+                with self.subTest(mode=mode,fault=fault),self.assertRaises(AssertionError):
+                    config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=tuple(values))
 
 
 if __name__=='__main__':unittest.main()
