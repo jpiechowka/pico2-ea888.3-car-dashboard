@@ -1044,7 +1044,7 @@ def _first_boot_decoded_widgets_state(objects,rows,source_context):
             if decision['kind']=='source_error':break
             normal=advanced['normal'];after=decision['after']
             if decision['kind']=='capacity_error':
-                errors.append(dict(stage='Widget precommit capacity',error=14,cursor=after,
+                errors.append(dict(stage='Widget precommit capacity',error=14,cursor=after.cursor,
                     initialized_views=entry.initialized_views,initialized_widgets=64,widgets_cleared=True,frontier=V+56,
                     guard='N>64 AND complete candidate decoded before i==64 guard',spare_Widget_borrow_created=False))
                 break
