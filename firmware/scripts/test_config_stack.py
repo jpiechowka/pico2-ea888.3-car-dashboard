@@ -5443,4 +5443,140 @@ class LedPlatformFamilies(unittest.TestCase):
                     config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=tuple(values))
 
 
+class PreclaimConfigurationPreservation(unittest.TestCase):
+    def fixture(self,mode='sizez',delta=0):
+        return StartupConfigurationCopy().fixture(mode,delta)
+
+    def test_same_Reset_application_and_claim_intervals_in_all_compatible_modes(self):
+        from config_preclaim import preclaim_configuration_preservation
+        for mode,footprint,attempts,count in (('speed2',80,4,46),('sizes',80,1,34),('sizez',96,1,34)):
+            for delta in (0,0x4000):
+                objects,rows,item=self.fixture(mode,delta)
+                proof=preclaim_configuration_preservation(objects,rows)
+                self.assertEqual(proof['phase'],'normal_preclaim_preserved_pending_source_diagnostic_and_loader_closure')
+                self.assertEqual(proof['mode'],mode)
+                self.assertEqual(proof['executor'],(0x2007ffe8,8))
+                self.assertEqual(proof['normal_stack_interval'],(0x20080000-footprint,0x20080000))
+                self.assertEqual(len(proof['writes']),count)
+                self.assertEqual(len(proof['publication_attempts']),attempts)
+                config=proof['startup']['entry']['initial']['address']
+                self.assertEqual(proof['Config_write_intersections'],((config+14600,1,'claim_transition'),))
+                self.assertEqual(proof['claim']['loader_r0'],config+14600)
+                self.assertEqual(proof['claim']['after_success_taken'],1)
+                self.assertEqual(proof['claim']['failed_exclusive_write_bytes'],0)
+                self.assertEqual(proof['callback_expiry'],'before next shared dequeue')
+                self.assertTrue(proof['requires_M2_pre_init_source_reconciliation'])
+                self.assertFalse(proof['hardware_qualified'])
+                self.assertNotIn('acquired_owner',proof)
+                self.assertTrue(proof['requires_complete_source_alias_and_diagnostic_closure'])
+                self.assertEqual(set(v['kind'] for v in proof['pending_diagnostics']),{'Busy','resumed','already_taken'})
+                self.assertTrue(all(len(v['edges'])==1 for v in proof['pending_diagnostics']))
+                self.assertEqual(proof['claim']['required_before_taken'],0)
+
+    def test_full_preclaim_stack_rejects_partial_allocations_below_the_old_hook_frame(self):
+        from config_preclaim import preclaim_configuration_preservation
+        from config_startup import startup_configuration_copy
+        for mode in ('speed2','sizes','sizez'):
+            for offset in (12,28,44,68,76)+( (92,) if mode=='sizez' else ()):
+                objects,rows,item=self.fixture(mode)
+                objects.elf.sections.append((0,8,3,0x20080000-offset,0,4,0,0,4,0))
+                # Reset's eight-byte hook is disjoint. The newly composed
+                # application stack footprint must close this later boundary.
+                startup_configuration_copy(objects,rows)
+                with self.subTest(mode=mode,offset=offset),self.assertRaisesRegex(AssertionError,'preclaim stack'):
+                    preclaim_configuration_preservation(objects,rows)
+
+    def test_stack_cannot_overlap_a_LOAD_memory_interval_without_a_section(self):
+        from config_preclaim import preclaim_configuration_preservation
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,item=self.fixture(mode);address=0x20080000-(92 if mode=='sizez' else 76)
+            # A section-less four-byte PT_LOAD memory extent still occupies
+            # the newly composed stack footprint. No file bytes are needed.
+            objects.elf.segments.append((1,0,address,address,0,4,6,4))
+            with self.subTest(mode=mode),self.assertRaisesRegex(AssertionError,'preclaim stack'):
+                preclaim_configuration_preservation(objects,rows)
+
+    def test_independent_Restore_Reset_and_LMA_relocation_do_not_supply_a_stack_address(self):
+        from config_preclaim import preclaim_configuration_preservation
+        helper=StartupConfigurationCopy()
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,item=self.fixture(mode)
+            helper.move_Reset(objects,rows);helper.move_source(objects,rows,0x100000);helper.move_hook(objects,rows)
+            proof=preclaim_configuration_preservation(objects,rows)
+            self.assertEqual(proof['startup']['reset']['function'],0x10070000)
+            self.assertEqual(proof['executor'],(proof['startup']['copy']['initial_sp']-24,8))
+
+    def test_external_direct_ingress_cannot_bypass_task_or_executor_construction(self):
+        from config_preclaim import preclaim_configuration_preservation
+        from config_startup import startup_configuration_copy
+        for mode in ('speed2','sizes','sizez'):
+            objects,rows,item=self.fixture(mode)
+            before=startup_configuration_copy(objects,rows)
+            phases=before['entry']['entry']['phases'];source=before['entry']['loader']['function']+200
+            for phase in phases:
+                if phase in ('main','configuration_initialize'):continue
+                for offset in (0,2):
+                    candidate=dict(rows);target=phases[phase]['function']+offset
+                    candidate[source]=Instruction(source,b'\x00\xbf','bne.w',hex(target))
+                    if offset==0 and phase in ('raw_spawn','raw_poll','queue_push','callback_install'):
+                        proof=preclaim_configuration_preservation(objects,candidate)
+                        self.assertIn((source,'bne.w',phase,target),proof['pending_other_shared_invocations'])
+                        self.assertNotIn('acquired_owner',proof)
+                    else:
+                        with self.subTest(mode=mode,phase=phase,offset=offset),self.assertRaisesRegex(AssertionError,'preclaim.*ingress'):
+                            preclaim_configuration_preservation(objects,candidate)
+
+    def test_initializer_and_same_task_callback_effects_cannot_change_under_matching_roles(self):
+        from config_preclaim import preclaim_configuration_preservation
+        from config_startup import startup_configuration_copy
+        for mode in ('speed2','sizes','sizez'):
+            for phase,offset in (('boot_initializer',4 if mode=='sizes' else 6 if mode=='sizez' else 12),
+                                 ('run',32 if mode=='sizez' else 42 if mode=='sizes' else 28),
+                                 ('boot_poll',12),('cortex_main',12 if mode=='sizez' else 14 if mode=='sizes' else 8)):
+                objects,rows,item=self.fixture(mode);initial=startup_configuration_copy(objects,rows)
+                at=initial['entry']['entry']['phases'][phase]['function']+offset
+                row=rows[at];raw=bytes([row.raw[0]^1])+row.raw[1:]
+                StartupConfigurationCopy.put(objects,at,raw)
+                # Keep the original decoded record: this is a byte/listing
+                # identity negative, not a fresh semantic decoder execution.
+                with self.subTest(mode=mode,phase=phase),self.assertRaises(AssertionError):
+                    preclaim_configuration_preservation(objects,rows)
+
+    def test_coherent_operand_mutations_reject_changed_register_and_queue_provenance(self):
+        from config_preclaim import preclaim_configuration_preservation
+        from config_startup import startup_configuration_copy
+        from dataclasses import replace
+        for mode in ('speed2','sizes','sizez'):
+            for phase in ('boot_initializer','boot_poll','run','cortex_main'):
+                objects,rows,item=self.fixture(mode);proof=startup_configuration_copy(objects,rows)
+                offsets=dict(boot_initializer=12 if mode=='speed2' else 4 if mode=='sizes' else 6,
+                    boot_poll=12,run=28 if mode=='speed2' else 42 if mode=='sizes' else 32,
+                    cortex_main=8 if mode=='speed2' else 14 if mode=='sizes' else 12)
+                at=proof['entry']['entry']['phases'][phase]['function']+offsets[phase];row=rows[at]
+                raw=bytes([row.raw[0]^1])+row.raw[1:];args=row.operands.split('@',1)[0].strip()
+                if phase=='cortex_main':args=args.replace('[sp]','[sp, #0x4]')
+                elif phase=='boot_initializer':args=('r1'+args[2:] if mode=='speed2' else 'r0'+args[2:])
+                elif phase=='boot_poll':args=args.replace('[r0,','[r1,')
+                else:args=args.replace('[r5,','[r4,').replace('[r3]','[r2]')
+                self.assertNotEqual(args,row.operands.split('@',1)[0].strip())
+                StartupConfigurationCopy.put(objects,at,raw);rows[at]=replace(row,raw=raw,operands=args)
+                with self.subTest(mode=mode,phase=phase),self.assertRaises(AssertionError):
+                    preclaim_configuration_preservation(objects,rows)
+
+    def test_full_typed_pool_backing_and_initial_claim_are_still_required(self):
+        from config_preclaim import preclaim_configuration_preservation
+        from config_entry import BOOT_POOL,static_role
+        from config_initial import initial_configuration
+        for fault in ('pool_extent','pool_alias','initial_taken'):
+            objects,rows,item=self.fixture();elf=objects.elf
+            if fault=='initial_taken':
+                value=initial_configuration(objects);InitialConfiguration.change(objects,value['address'],14600,b'\x01')
+            elif fault=='pool_extent':
+                elf.symbol_entries=[(n,a,47 if static_role(n)==BOOT_POOL else z,t,ix) for n,a,z,t,ix in elf.symbol_entries]
+            else:
+                n,a,z,t,ix=next(v for v in elf.symbol_entries if static_role(v[0])==BOOT_POOL)
+                elf.symbol_entries.append(('other_allocated_pool',a+20,4,1,ix))
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):preclaim_configuration_preservation(objects,rows)
+
+
 if __name__=='__main__':unittest.main()
