@@ -6244,6 +6244,46 @@ class ChecksumRefillHandoff(unittest.TestCase):
         self.assertGreater(len(proof['floating_carrier_preserving_child_bodies']),0)
         self.assertTrue(proof['target_access_requirements_unresolved'])
 
+    def test_premature_Source_exit_cannot_reuse_live_ID_staging_as_Result(self):
+        from config_refill_handoff import checksum_refill_handoff
+        from dataclasses import replace
+        objects,rows,context=self.fixture()
+        S=struct.unpack('<I',objects.read_only(objects.elf.named['.vector_table'][3],4))[0]
+        P=S-544;source=0x10020290
+        ids=(P+244,P+252);result=(P+236,P+248)
+        self.assertEqual((max(ids[0],result[0]),min(ids[1],result[1])),(P+244,P+248))
+        # Actual initialization and pointer transport establish the live eight
+        # ID bytes. R's first use as a Result overlaps the first four of them.
+        expected={10:('movs','r5, #0x0'),18:('str','r0, [sp, #0xf4]'),
+            14:('str','r0, [sp, #0xf8]'),32:('add','r0, sp, #0xec'),
+            34:('add.w','r11, r0, #0x8'),42:('cmp','r5, #0xb0'),
+            44:('beq',hex(source+206)),46:('ldrb','r1, [r11], #1'),
+            198:('adds','r5, #0x16'),204:('b',hex(source+38)),
+            328:('add','r4, sp, #0xec'),336:('mov','r0, r4')}
+        for offset,pair in expected.items():
+            row=rows[source+offset]
+            self.assertEqual((row.mnemonic,row.operands.split('@',1)[0].split('<',1)[0].strip()),pair)
+        self.assertEqual(rows[source+338].mnemonic,'bl')
+        # Offset increments22 close at176 only after eight actual ID reads.
+        # Index3 at this same postincrement site is the last overlapping byte
+        # read (P247); index7 is the array's final read (P251). Neither occurs
+        # if the initial zero counter takes the terminal exit immediately.
+        self.assertEqual(tuple(ids[0]+i for i in range(4)),tuple(range(P+244,P+248)))
+        self.assertEqual(ids[0]+3,result[1]-1)
+        self.assertEqual(ids[0]+7,ids[1]-1)
+        self.assertEqual(8*22,176)
+        changed=dict(rows);at=source+42
+        changed[at]=replace(rows[at],operands='r5, #0x0')
+        self.assertEqual([a for a in rows if rows[a]!=changed[a]],[at])
+        self.assertEqual(changed[at].raw,rows[at].raw)
+        # Semantic-record mutation only: the actual exit/call relation now
+        # bypasses those last reads while keeping R=P236 and the call intact.
+        # ELF/source context are unchanged; no supplied context/owner/phase is
+        # accepted and no newly decoded executable mutant is claimed.
+        returned=None
+        with self.assertRaises(AssertionError):returned=checksum_refill_handoff(objects,changed,context)
+        self.assertIsNone(returned)
+
     def test_independent_Reset_S_and_Overview_object_pool_relocation_keep_B_code_fixed(self):
         from config_refill_handoff import checksum_refill_handoff
         objects,rows,context=self.fixture();elf=objects.elf
