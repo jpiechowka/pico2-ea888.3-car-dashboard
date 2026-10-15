@@ -69,7 +69,7 @@ SUFFIXES=(
 TABLES={272:('rotation',tuple(range(4))),
     1856:('constructed ColorRole subset',(2,3,4,5,6,8,9,10,11,12,13)),
     3090:('typed LimitMode',tuple(range(5))),3690:('guarded Access tag minus one',tuple(range(4)))}
-TERMINAL_PADDING={942:(938,'nonreturn'),3750:(3748,'branch'),4914:(4912,'branch'),4986:(4982,'nonreturn')}
+TERMINAL_PADDING={942:(938,'pending_diagnostic_cut'),3750:(3748,'branch'),4914:(4912,'branch'),4986:(4982,'pending_diagnostic_cut')}
 
 
 def _source_inputs(source,context):
@@ -541,8 +541,8 @@ def _coverage(objects,name,instructions,proof,context,children):
         for address,value in data:
             left=max(address,start+lo);right=min(address+len(value),start+hi)
             if left<right:owned.append((left,value[left-address:right-address]))
-        # NOPs after exact nonreturn sites are included by their fixed source
-        # phase. They are unreachable alternatives, not executable data edges.
+        # These pads follow exact pending cuts or unconditional branches.
+        # The private audit excludes entry in this selected ordinary prefix.
         regions.append(Region(key,'data' if not selected else 'visitor',start+lo,start+hi,
                               selected,tuple(owned),tuple(transfers)))
     require(all_backwards==set(backwards),'validator omits an authored loop/shared-suffix edge')
@@ -590,8 +590,7 @@ def _audit_regions(objects,name,instructions,proof,regions,children):
     for at,row in sorted(rows.items()):
         if at in pads:
             before,kind=TERMINAL_PADDING[at-start];previous=machine.get(start+before)
-            expected='pending_diagnostic_cut' if kind=='nonreturn' else kind
-            require(previous is not None and previous.kind==expected and start+before+len(rows[start+before].raw)==at,
+            require(previous is not None and previous.kind==kind and start+before+len(rows[start+before].raw)==at,
                     'validator padding has no exact terminal predecessor')
             require(at not in machine and at not in falls and at+2 in data,
                     'validator terminal padding gains a continuation')

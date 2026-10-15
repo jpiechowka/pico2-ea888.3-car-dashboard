@@ -98,7 +98,7 @@ def _source_arguments(family,offset,source,inputs,context,parent):
             same_current_Widget=offset!=3548)
     if family=='channel_domain':
         require(offset==2080,'Channel domain loses actual Widget scalar site')
-        return dict(kind='Channel scalar',readonly=tuple(borrow(owner,W.offset+212,1,phase) for W in inputs['widgets']),
+        return dict(kind='Channel scalar',readonly=tuple(borrow(owner,W.offset+217,1,phase) for W in inputs['widgets']),
             domain=tuple(W['channel'] for W in source['widget']['iterations']),returns=('s0','s1'))
     require(family=='bands' and offset in (2452,2590,2644),'normal child has no complete source argument interface')
     return dict(kind='same current Widget AdvancedDisplay/count prefix',

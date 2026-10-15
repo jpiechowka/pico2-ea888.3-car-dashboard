@@ -6380,6 +6380,20 @@ class ChecksumValidatorReturn(unittest.TestCase):
         self.assertTrue(proof['diagnostic_closure_pending']);self.assertTrue(proof['loader_continuation_pending'])
         self.assertFalse(proof['hardware_qualified']);self.assertNotIn('acquired_owner',proof)
 
+    def test_channel_domain_invocation_reads_each_Widget_Channel_not_its_id(self):
+        from config_validator_return import checksum_refill_validator_return
+        objects,rows,context=self.fixture();proof=checksum_refill_validator_return(objects,rows,context)
+        calls=[n for n in proof['guard_stopped_normal_activation_closure']['invocations']
+               if n['family']=='channel_domain']
+        self.assertEqual(len(calls),1)
+        argument=calls[0]['source_receiver_phase']
+        # Fixture Config: Widgets start at444, stride220, Channel217; id212
+        # is a separate u16. These eight offsets name the initialized prefix.
+        base=0x2000031c
+        self.assertEqual(argument['kind'],'Channel scalar')
+        self.assertEqual(argument['readonly_ranges'],tuple((base+offset,1)
+            for offset in (661,881,1101,1321,1541,1761,1981,2201)))
+
     def test_exported_summary_and_supplied_context_cannot_replace_internal_recomputation(self):
         from config_validator_return import checksum_refill_validator_return
         objects,rows,context=self.fixture()

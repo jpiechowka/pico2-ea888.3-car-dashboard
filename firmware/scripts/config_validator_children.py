@@ -2,7 +2,7 @@
 
 Actual callers still bind typed receivers/scalars, initialized prefixes and
 physical live storage. These functions cannot validate Config or issue an
-owner. Bands' nonreturn diagnostic remains a separate unresolved alternative.
+owner. Bands' pending diagnostic cut remains a separate unresolved alternative.
 """
 import re
 from dataclasses import replace
@@ -62,7 +62,7 @@ def _normal_body(objects,name,instructions,family,_ancestry=()):
         if family=='bands':
             require((offset,operation,raw_role,frame)==
                     (20,'bl','_RNvNtNtCs_4core5slice5index16slice_index_fail',32),
-                    'bands changes its exact nonreturn diagnostic alternative')
+                    'bands changes its exact pending diagnostic-cut alternative')
             continue
         wanted='range_u8' if family=='text_valid' else 'luminance' if family=='contrasts' else None
         require(wanted is not None and NORMAL_ROLES.get(raw_role)==wanted and
