@@ -27,33 +27,53 @@ and passes after the fix. CI runs it on twelve target matrix entries, covering s
 280/70, legacy overclocks and serial/full-outline variants; the exact matrix
 is in `.github/workflows/ci.yml`.
 
-Reproduce from `firmware` with `CARGO_PROFILE_RELEASE_STRIP=none`:
+## Practical image checks and experimental proof
+
+Normal captures and native builds use the practical gate. It checks the exact
+ELF program map and boot metadata, linked configuration envelope and identity,
+RAM geometry, fixed stack reserves and conservative named stack paths, and
+reviewed flash lockout/SRAM-copy/vector contracts. Capture and native admission
+also bind startup inputs, frozen source/options and the converted UF2 bytes.
+No stack budget or reserve is increased by selecting this gate.
+
+From `firmware`, create a new capture (without flashing):
 
 ```text
-cargo build --locked -p dashboard-pico2 --release
-python scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
+python scripts/capture_target_bench.py my-static-check --firmware --features demo --image-gate practical
 ```
 
-Captures also freeze an explicit `source-context.json` before the image gate.
-It contains the two captured Boot/private Config source members, bound to the
-frozen ELF, capture attempt and exact build-options bytes. To check that input
-alongside the image gates, pass it explicitly:
+Captures freeze an explicit `source-context.json` before the gate. It contains
+the two captured Boot/private Config source members, bound to the frozen ELF,
+capture attempt and exact build-options bytes. Recheck an existing capture with:
 
 ```text
-python scripts/check_memory_layout.py <capture>/pico2.elf --source-context <capture>/source-context.json --result-json <new-result.json>
+python scripts/check_memory_layout.py <capture>/pico2.elf --gate practical --source-context <capture>/source-context.json --result-json <new-result.json>
 ```
 
-The existing command without this option retains its source-independent
-behavior. The checker never searches beside the ELF or reads current checkout
-source as a fallback. Each source member is limited to 65536 UTF-8 bytes and
-the separate context to 262144 bytes; the memory-result limit stays 65536.
-The memory JSON contains no source text and is not self-contained source-history
-or ownership evidence. Consumers claiming the source check need the explicit
-context and its compact identity from the capture manifest. This establishes
-recorded source pairing and the selected source semantics, not complete
-compiler-consumed-input provenance, Config ownership or hardware qualification.
-The remaining source/alias/diagnostic/loader graph and Maintenance M2 startup
-qualification still apply.
+The practical result uses schema3, gate `practical_image` and status
+`STATIC_IMAGE_CHECKS_PASS`. It includes exact identities, conservative bounds,
+fixed assumptions and limitations; `hardware_qualified` and
+`complete_instruction_proof` are both false. It contains no execution-proof
+receipt. Readers rerun the checks and reject altered bounds, assumptions,
+identities or a result from another gate. Native admission requires this exact
+practical scope; old captures without an explicit gate cannot be substituted.
+
+The independent complete instruction-level proof remains experimental and
+fail-closed. Select `--image-gate experimental-full` during capture, or
+`--gate experimental-full` in the memory checker. Its original schema2
+`full_memory_layout` contract is preserved. Its complete internal producer is
+unfinished, so current actual captures in that mode fail without publishing a
+successful result. There is no automatic downgrade to practical checks.
+
+Both gates require the explicit source context. Neither discovers a sidecar or
+uses current checkout source as a fallback. Each source member is limited to
+65536 UTF-8 bytes and the context to262144 bytes; memory results remain bounded
+to65536 bytes. Recorded pairing and source-contract checks do not prove all
+compiler-consumed inputs or complete machine ownership/effects. Practical
+stack admission relies on reviewed named paths and fixed child allowances;
+it is not whole-program stack or exception/reset-reentry safety proof, physical
+stack high-water, clock/voltage qualification, or device validation. The full
+experimental source/alias/diagnostic/loader graph work remains separate.
 
 The trace plus 300 MHz diagnostic build used 373264 bytes of static RAM and
 left 151024 bytes before the core 0 stack top. These numbers vary with features

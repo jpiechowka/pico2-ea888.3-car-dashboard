@@ -72,14 +72,9 @@ def read_image_result(record,elf,expected_eav=None,source_context=None):
     return wanted
 
 
-def check(path,source_context=None):
-    elf = ElfImage(path)
-    require(source_context is not None,"schema2 image requires explicit source context")
-    inspect_source_context(source_context,elf)
-    sections,named,symbols=elf.sections,elf.named,elf.symbols
+def check_boundaries(elf):
+    named,symbols=elf.named,elf.symbols
     ram_start,ram_end=0x20000000,0x20080000
-    static_ram,headroom=geometry(elf)
-    stack=check_stack_budget(elf,headroom,source_context=source_context)
     flash_start, journal_start = 0x10000000, 0x101FE000
     require(flash_start <= named[".end_block"][3] < journal_start, "boot info outside program flash")
     # Physical LOAD addresses include the flash copy of RAM .data/ram_func.
@@ -93,6 +88,14 @@ def check(path,source_context=None):
     for name, addr in handlers.items():
         require(ram_start <= (addr & ~1) < ram_end, f"lockout handler executes outside RAM: {name} at {addr:#x}")
     check_flash_lockout(elf)
+
+def check(path,source_context=None):
+    elf = ElfImage(path)
+    require(source_context is not None,"schema2 image requires explicit source context")
+    inspect_source_context(source_context,elf)
+    static_ram,headroom=geometry(elf)
+    stack=check_stack_budget(elf,headroom,source_context=source_context)
+    check_boundaries(elf)
     result=_qualified_image(stack,elf,static_ram,headroom,source_context=source_context)
     print(f"static RAM {static_ram} B; core 0 headroom {headroom} B; boundaries verified; "
           "CONDITIONAL_IMAGE_PASS, assumed_external, hardware_qualified=false; named ordinary/callback paths only; "
@@ -100,15 +103,30 @@ def check(path,source_context=None):
     return result
 
 
+def read_selected_image_result(record,elf,expected_eav=None,source_context=None,gate='practical'):
+    """Select an explicit contract; never fall back after a failed gate."""
+    require(gate in ('practical','experimental-full'),'unknown image gate')
+    if gate=='experimental-full':
+        return read_image_result(record,elf,expected_eav,source_context)
+    from practical_image import read_result
+    return read_result(record,elf,expected_eav,source_context)
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf');parser.add_argument('--result-json',type=Path)
     parser.add_argument('--source-context',type=Path,help='explicit captured source input; never discovered beside ELF')
+    parser.add_argument('--gate',choices=('practical','experimental-full'),default='practical',
+                        help='practical static checks (default), or unfinished complete instruction proof')
     args=parser.parse_args(argv)
     if args.result_json is not None:require(not args.result_json.exists(),'image result path already exists')
     source_context=load_source_context(args.source_context,ElfImage(args.elf)) if args.source_context is not None else None
-    result=check(args.elf,source_context=source_context) if source_context is not None else check(args.elf)
-    # No record is created before the complete gate returns successfully.
+    if args.gate=='practical':
+        from practical_image import check as practical_check
+        result=practical_check(ElfImage(args.elf),source_context=source_context)
+    else:
+        result=check(args.elf,source_context=source_context)
+    # No record is created before the selected gate returns successfully.
     if args.result_json is not None:
         with args.result_json.open('x',encoding='utf-8',newline='\n') as stream:json.dump(result,stream,sort_keys=True);stream.write('\n')
 

@@ -5,6 +5,7 @@ not a whole-program stack proof or a device high-water measurement. Changes to
 those paths/dependencies require disassembly review of the child allowances.
 See docs/configurator/configuration-storage.md. Never increase budgets to pass.
 """
+from dataclasses import dataclass
 import re
 import struct
 from validation import require
@@ -12,6 +13,22 @@ from validation import require
 CORE1_BYTES = 32768
 CORE1_RESERVE = 4096
 CORE0_RESERVE = 8192
+
+
+@dataclass(frozen=True)
+class FrameAdmission:
+    """Conservative named paths only; never a complete execution proof."""
+    boot:int
+    constructor:int
+    runtime:int
+    dashboard:int
+
+    def to_record(self):
+        values={key:getattr(self,key) for key in ('boot','constructor','runtime','dashboard')}
+        require(all(type(value) is int and 0<=value<=0xffffffff for value in values.values()),
+                'invalid conservative stack bound')
+        return dict(schema=1,method='conservative_named_frames_v1',bounds=values,
+                    core0_reserve=CORE0_RESERVE,core1_bytes=CORE1_BYTES,core1_reserve=CORE1_RESERVE)
 
 
 def frames(data):
@@ -323,3 +340,4 @@ def check(elf, headroom, source_context=None):
     print(f'Frame admission: boot {boot_bound} B, core1 construct {constructor_bound} B, '
           f'core1 runtime {runtime_bound} B, dashboard {dashboard_bound} B; '
           'excludes unqualified hardware high-water use')
+    return FrameAdmission(boot_bound,constructor_bound,runtime_bound,dashboard_bound)

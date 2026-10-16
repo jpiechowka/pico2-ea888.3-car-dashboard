@@ -20,14 +20,14 @@ from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler
 from source_inventory import shared_inputs
 from elf_image import ElfImage
 from check_program_image import inspect_program, linked_configuration, linked_startup
-from check_memory_layout import read_image_result
+from check_memory_layout import read_selected_image_result
 from config_build_source import make_source_context,write_source_context,load_source_context,inspect_source_context
 
 CUSTOM_KEYS = ('DASHBOARD_CPU_HZ', 'DASHBOARD_SPI_HZ', 'DASHBOARD_VSEL_MV')
 
 
-def read_memory_gate(path,frozen,config_bytes,source_context=None):
-    """Retain a full successful image result, bound to this immutable input."""
+def read_memory_gate(path,frozen,config_bytes,source_context=None,gate='practical'):
+    """Retain the explicitly selected successful image result, bound to this immutable input."""
     with path.open('rb') as stream:raw=stream.read(65537)
     if len(raw)>65536:raise ValueError('oversized image gate result')
     def unique(pairs):
@@ -37,23 +37,23 @@ def read_memory_gate(path,frozen,config_bytes,source_context=None):
             result[key]=value
         return result
     record=json.loads(raw,object_pairs_hook=unique)
-    checked=read_image_result(record,ElfImage(frozen),config_bytes,source_context=source_context)
+    checked=read_selected_image_result(record,ElfImage(frozen),config_bytes,source_context=source_context,gate=gate)
     return dict(record=checked,sha256=hashlib.sha256(raw).hexdigest())
 
 
-def run_memory_gate(frozen,destination,config_bytes,source_context=None,source_context_path=None):
+def run_memory_gate(frozen,destination,config_bytes,source_context=None,source_context_path=None,gate='practical'):
     if source_context is None or source_context_path is None:
-        raise ValueError('schema2 image requires an explicit source context and owned sidecar before launching child')
+        raise ValueError('image gate requires an explicit source context and owned sidecar before launching child')
     path=destination/'memory-layout.json'
     if path.exists():raise ValueError('image result path already exists')
-    command=[sys.executable,'scripts/check_memory_layout.py',str(frozen)]
+    command=[sys.executable,'scripts/check_memory_layout.py',str(frozen),'--gate',gate]
     current=load_source_context(source_context_path,ElfImage(frozen),destination.name,source_context.build_options)
     if current!=source_context:raise ValueError('source sidecar differs from the owned attempt')
     inspect_source_context(current,ElfImage(frozen))
     command.extend(['--source-context',str(source_context_path.resolve())])
     command.extend(['--result-json',str(path.resolve())])
     subprocess.run(command,cwd=FIRMWARE,check=True)
-    return read_memory_gate(path,frozen,config_bytes,source_context)
+    return read_memory_gate(path,frozen,config_bytes,source_context,gate)
 
 
 def check_clock_environment(environment):
@@ -365,6 +365,8 @@ def main():
     parser.add_argument('--cpu-hz')
     parser.add_argument('--spi-hz')
     parser.add_argument('--vsel-mv')
+    parser.add_argument('--image-gate',choices=('practical','experimental-full'),default='practical',
+                        help='static software checks, or unfinished complete instruction proof')
     args=parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',args.name): parser.error('invalid capture name')
     if args.options_json is not None and (args.features is not None or args.no_default_features or args.expert or args.optimization or args.cpu_hz is not None or args.spi_hz is not None or args.vsel_mv is not None):
@@ -433,7 +435,7 @@ def main():
     source_context_record=dict(path='source-context.json',sha256=hashlib.sha256(source_context_bytes).hexdigest(),
                                binding=source_context.binding())
     print("Capture: validating linked configuration, program image, memory and stack gates",flush=True)
-    memory_evidence=run_memory_gate(frozen,destination,config_bytes,source_context,source_context_path)
+    memory_evidence=run_memory_gate(frozen,destination,config_bytes,source_context,source_context_path,args.image_gate)
     for flags in [[], ['-O']]:
         subprocess.run([sys.executable,*flags,'scripts/test_flash_lockout.py',str(frozen)],cwd=FIRMWARE,check=True)
     if before!=inputs() or config!=configuration() or (rustc,version)!=compiler(FIRMWARE):
@@ -450,8 +452,8 @@ def main():
     if (destination/'build-options.json').read_bytes()!=attempt_bytes or source_context_path.read_bytes()!=source_context_bytes or load_source_context(
             source_context_path,ElfImage(frozen),destination.name,attempt_bytes)!=source_context:
         raise ValueError('captured source sidecar changed during the gate')
-    if memory_evidence!=read_memory_gate(destination/'memory-layout.json',frozen,config_bytes,source_context):
-        raise ValueError('conditional image result changed during capture')
+    if memory_evidence!=read_memory_gate(destination/'memory-layout.json',frozen,config_bytes,source_context,args.image_gate):
+        raise ValueError('selected image result changed during capture')
     (destination/'clock_profile.rs').write_bytes(clock_evidence['source'])
     (destination/'clock_profile.json').write_bytes(clock_evidence['metadata'])
     with zipfile.ZipFile(destination/'source.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
@@ -467,7 +469,7 @@ def main():
             archive.writestr('build-config/selected.eav', selection[1])
     verify_startup(build.stdout,destination/'build',destination,startup_record)
     hashes={name:hashlib.sha256(data).hexdigest() for name,data in before.items()}
-    record=dict(schema=2,scope='Build artifact only; hardware not executed',rustc=version,rustc_path=rustc,
+    record=dict(schema=2,image_gate=args.image_gate,scope='Build artifact only; hardware not executed',rustc=version,rustc_path=rustc,
                 command=command,emitted_executable=str(elf),cargo_config=config,
                 explicit_environment={key: environment[key] for key in
                                       ['CARGO_PROFILE_RELEASE_STRIP','CARGO_PROFILE_RELEASE_OPT_LEVEL','RUSTC','DASHBOARD_CONFIG',*CUSTOM_KEYS] if key in environment},

@@ -151,6 +151,8 @@ jobs:
       - name: Target artifact capture contracts
         run: |
           python3 scripts/test_target_capture.py
+          python3 scripts/test_practical_image.py
+          python3 -O scripts/test_practical_image.py
           cargo fetch --locked --manifest-path ../Cargo.toml
           python3 scripts/test_clock_profiles.py
           python3 scripts/test_stack_budget.py
@@ -271,7 +273,7 @@ jobs:
         # including strip=none; do not pass ambient overrides through its strict gate.
         run: |
           unset CARGO_INCREMENTAL
-          python3 scripts/capture_target_bench.py ci-${{ matrix.profile }} --firmware --features "${{ matrix.features }}" ${{ matrix.extra_args }}
+          python3 scripts/capture_target_bench.py ci-${{ matrix.profile }} --firmware --image-gate practical --features "${{ matrix.features }}" ${{ matrix.extra_args }}
         working-directory: firmware
       # Capture runs the complete RAM gate with its explicit pre-build source context.
       - name: Check captured flash lockout contracts

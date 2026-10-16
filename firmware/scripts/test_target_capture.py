@@ -236,13 +236,13 @@ class CaptureMemoryQualification(unittest.TestCase):
                 self.assertEqual(Path(argv[argv.index('--source-context')+1]),path.resolve());self.assertTrue(kwargs['check'])
                 Path(argv[argv.index('--result-json')+1]).write_text(json.dumps(record));return subprocess.CompletedProcess(argv,0)
             with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child) as run:
-                evidence=capture.run_memory_gate(frozen,destination,eav,source,path)
+                evidence=capture.run_memory_gate(frozen,destination,eav,source,path,gate='experimental-full')
                 self.assertEqual(evidence['record'],record)
                 self.assertLessEqual((destination/'memory-layout.json').stat().st_size,65536)
-                self.assertEqual(capture.read_memory_gate(destination/'memory-layout.json',frozen,eav,source),evidence)
+                self.assertEqual(capture.read_memory_gate(destination/'memory-layout.json',frozen,eav,source,gate='experimental-full'),evidence)
                 self.assertEqual(run.call_count,1)
-                with self.assertRaises(AssertionError):capture.read_memory_gate(destination/'memory-layout.json',frozen,eav+b'changed',source)
-                with self.assertRaises(ValueError):capture.run_memory_gate(frozen,destination,eav,source,path)
+                with self.assertRaises(AssertionError):capture.read_memory_gate(destination/'memory-layout.json',frozen,eav+b'changed',source,gate='experimental-full')
+                with self.assertRaises(ValueError):capture.run_memory_gate(frozen,destination,eav,source,path,gate='experimental-full')
 
     def test_nonzero_missing_and_intermediate_child_output_never_admit(self):
         elf,eav,record=self.fixture()
@@ -261,7 +261,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                     return subprocess.CompletedProcess(argv,0)
                 with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child),\
                      self.assertRaises((AssertionError,ValueError,FileNotFoundError,subprocess.CalledProcessError)):
-                    capture.run_memory_gate(frozen,destination,eav,source,path)
+                    capture.run_memory_gate(frozen,destination,eav,source,path,gate='experimental-full')
 
     def test_real_nonzero_child_preserves_file_without_admitting_it(self):
         elf,eav,record=self.fixture();real_run=subprocess.run
@@ -273,7 +273,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                     'import pathlib,sys;pathlib.Path(sys.argv[1]).write_text(sys.argv[2]);sys.exit(7)',
                     argv[argv.index('--result-json')+1],json.dumps(record)],check=kwargs['check'],timeout=10)
             with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child),self.assertRaises(subprocess.CalledProcessError) as error:
-                capture.run_memory_gate(frozen,destination,eav,source,path)
+                capture.run_memory_gate(frozen,destination,eav,source,path,gate='experimental-full')
             self.assertEqual(error.exception.returncode,7)
             self.assertEqual(json.loads((destination/'memory-layout.json').read_text()),record)
 
@@ -337,7 +337,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                         patch.object(capture,'run_build',side_effect=build),patch.object(capture,'emitted_elf',return_value=emitted),
                         patch.object(capture,'generated_clock',side_effect=clock),patch.object(capture,'firmware_package',return_value='id'),
                         patch.object(capture,'embedded_config',return_value=eav),patch.object(capture.subprocess,'run',side_effect=child),
-                        patch.object(sys,'argv',['capture','fixture']),patch.dict(os.environ,{},clear=True)):
+                        patch.object(sys,'argv',['capture','fixture','--image-gate','experimental-full']),patch.dict(os.environ,{},clear=True)):
                         patches.enter_context(context)
                     if drift:
                         with self.assertRaises((AssertionError,ValueError)):capture.main()
@@ -380,13 +380,13 @@ class CaptureMemoryQualification(unittest.TestCase):
                     return subprocess.CompletedProcess(argv,0)
                 with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child) as run:
                     if fault is None:
-                        self.assertEqual(capture.run_memory_gate(frozen,destination,eav,value,path)['record'],record)
+                        self.assertEqual(capture.run_memory_gate(frozen,destination,eav,value,path,gate='experimental-full')['record'],record)
                         self.assertEqual(run.call_count,1)
                     else:
                         with self.assertRaises((AssertionError,ValueError)):
                             capture.run_memory_gate(frozen,destination,eav,
                                 None if fault in ('missing_context','missing_both') else value,
-                                None if fault in ('missing_pair','missing_both') else path)
+                                None if fault in ('missing_pair','missing_both') else path,gate='experimental-full')
                         run.assert_not_called();self.assertFalse((destination/'memory-layout.json').exists())
 
     def test_real_python_child_reads_explicit_source_bytes_before_supplied_image_output(self):
@@ -409,7 +409,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                     argv[argv.index('--source-context')+1],destination.name,argv[argv.index('--result-json')+1],
                     json.dumps(record)],check=kwargs['check'],timeout=10)
             with patch.object(capture,'ElfImage',return_value=elf),patch.object(capture.subprocess,'run',side_effect=child):
-                self.assertEqual(capture.run_memory_gate(frozen,destination,eav,value,source)['record'],record)
+                self.assertEqual(capture.run_memory_gate(frozen,destination,eav,value,source,gate='experimental-full')['record'],record)
             # The child verifies actual sidecar bytes, but its image stages are
             # supplied fixtures. This is not a linked-firmware/image proof.
 

@@ -429,7 +429,7 @@ mass-storage fallback. Explicit Flash admission requires a matching artifact,
 fresh device inspection and the user's genuine-Pico-2 confirmation; artifact
 metadata alone grants no write authority.
 
-Compilation currently includes the capture script's existing image gates.
+Compilation uses [practical image checks](../performance/memory-layout.md#practical-image-checks-and-experimental-proof): exact ELF/config/startup identities, memory limits, conservative stack bounds and reviewed flash contracts, followed by strict ELF-to-UF2 comparison. The separate complete instruction-level proof remains experimental and unfinished. Practical admission makes no hardware qualification claim.
 Sanitized stdout/stderr is streamed into bounded job logs while the child runs;
 contended log ingress is dropped with explicit loss accounting, never blocking
 pipe draining or cancellation. Terminal transition/error

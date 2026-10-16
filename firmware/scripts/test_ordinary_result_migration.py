@@ -48,7 +48,7 @@ class OrdinaryResultMigration(unittest.TestCase):
         self.assertIn('NMI/HardFault',stdout.getvalue())
         with tempfile.TemporaryDirectory() as folder,patch.object(capture,'ElfImage',return_value=elf):
             p=Path(folder)/'memory-layout.json';raw=(json.dumps(record,sort_keys=True)+'\n').encode();p.write_bytes(raw)
-            checked=capture.read_memory_gate(p,'supplied-stage.elf',eav,source)
+            checked=capture.read_memory_gate(p,'supplied-stage.elf',eav,source,gate='experimental-full')
             self.assertEqual(checked,dict(record=record,sha256=hashlib.sha256(raw).hexdigest()))
 
     def test_missing_changed_or_stronger_scope_rejects_through_real_enclosing_reader(self):
@@ -125,7 +125,7 @@ class OrdinaryResultMigration(unittest.TestCase):
                 "from test_validation_policy import MemoryQualification;"
                 "elf,_,_=MemoryQualification().fixture();stack=json.loads(Path(sys.argv[3]).read_bytes());"
                 "\nwith patch.object(image,'ElfImage',return_value=elf),patch.object(image,'check_stack_budget',return_value=stack),patch.object(image,'check_flash_lockout'):"
-                "\n image.main([sys.argv[2],'--result-json',sys.argv[5],'--source-context',sys.argv[4]])")
+                "\n image.main([sys.argv[2],'--gate','experimental-full','--result-json',sys.argv[5],'--source-context',sys.argv[4]])")
             child=subprocess.run([sys.executable,'-B',*(['-O'] if sys.flags.optimize else []),'-c',code,str(Path(fixtures.__file__).parent),str(frozen),
                 str(stages),str(sidecar),str(result)],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=10)
             self.assertEqual(child.returncode,0,child.stdout.decode(errors='replace'))
@@ -134,7 +134,7 @@ class OrdinaryResultMigration(unittest.TestCase):
             self.assertIn('NMI/HardFault',stdout)
             self.assertIn('reset requires fresh qualified epoch',stdout)
             with patch.object(capture,'ElfImage',return_value=elf):
-                checked=capture.read_memory_gate(result,frozen,eav,source)
+                checked=capture.read_memory_gate(result,frozen,eav,source,gate='experimental-full')
             self.assertEqual(checked['record']['stack'],stack)
             self.assertEqual(checked['sha256'],hashlib.sha256(result.read_bytes()).hexdigest())
             self.assertFalse(checked['record']['stack']['execution_scope']['exception_safe_completion'])

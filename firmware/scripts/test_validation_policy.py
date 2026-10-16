@@ -174,14 +174,14 @@ class MemoryQualification(unittest.TestCase):
             source=Path(folder)/'source-context.json';write_source_context(source,elf.fixture_source_context)
             with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
                  patch.object(check_memory_layout,'check_flash_lockout',side_effect=AssertionError('late failure')):
-                with self.assertRaises(AssertionError):check_memory_layout.main(['fixture.elf','--result-json',str(target),'--source-context',str(source)])
+                with self.assertRaises(AssertionError):check_memory_layout.main(['fixture.elf','--gate','experimental-full','--result-json',str(target),'--source-context',str(source)])
             self.assertFalse(target.exists())
             with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(check_memory_layout,'check_stack_budget',return_value=stack),\
                  patch.object(check_memory_layout,'check_flash_lockout'):
-                check_memory_layout.main(['fixture.elf','--result-json',str(target),'--source-context',str(source)])
+                check_memory_layout.main(['fixture.elf','--gate','experimental-full','--result-json',str(target),'--source-context',str(source)])
             self.assertEqual(json.loads(target.read_text())['status'],'CONDITIONAL_IMAGE_PASS')
             with patch.object(check_memory_layout,'check') as gate,self.assertRaises(AssertionError):
-                check_memory_layout.main(['fixture.elf','--result-json',str(target),'--source-context',str(source)])
+                check_memory_layout.main(['fixture.elf','--gate','experimental-full','--result-json',str(target),'--source-context',str(source)])
             gate.assert_not_called()
 
     def test_input_policy_rejects_partial_allocated_alias_and_wrapped_owner(self):
@@ -242,7 +242,7 @@ class MemoryQualification(unittest.TestCase):
             with self.subTest(explicit=explicit,bad=bad),tempfile.TemporaryDirectory() as folder:
                 source=Path(folder)/'source-context.json';output=Path(folder)/'memory.json'
                 write_source_context(source,replace(value,elf_sha256='0'*64) if bad else value)
-                args=['fixture.elf','--result-json',str(output)]
+                args=['fixture.elf','--gate','experimental-full','--gate','experimental-full','--result-json',str(output)]
                 if explicit:args+=['--source-context',str(source)]
                 with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(
                         check_memory_layout,'check_stack_budget',return_value=stack),patch.object(check_memory_layout,'check_flash_lockout'):
