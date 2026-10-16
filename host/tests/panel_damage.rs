@@ -297,3 +297,23 @@ fn both_geometries_reconstruct_every_tile_boundary_and_random_union() {
         );
     }
 }
+
+#[test]
+fn render_transition_follows_pending_orientation_before_old_completion() {
+    use dashboard_config::Orientation;
+    let mut history = PanelHistory::new();
+    let a = token(BufferId::A, 1);
+    let b = token(BufferId::B, 2);
+    history.begin_render_in(a, Orientation::Landscape).unwrap();
+    history.queue(a, None).unwrap();
+    history.complete(a).unwrap();
+    history.begin_render_in(b, Orientation::Portrait).unwrap();
+    assert_eq!(history.target_orientation(), Some(Orientation::Landscape));
+    history.queue(b, None).unwrap();
+    assert_eq!(history.target_orientation(), Some(Orientation::Portrait));
+    let next = token(BufferId::A, 3);
+    history.begin_render_in(next, Orientation::Landscape).unwrap();
+    assert_eq!(history.target_orientation(), Some(Orientation::Portrait));
+    history.complete(b).unwrap();
+    assert_eq!(history.target_orientation(), Some(Orientation::Portrait));
+}

@@ -663,7 +663,9 @@ async fn dashboard_task(
         );
         let geometry = orientation.geometry();
         let render_idx = render_frame.id().index();
-        if rendered_orientations[render_idx] != Some(orientation) {
+        if rendered_orientations[render_idx] != Some(orientation)
+            || panel_history.target_orientation() != Some(orientation)
+        {
             dashboard_cache.invalidate(render_idx);
             rendered_orientations[render_idx] = Some(orientation);
         }

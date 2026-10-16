@@ -252,6 +252,15 @@ impl PanelHistory {
 
     pub const fn panel_orientation(&self) -> Option<Orientation> { self.panel_orientation }
 
+    /// The mode that will precede the next submitted frame. Rendering can run
+    /// ahead of completion, so the pending request takes precedence over the
+    /// current panel. Merely rendering or discarding a frame never changes it.
+    pub fn target_orientation(&self) -> Option<Orientation> {
+        self.pending
+            .map(|token| self.orientations[token.buffer.index()])
+            .or(self.panel_orientation)
+    }
+
     pub fn reference_for(
         &self,
         orientation: Orientation,
