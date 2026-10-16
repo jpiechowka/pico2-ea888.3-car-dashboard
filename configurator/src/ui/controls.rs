@@ -5,9 +5,14 @@ use super::*;
 pub(super) fn write_timing_canvas(
     canvas: NodeRef<leptos::html::Canvas>,
     pixels: &[u8],
+    geometry: Geometry,
 ) -> Result<(), RenderIssue> {
-    let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(pixels), 320, 240)
-        .map_err(|_| RenderIssue::CanvasAllocation)?;
+    let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+        wasm_bindgen::Clamped(pixels),
+        u32::from(geometry.width()),
+        u32::from(geometry.height()),
+    )
+    .map_err(|_| RenderIssue::CanvasAllocation)?;
     let canvas = canvas.get_untracked().ok_or(RenderIssue::CanvasContext)?;
     let context = canvas
         .get_context("2d")
@@ -15,9 +20,31 @@ pub(super) fn write_timing_canvas(
         .ok_or(RenderIssue::CanvasContext)?
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .map_err(|_| RenderIssue::CanvasContext)?;
-    context
-        .put_image_data(&image, 0., 0.)
-        .map_err(|_| RenderIssue::CanvasDraw)
+    // Retain the previous complete image until browser publication succeeds.
+    let old_size = (canvas.width(), canvas.height());
+    let resized = old_size != (u32::from(geometry.width()), u32::from(geometry.height()));
+    let previous = if resized {
+        Some(
+            context
+                .get_image_data(0., 0., f64::from(old_size.0), f64::from(old_size.1))
+                .map_err(|_| RenderIssue::CanvasAllocation)?,
+        )
+    } else {
+        None
+    };
+    if resized {
+        canvas.set_width(u32::from(geometry.width()));
+        canvas.set_height(u32::from(geometry.height()));
+    }
+    if context.put_image_data(&image, 0., 0.).is_err() {
+        if let Some(previous) = previous {
+            canvas.set_width(old_size.0);
+            canvas.set_height(old_size.1);
+            let _ = context.put_image_data(&previous, 0., 0.);
+        }
+        return Err(RenderIssue::CanvasDraw);
+    }
+    Ok(())
 }
 
 fn binding_id(

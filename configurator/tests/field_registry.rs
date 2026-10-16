@@ -130,6 +130,10 @@ fn registry_has_each_editable_descriptor_once_and_unique_numeric_dom_ids() {
         expected.insert(Registry::raw_key(field));
     }
     for key in [
+        FieldKey::Orientation,
+        FieldKey::StatusOrientation,
+        FieldKey::SplashOrientation,
+        FieldKey::ViewOrientation,
         FieldKey::BootView,
         FieldKey::Span,
         FieldKey::Column,

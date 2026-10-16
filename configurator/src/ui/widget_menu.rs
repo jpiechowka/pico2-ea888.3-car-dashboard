@@ -1,4 +1,4 @@
-use dashboard_configurator::geometry::{ContentRect, panel_point};
+use dashboard_configurator::geometry::{ContentRect, panel_point_in};
 use dashboard_configurator::widget_actions::{Direction, WidgetMenu, menu_position};
 use leptos::leptos_dom::helpers::request_animation_frame;
 
@@ -40,7 +40,8 @@ fn open(
     close(ui, false);
     let point = ui.canvas.get_untracked().and_then(|canvas| {
         let r = canvas.get_bounding_client_rect();
-        panel_point(
+        panel_point_in(
+            ui.pixel_geometry.get_untracked(),
             ContentRect {
                 left: r.left(),
                 top: r.top(),

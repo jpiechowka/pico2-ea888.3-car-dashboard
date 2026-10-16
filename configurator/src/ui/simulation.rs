@@ -231,8 +231,13 @@ pub(super) fn submit(
         }
         ui.dock.sim.with_untracked(|sim| {
             ui.dock.timing.with_untracked(|p| {
+                let geometry = p.geometry();
+                let fit_issues = p.fit_issues().to_vec();
                 result = consume_simulation_pixels(sim, p, token, |pixels| {
-                    super::controls::write_timing_canvas(ui.canvas, pixels)
+                    super::controls::write_timing_canvas(ui.canvas, pixels, geometry).map(|()| {
+                        ui.pixel_geometry.set(geometry);
+                        ui.pixel_fit_issues.set(fit_issues.clone());
+                    })
                 });
             })
         });
@@ -252,8 +257,13 @@ pub(super) fn submit(
                         .map_err(RenderIssue::Preview)?;
                     ui.dock.sequence.set(next);
                     ui.dock.pending.set(Some(token));
+                    let geometry = p.geometry();
+                    let fit_issues = p.fit_issues().to_vec();
                     consume_simulation_pixels(sim, p, token, |pixels| {
-                        super::controls::write_timing_canvas(ui.canvas, pixels)
+                        super::controls::write_timing_canvas(ui.canvas, pixels, geometry).map(|()| {
+                            ui.pixel_geometry.set(geometry);
+                            ui.pixel_fit_issues.set(fit_issues.clone());
+                        })
                     })
                 })();
             })
@@ -315,15 +325,28 @@ pub(super) fn complete(ui: Ui) {
     let mut result = Ok(());
     ui.simulate(|sim| {
         ui.dock.timing.update(|p| {
+            let geometry = p.geometry();
+            let fit_issues = p.fit_issues().to_vec();
             result = complete_simulation_pixels(sim, p, token, |pixels| {
-                super::controls::write_timing_canvas(ui.canvas, pixels)
+                super::controls::write_timing_canvas(ui.canvas, pixels, geometry).map(|()| {
+                    ui.pixel_geometry.set(geometry);
+                    ui.pixel_fit_issues.set(fit_issues.clone());
+                })
             });
             if result.is_ok() && sim.session().backlight().compare() == 0 {
                 // Completed shutdown projects black; this read-only draw cannot commit new metadata.
                 result = p
                     .render_simulation(sim)
+                    .map(|_| ())
                     .map_err(RenderIssue::Preview)
-                    .and_then(|pixels| super::controls::write_timing_canvas(ui.canvas, pixels));
+                    .and_then(|()| {
+                        let geometry = p.geometry();
+                        let fit_issues = p.fit_issues().to_vec();
+                        super::controls::write_timing_canvas(ui.canvas, p.rgba(), geometry).map(|()| {
+                            ui.pixel_geometry.set(geometry);
+                            ui.pixel_fit_issues.set(fit_issues.clone());
+                        })
+                    });
             }
         })
     });

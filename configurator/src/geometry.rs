@@ -120,19 +120,19 @@ impl DragGesture {
         span: Span,
         offset: GrabOffset,
     ) -> Result<Option<Placement>, GeometryError> {
-        self.placement_in(Geometry::Landscape, rect, client_x, client_y, target, span, offset)
+        self.placement_in(Geometry::Landscape, rect, (client_x, client_y), target, span, offset)
     }
 
     pub fn placement_in(
         &mut self,
         geometry: Geometry,
         rect: ContentRect,
-        client_x: f64,
-        client_y: f64,
+        client: (f64, f64),
         target: PointerTarget,
         span: Span,
         offset: GrabOffset,
     ) -> Result<Option<Placement>, GeometryError> {
+        let (client_x, client_y) = client;
         if !client_x.is_finite() || !client_y.is_finite() {
             return Err(GeometryError::NonFinitePointer);
         }

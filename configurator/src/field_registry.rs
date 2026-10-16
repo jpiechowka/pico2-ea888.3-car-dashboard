@@ -33,6 +33,10 @@ pub struct Descriptor {
     slug: &'static str,
 }
 registry! {
+    Orientation, Root, Device, Bindings, "Default screen orientation", "landscape portrait mounting flip rotation";
+    StatusOrientation, Root, Device, Bindings, "Boot info orientation", "startup system check inherit landscape portrait flip";
+    SplashOrientation, Root, Device, Bindings, "Splash orientation", "startup custom artwork inherit landscape portrait flip";
+    ViewOrientation, View, Views, Layout, "View orientation", "inherit landscape portrait mounting flip rotation";
     BootView, Root, Views, Layout, "Boot view", "startup dashboard";
     ViewName, View, Views, Layout, "View name", "dashboard title";
     Label, Widget, Views, Layout, "Label", "widget name";

@@ -577,6 +577,17 @@ pub fn error_text(error: EditorError) -> String {
         EditorError::Codec(ConfigError::Json { line, column }) => {
             format!("Invalid JSON at line {line}, column {column}. Check fields, types and duplicate keys.")
         }
+        EditorError::LayoutCannotFit(view) => {
+            format!(
+                "View {view} cannot fit this shape with its current spans. Keep the current orientation or repair the \
+                 layout."
+            )
+        }
+        EditorError::Project(dashboard_config_tools::project::ProjectError::Orientation) => {
+            "Splash artwork has a different shape. Reconvert the retained original for the effective Splash \
+             orientation, or reimport the source."
+                .into()
+        }
         EditorError::Project(_) => {
             "Project or startup data is invalid, incomplete, oversized or failed its integrity checks. Current \
              accepted state was kept."

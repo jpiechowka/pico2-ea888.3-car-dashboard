@@ -336,7 +336,7 @@ fn artwork() -> Arc<Artwork> {
     use dashboard_config::startup_asset::{MAGIC, asset_crc32, crc32};
     let mut asset = vec![0; 52];
     asset[..8].copy_from_slice(MAGIC);
-    asset[8..10].copy_from_slice(&1u16.to_le_bytes());
+    asset[8..10].copy_from_slice(&dashboard_config::startup_asset::VERSION.to_le_bytes());
     asset[10..12].copy_from_slice(&32u16.to_le_bytes());
     asset[16..18].copy_from_slice(&320u16.to_le_bytes());
     asset[18..20].copy_from_slice(&240u16.to_le_bytes());
@@ -359,7 +359,8 @@ fn artwork() -> Arc<Artwork> {
     asset[28..32].copy_from_slice(&crc.to_le_bytes());
     let source: Arc<[u8]> = Arc::from(&b"\x89PNG\r\n\x1a\nsynthetic-original"[..]);
     let recipe = Recipe {
-        version: 1,
+        geometry: dashboard_config::Geometry::Landscape,
+        version: 2,
         converter: CONVERTER.into(),
         label: "Example".into(),
         source_kind: SourceKind::Png,

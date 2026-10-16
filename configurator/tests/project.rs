@@ -95,18 +95,26 @@ fn prepared_project_import_stays_blocked_until_current_admission_and_restores_en
 }
 use std::sync::Arc;
 fn backed_artwork(label: &str) -> Arc<dashboard_config_tools::project::Artwork> {
+    backed_artwork_in(label, dashboard_config::Geometry::Landscape)
+}
+fn backed_artwork_in(
+    label: &str,
+    geometry: dashboard_config::Geometry,
+) -> Arc<dashboard_config_tools::project::Artwork> {
     use dashboard_config_tools::project as p;
     let source: Arc<[u8]>=Arc::from(&b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b"[..]);
     let converted = dashboard_startup_tools::convert(
         &source,
         &dashboard_startup_tools::Options {
+            geometry,
             kind: dashboard_startup_tools::SourceKind::Gif,
             ..Default::default()
         },
     )
     .unwrap();
     let recipe = p::Recipe {
-        version: 1,
+        geometry,
+        version: 2,
         converter: p::CONVERTER.into(),
         label: label.into(),
         source_kind: p::SourceKind::Gif,
@@ -210,4 +218,78 @@ fn actual_artwork_publication_scopes_feedback_and_stale_join_keeps_current_proje
         "",
         "history restoration cannot revive an old operation result"
     );
+}
+
+#[test]
+fn orientation_mismatch_retains_artwork_blocks_snapshots_and_undo_restores_exact_project() {
+    use dashboard_config_tools::project::ExportMode;
+    use dashboard_configurator::config::Orientation;
+    let mut e = Editor::default();
+    let art = backed_artwork("retained");
+    e.set_artwork_if_current(e.stamp(), art.clone()).unwrap();
+    let before = e.export_project(ExportMode::ConvertedOnly).unwrap();
+    let import = e.begin_import().unwrap();
+    e.apply(Edit::SetOrientation(Orientation::Portrait)).unwrap();
+    assert!(e.artwork_geometry_mismatch());
+    assert_eq!(e.startup_artwork().unwrap().identity(), art.identity());
+    assert!(e.startup_artwork().unwrap().has_original());
+    assert!(e.begin_save().is_err());
+    assert!(e.export_binary().is_err());
+    assert!(e.accepted_project().is_err());
+    assert_eq!(
+        e.complete_artwork_import(import, art.clone()),
+        Err(EditorError::StaleToken)
+    );
+    e.undo().unwrap();
+    assert_eq!(e.export_project(ExportMode::ConvertedOnly).unwrap(), before);
+    e.redo().unwrap();
+    assert!(e.artwork_geometry_mismatch());
+    let mut profile = e.startup_profile();
+    profile.splash_orientation = Some(Orientation::LandscapeInverted);
+    e.set_startup_profile(profile).unwrap();
+    assert!(!e.artwork_geometry_mismatch());
+    assert!(e.accepted_project().is_ok());
+}
+
+#[test]
+fn stale_geometry_conversion_cannot_replace_project() {
+    use dashboard_configurator::config::Orientation;
+    let mut e = Editor::default();
+    let token = e.begin_import().unwrap();
+    let mut profile = e.startup_profile();
+    profile.splash_orientation = Some(Orientation::Portrait);
+    e.set_startup_profile(profile).unwrap();
+    assert_eq!(
+        e.complete_artwork_import(token, backed_artwork("obsolete")),
+        Err(EditorError::StaleToken)
+    );
+    assert!(e.startup_artwork().is_none());
+    // Even a fresh callback cannot admit wrong-shape pixels.
+    assert!(
+        e.set_artwork_if_current(e.stamp(), backed_artwork("wrong shape"))
+            .is_err()
+    );
+    assert!(e.startup_artwork().is_none());
+}
+
+#[test]
+fn matching_reconversion_is_atomic_and_undo_keeps_the_retained_original() {
+    use dashboard_configurator::config::{Geometry, Orientation};
+    let mut e = Editor::default();
+    let old = backed_artwork("original");
+    e.set_artwork_if_current(e.stamp(), old.clone()).unwrap();
+    e.apply(Edit::SetOrientation(Orientation::Portrait)).unwrap();
+    let converted = backed_artwork_in("original", Geometry::Portrait);
+    let token = e.begin_import().unwrap();
+    e.complete_artwork_import(token, converted.clone()).unwrap();
+    assert!(!e.artwork_geometry_mismatch());
+    assert!(e.accepted_project().is_ok());
+    assert_eq!(e.startup_artwork().unwrap().identity(), converted.identity());
+    assert!(e.startup_artwork().unwrap().has_original());
+    e.undo().unwrap();
+    assert!(e.artwork_geometry_mismatch());
+    assert_eq!(e.startup_artwork().unwrap().identity(), old.identity());
+    e.undo().unwrap();
+    assert!(!e.artwork_geometry_mismatch());
+    assert!(e.accepted_project().is_ok());
 }

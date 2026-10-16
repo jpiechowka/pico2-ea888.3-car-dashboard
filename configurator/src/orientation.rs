@@ -7,7 +7,18 @@ pub fn repack_changed_views(
     before: &Config,
     after: &mut Config,
 ) -> Result<usize, EditorError> {
-    // Callers admit only clean, uniquely identified configurations.
+    // Reject ambiguous inputs before any placement mutation.
+    if after
+        .views
+        .iter()
+        .enumerate()
+        .any(|(i, v)| after.views[..i].iter().any(|other| other.id == v.id))
+        || after.widgets.iter().enumerate().any(|(i, w)| {
+            after.widgets[..i].iter().any(|other| other.id == w.id) || !after.views.iter().any(|v| v.id == w.view)
+        })
+    {
+        return Err(EditorError::AmbiguousTarget);
+    }
     let mut moved = 0;
     for view in &after.views {
         let geometry = after

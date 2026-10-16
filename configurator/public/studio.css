@@ -113,3 +113,9 @@
 .reference-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
 .ecu-reference :focus-visible { outline: 2px solid #ff899b; outline-offset: 3px; }
 @media (max-width: 1000px) { .reference-toolbar, .reference-browser { grid-template-columns: 1fr; } .reference-results { max-height: 35vh; } .ecu-reference { padding: 16px; } }
+
+/* Orientation proposals keep the effective shape and inheritance visible. */
+.orientation-card{padding:14px;border:1px solid #394251;border-radius:8px;background:#111620;min-width:0;margin:10px 0}.orientation-heading{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;margin-bottom:12px}.orientation-effective{font:11px Consolas,monospace;color:#f2a1ac}.orientation-card select{width:100%;padding:10px;border:1px solid #515b6c;border-radius:6px;background:#0a0e15;color:var(--text)}.orientation-card .mini-grid{max-width:180px;margin:12px 0}.orientation-card .mini-grid i{height:14px}.orientation-proposal{border-left:2px solid var(--red);padding-left:12px}.orientation-proposal button{margin:4px 8px 4px 0}.display-stage.portrait .display-frame{max-width:min(100%,390px)}.display-stage.portrait .screen{aspect-ratio:3/4}.view-controls .orientation-card{flex:1 1 280px}.orientation-proposal p{overflow-wrap:anywhere}
+@media(max-width:680px){.display-stage.portrait .display-frame{max-width:300px}.orientation-heading{flex-direction:column}.orientation-proposal button{width:100%}}
+
+.orientation-layouts{display:flex;gap:12px;flex-wrap:wrap}.orientation-layouts figure{margin:0 0 12px;width:160px;max-width:100%}.orientation-layouts figcaption{font-size:11px;margin:6px 0;color:#aeb7c7}.orientation-layout{position:relative;background:#090c12;border:1px solid #4c576a}.orientation-layout span{position:absolute;display:flex;align-items:center;justify-content:center;padding:3px;font:10px Consolas,monospace;overflow:hidden;border:1px solid #a34c5b;background:#60233255;box-sizing:border-box;text-align:center}

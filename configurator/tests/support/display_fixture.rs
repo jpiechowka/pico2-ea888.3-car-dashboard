@@ -26,7 +26,7 @@ pub fn artwork(
     payloads.push(compressed);
     let mut bytes = vec![0; HEADER_BYTES + ENTRY_BYTES * 4];
     bytes[..8].copy_from_slice(MAGIC);
-    bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+    bytes[8..10].copy_from_slice(&dashboard_config::startup_asset::VERSION.to_le_bytes());
     bytes[10..12].copy_from_slice(&(HEADER_BYTES as u16).to_le_bytes());
     bytes[12..16].copy_from_slice(&(MAX_ASSET_BYTES as u32).to_le_bytes());
     bytes[16..18].copy_from_slice(&(WIDTH as u16).to_le_bytes());
@@ -49,7 +49,8 @@ pub fn artwork(
     Asset::parse(&bytes).unwrap();
     let source: Arc<[u8]> = Arc::from([b"GIF89a".as_slice(), &[original_tag]].concat());
     let recipe = p::Recipe {
-        version: 1,
+        geometry: dashboard_config::Geometry::Landscape,
+        version: 2,
         converter: p::CONVERTER.into(),
         label: label.into(),
         source_kind: p::SourceKind::Gif,

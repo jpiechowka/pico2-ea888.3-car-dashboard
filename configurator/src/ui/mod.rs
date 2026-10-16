@@ -12,6 +12,7 @@ mod io;
 mod json_editor;
 mod led;
 mod metrics;
+mod orientation;
 mod originals;
 mod project_io;
 mod relay;
@@ -79,6 +80,8 @@ pub struct Ui {
     pending_at: RwSignal<Option<f64>>,
     render_ms: RwSignal<f64>,
     canvas: NodeRef<leptos::html::Canvas>,
+    pixel_geometry: RwSignal<Geometry>,
+    pixel_fit_issues: RwSignal<Vec<u16>>,
     drag: RwSignal<Option<stage::Drag>>,
     capture: RwSignal<Option<(i32, web_sys::Element)>>,
     menu: RwSignal<Option<widget_menu::Menu>>,
@@ -508,6 +511,9 @@ impl Ui {
                 SaveStatus::Saved => "Saved in this browser".into(),
                 SaveStatus::Dirty => "Unsaved changes".into(),
                 SaveStatus::InvalidDraft if e.has_pending_json() => "Pending JSON · not saved".into(),
+                SaveStatus::InvalidDraft if e.artwork_geometry_mismatch() => {
+                    "Splash needs conversion · not saved".into()
+                }
                 SaveStatus::InvalidDraft => "Invalid edits · not saved".into(),
                 SaveStatus::Saving => "Saving…".into(),
                 SaveStatus::Failed(StorageFailure::Quota) => "Storage full · export to keep changes".into(),
@@ -573,6 +579,8 @@ pub fn Studio() -> impl IntoView {
         pending_at: RwSignal::new(None),
         render_ms: RwSignal::new(0.0),
         canvas: NodeRef::new(),
+        pixel_geometry: RwSignal::new(Geometry::Landscape),
+        pixel_fit_issues: RwSignal::new(Vec::new()),
         drag: RwSignal::new(None),
         capture: RwSignal::new(None),
         menu: RwSignal::new(None),
@@ -624,7 +632,7 @@ pub fn Studio() -> impl IntoView {
             on:keydown=move |e| { if e.key() == "Escape" { stage::cancel(ui); widget_menu::close(ui, true); } }>
             <header class="masthead">
                 <a class="brand" href="./" aria-label="EA888 View Studio"><b>"EA"<span>"888"</span></b><div>"VIEW STUDIO"<small>"PICO 2 / DNUC"</small></div></a>
-                <div class="device-spec"><span class="dot"></span>"320 × 240"<span>"4 × 2 GRID"</span></div>
+                <div class="device-spec"><span class="dot"></span>{move ||format!("{} × {}",ui.pixel_geometry.get().width(),ui.pixel_geometry.get().height())}<span>{move ||format!("{} × {} GRID",ui.pixel_geometry.get().columns(),ui.pixel_geometry.get().rows())}</span></div>
                 <div class="header-actions">
                     <command_palette::CommandPalette ui/>
                     <button title="Undo accepted edit" disabled=move || ui.snapshot_blocked() || ui.editor.with(|e| e.history_len().0 == 0) on:click=move |_| { ui.run(Editor::undo); }>"↶ Undo"</button>
@@ -651,7 +659,7 @@ pub fn Studio() -> impl IntoView {
                     </main>
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-device" role="tabpanel" aria-labelledby="studio-tab-device" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Device)>
-                    <Group ui group=GroupId::Bindings><controls::DeviceControls ui/></Group>
+                    <Group ui group=GroupId::Bindings><orientation::Picker ui scope=orientation::Scope::Device/><controls::DeviceControls ui/></Group>
                     <Group ui group=GroupId::Indicator><led::LedPanel ui/></Group>
                     <startup::Panel ui/>
                     <div class="resource-navigation"><p>"Review configuration resources in Diagnostics and firmware artifacts in Build & Flash."</p><button on:click=move |_|workspaces::activate(ui,Workspace::BuildFlash)>"Open Build & Flash"</button></div>
@@ -727,7 +735,7 @@ fn Views(ui: Ui) -> impl IntoView {
         </div>
         <For each=move || vec![ui.inspected_view()] key=|id| *id children=move |id| view! {
             <div class="view-controls">
-                <TextField ui field=RawField::ViewName(id) label="View name" hint="1–14 ASCII characters"/>
+                <TextField ui field=RawField::ViewName(id) label="View name" hint="1–14 ASCII characters"/><orientation::Picker ui scope=orientation::Scope::View(id)/>
                 <div class="view-tools">
                     <button id=Registry::dom_id(FieldKey::BootView,TargetOwner::Root) disabled=move || ui.inspection_active() on:click=move |_| ui.apply(Edit::SetBootView(id))>"Set as boot"</button>
                     <button disabled=move || ui.inspection_active() on:click=move |_| ui.apply(Edit::DuplicateView { id,name:"Copy".into() })>"Duplicate"</button>

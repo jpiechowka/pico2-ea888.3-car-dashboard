@@ -185,12 +185,17 @@ fn WidgetInspector(
             <Choice ui layout=true label="Size" value=Signal::derive(move || ui.widget(id).map(|w|match w.placement.span { Span::OneByOne=>"1",Span::TwoByOne=>"2",Span::TwoByTwo=>"4" }.to_string()).unwrap_or_default())
                 options=choices(&[("1","1 × 1 · compact"),("2","2 × 1 · wide"),("4","2 × 2 · large")])
                 on_change=Callback::new(move |(token,value): (FieldToken,String)| { let span=match value.as_str(){"1"=>Span::OneByOne,"2"=>Span::TwoByOne,"4"=>Span::TwoByTwo,_=>return};ui.typed(token,Edit::ResizeWidget { id,span }); })/>
-            <div class="field-pair">
-                <Choice ui layout=true label="Column" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.column.to_string())) options=choices(&[("0","1"),("1","2"),("2","3"),("3","4")])
+            {move || {
+                let geometry=ui.editor.with(|e|e.editing_config().view_orientation(e.selection().view).unwrap_or(e.editing_config().orientation).geometry());
+                let placement=ui.widget(id).map(|w|w.placement);
+                let axis=|count:u8, current:Option<u8>| { let mut options:Vec<_>=(0..count).map(|n|(n.to_string(),(u16::from(n)+1).to_string())).collect(); if let Some(n)=current.filter(|n|*n>=count){options.push((n.to_string(),format!("{} (outside grid)",u16::from(n)+1)));}options };
+                view!{<div class="field-pair">
+                <Choice ui layout=true label="Column" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.column.to_string())) options=axis(geometry.columns(),placement.map(|p|p.column))
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(column)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.column=column);}})/>
-                <Choice ui layout=true label="Row" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.row.to_string())) options=choices(&[("0","Top"),("1","Bottom")])
+                <Choice ui layout=true label="Row" value=Signal::derive(move ||ui.widget(id).map_or(String::new(),|w|w.placement.row.to_string())) options=axis(geometry.rows(),placement.map(|p|p.row))
                     on_change=Callback::new(move |(token,value): (FieldToken,String)| {if let Ok(row)=value.parse::<u8>() {ui.place_widget(token,id,|p|p.row=row);}})/>
-            </div>
+                </div>}
+            }}
             </Group>
             <Group ui group=GroupId::Gauge>
 

@@ -99,6 +99,7 @@ fn retained_source(ui: Ui) -> Option<startup_artwork::RetainedSource> {
             },
             label: r.label.clone(),
             options: c::Options {
+                geometry: r.geometry,
                 kind: match r.source_kind {
                     p::SourceKind::Png => c::SourceKind::Png,
                     p::SourceKind::Gif => c::SourceKind::Gif,
@@ -136,7 +137,8 @@ fn accept_artwork(
     use dashboard_startup_tools as c;
     let o = input.options;
     let recipe = p::Recipe {
-        version: 1,
+        geometry: o.geometry,
+        version: 2,
         converter: p::CONVERTER.into(),
         label: input.label,
         source_kind: match o.kind {
@@ -243,6 +245,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
     view! {
         <details class="workspace-group startup-panel" id="studio-startup" open><summary>"Startup"</summary><div class="startup-body">
             <p class="hint startup-intro">"A brief system check, your animation, then the dashboard. Acquisition keeps running throughout."</p>
+            <orientation::Picker ui scope=orientation::Scope::Status/><orientation::Picker ui scope=orientation::Scope::Splash/>
             <section class="startup-card"><h3>"Playback and timing"</h3><div class="startup-grid"><label>"Animation"<select disabled=move ||ui.snapshot_blocked() aria-label="Startup animation" prop:value=move ||(state.profile.get().theme as u8).to_string() on:change=move |e|{if let Ok(n)=event_target_value(&e).parse::<usize>() {if n==5 {state.edit(ui, |p|p.theme=StartupTheme::Custom);} else if let Some(theme)=StartupTheme::ALL.get(n) {state.edit(ui, |p|p.theme = *theme);}}}>{StartupTheme::ALL.into_iter().enumerate().map(|(i,t)|view!{<option value=i.to_string()>{t.label()}</option>}).collect_view()}<Show when=move ||ui.editor.with(|e|e.startup_artwork().is_some())><option value="5">"Custom artwork"</option></Show></select></label>
             <label>"System check"<select aria-label="Startup system check" prop:value=move ||(state.profile.get().status as u8).to_string() on:change=move |e|{let value=match event_target_value(&e).as_str(){"0"=>StartupStatus::Off,"2"=>StartupStatus::Detailed,_=>StartupStatus::Brief};state.edit(ui, |p|p.status=value);}>
                 <option value="0">"Off"</option><option value="1">"Brief"</option><option value="2">"Detailed"</option>
@@ -279,6 +282,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                     });
                 }
             }/></label>
+            <Show when=move ||ui.editor.with(Editor::artwork_geometry_mismatch)><div class="draft-alert" role="alert"><strong>"Splash artwork needs conversion"</strong><p>"The retained pixels have a different shape from the effective Splash orientation. Save, export and build are blocked. Convert the retained original below, or reimport it if this project contains converted artwork only. Undo restores the complete previous project."</p></div></Show>
             <startup_artwork::Panel ui=ui on_accept=on_accept retained=retained/>
             <p role="status" class="startup-status">{move ||state.message.get()}</p>
             <p class="hint">"Save a complete .eavp project to keep dashboard, startup and artwork together. Dashboard-only .eav and JSON omit startup. Choosing a procedural theme replaces custom artwork in the current state; Undo restores it."</p>

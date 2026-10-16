@@ -1,6 +1,6 @@
 //! Exact shared framebuffer rendering with explicitly synthetic inputs.
 
-use dashboard_config::{Channel, Config, ValidatedConfig, validate};
+use dashboard_config::{Channel, Config, Geometry, ValidatedConfig, validate};
 use dashboard_core::acquisition::{AcquisitionModel, DashboardSnapshot};
 use dashboard_core::cache_diagnostics::CacheExhaustionStatus;
 use dashboard_core::colors::{BLACK, RED};
@@ -91,6 +91,8 @@ pub struct Preview {
     presentation: dashboard_core::presentation::PresentationState,
     simulation_epoch: Option<u64>,
     framebuffer: Box<FrameBuffer>,
+    geometry: Geometry,
+    fit_issues: Vec<u16>,
     rgba: Vec<u8>,
     snapshot: Option<DashboardSnapshot>,
     warning: Option<WarningPage>,
@@ -116,6 +118,8 @@ impl Preview {
             presentation: dashboard_core::presentation::PresentationState::new(),
             simulation_epoch: None,
             framebuffer: Box::new(FrameBuffer::new()),
+            geometry: Geometry::Landscape,
+            fit_issues: Vec::new(),
             rgba: vec![0; WIDTH * HEIGHT * 4],
             snapshot: None,
             warning: None,
@@ -129,6 +133,12 @@ impl Preview {
     }
 
     pub const fn mode(&self) -> PreviewMode { self.mode }
+
+    /// Logical dimensions belong to the published pixels, including pending frames.
+    pub const fn geometry(&self) -> Geometry { self.geometry }
+
+    /// Current sample strings with reserved warning space; runtime width can still vary.
+    pub fn fit_issues(&self) -> &[u16] { &self.fit_issues }
 
     /// Same startup pixels as Pico; browser seeking makes no scanout timing claim.
     pub fn render_startup(
@@ -177,27 +187,43 @@ impl Preview {
         asset: Option<&[u8]>,
     ) -> Result<&[u8], PreviewError> {
         let (phase, time) = frame;
+        let geometry = dashboard_core::startup::screen_orientation(
+            config.config(),
+            profile,
+            phase,
+            dashboard_config::ControlPage::Dashboard,
+            config.config().boot_view,
+        )
+        .geometry();
         if phase == dashboard_core::startup::Phase::Splash
             && profile.theme == dashboard_core::startup::StartupTheme::Custom
         {
             let asset = asset
                 .and_then(|bytes| dashboard_config::startup_asset::Asset::parse(bytes).ok())
                 .ok_or(PreviewError::StartupAsset)?;
-            dashboard_core::startup::draw_custom(
+            if asset.geometry() != geometry {
+                return Err(PreviewError::StartupAsset);
+            }
+            dashboard_core::startup::draw_custom_in(
                 asset,
                 time,
                 profile.loop_animation,
                 reduced_motion,
+                geometry,
                 &mut self.framebuffer,
             )
             .map_err(|_| PreviewError::StartupAsset)?;
+            self.geometry = geometry;
+            self.fit_issues.clear();
             rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
             self.configuration = None;
             self.presentation.reset();
             return Ok(&self.rgba);
         }
+        self.geometry = geometry;
+        self.fit_issues.clear();
         dashboard_core::startup::draw(
-            &mut St7789Renderer::new(&mut self.framebuffer),
+            &mut St7789Renderer::with_geometry(&mut self.framebuffer, geometry),
             phase,
             profile,
             time,
@@ -231,7 +257,10 @@ impl Preview {
         if self.pending.is_some() {
             return &self.rgba;
         }
-        dashboard_core::debug_view::DebugPage::new(data, map).draw(&mut St7789Renderer::new(&mut self.framebuffer));
+        self.geometry = Geometry::Landscape;
+        self.fit_issues.clear();
+        dashboard_core::debug_view::DebugPage::new(data, map)
+            .draw(&mut St7789Renderer::with_geometry(&mut self.framebuffer, self.geometry));
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
         &self.rgba
     }
@@ -358,6 +387,16 @@ impl Preview {
         inspection: bool,
         candidate: Option<&ValidatedConfig>,
     ) -> Result<&[u8], PreviewError> {
+        self.render_projection_in(simulation, inspection, candidate, None)
+    }
+
+    fn render_projection_in(
+        &mut self,
+        simulation: &crate::simulator::ControlSimulator,
+        inspection: bool,
+        candidate: Option<&ValidatedConfig>,
+        geometry_override: Option<Geometry>,
+    ) -> Result<&[u8], PreviewError> {
         let config = candidate.unwrap_or_else(|| simulation.config());
         let session = if inspection {
             simulation.display_session()
@@ -418,7 +457,21 @@ impl Preview {
                 simulation.presented_scene().overlay
             },
         };
-        let mut display = St7789Renderer::new(&mut self.framebuffer);
+        self.geometry = dashboard_core::startup::screen_orientation(
+            config.config(),
+            dashboard_core::startup::StartupProfile::default(),
+            dashboard_core::startup::Phase::Dashboard,
+            session.page(),
+            view,
+        )
+        .geometry();
+        self.geometry = geometry_override.unwrap_or(self.geometry);
+        self.fit_issues = if session.page() == dashboard_config::ControlPage::Dashboard {
+            portrait_fit_issues(&scene, config, view)
+        } else {
+            Vec::new()
+        };
+        let mut display = St7789Renderer::with_geometry(&mut self.framebuffer, self.geometry);
         match session.page() {
             dashboard_config::ControlPage::Dashboard => scene.draw_full(&mut display),
             dashboard_config::ControlPage::Debug => {
@@ -578,7 +631,13 @@ impl Preview {
             backgrounds: [BLACK; 8], // Configured renderer resolves palettes itself.
             overlay: warning.map(Overlay::Warnings),
         };
-        scene.draw_full(&mut St7789Renderer::new(&mut self.framebuffer));
+        self.geometry = config
+            .config()
+            .view_orientation(view)
+            .ok_or(PreviewError::UnknownView(view))?
+            .geometry();
+        self.fit_issues = portrait_fit_issues(&scene, config, view);
+        scene.draw_full(&mut St7789Renderer::with_geometry(&mut self.framebuffer, self.geometry));
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed framebuffer and RGBA dimensions");
         self.mode = PreviewMode::Appearance;
         self.snapshot = Some(snapshot);
@@ -626,7 +685,7 @@ impl Preview {
             return Err(PreviewError::PendingFrame);
         }
         if simulation.display_session().page() != dashboard_config::ControlPage::Dashboard || draft.is_none() {
-            return self.render_projection(simulation, true, None);
+            return self.render_projection_in(simulation, true, None, draft.map(|d| d.config.orientation.geometry()));
         }
         let view = simulation.display_session().view_id();
         let options = PreviewOptions {
@@ -681,13 +740,23 @@ impl Preview {
         }
         let snapshot = self.snapshot.as_ref().expect("successful render has a snapshot");
         let now = self.rendered_at.expect("successful render has a timestamp");
-        let mut display = St7789Renderer::new(&mut self.framebuffer);
-        Rectangle::new(Point::new(0, 26), Size::new(320, 214))
-            .into_styled(PrimitiveStyle::with_fill(BLACK))
-            .draw(&mut display)
-            .ok();
+        self.geometry = draft
+            .config
+            .view_orientation(view)
+            .unwrap_or(draft.config.orientation)
+            .geometry();
+        let geometry = self.geometry;
+        self.fit_issues.clear();
+        let mut display = St7789Renderer::with_geometry(&mut self.framebuffer, geometry);
+        Rectangle::new(
+            Point::new(0, 26),
+            Size::new(u32::from(geometry.width()), u32::from(geometry.height() - 26)),
+        )
+        .into_styled(PrimitiveStyle::with_fill(BLACK))
+        .draw(&mut display)
+        .ok();
         for widget in draft.config.widgets.iter().take(64).filter(|w| w.view == view) {
-            let Some(config) = crate::diagnostic::isolated_widget(accepted, widget) else {
+            let Some(config) = crate::diagnostic::isolated_widget_in(accepted, widget, geometry) else {
                 continue;
             };
             self.prepared_status = self
@@ -721,7 +790,7 @@ impl Preview {
             );
             let rect = config.config().widgets[0]
                 .placement
-                .rect()
+                .rect_in(geometry)
                 .expect("isolated widget has valid geometry");
             let label = Rectangle::new(
                 Point::new(i32::from(rect.x) + 2, i32::from(rect.y) + 2),
@@ -774,7 +843,7 @@ impl Preview {
         }
         // This watermark is part of the pixels as well as the browser chrome,
         // so even a copied canvas cannot be mistaken for an accepted preview.
-        Rectangle::new(Point::zero(), Size::new(320, 26))
+        Rectangle::new(Point::zero(), Size::new(u32::from(geometry.width()), 26))
             .into_styled(PrimitiveStyle::with_fill(RED))
             .draw(&mut display)
             .ok();
@@ -785,7 +854,7 @@ impl Preview {
         )
         .draw(&mut display)
         .ok();
-        let header = Rectangle::new(Point::new(107, 0), Size::new(206, 26));
+        let header = Rectangle::new(Point::new(107, 0), Size::new(u32::from(geometry.width()) - 114, 26));
         let name: String = draft
             .name(view)
             .chars()
@@ -803,6 +872,51 @@ impl Preview {
         rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba)?;
         Ok(&self.rgba)
     }
+}
+
+/// Advisory uses the same measured lane allocator as the renderer, reserving
+/// warning lines even when this synthetic sample does not activate a warning.
+fn portrait_fit_issues(
+    scene: &DashboardScene<'_>,
+    config: &ValidatedConfig,
+    view: u8,
+) -> Vec<u16> {
+    use embedded_graphics::prelude::{Point, Size};
+    use embedded_graphics::primitives::Rectangle;
+    if config.config().view_orientation(view).map(|o| o.geometry()) != Some(Geometry::Portrait) {
+        return Vec::new();
+    }
+    config
+        .config()
+        .widgets
+        .iter()
+        .filter(|w| w.view == view)
+        .enumerate()
+        .filter_map(|(slot, w)| {
+            let rect = w.placement.rect_in(Geometry::Portrait)?;
+            let text = scene.configured_text(slot)?;
+            let caps = w.capabilities();
+            let legend = u32::from(caps.markers && w.advanced.reference_mode != dashboard_config::ReferenceMode::Off)
+                + if caps.band_labels {
+                    w.advanced.bands().len() as u32
+                } else {
+                    0
+                };
+            let lanes = dashboard_core::configured_scene::portrait_content_layout(
+                Rectangle::new(
+                    Point::new(i32::from(rect.x) + 2, i32::from(rect.y) + 2),
+                    Size::new(u32::from(rect.width) - 4, u32::from(rect.height) - 4),
+                ),
+                core::array::from_fn(|i| text[i].as_str()),
+                if w.warning.enabled { 2 } else { 0 },
+                w.shows_graph(),
+                w.gauge.kind.is_numeric(),
+                legend,
+                w.shows_trend(),
+            );
+            (!lanes.fits).then_some(w.id)
+        })
+        .collect()
 }
 
 /// Convert panel-order big-endian words, with bit replication to full 8-bit

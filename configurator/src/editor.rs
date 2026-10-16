@@ -660,6 +660,32 @@ impl Editor {
 
     pub fn startup_artwork(&self) -> Option<&Arc<Artwork>> { self.accepted.artwork.as_ref() }
 
+    /// Retain source and converted bytes while an orientation edit awaits reconversion.
+    pub fn artwork_geometry_mismatch(&self) -> bool {
+        self.accepted.artwork.as_ref().is_some_and(|art| {
+            dashboard_config::startup_asset::Asset::parse(art.converted()).map_or(true, |asset| {
+                asset.geometry()
+                    != self
+                        .accepted
+                        .startup
+                        .effective_splash_orientation(self.preview().config().orientation)
+                        .geometry()
+            })
+        })
+    }
+
+    fn ensure_project_edit_ready(&self) -> Result<(), EditorError> {
+        // Artwork mismatch blocks snapshots, while conversion and orientation repair remain available.
+        self.ensure_clean()?;
+        if self.pointer.is_some() {
+            return Err(EditorError::PointerActive);
+        }
+        if self.import.is_some() {
+            return Err(EditorError::ImportPending);
+        }
+        Ok(())
+    }
+
     /// A cheap immutable snapshot; artwork byte allocations are shared with history.
     pub fn accepted_project(&self) -> Result<Project, EditorError> {
         self.ensure_snapshot_ready()?;
@@ -677,13 +703,23 @@ impl Editor {
         &mut self,
         profile: StartupProfile,
     ) -> Result<Revision, EditorError> {
-        self.ensure_snapshot_ready()?;
+        if profile.status_orientation != self.accepted.startup.status_orientation
+            || profile.splash_orientation != self.accepted.startup.splash_orientation
+        {
+            // Logical shape changes retire pending import/worker capabilities at commit.
+            self.ensure_clean()?;
+        } else {
+            self.ensure_project_edit_ready()?;
+        }
         let artwork = if profile.theme == dashboard_config::startup::StartupTheme::Custom {
             self.accepted.artwork.clone()
         } else {
             None
         };
-        Project::new(self.preview(), profile, artwork.clone()).map_err(EditorError::Project)?;
+        match Project::new(self.preview(), profile, artwork.clone()) {
+            Ok(_) | Err(ProjectError::Orientation) => {}
+            Err(error) => return Err(EditorError::Project(error)),
+        }
         self.accept_project(self.preview().clone(), self.accepted.selection, profile, artwork)
     }
 
@@ -695,9 +731,10 @@ impl Editor {
         if stamp != self.stamp() {
             return Err(EditorError::StaleToken);
         }
-        self.ensure_snapshot_ready()?;
+        self.ensure_project_edit_ready()?;
         let mut profile = self.accepted.startup;
         profile.theme = dashboard_config::startup::StartupTheme::Custom;
+        Project::new(self.preview(), profile, Some(artwork.clone())).map_err(EditorError::Project)?;
         self.accept_project(self.preview().clone(), self.accepted.selection, profile, Some(artwork))
     }
 
@@ -855,7 +892,7 @@ impl Editor {
             Some(ActionBlock::JsonPending)
         } else if self.has_startup_draft() {
             Some(ActionBlock::StartupPending)
-        } else if self.has_invalid_draft() {
+        } else if self.has_invalid_draft() || self.artwork_geometry_mismatch() {
             Some(ActionBlock::InvalidDraft)
         } else if self.pointer.is_some() {
             Some(ActionBlock::PointerActive)
@@ -1257,7 +1294,11 @@ impl Editor {
     }
 
     pub fn save_status(&self) -> SaveStatus {
-        if self.has_invalid_draft() || self.has_pending_json() || self.has_startup_draft() {
+        if self.has_invalid_draft()
+            || self.has_pending_json()
+            || self.has_startup_draft()
+            || self.artwork_geometry_mismatch()
+        {
             SaveStatus::InvalidDraft
         } else if self.save.is_some() {
             SaveStatus::Saving

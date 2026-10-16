@@ -353,11 +353,29 @@ impl Draft {
 /// Render each in-bounds placement independently so overlaps remain visible.
 /// Unsafe numeric/style fields use explicit safe display fallbacks. All labels
 /// (including over-capacity input) are drawn separately under clipping.
+#[cfg(test)]
 pub(crate) fn isolated_widget(
     accepted: &ValidatedConfig,
     widget: &Widget,
 ) -> Option<ValidatedConfig> {
+    isolated_widget_in(
+        accepted,
+        widget,
+        accepted.config().view_orientation(widget.view)?.geometry(),
+    )
+}
+
+pub(crate) fn isolated_widget_in(
+    accepted: &ValidatedConfig,
+    widget: &Widget,
+    geometry: Geometry,
+) -> Option<ValidatedConfig> {
     let mut config = accepted.config().clone();
+    let view = config.views.iter_mut().find(|v| v.id == widget.view)?;
+    view.orientation = Some(match geometry {
+        Geometry::Landscape => Orientation::Landscape,
+        Geometry::Portrait => Orientation::Portrait,
+    });
     config.widgets.clear();
     let mut safe = widget.clone();
     let geometry = config.view_orientation(widget.view)?.geometry();

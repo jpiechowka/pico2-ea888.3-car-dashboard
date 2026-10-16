@@ -1,13 +1,13 @@
 use dashboard_configurator::geometry::{self, ContentRect, DragGesture, GrabOffset};
 use dashboard_configurator::preview::{Preview, PreviewOptions};
 use leptos::leptos_dom::helpers::request_animation_frame_with_handle;
-use wasm_bindgen::Clamped;
 
 use super::*;
 
 #[derive(Clone, Copy)]
 pub struct Drag {
     token: PointerToken,
+    geometry: Geometry,
     span: Span,
     offset: GrabOffset,
     gesture: DragGesture,
@@ -45,8 +45,17 @@ fn start(
     event.prevent_default();
     event.stop_propagation();
     widget_menu::close(ui, false);
+    let geometry = ui.pixel_geometry.get_untracked();
+    if ui.editor.with_untracked(|e| {
+        e.editing_config()
+            .view_orientation(e.selection().view)
+            .map(|o| o.geometry())
+    }) != Some(geometry)
+    {
+        return;
+    }
     let (span, offset) = match target {
-        PointerTarget::Library(_) => (Span::OneByOne, GrabOffset::center(Span::OneByOne)),
+        PointerTarget::Library(_) => (Span::OneByOne, GrabOffset::center_in(geometry, Span::OneByOne)),
         PointerTarget::Widget(id) => {
             let Some(widget) = ui.canvas_widget(id) else {
                 return;
@@ -54,7 +63,8 @@ fn start(
             let Some(rect) = content_rect(ui) else {
                 return;
             };
-            let Ok(offset) = geometry::grab_offset(
+            let Ok(offset) = geometry::grab_offset_in(
+                geometry,
                 rect,
                 f64::from(event.client_x()),
                 f64::from(event.client_y()),
@@ -99,6 +109,7 @@ fn start(
             ui.capture.set(Some((event.pointer_id(), element)));
             ui.drag.set(Some(Drag {
                 token,
+                geometry,
                 span,
                 offset,
                 gesture,
@@ -176,17 +187,19 @@ pub fn drag_move(
     if event.pointer_id() != drag.token.pointer_id() {
         return;
     }
-    if ui.editor.with_untracked(Editor::active_pointer) != Some(drag.token) {
+    if ui.editor.with_untracked(Editor::active_pointer) != Some(drag.token)
+        || ui.pixel_geometry.get_untracked() != drag.geometry
+    {
         cancel(ui);
         return;
     }
     event.prevent_default();
     drag.position = content_rect(ui).and_then(|rect| {
         drag.gesture
-            .placement(
+            .placement_in(
+                drag.geometry,
                 rect,
-                f64::from(event.client_x()),
-                f64::from(event.client_y()),
+                (f64::from(event.client_x()), f64::from(event.client_y())),
                 drag.token.target(),
                 drag.span,
                 drag.offset,
@@ -238,6 +251,17 @@ pub fn drag_end(
 }
 
 pub fn install_playback(ui: Ui) {
+    Effect::new(move |_| {
+        let pointer = ui.editor.with(Editor::active_pointer);
+        let geometry = ui.pixel_geometry.get();
+        if ui
+            .drag
+            .get_untracked()
+            .is_some_and(|drag| Some(drag.token) != pointer || drag.geometry != geometry)
+        {
+            cancel(ui);
+        }
+    });
     use dashboard_configurator::timing::Playback;
     use leptos::leptos_dom::helpers::set_interval_with_handle;
     Effect::new(move |_| {
@@ -318,19 +342,22 @@ pub fn Library(ui: Ui) -> impl IntoView {
                     <span class="grip" aria-hidden="true">"⠿"</span>
                 </button><button class="library-add" aria-label=format!("Add {}",channel.label()) disabled=move ||ui.inspection_active() on:click=move |_|add(ui,channel)>"+"</button></div>
             }/></div>
-            <div class="library-note"><span class="chip">"HARDWARE BOUNDS"</span><p>"Eight cells. Three sizes. Every view checked before export."</p><div class="mini-grid" aria-hidden="true">{(0..8).map(|_|view!{<i></i>}).collect_view()}</div><p class="hint">"Encoder: rotate for views, click for Full / Dim / Off. Debug and Logs keep their controls."</p></div>
+            <div class="library-note"><span class="chip">"HARDWARE BOUNDS"</span><p>"Eight cells. Three sizes. Every view checked before export."</p><div class="mini-grid" style=move ||format!("grid-template-columns:repeat({},1fr)",ui.pixel_geometry.get().columns()) aria-hidden="true">{(0..8).map(|_|view!{<i></i>}).collect_view()}</div><p class="hint">"Encoder: rotate for views, click for Full / Dim / Off. Debug and Logs keep their controls."</p></div>
         </aside>
     }
 }
 
-fn style(placement: Placement) -> String {
-    placement.rect().map_or("display:none".into(), |r| {
+fn style(
+    geometry: Geometry,
+    placement: Placement,
+) -> String {
+    placement.rect_in(geometry).map_or("display:none".into(), |r| {
         format!(
             "left:{}%;top:{}%;width:{}%;height:{}%",
-            f64::from(r.x) / 3.2,
-            f64::from(r.y) / 2.4,
-            f64::from(r.width) / 3.2,
-            f64::from(r.height) / 2.4
+            f64::from(r.x) * 100. / f64::from(geometry.width()),
+            f64::from(r.y) * 100. / f64::from(geometry.height()),
+            f64::from(r.width) * 100. / f64::from(geometry.width()),
+            f64::from(r.height) * 100. / f64::from(geometry.height())
         )
     })
 }
@@ -398,7 +425,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
             if !admitted {
                 return;
             }
-            let Some(canvas) = ui.canvas.get_untracked() else {
+            let Some(_canvas) = ui.canvas.get_untracked() else {
                 return;
             };
             if ui.dock.mode.get_untracked() == PreviewMode::Simulation
@@ -494,18 +521,9 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                             .map(|_| ())
                         }
                         .map_err(RenderIssue::Preview)?;
-                        let pixels = p.rgba();
-                        let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(Clamped(pixels), 320, 240)
-                            .map_err(|_| RenderIssue::CanvasAllocation)?;
-                        let context = canvas
-                            .get_context("2d")
-                            .map_err(|_| RenderIssue::CanvasContext)?
-                            .ok_or(RenderIssue::CanvasContext)?
-                            .dyn_into::<web_sys::CanvasRenderingContext2d>()
-                            .map_err(|_| RenderIssue::CanvasContext)?;
-                        context
-                            .put_image_data(&image, 0.0, 0.0)
-                            .map_err(|_| RenderIssue::CanvasDraw)?;
+                        super::controls::write_timing_canvas(ui.canvas, p.rgba(), p.geometry())?;
+                        ui.pixel_geometry.set(p.geometry());
+                        ui.pixel_fit_issues.set(p.fit_issues().to_vec());
                         Ok(())
                     })();
                     ui.observe_cache(p.cache_exhaustion_status());
@@ -575,18 +593,20 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         }
     });
     view! {
+        <div class="invalid-preview-heading" hidden=move ||!ui.editor.with(Editor::artwork_geometry_mismatch) role="alert"><strong>"SPLASH SHAPE MISMATCH"</strong><span>"Original artwork retained. Reconvert it in Device → Startup, reimport its source, or Undo. Save, export and build are blocked."</span><button on:click=move |_|workspaces::open(ui,Workspace::Device,GroupId::Bindings)>"Open Device settings"</button></div>
         <div class="json-preview-status" hidden=move ||json.get().is_none() role="status"><strong>{move ||json_editor::label(ui)}</strong><span hidden=move ||!ui.json_pending()>"Apply or Discard to resume accepted edits, export and timing completion."</span><button hidden=move ||!ui.json_pending() on:click=move |_|json_editor::open(ui)>"Resolve JSON edits"</button></div>
         <div class="invalid-preview-heading" hidden=move ||!ui.editor.with(Editor::has_startup_draft) role="status"><strong>{move ||ui.editor.with(Editor::startup_draft_label).unwrap_or_default()}</strong><span>"Apply or discard timing in Device → Startup. Save, export and build blocked."</span></div>
         <div class="invalid-preview-heading" hidden=move || !ui.invalid() && !ui.dock.invalid_pixels.get() role="status"><strong>"INVALID PREVIEW"</strong><span>{move ||if ui.invalid(){"Rejected draft · save and export blocked"}else{"Last inspection pixels · restore timing pixels in Diagnostics"}}</span></div>
         <p class="hint">{move ||if ui.dock.displayed.get()==PreviewMode::Startup{"Startup preview · shared Rust pixels · synthetic OBD status"}else if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW · candidate only; accepted acquisition and pending pixels retained"}else if ui.dock.pixels_key.get()!=Some(ui.editor.with(Editor::accepted_config_key)){"Last frame · configuration changed · submit a current frame in Diagnostics"}else if ui.dock.displayed.get()==PreviewMode::Simulation {"Synthetic Dashboard / Debug / Logs · browser completion is not physical scanout"}else if ui.dock.mode.get()==PreviewMode::Simulation {"Last appearance frame · submit or restore timing pixels in Diagnostics"}else{"Appearance preview · generated history"}}</p>
-        <div class="display-stage" class:invalid-preview=move ||ui.invalid() ||ui.dock.invalid_pixels.get()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
+        <p class="draft-alert" role="status" hidden=move ||ui.pixel_fit_issues.get().is_empty()>{move ||format!("Content fit needs review in widgets {:?}. The current sample with reserved warning space exceeds a compact lane. FIT! marks an overflowing value; try a larger tile or fewer detail lanes. Other runtime values can have different widths.",ui.pixel_fit_issues.get())}</p>
+        <div class="display-stage" class:portrait=move ||ui.pixel_geometry.get()==Geometry::Portrait class:invalid-preview=move ||ui.invalid() ||ui.dock.invalid_pixels.get()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
                 <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if let Some(label)=ui.editor.with(Editor::startup_draft_label){label}else if ui.json_pending(){json_editor::label(ui)}else if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent all-screen synthetic timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>
                 <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Last frame only. Change the test values or reload to retry."</p></div>
-                <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views) ||ui.dock.mode.get()!=PreviewMode::Appearance>
+                <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views) ||ui.dock.mode.get()!=PreviewMode::Appearance ||ui.editor.with(|e|e.editing_config().view_orientation(e.selection().view).map(|o|o.geometry()))!=Some(ui.pixel_geometry.get())>
                     <For each=move ||ui.editor.with(|e|e.editing_config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{
                         <button id=format!("widget-{id}") class="widget-hit" disabled=move ||ui.layout_locked() class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
-                            style=move ||ui.canvas_widget(id).map_or("display:none".into(),|w|style(w.placement))
+                            style=move ||ui.canvas_widget(id).map_or("display:none".into(),|w|style(ui.pixel_geometry.get(),w.placement))
                             aria-label=move ||ui.canvas_widget(id).map_or(String::new(),|w|format!("Select {} widget",w.label))
                             title="Drag to move. Right-click or Shift+F10 for actions. Arrow keys move one cell. Delete removes."
                             aria-haspopup="menu" aria-expanded=move ||ui.menu.with(|menu|menu.as_ref().is_some_and(|m|m.actions.target()==id)).to_string()
@@ -599,15 +619,15 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                                 use dashboard_configurator::widget_actions::Direction;
                                 let direction=match e.key().as_str(){"ArrowLeft"=>Direction::Left,"ArrowRight"=>Direction::Right,"ArrowUp"=>Direction::Up,"ArrowDown"=>Direction::Down,_=>return};
                                 e.prevent_default();
-                                if let Some(placement)=ui.canvas_widget(id).and_then(|w|direction.placement(w.placement)){ui.apply(Edit::PlaceWidget{id,placement});}
+                                if let Some(placement)=ui.canvas_widget(id).and_then(|w|direction.placement_in(ui.pixel_geometry.get(),w.placement)){ui.apply(Edit::PlaceWidget{id,placement});}
                             }><span class="selection-corner"></span></button>
                     }/>
                     <div class="drop-guide" class:invalid=move ||ui.drag.get().is_some_and(|d|!d.valid)
-                        style=move ||ui.drag.get().and_then(|d|d.position).map_or("display:none".into(),style) aria-hidden="true"></div>
+                        style=move ||ui.drag.get().and_then(|d|d.position).map_or("display:none".into(),|p|style(ui.pixel_geometry.get(),p)) aria-hidden="true"></div>
                     {move ||ui.editor.with(|e|e.diagnostic().map(|draft|{
                         let ids=draft.affected(e.preview(),e.selection().view);
                         draft.config.widgets.iter().filter(|w|w.view==e.selection().view && ids.contains(&w.id)).map(|w|view!{
-                            <div class="invalid-widget" style=style(w.placement)><span>{format!("! INVALID #{}",w.id)}</span></div>
+                            <div class="invalid-widget" style=style(ui.pixel_geometry.get(),w.placement)><span>{format!("! INVALID #{}",w.id)}</span></div>
                         }).collect_view()
                     }))}
                 </div>
