@@ -1,9 +1,8 @@
-"""Closed Reset-copy machine bridge, not defined-Rust startup ownership.
+"""Closed Reset-copy bridge with historical Rust and current assembly hooks.
 
-The frozen Rust pre_init attribute is deprecated: its source-language issue
-remains named for Maintenance M2. Complete emitted shapes establish only the
-conditional machine transitions below. No generic MMIO or hardware permission
-is inferred, and application source/task/alias/loader closure stays internal.
+Historical source-language qualification remains explicit. The current exact
+stackless upstream assembly is separately admitted; neither path infers
+hardware permission or application source/task/alias/loader closure.
 """
 from dataclasses import replace
 import re
@@ -12,7 +11,7 @@ from config_finite import _literal_body
 from config_owner_entry import configuration_entry_boundary,_direct_target
 from config_refill_children import _readonly
 from config_stack import typed_function,_typed_function_extent,transfer_family
-from config_startup_contracts import STARTUP
+from config_startup_contracts import STARTUP, ASSEMBLY_PRE_INIT
 from validation import require
 
 
@@ -27,6 +26,13 @@ def _symbol(elf,name,info,size,index):
 
 
 def _function(objects,address,role):
+    if role=='__pre_init' and objects.elf.functions.get('__pre_init',(0,0))[1]==42:
+        extent,name=_typed_function_extent(objects,address,role)
+        index=objects.elf.functions[name][2]
+        require(name=='__pre_init' and _symbol(objects.elf,name,18,42,index)==address|1 and extent==42 and
+            (address not in objects.sizes or (type(objects.sizes[address]) is int and objects.sizes[address]==0)),
+            'assembly pre_init is not the exact zero-growth function')
+        return 42,0,name
     if role!='Reset':return typed_function(objects,address,role)
     extent,name=_typed_function_extent(objects,address,role)
     index=objects.elf.functions[name][2]
@@ -62,10 +68,48 @@ def _external_pool(objects,name,slot):
     return struct.unpack('<I',_readonly(objects,slot,4,4))[0]
 
 
+def assembly_pre_init(objects,rows):
+    """Match the complete stackless hook and its three external MMIO words."""
+    elf=objects.elf;require('__pre_init' in elf.functions,'missing assembly startup hook')
+    start=elf.functions['__pre_init'][0]&~1
+    # The decoder's text must agree with the exact reviewed nonliteral opcodes.
+    # Only the three LDR displacements may vary with external pool placement.
+    fixed=bytes.fromhex('0a48012101600a480906016002688a42fcd10021016002688a42fcd10548016801225207114301607047')
+    raw=objects.read_only(start,42)
+    require(all(raw[i:i+2]==fixed[i:i+2] for i in range(0,42,2) if i not in (0,6,28)),
+        'assembly startup fixed opcode differs')
+    contract=dict(ASSEMBLY_PRE_INIT);operations=[];pools=[]
+    expected=(0xd000017c,0x40018004,0xe000e008)
+    for offset,width,text in contract['instructions']:
+        match=re.search(r'@hook_pool([0-9]+)',text)
+        if match:
+            row=rows.get(start+offset)
+            require(row is not None and row.mnemonic=='ldr','missing assembly MMIO literal consumer')
+            actual=re.fullmatch(r'r0, \[pc, #(0x[0-9a-f]+|[0-9]+)\]',row.operands)
+            require(actual is not None,'assembly MMIO literal receiver differs')
+            immediate=int(actual[1],0);slot=((start+offset+4)&~3)+immediate
+            require(immediate%4==0 and 0<=immediate<=1020 and row.raw==struct.pack('<H',0x4800|immediate//4),
+                'assembly literal opcode or displacement differs')
+            value=_external_pool(objects,'__pre_init',slot)
+            require(value==expected[int(match[1])],'assembly startup MMIO address differs')
+            pools.append((start+offset,slot,value));text='ldr '+row.operands
+        operations.append((offset,width,text))
+    require(len(pools)==3 and len({p[1] for p in pools})==3,'assembly startup literal ownership differs')
+    contract['instructions']=operations
+    proof=_literal_body(objects,'__pre_init',rows,'__pre_init','assembly_rp235x',contract,_no_policy,_no_policy,
+        window=start,function_consumer=_function)
+    require(not proof['ordinary_edges'] and not proof['indirect_sites'],'assembly startup gains a call')
+    proof.update(external_literals=tuple(pools),zero_growth_requires_complete_assembly_contract=True,
+        reviewed_upstream_commit='c003af1767be1b7602ecf2a3b155eb6ce543e06a')
+    return proof
+
+
 def _bodies(objects,rows,mode,expected):
     elf=objects.elf;require('Reset' in elf.functions and '__pre_init' in elf.functions,'missing startup function')
     reset=elf.functions['Reset'][0]&~1;preinit=elf.functions['__pre_init'][0]&~1
-    require(_symbol(elf,'__pre_init',18,STARTUP[mode]['extent'],elf.functions['__pre_init'][2])==preinit|1,
+    hook_shape='assembly_rp235x' if elf.functions['__pre_init'][1]==42 else mode
+    hook_contract=STARTUP[hook_shape]
+    require(_symbol(elf,'__pre_init',18,hook_contract['extent'],elf.functions['__pre_init'][2])==preinit|1,
         'pre_init raw definition differs')
     clean={a:replace(r,operands=r.operands.split('@',1)[0].split('<',1)[0].strip()) for a,r in rows.items()}
     contract=dict(STARTUP['Reset']);operations=[];pools=[]
@@ -91,17 +135,18 @@ def _bodies(objects,rows,mode,expected):
     # matcher's internal-pool policy is not widened for other consumers.
     proof=_literal_body(objects,'Reset',clean,'Reset','Reset',contract,_no_policy,_no_policy,
         window=reset,function_consumer=_function)
-    child=_literal_body(objects,'__pre_init',clean,'__pre_init',mode,STARTUP[mode],_no_policy,_no_policy)
+    child=(assembly_pre_init(objects,clean) if hook_shape=='assembly_rp235x' else
+        _literal_body(objects,'__pre_init',clean,'__pre_init',mode,hook_contract,_no_policy,_no_policy))
     require(not child['ordinary_edges'] and not child['indirect_sites'] and not proof['indirect_sites'],
         'startup gains an unexamined hook/helper/indirect call')
     require(tuple((o,op,role,frame) for o,op,target,role,frame in proof['ordinary_edges'])==
-        ((0,'bl','__pre_init',8),(56,'bl','main',8)),
+        ((0,'bl','__pre_init',hook_contract['frame']),(56,'bl','main',8)),
         'Reset ordinary/main seam differs')
     proof.update(external_literals=tuple(pools),zero_growth_requires_complete_Reset_contract=True)
     return proof,child,clean
 
 
-def _ranges(objects,initial):
+def _ranges(objects,initial,hook_frame=8):
     elf=objects.elf;data=elf.named.get('.data');bss=elf.named.get('.bss');uninit=elf.named.get('.uninit');vector=elf.named.get('.vector_table')
     require(all(v is not None for v in (data,bss,uninit,vector)),'missing exact startup allocation')
     def index(section):
@@ -144,7 +189,7 @@ def _ranges(objects,initial):
         if not section[2]&2 or not section[5]:continue
         lo,hi=section[3],section[3]+section[5]
         require(0<=lo<hi<=0x100000000,'startup allocated section wraps')
-        require(not (lo<sp and sp-8<hi),'pre_init saves overlap an allocated object/section')
+        require(not (lo<sp and sp-8<hi),'initial stack reserve overlaps an allocated object/section')
         if section!=data:require(not (lo<de and d<hi),'initialized data destination has an overlapping allocation')
         if section!=bss:require(not (lo<ze and z<hi),'zero destination has an overlapping allocation')
     v=_symbol(elf,'__vector_table',16,0,index(vector));rv=_symbol(elf,'__RESET_VECTOR',17,4,index(vector))
@@ -156,12 +201,14 @@ def _ranges(objects,initial):
     return dict(data=(d,de),bss=(z,ze),source=(load,load+de-d),source_file=(data[4],data[4]+data[5]),
         Config_address=initial['address'],Config_source=load+initial['address']-d,step=4,
         words=(de-d)//4,zero_words=(ze-z)//4,initial_sp=sp,stack_bottom=bottom,
-        pre_init_stack=(sp-8,sp),vector=(v,rv,words[1]),header_entry=struct.unpack_from('<I',elf.data,24)[0])
+        pre_init_stack=(sp-hook_frame,sp),vector=(v,rv,words[1]),header_entry=struct.unpack_from('<I',elf.data,24)[0])
 
 
 def startup_configuration_copy(objects,instructions):
     """Conditional copy-at-main lineage, not an unqualified live owner."""
-    entry=configuration_entry_boundary(objects,instructions);initial=entry['initial'];ranges=_ranges(objects,initial)
+    entry=configuration_entry_boundary(objects,instructions);initial=entry['initial']
+    hook_frame=0 if objects.elf.functions.get('__pre_init',(0,0))[1]==42 else 8
+    ranges=_ranges(objects,initial,hook_frame)
     expected=(ranges['bss'][0],ranges['bss'][1],ranges['data'][0],ranges['data'][1],ranges['source'][0],0xe000ed88)
     reset,preinit,rows=_bodies(objects,instructions,entry['mode'],expected)
     require(ranges['vector'][2]==ranges['header_entry']==reset['function']|1,'Reset vector/ELF/typed function entry differ')
@@ -182,9 +229,9 @@ def startup_configuration_copy(objects,instructions):
         reset=reset,pre_init=preinit,copy=ranges,
         reaching_phase_requires=('pre_init_returned','complete_bss_zero_exit','complete_data_copy_exit'),
         pre_init_outcomes=('nonterminating_poll_has_no_successor','normal_restored_before_zero_and_copy'),
-        source_qualification='deprecated_Rust_pre_init_emitted_machine_only',
-        requires_M2_pre_init_source_reconciliation=True,hardware_qualified=False,
-        startup_stack_alternatives=((0,8),(0,)+tuple(frame for at,frame in entry['entry']['entry_chain'])),
+        source_qualification=('reviewed_stackless_assembly_pre_init' if hook_frame==0 else 'deprecated_Rust_pre_init_emitted_machine_only'),
+        requires_M2_pre_init_source_reconciliation=hook_frame!=0,hardware_qualified=False,
+        startup_stack_alternatives=((0,hook_frame),(0,)+tuple(frame for at,frame in entry['entry']['entry_chain'])),
         post_copy_direct_store=(0xe000ed88,4,'CPACR read OR 0x00f00000'),
         requires_expected_vector_entry_and_successful_ordinary_memory_execution=True,
         requires_first_batch_source_alias_and_specialized_loader_closure=True,

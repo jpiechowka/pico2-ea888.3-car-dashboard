@@ -1,7 +1,7 @@
 """Closed emitted Reset/pre_init shapes for the startup machine bridge.
 
-The locked Rust pre_init source remains deprecated and not a defined-Rust
-startup theorem. These fixed current bytes/operands justify only the emitted
+The historical Rust pre_init source remains deprecated and not a defined-Rust
+startup theorem. Those frozen bytes/operands justify only the emitted
 machine effects. No generic MMIO permission or missing-frame fallback exists.
 Six Reset literals outside its STT_FUNC are separate mandatory dependencies.
 Changed source/compiler/link shape requires fresh review.
@@ -137,3 +137,17 @@ STARTUP = {'Reset': {'extent': 62,
                             (46, 2, 'pop {r7, pc}')],
            'data': [(48, 4, '7c0100d0'), (52, 4, '04800140'), (56, 4, '08e000e0')],
            'objects': ()}}
+
+
+# Exact c003af17 RP235x assembly; external MMIO pool is separately bound.
+# The historical compiler-shaped entries above remain unchanged.
+ASSEMBLY_PRE_INIT = {'extent':42,'frame':0,'mapping':((0,42,'t'),),
+ 'instructions':[(0,2,'ldr r0, [pc, @hook_pool0]'),(2,2,'movs r1, #0x1'),
+ (4,2,'str r1, [r0]'),(6,2,'ldr r0, [pc, @hook_pool1]'),
+ (8,2,'lsls r1, r1, #0x18'),(10,2,'str r1, [r0]'),(12,2,'ldr r2, [r0]'),
+ (14,2,'cmp r2, r1'),(16,2,'bne @self+c'),(18,2,'movs r1, #0x0'),
+ (20,2,'str r1, [r0]'),(22,2,'ldr r2, [r0]'),(24,2,'cmp r2, r1'),
+ (26,2,'bne @self+16'),(28,2,'ldr r0, [pc, @hook_pool2]'),(30,2,'ldr r1, [r0]'),
+ (32,2,'movs r2, #0x1'),(34,2,'lsls r2, r2, #0x1d'),(36,2,'orrs r1, r2'),
+ (38,2,'str r1, [r0]'),(40,2,'bx lr')],'data':[],'objects':()}
+STARTUP['assembly_rp235x']=ASSEMBLY_PRE_INIT

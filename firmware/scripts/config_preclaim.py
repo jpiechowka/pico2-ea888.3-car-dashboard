@@ -201,7 +201,7 @@ def preclaim_configuration_preservation(objects,instructions):
         alternatives=('successful_zero_claim_then_restored_loader_tail','exclusive_failure_no_write_retry',
             'empty_or_wait_no_claim_successor','Busy_diagnostic_pending','resumed_diagnostic_pending',
             'already_taken_diagnostic_pending'),
-        source_qualification=startup['source_qualification'],requires_M2_pre_init_source_reconciliation=True,
+        source_qualification=startup['source_qualification'],requires_M2_pre_init_source_reconciliation=startup['requires_M2_pre_init_source_reconciliation'],
         hardware_qualified=False,requires_complete_source_alias_and_diagnostic_closure=True,
         requires_first_batch_and_all_implicit_computed_ingress_closure=True,
         requires_same_B_specialized_loader_and_all_later_source_epochs=True,

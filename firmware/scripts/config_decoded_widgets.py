@@ -1294,7 +1294,7 @@ def _first_boot_decoded_widgets_state(objects,rows,source_context):
         source_context=views['source_context'],source_qualification=views['source_qualification'],
         external_qualifications=views['external_qualifications'],exception_graph_limit=views['exception_graph_limit'],
         exception_absence_established=False,hardware_qualified=False,initial_facts_reinitialized=False,
-        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=True,
+        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=views['requires_M2_pre_init_source_reconciliation'],
         full_visitor_return_pending=True,shared_error_suffix_pending=True,
         pending=('Sources and remaining visitor groups','full visitor errors and restore','D finalize/canonical Compare',
             'decoded validation and other loader modes/routes','diagnostic/sink/PANICKED/full resource graph',

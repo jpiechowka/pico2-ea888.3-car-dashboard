@@ -186,10 +186,18 @@ literals; body SHA-256 is
 `2e607823f0c33ea503d542e8961cbbe910238fc5a80886a4cd822b9e3598bc06`.
 The original archive and all vendor file hashes passed `check_vendor.py`.
 
-The frozen `config_startup.py` / `config_startup_contracts.py` machine-code
-grammars still describe the old Rust hook, including its saved stack words.
-They must be reconciled with this stackless assembly body during the final
-artifact audit; their current rejection is not permission to bypass them.
+The startup consumer retains the historical Rust grammars and adds a separate
+exact 42-byte assembly contract. It binds typed symbol/extent, zero frame,
+complete Thumb coverage, each literal opcode and read-only pool, MMIO values,
+reset call sequence and preserved LR. The current linked Reset/hook passes
+this focused consumer. Mutation tests reject every changed code byte and
+changed literals, mapping, symbols, frame metadata, branch/return text or pool
+aliases. Historical startup/preclaim/history tests remain unchanged.
+
+The pre-init source qualification follows the selected complete proof through
+private compositions. H8 consumed-input and hardware qualifications stay open;
+the generic public ExecutionReceipt carries no startup proof and remains
+conservative. This is not a substitute for the remaining full capture audit.
 
 This does not requalify flash machine-code gates, other profile/feature images,
 RP2040 linking, or physical reset/PIO timing. Those checks remain separate;

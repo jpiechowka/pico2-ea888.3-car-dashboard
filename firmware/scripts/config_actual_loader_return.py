@@ -246,7 +246,7 @@ def checksum_refill_loader_return(objects,instructions,source_context):
         pending_diagnostics=description['pending_diagnostics']+tuple((v['site'],v['source_phase']) for v in closure['pending_diagnostic_cuts']),
         decoded_caller_and_other_routes_pending=True,other_optimization_variants_pending=True,
         source_qualification=description['source_qualification'],external_qualifications=description['external_qualifications'],
-        requires_M2_pre_init_source_reconciliation=True,requires_H8_consumed_input_closure=True,
+        requires_M2_pre_init_source_reconciliation=description['requires_M2_pre_init_source_reconciliation'],requires_H8_consumed_input_closure=True,
         exception_graph_limit=description['exception_graph_limit'],exception_absence_established=False,
         target_access_requirements_unresolved=True,requires_complete_same_B_loader_before_owner=True,
         requires_full_diagnostic_and_activation_graph_and_resource_gates=True,hardware_qualified=False)

@@ -646,7 +646,7 @@ def _tail_description(state,bridge,uses,exits,raw):
         external_qualifications=prior['external_qualifications'],exception_graph_limit=prior['exception_graph_limit'],
         exceptional_resume_established=False,exception_absence_established=False,all_observers_compatible=False,
         exception_safe_completion=False,unconditional_owner=False,hardware_qualified=False,initial_facts_reinitialized=False,
-        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=True,
+        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=prior['requires_M2_pre_init_source_reconciliation'],
         complete_policy_and_resource_producer_pending=True,
         pending=('D finalize/canonical Compare','decoded validator and remaining loader routes/modes',
             'diagnostics/live sinks/PANICKED/full resource graph','actual complete policy/producer/max envelope',

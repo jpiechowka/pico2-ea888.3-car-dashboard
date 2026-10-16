@@ -79,7 +79,7 @@ def _successors(preclaim,rows,bodies,edges):
     """
     result=[];mode=preclaim['mode'];callback=preclaim['callback'];entry=preclaim['startup']['entry']['entry']
     for phase,proof in bodies.items():
-        contract=STARTUP[mode] if phase=='pre_init' else STARTUP['Reset'] if phase=='Reset' else ENTRY_GRAMMARS[proof['shape']]
+        contract=STARTUP[proof['shape']] if phase=='pre_init' else STARTUP['Reset'] if phase=='Reset' else ENTRY_GRAMMARS[proof['shape']]
         start=proof['function'];points={o for o,w,t in contract['instructions']};used=set()
         ret=contract['instructions'][-1][0] if phase=='pre_init' else _RETURNS.get(proof['shape'])
         for offset,width,text in contract['instructions']:
@@ -165,15 +165,16 @@ def _save_protection(preclaim,bodies):
 
 def _returns(preclaim,bodies,edges,saves):
     mode=preclaim['mode'];sp=preclaim['startup']['copy']['initial_sp'];selected=[]
-    # The full fixed hook has only ordinary MMIO stores and no helper or LR
-    # producer; its PUSH/POP protects the actual Reset+4 return. This remains
-    # emitted-machine proof and does not define Rust pre_init semantics.
-    hook=bodies['pre_init'];ret=STARTUP[mode]['instructions'][-1][0]
-    require(STARTUP[mode]['instructions'][0][2]=='push {r7, lr}' and
-        STARTUP[mode]['instructions'][-1][2]=='pop {r7, pc}','hook return ABI differs')
+    # The exact current hook preserves LR without stack writes; historical
+    # Rust bodies retain their independently checked PUSH/POP contract.
+    hook=bodies['pre_init'];contract=STARTUP[hook['shape']];ret=contract['instructions'][-1][0]
+    assembly=hook['shape']=='assembly_rp235x'
+    require((assembly and hook['frame']==0 and contract['instructions'][-1][2]=='bx lr') or
+        (not assembly and contract['instructions'][0][2]=='push {r7, lr}' and
+         contract['instructions'][-1][2]=='pop {r7, pc}'),'hook return ABI differs')
     selected.append(dict(phase='pre_init',call_site=bodies['Reset']['function'],continuation=bodies['Reset']['function']+4,
         LR_value=(bodies['Reset']['function']+4)|1,entry_SP=sp,return_SP=sp,
-        saved_LR=(sp-4,sp),return_site=hook['function']+ret))
+        saved_LR=None if assembly else (sp-4,sp),return_site=hook['function']+ret))
     for phase,(caller,offsets) in _CALLERS.items():
         if mode not in offsets:continue
         body=bodies[phase];site=bodies[caller]['function']+offsets[mode];edge=edges[(caller,offsets[mode])]
@@ -435,7 +436,8 @@ def first_boot_history(objects,instructions,source_context):
         nonreturn_prefix=dict(main_cortex_and_run_have_no_return_before_claim=True,Reset_UDF_not_reached_by_selected_prefix=True),
         callback_expiry=p['callback_expiry'],later_invocations_require_separate_context=True,
         initial_state_expires_at_decode_refill_or_publication=True,requires_complete_same_B_loader_effects=True,
-        requires_H8_consumed_input_closure=True,external_qualifications=_EXTERNAL,
+        requires_H8_consumed_input_closure=True,external_qualifications=(_EXTERNAL if p['requires_M2_pre_init_source_reconciliation'] else
+            _EXTERNAL[:2]+('exact reviewed assembly pre_init; no Rust executes before RAM initialization',)),
         exception_graph_limit=('NMI','HardFault','reset_reentry'),exception_absence_established=False,
-        source_qualification=p['source_qualification'],requires_M2_pre_init_source_reconciliation=True,
+        source_qualification=p['source_qualification'],requires_M2_pre_init_source_reconciliation=p['requires_M2_pre_init_source_reconciliation'],
         hardware_qualified=False,existing_conservative_frame_arithmetic_unchanged=True)

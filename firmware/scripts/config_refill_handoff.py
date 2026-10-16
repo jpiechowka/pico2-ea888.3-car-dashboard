@@ -262,7 +262,7 @@ def _checksum_refill_state(objects,instructions,source_context):
         pending_diagnostics=tuple((d['root']['location_role'],d['root']['window']) for d in diagnostics),diagnostic_closure_pending=True,
         target_access_requirements_unresolved=True,requires_complete_validator_Result_and_restore=True,
         requires_full_parent_other_paths_ingress_and_activation_graph=True,requires_complete_same_B_loader_before_owner=True,
-        source_qualification=boundary['source_qualification'],requires_M2_pre_init_source_reconciliation=True,
+        source_qualification=boundary['source_qualification'],requires_M2_pre_init_source_reconciliation=boundary['requires_M2_pre_init_source_reconciliation'],
         requires_H8_consumed_input_closure=True,external_qualifications=boundary['external_qualifications'],
         exception_graph_limit=boundary['exception_graph_limit'],exception_absence_established=False,hardware_qualified=False)
 

@@ -342,7 +342,7 @@ def _first_boot_decoded_u16_state(objects,instructions,source_context):
         D_end_and_Q_pointer_preserved=True,protected_static_suffix=(B+14576,B+14604),
         executor_constituent=boundary['physical_protected'][1],nested_frame_metadata=(456,1608,8,8,24,16),
         source_context=boundary['history']['source_context'],source_qualification=boundary['source_qualification'],
-        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=True,
+        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=boundary['requires_M2_pre_init_source_reconciliation'],
         external_qualifications=boundary['external_qualifications'],exception_graph_limit=boundary['exception_graph_limit'],
         exception_absence_established=False,hardware_qualified=False,
         pending=('shared error suffix/visitor restore','boot_view and all remaining visitor groups','finalize and complete canonical Compare',

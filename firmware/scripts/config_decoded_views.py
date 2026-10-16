@@ -615,7 +615,7 @@ def _first_boot_decoded_views_state(objects,instructions,source_context):
             island=context.headers['visitor']['proof']['function']+6848,machine_nonreturn_established=False),
         shared_error_suffix_pending=True,full_visitor_return_pending=True,initial_facts_reinitialized=False,
         target_policy_unchanged=True,source_qualification=prefix['source_qualification'],external_qualifications=prefix['external_qualifications'],
-        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=True,
+        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=prefix['requires_M2_pre_init_source_reconciliation'],
         exception_graph_limit=prefix['exception_graph_limit'],exception_absence_established=False,hardware_qualified=False,
         pending=('Widgets and remaining source groups','full visitor error/normal restore','D finalize and canonical Compare',
             'decoded validation and all other loader routes/modes','diagnostic/default sink/PANICKED graph',
