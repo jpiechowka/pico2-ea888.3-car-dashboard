@@ -218,6 +218,9 @@ jobs:
   build-pico2:
     name: Build Pico 2 (${{ matrix.profile }})
     runs-on: ubuntu-latest
+    env:
+      CAPTURE_NAME: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.profile }}
+      CAPTURE_ROOT: firmware/target/bench-captures
     strategy:
       matrix:
         include:
@@ -266,6 +269,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware
+          # Each capture intentionally builds in a fresh directory. Cache downloads,
+          # not immutable captures or their private compiler output directories.
+          cache-targets: 'false'
+          prefix-key: v1-capture-downloads
       - name: Fetch capture-tool workspace dependencies
         run: cargo fetch --locked
       - name: Build pico2
@@ -273,11 +280,10 @@ jobs:
         # including strip=none; do not pass ambient overrides through its strict gate.
         run: |
           unset CARGO_INCREMENTAL
-          python3 scripts/capture_target_bench.py ci-${{ matrix.profile }} --firmware --image-gate practical --features "${{ matrix.features }}" ${{ matrix.extra_args }}
+          python3 scripts/capture_target_bench.py "$CAPTURE_NAME" --firmware --image-gate practical --features "${{ matrix.features }}" ${{ matrix.extra_args }}
         working-directory: firmware
-      # Capture runs the complete RAM gate with its explicit pre-build source context.
+      # Capture runs the practical image gate with its explicit pre-build source context.
       - name: Check captured flash lockout contracts
         run: |
-          python3 scripts/test_flash_lockout.py target/bench-captures/ci-${{ matrix.profile }}/pico2.elf
-          python3 -O scripts/test_flash_lockout.py target/bench-captures/ci-${{ matrix.profile }}/pico2.elf
-        working-directory: firmware
+          python3 firmware/scripts/test_flash_lockout.py "$CAPTURE_ROOT/$CAPTURE_NAME/pico2.elf"
+          python3 -O firmware/scripts/test_flash_lockout.py "$CAPTURE_ROOT/$CAPTURE_NAME/pico2.elf"
