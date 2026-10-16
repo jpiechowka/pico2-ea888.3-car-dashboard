@@ -266,3 +266,18 @@ fn completion_is_a_monotonic_clock_observation() {
     state.advance(profile, 99, false, false);
     assert_eq!(state.exit(), Some(Exit::Clock));
 }
+
+#[test]
+fn invalid_optional_profile_skips_startup_without_panicking() {
+    for bytes in [&b""[..], &b"EASP"[..], &[0xFF; 16][..]] {
+        let (_, state) = Startup::from_encoded(bytes, 123);
+        assert!(!state.active());
+        assert_eq!(state.exit(), Some(Exit::Fault));
+        assert_eq!(state.ended_at(), Some(123));
+    }
+    let profile = StartupProfile::DEFAULT;
+    let (decoded, state) = Startup::from_encoded(&profile.encode().unwrap(), 123);
+    assert_eq!(decoded, profile);
+    assert_eq!(state.phase(), Phase::Status);
+    assert_eq!(state.exit(), None);
+}

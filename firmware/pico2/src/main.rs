@@ -337,9 +337,11 @@ async fn dashboard_task(
     let btn_y = Input::new(p.PIN_15, Pull::Up);
 
     let mut gestures = ControlGestures::new();
-    let startup_profile = dashboard_pico2::startup::StartupProfile::decode(&DASHBOARD_STARTUP_PROFILE)
-        .expect("build-validated startup profile");
-    let mut startup = dashboard_pico2::startup::Startup::new(startup_profile, Instant::now().as_millis());
+    let (startup_profile, mut startup) =
+        dashboard_pico2::startup::Startup::from_encoded(&DASHBOARD_STARTUP_PROFILE, Instant::now().as_millis());
+    if startup.exit() == Some(dashboard_pico2::startup::Exit::Fault) {
+        log_fault!("Startup profile invalid; continuing to dashboard");
+    }
     let mut startup_validation = if startup_profile.theme == dashboard_pico2::startup::StartupTheme::Custom {
         dashboard_pico2::view_config::startup_asset::Validator::new(&DASHBOARD_STARTUP_ASSET[..STARTUP_ASSET_LENGTH])
             .ok()

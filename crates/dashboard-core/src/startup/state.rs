@@ -52,6 +52,22 @@ impl Startup {
         state
     }
 
+    /// A corrupt optional profile must never prevent dashboard recovery.
+    pub fn from_encoded(
+        bytes: &[u8],
+        now: u64,
+    ) -> (StartupProfile, Self) {
+        match StartupProfile::decode(bytes) {
+            Some(profile) => (profile, Self::new(profile, now)),
+            None => {
+                let profile = StartupProfile::DEFAULT;
+                let mut state = Self::new(profile, now);
+                state.finish(Exit::Fault);
+                (profile, state)
+            }
+        }
+    }
+
     pub const fn phase(&self) -> Phase { self.phase }
 
     pub const fn active(&self) -> bool { !matches!(self.phase, Phase::Dashboard) }
