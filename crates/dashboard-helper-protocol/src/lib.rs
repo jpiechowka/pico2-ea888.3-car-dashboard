@@ -12,3 +12,6 @@ pub mod setup;
 pub use devices::*;
 
 pub mod diagnostics;
+
+pub mod flash_history;
+pub use flash_history::*;
