@@ -286,7 +286,9 @@ def _history_led_source(objects,rows,parents,controls,frame,ancestor_protected):
         for option in child['outcomes']:
             if option['kind']=='some':good.append(option)
             else:record(call,option,14 if option['kind']=='none' else option['error'],count,completed)
-        return call,None if not good else _joined_sequence(good),tuple(good)
+        after=None if not good else _joined_sequence(good)
+        call['normal_after']=after
+        return call,after,tuple(good)
     top=state.header
     require_writes((top,),((top,4,4),),base+(_object(state.decoder.header,'Tail D'),))
     history_q=borrow(frame,1064,8,phase,True)

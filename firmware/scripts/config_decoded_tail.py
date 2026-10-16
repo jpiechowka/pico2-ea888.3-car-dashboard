@@ -131,3 +131,98 @@ def _tail_entries(objects,rows,state):
         entries.append(_TailEntry(state,exit,exit.sequence,V+5630,protected,pointer,carrier[0],
             (cell,7,V+5052,V+5630),borrow(owner,212,32,frame.phase),full))
     return tuple(entries)
+
+
+@dataclass(frozen=True)
+class _TailPhase:
+    entry:_TailEntry
+    controls:dict
+    control_effects:dict
+    suffix:object
+    suffix_effects:object
+    parent_envelopes:dict
+    completed_ordinary_group_issued:bool=False
+
+
+def _entry_data(entry,predecessor):
+    require(type(entry) is _TailEntry and entry.predecessor is predecessor and
+        any(entry.exit is v for v in predecessor.exits) and entry.sequence is entry.exit.sequence,
+        'Tail private entry lost its exact Source exit/sequence identity')
+    return dict(exit_index=next(i for i,v in enumerate(predecessor.exits) if v is entry.exit),
+        sequence=entry.sequence,frontier=entry.frontier,protected=entry.protected,
+        r4_pointer=entry.r4_pointer,second_screen_pointer=entry.second_screen_pointer,
+        retired_saved_count=entry.retired_saved_count,old_controls=entry.old_controls,full_config=entry.full_config,
+        Controls_sequence=entry.Controls_sequence,completed_ordinary_group_issued=entry.completed_ordinary_group_issued)
+
+
+def _phase_checkpoint(predecessor,entries,parents,children,phases,predecessor_description,payload_sha256):
+    from config_decoded_sources import _phase_graph
+    require(len(entries)==len(phases) and all(p.entry is e and not p.completed_ordinary_group_issued for p,e in zip(phases,entries)),
+        'Tail private phase changed its selected entry association')
+    data=tuple(dict(entry=_entry_data(p.entry,predecessor),controls=p.controls,control_effects=p.control_effects,
+        suffix=p.suffix,suffix_effects=p.suffix_effects,parent_envelopes=p.parent_envelopes) for p in phases)
+    return _phase_graph(dict(parents=parents,children=children,phases=data,
+        predecessor_description=predecessor_description,payload_sha256=payload_sha256))
+
+
+@dataclass(frozen=True)
+class _TailPhasesState:
+    predecessor:object
+    objects:object
+    rows:object
+    source_context:object
+    parents:tuple
+    children:dict
+    entries:tuple
+    phases:tuple
+    predecessor_description:dict
+    payload_sha256:str
+    checkpoint:object
+    completed_ordinary_group_issued:bool=False
+
+    def current(self):
+        from config_tail_children import tail_children
+        from config_structural import _readonly_hash
+        require(not self.completed_ordinary_group_issued,'Tail phase alone cannot mint ordinary completion')
+        base=self.predecessor.phases;c=base.widgets.views.context
+        require(self.objects is base.objects and self.rows is base.rows and self.source_context is base.source_context,
+            'Tail private phase uses another current input/source pair')
+        entries=_tail_entries(self.objects,self.rows,self.predecessor)
+        require(tuple(_entry_data(v,self.predecessor) for v in entries)==tuple(_entry_data(v,self.predecessor) for v in self.entries),
+            'Tail private entry/source/epoch relation changed')
+        require(self.parents==_parents(self.objects,self.rows,c.headers['visitor']['proof']['function'],c.owner.start) and
+            self.children==tail_children(self.objects,self.rows,self.parents),'Tail private current parent/child body changed')
+        payload=c.headers['visitor']['sequence_state'].decoder.payload
+        require(_readonly_hash(self.objects,payload.start,payload.extent)==self.payload_sha256,
+            'Tail private consumed source bytes changed')
+        require(_phase_checkpoint(self.predecessor,self.entries,self.parents,self.children,self.phases,
+            self.predecessor_description,self.payload_sha256)==self.checkpoint,
+            'Tail private source/epoch/child/effect record changed')
+        return self
+
+
+def _first_boot_tail_phases(objects,rows,source_context):
+    """Derive the actual private Sources chain once; no ordinary return yet."""
+    from config_decoded_sources import _first_boot_decoded_sources_state
+    from config_tail_source import _controls_source,_controls_effects,_history_led_source,_suffix_effects
+    from config_tail_parent_effects import _parent_envelopes
+    from config_tail_children import tail_children
+    from config_structural import _readonly_hash
+    description,predecessor=_first_boot_decoded_sources_state(objects,rows,source_context)
+    base=predecessor.phases;objects=base.objects;rows=base.rows;c=base.widgets.views.context
+    frame=c.headers['visitor_frame'];V=c.headers['visitor']['proof']['function'];owner=c.owner
+    parents=_parents(objects,rows,V,owner.start);children=tail_children(objects,rows,parents)
+    entries=_tail_entries(objects,rows,predecessor);phases=[]
+    for entry in entries:
+        envelopes=_parent_envelopes(objects,rows,parents,entry,owner)
+        controls=_controls_source(objects,rows,parents,entry.sequence,frame,entry.protected+(entry.full_config,))
+        effect=_controls_effects(objects,rows,parents,controls,owner,frame,entry.protected)
+        suffix=suffix_effects=None
+        if effect['complete_after'] is not None:
+            suffix=_history_led_source(objects,rows,parents,effect,frame,entry.protected)
+            suffix_effects=_suffix_effects(objects,rows,parents,suffix,frame,entry.protected)
+        phases.append(_TailPhase(entry,controls,effect,suffix,suffix_effects,envelopes))
+    phases=tuple(phases);payload=c.headers['visitor']['sequence_state'].decoder.payload
+    digest=_readonly_hash(objects,payload.start,payload.extent)
+    checkpoint=_phase_checkpoint(predecessor,entries,parents,children,phases,description,digest)
+    return _TailPhasesState(predecessor,objects,rows,base.source_context,parents,children,entries,phases,description,digest,checkpoint)

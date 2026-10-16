@@ -539,6 +539,26 @@ class TailPrivateHandoff(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'outgoing state'):_tail_entries(self.objects,self.rows,changed)
         with self.assertRaises(AssertionError):_tail_entries(self.objects,dict(self.rows),self.state)
 
+    def test_closed_original_Visitor_restore_uses_full96_saved_bytes_and_original_loader_successor(self):
+        from config_tail_control import _restore_equations
+        from config_decoded_tail import _parents
+        from config_tail_children import tail_children
+        from llvm_stack import Instruction
+        c=self.state.phases.widgets.views.context;frame=c.headers['visitor_frame'];V=c.headers['visitor']['proof']['function']
+        parents=_parents(self.objects,self.rows,V,c.owner.start);children=tail_children(self.objects,self.rows,parents)
+        proof=_restore_equations(self.objects,self.rows,c,parents,children)
+        self.assertEqual(proof['release_bytes'],(1512,56,4,36))
+        self.assertEqual(proof['original_return_PC'],c.headers['root']['call_site']+4)
+        self.assertEqual(proof['return_SP'],frame.start+1608)
+        self.assertEqual(proof['saved_interval'],(frame.start+1512,frame.start+1608))
+        self.assertEqual(proof['restored_GPRs'],('r4','r5','r6','r7','r8','r9','r10','r11'))
+        self.assertEqual(proof['restored_FP'],tuple('d'+str(i) for i in range(8,15)))
+        self.assertFalse(proof['architectural_LR_preserved'])
+        self.assertFalse(proof['proves_guarded_parent_execution_or_saved_cell_noninterference'])
+        for off,op,operand in ((62,'vpop','{d8, d9, d10, d11, d12, d13}'),(66,'add','sp, #0x8')):
+            rows=dict(self.rows);row=rows[V+off];rows[V+off]=Instruction(row.address,row.raw,op,operand)
+            with self.subTest(offset=off),self.assertRaises(AssertionError):_restore_equations(self.objects,rows,c,parents,children)
+
 
 class TailControlsSource(unittest.TestCase):
     @staticmethod
@@ -721,6 +741,223 @@ class TailSuffixPublication(unittest.TestCase):
         result=_suffix_effects(*self.fixture(50))
         self.assertEqual(len(result['history']),9);self.assertIsNotNone(result['reduced'])
         self.assertEqual(result['LED'],());self.assertIsNone(result['complete_after'])
+
+
+class TailPrivatePhases(unittest.TestCase):
+    def test_actual_private_Source_producer_once_feeds_all_current_Tail_phases(self):
+        from config_decoded_tail import _first_boot_tail_phases
+        from config_abstract import Span
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        state=_first_boot_tail_phases(objects,rows,source)
+        self.assertTrue(state.entries);self.assertEqual(len(state.entries),len(state.predecessor.exits))
+        self.assertEqual(len(state.phases),len(state.entries))
+        normals=tuple(v for v in state.phases if v.suffix_effects is not None and v.suffix_effects['complete_after'] is not None)
+        self.assertTrue(normals)
+        for phase,entry in zip(state.phases,state.entries):
+            self.assertIs(phase.entry,entry)
+            self.assertTrue(any(entry.exit is v for v in state.predecessor.exits))
+            self.assertIs(phase.controls['before'],entry.sequence)
+            self.assertEqual(phase.parent_envelopes['stores'],57)
+            self.assertFalse(phase.completed_ordinary_group_issued)
+        for phase in normals:
+            self.assertEqual(phase.suffix['normal']['after'].count,Span(1,1))
+            self.assertEqual(phase.suffix_effects['complete_after'],0x1001c654+7112)
+        self.assertIs(state.current(),state)
+        old=normals[0].controls['top_decrement'];normals[0].controls['top_decrement']=(old[0],Span(4,4),Span(0,0))
+        with self.assertRaisesRegex(AssertionError,'Tail private source/epoch/child/effect record changed'):state.current()
+        normals[0].controls['top_decrement']=old
+        self.assertIs(state.current(),state)
+        self.assertFalse(state.completed_ordinary_group_issued)
+
+    def test_absent_private_Source_exit_does_not_construct_Tail_source_or_state(self):
+        from config_decoded_tail import _first_boot_tail_phases
+        from unittest.mock import patch
+        import config_tail_source
+        objects,rows,source,_=TailLiteralBodies.fixture(1)
+        with patch.object(config_tail_source,'_controls_source',wraps=config_tail_source._controls_source) as source_call:
+            state=_first_boot_tail_phases(objects,rows,source)
+        self.assertEqual(state.entries,());self.assertEqual(state.phases,())
+        self.assertEqual(source_call.call_count,0)
+        self.assertIs(state.current(),state)
+
+
+class TailWholeStructure(unittest.TestCase):
+    @staticmethod
+    def fixture(mutation=None):
+        from config_decoded_tail import _first_boot_tail_phases
+        from test_config_stack import StartupConfigurationCopy,BoundedParentTargets,SameBLoaderBoundary
+        from llvm_stack import Instruction
+        objects,rows,source,_=TailLiteralBodies.fixture(1)
+        if mutation=='foreign':
+            site=0x1002c000;target=0x1001c654+5632
+            raw=BoundedParentTargets.conditional_branch(site,target,0)
+            StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'beq.w',hex(target))
+        elif mutation=='padding':
+            # New reachable code replaces the exact terminal NOP and points
+            # into the live return path. Source's earlier frontier ignores
+            # this unentered location; full Tail must classify it itself.
+            site=0x1001c654+7122;target=0x1001c654+6988
+            import struct
+            raw=struct.pack('<H',0xe000|(((target-(site+4))//2)&0x7ff))
+            StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'b',hex(target))
+        if mutation:source=SameBLoaderBoundary.rebound(objects,source)
+        return _first_boot_tail_phases(objects,rows,source)
+
+    def test_complete_current_Visitor_selection_consumes_old_frontiers_and_keeps_only_dormant4408(self):
+        from config_tail_control import _tail_structural
+        state=self.fixture();raw=_tail_structural(state);V=0x1001c654
+        self.assertIn(V+54,raw.selection.selected);self.assertIn(V+56,raw.selection.selected)
+        self.assertIn(V+6654,raw.selection.selected);self.assertIn(V+7108,raw.selection.selected)
+        self.assertNotIn(V+7122,raw.selection.selected);self.assertNotIn(V+7124,raw.selection.selected)
+        self.assertEqual(tuple(at-V for at,target,reason in raw.outside_shared_contexts),(4408,))
+        self.assertEqual(raw.terminal_partition['padding'],(V+7122,V+7124))
+        self.assertEqual(raw.carrier_returns['parent_call_count'],25)
+        self.assertFalse(raw.confers_active_state)
+        self.assertFalse(raw.restore['successor_executed'])
+
+    def test_current_foreign_conditional_ingress_and_reachable_terminal_padding_reject(self):
+        from config_tail_control import _tail_structural
+        for mutation,expected in (('foreign','foreign direct ingress'),('padding','terminal padding')):
+            with self.subTest(mutation=mutation),self.assertRaisesRegex(AssertionError,expected):
+                _tail_structural(self.fixture(mutation))
+
+
+class TailRestoreContexts(unittest.TestCase):
+    def test_current_RenderTrace_restore_context_relocates_with_its_local_conditional_target(self):
+        # Real retained caller bytes/metadata/listing, supplied only as an
+        # unresolved foreign context. Relocation cannot grant its save stack.
+        from pathlib import Path
+        import json
+        from llvm_stack import Instruction
+        from config_tail_control import _restore_ingress
+        from test_config_stack import ActualDecodedViews,StartupConfigurationCopy
+        f=json.loads((Path(__file__).parent/'fixtures/config-tail-restore-context.json').read_bytes())
+        objects,rows,_,_=TailLiteralBodies.fixture(1)
+        name=f['name'];role=f['role'];at=f['address'];extent=f['extent']
+        section,=tuple(i for i,s in enumerate(objects.elf.sections) if s[1]==1 and s[3]<=at<at+extent<=s[3]+s[5])
+        objects.elf.functions[name]=(at|1,extent,section)
+        objects.elf.symbol_entries.append((name,at|1,extent,2,section))
+        objects.sizes[at]=f['frame']
+        objects.elf.mapping_symbols.extend((n,a,section) for n,a,i in f['mapping'])
+        StartupConfigurationCopy.put(objects,at,bytes.fromhex(f['bytes']))
+        for r in f['records']:rows[r['address']]=Instruction(r['address'],bytes.fromhex(r['bytes']),r['mnemonic'],r['operands'])
+        restore=dict(restore=dict(function=0x100289f0),epilogue=dict(function=0x1001c654+56))
+        before=_restore_ingress(objects,rows,restore)
+        self.assertEqual(len(before),1);self.assertEqual(before[0]['entry_site'],at+60)
+        ActualDecodedViews.move_function(objects,rows,role,0x10071000)
+        after=_restore_ingress(objects,rows,restore)
+        self.assertEqual(len(after),1);self.assertEqual(after[0]['entry_site'],0x10071000+60)
+        self.assertEqual(rows[0x10071000+54].operands.split('<',1)[0].strip(),hex(0x10071000+64))
+        self.assertTrue(after[0]['inherited_source_stack_and_return_unresolved'])
+        self.assertFalse(after[0]['selected_Visitor_permission'])
+        # Coherent changed local conditional target remains a different
+        # unresolved caller context, rather than borrowing its old anchor.
+        import struct
+        from llvm_stack import Instruction
+        at=0x10071000+54;target=0x10071000+66;old=rows[at]
+        raw=struct.pack('<H',0xd200|(((target-(at+4))//2)&255))
+        StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,'bhs',hex(target))
+        with self.assertRaisesRegex(AssertionError,'local branch|caller context'):_restore_ingress(objects,rows,restore)
+
+
+class TailParentLineage(unittest.TestCase):
+    @staticmethod
+    def fixture(extent=64):
+        from config_tail_source import _controls_source,_controls_effects,_history_led_source,_suffix_effects
+        from config_tail_children import tail_children,tail_return_profiles
+        from config_finite_returns import _closed_child_returns
+        from config_tail_contracts import ROLES
+        args=TailControlsPublication.fixture(extent)
+        objects,rows,parents,controls,owner,frame,protected=args
+        effects=_controls_effects(*args)
+        suffix=_history_led_source(objects,rows,parents,effects,frame,protected) if effects['complete_after'] else None
+        writes=_suffix_effects(objects,rows,parents,suffix,frame,protected) if suffix is not None else None
+        children=tail_children(objects,rows,parents)
+        callable_parents=tuple(dict(function=p['function'],ordinary_edges=tuple(e for e in p['ordinary_edges'] if e[1]=='bl'))
+            for p in parents if any(e[1]=='bl' for e in p['ordinary_edges']))
+        returns=_closed_child_returns(rows,callable_parents,children,frame.start,tail_return_profiles(),
+            (ROLES['ControlAction'],ROLES['ButtonBinding'],ROLES['LedPattern']),objects=objects)
+        return objects,rows,parents,children,returns,controls,effects,suffix,writes,frame
+
+    def test_conditional_normal_path_pairs_all_source_returns_late_stores_and_carrier_lifetimes(self):
+        from config_tail_control import _parent_lineage
+        args=self.fixture();result=_parent_lineage(*args);V=0x1001c654
+        self.assertEqual(result['normal']['frontier'],V+7112)
+        self.assertEqual(result['normal']['return_carrier'],255)
+        self.assertEqual(result['normal']['physical_top_count'],1)
+        self.assertEqual(result['normal']['logical_remaining_fields'],0)
+        self.assertEqual(result['normal']['path'][-1],V+7112)
+        self.assertLess(result['normal']['path'].index(V+7100),result['normal']['path'].index(V+7108))
+        self.assertEqual(len(result['normal']['calls']),25)
+        self.assertTrue(result['errors'])
+        self.assertTrue(all(v['path'][-1]==V+56 and v['source_error'] is not None for v in result['errors']))
+        self.assertFalse(result['confers_active_state'])
+
+    def test_wrong_source_error_late_store_and_register_transfer_cannot_authorize_parent_completion(self):
+        from config_tail_control import _parent_lineage
+        args=list(self.fixture());before=args[7]['invocations'][0]['before']
+        args[7]['invocations'][0]['before']=replace(before,count=before.count.__class__(0,0))
+        with self.assertRaises(AssertionError):_parent_lineage(*args)
+        args[7]['invocations'][0]['before']=before
+        complete=args[8]['complete_after'];args[8]['complete_after']=0x1001c654+7100
+        with self.assertRaisesRegex(AssertionError,'late|last|complete'):_parent_lineage(*args)
+        args[8]['complete_after']=complete
+        node=next(v for v in args[4] if v['return_PC']==0x1001c654+6828+4)
+        high=node['preserved_high_gprs'];node['preserved_high_gprs']=high[:-1]
+        with self.assertRaisesRegex(AssertionError,'carrier|register|GPR'):_parent_lineage(*args)
+        node['preserved_high_gprs']=high
+        error=args[5]['errors'][0];cause=error['cause'];error['cause']=dict(cause)
+        with self.assertRaisesRegex(AssertionError,'error.*origin|origin.*error'):_parent_lineage(*args)
+        error['cause']=cause
+        self.assertEqual(_parent_lineage(*args)['normal']['frontier'],0x1001c654+7112)
+
+    def test_short_LED_error_retains_previous_groups_without_success_carrier(self):
+        from config_tail_control import _parent_lineage
+        args=self.fixture(50);result=_parent_lineage(*args)
+        self.assertIsNone(result['normal'])
+        self.assertTrue(result['errors'])
+        late=[v for v in result['errors'] if v['completed_groups']==('Controls','history','reduced_motion')]
+        self.assertTrue(late)
+        self.assertTrue(all(v['return_carrier']!=255 for v in late))
+        self.assertTrue(all(not v['LED_Config_writes'] for v in late))
+
+
+class TailActualActiveControl(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_decoded_tail import _first_boot_tail_phases
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        cls.state=_first_boot_tail_phases(objects,rows,source)
+
+    def test_actual_private_predecessor_binds_guards_saved_cells_and_original_return(self):
+        from config_tail_control import _tail_control
+        control=_tail_control(self.state);V=0x1001c654
+        self.assertIs(control.state,self.state)
+        self.assertEqual(len(control.guards),len(self.state.entries))
+        self.assertTrue(any(v['lineage']['normal'] is not None for v in control.guards))
+        self.assertEqual(control.record['return']['original_return_PC'],0x1001fe64+130)
+        self.assertEqual(control.record['return']['release_bytes'],(1512,56,4,36))
+        self.assertEqual(control.record['outside_shared_contexts'][0][0],V+4408)
+        self.assertFalse(control.record['successor_executed'])
+        self.assertFalse(control.record['exception_safe_completion'])
+        self.assertTrue(control.record['actual_reached_accesses_pending'])
+        normal=next(v for v in control.guards if v['lineage']['normal'] is not None)
+        self.assertIs(normal['entry'],self.state.entries[normal['entry_index']])
+        saved=normal['saved_interval']
+        self.assertEqual(saved,(self.state.phases[0].entry.sequence.header.storage.start+1512,
+                                self.state.phases[0].entry.sequence.header.storage.start+1608))
+        old=normal['lineage']['normal']['return_carrier'];normal['lineage']['normal']['return_carrier']=0
+        with self.assertRaisesRegex(AssertionError,'Tail active source/control record changed'):control.current()
+        normal['lineage']['normal']['return_carrier']=old
+        origin=normal['Source_normal'];normal['Source_normal']=dict(origin)
+        with self.assertRaisesRegex(AssertionError,'exact entry/normal association'):control.current()
+        normal['Source_normal']=origin
+        self.assertIs(control.current(),control)
+        import config_platform
+        receipt=self.state.predecessor.phases.widgets.execution
+        with self.assertRaisesRegex(AssertionError,'exception-safe'):config_platform.require_exception_safe_execution(receipt)
+        with self.assertRaisesRegex(AssertionError,'global ownership'):config_platform.require_global_execution_owner(receipt)
+        with self.assertRaises(AssertionError):_tail_control(dict(phase='Tail complete',complete=True))
 
 
 if __name__=='__main__':unittest.main()

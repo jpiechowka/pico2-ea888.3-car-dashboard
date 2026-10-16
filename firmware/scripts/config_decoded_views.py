@@ -369,8 +369,12 @@ def _selected_successors(selection,extension=None):
                 successors.append((at,None,following))
             continue
         elif family=='tbb':
-            from config_source_control import _source_table_targets
-            successors.extend((at,target,None) for target in _source_table_targets(selection,at,row))
+            from config_tail_control import _TailSelection,_tail_table_targets
+            if type(selection) is _TailSelection:targets=_tail_table_targets(selection,at,row)
+            else:
+                from config_source_control import _source_table_targets
+                targets=_source_table_targets(selection,at,row)
+            successors.extend((at,target,None) for target in targets)
             continue
         else:require(family is None,'Views selected invocation has an unresolved PC effect')
         require(following in selected or following in cuts,'Views selected fallthrough leaves its exact frontier')
@@ -382,8 +386,12 @@ def _foreign_ingress(objects,rows,selection):
     proofs,selected,children=selection.proofs,selection.selected,selection.children
     source_pending={};source_fallthrough={}
     if type(selection) is not _ControlSelection:
-        from config_source_control import _pending_profile
-        source_pending,source_fallthrough=_pending_profile(selection)
+        from config_source_control import _SourceSelection,_pending_profile
+        if type(selection) is _SourceSelection:source_pending,source_fallthrough=_pending_profile(selection)
+        else:
+            from config_tail_control import _TailSelection,_tail_pending_profile
+            require(type(selection) is _TailSelection,'unreviewed selected control family')
+            source_pending,source_fallthrough=_tail_pending_profile(selection)
     pending_profiles={**SHARED_PENDING,**source_pending};seen_fallthrough=set()
     def pending_call(current,expected):
         """Current typed identity only; no later invocation is activated."""

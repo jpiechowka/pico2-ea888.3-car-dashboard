@@ -1,0 +1,370 @@
+{
+  "scope": "Retained minimal RenderTrace foreign restore context only; no execution permission.",
+  "provenance": {
+    "firmware\\target\\bench-captures\\helper-task2-demo-stock-sizez-fixedpad9\\pico2.elf": "55070b3fefd8092588abfe4d7e47515b1aa8cb55b034c07e2e9835dd41a31520",
+    "firmware\\target\\power-user-expansion\\helper-task2\\fixedpad9-sizez-disassembly.txt": "16424fefec1b637b18ca761433d4dab39458c72da4a94501dcae9ac50b65c535"
+  },
+  "name": "_RNvMNtNtCsaZueOrjS1OD_14dashboard_core7display9telemetryNtB2_11RenderTrace8validate",
+  "role": "_RNvMNtNtCs_14dashboard_core7display9telemetryNtB2_11RenderTrace8validate",
+  "address": 268577248,
+  "extent": 176,
+  "frame": 36,
+  "bytes": "f0b503af2de9000fd0e91245d0e91423111b73eb05010fd3d0e916acbaeb02017ceb030108d30168c90709d0d0e90216611a75eb060103d20021084605f0e8bf0169c90726d000f1180ed0f824809ee84240b1f1010966f1000b0021b9eb0e067beb0806e9d2066c002ee6d0d0e90a68d0e90c1e8e1b7eeb0806ddd3d0e90e98b9eb010178eb0e01d6d3b4eb090175eb0801d1d3d0e91804baeb02024ff0ff316ceb0303101a73eb040038bf0121c4e7",
+  "mapping": [
+    [
+      "$t",
+      268577248,
+      3
+    ]
+  ],
+  "records": [
+    {
+      "address": 268577248,
+      "bytes": "f0b5",
+      "mnemonic": "push",
+      "operands": "{r4, r5, r6, r7, lr}"
+    },
+    {
+      "address": 268577250,
+      "bytes": "03af",
+      "mnemonic": "add",
+      "operands": "r7, sp, #0xc"
+    },
+    {
+      "address": 268577252,
+      "bytes": "2de9000f",
+      "mnemonic": "push.w",
+      "operands": "{r8, r9, r10, r11}"
+    },
+    {
+      "address": 268577256,
+      "bytes": "d0e91245",
+      "mnemonic": "ldrd",
+      "operands": "r4, r5, [r0, #72]"
+    },
+    {
+      "address": 268577260,
+      "bytes": "d0e91423",
+      "mnemonic": "ldrd",
+      "operands": "r2, r3, [r0, #80]"
+    },
+    {
+      "address": 268577264,
+      "bytes": "111b",
+      "mnemonic": "subs",
+      "operands": "r1, r2, r4"
+    },
+    {
+      "address": 268577266,
+      "bytes": "73eb0501",
+      "mnemonic": "sbcs.w",
+      "operands": "r1, r3, r5"
+    },
+    {
+      "address": 268577270,
+      "bytes": "0fd3",
+      "mnemonic": "blo",
+      "operands": "0x10022a18 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x38>"
+    },
+    {
+      "address": 268577272,
+      "bytes": "d0e916ac",
+      "mnemonic": "ldrd",
+      "operands": "r10, r12, [r0, #88]"
+    },
+    {
+      "address": 268577276,
+      "bytes": "baeb0201",
+      "mnemonic": "subs.w",
+      "operands": "r1, r10, r2"
+    },
+    {
+      "address": 268577280,
+      "bytes": "7ceb0301",
+      "mnemonic": "sbcs.w",
+      "operands": "r1, r12, r3"
+    },
+    {
+      "address": 268577284,
+      "bytes": "08d3",
+      "mnemonic": "blo",
+      "operands": "0x10022a18 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x38>"
+    },
+    {
+      "address": 268577286,
+      "bytes": "0168",
+      "mnemonic": "ldr",
+      "operands": "r1, [r0]"
+    },
+    {
+      "address": 268577288,
+      "bytes": "c907",
+      "mnemonic": "lsls",
+      "operands": "r1, r1, #0x1f"
+    },
+    {
+      "address": 268577290,
+      "bytes": "09d0",
+      "mnemonic": "beq",
+      "operands": "0x10022a20 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x40>"
+    },
+    {
+      "address": 268577292,
+      "bytes": "d0e90216",
+      "mnemonic": "ldrd",
+      "operands": "r1, r6, [r0, #8]"
+    },
+    {
+      "address": 268577296,
+      "bytes": "611a",
+      "mnemonic": "subs",
+      "operands": "r1, r4, r1"
+    },
+    {
+      "address": 268577298,
+      "bytes": "75eb0601",
+      "mnemonic": "sbcs.w",
+      "operands": "r1, r5, r6"
+    },
+    {
+      "address": 268577302,
+      "bytes": "03d2",
+      "mnemonic": "bhs",
+      "operands": "0x10022a20 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x40>"
+    },
+    {
+      "address": 268577304,
+      "bytes": "0021",
+      "mnemonic": "movs",
+      "operands": "r1, #0x0"
+    },
+    {
+      "address": 268577306,
+      "bytes": "0846",
+      "mnemonic": "mov",
+      "operands": "r0, r1"
+    },
+    {
+      "address": 268577308,
+      "bytes": "05f0e8bf",
+      "mnemonic": "b.w",
+      "operands": "0x100289f0 <OUTLINED_FUNCTION_155>"
+    },
+    {
+      "address": 268577312,
+      "bytes": "0169",
+      "mnemonic": "ldr",
+      "operands": "r1, [r0, #0x10]"
+    },
+    {
+      "address": 268577314,
+      "bytes": "c907",
+      "mnemonic": "lsls",
+      "operands": "r1, r1, #0x1f"
+    },
+    {
+      "address": 268577316,
+      "bytes": "26d0",
+      "mnemonic": "beq",
+      "operands": "0x10022a74 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x94>"
+    },
+    {
+      "address": 268577318,
+      "bytes": "00f1180e",
+      "mnemonic": "add.w",
+      "operands": "lr, r0, #0x18"
+    },
+    {
+      "address": 268577322,
+      "bytes": "d0f82480",
+      "mnemonic": "ldr.w",
+      "operands": "r8, [r0, #0x24]"
+    },
+    {
+      "address": 268577326,
+      "bytes": "9ee84240",
+      "mnemonic": "ldm.w",
+      "operands": "lr, {r1, r6, lr}"
+    },
+    {
+      "address": 268577330,
+      "bytes": "b1f10109",
+      "mnemonic": "subs.w",
+      "operands": "r9, r1, #0x1"
+    },
+    {
+      "address": 268577334,
+      "bytes": "66f1000b",
+      "mnemonic": "sbc",
+      "operands": "r11, r6, #0x0"
+    },
+    {
+      "address": 268577338,
+      "bytes": "0021",
+      "mnemonic": "movs",
+      "operands": "r1, #0x0"
+    },
+    {
+      "address": 268577340,
+      "bytes": "b9eb0e06",
+      "mnemonic": "subs.w",
+      "operands": "r6, r9, lr"
+    },
+    {
+      "address": 268577344,
+      "bytes": "7beb0806",
+      "mnemonic": "sbcs.w",
+      "operands": "r6, r11, r8"
+    },
+    {
+      "address": 268577348,
+      "bytes": "e9d2",
+      "mnemonic": "bhs",
+      "operands": "0x10022a1a <<dashboard_core::display::telemetry::RenderTrace>::validate+0x3a>"
+    },
+    {
+      "address": 268577350,
+      "bytes": "066c",
+      "mnemonic": "ldr",
+      "operands": "r6, [r0, #0x40]"
+    },
+    {
+      "address": 268577352,
+      "bytes": "002e",
+      "mnemonic": "cmp",
+      "operands": "r6, #0x0"
+    },
+    {
+      "address": 268577354,
+      "bytes": "e6d0",
+      "mnemonic": "beq",
+      "operands": "0x10022a1a <<dashboard_core::display::telemetry::RenderTrace>::validate+0x3a>"
+    },
+    {
+      "address": 268577356,
+      "bytes": "d0e90a68",
+      "mnemonic": "ldrd",
+      "operands": "r6, r8, [r0, #40]"
+    },
+    {
+      "address": 268577360,
+      "bytes": "d0e90c1e",
+      "mnemonic": "ldrd",
+      "operands": "r1, lr, [r0, #48]"
+    },
+    {
+      "address": 268577364,
+      "bytes": "8e1b",
+      "mnemonic": "subs",
+      "operands": "r6, r1, r6"
+    },
+    {
+      "address": 268577366,
+      "bytes": "7eeb0806",
+      "mnemonic": "sbcs.w",
+      "operands": "r6, lr, r8"
+    },
+    {
+      "address": 268577370,
+      "bytes": "ddd3",
+      "mnemonic": "blo",
+      "operands": "0x10022a18 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x38>"
+    },
+    {
+      "address": 268577372,
+      "bytes": "d0e90e98",
+      "mnemonic": "ldrd",
+      "operands": "r9, r8, [r0, #56]"
+    },
+    {
+      "address": 268577376,
+      "bytes": "b9eb0101",
+      "mnemonic": "subs.w",
+      "operands": "r1, r9, r1"
+    },
+    {
+      "address": 268577380,
+      "bytes": "78eb0e01",
+      "mnemonic": "sbcs.w",
+      "operands": "r1, r8, lr"
+    },
+    {
+      "address": 268577384,
+      "bytes": "d6d3",
+      "mnemonic": "blo",
+      "operands": "0x10022a18 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x38>"
+    },
+    {
+      "address": 268577386,
+      "bytes": "b4eb0901",
+      "mnemonic": "subs.w",
+      "operands": "r1, r4, r9"
+    },
+    {
+      "address": 268577390,
+      "bytes": "75eb0801",
+      "mnemonic": "sbcs.w",
+      "operands": "r1, r5, r8"
+    },
+    {
+      "address": 268577394,
+      "bytes": "d1d3",
+      "mnemonic": "blo",
+      "operands": "0x10022a18 <<dashboard_core::display::telemetry::RenderTrace>::validate+0x38>"
+    },
+    {
+      "address": 268577396,
+      "bytes": "d0e91804",
+      "mnemonic": "ldrd",
+      "operands": "r0, r4, [r0, #96]"
+    },
+    {
+      "address": 268577400,
+      "bytes": "baeb0202",
+      "mnemonic": "subs.w",
+      "operands": "r2, r10, r2"
+    },
+    {
+      "address": 268577404,
+      "bytes": "4ff0ff31",
+      "mnemonic": "mov.w",
+      "operands": "r1, #0xffffffff"
+    },
+    {
+      "address": 268577408,
+      "bytes": "6ceb0303",
+      "mnemonic": "sbc.w",
+      "operands": "r3, r12, r3"
+    },
+    {
+      "address": 268577412,
+      "bytes": "101a",
+      "mnemonic": "subs",
+      "operands": "r0, r2, r0"
+    },
+    {
+      "address": 268577414,
+      "bytes": "73eb0400",
+      "mnemonic": "sbcs.w",
+      "operands": "r0, r3, r4"
+    },
+    {
+      "address": 268577418,
+      "bytes": "38bf",
+      "mnemonic": "it",
+      "operands": "lo"
+    },
+    {
+      "address": 268577420,
+      "bytes": "0121",
+      "mnemonic": "movlo",
+      "operands": "r1, #0x1"
+    },
+    {
+      "address": 268577422,
+      "bytes": "c4e7",
+      "mnemonic": "b",
+      "operands": "0x10022a1a <<dashboard_core::display::telemetry::RenderTrace>::validate+0x3a>"
+    }
+  ]
+}
