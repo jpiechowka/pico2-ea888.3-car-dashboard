@@ -101,6 +101,15 @@ jobs:
         run: |
           cargo fetch --locked
           ./firmware/scripts/Test-BuildDashboard.ps1
+          ./configurator/Test-SetupTools.ps1
+      - name: Windows capture paths and native artifact contracts
+        working-directory: .
+        shell: pwsh
+        run: |
+          python firmware/scripts/test_target_capture.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s studio-helper/tests -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   configurator:
     name: Configurator state and WebAssembly
