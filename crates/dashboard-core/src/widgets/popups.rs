@@ -72,47 +72,35 @@ where
         .ok();
 }
 
-pub fn draw_fps_toggle_popup<D>(
+fn draw_compact_popup<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
-    fps_mode: FpsMode,
-) where
-    D: DrawTarget<Color = Rgb565>,
-{
+    label: &str,
+) {
     Rectangle::new(FPS_BORDER_POS, FPS_BORDER_SIZE)
         .into_styled(WHITE_FILL)
         .draw(display)
         .ok();
-
     Rectangle::new(FPS_BG_POS, FPS_BG_SIZE)
         .into_styled(RED_FILL)
         .draw(display)
         .ok();
-
-    Text::with_text_style(fps_mode.label(), FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
+    Text::with_text_style(label, FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
 }
 
-pub fn draw_boost_unit_popup<D>(
+pub fn draw_fps_toggle_popup<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    fps_mode: FpsMode,
+) {
+    draw_compact_popup(display, fps_mode.label());
+}
+
+pub fn draw_boost_unit_popup<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     show_psi: bool,
-) where
-    D: DrawTarget<Color = Rgb565>,
-{
-    Rectangle::new(FPS_BORDER_POS, FPS_BORDER_SIZE)
-        .into_styled(WHITE_FILL)
-        .draw(display)
-        .ok();
-
-    Rectangle::new(FPS_BG_POS, FPS_BG_SIZE)
-        .into_styled(RED_FILL)
-        .draw(display)
-        .ok();
-
-    let unit = if show_psi { "BOOST: PSI" } else { "BOOST: BAR" };
-    Text::with_text_style(unit, FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
-        .draw(display)
-        .ok();
+) {
+    draw_compact_popup(display, if show_psi { "BOOST: PSI" } else { "BOOST: BAR" });
 }
 
 pub fn draw_critical_popup<D>(
@@ -148,27 +136,11 @@ pub fn draw_critical_popup<D>(
         .ok();
 }
 
-pub fn draw_brightness_popup<D>(
+pub fn draw_brightness_popup<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     brightness: crate::backlight::Brightness,
-) where
-    D: DrawTarget<Color = Rgb565>,
-{
-    // Re-use the FPS popup size — compact centered box
-    Rectangle::new(FPS_BORDER_POS, FPS_BORDER_SIZE)
-        .into_styled(WHITE_FILL)
-        .draw(display)
-        .ok();
-
-    Rectangle::new(FPS_BG_POS, FPS_BG_SIZE)
-        .into_styled(RED_FILL)
-        .draw(display)
-        .ok();
-
-    let label = brightness.label();
-    Text::with_text_style(label.as_str(), FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
-        .draw(display)
-        .ok();
+) {
+    draw_compact_popup(display, brightness.label().as_str());
 }
 
 pub fn draw_view_popup<D: DrawTarget<Color = Rgb565>>(
