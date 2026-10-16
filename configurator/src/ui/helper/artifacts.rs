@@ -4,10 +4,14 @@ use super::*;
 #[component]
 pub fn Panel(ui: Ui) -> impl IntoView {
     let state = ui.helper;
+    let cache = StoredValue::new(dashboard_configurator::helper_client::ArtifactDisplayCache::default());
     let current = Memo::new(move |_| {
         ui.editor.with(|editor| {
-            ui.build
-                .with(|selection| PreparedBuild::capture(editor, selection, 0).ok())
+            ui.build.with(|selection| {
+                let mut identity = None;
+                cache.update_value(|cache| identity = cache.inspect(editor, selection).ok());
+                identity
+            })
         })
     });
     view! {

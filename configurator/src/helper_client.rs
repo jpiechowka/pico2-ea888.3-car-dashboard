@@ -19,6 +19,9 @@ use serde::Deserialize;
 use crate::build_flash::BuildSelection;
 use crate::editor::{Editor, EditorStamp};
 
+mod display_identity;
+pub use display_identity::{ArtifactDisplayCache, ArtifactDisplayIdentity};
+
 mod device;
 pub use device::DeviceSelection;
 mod storage;
@@ -73,13 +76,15 @@ impl PreparedBuild {
         &self,
         artifact: &dashboard_helper_protocol::ArtifactSummary,
     ) -> bool {
-        artifact.options.requested == self.options
-            && [
-                artifact.project_sha256.as_str(),
-                artifact.config_sha256.as_str(),
-                artifact.startup_profile_sha256.as_str(),
-                artifact.startup_asset_sha256.as_str(),
-            ] == self.hashes.each_ref().map(String::as_str)
+        display_identity::matches(&self.options, &self.hashes, artifact)
+    }
+
+    /// Display projection only; it cannot authorize upload or device operations.
+    pub fn display_identity(&self) -> ArtifactDisplayIdentity {
+        ArtifactDisplayIdentity {
+            options: self.options.clone(),
+            hashes: self.hashes.clone(),
+        }
     }
 
     pub fn capture(
