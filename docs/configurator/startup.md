@@ -101,6 +101,11 @@ The retained-original callback lets the project UI restore options and reconvert
 without selecting the original again. A converted-only project needs reimport
 for source edits.
 
+Malformed conversion numbers stay visible with **INVALID CONVERSION OPTIONS**.
+Both file import and retained-original conversion are blocked until corrected or
+the original recipe is restored. These are settings for a future conversion;
+accepted artwork and valid project export/build remain available.
+
 EASA validates header/table/payload bounds, reserved fields, frame times and CRC32.
 Frames use raw big-endian RGB565 or row-bounded RLE. Seeking uses the elapsed time;
 firmware decodes rows into the existing rendering buffer without a GIF decoder or

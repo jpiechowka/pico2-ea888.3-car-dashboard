@@ -654,7 +654,7 @@ pub fn Studio() -> impl IntoView {
                     <Group ui group=GroupId::Bindings><controls::DeviceControls ui/></Group>
                     <Group ui group=GroupId::Indicator><led::LedPanel ui/></Group>
                     <startup::Panel ui/>
-                    <div class="resource-navigation"><p>"Review the accepted configuration and captured build evidence in Diagnostics."</p><button on:click=move |_|workspaces::activate(ui,Workspace::BuildFlash)>"Open Build & Flash"</button></div>
+                    <div class="resource-navigation"><p>"Review configuration resources in Diagnostics and firmware artifacts in Build & Flash."</p><button on:click=move |_|workspaces::activate(ui,Workspace::BuildFlash)>"Open Build & Flash"</button></div>
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-data-warnings" role="tabpanel" aria-labelledby="studio-tab-data-warnings" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::DataWarnings)>
                     <h1>"Data & warnings"</h1>

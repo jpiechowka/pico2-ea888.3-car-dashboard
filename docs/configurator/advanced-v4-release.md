@@ -1,12 +1,13 @@
 # Complete advanced v4 configuration
 
-The v4 release delivers approved stages 2–7 in firmware and Studio: configurable
+This historical v4 release delivered approved stages 2–7 in firmware and Studio: configurable
 RGB patterns, per-widget units, current-value smoothing and reduced motion,
 channel-shared history duration, peak/reference/band markers and advanced warnings.
 Existing controls, eight views, 64 independent widgets, six styles and the
 320×240/26-pixel-header/4×2 grid remain the contract. Organized editor workspaces,
 full Debug/Logs browser pixels, JSON Apply/diff/resource tools and native Build &
-Flash are later stages; this release is not completion of those features.
+Flash were delivered in later stages, documented in [Studio](studio.md).
+The measurements below describe this release's frozen inputs only.
 
 ## Defaults and behavior
 

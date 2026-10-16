@@ -39,9 +39,9 @@ export, build with the user's observed working profile:
 This builds and validates an artifact without flashing. See the
 [configuration build guide](docs/configurator/building.md) for runtime parsing,
 fallback and hardware validation. Vehicle source qualification remains required.
-The [configurator validation record](docs/configurator/validation.md) maps the
-completed implementation, final review corrections, measurements and remaining
-device checks.
+The [original configurator validation record](docs/configurator/validation.md)
+preserves its dated implementation checks and measurements; later feature
+guides describe the current workflows and remaining device checks.
 
 ### Build & Flash from Studio
 
@@ -52,7 +52,12 @@ compiler options before building the accepted project. Invalid drafts block a
 new build; changes after a build mark its firmware as different.
 
 After a build passes its artifact checks, Studio offers a checked UF2 download
-and explicit flashing. Hold BOOTSEL while connecting the isolated board, scan,
+and explicit flashing. The [practical image checks](docs/performance/memory-layout.md#practical-image-checks-and-experimental-proof)
+bind source/configuration identities, ELF/UF2 contents, memory limits and
+conservative stack bounds. The unfinished instruction-level proof is a separate
+research check. Neither establishes physical hardware behavior.
+
+Hold BOOTSEL while connecting the isolated board, scan,
 inspect the intended device and confirm it is a genuine Pico 2. Its 4 MB capacity
 is manufacturer specified and user confirmed, not measured by picotool.
 The job shows **transfer → verification → reboot request** separately. A reboot
@@ -64,9 +69,10 @@ The helper currently runs on **Windows 10/11 x64**. Setup needs rustup, MSVC Bui
 Tools with a Windows SDK, Python, and Internet access for the pinned Rust/tool
 downloads. Check reports missing tools before a build. Browser editing of an
 already served Studio build does not require a Rust toolchain on the browser's
-computer. No minimum PC RAM specification has been qualified. A full development
-firmware-image validation previously sampled up to **16.5 GB of process private
-memory**; this is a heavy validation workload, not browser editing or Pico RAM.
+computer. No minimum PC RAM specification has been qualified. An experimental
+instruction-proof workload previously sampled up to **16.5 GB of process private
+memory**. That separate research run does not describe normal practical image
+checks, browser editing or Pico RAM.
 See [setup details](docs/configurator/setup-tools.md) and the
 [flashing contract and clock references](docs/configurator/flashing-design.md).
 

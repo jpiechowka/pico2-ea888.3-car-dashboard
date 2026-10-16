@@ -48,9 +48,9 @@ edits or a precise shared field error still require them. Disabling history or
 warnings cannot hide their retained failing numeric inputs. The pure
 `widget_fields_need_repair` query supplies the inspector reveal seam for
 validation errors that have no raw text, including inactive stored fields.
-A future JSON candidate adapter must select the error's widget/view and keep
-the reported field's control or applicable option control mounted before focus;
-the accepted configuration proof and export gates must remain strict.
+The JSON candidate inspector resolves field and widget locations without changing
+accepted state. JSON remains read-only through visual controls until Apply or
+Discard; its text and linked diagnostics stay available in Diagnostics.
 
 Pointer, field, import and save operations carry private owner/revision/request
 tokens. Old callbacks cannot change a newer selection, undo result, imported

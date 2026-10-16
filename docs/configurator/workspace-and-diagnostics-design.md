@@ -1,20 +1,21 @@
 # Studio workspace and diagnostics
 
-This is the implementation contract for approved decisions D8, D9 and D10. It extends the Rust/Leptos editor after the shared controls and advanced widget runtime. The Workspace, appearance, diagnostics, simulator and JSON editing paths described below are implemented and have native and browser integration evidence. Build & Flash is still a reserved workspace: helper connection, matching target measurements and Flash dispatch depend on the later Helper work. The imperative language below retains the behavioral contract; the verification section distinguishes executed checks from remaining qualification.
+This is the implementation contract for approved decisions D8, D9 and D10. It extends the Rust/Leptos editor after the shared controls and advanced widget runtime. Workspace, appearance, diagnostics, simulator and JSON editing paths have native and browser integration evidence. The later native Build & Flash and ECU Reference workspaces are implemented; their current workflows are documented in [building](building.md) and [ECU Reference](ecu-reference.md). The imperative language below retains the behavioral contract; dated verification records apply to their frozen inputs, not subsequent features.
 
 ## Navigation and visual direction
 
 Keep the existing charcoal surfaces, restrained red accents, pixel-accurate Pico canvas and typography. The central visual remains the configured instrument display. Use the current CSS variables and local font stacks; no remote fonts or new JavaScript application library.
 
-The primary navigation has five workspaces:
+The primary navigation has six workspaces:
 
 | Workspace | Contents |
 | --- | --- |
 | Views | Named views, widget library, drag/drop canvas, selected-widget inspector, appearance copy/presets |
-| Device | Per-screen buttons and encoder, protected recovery, normal/warning RGB behavior, reduced motion |
+| Device | Per-screen buttons and encoder, protected recovery, normal/warning RGB behavior, reduced motion, startup and artwork |
 | Data & warnings | Channel sources, polling/freshness, channel history, fuel/AFR basis, combined warnings and a rule summary |
 | Diagnostics | All-screen simulator, event log, performance trace, JSON editor/diff, configuration and source inspector |
-| Build & Flash | Reserved for the later native helper integration; no device readiness, target measurement or Flash dispatch is claimed yet |
+| Build & Flash | Local prerequisites, profiles, accepted-project builds, admitted firmware, explicit device inspection and transfer/verify/reboot, logs and retained build storage |
+| ECU Reference | Offline research, source/decoder details, evidence and qualification limits |
 
 Workspace navigation never clears a draft, resets the simulator, changes the selected firmware view or accepts an edit. Store the active workspace and expanded groups as browser preferences separate from the exported firmware configuration. A missing or invalid preference falls back to Views. Moving between firmware screens inside the simulator preserves that simulator's current view and controls.
 
@@ -26,7 +27,7 @@ Use semantic tab controls with an active tab stop, arrow/Home/End navigation and
 
 ## Search, commands and error navigation
 
-A single registry describes each editable field: stable key, workspace/group, label, aliases, applicability, DOM target and optional widget/channel identity. The inspector, search and error navigator consume this registry. Labels such as boost, AFR, lambda, PSI, smoothing, stale and warning should find their related fields. Limit search input to 128 UTF-8 bytes and show at most 40 results with an explicit remaining count.
+A single registry describes dashboard configuration fields: stable key, workspace/group, label, aliases, applicability, DOM target and optional widget/channel identity. The inspector, search and error navigator consume this registry. Startup/artwork and build options currently use their dedicated panels, without field-search entries. Labels such as boost, AFR, lambda, PSI, smoothing, stale and warning find their related registered fields. Limit search input to 128 UTF-8 bytes and show at most 40 results with an explicit remaining count.
 
 The command palette opens with Ctrl/Cmd+K or its visible button. It includes workspace navigation, find setting, duplicate selected widget/view, copy/apply appearance, undo/redo, open JSON, export and simulator recovery. Mutation commands use the same reducer and validation gates as their visible buttons. Availability is recalculated before dispatch; stale selections cannot target replacement widgets. A command cannot execute an arbitrary URL, shell command or expression. Flash remains an explicit action in its workspace with a selected device and current artifact.
 
@@ -96,7 +97,7 @@ The diff compares JSON fields structurally using JSON-pointer paths and stable v
 
 The resource inspector shows actual current encoded EAV bytes, compact JSON/saved-envelope bytes, 8-view/64-widget counts, 4x2 occupancy, text limits, gauge capabilities, decoded source/route/poll/freshness/evidence and canonical/display unit relationships. Invalid candidates show blocked or candidate-only values, not a successful export size. No arbitrary decoder expressions are evaluated; supported decoders remain the researched catalogue.
 
-Target SRAM/flash/stack figures are shown only from a matching build artifact manifest supplied by Build & Flash. Bind them to configuration, source, toolchain, profile and feature identities. If those change, label the measurements stale. Host/Wasm `size_of` values are not Pico SRAM admission. Before a matching build, show Not measured and the fixed limits. Physical FPS, voltage accuracy, interrupt overlap, long-duration stability and ECU qualification remain hardware checks.
+The resource panel reports configuration sizes and fixed layout limits and links to Build & Flash for admitted firmware. That workspace binds artifact eligibility to project/options/session identities and marks changed inputs. It does not yet project all SRAM/flash/stack manifest fields into the resource panel. Any future projection must also bind source, toolchain, profile and features. Host/Wasm `size_of` values are not Pico SRAM admission. Physical FPS, voltage accuracy, interrupt overlap, long-duration stability and ECU qualification remain hardware checks.
 
 ## Verification boundaries
 
@@ -112,4 +113,4 @@ The final audit traces edit -> validation -> preview -> export -> embedded load 
 - The actual Studio launcher built an isolated release. In the available IAB browser, 1440/768/320 CSS pixel layouts had one intrinsic 320×240 canvas and no page horizontal overflow. Workspace switching kept simulator state. Actual Full/Dim/Off completion and protected Y recovery, dropped completion, source fault and delayed reset were observed in the browser. JSON wrap, valid pending/invalid repair/Discard, tab focus/activation, resolved search/inspection labels, event filtering, copy and JSONL download were exercised. The 768/320 preview is reachable in vertical flow, with page scrolling needed to return to controls.
 - A four-case, 30-sample-per-case host Criterion capture provides initial shared Debug and hinted Logs renderer baselines. They are host timings, not measured gains or physical FPS. The prior traced Demo/Vehicle firmware artifacts were reused only after declared inputs, compiler and artifact identities matched; no new ARM build or physical measurement was made. The Vehicle predecessor had 65,968 B static headroom, 432 B above its 65,536 B floor.
 - Browser tooling did not expose 200% zoom, Chrome/Firefox or native app control. Forced storage quota/security/corruption, Web Locks ordering, canvas allocation/consumer/timer faults, hidden/disposal/IME and atomic mid-drag pointer cancellation were not browser-injected. Native/source checks do not turn those into browser passes. Reduced-motion and the complete warning/latch/snooze matrix were not repeated as a full browser matrix in this integration gate.
-- Build & Flash remains reserved until the Helper implementation supplies a selected authoritative artifact and device workflow. Hardware display, GPIO/PWM, scanout, voltage, ECU behavior, electrical safety and soak qualification remain unverified.
+- At this October 14 checkpoint Build & Flash was reserved. Its later implementation does not change these historical test results. Hardware display, GPIO/PWM, scanout, voltage, ECU behavior, electrical safety and soak qualification remain unverified.

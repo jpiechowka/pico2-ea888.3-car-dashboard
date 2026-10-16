@@ -1,8 +1,12 @@
-# Configurable dashboard validation
+# Configurable dashboard validation, original October 12 baseline
 
-For the current v2 gauges, colours and stack-budget corrections, see
+For the subsequent v2 gauges, colours and stack-budget corrections, see
 [Gauges and colours](gauges-and-colours.md). Its resource figures supersede the
 historical images below; none of these records establish hardware qualification.
+
+Later v4 evidence is in [the advanced release record](advanced-v4-release.md).
+Current startup, complete projects and native builds are documented in
+[Studio](studio.md); this historical test count and image set do not qualify them.
 
 For the later larger-font and invalid-preview implementation, see
 [Value sizing and diagnostic previews](preview-hardening.md), including its

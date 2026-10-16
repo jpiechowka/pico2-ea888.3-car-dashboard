@@ -407,11 +407,11 @@ that source copy. Source and accepted input hashes are checked before and after
 capture. This is an exact-byte snapshot with change detection, not a guarantee
 against a malicious process running as the same Windows user. Capture uses the
 owned Job process supervisor, a 30-minute deadline, 8 MiB per output stream and
-offline Cargo resolution. It performs the existing full image checks when the
+offline Cargo resolution. It performs the practical image checks when the
 user explicitly requests a build; implementation tests do not run that pipeline.
 
-After capture, Validation checks the final linked EAV/EASP/EASA arrays, full
-conditional image evidence and physical program/boot metadata. The exact
+After capture, Validation checks the final linked EAV/EASP/EASA arrays, practical
+image evidence and ELF program/boot metadata. The exact
 picotool 2.3.1 converter runs with the fixed RP2350 secure ARM family/platform
 and no absolute block. A separate consumer verifies every UF2 block against the
 ELF physical payload map before publishing an ArtifactId. Frozen source/input
@@ -430,8 +430,12 @@ fresh device inspection and the user's genuine-Pico-2 confirmation; artifact
 metadata alone grants no write authority.
 
 Compilation uses [practical image checks](../performance/memory-layout.md#practical-image-checks-and-experimental-proof): exact ELF/config/startup identities, memory limits, conservative stack bounds and reviewed flash contracts, followed by strict ELF-to-UF2 comparison. The separate complete instruction-level proof remains experimental and unfinished. Practical admission makes no hardware qualification claim.
-Sanitized stdout/stderr is streamed into bounded job logs while the child runs;
-contended log ingress is dropped with explicit loss accounting, never blocking
+Cargo's structured compiler diagnostics and sanitized stdout/stderr are streamed
+into bounded job logs while the child runs. Compiler messages have explicit
+line and total limits; failure cleanup retains a bounded `cargo-diagnostics.log`
+beside the attempt summary, so errors remain available after scratch removal.
+The raw Cargo message file remains subject to its separate capture limit.
+Contended log ingress is dropped with explicit loss accounting, never blocking
 pipe draining or cancellation. Terminal transition/error
 diagnostics use a bounded best-effort queue and honor NO_COLOR/non-TTY output.
 They contain no capabilities or raw project data.
@@ -460,7 +464,7 @@ prevent a device spoofing descriptors. Every inspection still has
 
 ### Explicit Flash and recovery
 
-**Flash selected device** submits the accepted artifact, inspected device and
+**Flash selected Pico 2** submits the accepted artifact, inspected device and
 session-bound confirmation to `POST /api/v1/flashes`. The native worker repeats
 identity and policy checks before fixed picotool commands. Transfer,
 verification and reboot request are separate stages with bounded logs.

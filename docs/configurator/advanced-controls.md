@@ -77,12 +77,13 @@ remain visible until the producer result arrives. Protected Y recovery remains
 available from dark screens.
 
 The appearance preview reconstructs synthetic history and its Warnings button
-compresses dwell. **Device controls** has a separate persistent timing
+compresses dwell. **Diagnostics** has a separate persistent timing
 simulation: sample normal/elevated values, inject faults, advance without data
 to expose gaps/staleness, and process acknowledgment results. Its Dashboard
 canvas has separate submit and complete steps. LED and acknowledgment identity
 change only on completion of pixels accepted by the canvas. Failed writes retain
-the exact candidate for retry. Debug/Logs have state readouts at this stage.
+the exact candidate for retry. Dashboard, Debug and Logs use their shared pixel
+renderers. Startup replay adds status and splash phases without resetting acquisition.
 Synthetic controls do not qualify an ECU source or physical device timing.
 
 Rejected edits show **INVALID PREVIEW** and block save/export. Repair the actual
