@@ -1,7 +1,8 @@
 param([string]$Wrapper = (Join-Path $PSScriptRoot 'Build-Dashboard.ps1'))
 $ErrorActionPreference = 'Stop'
 $global:task2Captured = @()
-function python { $global:task2Captured = @($args); $global:LASTEXITCODE = 0 }
+$global:task2CaptureExit = 0
+function python { $global:task2Captured = @($args); $global:LASTEXITCODE = $global:task2CaptureExit }
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
 function Options {
     $at = [Array]::IndexOf($global:task2Captured, '--options-json')
@@ -44,4 +45,16 @@ foreach ($request in @(
     Assert $rejected 'invalid options must fail before capture'
     Assert ($global:task2Captured.Count -eq 0) 'invalid options dispatched capture'
 }
+$beforeLocation = (Get-Location).Path
+$global:task2CaptureExit = 7
+$failed = $false
+try {
+    & $wrapper -Name wrapper-capture-failure
+} catch {
+    $failed = $_.Exception.Message -match 'Dashboard build failed \(exit 7\)'
+} finally {
+    $global:task2CaptureExit = 0
+}
+Assert $failed 'capture failure must propagate its exact exit status'
+Assert ((Get-Location).Path -ceq $beforeLocation) 'capture failure changed caller location'
 'Wrapper normalization, compatibility and rejection contracts passed; no capture process or device opened.'
