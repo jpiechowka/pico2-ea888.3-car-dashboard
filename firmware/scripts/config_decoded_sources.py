@@ -342,14 +342,19 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
                         ('percent','gasoline_stoich','ethanol_stoich','gasoline_density','ethanol_density'))
                     if tag:fields+=(('temperature','f32_bits',(0,0xffffffff)),)
                     fuel.append((2,tag,q.decoder,fields,tag))
-    normals=[]
+    normals=[];fuel_assignments=[]
     for wire,tag,decoder,fields,density in fuel:
         writes=((0,4),(29,1),(7,1),(28,1),(8,4),(12,4),(16,4),(20,4),(24,4),(4,1),(5,2))
-        assignment(tuple((borrow(owner,0,32,phase,True),offset,size) for offset,size in writes))
+        possible=tuple((borrow(owner,0,32,phase,True),offset,size) for offset,size in writes)
+        assignment(possible)
         record=dict(wire_tag=wire,emitted_tag=tag,active_fields=fields,padding=(30,32),
             complete_store=V+5570,early_tag_store=V+5568,pending_after_tag=((5,7),),
             inactive_payload_opaque=True,density_newtype_count_decrement=0,
             remaining_sequence_counts=(4,3,2,1,0) if wire==2 else (),folded_top_count=5)
+        # The actual Fuel write precedes the global Colors call. Preserve its
+        # paired input/variant/footprint even when that later call fails.
+        fuel_assignments.append(dict(Fuel=record,before=fuel_start,after=decoder,
+            source_guard=(wire,density),possible_writes=possible))
         from config_decoded_widgets import _edge_at
         edge=_edge_at(parents,V+5578)
         require(edge[3]==WIDGET['warning_colors'],'global WarningColors uses another current call')
@@ -363,7 +368,7 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
             normals.append(dict(wire_tag=wire,emitted_tag=tag,Fuel=record,after=option['state'],
                 colors=dict(source=colors,partial_background_store=V+5618,complete_store=V+5628,
                     same_source_order=('foreground','background'))))
-    return dict(warning=warning,normal=tuple(normals),errors=tuple(errors),transitions=tuple(steps),carrier_guards=tuple(carrier_guards),
+    return dict(warning=warning,Fuel_assignments=tuple(fuel_assignments),normal=tuple(normals),errors=tuple(errors),transitions=tuple(steps),carrier_guards=tuple(carrier_guards),
         before=sequence,complete_ordinary_group_issued=False,
         pending_owned_roles=('warning_presentation_local','Fuel_final_halfword'),
         requires_actual_Source_prefix_ordinary_control_and_reached_uses=True)

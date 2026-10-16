@@ -411,6 +411,45 @@ class SourcePhaseSnapshot(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'unsupported'):_phase_graph({'value':object()})
 
 
+class SourceStructuralControl(unittest.TestCase):
+    @staticmethod
+    def consume(objects,rows,source):
+        from config_source_control import _source_structural_control
+        from config_decoded_widgets import _first_boot_decoded_widgets_state
+        from config_decoded_sources import _parents
+        from config_source_children import source_children
+        _,widgets=_first_boot_decoded_widgets_state(objects,rows,source)
+        objects=widgets.family_bridge.objects;rows=widgets.family_bridge.rows
+        c=widgets.views.context;V=c.headers['visitor']['proof']['function']
+        parents=_parents(objects,rows,V,c.owner.start);children=source_children(objects,rows,parents)
+        return _source_structural_control(objects,rows,widgets,parents,children)
+
+    def test_current_complete_group_retains_pending_contexts_without_active_authority(self):
+        objects,rows,source,_=SourceLiteralBodies.fixture();result=self.consume(objects,rows,source)
+        V=result.selection.context.headers['visitor']['proof']['function']
+        self.assertEqual(tuple(at-V for at,target,reason in result.outside_shared_contexts),
+            (4408,6118,6156,6186,6476,6550,6578,6606,6632,6654,6756,6760,6774,6856))
+        self.assertEqual(result.selection.cuts&{V+4376,V+5630},frozenset((V+5630,)))
+        self.assertTrue(result.unentered_outgoing)
+        self.assertFalse(result.confers_active_state)
+        self.assertTrue(result.selection.child_contexts)
+
+    def test_coherent_pending_predecessor_interior_and_unlisted_fallthrough_reject(self):
+        from test_config_stack import StartupConfigurationCopy,SameBLoaderBoundary
+        from llvm_stack import Instruction
+        V=0x1001c654
+        # Manually encoded byte/row pairs, with the explicit source context
+        # rebound to that image. No fresh decoder or stale-byte failure.
+        for off,raw,op,args,wanted in (
+            (6148,bytes.fromhex('0c46'),'mov','r4, r1','shared-error predecessor differs'),
+            (6652,bytes.fromhex('01d1'),'bne',hex(V+6658),'foreign direct ingress'),
+            (6216,bytes.fromhex('00bf'),'nop','','unselected fallthrough')):
+            objects,rows,source,_=SourceLiteralBodies.fixture();at=V+off
+            StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,op,args)
+            with self.subTest(offset=off),self.assertRaisesRegex(AssertionError,wanted):
+                self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+
+
 class SourceRemainingAggregates(unittest.TestCase):
     @staticmethod
     def fixture(extent=160):
@@ -453,6 +492,13 @@ class SourceRemainingAggregates(unittest.TestCase):
         self.assertFalse(result['normal'])
         self.assertTrue(any(v['stage']=='global WarningColors' and v['completed_aggregates']==('Sources','WarningPresentation','Fuel')
             for v in result['errors']))
+        self.assertTrue(result.get('Fuel_assignments'),'paired reached Fuel assignment lost after later Colors failure')
+        assignment=result['Fuel_assignments'][0]
+        self.assertEqual((assignment['Fuel']['wire_tag'],assignment['Fuel']['emitted_tag']),(0,2))
+        self.assertEqual(assignment['Fuel']['complete_store'],0x1001c654+5570)
+        self.assertEqual((assignment['after'].cursor.lower,assignment['after'].cursor.upper),(60,60))
+        self.assertEqual(tuple((o,n) for v,o,n in assignment['possible_writes']),
+            ((0,4),(29,1),(7,1),(28,1),(8,4),(12,4),(16,4),(20,4),(24,4),(4,1),(5,2)))
         self.assertFalse(result['complete_ordinary_group_issued'])
 
 

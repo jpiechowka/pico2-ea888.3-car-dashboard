@@ -368,6 +368,10 @@ def _selected_successors(selection,extension=None):
                 require(following in selected,'Widget conditional child return loses its untaken save-map path')
                 successors.append((at,None,following))
             continue
+        elif family=='tbb':
+            from config_source_control import _source_table_targets
+            successors.extend((at,target,None) for target in _source_table_targets(selection,at,row))
+            continue
         else:require(family is None,'Views selected invocation has an unresolved PC effect')
         require(following in selected or following in cuts,'Views selected fallthrough leaves its exact frontier')
     return tuple(successors),tuple(returns),tuple(dormant)
@@ -376,6 +380,11 @@ def _selected_successors(selection,extension=None):
 def _foreign_ingress(objects,rows,selection):
     context=selection.context;V=context.headers['visitor']['proof']['function'];R=context.headers['root']['proof']['function']
     proofs,selected,children=selection.proofs,selection.selected,selection.children
+    source_pending={};source_fallthrough={}
+    if type(selection) is not _ControlSelection:
+        from config_source_control import _pending_profile
+        source_pending,source_fallthrough=_pending_profile(selection)
+    pending_profiles={**SHARED_PENDING,**source_pending};seen_fallthrough=set()
     def pending_call(current,expected):
         """Current typed identity only; no later invocation is activated."""
         require(current.mnemonic=='bl','foreign Views shared-error call family differs')
@@ -390,6 +399,11 @@ def _foreign_ingress(objects,rows,selection):
             wanted=objects.elf.functions[name][0]&~1
             _helper_function(objects,wanted,role)
             require(target==wanted,'foreign Views shared-error ordinary target differs')
+        elif expected=='bl @pending:seq_u16':
+            role=HELPER_SEMANTIC_ROLES['seq_u16'];matches=[p for p in children.values() if p['role']==role]
+            require(source_pending and len(matches)==1 and target==matches[0]['function'] and
+                matches[0].get('semantic_role')=='seq_u16',
+                'foreign Sources u16 context has another current complete child')
         else:
             require(expected=='bl @pending:varint_from_r8','unreviewed pending Views call identity')
             names=[n for n,e in objects.elf.functions.items() if e[0]&~1==target]
@@ -403,6 +417,15 @@ def _foreign_ingress(objects,rows,selection):
                 proof['ordinary_edges'][0][2]==varint[0]['function'],
                 'pending Views varint transport selects another current child')
         return expected
+    def check_context(witness):
+        for off,width,text in witness['context']:
+            current=rows.get(V+off)
+            require(current is not None and len(current.raw)==width and objects.read_only(current.address,width)==current.raw,
+                'foreign Views context has stale or missing bytes')
+            actual=current.mnemonic+' '+current.operands.split('@',1)[0].split('<',1)[0].strip()
+            if text.startswith(('bl @child:','bl @pending:')):actual=pending_call(current,text)
+            else:actual=re.sub(r'0x([0-9a-f]+)',lambda m:'@parent+'+format(int(m[1],16)-V,'x') if V<=int(m[1],16)<V+7128 else m[0],actual)
+            require(actual==text,'foreign Views shared-error predecessor differs')
     intervals=tuple((p['function'],p['function']+p['extent']) for p in proofs)
     complete={p['function'] for p in [context.outer['proof'],*context.helpers.values(),*children.values()]}
     entry={R:context.boundary['history']['preclaim']['startup']['entry']['once']['success']['tail'],V:R+126}
@@ -411,8 +434,15 @@ def _foreign_ingress(objects,rows,selection):
         if at in selected:continue
         family,conditional=_control(row);following=at+len(row.raw)
         if any(a<=following<b for a,b in intervals):
-            require(len(row.raw) in (2,4) and objects.read_only(at,len(row.raw))==row.raw and
-                not conditional and family in ('b','bx','return','tbb','tbh'),'unselected fallthrough enters Views selected window')
+            witness=source_fallthrough.get(at-V)
+            if witness is not None:
+                require(following==V+witness['target'] and not conditional and family is None,
+                    'foreign Sources fallthrough changes its pending predecessor')
+                check_context(witness);seen_fallthrough.add(at-V)
+                pending.append((at,following,'unvisited later invocation; no state/return/owner'))
+            else:
+                require(len(row.raw) in (2,4) and objects.read_only(at,len(row.raw))==row.raw and
+                    not conditional and family in ('b','bx','return','tbb','tbh'),'unselected fallthrough enters Views selected window')
         direct=_direct_family(row)
         if direct:
             target=_direct_target(row,direct)
@@ -421,17 +451,10 @@ def _foreign_ingress(objects,rows,selection):
                 require(target in selected,'foreign Views ingress targets an instruction interior')
                 if target in complete:continue
                 offset=at-V
-                require(offset in SHARED_PENDING,'foreign direct ingress skips Views state/prologue')
-                witness=SHARED_PENDING[offset]
+                require(offset in pending_profiles,'foreign direct ingress skips Views state/prologue')
+                witness=pending_profiles[offset]
                 require(target==V+witness['target'] and row.mnemonic==witness['operation'],'foreign Views shared-error context differs')
-                for off,width,text in witness['context']:
-                    current=rows.get(V+off)
-                    require(current is not None and len(current.raw)==width and objects.read_only(current.address,width)==current.raw,
-                        'foreign Views context has stale or missing bytes')
-                    actual=current.mnemonic+' '+current.operands.split('@',1)[0].split('<',1)[0].strip()
-                    if text.startswith(('bl @child:','bl @pending:')):actual=pending_call(current,text)
-                    else:actual=re.sub(r'0x([0-9a-f]+)',lambda m:'@parent+'+format(int(m[1],16)-V,'x') if V<=int(m[1],16)<V+7128 else m[0],actual)
-                    require(actual==text,'foreign Views shared-error predecessor differs')
+                check_context(witness)
                 pending.append((at,target,'unvisited later invocation; no state/return/owner'))
     # Full ROOT/Visitor computed/implicit audit uses their actual declared
     # extents, not just these selected entry windows.
@@ -449,8 +472,9 @@ def _foreign_ingress(objects,rows,selection):
             elif family in ('bx','blx'):require(family=='bx' and not conditional and row.operands=='lr','Views has an unresolved parent indirect ingress')
             else:require(not row.mnemonic.startswith('rfe') and family in (None,'b','bl','cbz','cbnz','return'),
                 'Views parent has an unsupported implicit/exception PC effect')
-    expected_pending={off for off in SHARED_PENDING if not selection.widget or V+off not in selected}
-    require({at-V for at,target,reason in pending}==expected_pending,'Views pending shared contexts are missing or retargeted')
+    expected_pending={off for off in pending_profiles if not selection.widget or V+off not in selected}|set(source_fallthrough)
+    require({at-V for at,target,reason in pending}==expected_pending and seen_fallthrough==set(source_fallthrough),
+        'Views pending shared contexts are missing or retargeted')
     return tuple(sorted(pending))
 
 
