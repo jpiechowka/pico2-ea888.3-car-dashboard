@@ -337,38 +337,67 @@ mod tests {
             OpenProcess,
             PROCESS_QUERY_LIMITED_INFORMATION,
         };
-        let marker = std::env::temp_dir().join(format!("studio-probe-child-{}.txt", std::process::id()));
-        let _ = std::fs::remove_file(&marker);
-        let script = "import subprocess,sys,time; p=subprocess.Popen([sys.executable,'-I','-c','import time; \
-                      time.sleep(30)']); open(sys.argv[1],'w').write(str(p.pid)); time.sleep(30)";
-        let e = run(
+        struct Handle(HANDLE);
+        impl Drop for Handle {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    unsafe {
+                        CloseHandle(self.0);
+                    }
+                }
+            }
+        }
+        let marker = std::env::temp_dir().join(format!(
+            "studio-probe-ready-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        struct Marker(std::path::PathBuf);
+        impl Drop for Marker {
+            fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+        }
+        let _marker = Marker(marker.clone());
+        // The parent waits for our live-process observation before triggering the
+        // pipe failure. Python startup time is not the cleanup assertion's clock.
+        let script = "import subprocess,sys,time,pathlib\np=subprocess.Popen([sys.executable,'-I','-c','import time; \
+                      time.sleep(30)'])\nprint(p.pid,flush=True)\nwhile not pathlib.Path(sys.argv[1]).exists(): \
+                      time.sleep(0.005)\nprint('x'*100000,flush=True)\ntime.sleep(30)";
+        let mut handle = Handle(null_mut());
+        let mut observed_live = false;
+        let mut acknowledged = false;
+        let error = run_stream(
             &cmd(),
-            &["-I", "-c", script, marker.to_str().unwrap()],
+            &["-I", "-u", "-c", script, marker.to_str().unwrap()],
             &std::env::current_dir().unwrap(),
-            Duration::from_millis(600),
-            65536,
+            Duration::from_secs(10),
+            1024,
+            &mut |stderr, text| {
+                if !stderr
+                    && handle.0.is_null()
+                    && let Ok(pid) = text.parse::<u32>()
+                {
+                    handle.0 = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+                    if !handle.0.is_null() {
+                        let mut code = 0;
+                        observed_live = unsafe { GetExitCodeProcess(handle.0, &mut code) } != 0 && code == 259;
+                    }
+                    acknowledged = std::fs::write(&marker, b"observed").is_ok();
+                }
+            },
         )
         .unwrap_err();
-        assert!(e.starts_with("deadline"), "{e}");
-        let pid: u32 = std::fs::read_to_string(&marker)
-            .expect("descendant was spawned before deadline")
-            .parse()
-            .unwrap();
-        std::fs::remove_file(marker).unwrap();
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if !handle.is_null() {
-            let mut code = 259;
-            let success = unsafe { GetExitCodeProcess(handle, &mut code) };
-            unsafe { CloseHandle(handle) };
-            assert_ne!(success, 0);
-            assert_ne!(code, 259, "descendant remains active after runner returned");
-        } else {
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(87),
-                "unexpected OpenProcess failure"
-            );
-        }
+        assert!(error.starts_with("output_limit"), "{error}");
+        assert!(
+            acknowledged && observed_live,
+            "descendant must be observed alive before inducing pipe failure"
+        );
+        let mut code = 259;
+        let success = unsafe { GetExitCodeProcess(handle.0, &mut code) };
+        assert_ne!(success, 0);
+        assert_ne!(code, 259, "descendant remains active after runner returned");
     }
     #[test]
     fn excessive_output_is_rejected() {
