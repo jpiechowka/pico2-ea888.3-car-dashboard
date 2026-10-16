@@ -242,7 +242,7 @@ class MemoryQualification(unittest.TestCase):
             with self.subTest(explicit=explicit,bad=bad),tempfile.TemporaryDirectory() as folder:
                 source=Path(folder)/'source-context.json';output=Path(folder)/'memory.json'
                 write_source_context(source,replace(value,elf_sha256='0'*64) if bad else value)
-                args=['fixture.elf','--gate','experimental-full','--gate','experimental-full','--result-json',str(output)]
+                args=['fixture.elf','--gate','experimental-full','--result-json',str(output)]
                 if explicit:args+=['--source-context',str(source)]
                 with patch.object(check_memory_layout,'ElfImage',return_value=elf),patch.object(
                         check_memory_layout,'check_stack_budget',return_value=stack),patch.object(check_memory_layout,'check_flash_lockout'):
