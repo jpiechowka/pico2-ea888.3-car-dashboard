@@ -1,5 +1,5 @@
 """Independently consume completed capture identity and strict converted UF2 bytes.
-This proves a conditional software artifact, not hardware qualification.
+Practical static checks admit software artifacts, not hardware qualification.
 """
 import hashlib,json,sys
 from pathlib import Path
@@ -7,7 +7,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 from validation import require
 from elf_image import ElfImage
 from check_program_image import inspect_program,linked_configuration,linked_startup,read_uf2,verify_uf2
-from check_memory_layout import read_image_result
+import check_memory_layout
 from config_build_source import load_source_context
 
 def bounded(path,maximum):
@@ -28,6 +28,7 @@ def validate(capture,inputs,uf2):
     capture=Path(capture);inputs=Path(inputs)
     manifest=record(capture/'manifest.json',4*1024*1024)
     require(manifest.get('schema')==2,'completed schema2 capture required')
+    require(manifest.get('image_gate')=='practical','native artifacts require explicit practical image checks')
     elf=ElfImage(capture/'pico2.elf')
     require(sha(elf.data)==manifest['elf_sha256'],'capture ELF identity mismatch')
     eav=bounded(inputs/'dashboard.eav',65536)
@@ -40,15 +41,15 @@ def validate(capture,inputs,uf2):
     context=load_source_context(context_path,elf,capture.name,attempt)
     require(manifest['source_context']['sha256']==sha(bounded(context_path,262144)),'source context identity mismatch')
     memory_raw=bounded(capture/'memory-layout.json',65536)
-    memory=read_image_result(json.loads(memory_raw,object_pairs_hook=unique),elf,eav,context)
-    require(manifest['memory_layout']==memory and manifest['memory_layout_json_sha256']==sha(memory_raw),'full image evidence mismatch')
+    memory=check_memory_layout.read_selected_image_result(json.loads(memory_raw,object_pairs_hook=unique),elf,eav,context,gate='practical')
+    require(manifest['memory_layout']==memory and manifest['memory_layout_json_sha256']==sha(memory_raw),'practical image evidence mismatch')
     mapping,program=inspect_program(elf)
     program['linked_configuration']=linked_configuration(elf,eav)
     profile=bounded(inputs/'startup.easp',16);asset=bounded(inputs/'startup.easa',524288)
     program['linked_startup']=linked_startup(elf,profile,asset)
     require(program==manifest['program_image'],'program image identity mismatch')
     converted=read_uf2(uf2);comparison=verify_uf2(converted,mapping)
-    return {'schema_version':1,'scope':'conditional_software_artifact','hardware_qualified':False,'flash_ready':False,'elf_sha256':sha(elf.data),'uf2_sha256':sha(converted),'uf2_bytes':len(converted),'config_sha256':sha(eav),'startup_profile_sha256':sha(profile),'startup_asset_sha256':sha(asset),'options':options,'program_image':program,'uf2':comparison,'memory_layout':memory}
+    return {'schema_version':2,'scope':'practical_software_artifact','image_gate':'practical','complete_instruction_proof':False,'hardware_qualified':False,'flash_ready':False,'elf_sha256':sha(elf.data),'uf2_sha256':sha(converted),'uf2_bytes':len(converted),'config_sha256':sha(eav),'startup_profile_sha256':sha(profile),'startup_asset_sha256':sha(asset),'options':options,'program_image':program,'uf2':comparison,'memory_layout':memory}
 
 def main():
     import argparse

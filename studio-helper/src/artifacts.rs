@@ -142,13 +142,7 @@ pub(crate) fn admit(
     }
     let report: serde_json::Value =
         serde_json::from_slice(&output.raw_stdout).map_err(|_| "Invalid artifact validation result")?;
-    if report["schema_version"] != 1
-        || report["scope"] != "conditional_software_artifact"
-        || report["hardware_qualified"] != false
-        || report["flash_ready"] != false
-    {
-        return Err("Unsupported artifact qualification".into());
-    }
+    validate_qualification(&report)?;
     for (key, expected) in [
         ("uf2_sha256", digest(&uf2_bytes)),
         ("config_sha256", digest(&input.eav)),
@@ -215,4 +209,58 @@ pub(crate) fn admit(
     };
     artifact.verify_lease()?;
     Ok(artifact)
+}
+
+/// The frozen Python authority revalidates every image field; this boundary rejects
+/// legacy or experimental receipts before publishing a native artifact.
+fn validate_qualification(report: &serde_json::Value) -> Result<(), String> {
+    if report["schema_version"] != 2
+        || report["scope"] != "practical_software_artifact"
+        || report["image_gate"] != "practical"
+        || report["complete_instruction_proof"] != false
+        || report["hardware_qualified"] != false
+        || report["flash_ready"] != false
+    {
+        return Err("Unsupported artifact qualification".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod qualification_tests {
+    use serde_json::json;
+
+    use super::validate_qualification;
+
+    #[test]
+    fn only_explicit_practical_receipts_are_admitted() {
+        let valid = json!({"schema_version":2,"scope":"practical_software_artifact",
+            "image_gate":"practical","complete_instruction_proof":false,
+            "hardware_qualified":false,"flash_ready":false});
+        assert!(validate_qualification(&valid).is_ok());
+        for key in [
+            "schema_version",
+            "scope",
+            "image_gate",
+            "complete_instruction_proof",
+            "hardware_qualified",
+            "flash_ready",
+        ] {
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(validate_qualification(&missing).is_err(), "missing {key}");
+        }
+        for (key, value) in [
+            ("schema_version", json!(1)),
+            ("scope", json!("conditional_software_artifact")),
+            ("image_gate", json!("experimental-full")),
+            ("complete_instruction_proof", json!(true)),
+            ("hardware_qualified", json!(true)),
+            ("flash_ready", json!(true)),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[key] = value;
+            assert!(validate_qualification(&invalid).is_err(), "invalid {key}");
+        }
+    }
 }
