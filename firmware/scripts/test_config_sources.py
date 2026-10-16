@@ -155,6 +155,71 @@ class SourceLiteralBodies(unittest.TestCase):
             _closed_child_returns(rows,(parent,),wrong,sp,sources.source_return_profiles(),())
 
 
+class SourceRegisterReturns(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        from config_decoded_sources import _parents
+        from config_source_children import source_children,source_return_profiles
+        from config_finite_returns import _closed_child_returns
+        from config_widget_contracts import ROLES
+        objects,rows,_,_=SourceLiteralBodies.fixture()
+        parents=_parents(objects,rows,0x1001c654,0x2000031c)
+        children=source_children(objects,rows,parents);sp=0x20070000
+        def evaluate(current):
+            return _closed_child_returns(current,parents,children,sp,source_return_profiles(),
+                ('seq_f32',ROLES['warning_colors']))
+        return rows,parents,children,sp,evaluate
+
+    def test_actual_57_calls_restore_high_carriers_but_outline338_clobbers_r4(self):
+        rows,parents,children,sp,evaluate=self.fixture();nodes=evaluate(rows)
+        expected=tuple('r'+str(i) for i in range(4,12))
+        roots=tuple((p['function']+off+4,target,role) for p in parents
+            for off,operation,target,role,frame in p['ordinary_edges'])
+        self.assertEqual(len(roots),57)
+        for pc,target,role in roots:
+            matching=[n for n in nodes if n['function']==target and n['role']==role and
+                n['entry_SP']==sp and n['return_PC']==pc]
+            self.assertEqual(len(matching),1)
+            self.assertEqual(matching[0]['preserved_high_gprs'],expected)
+            self.assertFalse(matching[0]['architectural_LR_preserved'])
+        setup=[n for n in nodes if n['function']==0x10029178]
+        self.assertTrue(setup)
+        self.assertTrue(all('r4' not in n['preserved_high_gprs'] for n in setup))
+        # Both current typed roles must remain separate memoized activations.
+        self.assertEqual(len({n['role'] for n in setup}),2)
+        memcpy=[n for n in nodes if n['function']==0x100294f4]
+        self.assertTrue(memcpy)
+        self.assertTrue(all(n['architectural_LR_after']!=n['return_PC'] for n in memcpy))
+
+    def test_changed_unsaved_high_definition_changes_the_actual_return_transfer(self):
+        # Private transfer injection, not a coherent current-body mutant.
+        # Complete literal matching remains a separate public prerequisite.
+        rows,parents,children,sp,evaluate=self.fixture();changed=dict(rows)
+        at=0x10029178;row=changed[at]
+        self.assertEqual(row.operands,'r4, r0')
+        changed[at]=replace(row,operands='r8, r0')
+        nodes=evaluate(changed)
+        self.assertTrue(any(n['entry_SP']==sp and 'r8' not in n['preserved_high_gprs'] for n in nodes))
+        from config_source_control import _source_carrier_returns
+        with self.assertRaisesRegex(AssertionError,'actual live high GPR'):
+            _source_carrier_returns(changed,parents,children,nodes,sp)
+
+    def test_expanded_Source_graph_checks_high_FP_and_exact_57_return_members(self):
+        from config_source_control import _source_carrier_returns
+        rows,parents,children,sp,evaluate=self.fixture();nodes=evaluate(rows)
+        result=_source_carrier_returns(rows,parents,children,nodes,sp)
+        self.assertEqual(len(result['parent_calls']),57)
+        self.assertFalse(result['architectural_LR_preserved'])
+        with self.assertRaisesRegex(AssertionError,'actual live high GPR'):
+            _source_carrier_returns(rows,parents,children,(),sp)
+        changed=dict(rows);at=0x1001bb02+20;row=changed[at]
+        # Private scanner injection. Actual current children contain no VFP
+        # instruction here; literal matching would reject this changed body.
+        changed[at]=replace(row,mnemonic='vldr',operands='s16, [r1]')
+        with self.assertRaisesRegex(AssertionError,'live float source carrier'):
+            _source_carrier_returns(changed,parents,children,nodes,sp)
+
+
 class SourceParentFamilies(unittest.TestCase):
     def test_complete_parent_windows_bind_same_Config_and_all_eight_Source_calls(self):
         from config_decoded_sources import _parents

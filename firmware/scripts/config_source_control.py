@@ -42,6 +42,7 @@ class _SourceStructuralControl:
     raw_successors:tuple
     raw_returns:tuple
     Source_returns:tuple
+    carrier_returns:dict
     nested_returns:tuple
     outside_shared_contexts:tuple
     unentered_outgoing:tuple
@@ -107,9 +108,33 @@ def _source_structural_control(objects,rows,widgets,parents,children):
         ('seq_f32',WIDGET['warning_colors']))
     require(nested and min(v['lowest_SP'] for v in nested)==c.headers['visitor_frame'].start-120,
         'Sources structure loses its current child save/return geometry')
+    carriers=_source_carrier_returns(rows,parents,children,nested,c.headers['visitor_frame'].start)
     pending=_foreign_ingress(objects,rows,selection)
     return _SourceStructuralControl(selection,successors,returns,
-        nested,widgets.structural.nested_returns+nested,pending,dormant)
+        nested,carriers,widgets.structural.nested_returns+nested,pending,dormant)
+
+
+def _source_carrier_returns(rows,parents,children,returns,sp):
+    """Actual per-call transfer, conditional on separate protected save slots.
+
+    Complete current body matching and the existing finite saved-PC walk are
+    prerequisites. This does not initialize a carrier, choose a source arm,
+    or establish a pointer's parent lifetime from the callee ABI alone.
+    """
+    from config_decoded_widgets import _source_fp_preservation
+    high=tuple('r'+str(i) for i in range(4,12));checked=[]
+    for parent in parents:
+        for off,operation,target,role,frame in parent['ordinary_edges']:
+            pc=parent['function']+off+4
+            matches=tuple(v for v in returns if v['function']==target and v['role']==role and
+                v['entry_SP']==sp and v['return_PC']==pc and v['return_SP']==sp)
+            require(operation=='bl' and len(matches)==1 and matches[0]['preserved_high_gprs']==high,
+                'Sources child changes an actual live high GPR carrier')
+            checked.append((pc-4,target,role,high))
+    require(len(checked)==57 and len({v[0] for v in checked})==57,
+        'Sources carrier graph omits a current parent call')
+    return dict(parent_calls=tuple(checked),high_fp=_source_fp_preservation(rows,children),
+        architectural_LR_preserved=False,requires_actual_protected_save_slots_and_parent_lifetimes=True)
 
 
 def _structural_data(value,widgets,parents,children):
@@ -121,5 +146,6 @@ def _structural_data(value,widgets,parents,children):
     s=value.selection
     return dict(selection=(s.proofs,s.selected,s.edges,tuple(sorted(s.cuts)),s.widget,s.children,s.child_contexts),
         raw_successors=value.raw_successors,raw_returns=value.raw_returns,Source_returns=value.Source_returns,
+        carrier_returns=value.carrier_returns,
         nested_returns=value.nested_returns,outside_shared_contexts=value.outside_shared_contexts,
         unentered_outgoing=value.unentered_outgoing,confers_active_state=value.confers_active_state)
