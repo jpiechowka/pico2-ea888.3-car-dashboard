@@ -14,6 +14,7 @@ pub(crate) struct Output {
     pub stdout: String,
     pub raw_stdout: Vec<u8>,
     pub stderr: String,
+    pub raw_stderr: Vec<u8>,
 }
 #[cfg(windows)]
 mod windows;

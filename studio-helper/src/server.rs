@@ -449,7 +449,7 @@ async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Snapshot);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            let frozen = crate::build_input::freeze(&worker_state.repo, &input)?;
+            let frozen = Arc::new(crate::build_input::freeze(&worker_state.repo, &input)?);
             if crate::process::cancelled() {
                 return Err("Build cancelled after snapshot".into());
             }
@@ -491,7 +491,7 @@ async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Validation);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            crate::artifacts::admit(&frozen, &input, worker_state.session.clone(), converter)
+            crate::artifacts::admit(frozen, &input, worker_state.session.clone(), converter)
         })();
         let mut inner = worker_state.inner.lock().unwrap();
         if crate::process::cleanup_failed() {
@@ -1142,7 +1142,9 @@ mod tests {
         state.inner.lock().unwrap().artifacts.push(crate::artifacts::Artifact {
             summary: metadata,
             uf2: vec![7; 512].into(),
+            lease: None,
         });
+        assert!(state.inner.lock().unwrap().artifacts[0].verify_lease().is_err());
         for authorized in [false, true] {
             let mut builder = Request::builder()
                 .uri(format!("/api/v1/artifacts/{}/uf2", id.as_str()))

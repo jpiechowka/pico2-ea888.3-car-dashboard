@@ -224,7 +224,7 @@ pub(crate) fn inspect(
                 ],
                 repo,
             )?;
-            if information.code != Some(0) || !information.stderr.trim().is_empty() {
+            if information.code != Some(0) || !information.raw_stderr.is_empty() {
                 return Err("Descriptor visible but picotool information unavailable".into());
             }
             let partitions = crate::process::run(
@@ -241,7 +241,7 @@ pub(crate) fn inspect(
                 ],
                 repo,
             )?;
-            if partitions.code != Some(0) || !partitions.stderr.trim().is_empty() {
+            if partitions.code != Some(0) || !partitions.raw_stderr.is_empty() {
                 return Err("Partition information unavailable".into());
             }
             let facts = parse(&information.raw_stdout, &partitions.raw_stdout)?;

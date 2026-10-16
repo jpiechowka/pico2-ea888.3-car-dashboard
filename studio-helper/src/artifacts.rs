@@ -11,9 +11,31 @@ use crate::build_input::{AcceptedInput, FrozenInput, digest};
 pub(crate) struct Artifact {
     pub summary: ArtifactSummary,
     pub uf2: Arc<[u8]>,
+    pub lease: Option<Arc<ArtifactLease>>,
+}
+/// Shared by cache and active operation; eviction cannot release an in-use artifact.
+pub(crate) struct ArtifactLease {
+    pub frozen: Arc<FrozenInput>,
+    pub elf: PathBuf,
+    pub converter: Converter,
+    pub verification_ranges: Vec<(u32, u32)>,
+    _holds: Vec<File>,
+}
+impl Artifact {
+    pub fn verify_lease(&self) -> Result<&ArtifactLease, String> {
+        let lease = self.lease.as_deref().ok_or("Artifact has no retained native lease")?;
+        lease.frozen.verify()?;
+        if digest(&bytes(&mut held(&lease.elf)?, 32 * 1024 * 1024)?) != self.summary.elf_sha256.as_str()
+            || digest(&self.uf2) != self.summary.uf2_sha256.as_str()
+            || lease.converter.hash != self.summary.converter_sha256.as_str()
+            || lease.verification_ranges.is_empty() {
+            return Err("Retained artifact identity mismatch".into());
+        }
+        Ok(lease)
+    }
 }
 pub(crate) struct Converter {
-    path: PathBuf,
+    pub path: PathBuf,
     _file: File,
     _parents: Vec<File>,
     hash: String,
@@ -56,7 +78,7 @@ pub(crate) fn converter(repo: &Path) -> Result<Converter, String> {
     })
 }
 pub(crate) fn admit(
-    frozen: &FrozenInput,
+    frozen: Arc<FrozenInput>,
     input: &AcceptedInput,
     session: SessionId,
     converter: Converter,
@@ -158,15 +180,27 @@ pub(crate) fn admit(
         elf_sha256: Sha256::new(report["elf_sha256"].as_str().ok_or("Missing ELF identity")?)
             .map_err(|e| e.to_string())?,
         uf2_sha256: Sha256::new(digest(&uf2_bytes)).unwrap(),
-        converter_sha256: Sha256::new(converter.hash).unwrap(),
+        converter_sha256: Sha256::new(converter.hash.clone()).unwrap(),
         options: input.options.clone(),
         uf2_bytes: uf2_bytes.len() as u32,
         hardware_qualified: false,
         flash_ready: false,
     };
     summary.validate().map_err(|e| e.to_string())?;
-    Ok(Artifact {
+    let verification_ranges: Vec<(u32,u32)> = serde_json::from_value(report["program_image"]["verification_ranges"].clone())
+        .map_err(|_| "Missing qualified verification ranges")?;
+    if verification_ranges.is_empty() || verification_ranges.len() > 1024
+        || verification_ranges.iter().any(|(a,b)| *a < 0x10000000 || a >= b || *b > 0x101fe000)
+        || verification_ranges.windows(2).any(|p| p[0].1 >= p[1].0) {
+        return Err("Invalid verification ranges".into());
+    }
+    holds.push(uf2_file);
+
+    let artifact = Artifact {
         summary,
         uf2: uf2_bytes.into(),
-    })
+        lease: Some(Arc::new(ArtifactLease { frozen, elf, converter, verification_ranges, _holds: holds })),
+    };
+    artifact.verify_lease()?;
+    Ok(artifact)
 }

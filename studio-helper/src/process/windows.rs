@@ -213,6 +213,7 @@ pub(super) fn run_stream(
                         stdout: std::mem::take(&mut out.text),
                         raw_stdout: std::mem::take(&mut out.raw),
                         stderr: std::mem::take(&mut err.text),
+                        raw_stderr: std::mem::take(&mut err.raw),
                     });
                 }
             }
