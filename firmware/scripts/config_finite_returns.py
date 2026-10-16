@@ -110,6 +110,17 @@ def _closed_child_returns(rows,parents,children,sp,stacks,scratch_restores,*,obj
                             elif reg=='lr':new_link=value
                             elif reg in ('r2','r3'):
                                 require(family in scratch_restores,'finite child restores scratch into another register family')
+                            elif reg in ('r0','r1'):
+                                # The authored LedPattern H48 prologue uses
+                                # its first sixteen bytes as Q/Result scratch.
+                                # Its exact POP discards those four cells;
+                                # r8/r9/r11 and the outer low saves still need
+                                # their original lineage equations below.
+                                from config_tail_contracts import ROLES as TAIL
+                                require(family==TAIL['LedPattern'] and proof['shape']=='LedPattern' and
+                                    family in scratch_restores and at==start+170 and
+                                    row.operands=='{r0, r1, r2, r3, r8, r9, r11}',
+                                    'finite child restores scratch into another low-register family')
                             elif reg in _HIGH:
                                 require(type(value) is tuple and len(value)==2 and value[0]==reg,
                                     'finite child restore consumes another caller register')
@@ -163,16 +174,25 @@ def _closed_child_returns(rows,parents,children,sp,stacks,scratch_restores,*,obj
                 pending.append((target,new_sp,new_link,updated,reg2,tuple(new_high)))
                 if not conditional:continue
             elif control=='tbb':
-                # One exact authored aggregate family. This consumes its
+                # Closed authored aggregate families. This consumes their
                 # already current complete literal/table proof, never an
                 # arbitrary caller target list. Source argument/arm effects
-                # remain separate from these all-six saved-PC equations.
+                # remain separate from these saved-PC equations.
                 from config_source_children import CHANNEL_SOURCE,ACCESS_TARGET_OFFSETS
-                targets=tuple(start+off for off in ACCESS_TARGET_OFFSETS)
-                require(family==CHANNEL_SOURCE and proof['shape']=='ChannelSource' and at==start+74 and
-                    row.operands=='[pc, r6]' and not conditional and proof.get('access_targets')==targets and
-                    proof.get('guarded_access_index_domain')==(0,5) and all(t in body for t in targets),
-                    'finite child loses the guarded Source Access table relation')
+                if family==CHANNEL_SOURCE:
+                    targets=tuple(start+off for off in ACCESS_TARGET_OFFSETS)
+                    require(proof['shape']=='ChannelSource' and at==start+74 and row.operands=='[pc, r6]' and
+                        not conditional and proof.get('access_targets')==targets and
+                        proof.get('guarded_access_index_domain')==(0,5) and all(t in body for t in targets),
+                        'finite child loses the guarded Source Access table relation')
+                else:
+                    from config_tail_children import ACTION_TARGET_OFFSETS
+                    from config_tail_contracts import ROLES as TAIL
+                    targets=tuple(start+off for off in ACTION_TARGET_OFFSETS)
+                    require(family==TAIL['ControlAction'] and proof['shape']=='ControlAction' and at==start+48 and
+                        row.operands=='[pc, r0]' and not conditional and proof.get('action_targets')==targets and
+                        proof.get('guarded_action_index_domain')==(0,18) and all(t in body for t in targets),
+                        'finite child loses the guarded ControlAction table relation')
                 pending.extend((t,new_sp,new_link,updated,reg2,tuple(new_high)) for t in targets)
                 continue
             else:require(control is None,'finite child child contains an unclassified PC effect')

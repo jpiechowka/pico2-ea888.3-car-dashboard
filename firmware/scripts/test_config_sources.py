@@ -1602,7 +1602,9 @@ class SourceStructuralReuse(unittest.TestCase):
             ('config_refill_children','child_coverage'),('config_utf8','utf8_body'),
             ('config_widget_children','widget_body')}
         self.assertEqual(len(original),7)
-        self.assertEqual(_APIS,original|{('config_source_children','source_coverage')})
+        sources=original|{('config_source_children','source_coverage')}
+        self.assertEqual(len(sources),8)
+        self.assertEqual(_APIS,sources|{('config_tail_children','tail_coverage')})
 
     def test_warmed_snapshot_is_independent_and_new_consumed_inputs_recheck(self):
         from config_source_children import source_coverage

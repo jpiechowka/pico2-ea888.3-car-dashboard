@@ -21,6 +21,7 @@ _APIS=frozenset((
     ('config_refill_children','child_coverage'),('config_utf8','utf8_body'),
     ('config_widget_children','widget_body'),
     ('config_source_children','source_coverage'),
+    ('config_tail_children','tail_coverage'),
 ))
 
 
