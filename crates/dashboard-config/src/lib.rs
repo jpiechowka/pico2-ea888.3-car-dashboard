@@ -20,6 +20,7 @@ mod legacy;
 mod legacy_v3;
 mod model;
 pub mod startup;
+pub mod startup_asset;
 mod validate;
 
 pub use advanced::*;

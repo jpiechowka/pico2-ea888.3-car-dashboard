@@ -165,6 +165,7 @@ pub fn draw(
     rect(d, 20, 19, 30, 3, GOLD);
     rect(d, 270, 19, 30, 3, GOLD);
     match profile.theme {
+        StartupTheme::Custom => { text(d, "CUSTOM ARTWORK UNAVAILABLE", 120, WHITE, false); }
         StartupTheme::Aezakmi => {
             text(d, "WANTED: ABSOLUTELY NOBODY", 58, WHITE, false);
             let shift = wave(t, 2000, 7);

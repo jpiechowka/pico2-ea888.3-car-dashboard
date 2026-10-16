@@ -9,6 +9,7 @@ pub enum StartupTheme {
     Sanic,
     BoostBro,
     WhereLambo,
+    Custom,
 }
 impl StartupTheme {
     pub const ALL: [Self; 5] = [
@@ -26,6 +27,7 @@ impl StartupTheme {
             Self::Sanic => "GOTTA GO FAST",
             Self::BoostBro => "HOW MUCH BOOST BRO",
             Self::WhereLambo => "WHERE LAMBO",
+            Self::Custom => "Custom artwork",
         }
     }
 }
@@ -101,7 +103,11 @@ impl StartupProfile {
             return None;
         }
         let profile = Self {
-            theme: *StartupTheme::ALL.get(usize::from(bytes[5]))?,
+            theme: if bytes[5] == 5 {
+                StartupTheme::Custom
+            } else {
+                *StartupTheme::ALL.get(usize::from(bytes[5]))?
+            },
             status: match bytes[6] {
                 0 => StartupStatus::Off,
                 1 => StartupStatus::Brief,
