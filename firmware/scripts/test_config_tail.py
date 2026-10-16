@@ -199,4 +199,211 @@ class TailChildReturns(unittest.TestCase):
             self.evaluate('ScreenBindings',changed)
 
 
+class TailActionInterface(unittest.TestCase):
+    @staticmethod
+    def fixture(count=2,extent=32):
+        from config_abstract import DecoderInterface,SequenceInterface,Span
+        from config_regions import Storage,borrow
+        from config_tail_children import tail_coverage
+        from config_tail_contracts import ROLES
+        from config_widget_children import _name
+        objects,rows,_,_=TailLiteralBodies.fixture();phase='supplied_Tail_Action'
+        visitor=Storage('stack:Tail','supplied Visitor',0x20070000,1608,8,phase,True)
+        loader=Storage(visitor.space,'supplied loader',visitor.start+1608,456,8,phase,True)
+        screen=Storage(visitor.space,'supplied Screen',visitor.start-64,64,8,phase,True)
+        button=Storage(visitor.space,'supplied Button',screen.start-24,24,8,phase,True)
+        action=Storage(visitor.space,'supplied Action',button.start-16,16,8,phase,True)
+        payload=Storage('address','supplied readonly input',0x10032b2a,extent,1,phase,False)
+        decoder=DecoderInterface(borrow(loader,236,8,phase,True),borrow(payload,0,extent,phase),Span(0,0))
+        state=SequenceInterface(borrow(button,0,8,phase,True),decoder,Span(count,count))
+        saved=Storage(visitor.space,'supplied Button original saves',button.start+8,16,4,phase,False)
+        proof=tail_coverage(objects,_name(objects,ROLES['ControlAction']),rows)
+        return objects,rows,proof,state,action,(saved,),0x1001bd22+22
+
+    def test_Action_source_domain_missing_and_error_origins_are_distinct(self):
+        from config_tail_effects import control_action_interface
+        result=control_action_interface(*self.fixture())
+        self.assertEqual(result['normal']['domain'],(0,18))
+        self.assertEqual(result['normal']['after'].count.lower,1)
+        self.assertEqual(result['normal']['after'].decoder.cursor.lower,1)
+        self.assertEqual(result['normal']['mapping'],tuple((i,t) for i,t in enumerate(
+            (72,138,114,126,96,150,162,132,180,108,174,90,102,156,84,120,78,144,168))))
+        invalid=next(e for e in result['errors'] if e['stage']=='Action domain')
+        self.assertEqual((invalid['error'],invalid['status'],invalid['child_outcome']['kind']),(14,1,'success'))
+        self.assertIs(invalid['origin']['before'],result['before'].decoder)
+        none=control_action_interface(*self.fixture(count=0))
+        self.assertIsNone(none['normal']);self.assertEqual((none['none']['status'],none['none']['action_low']),(0,255))
+        self.assertEqual(none['primitive_invocations'],());self.assertEqual(none['none']['after'].count.lower,0)
+
+    def test_warmed_structure_does_not_cache_EOF_source_phase_or_protection(self):
+        from config_tail_effects import control_action_interface
+        from config_structural import _detached_inputs
+        from config_abstract import Span
+        from config_regions import Storage
+        args=list(self.fixture());args[0],args[1]=_detached_inputs(args[0],args[1])
+        result=control_action_interface(*args);self.assertIsNotNone(result['normal'])
+        old=args[3];args[3]=replace(old,decoder=replace(old.decoder,cursor=Span(32,32)))
+        eof=control_action_interface(*args);self.assertIsNone(eof['normal'])
+        self.assertEqual(tuple(e['error'] for e in eof['errors']),(4,))
+        args[3]=old;frame=args[4]
+        args[5]=args[5]+(Storage('address','physical deepest child overlap',frame.start-48,1,1,frame.phase,False),)
+        with self.assertRaisesRegex(AssertionError,'overlap|protected'):
+            control_action_interface(*args)
+
+    def test_wrong_current_caller_receiver_and_body_proof_reject(self):
+        from config_tail_effects import control_action_interface
+        from config_regions import borrow
+        args=list(self.fixture());before=args[3]
+        args[3]=replace(before,header=borrow(before.header.storage,4,8,before.header.storage.phase,True))
+        with self.assertRaises(AssertionError):control_action_interface(*args)
+        args=list(self.fixture());args[-1]+=2
+        with self.assertRaises(AssertionError):control_action_interface(*args)
+        args=list(self.fixture());args[2]=dict(args[2],action_targets=())
+        with self.assertRaises(AssertionError):control_action_interface(*args)
+
+
+class TailButtonInterface(unittest.TestCase):
+    @staticmethod
+    def fixture(count=4,extent=32):
+        from config_abstract import SequenceInterface,Span
+        from config_regions import Storage,borrow
+        from config_tail_children import tail_coverage
+        from config_tail_contracts import ROLES
+        from config_widget_children import _name
+        objects,rows,_,action,_,_,_=TailActionInterface.fixture(extent=extent)
+        button=action.header.storage;screen=Storage(button.space,'supplied Screen',button.start+24,64,8,button.phase,True)
+        sequence=SequenceInterface(borrow(screen,20,8,screen.phase,True),action.decoder,Span(count,count))
+        saved=Storage(screen.space,'Screen original saves',screen.start+28,36,4,screen.phase,False)
+        proof=tail_coverage(objects,_name(objects,ROLES['ButtonBinding']),rows)
+        return objects,rows,proof,sequence,button,(saved,),0x1001bb2c+30
+
+    def test_tap_then_hold_keep_distinct_same_source_origins_and_packed_domains(self):
+        from config_tail_effects import button_binding_interface
+        result=button_binding_interface(*self.fixture())
+        normal=result['normal'];self.assertIsNotNone(normal)
+        self.assertEqual(normal['fields'],(('tap',(0,18)),('hold',(0,18))))
+        self.assertEqual((normal['after'].count.lower,normal['after'].decoder.cursor.lower),(3,2))
+        self.assertEqual(tuple(v['site'] for v in result['invocations']),(0x1001bd22+22,0x1001bd22+48))
+        first,second=result['invocations']
+        self.assertIs(second['before'],first['result']['normal']['after'])
+        self.assertIs(second['predecessor'],first)
+        self.assertEqual(normal['upper_bits'],'opaque; only low16 carry tap/hold')
+        self.assertTrue(any(e['stage']=='hold' and e['cause']['origin']['caller']==0x1001bd22+48 for e in result['errors']))
+
+    def test_short_hold_and_zero_outer_count_never_make_packed_success(self):
+        from config_tail_effects import button_binding_interface
+        short=button_binding_interface(*self.fixture(extent=1))
+        self.assertIsNone(short['normal']);self.assertTrue(any(e['stage']=='hold' and e['error']==4 for e in short['errors']))
+        missing=button_binding_interface(*self.fixture(count=0))
+        self.assertIsNone(missing['normal']);self.assertEqual(missing['none']['low'],255)
+        self.assertEqual(missing['invocations'],())
+
+    def test_wrong_screen_Q_or_ancestor_alias_rejects_with_structure_warm(self):
+        from config_tail_effects import button_binding_interface
+        from config_structural import _detached_inputs
+        from config_regions import Storage,borrow
+        args=list(self.fixture());args[0],args[1]=_detached_inputs(args[0],args[1])
+        self.assertIsNotNone(button_binding_interface(*args)['normal'])
+        before=args[3];args[3]=replace(before,header=borrow(before.header.storage,12,8,before.header.storage.phase,True))
+        with self.assertRaises(AssertionError):button_binding_interface(*args)
+        args[3]=before;frame=args[4]
+        args[5]=args[5]+(Storage('address','deeper Action alias',frame.start-64,1,1,frame.phase,False),)
+        with self.assertRaises(AssertionError):button_binding_interface(*args)
+
+
+class TailOutputAggregates(unittest.TestCase):
+    @staticmethod
+    def fixture(shape='ScreenBindings',count=None,extent=64):
+        from config_abstract import DecoderInterface,SequenceInterface,Span
+        from config_regions import Storage,borrow
+        from config_tail_children import tail_coverage
+        from config_tail_contracts import ROLES
+        from config_widget_children import _name
+        objects,rows,_,_=TailLiteralBodies.fixture();phase='supplied_Tail_output'
+        visitor=Storage('stack:Tail-output','supplied Visitor',0x20070000,1608,8,phase,True)
+        loader=Storage(visitor.space,'supplied loader',visitor.start+1608,456,8,phase,True)
+        payload=Storage('address','supplied readonly input',0x10032b2a,extent,1,phase,False)
+        decoder=DecoderInterface(borrow(loader,236,8,phase,True),borrow(payload,0,extent,phase),Span(0,0))
+        q,out,frame,default,site=(1128,940,64,3,5712) if shape=='ScreenBindings' else (1000,1064,48,7,6792)
+        state=SequenceInterface(borrow(visitor,q,8,phase,True),decoder,Span(default if count is None else count,default if count is None else count))
+        activation=Storage(visitor.space,'supplied '+shape,visitor.start-frame,frame,8,phase,True)
+        saved=Storage(visitor.space,'Visitor original saves',visitor.start+1512,96,4,phase,False)
+        proof=tail_coverage(objects,_name(objects,ROLES[shape]),rows)
+        return objects,rows,proof,state,borrow(visitor,out,10,phase,True),activation,(saved,),0x1001c654+site
+
+    def test_Screen_source_order_domains_late_words_and_original_return(self):
+        from config_tail_effects import screen_bindings_interface
+        result=screen_bindings_interface(*self.fixture());normal=result['normal']
+        self.assertIsNotNone(normal)
+        self.assertEqual(normal['source_order'],('buttonA','buttonB','buttonX','buttonY','rotation','click'))
+        self.assertEqual(normal['rotation_domain'],(0,3));self.assertEqual(normal['click_domain'],(0,18))
+        self.assertEqual(normal['after'].decoder.cursor.lower,10)
+        self.assertEqual(normal['after'].count.lower,2)
+        self.assertEqual(normal['physical_output_order'],((266,1,1),(268,0,1),(296,6,4),(306,2,4)))
+        self.assertEqual(normal['outstanding_after_tag'],((2,8),))
+        self.assertEqual(normal['initialized_bytes'],tuple(range(10)))
+        self.assertTrue(any(e['stage']=='rotation domain' and e['child_outcome']['kind']=='success' for e in result['errors']))
+        self.assertTrue(result['requires_bound_Screen_word_access_policy'])
+
+    def test_LED_Off_still_decodes_all_fields_and_keeps_opaque_padding(self):
+        from config_tail_effects import led_pattern_interface
+        result=led_pattern_interface(*self.fixture('LedPattern'));normal=result['normal']
+        self.assertEqual(normal['fields'],(('kind',(0,3)),('color',(0,65535)),('brightness',(0,255)),('period_ms',(0,65535)),('on_percent',(0,255))))
+        self.assertEqual(normal['after'].decoder.cursor.lower,5)
+        self.assertEqual(normal['after'].count.lower,6)
+        self.assertEqual(normal['initialized_bytes'],(0,2,3,4,6,7,8))
+        self.assertEqual(normal['opaque_bytes'],(1,5,9))
+        self.assertEqual(normal['physical_output_order'],((184,0,1),(186,6,4),(194,2,4)))
+        self.assertEqual(len(result['invocations']),5)
+        self.assertTrue(result['requires_bound_LED_word_access_policy'])
+
+    def test_short_missing_or_wrong_epoch_outputs_never_become_complete(self):
+        from config_tail_effects import screen_bindings_interface,led_pattern_interface
+        from config_regions import borrow
+        for shape,interface,short in (('ScreenBindings',screen_bindings_interface,9),('LedPattern',led_pattern_interface,4)):
+            with self.subTest(shape=shape):
+                result=interface(*self.fixture(shape,extent=short));self.assertIsNone(result['normal'])
+                self.assertTrue(result['errors'])
+                missing=interface(*self.fixture(shape,count=0));self.assertIsNone(missing['normal'])
+                self.assertEqual(missing['none']['tag'],255);self.assertEqual(missing['invocations'],())
+                args=list(self.fixture(shape));output=args[4]
+                args[4]=borrow(output.storage,output.offset+4,10,output.storage.phase,True)
+                with self.assertRaises(AssertionError):interface(*args)
+
+    def test_Screen_receiver_output_and_deep_physical_guard_recheck_after_warmup(self):
+        from config_tail_effects import screen_bindings_interface
+        from config_structural import _detached_inputs
+        from config_regions import Storage
+        args=list(self.fixture());args[0],args[1]=_detached_inputs(args[0],args[1])
+        self.assertIsNotNone(screen_bindings_interface(*args)['normal'])
+        frame=args[5];guard=Storage('address','deepest descendant boundary',frame.start-88,1,1,frame.phase,False)
+        args[6]=args[6]+(guard,)
+        with self.assertRaises(AssertionError):screen_bindings_interface(*args)
+
+    def test_outer_None_still_protects_pushed_Screen_LED_frames_but_has_no_nested_child(self):
+        from config_tail_effects import screen_bindings_interface,led_pattern_interface
+        from config_regions import Storage
+        for shape,interface in (('ScreenBindings',screen_bindings_interface),('LedPattern',led_pattern_interface)):
+            with self.subTest(shape=shape):
+                args=list(self.fixture(shape,count=0));frame=args[5]
+                original=args[6]
+                args[6]=original+(Storage('address','actual pushed None save',frame.start+frame.extent-1,1,1,frame.phase,False),)
+                with self.assertRaises(AssertionError):interface(*args)
+                args[6]=original+(Storage('address','below inactive None child',frame.start-1,1,1,frame.phase,False),)
+                result=interface(*args);self.assertEqual(result['none'].get('physical_child_bytes'),frame.extent)
+                self.assertEqual(result['none']['ordinary_return']['return_SP'],frame.start+frame.extent)
+
+    def test_LED_unwritten_padding_guard_survives_containing_output_envelope(self):
+        from config_tail_effects import led_pattern_interface
+        from config_regions import Storage
+        args=list(self.fixture('LedPattern'));output=args[4];frame=args[5];original=args[6]
+        pad=Storage(frame.space,'protected old LED padding',output.start+1,1,1,frame.phase,False)
+        args[6]=original+(pad,)
+        result=led_pattern_interface(*args);self.assertIsNotNone(result['normal'])
+        self.assertIn(pad,result['protected'])
+        for offset in (0,2,5,9):
+            args[6]=original+(replace(pad,start=output.start+offset),)
+            with self.subTest(offset=offset),self.assertRaises(AssertionError):led_pattern_interface(*args)
+
+
 if __name__=='__main__':unittest.main()
