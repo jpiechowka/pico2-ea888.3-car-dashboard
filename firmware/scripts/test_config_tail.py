@@ -1697,4 +1697,145 @@ class DetachedInstructionRows(unittest.TestCase):
             tail_body(fresh,name,next_rows)
 
 
+class TailClosedProducer(unittest.TestCase):
+    def test_actual_raw_producer_checks_the_full_incoming_entry_once_before_closed_consumption(self):
+        from unittest.mock import patch
+        import config_decoded_tail as subject
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        with patch.object(subject,'_tail_entries',wraps=subject._tail_entries) as entries:
+            result,state=subject._first_boot_decoded_visitor_return_state(objects,rows,source)
+        self.assertTrue(result['successes']);self.assertTrue(state.access_bridge.uses)
+        self.assertTrue(state.error_exits)
+        self.assertEqual(entries.call_count,1,'one closed newly-owned raw producer must not replay the full upstream entry')
+
+
+class TailClosedProducerRelations(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from unittest.mock import patch
+        import config_decoded_tail as subject
+        cls.inputs=TailLiteralBodies.fixture(128)[:3]
+        with patch.object(subject,'_tail_entries',wraps=subject._tail_entries) as entries:
+            cls.result,cls.state=subject._first_boot_decoded_visitor_return_state(*cls.inputs)
+        cls.entry_checks=entries.call_count
+
+    def test_complete_supplied_frozen_fallback_matches_fresh_raw_values_types_and_aliases(self):
+        from unittest.mock import patch
+        import config_decoded_tail as subject
+        from config_structural import _detached_inputs
+        objects,rows,source=self.inputs
+        self.assertEqual(self.entry_checks,1)
+        supplied,current=_detached_inputs(objects,rows)
+        self.assertFalse(subject._raw_composition_inputs(supplied,current,source))
+        with patch.object(subject,'_tail_entries',wraps=subject._tail_entries) as entries:
+            result,state=subject._first_boot_decoded_visitor_return_state(supplied,current,source)
+        self.assertEqual(entries.call_count,2)
+        self.assertEqual(result,self.result)
+        # These are the complete typed value/container-alias encodings, not
+        # public envelope equality or translated evaluated cursor histories.
+        self.assertEqual(state.phases.checkpoint,self.state.phases.checkpoint)
+        self.assertEqual(state.access_bridge.control.checkpoint,self.state.access_bridge.control.checkpoint)
+        self.assertEqual(state.access_bridge.checkpoint,self.state.access_bridge.checkpoint)
+        self.assertIsNot(state.phases.objects,self.state.phases.objects)
+        self.assertIsNot(state.phases.source_context,self.state.phases.source_context)
+        self.assertGreater(len(state.phases.entries),1)
+        self.assertTrue(state.exits);self.assertTrue(state.error_exits)
+        for value in (state,self.state):
+            self.assertTrue(all(u.entry is value.phases.entries[u.phase_index] for u in value.access_bridge.uses))
+            self.assertTrue(all(p.entry.predecessor is value.phases.predecessor for p in value.phases.phases))
+            self.assertTrue(all(e.source_normal is value.phases.phases[e.phase_index].suffix['normal'] for e in value.exits))
+
+    def test_complete_local_handoff_check_rejects_mutation_before_any_control_consumption(self):
+        from unittest.mock import patch
+        import config_decoded_tail as subject
+        phases=self.state.phases
+        phase=next(p for p in phases.phases if p.control_effects['complete_after'] is not None)
+        original=phase.control_effects['complete_after']
+        phase.control_effects['complete_after']=original-2
+        try:
+            # A private handoff fault injected into an already constructed
+            # fixture isolates the local comparison; it is not a supplied
+            # public initializer or a mocked successful source validation.
+            with patch.object(subject,'_first_boot_tail_phases',return_value=phases), \
+                 patch('config_tail_control._tail_control_data',side_effect=AssertionError('consumed changed handoff')):
+                with self.assertRaisesRegex(AssertionError,'Tail private source/epoch/child/effect record changed'):
+                    subject._first_boot_decoded_visitor_return_state(*self.inputs)
+        finally:phase.control_effects['complete_after']=original
+
+    def test_new_path_retained_aliases_members_and_late_effects_remain_checked(self):
+        from config_tail_uses import _check_tail_uses
+        state=self.state;bridge=state.access_bridge;control=bridge.control;selection=control.structural.selection
+        replacements=dict(context=replace(selection.context),source_selection=replace(selection.source_selection),
+            widgets=replace(selection.widgets),Source_parents=tuple(list(selection.Source_parents)),
+            Source_children=dict(selection.Source_children))
+        for field,value in replacements.items():
+            original=getattr(selection,field);object.__setattr__(selection,field,value)
+            try:
+                with self.subTest(alias=field),self.assertRaisesRegex(AssertionError,'association|structure|retained'):
+                    control.current()
+            finally:object.__setattr__(selection,field,original)
+        object.__setattr__(control,'actual_reached_accesses_pending',False)
+        try:
+            with self.assertRaisesRegex(AssertionError,'retained reached-access qualification'):control.current()
+        finally:object.__setattr__(control,'actual_reached_accesses_pending',True)
+        for uses in (bridge.uses[:-1],tuple(reversed(bridge.uses)),bridge.uses+(bridge.uses[0],)):
+            with self.subTest(members=len(uses)),self.assertRaisesRegex(AssertionError,'collection changed'):
+                _check_tail_uses(replace(bridge,uses=uses))
+        use=next(u for u in bridge.uses if u.role=='Screen_output_words')
+        original=use.source['invocation'];use.source['invocation']=dict(original)
+        try:
+            with self.assertRaisesRegex(AssertionError,'collection changed'):_check_tail_uses(bridge)
+        finally:use.source['invocation']=original
+        phase=next(p for p in state.phases.phases if p.suffix_effects is not None and p.suffix_effects['complete_after'] is not None)
+        original=phase.suffix_effects['complete_after'];phase.suffix_effects['complete_after']=original-2
+        try:
+            with self.assertRaisesRegex(AssertionError,'collection changed'):_check_tail_uses(bridge)
+        finally:phase.suffix_effects['complete_after']=original
+        # A retained consumer still performs the complete fresh upstream
+        # validation after all independently injected faults are restored.
+        self.assertIs(state.current(),state)
+
+    def test_raw_eligibility_is_not_a_caller_detached_or_custom_provider_grant(self):
+        from config_decoded_tail import _raw_composition_inputs
+        from config_stack import DiagnosticObjects
+        from config_structural import _detached_inputs
+        objects,rows,source=self.inputs
+        self.assertTrue(_raw_composition_inputs(objects,rows,source))
+        class Custom(DiagnosticObjects):pass
+        self.assertFalse(_raw_composition_inputs(Custom(objects.elf,objects.sizes),rows,source))
+        objects.read_only=lambda *args: (_ for _ in ()).throw(AssertionError('caller override'))
+        try:self.assertFalse(_raw_composition_inputs(objects,rows,source))
+        finally:del objects.read_only
+        frozen,current=_detached_inputs(objects,rows)
+        self.assertFalse(_raw_composition_inputs(frozen,current,source))
+        self.assertFalse(_raw_composition_inputs(objects,dict(rows).items(),source))
+
+
+class TailClosedProducerFallback(unittest.TestCase):
+    def test_custom_reentry_and_fresh_non_site_reads_keep_independent_error_only_validation(self):
+        from config_decoded_tail import _first_boot_decoded_visitor_return_state,_raw_composition_inputs
+        from config_stack import DiagnosticObjects
+        objects,rows,source,_=TailLiteralBodies.fixture(1)
+        class Custom(DiagnosticObjects):
+            changed=False;entered=False;inner=None
+            def read_only(self,address,extent):
+                if not self.entered:
+                    self.entered=True
+                    self.inner=_first_boot_decoded_visitor_return_state(objects,rows,source)
+                raw=super().read_only(address,extent)
+                if self.changed and address<=0x1001bc64+44<address+extent:
+                    at=0x1001bc64+44-address;raw=raw[:at]+bytes((raw[at]^1,))+raw[at+1:]
+                return raw
+        custom=Custom(objects.elf,objects.sizes)
+        self.assertFalse(_raw_composition_inputs(custom,rows,source))
+        result,state=_first_boot_decoded_visitor_return_state(custom,rows,source)
+        self.assertEqual(result,custom.inner[0]);self.assertTrue(state.error_exits)
+        self.assertFalse(state.phases.entries);self.assertIsNone(state.access_bridge)
+        self.assertIs(state.phases.objects,custom)
+        self.assertIsNot(state.phases.objects,custom.inner[1].phases.objects)
+        custom.changed=True
+        with self.assertRaisesRegex(AssertionError,'payload'):
+            _first_boot_decoded_visitor_return_state(custom,rows,source)
+
+
 if __name__=='__main__':unittest.main()

@@ -699,6 +699,23 @@ class _TailState:
         return self
 
 
+def _raw_composition_inputs(objects,instructions,source_context):
+    """Select raw canonical inputs only, never a supplied checked-state flag.
+
+    A caller's already detached package can contain mutable caches or instance
+    overrides; it always keeps the independently validating retained path.
+    Actual fresh detachment and rebuilt context are checked after production.
+    """
+    from types import SimpleNamespace
+    from config_stack import DiagnosticObjects
+    from elf_image import ElfImage
+    from config_build_source import SourceContext
+    return (type(objects) is DiagnosticObjects and set(vars(objects))=={'elf','sizes'} and
+        type(objects.elf) in (ElfImage,SimpleNamespace) and type(instructions) is dict and
+        type(source_context) is SourceContext and
+        set(vars(source_context))=={'elf_sha256','attempt','build_options','sources'})
+
+
 def _first_boot_decoded_visitor_return_state(objects,instructions,source_context):
     """This component checks the admitted named ordinary/callback segment.
 
@@ -709,10 +726,31 @@ def _first_boot_decoded_visitor_return_state(objects,instructions,source_context
     from config_tail_uses import _tail_access_group
     from config_tail_control import _tail_structural,_structural_data
     from config_decoded_sources import _phase_graph
+    from config_structural import _FrozenObjects,_FrozenElf
+    raw_inputs=_raw_composition_inputs(objects,instructions,source_context)
     state=_first_boot_tail_phases(objects,instructions,source_context)
     bridge=None;uses=();exits=();unentered=None
     if state.entries:
-        bridge,uses=_tail_access_group(state);raw=bridge.control.structural
+        if (raw_inputs and type(state.objects) is _FrozenObjects and type(state.objects.elf) is _FrozenElf and
+            state.objects is not objects and not vars(state.objects) and state.rows is state.objects._rows and
+            state.rows is not instructions and state.source_context is not source_context):
+            # This invocation owns the complete private graph. The first
+            # _tail_entries already checked full Sources.current. Fixed Tail
+            # callees create new records/replacement models, with no callback
+            # or escape of that predecessor. Retain the COMPLETE local phase
+            # comparison; only its immediate second upstream replay is absent.
+            require(_phase_checkpoint(state.predecessor,state.entries,state.parents,state.children,state.phases,
+                state.predecessor_description,state.payload_sha256)==state.checkpoint,
+                'Tail private source/epoch/child/effect record changed')
+            from config_tail_control import _tail_control_data,_control_checkpoint,_TailActiveControl
+            from config_tail_uses import _family_data,_reached_data,_snapshot,_TailAccessBridge,_check_member
+            raw=_tail_structural(state);guards,record=_tail_control_data(state,raw)
+            control=_TailActiveControl(state,raw,guards,record,_control_checkpoint(state,guards,record,raw))
+            families,LEDs,lineage=_family_data(control);uses=_reached_data(control,families,LEDs)
+            bridge=_TailAccessBridge(control,families,LEDs,lineage,uses,_snapshot(control,families,LEDs,lineage,uses))
+            for use in uses:_check_member(bridge,use)
+        else:
+            bridge,uses=_tail_access_group(state);raw=bridge.control.structural
         exits=_tail_exits(state,bridge,uses)
     else:
         state.current();raw=_tail_structural(state)
