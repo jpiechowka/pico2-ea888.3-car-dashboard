@@ -79,7 +79,7 @@ def check(path,source_context=None):
     sections,named,symbols=elf.sections,elf.named,elf.symbols
     ram_start,ram_end=0x20000000,0x20080000
     static_ram,headroom=geometry(elf)
-    stack=check_stack_budget(elf,headroom,source_context=source_context) if source_context is not None else check_stack_budget(elf,headroom)
+    stack=check_stack_budget(elf,headroom,source_context=source_context)
     flash_start, journal_start = 0x10000000, 0x101FE000
     require(flash_start <= named[".end_block"][3] < journal_start, "boot info outside program flash")
     # Physical LOAD addresses include the flash copy of RAM .data/ram_func.

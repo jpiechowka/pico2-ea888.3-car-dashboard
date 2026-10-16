@@ -121,7 +121,7 @@ class MemoryQualification(unittest.TestCase):
             record=check_memory_layout.check('synthetic-owned.elf',source_context=elf.fixture_source_context)
         self.assertEqual(check_memory_layout.read_image_result(json.loads(json.dumps(record)),elf,eav,elf.fixture_source_context),record)
         policy=record['stack']['policies'][0]
-        self.assertEqual((policy['schema'],policy['owned_family'],len(policy['owned_dependencies'])),(5,'sizez_default_refill',10))
+        self.assertEqual((policy['schema'],policy['owned_family'],len(policy['owned_dependencies'])),(6,'sizez_default_refill',10))
         for fault in ('missing','empty','one_lost','duplicate','old','receiver','pair','phase','operation','width'):
             changed=deepcopy(record);p=changed['stack']['policies'][0]
             if fault=='missing':p.pop('owned_dependencies')

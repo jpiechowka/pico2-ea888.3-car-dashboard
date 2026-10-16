@@ -44,14 +44,11 @@ def run_memory_gate(frozen,destination,config_bytes,source_context=None,source_c
         raise ValueError('schema2 image requires an explicit source context and owned sidecar before launching child')
     path=destination/'memory-layout.json'
     if path.exists():raise ValueError('image result path already exists')
-    if (source_context is None)!=(source_context_path is None):
-        raise ValueError('explicit source context and its owned path must be supplied together')
     command=[sys.executable,'scripts/check_memory_layout.py',str(frozen)]
-    if source_context is not None:
-        current=load_source_context(source_context_path,ElfImage(frozen),destination.name,source_context.build_options)
-        if current!=source_context:raise ValueError('source sidecar differs from the owned attempt')
-        inspect_source_context(current,ElfImage(frozen))
-        command.extend(['--source-context',str(source_context_path.resolve())])
+    current=load_source_context(source_context_path,ElfImage(frozen),destination.name,source_context.build_options)
+    if current!=source_context:raise ValueError('source sidecar differs from the owned attempt')
+    inspect_source_context(current,ElfImage(frozen))
+    command.extend(['--source-context',str(source_context_path.resolve())])
     command.extend(['--result-json',str(path.resolve())])
     subprocess.run(command,cwd=FIRMWARE,check=True)
     return read_memory_gate(path,frozen,config_bytes,source_context)

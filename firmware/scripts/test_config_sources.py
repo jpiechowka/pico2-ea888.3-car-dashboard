@@ -1275,4 +1275,127 @@ class SourceAccessFamilies(unittest.TestCase):
             moved(-8)
 
 
+class SourcePolicyV7(unittest.TestCase):
+    @staticmethod
+    def augment(dependencies):
+        # Supplied conditional dependency geometry only. These fixtures do
+        # not derive the inherited sixteen from an actual complete producer.
+        from dataclasses import fields,is_dataclass
+        from config_regions import Storage,borrow
+        from config_source_access import SourceAccessContext,SourceFamily,EXPECTED_SOURCE_ROLES,SITE_SHAPES,SOURCE_EPOCHS
+        def physical(value):
+            if type(value) is Storage:
+                return replace(value,start=value.start+0x20070648) if value.space.startswith('stack:') else value
+            if is_dataclass(value):return replace(value,**{f.name:physical(getattr(value,f.name)) for f in fields(value)})
+            if type(value) is tuple:return tuple(physical(v) for v in value)
+            return value
+        dependencies=tuple(physical(v) for v in dependencies);widget=dependencies[-4]
+        old=widget.context;phase='decoded_sources_group'
+        loader=replace(old.loader,phase=phase);visitor=replace(old.visitor,phase=phase)
+        config=replace(old.config.storage,phase=phase)
+        child=Storage(visitor.space,'supplied ChannelSource',visitor.start-72,72,8,phase,True)
+        guards=tuple(replace(v,phase=phase) for v in old.protected);sources=[]
+        for role in EXPECTED_SOURCE_ROLES:
+            local=role in EXPECTED_SOURCE_ROLES[:2];parent=0x1001b500 if local else widget.parent
+            protected=guards+((Storage(visitor.space,'Source saves',child.start+36,36,4,phase,False),) if local else ())
+            context=SourceAccessContext(loader,visitor,child if local else visitor,borrow(config,0,14576,phase),protected)
+            sites=tuple((parent+off,*rest) for off,*rest in SITE_SHAPES[role])
+            epochs=tuple((widget.parent+off,out,tag,8-i) for i,(off,out,tag) in enumerate(SOURCE_EPOCHS)) if local else ()
+            sources.append(SourceFamily(role,'sizez',parent,widget.parent,sites,context,epochs))
+        return dependencies+tuple(sources)
+
+    def test_full_conditional_v7_tuple_roundtrips_without_creating_completion(self):
+        import json
+        import config_platform as subject
+        from test_config_stack import ValidatorPlatformFamilies,ConditionalStackPolicy
+        dependencies=ValidatorPlatformFamilies().dependencies('sizez')
+        if len(dependencies)==20:dependencies=self.augment(dependencies)
+        objects,view,context=ConditionalStackPolicy().fixture()
+        policy=subject.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
+        self.assertEqual((policy.schema,policy.scope,policy.scope_sha256),(6,'h2-rp2350-secure-owned-access-v7',
+            '50408f1a4774caff701c236184a4f17060cb9e17ade5fffaa0ca208d4f1b6181'))
+        self.assertEqual(len(dependencies),24)
+        self.assertEqual(subject.read_policy(json.loads(json.dumps(policy.to_record())),policy),policy)
+        self.assertTrue(all(v.to_record()['physical_tag_is_completed_Source'] is False for v in dependencies[-4:]))
+        self.assertLessEqual(len((json.dumps(policy.to_record(),sort_keys=True)+'\n').encode()),65536)
+
+    def test_v7_rejects_missing_duplicate_old_scope_and_cross_activation_sources(self):
+        import json,copy
+        import config_platform as subject
+        from test_config_stack import ValidatorPlatformFamilies,ConditionalStackPolicy
+        values=ValidatorPlatformFamilies().dependencies('sizez')
+        if len(values)==20:values=self.augment(values)
+        objects,view,context=ConditionalStackPolicy().fixture()
+        policy=subject.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=values)
+        for fault in ('missing','duplicate','reorder','legacy20','visitor','loader','config'):
+            changed=list(values)
+            if fault=='missing':changed.pop()
+            elif fault=='duplicate':changed[-1]=changed[-2]
+            elif fault=='reorder':changed[-4],changed[-3]=changed[-3],changed[-4]
+            elif fault=='legacy20':changed=changed[:-4]
+            else:
+                family=changed[-4];c=family.context
+                if fault=='loader':c=replace(c,loader=replace(c.loader,identity='another loader'))
+                elif fault=='visitor':c=replace(c,visitor=replace(c.visitor,identity='another Visitor'))
+                else:
+                    config=replace(c.config.storage,start=c.config.start+0x4000)
+                    c=replace(c,config=replace(c.config,storage=config),protected=tuple(
+                        replace(v,start=v.start+0x4000) if v.space=='address' else v for v in c.protected))
+                changed[-4]=replace(family,context=c)
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                subject.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=tuple(changed))
+        record=json.loads(json.dumps(policy.to_record()))
+        for fault in ('old','width','bool','kind','complete'):
+            changed=copy.deepcopy(record)
+            if fault=='old':changed.update(schema=5,scope='h2-rp2350-secure-owned-access-v6',
+                scope_sha256='627f472cf991e64d868d29eb67ef302218d57327a726cdfbc535ed5a97e6eeed')
+            elif fault=='width':changed['owned_dependencies'][-1]['sites'][0]['width']=2.0
+            elif fault=='bool':changed['owned_dependencies'][-1]['sites'][0]['offset']=True
+            elif fault=='kind':changed['owned_dependencies'][-1]['kind']='decoded_widget_access_family'
+            else:changed['owned_dependencies'][-1]['physical_tag_is_completed_Source']=True
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):subject.read_policy(changed,policy)
+
+    def test_current_image_rechecks_each_Source_site_after_coherent_artifact_identity_change(self):
+        import hashlib,copy
+        from config_platform import current_image_policy
+        from test_config_stack import ValidatorPlatformFamilies
+        elf,eav,stack=ValidatorPlatformFamilies().image_fixture('sizez')
+        record=stack['policies'][0]
+        self.assertEqual(len(current_image_policy(record,elf,eav).owned_dependencies),24)
+        original=elf.data
+        for dependency in record['owned_dependencies'][-4:]:
+            site=dependency['sites'][0]['site'];section=next(s for s in elf.sections if s[3]<=site<site+4<=s[3]+s[5])
+            changed=bytearray(original);changed[section[4]+site-section[3]]^=1;elf.data=bytes(changed)
+            policy=copy.deepcopy(record);policy['elf_sha256']=hashlib.sha256(elf.data).hexdigest()
+            try:
+                with self.subTest(role=dependency['role']),self.assertRaisesRegex(AssertionError,'Sources operation bytes'):
+                    current_image_policy(policy,elf,eav)
+            finally:elf.data=original
+
+    def test_supplied_24_family_image_obeys_exact_enclosing_wire_cap(self):
+        import json,tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import check_memory_layout as image
+        import capture_target_bench as capture
+        from test_config_stack import ValidatorPlatformFamilies
+        supplied=ValidatorPlatformFamilies()
+        elf,eav,stack=supplied.image_fixture('sizez',1)
+        static,headroom=image.geometry(elf)
+        small=image._qualified_image(stack,elf,static,headroom,eav,elf.fixture_source_context)
+        size=lambda v:len((json.dumps(v,sort_keys=True)+'\n').encode())
+        elf,eav,stack=supplied.image_fixture('sizez',65536-size(small)+1)
+        static,headroom=image.geometry(elf)
+        record=image._qualified_image(stack,elf,static,headroom,eav,elf.fixture_source_context)
+        wire=(json.dumps(record,sort_keys=True)+'\n').encode()
+        self.assertEqual(len(record['stack']['policies'][0]['owned_dependencies']),24)
+        self.assertEqual(len(wire),65536)
+        with tempfile.TemporaryDirectory() as folder,patch.object(capture,'ElfImage',return_value=elf):
+            path=Path(folder)/'memory-layout.json';path.write_bytes(wire)
+            self.assertEqual(capture.read_memory_gate(path,'supplied.elf',eav,elf.fixture_source_context)['record'],record)
+            path.write_bytes(wire+b' ')
+            with self.assertRaisesRegex(ValueError,'oversized'):
+                capture.read_memory_gate(path,'supplied.elf',eav,elf.fixture_source_context)
+
+
 if __name__=='__main__':unittest.main()

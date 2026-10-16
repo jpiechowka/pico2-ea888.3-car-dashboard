@@ -361,7 +361,7 @@ class CaptureMemoryQualification(unittest.TestCase):
     def test_explicit_source_sidecar_route_rejects_missing_changed_and_unproved_semantics(self):
         from config_build_source import SOURCE_PATHS,make_source_context,write_source_context
         elf,eav,record=self.fixture()
-        for fault in (None,'missing_pair','attempt','changed_bytes','semantics'):
+        for fault in (None,'missing_pair','missing_context','missing_both','attempt','changed_bytes','semantics'):
             with self.subTest(fault=fault),tempfile.TemporaryDirectory() as folder:
                 destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
                 before={name:(capture.REPO/name).read_bytes() for name in SOURCE_PATHS}
@@ -381,7 +381,9 @@ class CaptureMemoryQualification(unittest.TestCase):
                         self.assertEqual(run.call_count,1)
                     else:
                         with self.assertRaises((AssertionError,ValueError)):
-                            capture.run_memory_gate(frozen,destination,eav,value,None if fault=='missing_pair' else path)
+                            capture.run_memory_gate(frozen,destination,eav,
+                                None if fault in ('missing_context','missing_both') else value,
+                                None if fault in ('missing_pair','missing_both') else path)
                         run.assert_not_called();self.assertFalse((destination/'memory-layout.json').exists())
 
     def test_real_python_child_reads_explicit_source_bytes_before_supplied_image_output(self):
