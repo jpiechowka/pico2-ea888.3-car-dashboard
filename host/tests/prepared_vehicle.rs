@@ -17,21 +17,46 @@ impl Drop for OwnedPort {
     fn drop(&mut self) { self.0.drops.set(self.0.drops.get() + 1); }
 }
 impl Port for OwnedPort {
-    fn poll_read(&mut self, _: &mut Context<'_>, _: &mut [u8]) -> Poll<Result<usize, IoError>> {
+    fn poll_read(
+        &mut self,
+        _: &mut Context<'_>,
+        _: &mut [u8],
+    ) -> Poll<Result<usize, IoError>> {
         self.0.io.set(self.0.io.get() + 1);
         Poll::Pending
     }
-    fn poll_write(&mut self, _: &mut Context<'_>, _: &[u8]) -> Poll<Result<usize, IoError>> {
+
+    fn poll_write(
+        &mut self,
+        _: &mut Context<'_>,
+        _: &[u8],
+    ) -> Poll<Result<usize, IoError>> {
         self.0.io.set(self.0.io.get() + 1);
         Poll::Pending
     }
-    fn poll_flush(&mut self, _: &mut Context<'_>) -> Poll<Result<(), IoError>> {
+
+    fn poll_flush(
+        &mut self,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<(), IoError>> {
         self.0.io.set(self.0.io.get() + 1);
         Poll::Pending
     }
-    fn busy(&self) -> bool { self.0.io.set(self.0.io.get() + 1); false }
-    fn rx_error(&self) -> Option<IoError> { self.0.io.set(self.0.io.get() + 1); None }
-    fn discard_rx(&mut self) -> Result<(), IoError> { self.0.io.set(self.0.io.get() + 1); Ok(()) }
+
+    fn busy(&self) -> bool {
+        self.0.io.set(self.0.io.get() + 1);
+        false
+    }
+
+    fn rx_error(&self) -> Option<IoError> {
+        self.0.io.set(self.0.io.get() + 1);
+        None
+    }
+
+    fn discard_rx(&mut self) -> Result<(), IoError> {
+        self.0.io.set(self.0.io.get() + 1);
+        Ok(())
+    }
 }
 
 // One sequence makes origin issuance observable without concurrent constructors.
@@ -54,13 +79,28 @@ fn prepared_construction_preserves_bound_configuration_time_and_port_ownership()
     assert_eq!(first.link(), assembled.link());
     assert_eq!(first.telemetry(), assembled.telemetry());
     assert!(core::ptr::eq(assembled.configuration().unwrap(), &config));
-    assert_eq!(assembled.snapshot().sensor(SensorId::Lambda).history().duration_seconds(), 10);
+    assert_eq!(
+        assembled
+            .snapshot()
+            .sensor(SensorId::Lambda)
+            .history()
+            .duration_seconds(),
+        10
+    );
     assert_eq!(assembled.link().state, LinkState::Recovering);
     assert_eq!(counts.io.get(), 0);
 
     let error = Vehicle::prepare_configured(
-        OwnedPort(counts.clone()), Profile { responder: 0, ..Profile::UNQUALIFIED }, 42, &config,
-    ).err().unwrap();
+        OwnedPort(counts.clone()),
+        Profile {
+            responder: 0,
+            ..Profile::UNQUALIFIED
+        },
+        42,
+        &config,
+    )
+    .err()
+    .unwrap();
     assert_eq!(error, SessionError::Client(ClientError::Address));
     assert_eq!(counts.drops.get(), 2);
     assert_eq!(counts.io.get(), 0);

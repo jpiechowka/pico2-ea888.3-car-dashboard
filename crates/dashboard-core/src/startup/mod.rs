@@ -14,7 +14,10 @@ pub fn draw_custom(
     frame: &mut crate::display::FrameBuffer,
 ) -> Result<(), dashboard_config::startup_asset::AssetError> {
     let mut rows = asset.frame_at(elapsed, looping, reduced).rows();
-    for row in frame.chunks_exact_mut(dashboard_config::startup_asset::WIDTH * 2) {
+    for row in frame
+        .as_chunks_mut::<{ dashboard_config::startup_asset::WIDTH * 2 }>()
+        .0
+    {
         rows.next(row)?;
     }
     Ok(())

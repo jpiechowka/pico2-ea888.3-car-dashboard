@@ -208,15 +208,14 @@ jobs:
         run: cargo clippy --locked -p dashboard-pico2 --features target-bench,longan-rx12,frame-trace,te-trace -- -D warnings
         working-directory: firmware
       - name: Mutually exclusive profile guards
-        run: python3 scripts/check_feature_profiles.py
+        run: |
+          cargo fetch --locked --manifest-path ../Cargo.toml
+          python3 scripts/check_feature_profiles.py
         working-directory: firmware
 
   build-pico2:
     name: Build Pico 2 (${{ matrix.profile }})
     runs-on: ubuntu-latest
-    env:
-      # Keep linker symbols for the layout check; target code is still optimized.
-      CARGO_PROFILE_RELEASE_STRIP: none
     strategy:
       matrix:
         include:
@@ -265,8 +264,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware
+      - name: Fetch capture-tool workspace dependencies
+        run: cargo fetch --locked
       - name: Build pico2
-        run: python3 scripts/capture_target_bench.py ci-${{ matrix.profile }} --firmware --features "${{ matrix.features }}" ${{ matrix.extra_args }}
+        # rust-cache sets CARGO_INCREMENTAL=0. Capture owns compiler/profile inputs,
+        # including strip=none; do not pass ambient overrides through its strict gate.
+        run: |
+          unset CARGO_INCREMENTAL
+          python3 scripts/capture_target_bench.py ci-${{ matrix.profile }} --firmware --features "${{ matrix.features }}" ${{ matrix.extra_args }}
         working-directory: firmware
       # Capture runs the complete RAM gate with its explicit pre-build source context.
       - name: Check captured flash lockout contracts
