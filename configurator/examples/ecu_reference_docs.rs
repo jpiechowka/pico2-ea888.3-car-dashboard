@@ -22,6 +22,13 @@ fn main() {
         if let Some(id) = entry.definition {
             println!("Dashboard binding: `{id:?}`. Live qualification remains required.\n");
         }
+        if let Some(binding) = entry.binding() {
+            println!(
+                "Current catalogue request: `{}`. Decoder identifier: `{}`.\n\nReply/implementation note: \
+                 {}\n\nAvailability: {}.\n",
+                binding.request, binding.decoder, binding.interpretation, binding.availability
+            );
+        }
         for (index, url) in entry.references.iter().enumerate() {
             println!("- [Source {}]({})", index + 1, url);
         }

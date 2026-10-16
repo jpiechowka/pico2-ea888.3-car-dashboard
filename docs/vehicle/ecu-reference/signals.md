@@ -34,6 +34,12 @@ Documentary decoding/scaling: `No decoder`
 
 Dashboard binding: `Disabled`. Live qualification remains required.
 
+Current catalogue request: `No request`. Decoder identifier: `None`.
+
+Reply/implementation note: No request or decoder.
+
+Availability: Disabled; no acquisition.
+
 
 <a id="coolant"></a>
 
@@ -50,6 +56,12 @@ Units: °C
 Documentary decoding/scaling: `One unsigned byte A: A - 40`
 
 Dashboard binding: `ObdCoolant05`. Live qualification remains required.
+
+Current catalogue request: `01 05`. Decoder identifier: `TemperatureAminus40`.
+
+Reply/implementation note: 41 PID echo, 1 unsigned data byte A; A - 40 degC. Capability and deployment qualification required.
+
+Availability: Generic decoder implemented; responder capability and deployment qualification still required.
 
 - [Source 1](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/commands.py)
 - [Source 2](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/decoders.py)
@@ -71,6 +83,12 @@ Documentary decoding/scaling: `One unsigned byte A: A - 40`
 
 Dashboard binding: `ObdIntake0f`. Live qualification remains required.
 
+Current catalogue request: `01 0F`. Decoder identifier: `TemperatureAminus40`.
+
+Reply/implementation note: 41 PID echo, 1 unsigned data byte A; A - 40 degC. Capability and deployment qualification required.
+
+Availability: Generic decoder implemented; responder capability and deployment qualification still required.
+
 - [Source 1](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/commands.py)
 - [Source 2](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/decoders.py)
 - [Source 3](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/UnitsAndScaling.py)
@@ -90,6 +108,12 @@ Units: °C
 Documentary decoding/scaling: `One unsigned byte A: A - 40`
 
 Dashboard binding: `ObdOil5c`. Live qualification remains required.
+
+Current catalogue request: `01 5C`. Decoder identifier: `TemperatureAminus40`.
+
+Reply/implementation note: 41 PID echo, 1 unsigned data byte A; A - 40 degC. Capability and deployment qualification required.
+
+Availability: Generic decoder implemented; responder capability and deployment qualification still required.
 
 - [Source 1](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/commands.py)
 - [Source 2](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/decoders.py)
@@ -111,6 +135,12 @@ Documentary decoding/scaling: `Two unsigned big-endian bytes AB: AB / 1000`
 
 Dashboard binding: `ObdVoltage42`. Live qualification remains required.
 
+Current catalogue request: `01 42`. Decoder identifier: `Be16Millivolts`.
+
+Reply/implementation note: 41 42 echo, 2 unsigned big-endian data bytes AB; AB / 1000 V. ECU module voltage, not battery-post measurement.
+
+Availability: Generic decoder implemented; responder capability and deployment qualification still required.
+
 - [Source 1](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/commands.py)
 - [Source 2](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/decoders.py)
 - [Source 3](https://github.com/brendan-w/python-OBD/blob/a378bdd81d58c67d08050e4244173a9a7dbda73d/obd/UnitsAndScaling.py)
@@ -131,6 +161,12 @@ Documentary decoding/scaling: `Default MAP A kPa; nonzero 4F d: A*10*d/255 kPa. 
 
 Dashboard binding: `ObdMapMinusAmbient`. Live qualification remains required.
 
+Current catalogue request: `01 0B + 01 33`. Decoder identifier: `MapDifferenceWithScalingPrerequisites`.
+
+Reply/implementation note: Each 41 PID echo has 1 unsigned byte kPa; (MAP - ambient) / 100 bar. PID4F scaling, saturation, same ECU/epoch and input age/skew unresolved. No executable binding.
+
+Availability: Unavailable: scaling prerequisites are unresolved.
+
 - [Source 1](https://www.autonerdz.com/yabbfiles/Attachments/1979v3.pdf)
 - [Source 2](https://github.com/fr3ts0n/AndrOBD/blob/2d4974f3095ee2594833b59372b39d175ea24d71/library/src/main/java/com/fr3ts0n/ecu/prot/obd/res/conversions.csv)
 
@@ -149,6 +185,12 @@ Units: Lambda dimensionless; sensor V separately
 Documentary decoding/scaling: `x=256*A+B, y=256*C+D. Historical x*2/65535; y*8/65535 V. Competing defaults: x/32768; x*1.999/65535; y*7.999/65535`
 
 Dashboard binding: `ObdLambda24`. Live qualification remains required.
+
+Current catalogue request: `01 24`. Decoder identifier: `WidebandLambdaWithScalingPrerequisites`.
+
+Reply/implementation note: 41 PID echo, 4 data bytes; first unsigned BE16 / 32768 under reviewed default scaling. Remaining voltage/current is not lambda. Bank/sensor, PID4F and normative scaling unresolved.
+
+Availability: Unavailable: scaling prerequisites are unresolved.
 
 - [Source 1](https://www.autonerdz.com/yabbfiles/Attachments/1979v3.pdf)
 - [Source 2](https://github.com/fr3ts0n/AndrOBD/blob/2d4974f3095ee2594833b59372b39d175ea24d71/library/src/main/java/com/fr3ts0n/ecu/prot/obd/res/conversions.csv)
@@ -170,6 +212,12 @@ Documentary decoding/scaling: `Historical ratio x*2/65535 vs x/32768 and x*1.999
 
 Dashboard binding: `ObdLambda34`. Live qualification remains required.
 
+Current catalogue request: `01 34`. Decoder identifier: `WidebandLambdaWithScalingPrerequisites`.
+
+Reply/implementation note: 41 PID echo, 4 data bytes; first unsigned BE16 / 32768 under reviewed default scaling. Remaining voltage/current is not lambda. Bank/sensor, PID4F and normative scaling unresolved.
+
+Availability: Unavailable: scaling prerequisites are unresolved.
+
 - [Source 1](https://www.autonerdz.com/yabbfiles/Attachments/1979v3.pdf)
 - [Source 2](https://github.com/fr3ts0n/AndrOBD/blob/2d4974f3095ee2594833b59372b39d175ea24d71/library/src/main/java/com/fr3ts0n/ecu/prot/obd/res/conversions.csv)
 
@@ -189,6 +237,12 @@ Documentary decoding/scaling: `u8 x - 40`
 
 Dashboard binding: `SimosCoolant11cd`. Live qualification remains required.
 
+Current catalogue request: `22 11 CD`. Decoder identifier: `TemperatureAminus40`.
+
+Reply/implementation note: 62 11 CD echo, 1 unsigned data byte A; A - 40 degC. Not verified on this ECU/software.
+
+Availability: Unavailable: family candidate decoder is not enabled.
+
 - [Source 1](https://github.com/bri3d/VW_Flash/blob/293f46d782bae2ced930497889b71eb782f122cb/logs/csv/parameters_22.csv)
 
 <a id="simos-oil"></a>
@@ -206,6 +260,12 @@ Units: °C
 Documentary decoding/scaling: `unsigned BE16 (x-2731.4)/10`
 
 Dashboard binding: `SimosOil202f`. Live qualification remains required.
+
+Current catalogue request: `22 20 2F`. Decoder identifier: `Be16KelvinTenths`.
+
+Reply/implementation note: 62 20 2F echo, 2 unsigned big-endian data bytes AB; (AB - 2731.4) / 10 degC. Preserve documentary constant; ECU/software unverified.
+
+Availability: Unavailable: family candidate decoder is not enabled.
 
 - [Source 1](https://github.com/bri3d/VW_Flash/blob/293f46d782bae2ced930497889b71eb782f122cb/logs/csv/parameters_22.csv)
 
@@ -225,6 +285,12 @@ Documentary decoding/scaling: `u8 0.75*x-48`
 
 Dashboard binding: `SimosIntake1001`. Live qualification remains required.
 
+Current catalogue request: `22 10 01`. Decoder identifier: `IntakeThreeQuartersMinus48`.
+
+Reply/implementation note: 62 10 01 echo, 1 unsigned data byte A; 0.75 * A - 48 degC. Intake location and ECU/software unverified.
+
+Availability: Unavailable: family candidate decoder is not enabled.
+
 - [Source 1](https://github.com/bri3d/VW_Flash/blob/293f46d782bae2ced930497889b71eb782f122cb/logs/csv/parameters_22.csv)
 
 <a id="simos-voltage"></a>
@@ -242,6 +308,12 @@ Units: V
 Documentary decoding/scaling: `u8 0.1015625*x (13*x/128)`
 
 Dashboard binding: `SimosVoltage14a6`. Live qualification remains required.
+
+Current catalogue request: `22 14 A6`. Decoder identifier: `Voltage13Over128`.
+
+Reply/implementation note: 62 14 A6 echo, 1 unsigned data byte A; A * 13 / 128 V. ECU module voltage. ECU/software unverified.
+
+Availability: Unavailable: family candidate decoder is not enabled.
 
 - [Source 1](https://github.com/bri3d/VW_Flash/blob/293f46d782bae2ced930497889b71eb782f122cb/logs/csv/parameters_22.csv)
 
@@ -261,6 +333,12 @@ Documentary decoding/scaling: `unsigned BE16 MAP x/10; ambient x/120.60176665439
 
 Dashboard binding: `SimosMapMinusAmbient`. Live qualification remains required.
 
+Current catalogue request: `22 39 C0 + 22 13 CA`. Decoder identifier: `SimosMapDifference`.
+
+Reply/implementation note: Each 62 DID echo: 2 unsigned BE data bytes. MAP39C0 = AB/10 kPa absolute; ambient13CA = AB/120.60176665439 kPa. Difference /100 bar. Same ECU/epoch and bounded age/skew required. Neither alone is gauge boost.
+
+Availability: Unavailable: family candidate decoder is not enabled.
+
 - [Source 1](https://github.com/bri3d/VW_Flash/blob/293f46d782bae2ced930497889b71eb782f122cb/logs/csv/parameters_22.csv)
 
 <a id="simos-lambda"></a>
@@ -278,6 +356,12 @@ Units: Lambda dimensionless
 Documentary decoding/scaling: `unsigned BE16 actual x/1024; target x/32768`
 
 Dashboard binding: `SimosLambda10c0`. Live qualification remains required.
+
+Current catalogue request: `22 10 C0`. Decoder identifier: `Be16LambdaOver1024`.
+
+Reply/implementation note: 62 10 C0 echo, 2 unsigned big-endian data bytes AB; AB/1024 actual lambda (lean above 1). Not commanded lambda. ECU/software unverified.
+
+Availability: Unavailable: family candidate decoder is not enabled.
 
 - [Source 1](https://github.com/bri3d/VW_Flash/blob/293f46d782bae2ced930497889b71eb782f122cb/logs/csv/parameters_22.csv)
 - [Source 2](https://github.com/bri3d/MQBSimosLogVariables/blob/747b50e1af650c39cd9c5f6b4d58905db6debb45/exportedPIDs.csv)
@@ -298,6 +382,12 @@ Documentary decoding/scaling: `Historical signed 16-bit identity scale; not an a
 
 Dashboard binding: `DsgOil2104`. Live qualification remains required.
 
+Current catalogue request: `22 21 04`. Decoder identifier: `Le16SignedCelsius`.
+
+Reply/implementation note: 62 21 04 echo, 2 signed little-endian data bytes, identity degC. Historical generic DSG lead, not DQ381 proof. Route, TCU identity and exact sensor semantics unknown.
+
+Availability: Unavailable: family candidate decoder is not enabled.
+
 - [Source 1](https://github.com/Switchleg1/SimosTools/blob/f99771ceb0442c863601a84a282c6e67e6b311a8/app/src/main/java/com/app/simostools/PIDs.kt)
 - [Source 2](https://github.com/Switchleg1/SimosTools/blob/f99771ceb0442c863601a84a282c6e67e6b311a8/app/src/main/java/com/app/simostools/UDSlog.kt)
 
@@ -316,6 +406,12 @@ Units: Location-specific °C once qualified
 Documentary decoding/scaling: `No qualified definition`
 
 Dashboard binding: `UnresolvedEgt`. Live qualification remains required.
+
+Current catalogue request: `No qualified request mapping`. Decoder identifier: `Unresolved`.
+
+Reply/implementation note: No request or decoder established for measured manifold EGT on this ECU. Catalyst PIDs and modeled temperatures are not substitutes.
+
+Availability: Unavailable: sensor identity or semantics are unresolved.
 
 - [Source 1](https://www.ross-tech.com/vcds/tour/controller-channels-map.php)
 

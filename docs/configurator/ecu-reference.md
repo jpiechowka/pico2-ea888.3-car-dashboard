@@ -13,3 +13,13 @@ Workspace panels remain mounted. Navigation uses the existing Studio helper to r
 Use Left/Right/Home/End in the tab bar, then Enter or Space to activate. All filters and result buttons have visible labels and keyboard focus. Status is conveyed in text as well as colour. At narrow widths, the list stacks above the detail; the shared preview remains Studio-owned.
 
 See the [technical ECU library](../vehicle/ecu-reference/README.md) and [generated catalogue](../vehicle/ecu-reference/signals.md). Browser keyboard, narrow/wide layout and final screenshot validation are separate integration checks; native catalogue tests do not prove browser rendering or physical support.
+
+## Inspecting the shipped decoder
+
+Cards with a dashboard binding also show the authoritative runtime catalogue's request bytes, decoder identifier, reply byte width/order and implementation availability. Requests exclude CAN and ISO-TP framing. These fields describe the shipped definition, not a live reply and not your configured route or polling interval. A named candidate decoder can remain unavailable. Read the research conflict immediately above it before interpreting a source.
+
+## Diagnostic context while researching
+
+Use **Diagnostics** to inspect the existing event list, including severity, category, stable code, subject, sequence, elapsed time and repeated-event count. Warn/Error console output is enabled by default; Debug/Trace is opt-in and shares a ten-events-per-second allowance. Browser output uses fixed severity colours and keeps severity text; generated messages are data, not console formatting strings. The store holds at most512 events and exports at most2MiB of JSONL.
+
+The browser developer console belongs to the browser. It cannot write directly into the PowerShell terminal running Trunk. Native helper job output has its own bounded stream and is separate from browser editing events. Browser-to-terminal forwarding requires an authenticated helper relay; console colours alone do not provide that relay. Reference browsing does not open a vehicle connection or produce per-frame logs. Do not paste VIN, capability URLs, full configuration or private correspondence into a diagnostic report.

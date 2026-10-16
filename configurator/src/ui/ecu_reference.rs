@@ -31,7 +31,11 @@ pub fn ReferenceWorkspace(ui: Ui) -> impl IntoView {
                         view!{
                             <p class="reference-section">{entry.section.label()}</p><h2>{entry.title}</h2><p class="reference-status">{entry.status.label()}</p>
                             <dl><dt>"Applicability"</dt><dd>{entry.scope}</dd><dt>"Meaning and qualification"</dt><dd>{entry.detail}</dd><dt>"Units"</dt><dd>{entry.units}</dd><dt>"Documentary decoding / scaling"</dt><dd><code>{entry.formula}</code></dd><dt>"Live qualification"</dt><dd>"Not established on the current vehicle. A catalogue entry cannot grant qualification."</dd></dl>
-                            {entry.definition.map(|id|view!{<p class="hint">{format!("Dashboard binding: {id:?}. {}", if entry.status==Status::Implemented{"Generic decoder implemented; deployment and responder support still required."}else{"No executable measurement is enabled by this reference."})}</p>})}
+                            {entry.binding().map(|binding|view!{
+                                <h3>"Current dashboard definition"</h3>
+                                <dl><dt>"Documentary request bytes"</dt><dd><code>{binding.request}</code></dd><dt>"Decoder identifier"</dt><dd><code>{binding.decoder}</code></dd><dt>"Reply shape and implementation note"</dt><dd>{binding.interpretation}</dd><dt>"Implementation availability"</dt><dd>{binding.availability}</dd></dl>
+                                <p class="hint">"Read-only projection of the shipped catalogue. Request bytes exclude CAN / ISO-TP framing. Research conflicts above remain unresolved even where a candidate decoder has a name. Your configured route and polling settings are separate."</p>
+                            })}
                             <h3>"Public evidence"</h3><p class="hint">"Pinned code shows an implementation; historical standards copies and family documentation have the stated scope. Links open only when selected."</p>
                             <ul class="reference-links">{entry.references.iter().enumerate().map(|(index,url)|view!{<li><a href=*url target="_blank" rel="noopener noreferrer">{format!("Source {} ↗",index+1)}<span>{*url}</span></a></li>}).collect_view()}</ul>
                         }

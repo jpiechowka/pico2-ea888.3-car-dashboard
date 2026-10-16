@@ -129,3 +129,31 @@ fn reference_navigation_keeps_raw_and_pending_json_without_an_undo_entry() {
     let encoded = workspace.preferences().unwrap();
     assert!(WorkspaceState::from_preferences(Some(&encoded)).1.is_none());
 }
+
+#[test]
+fn runtime_binding_details_are_read_only_and_preserve_unavailable_reasons() {
+    let mut state = ReferenceState::default();
+    state.open_definition(DefinitionId::ObdVoltage42);
+    let binding = state.selected().binding().unwrap();
+    assert_eq!(binding.request, "01 42");
+    assert!(binding.interpretation.contains("2 unsigned big-endian"));
+    assert!(binding.availability.contains("Generic"));
+    state.open_definition(DefinitionId::ObdLambda24);
+    assert!(state.selected().binding().unwrap().availability.contains("scaling"));
+    state.open_definition(DefinitionId::SimosMapMinusAmbient);
+    assert_eq!(state.selected().binding().unwrap().request, "22 39 C0 + 22 13 CA");
+    state.open_definition(DefinitionId::Disabled);
+    assert_eq!(
+        state.selected().binding().unwrap().availability,
+        "Disabled; no acquisition"
+    );
+    for id in DEFINITIONS {
+        state.open_definition(id);
+        let binding = state.selected().binding().unwrap();
+        assert!(!binding.request.is_empty());
+        assert_eq!(
+            binding.interpretation,
+            dashboard_configurator::config::definition(id).interpretation
+        );
+    }
+}

@@ -64,6 +64,46 @@ pub struct Entry {
     pub references: &'static [&'static str],
     pub definition: Option<DefinitionId>,
 }
+/// Text projection of the authoritative runtime catalogue, never a request constructor.
+pub struct BindingDetail {
+    pub request: String,
+    pub decoder: String,
+    pub interpretation: &'static str,
+    pub availability: &'static str,
+}
+impl Entry {
+    pub fn binding(&self) -> Option<BindingDetail> {
+        use crate::config::{Access, UnavailableReason};
+        let d = definition(self.definition?);
+        let did = |value: u16| format!("22 {:02X} {:02X}", value >> 8, value & 255);
+        let request = match d.access {
+            Access::None => "No request".into(),
+            Access::Obd01 { pid } => format!("01 {pid:02X}"),
+            Access::ReadDid22 { did: value } => did(value),
+            Access::MapMinusAmbient { map_pid, ambient_pid } => format!("01 {map_pid:02X} + 01 {ambient_pid:02X}"),
+            Access::DidMapMinusAmbient { map_did, ambient_did } => format!("{} + {}", did(map_did), did(ambient_did)),
+            Access::Unresolved => "No qualified request mapping".into(),
+        };
+        let availability = if d.id == DefinitionId::Disabled {
+            "Disabled; no acquisition"
+        } else {
+            match d.unavailable {
+                None => "Generic decoder implemented; responder capability and deployment qualification still required",
+                Some(UnavailableReason::CandidateDecoder) => "Unavailable: family candidate decoder is not enabled",
+                Some(UnavailableReason::ScalingUnresolved) => "Unavailable: scaling prerequisites are unresolved",
+                Some(UnavailableReason::SensorUnresolved) => "Unavailable: sensor identity or semantics are unresolved",
+                Some(UnavailableReason::MissingRoute) => "Unavailable: a qualified route is missing",
+                Some(UnavailableReason::RouteNotAvailable) => "Unavailable: route is not supported by this deployment",
+            }
+        };
+        Some(BindingDetail {
+            request,
+            decoder: format!("{:?}", d.decoder),
+            interpretation: d.interpretation,
+            availability,
+        })
+    }
+}
 #[derive(Clone, Debug, Default)]
 pub struct ReferenceState {
     query: String,
