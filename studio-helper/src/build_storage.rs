@@ -324,6 +324,36 @@ pub(crate) fn reserve(repo: &Path) -> Result<Reservation, String> {
     })
 }
 impl Reservation {
+    fn retain_cargo_diagnostics(&self) -> Result<(), String> {
+        // The fixed capture path belongs to this closed attempt, never a caller path.
+        let source = self
+            .path
+            .join("source/firmware/target/bench-captures/native/cargo-diagnostics.log");
+        match std::fs::symlink_metadata(&source) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+            Ok(_) => {}
+        }
+        let _parents = crate::file_locks::ancestors(std::slice::from_ref(&source))?;
+        let mut bytes = Vec::new();
+        crate::file_locks::read_file(&source)?
+            .take(256 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > 256 * 1024 {
+            return Err("Cargo failure diagnostics exceed 256 KiB; quarantined".into());
+        }
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.path.join("cargo-diagnostics.log"))
+            .map_err(|e| e.to_string())?;
+        output
+            .write_all(&bytes)
+            .and_then(|_| output.sync_all())
+            .map_err(|e| e.to_string())
+    }
+
     pub(crate) fn close(
         &mut self,
         artifact: bool,
@@ -334,6 +364,9 @@ impl Reservation {
         {
             return Err("Build storage root identity changed".into());
         }
+        if !artifact {
+            self.retain_cargo_diagnostics()?;
+        }
         let (bytes, rows) = inventory(&self.path, true)?;
         drop(self.root_lock.take());
         if artifact && bytes > 4 * GIB {
@@ -341,12 +374,16 @@ impl Reservation {
         }
         if !artifact {
             // The compiler has closed and the frozen lease has been released. Keep input
-            // and the small source manifest, remove generated source/build intermediates.
+            // and bounded diagnostics/source manifest, remove generated source/build intermediates.
             let disposable = rows
                 .iter()
                 .filter(|r| {
                     let n = r[0].as_str().unwrap_or("");
-                    n != "input" && !n.starts_with("input\\") && !n.starts_with("input/") && n != "source-manifest.json"
+                    n != "input"
+                        && !n.starts_with("input\\")
+                        && !n.starts_with("input/")
+                        && n != "source-manifest.json"
+                        && n != "cargo-diagnostics.log"
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -637,7 +674,16 @@ mod tests {
         std::fs::write(r.path.join("source/nested/object"), b"compiler output").unwrap();
         std::fs::create_dir(r.path.join("input")).unwrap();
         std::fs::write(r.path.join("input/project"), b"accepted").unwrap();
+        let diagnostics = r
+            .path
+            .join("source/firmware/target/bench-captures/native/cargo-diagnostics.log");
+        std::fs::create_dir_all(diagnostics.parent().unwrap()).unwrap();
+        std::fs::write(&diagnostics, b"error: fixture missing linker\n").unwrap();
         r.close(false, Some("fixture compiler failure")).unwrap();
+        assert_eq!(
+            std::fs::read(r.path.join("cargo-diagnostics.log")).unwrap(),
+            b"error: fixture missing linker\n"
+        );
         assert!(!r.path.join("source").exists());
         assert!(r.path.join("input/project").exists());
         assert!(r.path.join("failure.json").exists());
@@ -646,6 +692,21 @@ mod tests {
             p.remove().unwrap();
         }
         assert_eq!(list(&repo, &BTreeSet::new()).unwrap().attempts.len(), 0);
+        drop(r);
+        cleanup_fixture(repo);
+    }
+    #[test]
+    fn oversized_failure_diagnostics_quarantine_without_pruning_source() {
+        let repo = fixture();
+        let mut r = reserve(&repo).unwrap();
+        let diagnostics = r
+            .path
+            .join("source/firmware/target/bench-captures/native/cargo-diagnostics.log");
+        std::fs::create_dir_all(diagnostics.parent().unwrap()).unwrap();
+        std::fs::write(&diagnostics, vec![b'x'; 256 * 1024 + 1]).unwrap();
+        assert!(r.close(false, Some("fixture failure")).unwrap_err().contains("256 KiB"));
+        assert!(diagnostics.exists());
+        assert!(!r.path.join("cargo-diagnostics.log").exists());
         drop(r);
         cleanup_fixture(repo);
     }

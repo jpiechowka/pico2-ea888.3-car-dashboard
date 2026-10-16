@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import io
-from contextlib import ExitStack,redirect_stdout
+from contextlib import ExitStack,redirect_stdout,redirect_stderr
 from unittest.mock import patch
 import capture_target_bench as capture
 
@@ -34,6 +34,49 @@ class CaptureTests(unittest.TestCase):
                 capture.run_build(command,os.environ.copy(),destination)
             self.assertEqual(error.exception.returncode,7)
             self.assertEqual(json.loads((destination/'cargo-messages.jsonl').read_text()),{'reason':'build-finished','success':False})
+
+    def test_failed_build_streams_safe_rendered_diagnostics_and_retains_them(self):
+        with tempfile.TemporaryDirectory() as folder:
+            destination=Path(folder);stream=io.StringIO()
+            record=dict(reason='compiler-message',message=dict(rendered='error: fixture missing linker\n\x1b[31munsafe\x00\r\n'))
+            command=[sys.executable,'-c','import sys; print('+repr(json.dumps(record))+'); sys.exit(7)']
+            with redirect_stderr(stream),self.assertRaises(subprocess.CalledProcessError):
+                capture.run_build(command,os.environ.copy(),destination)
+            self.assertIn('error: fixture missing linker',stream.getvalue())
+            self.assertNotIn('\x1b',stream.getvalue());self.assertNotIn('\x00',stream.getvalue())
+            self.assertEqual((destination/'cargo-diagnostics.log').read_text(),stream.getvalue())
+
+    def test_diagnostics_are_bounded_utf8_and_do_not_forward_artifact_json(self):
+        with tempfile.TemporaryDirectory() as folder:
+            destination=Path(folder);stream=io.StringIO()
+            diagnostic=capture.CargoDiagnostics(destination)
+            with redirect_stderr(stream):
+                diagnostic.record(json.dumps(dict(reason='compiler-artifact',message=dict(rendered='must not be logged'))))
+                diagnostic.record(b'not JSON')
+                diagnostic.record(json.dumps(dict(reason='compiler-message',message=dict(rendered='é'*300000))))
+                diagnostic.record(json.dumps(dict(reason='compiler-message',message=dict(rendered='after cap'))))
+            diagnostic.file.close()
+            raw=(destination/'cargo-diagnostics.log').read_bytes()
+            self.assertLessEqual(len(raw),256*1024)
+            self.assertTrue(raw.decode().endswith('[Cargo diagnostics truncated]\n'))
+            self.assertEqual(raw.decode(),stream.getvalue())
+            self.assertNotIn('must not be logged',stream.getvalue());self.assertNotIn('after cap',stream.getvalue())
+            self.assertTrue(all(len(line)<=2048 for line in stream.getvalue().splitlines()))
+
+    def test_diagnostic_is_published_before_compiler_exit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            destination=Path(folder);stream=io.StringIO()
+            record=json.dumps(dict(reason='compiler-message',message=dict(rendered='error: live fixture')))
+            script=('import pathlib,time,sys; print('+repr(record)+',flush=True); '
+                    'p=pathlib.Path('+repr(str(destination/'cargo-diagnostics.log'))+'); '
+                    'deadline=time.monotonic()+3\n'
+                    'while p.stat().st_size==0 and time.monotonic()<deadline: time.sleep(.01)\n'
+                    'sys.exit(0 if p.stat().st_size else 9)')
+            with redirect_stderr(stream):
+                result=capture.run_build([sys.executable,'-c',script],os.environ.copy(),destination)
+            self.assertEqual(result.returncode,0)
+            self.assertIn('error: live fixture',stream.getvalue())
+            self.assertEqual(json.loads(result.stdout)['reason'],'compiler-message')
 
     def test_generated_clock_is_bound_to_firmware_package_and_exact_attempt(self):
         with tempfile.TemporaryDirectory() as folder:

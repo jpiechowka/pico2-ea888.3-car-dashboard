@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tomllib
+import unicodedata
 import zipfile
 
 FIRMWARE = Path(__file__).resolve().parents[1]
@@ -61,18 +62,61 @@ def check_clock_environment(environment):
         raise ValueError('unset ambient compiler/config/custom-clock overrides; select typed inputs explicitly')
 
 
+MAX_CARGO_DIAGNOSTICS = 256 * 1024
+
+
+class CargoDiagnostics:
+    """Bound rendered messages independently of the raw Cargo identity stream."""
+    def __init__(self, destination):
+        self.file = (destination/'cargo-diagnostics.log').open('xb')
+        self.remaining = MAX_CARGO_DIAGNOSTICS
+        self.truncated = False
+
+    def record(self, raw):
+        if self.truncated:return
+        try:record=json.loads(raw)
+        except (ValueError,UnicodeError):return
+        if not isinstance(record,dict) or record.get('reason')!='compiler-message':return
+        message=record.get('message')
+        rendered=message.get('rendered') if isinstance(message,dict) else None
+        if not isinstance(rendered,str):return
+        # No terminal escapes, carriage-return rewriting or Unicode format controls.
+        rendered=''.join(c for c in rendered if c in '\n\t' or not unicodedata.category(c).startswith('C'))
+        marker=b'[Cargo diagnostics truncated]\n'
+        for line in rendered.splitlines():
+            for offset in range(0,max(1,len(line)),2048):
+                data=(line[offset:offset+2048]+'\n').encode('utf-8')
+                if len(data)+len(marker)>self.remaining:
+                    self.emit(marker);self.truncated=True;return
+                self.emit(data)
+
+    def emit(self, data):
+        self.file.write(data);self.file.flush();self.remaining-=len(data)
+        text=data.decode('utf-8')
+        encoding=getattr(sys.stderr,'encoding',None) or 'utf-8'
+        sys.stderr.write(text.encode(encoding,errors='backslashreplace').decode(encoding))
+        sys.stderr.flush()
+
+
 def run_build(command, environment, destination):
-    # Retain bounded Cargo JSON; stderr is drained by the owning native supervisor.
-    with subprocess.Popen(command,cwd=FIRMWARE,env=environment,stdout=subprocess.PIPE) as child:
-        output=bytearray()
-        while chunk:=child.stdout.read(4096):
-            if len(output)+len(chunk)>8*1024*1024:
-                child.kill();child.wait()
-                raise ValueError('Cargo JSON exceeds capture bound')
-            output.extend(chunk)
-        status=child.wait()
+    # stderr (including rendered JSON diagnostics below) uses the native redactor.
+    diagnostics=CargoDiagnostics(destination)
+    output=bytearray();pending=bytearray()
+    try:
+        with subprocess.Popen(command,cwd=FIRMWARE,env=environment,stdout=subprocess.PIPE) as child:
+            while chunk:=child.stdout.read1(4096):
+                if len(output)+len(chunk)>8*1024*1024:
+                    child.kill();child.wait()
+                    raise ValueError('Cargo JSON exceeds capture bound')
+                output.extend(chunk);pending.extend(chunk)
+                while (end:=pending.find(b'\n'))>=0:
+                    diagnostics.record(pending[:end]);del pending[:end+1]
+            if pending:diagnostics.record(pending)
+            status=child.wait()
+    finally:
+        diagnostics.file.close()
+        (destination/'cargo-messages.jsonl').write_bytes(output)
     text=output.decode('utf-8')
-    (destination/'cargo-messages.jsonl').write_text(text,encoding='utf-8')
     build=subprocess.CompletedProcess(command,status,text)
     build.check_returncode()
     return build
