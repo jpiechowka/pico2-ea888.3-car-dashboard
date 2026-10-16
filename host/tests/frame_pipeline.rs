@@ -208,3 +208,47 @@ fn queued_request_rejects_geometry_mismatch() {
         Orientation::Portrait,
     );
 }
+
+#[test]
+fn dark_transition_remains_bound_to_the_rotated_clear_frame() {
+    use dashboard_config::Orientation;
+    use dashboard_host_validation::backlight::Backlight;
+    use dashboard_host_validation::display::damage::PanelHistory;
+    use dashboard_host_validation::pages::Page;
+    let mut lifecycle = FrameLifecycle::new();
+    let mut history = PanelHistory::new();
+    let mut light = Backlight::new();
+    let popup = light.encoder(Page::Dashboard, 0, 2, 100).popup.unwrap();
+    let popup_token = lifecycle.begin(BufferId::A).unwrap();
+    history.begin_render_in(popup_token, Orientation::Landscape).unwrap();
+    lifecycle.ready(popup_token).unwrap();
+    history.queue(popup_token, None).unwrap();
+    lifecycle.queue(popup_token).unwrap();
+    light.frame_submitted(popup_token);
+    lifecycle.started(popup_token).unwrap();
+    lifecycle.complete(popup_token).unwrap();
+    history.complete(popup_token).unwrap();
+    light.frame_completed(popup_token, 200);
+    assert!(light.expire_popup(popup, 2200));
+    let clear_token = lifecycle.begin(BufferId::B).unwrap();
+    history
+        .begin_render_in(clear_token, Orientation::PortraitInverted)
+        .unwrap();
+    assert_eq!(history.reference_for(Orientation::PortraitInverted), None);
+    lifecycle.ready(clear_token).unwrap();
+    history.queue(clear_token, None).unwrap();
+    lifecycle.queue(clear_token).unwrap();
+    light.frame_submitted(clear_token);
+    lifecycle.started(clear_token).unwrap();
+    light.frame_completed(popup_token, 2201);
+    assert_ne!(light.compare(), 0);
+    assert_eq!(history.panel_orientation(), Some(Orientation::Landscape));
+    lifecycle.complete(clear_token).unwrap();
+    history.complete(clear_token).unwrap();
+    light.frame_completed(clear_token, 2300);
+    assert_eq!(light.compare(), 0);
+    assert_eq!(history.panel_orientation(), Some(Orientation::PortraitInverted));
+    light.wake_full();
+    light.frame_completed(clear_token, 2301);
+    assert_ne!(light.compare(), 0); // Protected wake cannot be undone by stale completion.
+}
