@@ -706,8 +706,10 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn build_rejects_stale_token_and_closes_snapshot_failure_without_artifact() {
-        let state = State::new(std::env::temp_dir().join("studio-definitely-not-a-repository")).unwrap();
+    async fn build_rejects_stale_token_and_closes_prerequisite_failure_without_artifact() {
+        let repo = std::env::temp_dir().join(format!("studio-missing-{}", random_hex::<16>().unwrap()));
+        assert!(!repo.exists());
+        let state = State::new(repo.clone()).unwrap();
         let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
         let bytes = dashboard_config_tools::project::Project::new(&config, Default::default(), None)
             .unwrap()
@@ -743,10 +745,16 @@ mod tests {
         let result = summary(&state, &job.job_id).unwrap();
         assert!(result.events_closed);
         assert!(result.artifact_id.is_none());
+        assert_eq!(result.terminal_cause, Some(TerminalCause::Failed));
+        assert_eq!(result.stages[0].state, StageState::Failed);
+        assert_eq!(result.stages[1].state, StageState::Skipped);
+        assert!(!repo.exists(), "prerequisite failure must not reserve snapshot storage");
     }
     #[tokio::test]
     async fn browser_poll_preflight_and_typed_build_route() {
-        let state = State::new(std::env::temp_dir().join("studio-no-build-repository")).unwrap();
+        let repo = std::env::temp_dir().join(format!("studio-missing-{}", random_hex::<16>().unwrap()));
+        assert!(!repo.exists());
+        let state = State::new(repo.clone()).unwrap();
         for (query, status) in [
             ("after=0&limit=128", StatusCode::NO_CONTENT),
             ("after=0&limit=129", StatusCode::FORBIDDEN),
@@ -789,6 +797,7 @@ mod tests {
         let worker = state.inner.lock().unwrap().worker.take().unwrap();
         worker.await.unwrap();
         assert!(state.inner.lock().unwrap().jobs.summaries()[0].events_closed);
+        assert!(!repo.exists());
     }
     #[tokio::test]
     async fn artifact_download_requires_capability_and_uses_retained_bytes() {
