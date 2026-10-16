@@ -39,7 +39,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                         let label=match attempt.state {BuildAttemptState::Artifact=>"Successful build",BuildAttemptState::Failed=>"Failed build",BuildAttemptState::Incomplete=>"Interrupted · review required"};
                         view! {<div class="helper-artifact"><strong>{label}</strong><span class="chip">{format!("{:.1} MiB",attempt.bytes as f64/1048576.0)}</span>
                             <code>{attempt.attempt_id.as_str().to_string()}</code>
-                            {attempt.protected.then(||view!{<small>"In use by a retained firmware file. Download what you need, then restart the helper to release its session. Rebuild before flashing afterward."</small>})}
+                            {(attempt.protected&&attempt.state==BuildAttemptState::Artifact).then(||view!{<small>"In use by a retained firmware file. Download what you need, then restart the helper to release its session. Rebuild before flashing afterward."</small>})}
                             {(!closed).then(||view!{<small>"Process closure was not confirmed. Studio will not delete this attempt automatically."</small>})}
                             <div class="helper-actions" hidden=move ||confirming.get()><button disabled=move ||!eligible||unavailable(ui) on:click=move |_|confirming.set(true)>"Remove build files"</button></div>
                             <div class="build-caution" hidden=move ||!confirming.get()><p>"Permanently remove this attempt's local build files and diagnostic evidence? Download any logs or firmware you want to keep first."</p>

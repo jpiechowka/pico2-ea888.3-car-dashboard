@@ -1,6 +1,6 @@
 # Build and flash from View Studio
 
-This is the implementation contract for the requested flashing workspace. It is planned work, not a claim that the current editor can flash a device. Existing controls, widget and diagnostics stages remain in scope.
+This is the design and acceptance contract for the Build & Flash workspace. The native helper and Studio workflow are implemented; final browser/image qualification and physical validation are tracked separately. The current entry points are documented in [setup](setup-tools.md) and the [README](../../README.md#build--flash-from-studio). A successful host check does not establish hardware operation.
 
 ## Workflow
 
@@ -8,7 +8,7 @@ The Build & Flash workspace sits alongside Views, Device, Data & warnings and Di
 
 Nightly is preferred. Resolve the project's dated nightly and report the installed compiler used by the build. A toolchain update is a separate visible operation: an in-flight build keeps its resolved compiler. Missing components, unavailable nightly, build failures and unsupported options are reported without silently selecting another compiler or profile.
 
-Custom firmware embeds the selected configuration, so it requires a local build. A native Rust helper serves the editor and a typed API on loopback. It launches fixed Cargo/build-validation/picotool operations with argument arrays. It never accepts arbitrary shell text, arbitrary executable paths or unrestricted environment variables. The existing PowerShell entry point starts this local workflow. The static editor remains usable for configuration export and command inspection without the helper.
+Custom firmware embeds the selected configuration, so it requires a local build. Studio's static server runs on loopback port 8080; the native Rust helper exposes its typed API separately on 127.0.0.1:8765. It launches fixed Cargo/build-validation/picotool operations with argument arrays. It never accepts arbitrary shell text, arbitrary executable paths or unrestricted environment variables. The PowerShell entry point starts each service explicitly. The static editor remains usable for configuration export and command inspection without the helper.
 
 Flashing is initiated from the web UI after a successful build, device selection and review of the artifact summary. The approved native path uses BOOTSEL and verified picotool loading; this also works in Firefox. If native USB access fails, offer a validated UF2 download and a specific driver/access diagnostic. Never silently choose another connected device. The user selected the local helper workflow; direct WebUSB is outside this delivery.
 

@@ -6,6 +6,12 @@ existing 320×240 Studio display, with play/pause, restart, seeking and a
 reduced-motion still. The preview labels its OBD status as synthetic; browser
 timing is not physical display, LED or ECU qualification.
 
+**Replay full startup** runs the shared startup controller in Simulation mode.
+Use the simulated buttons, encoder, warning conditions and frame-completion
+controls to inspect transitions into Dashboard, including skips and recovery.
+The seekable preview is for inspecting artwork; replay exercises application
+state with synthetic inputs. Neither measures the physical display.
+
 The defaults are a **Brief 600 ms** completed-system-check screen followed by
 **AEZAKMI for 2500 ms**, looping. Status can be Off, Brief or Detailed and has its
 own 0–2000 ms duration. Splash duration is 0–10000 ms: zero skips only the splash.
@@ -38,8 +44,9 @@ of the exported `.easp` alongside the normal `DASHBOARD_CONFIG` selection. Omit
 the startup variable to build the defaults. The build rejects invalid selected
 profiles, copies the canonical 16-byte profile into `startup_profile.bin` in
 `OUT_DIR`, and exposes `DASHBOARD_STARTUP_SHA256`. Existing config hashes alone
-do not identify a changed startup profile. Helper upload and complete artifact
-identity binding remain part of the next project delivery.
+do not identify a changed startup profile. Build & Flash uploads the accepted
+project without its original artwork and binds the artifact to dashboard,
+startup profile, converted asset and normalized build options.
 
 EASP v1 is exactly 16 bytes: `EASP` magic at 0..4, version 1 at byte 4, theme
 0..5 (Custom) at byte 5, status Off/Brief/Detailed as 0..2 at byte 6, flags at byte 7
@@ -49,7 +56,7 @@ Unknown versions, flags, enums, reserved bytes and out-of-range durations fail
 validation. Reduced motion uses the dashboard's existing setting; the extra
 Studio checkbox is a preview-only override.
 
-## Next delivery and validation
+## Validation boundaries
 
 Complete project packaging, original retention, converted-only export and shared project history are implemented. Artwork conversion/rendering and helper binding have their own focused integration checks; no browser or physical success is implied by the package codec.
 
