@@ -151,16 +151,15 @@ impl DrawTarget for St7789Renderer<'_> {
             if hidden_left > 0 && colors.nth(hidden_left - 1).is_none() {
                 return Ok(());
             }
-            let mut idx = ((first_y + row) * WIDTH + first_x) * 2;
-            for _ in 0..visible_width {
+            let start = ((first_y + row) * WIDTH + first_x) * 2;
+            let row_bytes = &mut self.framebuffer[start..start + visible_width * 2];
+            for pixel in row_bytes.as_chunks_mut::<2>().0 {
                 let Some(color) = colors.next() else {
                     return Ok(());
                 };
                 let raw: RawU16 = color.into();
                 let bytes = raw.into_inner().to_be_bytes();
-                self.framebuffer[idx] = bytes[0];
-                self.framebuffer[idx + 1] = bytes[1];
-                idx += 2;
+                *pixel = bytes;
             }
             if row + 1 < visible_height && hidden_right > 0 && colors.nth(hidden_right - 1).is_none() {
                 return Ok(());
@@ -191,27 +190,21 @@ impl DrawTarget for St7789Renderer<'_> {
         let width = drawable_area.size.width as usize;
 
         for y in drawable_area.rows() {
-            let row_start = y as usize * WIDTH * 2;
-            let mut x = x_start;
+            let start = (y as usize * WIDTH + x_start) * 2;
+            let mut row_bytes = &mut self.framebuffer[start..start + width * 2];
 
-            if !x.is_multiple_of(2) && x < x_start + width {
-                let idx = row_start + x * 2;
-                self.framebuffer[idx] = pixel_bytes[0];
-                self.framebuffer[idx + 1] = pixel_bytes[1];
-                x += 1;
+            if !x_start.is_multiple_of(2) {
+                let (first, rest) = row_bytes.split_at_mut(2);
+                first.copy_from_slice(&pixel_bytes);
+                row_bytes = rest;
             }
 
-            let word_end = x_start + width - ((x_start + width - x) % 2);
-            while x + 1 < word_end {
-                let idx = row_start + x * 2;
-                self.framebuffer[idx..idx + 4].copy_from_slice(&word.to_ne_bytes());
-                x += 2;
+            let (pairs, tail) = row_bytes.as_chunks_mut::<4>();
+            for pair in pairs {
+                *pair = word.to_ne_bytes();
             }
-
-            if x < x_start + width {
-                let idx = row_start + x * 2;
-                self.framebuffer[idx] = pixel_bytes[0];
-                self.framebuffer[idx + 1] = pixel_bytes[1];
+            if !tail.is_empty() {
+                tail.copy_from_slice(&pixel_bytes);
             }
         }
         Ok(())
