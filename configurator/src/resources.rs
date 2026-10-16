@@ -197,14 +197,7 @@ fn measure_ready(editor: &Editor) -> Result<ConfigResources, EditorError> {
     // Recheck even if the caller inspected before this function. Export methods
     // and the saved-envelope method also perform their own admission check.
     if let Some(block) = readiness.block {
-        return Err(match block {
-            ActionBlock::InvalidDraft => EditorError::InvalidDraft,
-            ActionBlock::JsonPending => EditorError::JsonPending,
-            ActionBlock::StartupPending => EditorError::StartupPending,
-            ActionBlock::PointerActive => EditorError::PointerActive,
-            ActionBlock::ImportPending => EditorError::ImportPending,
-            ActionBlock::IdentityExhausted => EditorError::CounterExhausted,
-        });
+        return Err(block.into());
     }
     let eav_bytes = editor.export_binary()?.len();
     let json_bytes = editor.export_json()?.len();

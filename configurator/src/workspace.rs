@@ -234,26 +234,7 @@ fn free_placement(
     editor: &Editor,
     widget: &crate::config::Widget,
 ) -> Option<Placement> {
-    let occupied = editor
-        .preview()
-        .config()
-        .widgets
-        .iter()
-        .filter(|w| w.view == widget.view)
-        .fold(0u8, |mask, w| mask | w.placement.occupied().unwrap_or(u8::MAX));
-    for row in 0..2 {
-        for column in 0..4 {
-            let p = Placement {
-                row,
-                column,
-                span: widget.placement.span,
-            };
-            if p.occupied().is_some_and(|mask| mask & occupied == 0) {
-                return Some(p);
-            }
-        }
-    }
-    None
+    crate::geometry::first_free_placement(editor.preview().config(), widget.view, widget.placement.span, None)
 }
 pub fn dispatch(
     editor: &mut Editor,

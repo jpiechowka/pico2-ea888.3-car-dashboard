@@ -6,12 +6,12 @@ mod ecu_reference;
 mod event_log;
 mod fields;
 mod helper;
+mod idb;
 mod inspector;
 mod io;
 mod json_editor;
 mod led;
 mod metrics;
-mod idb;
 mod originals;
 mod project_io;
 mod relay;
@@ -522,22 +522,12 @@ impl Ui {
         except: Option<u16>,
     ) -> Option<Placement> {
         self.editor.with_untracked(|e| {
-            let occupied = e
-                .preview()
-                .config()
-                .widgets
-                .iter()
-                .filter(|w| w.view == e.selection().view && Some(w.id) != except)
-                .fold(0u8, |mask, w| mask | w.placement.occupied().unwrap_or(u8::MAX));
-            for row in 0..2 {
-                for column in 0..4 {
-                    let p = Placement { column, row, span };
-                    if p.occupied().is_some_and(|mask| mask & occupied == 0) {
-                        return Some(p);
-                    }
-                }
-            }
-            None
+            dashboard_configurator::geometry::first_free_placement(
+                e.preview().config(),
+                e.selection().view,
+                span,
+                except,
+            )
         })
     }
 }

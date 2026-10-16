@@ -286,3 +286,27 @@ pub fn validate_draft_drop(
     }
     validate(candidate).map(|_| ()).map_err(GeometryError::Validation)
 }
+
+/// Row-major placement shared by library additions and duplicate commands.
+/// An invalid occupied rectangle blocks placement instead of inventing free space.
+pub fn first_free_placement(
+    config: &Config,
+    view: u8,
+    span: Span,
+    except: Option<u16>,
+) -> Option<Placement> {
+    let occupied = config
+        .widgets
+        .iter()
+        .filter(|w| w.view == view && Some(w.id) != except)
+        .fold(0u8, |mask, w| mask | w.placement.occupied().unwrap_or(u8::MAX));
+    for row in 0..2 {
+        for column in 0..4 {
+            let placement = Placement { column, row, span };
+            if placement.occupied().is_some_and(|mask| mask & occupied == 0) {
+                return Some(placement);
+            }
+        }
+    }
+    None
+}

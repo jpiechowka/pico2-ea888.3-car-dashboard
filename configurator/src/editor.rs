@@ -66,6 +66,19 @@ pub enum ActionBlock {
     IdentityExhausted,
 }
 
+impl From<ActionBlock> for EditorError {
+    fn from(block: ActionBlock) -> Self {
+        match block {
+            ActionBlock::InvalidDraft => Self::InvalidDraft,
+            ActionBlock::JsonPending => Self::JsonPending,
+            ActionBlock::StartupPending => Self::StartupPending,
+            ActionBlock::PointerActive => Self::PointerActive,
+            ActionBlock::ImportPending => Self::ImportPending,
+            ActionBlock::IdentityExhausted => Self::CounterExhausted,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActionReadiness {
     pub stamp: EditorStamp,
@@ -2251,15 +2264,7 @@ impl Editor {
     }
 
     fn ensure_snapshot_ready(&self) -> Result<(), EditorError> {
-        match self.action_readiness().block {
-            None => Ok(()),
-            Some(ActionBlock::InvalidDraft) => Err(EditorError::InvalidDraft),
-            Some(ActionBlock::JsonPending) => Err(EditorError::JsonPending),
-            Some(ActionBlock::StartupPending) => Err(EditorError::StartupPending),
-            Some(ActionBlock::PointerActive) => Err(EditorError::PointerActive),
-            Some(ActionBlock::ImportPending) => Err(EditorError::ImportPending),
-            Some(ActionBlock::IdentityExhausted) => Err(EditorError::CounterExhausted),
-        }
+        self.action_readiness().block.map_or(Ok(()), |block| Err(block.into()))
     }
 }
 
