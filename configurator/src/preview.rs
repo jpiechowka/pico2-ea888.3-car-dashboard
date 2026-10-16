@@ -165,6 +165,18 @@ impl Preview {
                 },
             );
         }
+        self.draw_startup_phase(config, profile, (phase, time), reduced_motion, asset)
+    }
+
+    fn draw_startup_phase(
+        &mut self,
+        config: &ValidatedConfig,
+        profile: dashboard_core::startup::StartupProfile,
+        frame: (dashboard_core::startup::Phase, u64),
+        reduced_motion: bool,
+        asset: Option<&[u8]>,
+    ) -> Result<&[u8], PreviewError> {
+        let (phase, time) = frame;
         if phase == dashboard_core::startup::Phase::Splash
             && profile.theme == dashboard_core::startup::StartupTheme::Custom
         {
@@ -270,6 +282,18 @@ impl Preview {
         self.synchronize_source(simulation);
         if self.pending.is_some() {
             return Err(PreviewError::PendingFrame);
+        }
+        if let Some((profile, phase, time, asset)) = simulation.startup_frame() {
+            self.draw_startup_phase(
+                simulation.config(),
+                profile,
+                (phase, time),
+                simulation.config().config().reduced_motion,
+                asset,
+            )?;
+            self.mode = PreviewMode::Simulation;
+            self.simulation_epoch = simulation.presentation_epoch();
+            return Ok(&self.rgba);
         }
         self.render_projection(simulation, false, None)
     }

@@ -240,6 +240,9 @@ impl Artwork {
 
     pub fn converted(&self) -> &[u8] { &self.converted }
 
+    /// Share firmware pixels without retaining an original-source pin.
+    pub fn converted_arc(&self) -> Arc<[u8]> { self.converted.clone() }
+
     pub fn recipe(&self) -> &Recipe { &self.recipe }
 
     pub fn original(&self) -> Option<&Arc<[u8]>> { self.original.as_ref() }

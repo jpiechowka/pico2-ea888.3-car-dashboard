@@ -341,6 +341,38 @@ pub(super) fn complete(ui: Ui) {
     ui.render_issue(RenderLane::Simulation, result);
 }
 
+pub(super) fn replay_startup(ui: Ui) {
+    let captured = ui
+        .editor
+        .with_untracked(|e| e.accepted_project().map(|p| (e.stamp(), p)));
+    let Ok((stamp, project)) = captured else {
+        ui.dock
+            .notice
+            .set("Finish the current edit or import before startup replay.".into());
+        return;
+    };
+    ui.editor.with_untracked(|e| ui.dock.synchronize(ui, e));
+    cancel(ui);
+    stage::cancel(ui);
+    ui.playing.set(false);
+    let mut result = Ok(());
+    ui.dock.sim.update(|sim| result = sim.restart_project(&project));
+    if let Err(error) = result {
+        ui.dock.notice.set(format!("Startup replay rejected: {error:?}"));
+        return;
+    }
+    ui.dock.startup_stamp.set_value(Some(stamp));
+    ui.dock.pending.set(None);
+    ui.dock.consumed.set(false);
+    ui.dock.mode.set(PreviewMode::Simulation);
+    ui.dock.notice.set(
+        "Full startup replay: synthetic acquisition and matching frame completions; controls and recovery are active."
+            .into(),
+    );
+    ui.dock.running.set(true);
+    submit(ui, false);
+}
+
 fn source(
     ui: Ui,
     scenario: Scenario,

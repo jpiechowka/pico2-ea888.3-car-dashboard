@@ -46,6 +46,7 @@ impl Scenario {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SimulationError {
+    InvalidProject,
     Exhausted,
     Backdated,
     InspectionOnly,
@@ -323,7 +324,7 @@ impl ControlSimulator {
             SimulationInput::Sample(sample) => (sample, self.now_ms()),
             SimulationInput::Fault { sensor, quality, at_ms } => {
                 let accepted = self.simulation.model.mark_fault(sensor, quality, at_ms);
-                self.simulation.advance_to(self.now_ms().max(at_ms), None);
+                self.advance_acquisition(self.now_ms().max(at_ms), None);
                 let outcome = if accepted {
                     InputOutcome::Accepted
                 } else {
@@ -339,7 +340,7 @@ impl ControlSimulator {
             Err(error) => InputOutcome::Rejected(error),
         };
         // A rejected sample cannot roll back the simulation clock or evaluate old dwell.
-        self.simulation.advance_to(now, None);
+        self.advance_acquisition(now, None);
         self.outcomes[channel] = Some(outcome);
         outcome
     }

@@ -9,7 +9,13 @@ use dashboard_core::warning_state::{WarningCommand, WarningFeedback, WarningRequ
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 
+pub(crate) struct StartupReplay {
+    pub(crate) profile: dashboard_core::startup::StartupProfile,
+    pub(crate) state: dashboard_core::startup::Startup,
+    pub(crate) artwork: Option<std::sync::Arc<[u8]>>,
+}
 pub(crate) struct Simulation {
+    pub(crate) startup: Option<StartupReplay>,
     pub(crate) model: OwnedAcquisitionModel,
     pub(crate) session: ControlSession,
     pub(crate) now_ms: u64,
@@ -32,6 +38,7 @@ impl Simulation {
         let session = ControlSession::new(&config, FpsMode::Off, false);
         let visible = (session.page(), session.view_id());
         Self {
+            startup: None,
             visible,
             presentation_epoch: Some(0),
             model: OwnedAcquisitionModel::demo_configured(Box::new(config)),
@@ -68,10 +75,35 @@ impl Simulation {
             self.model.apply_warning_command(command, now_ms);
         }
         self.model.tick(now_ms);
+        self.advance_startup(now_ms);
         self.now_ms = self.now_ms.max(now_ms);
         self.observe_result();
         self.session.expire_feedback(self.now_ms);
         self.prepare(false);
+    }
+
+    pub(crate) fn startup_active(&self) -> bool { self.startup.as_ref().is_some_and(|s| s.state.active()) }
+
+    fn advance_startup(
+        &mut self,
+        now: u64,
+    ) {
+        let attention = PresentedScene::capture(
+            self.configuration(),
+            &self.snapshot(),
+            self.session.page(),
+            self.session.view_id(),
+            None,
+            now,
+        )
+        .attention;
+        if let Some(startup) = &mut self.startup {
+            let phase = startup.state.phase();
+            startup.state.advance(startup.profile, now, false, attention);
+            if phase != startup.state.phase() {
+                self.presentation_epoch = self.presentation_epoch.and_then(|n| n.checked_add(1));
+            }
+        }
     }
 
     pub(crate) fn prepare(
@@ -86,20 +118,23 @@ impl Simulation {
             self.presentation_epoch = self.presentation_epoch.and_then(|epoch| epoch.checked_add(1));
             self.visible = visible;
         }
+        self.advance_startup(self.now_ms);
         let snapshot = self.model.snapshot();
-        self.warning =
-            if self.session.page() == dashboard_core::pages::Page::Dashboard && self.session.popup().is_none() {
-                self.pager.select(
-                    self.model.configuration().expect("simulation config"),
-                    &snapshot,
-                    self.session.view_id(),
-                    self.now_ms,
-                    self.blink_on(),
-                )
-            } else {
-                self.pager.pause(self.now_ms);
-                None
-            };
+        self.warning = if !self.startup_active()
+            && self.session.page() == dashboard_core::pages::Page::Dashboard
+            && self.session.popup().is_none()
+        {
+            self.pager.select(
+                self.model.configuration().expect("simulation config"),
+                &snapshot,
+                self.session.view_id(),
+                self.now_ms,
+                self.blink_on(),
+            )
+        } else {
+            self.pager.pause(self.now_ms);
+            None
+        };
         self.update_led();
     }
 
@@ -143,14 +178,19 @@ impl Simulation {
             self.session.overlay(self.configuration()),
             self.warning,
         );
-        PresentedScene::capture(
+        let scene = PresentedScene::capture(
             self.configuration(),
             &self.snapshot(),
             self.session.page(),
             self.session.view_id(),
             overlay,
             self.now_ms,
-        )
+        );
+        if let Some(startup) = self.startup.as_ref().filter(|s| s.state.active()) {
+            scene.startup(startup.profile.warning_led)
+        } else {
+            scene
+        }
     }
 
     pub(crate) fn snapshot(&self) -> DashboardSnapshot { self.model.snapshot() }

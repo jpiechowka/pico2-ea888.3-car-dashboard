@@ -135,6 +135,68 @@ impl ControlSimulator {
         self.scenario = scenario;
     }
 
+    /// Explicit full boot replay. Original artwork bytes never enter this session.
+    pub fn restart_project(
+        &mut self,
+        project: &dashboard_config_tools::project::Project,
+    ) -> Result<(), SimulationError> {
+        if self.invalid {
+            return Err(SimulationError::InspectionOnly);
+        }
+        let config =
+            dashboard_config::decode(project.dashboard_bytes()).map_err(|_| SimulationError::InvalidProject)?;
+        self.restart(config);
+        if self.source_key().is_none() {
+            return Err(SimulationError::Exhausted);
+        }
+        self.simulation.startup = Some(crate::simulation::StartupReplay {
+            profile: project.profile(),
+            state: dashboard_core::startup::Startup::new(project.profile(), self.now_ms()),
+            artwork: project.artwork().map(|a| a.converted_arc()),
+        });
+        self.simulation.prepare(true);
+        Ok(())
+    }
+
+    pub fn startup_phase(&self) -> dashboard_core::startup::Phase {
+        self.simulation
+            .startup
+            .as_ref()
+            .map_or(dashboard_core::startup::Phase::Dashboard, |s| s.state.phase())
+    }
+
+    pub fn startup_exit(&self) -> Option<dashboard_core::startup::Exit> {
+        self.simulation.startup.as_ref().and_then(|s| s.state.exit())
+    }
+
+    pub(crate) fn startup_frame(
+        &self
+    ) -> Option<(
+        dashboard_core::startup::StartupProfile,
+        dashboard_core::startup::Phase,
+        u64,
+        Option<&[u8]>,
+    )> {
+        let startup = self.simulation.startup.as_ref().filter(|s| s.state.active())?;
+        Some((
+            startup.profile,
+            startup.state.phase(),
+            startup.state.elapsed(self.now_ms()),
+            startup.artwork.as_deref(),
+        ))
+    }
+
+    /// Simulate a global startup/configuration fault, not a synthetic sensor reading.
+    pub fn startup_fault(&mut self) {
+        if let Some(startup) = &mut self.simulation.startup {
+            startup
+                .state
+                .finish_at(dashboard_core::startup::Exit::Fault, self.simulation.now_ms);
+        }
+        self.gestures.suppress_held();
+        self.simulation.prepare(true);
+    }
+
     /// Candidate bindings are inspection only; the validated layout remains authoritative.
     pub fn inspect_invalid(
         &mut self,
@@ -334,13 +396,28 @@ impl ControlSimulator {
         }
         self.simulation.model.tick(self.simulation.now_ms);
         self.simulation.session.expire_feedback(self.simulation.now_ms);
-        let mut buttons = self.gestures.update(
-            &self.map,
-            self.simulation.session.page(),
-            pressed,
-            self.simulation.now_ms,
-        );
+        let was_startup = self.simulation.startup_active();
+        let mut buttons = if was_startup {
+            self.gestures.update_startup(
+                &self.map,
+                self.simulation.session.page(),
+                pressed,
+                self.simulation.now_ms,
+            )
+        } else {
+            self.gestures.update(
+                &self.map,
+                self.simulation.session.page(),
+                pressed,
+                self.simulation.now_ms,
+            )
+        };
         let mut encoder = encoder;
+        if let Some(startup) = &mut self.simulation.startup {
+            startup
+                .state
+                .consume_inputs(&mut self.gestures, &mut buttons, &mut encoder, self.simulation.now_ms);
+        }
         if self.reset_requested.checked_add(1).is_none() {
             let old = buttons.actions.len();
             buttons
@@ -389,6 +466,21 @@ impl ControlSimulator {
                 .frame_unchanged(self.simulation.now_ms);
         }
         self.simulation.prepare(effects.view_changed);
+        if was_startup && !self.simulation.startup_active() {
+            self.gestures.suppress_held();
+        }
+    }
+
+    fn advance_acquisition(
+        &mut self,
+        now_ms: u64,
+        values: Option<[f32; 8]>,
+    ) {
+        let was_startup = self.simulation.startup_active();
+        self.simulation.advance_to(now_ms, values);
+        if was_startup && !self.simulation.startup_active() {
+            self.gestures.suppress_held();
+        }
     }
 
     /// Stateful sampling uses real warning dwell. None advances time without readings.
@@ -397,7 +489,7 @@ impl ControlSimulator {
         now_ms: u64,
         values: Option<[f32; 8]>,
     ) {
-        self.simulation.advance_to(now_ms, values);
+        self.advance_acquisition(now_ms, values);
         self.simulation.session.expire_feedback(self.simulation.now_ms);
         // Same synthetic summary completion used by the existing controls UI.
         if !self.simulation.render_transport {
@@ -431,6 +523,9 @@ impl ControlSimulator {
             return false;
         }
         self.simulation.render_transport = true;
+        if let Some(startup) = &mut self.simulation.startup {
+            startup.state.submitted(token);
+        }
         self.simulation.session.backlight_mut().frame_submitted(token);
         true
     }
@@ -453,6 +548,9 @@ impl ControlSimulator {
             .session
             .backlight_mut()
             .frame_completed(token, self.simulation.now_ms);
+        if let Some(startup) = &mut self.simulation.startup {
+            startup.state.completed(token, self.simulation.now_ms);
+        }
         self.simulation.update_led();
         self.completed_frame = Some(token);
         true
@@ -463,7 +561,7 @@ impl ControlSimulator {
         &mut self,
         values: Option<[f32; 8]>,
     ) {
-        self.simulation.advance_to(self.simulation.now_ms, values);
+        self.advance_acquisition(self.simulation.now_ms, values);
     }
 
     /// Explicit fault injection uses the same qualified owner route as firmware.
@@ -474,7 +572,7 @@ impl ControlSimulator {
         now_ms: u64,
     ) {
         self.simulation.model.mark_fault(sensor, quality, now_ms);
-        self.simulation.advance_to(now_ms, None);
+        self.advance_acquisition(now_ms, None);
     }
 
     pub fn snapshot(&self) -> DashboardSnapshot { self.simulation.snapshot() }

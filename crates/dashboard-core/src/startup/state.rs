@@ -80,6 +80,37 @@ impl Startup {
         self.exit = Some(reason);
     }
 
+    /// Consume startup gestures once, preserving protected recovery and rejecting late encoder observations.
+    pub fn consume_inputs(
+        &mut self,
+        gestures: &mut crate::controls::ControlGestures,
+        buttons: &mut crate::controls::ControlBatch,
+        encoder: &mut crate::input_model::EncoderBatch,
+        now: u64,
+    ) {
+        if self.active() {
+            if buttons.recovery.is_some() {
+                self.finish_at(Exit::Recovery, now);
+                gestures.suppress_held();
+            } else if buttons.startup_skip || encoder.delta != 0 || encoder.presses != 0 {
+                self.finish_at(Exit::Skip, now);
+                gestures.suppress_held();
+                buttons.actions.clear();
+            }
+            *encoder = Default::default();
+        } else if let Some(ended) = self.ended_at() {
+            let boundary = ended.saturating_mul(1000);
+            if encoder.motion.is_some_and(|o| o.observed_us <= boundary) {
+                encoder.delta = 0;
+                encoder.motion = None;
+            }
+            if encoder.button.is_some_and(|o| o.observed_us <= boundary) {
+                encoder.presses = 0;
+                encoder.button = None;
+            }
+        }
+    }
+
     pub fn submitted(
         &mut self,
         token: FrameToken,

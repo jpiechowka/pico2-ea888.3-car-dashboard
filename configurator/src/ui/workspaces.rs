@@ -42,6 +42,7 @@ pub struct PreviewDockState {
         )>,
     >,
     pub inspection_stamp: RwSignal<Option<(EditorStamp, Option<dashboard_configurator::json_draft::JsonProjection>)>>,
+    pub startup_stamp: StoredValue<Option<EditorStamp>>,
     accepted_key: StoredValue<AcceptedConfigKey>,
     reported_key: StoredValue<AcceptedConfigKey>,
 }
@@ -71,6 +72,7 @@ impl PreviewDockState {
             callbacks: StoredValue::new(dashboard_configurator::frame_callbacks::FrameCallbacks::new()),
             playback_clock: StoredValue::new(None),
             inspection_stamp: RwSignal::new(None),
+            startup_stamp: StoredValue::new(None),
             accepted_key: StoredValue::new(editor.accepted_config_key()),
             reported_key: StoredValue::new(editor.accepted_config_key()),
         }
@@ -89,7 +91,13 @@ impl PreviewDockState {
         if self.sim.try_with_untracked(|_| ()).is_none() || self.inspection_stamp.try_get_untracked().is_none() {
             return false;
         }
-        if accepted_key != key {
+        let stale_startup = self
+            .startup_stamp
+            .try_get_value()
+            .flatten()
+            .is_some_and(|stamp| stamp != editor.stamp());
+        if accepted_key != key || stale_startup {
+            let _ = self.startup_stamp.try_set_value(None);
             super::simulation::cancel(_ui);
             let _ = self.sim.try_update(|s| s.restart(editor.preview().clone()));
             let _ = self.accepted_key.try_set_value(key);

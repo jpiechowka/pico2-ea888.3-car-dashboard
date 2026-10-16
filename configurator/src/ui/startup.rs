@@ -198,9 +198,10 @@ pub fn Panel(ui: Ui) -> impl IntoView {
             <p class="hint">"By default warnings wait for the dashboard. Faults and protected Y recovery always exit startup; a fresh tap or rotation skips it without also activating its usual action."</p>
             </div><div><label class="startup-toggle"><input type="checkbox" prop:checked=move ||state.profile.get().warning_led on:change=move |e|state.edit(ui, |p|p.warning_led=event_target_checked(&e))/>{" Warning LED during startup"}</label>
             <p class="hint">"The configured LED pattern can indicate warnings while splash text stays hidden. A hidden warning cannot be acknowledged."</p>
-            </div></div></section><div class="startup-actions"><button on:click=move |_|show(ui)>"Preview startup"</button><button disabled=move ||ui.snapshot_blocked() on:click=move |_|{
+            </div></div></section><div class="startup-actions"><button on:click=move |_|show(ui)>"Preview startup"</button><button disabled=move ||ui.snapshot_blocked() on:click=move |_|simulation::replay_startup(ui)>"Replay full startup"</button><button disabled=move ||ui.snapshot_blocked() on:click=move |_|{
                 if let Some(bytes)=state.profile.get_untracked().encode() && io::download(ui,"startup.easp","application/octet-stream",&bytes).is_err(){state.message.set("Could not download the startup profile.".into());}
             }>"Export startup profile"</button></div>
+            <p class="hint">"Preview startup seeks through artwork. Replay full startup runs the shared startup controller with simulated acquisition, controls, warning LED and frame completions."</p>
             <label>"Import startup profile (.easp)"<input type="file" disabled=move ||ui.snapshot_blocked() accept=".easp" on:change=move |event| {
                 let input=event_target::<web_sys::HtmlInputElement>(&event);
                 let file=input.files().and_then(|files|files.get(0)); input.set_value("");

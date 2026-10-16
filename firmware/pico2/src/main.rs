@@ -423,29 +423,7 @@ async fn dashboard_task(
         } else {
             gestures.update(controls, session.page(), pressed, input_ms)
         };
-        if startup.active() {
-            if buttons.recovery.is_some() {
-                startup.finish_at(dashboard_pico2::startup::Exit::Recovery, input_ms);
-                gestures.suppress_held();
-            } else if buttons.startup_skip || encoder.delta != 0 || encoder.presses != 0 {
-                startup.finish_at(dashboard_pico2::startup::Exit::Skip, input_ms);
-                gestures.suppress_held();
-                buttons.actions.clear();
-            }
-            // The startup transaction cannot also invoke mapped encoder actions.
-            encoder = Default::default();
-        } else if let Some(ended) = startup.ended_at() {
-            // A delayed batch originating during startup remains consumed.
-            let boundary = ended.saturating_mul(1000);
-            if encoder.motion.is_some_and(|o| o.observed_us <= boundary) {
-                encoder.delta = 0;
-                encoder.motion = None;
-            }
-            if encoder.button.is_some_and(|o| o.observed_us <= boundary) {
-                encoder.presses = 0;
-                encoder.button = None;
-            }
-        }
+        startup.consume_inputs(&mut gestures, &mut buttons, &mut encoder, input_ms);
         let input = session.apply(
             &dashboard_configuration.config,
             controls,
