@@ -68,7 +68,7 @@ The 8 KiB Core0 reserve, 4 KiB Core1 reserve and 32 KiB Core1 stack remain uncha
 
 Device stack high-water, simultaneous interrupt/exception use, physical display/SPI timing and vehicle behavior remain unverified. No target code was run and no device was flashed during this admission. Future advanced fields must retain all established capacities and undergo a separate measured admission before changing object guards or storage representation.
 
-## Unreleased v4 target admission, 13 October 2026
+## Historical v4 schema admission, 13 October 2026
 
 Normal `Build-Dashboard.ps1 -Profile 280-70` captures `v4-schema1-demo280-traced`
 and `v4-schema3-vehicle280-traced` admit the complete v4 schema using the same
@@ -104,8 +104,9 @@ maximum single frame and fit the unchanged 1,024-byte formatting/entry
 allowance; unknown configuration helpers continue to fail closed. Exact
 M33 disassembly includes floating-point register saves.
 
-The complete v4 data contract is admitted here. Advanced runtime adapters and
-final integrated admission remain unfinished and this series is unreleased.
+This checkpoint admitted the v4 data contract before its advanced runtime
+adapters. The later [advanced release](advanced-v4-release.md) records their
+integration; these historical figures do not qualify subsequent changes.
 
 
 ### October 16 startup helper admission

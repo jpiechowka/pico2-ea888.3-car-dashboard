@@ -1,9 +1,11 @@
 # Startup and transport status
 
-The production path no longer plays the scripted 13-second loading/welcome
-sequence or asserts ECU connection/vehicle identity before a response. Display
-initialization retains the controller delays; the ordinary dashboard starts
-once the display task and input paths have been initialized. Demo is still an
+After display initialization, the configurable startup path shows completed
+boot checks and current transport status, then the selected splash and Dashboard.
+The defaults are a brief 600 ms status screen and a 2500 ms animation. It never
+asserts ECU connection or vehicle identity before evidence exists. Acquisition
+continues throughout; faults and protected recovery exit startup immediately.
+See [startup settings and previews](../configurator/startup.md). Demo remains an
 explicit synthetic data build, with no automatic fallback.
 
 The header distinguishes NO LINK, STARTING, RETRY, RAW ONLY, WAIT ECU, DATA,
