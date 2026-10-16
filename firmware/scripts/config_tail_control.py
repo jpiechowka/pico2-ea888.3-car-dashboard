@@ -499,6 +499,8 @@ class _TailActiveControl:
 
     def current(self):
         from config_decoded_sources import _phase_graph
+        require(self.actual_reached_accesses_pending is True,
+            'Tail active retained reached-access qualification changed')
         require(_control_checkpoint(self.state,self.guards,self.record,self.structural)==self.checkpoint,
             'Tail active source/control record changed')
         self.state.current()
@@ -515,6 +517,13 @@ def _structural_data(raw,state):
         raw.selection.Tail_children is state.children and not raw.confers_active_state,
         'Tail raw selection changes its exact private predecessor/parent/child association')
     s=raw.selection
+    source=state.predecessor.phases.structural.selection
+    require(s.source_selection is source and
+        s.context is source.context is state.predecessor.phases.widgets.views.context and
+        s.widgets is source.widgets is state.predecessor.phases.widgets and
+        s.Source_parents is source.Source_parents is state.predecessor.phases.parents and
+        s.Source_children is source.Source_children is state.predecessor.phases.children,
+        'Tail retained selection changes its exact predecessor association')
     return dict(selection=(s.proofs,s.selected,s.edges,tuple(sorted(s.cuts)),s.widget,s.children,s.child_contexts),
         raw_successors=raw.raw_successors,raw_returns=raw.raw_returns,nested_returns=raw.nested_returns,
         carriers=raw.carrier_returns,restore=raw.restore,terminal_partition=raw.terminal_partition,
@@ -627,8 +636,13 @@ def _control_checkpoint(state,guards,record,raw):
     the predecessor's own currentness checks their complete value/alias graph.
     Every local retained field and its aliases still enters this snapshot.
     """
-    from config_decoded_tail import _entry_data
     from config_decoded_sources import _phase_graph
+    return _phase_graph((_guard_data(state,guards),record,_structural_data(raw,state)))
+
+
+def _guard_data(state,guards):
+    """Local guard values with their actual upstream identities checked."""
+    from config_decoded_tail import _entry_data
     require(len(guards)==len(state.entries),'Tail active guard collection changed')
     data=[]
     for i,(guard,entry) in enumerate(zip(guards,state.entries)):
@@ -637,4 +651,4 @@ def _control_checkpoint(state,guards,record,raw):
             'Tail active guard lost its exact entry/normal association')
         data.append(dict(entry=_entry_data(entry,state.predecessor),
             **{k:v for k,v in guard.items() if k not in ('entry','Source_normal')}))
-    return _phase_graph((tuple(data),record,_structural_data(raw,state)))
+    return tuple(data)

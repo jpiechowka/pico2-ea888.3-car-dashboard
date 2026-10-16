@@ -960,4 +960,87 @@ class TailActualActiveControl(unittest.TestCase):
         with self.assertRaises(AssertionError):_tail_control(dict(phase='Tail complete',complete=True))
 
 
+    def test_current_rejects_each_retained_predecessor_alias_before_derived_consumers(self):
+        from config_tail_control import _tail_control
+        control=_tail_control(self.state);selection=control.structural.selection
+        replacements=dict(context=replace(selection.context),source_selection=replace(selection.source_selection),
+            widgets=replace(selection.widgets),Source_parents=tuple(list(selection.Source_parents)),
+            Source_children=dict(selection.Source_children))
+        for field,value in replacements.items():
+            old=getattr(selection,field);self.assertIsNot(old,value)
+            object.__setattr__(selection,field,value)
+            try:
+                with self.subTest(alias=field),self.assertRaisesRegex(AssertionError,'association|structure|retained'):
+                    control.current()
+            finally:object.__setattr__(selection,field,old)
+        object.__setattr__(control,'actual_reached_accesses_pending',False)
+        try:
+            with self.assertRaisesRegex(AssertionError,'retained reached-access qualification'):control.current()
+        finally:object.__setattr__(control,'actual_reached_accesses_pending',True)
+        self.assertIs(control.current(),control)
+        self.assertIs(control.structural.selection.context,self.state.predecessor.phases.widgets.views.context)
+
+
+class TailReachedAccesses(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_tail_uses import _tail_access_group
+        from config_decoded_tail import _first_boot_tail_phases
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        cls.state=_first_boot_tail_phases(objects,rows,source)
+        cls.bridge,cls.uses=_tail_access_group(cls.state)
+
+    def test_actual_three_Screen_epochs_first_only_and_both_LED_sources_reach_current_requirements(self):
+        from config_tail_uses import _check_tail_uses
+        from collections import Counter
+        self.assertIs(self.uses,self.bridge.uses)
+        self.assertEqual(tuple(v.role for v in self.bridge.tail_families),
+            ('Screen_output_words','first_Screen_scratch_words','first_Config_Screen_words'))
+        self.assertEqual(tuple(v.role for v in self.bridge.LED_families),
+            ('result_words','pattern_words','normal_config_words'))
+        counts=Counter(v.role for v in self.uses)
+        self.assertTrue(all(counts[v]>0 for v in ('Screen_output_words','first_Screen_scratch_words',
+            'first_Config_Screen_words','result_words','pattern_words','normal_config_words')))
+        for use in self.uses:
+            phase=self.state.phases[use.phase_index]
+            self.assertIs(use.entry,phase.entry)
+            self.assertFalse(use.completed_prefix_issued)
+            if use.role=='Screen_output_words':
+                self.assertEqual(use.epoch,(5712,6198,6426).index(use.source['invocation']['site']-0x1001c654))
+                self.assertIs(use.source['normal'],use.source['invocation']['result']['normal'])
+            elif use.role in ('first_Screen_scratch_words','first_Config_Screen_words'):
+                self.assertIs(use.source['Screen'],phase.controls['normal']['screens'][0])
+                self.assertEqual(use.epoch,0)
+            elif use.role=='normal_config_words':
+                self.assertIsNotNone(phase.suffix_effects['complete_after'])
+                self.assertEqual(use.continuation[-1],0x1001c654+7112)
+        self.assertIs(_check_tail_uses(self.bridge),self.uses)
+
+    def test_equal_copy_source_and_late_completion_mutation_reject_whole_current_collection(self):
+        from config_tail_uses import _check_tail_uses
+        use=next(v for v in self.uses if v.role=='Screen_output_words')
+        original=use.source['invocation'];use.source['invocation']=dict(original)
+        try:
+            with self.assertRaisesRegex(AssertionError,'Tail reached access collection changed'):_check_tail_uses(self.bridge)
+        finally:use.source['invocation']=original
+        phase=next(v for v in self.state.phases if v.suffix_effects is not None and v.suffix_effects['complete_after'] is not None)
+        original=phase.suffix_effects['complete_after'];phase.suffix_effects['complete_after']=0x1001c654+7100
+        try:
+            with self.assertRaises(AssertionError):_check_tail_uses(self.bridge)
+        finally:phase.suffix_effects['complete_after']=original
+
+    def test_public_descriptors_or_changed_collection_cannot_authorize_current_accesses(self):
+        from config_tail_uses import _tail_access_group,_check_tail_uses
+        for value in (dict(phase='Tail complete'),self.bridge.tail_families[0],None):
+            with self.assertRaises(AssertionError):_tail_access_group(value)
+        with self.assertRaises(AssertionError):_check_tail_uses(dict(uses=self.uses,verified=True))
+        # Derived value wrappers may be independently recreated. Their actual
+        # source/entry/control aliases remain checked by the fresh batch.
+        copies=tuple(replace(v) for v in self.uses)
+        self.assertIs(_check_tail_uses(replace(self.bridge,uses=copies)),copies)
+        for changed in (self.uses[:-1],tuple(reversed(self.uses)),self.uses+(self.uses[0],)):
+            with self.subTest(change=len(changed)),self.assertRaisesRegex(AssertionError,'collection changed'):
+                _check_tail_uses(replace(self.bridge,uses=changed))
+
+
 if __name__=='__main__':unittest.main()
