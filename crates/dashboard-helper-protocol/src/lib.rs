@@ -8,3 +8,5 @@ pub use jobs::*;
 pub mod requests;
 pub use requests::*;
 pub mod setup;
+pub mod devices;
+pub use devices::*;

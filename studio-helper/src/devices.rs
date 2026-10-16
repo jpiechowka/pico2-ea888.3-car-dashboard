@@ -1,0 +1,165 @@
+//! Descriptor-only BOOTSEL discovery. Never opens a PICOBOOT interface or runs picotool.
+use std::path::Path;
+
+use dashboard_helper_protocol::*;
+fn text<const N: usize>(s: Option<&str>) -> Option<Text<N>> {
+    s.filter(|s| !s.is_empty() && !s.chars().any(char::is_control))
+        .and_then(|s| Text::new(s).ok())
+}
+pub(crate) fn empty(
+    session: SessionId,
+    reason: &str,
+) -> DeviceScanReport {
+    DeviceScanReport {
+        schema_version: 1,
+        session_id: session,
+        complete: false,
+        reason: Text::new(reason).unwrap(),
+        devices: BoundedVec::new(vec![]).unwrap(),
+    }
+}
+fn id() -> Result<DeviceId, String> {
+    let mut bytes = [0; 16];
+    getrandom::fill(&mut bytes).map_err(|_| "OS entropy unavailable")?;
+    DeviceId::new(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()).map_err(|e| e.to_string())
+}
+fn qualify(devices: &mut [DeviceSummary]) {
+    for i in 0..devices.len() {
+        let serial = devices[i].serial.as_ref().map(|s| s.as_str());
+        let ambiguous = serial.is_some_and(|s| {
+            devices
+                .iter()
+                .enumerate()
+                .any(|(j, d)| i != j && d.serial.as_ref().is_some_and(|v| v.as_str() == s))
+        });
+        if ambiguous {
+            devices[i].status = DeviceStatus::Ambiguous;
+            devices[i].reason = Text::new("Duplicate descriptor serial; device identity is ambiguous").unwrap();
+        } else if serial.is_none_or(|s| !s.is_ascii() || s.starts_with('-')) {
+            devices[i].status = DeviceStatus::Unsupported;
+            devices[i].reason =
+                Text::new("Missing or unsupported descriptor serial; no device command is authorized").unwrap();
+        }
+    }
+}
+fn enumerate() -> Result<DeviceScanReport, String> {
+    use nusb::MaybeFuture;
+    let mut report = empty(
+        SessionId::new("0".repeat(32)).unwrap(),
+        "Descriptor observation only; capacity, model, security and partition state are unverified",
+    );
+    let mut devices = Vec::new();
+    for d in nusb::list_devices()
+        .wait()
+        .map_err(|e| format!("Descriptor enumeration failed: {e}"))?
+    {
+        if d.vendor_id() != 0x2E8A || d.product_id() != 0x000F {
+            continue;
+        }
+        if devices.len() == 16 {
+            return Ok(empty(
+                report.session_id,
+                "More than 16 BOOTSEL descriptors; scan is incomplete and no devices are admitted",
+            ));
+        }
+        devices.push(DeviceSummary {
+            device_id: id()?,
+            vid: d.vendor_id(),
+            pid: d.product_id(),
+            serial: text(d.serial_number()),
+            product: text(d.product_string()),
+            status: DeviceStatus::DescriptorOnly,
+            reason: Text::new("BOOTSEL VID/PID observed; descriptor identity only, not confirmed Pico 2 hardware")
+                .unwrap(),
+            capacity: DeviceCapacity {
+                state: DeviceCapacityState::Unverified,
+                bytes: None,
+                provenance: None,
+            },
+            flash_ready: false,
+        });
+    }
+    qualify(&mut devices);
+    report.complete = true;
+    report.devices = BoundedVec::new(devices).map_err(|e| e.to_string())?;
+    report.validate().map_err(|e| e.to_string())?;
+    Ok(report)
+}
+/// Fixed child entrypoint is isolated because nusb's Windows enumeration is blocking.
+pub fn enumerate_child() -> i32 {
+    match enumerate().and_then(|r| encode(&r).map_err(|e| e.to_string())) {
+        Ok(bytes) => {
+            use std::io::Write;
+            if std::io::stdout().write_all(&bytes).is_ok() {
+                0
+            } else {
+                1
+            }
+        }
+        Err(_) => {
+            eprintln!("Descriptor enumeration failed; no devices admitted");
+            1
+        }
+    }
+}
+pub(crate) fn scan(
+    repo: &Path,
+    session: SessionId,
+) -> DeviceScanReport {
+    let result = std::env::current_exe()
+        .map_err(|e| e.to_string())
+        .and_then(|exe| crate::process::run(&exe, &["--internal-device-descriptors"], repo))
+        .and_then(|o| {
+            if o.code != Some(0) {
+                return Err(format!("Descriptor child exited {:?}: {}", o.code, o.stderr));
+            }
+            decode::<DeviceScanReport>(&o.raw_stdout).map_err(|e| format!("Invalid descriptor report: {e}"))
+        });
+    match result {
+        Ok(mut report) => {
+            report.session_id = session;
+            report
+        }
+        Err(e) => {
+            empty(
+                session,
+                &format!("Descriptor scan failed: {}", e.chars().take(350).collect::<String>()),
+            )
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn device(serial: Option<&str>) -> DeviceSummary {
+        DeviceSummary {
+            device_id: id().unwrap(),
+            vid: 0x2E8A,
+            pid: 0xF,
+            serial: text(serial),
+            product: None,
+            status: DeviceStatus::DescriptorOnly,
+            reason: Text::new("descriptor").unwrap(),
+            capacity: DeviceCapacity {
+                state: DeviceCapacityState::Unverified,
+                bytes: None,
+                provenance: None,
+            },
+            flash_ready: false,
+        }
+    }
+    #[test]
+    fn missing_and_duplicate_serials_remain_unqualified() {
+        let mut devices = vec![device(Some("same")), device(Some("same")), device(None)];
+        qualify(&mut devices);
+        assert_eq!(devices[0].status, DeviceStatus::Ambiguous);
+        assert_eq!(devices[1].status, DeviceStatus::Ambiguous);
+        assert_eq!(devices[2].status, DeviceStatus::Unsupported);
+        assert!(devices.iter().all(|d| !d.flash_ready && d.capacity.bytes.is_none()));
+    }
+    #[test]
+    fn descriptor_controls_and_oversize_are_not_displayed() {
+        assert!(text::<126>(Some("bad\nserial")).is_none());
+        assert!(text::<126>(Some(&"a".repeat(127))).is_none());
+    }
+}

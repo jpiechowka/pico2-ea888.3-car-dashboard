@@ -81,6 +81,7 @@ impl Job {
 struct Pipe {
     frame: StreamFramer,
     text: String,
+    raw: Vec<u8>,
     bytes: usize,
     closed: bool,
 }
@@ -89,6 +90,7 @@ impl Pipe {
         Self {
             frame: StreamFramer::new(&[]).unwrap(),
             text: String::new(),
+            raw: Vec::new(),
             bytes: 0,
             closed: false,
         }
@@ -136,6 +138,7 @@ impl Pipe {
             if self.bytes > limit {
                 return Err("output_limit: probe exceeded 65536 bytes per stream".into());
             }
+            self.raw.extend_from_slice(&buffer[..n]);
             self.frame
                 .push(&buffer[..n], |s, _| {
                     self.text.push_str(&s);
@@ -189,6 +192,7 @@ pub(super) fn run(
                     return Ok(Output {
                         code: status.code(),
                         stdout: std::mem::take(&mut out.text),
+                        raw_stdout: std::mem::take(&mut out.raw),
                         stderr: std::mem::take(&mut err.text),
                     });
                 }

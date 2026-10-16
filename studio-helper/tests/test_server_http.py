@@ -1,4 +1,4 @@
-import json,subprocess,time,urllib.request,urllib.error,socket
+import json,subprocess,time,urllib.request,urllib.error,socket,sys,threading,queue
 from pathlib import Path
 repo=Path.cwd()
 child=subprocess.Popen([str(repo/'studio-helper/target/debug/studio-helper.exe'),'serve','--repo',str(repo)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -11,11 +11,13 @@ def req(path,method='GET',headers=None):
   with urllib.request.urlopen(r,timeout=10) as response:return response.status,json.loads(response.read() or b'null')
  except urllib.error.HTTPError as e:return e.code,json.loads(e.read() or b'null')
 try:
- for _ in range(100):
-  if child.poll() is not None:raise RuntimeError('Owned helper could not start; no existing listener was terminated')
-  try:
-   with socket.create_connection(('127.0.0.1',8765),timeout=.1):break
-  except OSError:time.sleep(.02)
+ startup=queue.Queue(maxsize=1)
+ reader=threading.Thread(target=lambda: startup.put(child.stderr.readline()),daemon=True)
+ reader.start()
+ line=startup.get(timeout=5)
+ reader.join(timeout=1)
+ if not line.startswith(b'Studio helper listening at '):
+  raise RuntimeError('Owned helper could not bind; no existing listener was contacted or terminated')
  status,session=req('/api/v1/connect','POST',{'X-Studio-Connect':'1'})
  assert status==200 and len(session['capability'])==64
  headers={'X-Studio-Capability':session['capability']}
@@ -44,9 +46,18 @@ try:
  assert req('/api/v1/jobs/'+second['job_id']+'/cancel','POST',headers)[0]==200
  assert poll(second)['summary']['terminal_cause']=='cancelled'
  assert req('/api/v1/builds','POST',headers)[0]==404
+ if '--devices' in sys.argv:
+  status,device_job=req('/api/v1/devices/refresh','POST',headers)
+  assert status==202
+  device_batch=poll(device_job)
+  status,devices=req('/api/v1/devices',headers=headers)
+  assert status==200 and devices['schema_version']==1 and len(devices['devices'])<=16
+  assert all(not d['flash_ready'] and d['capacity']['state']=='unverified' and d['capacity']['bytes'] is None for d in devices['devices'])
+  print('Read-only descriptor endpoint: complete=%s, candidates=%s; no flash-ready claims.'%(devices['complete'],len(devices['devices'])))
  print('Live HTTP: connect/auth, single active job, cached report, event polling, cancel/join and disabled build route passed.')
 finally:
  child.terminate()
  _,stderr=child.communicate(timeout=10)
  if child.returncode is None:raise RuntimeError('Owned helper did not exit')
  print('Owned helper stopped and joined; no capability logged.')
+

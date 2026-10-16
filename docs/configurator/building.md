@@ -330,3 +330,35 @@ Build, setup, device and flash HTTP routes remain unavailable in this slice.
 Focused native HTTP regression command after building the helper:
 `python studio-helper/tests/test_server_http.py` (run from repository root).
 It starts and stops only its own temporary helper process; port 8765 must be free.
+
+### Read-only BOOTSEL descriptor discovery
+
+`POST /api/v1/devices/refresh` (empty body, same authentication) starts a
+`DeviceScan` job. `GET /api/v1/devices` returns the cached, bounded
+`DeviceScanReport`; GET never enumerates USB. The report contains at most 16
+candidates with BOOTSEL VID/PID `2e8a:000f`, fresh per-scan opaque IDs, optional
+serial/product strings, descriptor status, reason, and explicit capacity state.
+Missing/unsupported serials and duplicates stay unqualified. No candidate is
+automatically selected. Refresh replaces the snapshot and all IDs.
+
+This slice uses nusb 0.2.7 Windows descriptor discovery in a fixed helper child,
+under the existing 15-second deadline/64 KiB output/owned-Job cleanup boundary.
+It does not call picotool, claim/reset the PICOBOOT interface, read program or
+OTP memory, or program anything. Every returned entry has `flash_ready:false`
+and `capacity:{state:"unverified",bytes:null,provenance:null}`. A future explicit
+genuine-Pico-2 confirmation can use the shared `user_confirmed` state with
+manufacturer 4 MiB provenance; this scanner never fabricates that assertion or
+presents it as a measurement.
+
+`complete:true` means the bounded descriptor producer finished. nusb can omit
+inaccessible Windows descriptors and allocates its device list before returning;
+this flag does not establish exhaustive USB absence, continuous attachment,
+physical model, chip revision, security, partition state, capacity, driver
+access or future flash eligibility. More than 16 candidates returns an
+incomplete empty result rather than a misleading truncated selection list.
+The descriptor child lifetime and returned data are bounded; upstream nusb/OS
+allocation is not claimed to have the same 16-device bound.
+
+The optional focused smoke check
+`python studio-helper/tests/test_server_http.py --devices` explicitly enumerates
+read-only descriptors. Without `--devices`, the HTTP test does not enumerate USB.

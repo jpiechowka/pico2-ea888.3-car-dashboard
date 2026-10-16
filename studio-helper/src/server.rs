@@ -16,6 +16,7 @@ const ORIGINS: [&str; 2] = ["http://127.0.0.1:8080", "http://localhost:8080"];
 struct Inner {
     jobs: JobStore,
     cached: Value,
+    devices: DeviceScanReport,
     worker: Option<tokio::task::JoinHandle<()>>,
     stopping: bool,
 }
@@ -38,7 +39,8 @@ impl State {
             session: session.clone(),
             capability: random_hex::<32>()?,
             inner: Mutex::new(Inner {
-                jobs: JobStore::new(session),
+                jobs: JobStore::new(session.clone()),
+                devices: crate::devices::empty(session, "Device scan not run"),
                 cached: json!({"schema_version":1,"ready":false,"checks":[],"reason":"Check not run"}),
                 worker: None,
                 stopping: false,
@@ -192,7 +194,10 @@ fn log_report(
         });
     }
 }
-async fn start_check(state: Arc<State>) -> Result<JobSummary, Error> {
+async fn start_check(
+    state: Arc<State>,
+    device_scan: bool,
+) -> Result<JobSummary, Error> {
     let previous = {
         let mut inner = state.inner.lock().unwrap();
         if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
@@ -208,25 +213,61 @@ async fn start_check(state: Arc<State>) -> Result<JobSummary, Error> {
         return Err(Error::InvalidState);
     }
     let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
-    let result = inner.jobs.start(id.clone(), OperationKind::PrerequisiteCheck, None)?;
-    let stage = StageId::Probe(ProbeStage::Prerequisites);
+    let operation = if device_scan {
+        OperationKind::DeviceScan
+    } else {
+        OperationKind::PrerequisiteCheck
+    };
+    let result = inner.jobs.start(id.clone(), operation, None)?;
+    let stage = StageId::Probe(if device_scan {
+        ProbeStage::DeviceDetection
+    } else {
+        ProbeStage::Prerequisites
+    });
     inner.jobs.transition(&id, stage, StageState::Running, None)?;
     inner.jobs.append(
         &id,
         LogInput {
             stage,
             source: Source::Internal,
-            text: "Checking installed tools; no installation, build or USB access".into(),
+            text: if device_scan {
+                "Reading BOOTSEL descriptors only; no interface reset, programming or capacity claim"
+            } else {
+                "Checking installed tools; no installation, build or USB access"
+            }
+            .into(),
             progress: false,
         },
     )?;
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(tokio::task::spawn_blocking(move || {
-        let report = crate::prerequisites::check(&worker_state.repo);
+        let report = if device_scan {
+            serde_json::to_value(crate::devices::scan(&worker_state.repo, worker_state.session.clone())).unwrap()
+        } else {
+            crate::prerequisites::check(&worker_state.repo)
+        };
         let mut inner = worker_state.inner.lock().unwrap();
-        log_report(&mut inner.jobs, &id, &report);
-        inner.cached = report.clone();
+        if device_scan {
+            inner.devices = serde_json::from_value(report.clone()).unwrap();
+            let text = format!(
+                "{} BOOTSEL descriptor candidates. {}",
+                inner.devices.devices.len(),
+                inner.devices.reason.as_str()
+            );
+            let _ = inner.jobs.append(
+                &id,
+                LogInput {
+                    stage,
+                    source: Source::Internal,
+                    text,
+                    progress: false,
+                },
+            );
+        } else {
+            log_report(&mut inner.jobs, &id, &report);
+            inner.cached = report.clone();
+        }
         if crate::process::cleanup_failed() {
             let _ = inner.jobs.note_cleanup_fatal(&id, true);
             inner.stopping = true;
@@ -242,13 +283,13 @@ async fn start_check(state: Arc<State>) -> Result<JobSummary, Error> {
                 TerminalCause::Cancelled,
                 Some(Text::new("Check cancelled; owned probe processes joined").unwrap()),
             )
-        } else if report["ready"] == true {
+        } else if report[if device_scan { "complete" } else { "ready" }] == true {
             (StageState::Succeeded, TerminalCause::Succeeded, None)
         } else {
             (
                 StageState::Failed,
                 TerminalCause::Failed,
-                Some(Text::new("One or more installed prerequisites failed; inspect the cached report").unwrap()),
+                Some(Text::new("Operation incomplete; inspect the cached prerequisite or device report").unwrap()),
             )
         };
         let _ = inner.jobs.transition(&id, stage, state, reason);
@@ -354,6 +395,19 @@ async fn dispatch(
         ("GET", "/api/v1/prerequisites") => {
             response(StatusCode::OK, state.inner.lock().unwrap().cached.clone(), origin)
         }
+        ("GET", "/api/v1/devices") => {
+            response(
+                StatusCode::OK,
+                serde_json::to_value(&state.inner.lock().unwrap().devices).unwrap(),
+                origin,
+            )
+        }
+        ("POST", "/api/v1/devices/refresh") => {
+            match start_check(state.clone(), true).await {
+                Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
+                Err(e) => store_error(e, origin),
+            }
+        }
         ("GET", "/api/v1/jobs") => {
             response(
                 StatusCode::OK,
@@ -362,7 +416,7 @@ async fn dispatch(
             )
         }
         ("POST", "/api/v1/prerequisites/check") => {
-            match start_check(state.clone()).await {
+            match start_check(state.clone(), false).await {
                 Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
                 Err(e) => store_error(e, origin),
             }

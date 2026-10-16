@@ -12,6 +12,7 @@ use std::time::Duration;
 pub(crate) struct Output {
     pub code: Option<i32>,
     pub stdout: String,
+    pub raw_stdout: Vec<u8>,
     pub stderr: String,
 }
 #[cfg(windows)]

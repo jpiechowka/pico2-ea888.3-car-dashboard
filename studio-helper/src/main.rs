@@ -1,5 +1,8 @@
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 1 && args[0] == "--internal-device-descriptors" {
+        std::process::exit(studio_helper::devices::enumerate_child());
+    }
     if args.first().is_some_and(|s| s == "serve") {
         let repo = match args.as_slice() {
             [_] => std::env::current_dir().unwrap_or_default(),
