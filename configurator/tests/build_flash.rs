@@ -192,7 +192,7 @@ fn powershell_recipe_preserves_configuration_flags_and_failure_boundaries() {
     fs::write(dir.join("firmware/rust-toolchain.toml"), &toolchain).unwrap();
     fs::write(dir.join("firmware/scripts/Build-Dashboard.ps1"), r#"
 param([string]$Name,[string]$Config,[string]$Mode,[string]$Profile,[string]$CpuHz,[string]$SpiHz,[string]$VselMv,[string]$Optimization,[bool]$FrameTrace,[bool]$TeTrace,[switch]$SerialDisplay,[switch]$FullOutline,[switch]$FullFrame,[switch]$Expert)
-$data = @{ Name=$Name; Hex=[Convert]::ToHexString([IO.File]::ReadAllBytes($Config)); Mode=$Mode; Profile=$Profile; CpuHz=$CpuHz; SpiHz=$SpiHz; VselMv=$VselMv; Optimization=$Optimization; FrameTrace=$FrameTrace; TeTrace=$TeTrace; SerialDisplay=$SerialDisplay.IsPresent; FullOutline=$FullOutline.IsPresent; FullFrame=$FullFrame.IsPresent; Expert=$Expert.IsPresent; Toolchain=$env:RUSTUP_TOOLCHAIN }
+$data = @{ Name=$Name; Hex=[Convert]::ToHexString([IO.File]::ReadAllBytes($Config)); Mode=$Mode; Profile=$Profile; CpuHz=$CpuHz; SpiHz=$SpiHz; VselMv=$VselMv; Optimization=$Optimization; FrameTrace=$FrameTrace; TeTrace=$TeTrace; SerialDisplay=$SerialDisplay.IsPresent; FullOutline=$FullOutline.IsPresent; FullFrame=$FullFrame.IsPresent; Expert=$Expert.IsPresent; Toolchain=$env:RUSTUP_TOOLCHAIN; StartupHex=[Convert]::ToHexString([IO.File]::ReadAllBytes($env:DASHBOARD_STARTUP_PROFILE)); AssetHex=if ($env:DASHBOARD_STARTUP_ASSET) {[Convert]::ToHexString([IO.File]::ReadAllBytes($env:DASHBOARD_STARTUP_ASSET))} else { $null } }
 $data | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot '../../observed.json')
 "#).unwrap();
     let mut selection = BuildSelection::default();
@@ -208,12 +208,29 @@ $data | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot '../.
     selection.cpu.set("280000000");
     selection.spi.set("70000000");
     selection.voltage = Voltage::V1_30;
-    let recipe = selection.prepare(&Editor::default()).unwrap();
+    let mut editor = Editor::default();
+    let art = artwork();
+    editor.set_artwork_if_current(editor.stamp(), art.clone()).unwrap();
+    let recipe = selection.prepare(&editor).unwrap();
     let script = dir.join("recipe.ps1");
     fs::write(&script, recipe.powershell()).unwrap();
+    let harness = dir.join("harness.ps1");
+    fs::write(&harness,r#"
+param([string]$Recipe,[string]$Repository,[string]$Name)
+$ErrorActionPreference='Stop'
+$env:RUSTUP_TOOLCHAIN='prior-toolchain'
+$env:DASHBOARD_STARTUP_PROFILE='prior-profile'
+$env:DASHBOARD_STARTUP_ASSET='prior-asset'
+try { & $Recipe -Repository $Repository -Name $Name }
+finally {
+    @{ Toolchain=$env:RUSTUP_TOOLCHAIN; Startup=$env:DASHBOARD_STARTUP_PROFILE; Asset=$env:DASHBOARD_STARTUP_ASSET } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Repository 'restored.json')
+}
+"#).unwrap();
     let run = |name: &str| {
         Command::new("pwsh")
             .args(["-NoProfile", "-NonInteractive", "-File"])
+            .arg(&harness)
+            .arg("-Recipe")
             .arg(&script)
             .arg("-Repository")
             .arg(&dir)
@@ -225,6 +242,26 @@ $data | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot '../.
     let result = run("test-capture");
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let observed: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("observed.json")).unwrap()).unwrap();
+    assert_eq!(
+        fs::read(dir.join("target/studio-exports/test-capture.easa")).unwrap(),
+        art.converted()
+    );
+    assert_eq!(
+        observed["StartupHex"].as_str().unwrap(),
+        recipe
+            .startup_bytes()
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<String>()
+    );
+    assert_eq!(
+        observed["AssetHex"].as_str().unwrap(),
+        art.converted().iter().map(|b| format!("{b:02X}")).collect::<String>()
+    );
+    let restored: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("restored.json")).unwrap()).unwrap();
+    assert_eq!(restored["Toolchain"], "prior-toolchain");
+    assert_eq!(restored["Startup"], "prior-profile");
+    assert_eq!(restored["Asset"], "prior-asset");
     assert_eq!(observed["Mode"], "Vehicle");
     assert_eq!(observed["Profile"], "");
     assert_eq!(observed["CpuHz"], "280000000");
@@ -254,6 +291,13 @@ $data | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot '../.
     assert!(!run("changed").status.success());
     assert!(!dir.join("target/studio-exports/changed.eav").exists());
     fs::write(dir.join("rust-toolchain.toml"), &toolchain).unwrap();
+    let procedural = selection.prepare(&Editor::default()).unwrap();
+    fs::write(&script, procedural.powershell()).unwrap();
+    assert!(run("procedural").status.success());
+    let procedural_observed: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("observed.json")).unwrap()).unwrap();
+    assert!(procedural_observed["AssetHex"].is_null());
+    assert!(!dir.join("target/studio-exports/procedural.easa").exists());
     fs::write(
         dir.join("firmware/scripts/Build-Dashboard.ps1"),
         "throw 'fixture build failed'\n",
@@ -261,5 +305,102 @@ $data | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot '../.
     .unwrap();
     let failed = run("failed");
     assert!(!failed.status.success());
+    let restored: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("restored.json")).unwrap()).unwrap();
+    assert_eq!(restored["Toolchain"], "prior-toolchain");
+    assert_eq!(restored["Startup"], "prior-profile");
+    assert_eq!(restored["Asset"], "prior-asset");
     assert!(!String::from_utf8_lossy(&failed.stdout).contains("Build wrapper completed"));
+}
+
+#[test]
+fn recipe_snapshots_accepted_startup_instead_of_defaults() {
+    use dashboard_config::startup::{StartupProfile, StartupTheme};
+    let mut editor = Editor::default();
+    let profile = StartupProfile {
+        theme: StartupTheme::Turbo,
+        duration_ms: 1234,
+        ..StartupProfile::default()
+    };
+    editor.set_startup_profile(profile).unwrap();
+    let recipe = BuildSelection::default().prepare(&editor).unwrap();
+    assert_eq!(recipe.startup_bytes(), &profile.encode().unwrap());
+    editor.undo().unwrap();
+    assert_eq!(recipe.startup_bytes(), &profile.encode().unwrap());
+}
+
+use std::sync::Arc;
+
+use dashboard_config_tools::project::*;
+fn artwork() -> Arc<Artwork> {
+    use dashboard_config::startup_asset::{MAGIC, asset_crc32, crc32};
+    let mut asset = vec![0; 52];
+    asset[..8].copy_from_slice(MAGIC);
+    asset[8..10].copy_from_slice(&1u16.to_le_bytes());
+    asset[10..12].copy_from_slice(&32u16.to_le_bytes());
+    asset[16..18].copy_from_slice(&320u16.to_le_bytes());
+    asset[18..20].copy_from_slice(&240u16.to_le_bytes());
+    asset[20..22].copy_from_slice(&1u16.to_le_bytes());
+    asset[24..28].copy_from_slice(&100u32.to_le_bytes());
+    asset[32..36].copy_from_slice(&100u32.to_le_bytes());
+    asset[36..40].copy_from_slice(&52u32.to_le_bytes());
+    let mut payload = Vec::new();
+    for _ in 0..240 {
+        payload.extend_from_slice(&0x813Fu16.to_le_bytes());
+        payload.extend_from_slice(&[0xF8, 0]);
+    }
+    asset[40..44].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+    asset[44..48].copy_from_slice(&crc32(&payload).to_le_bytes());
+    asset[48] = 1;
+    asset.extend(payload);
+    let len = asset.len() as u32;
+    asset[12..16].copy_from_slice(&len.to_le_bytes());
+    let crc = asset_crc32(&asset).unwrap();
+    asset[28..32].copy_from_slice(&crc.to_le_bytes());
+    let source: Arc<[u8]> = Arc::from(&b"\x89PNG\r\n\x1a\nsynthetic-original"[..]);
+    let recipe = Recipe {
+        version: 1,
+        converter: CONVERTER.into(),
+        label: "Example".into(),
+        source_kind: SourceKind::Png,
+        source_sha256: digest(&source),
+        source_length: source.len() as u32,
+        original_included: true,
+        asset_sha256: digest(&asset),
+        fit: Fit::Contain,
+        matte_rgb: [0; 3],
+        sample_fps: 20,
+        trim_start_ms: 0,
+        trim_end_ms: 100,
+        sheet: None,
+        gif_background: GifBackground::Logical,
+    };
+    Arc::new(Artwork::new(asset.into(), recipe, Some(source)).unwrap())
+}
+
+#[test]
+fn recipe_freezes_converted_asset_and_never_embeds_original() {
+    let mut editor = Editor::default();
+    let art = artwork();
+    editor.set_artwork_if_current(editor.stamp(), art.clone()).unwrap();
+    let recipe = BuildSelection::default().prepare(&editor).unwrap();
+    assert_eq!(recipe.artwork_bytes(), Some(art.converted()));
+    assert_eq!(recipe.artwork_sha256(), Some(digest(art.converted())));
+    assert_eq!(recipe.startup_sha256(), digest(recipe.startup_bytes()));
+    assert_eq!(recipe.config_sha256(), digest(recipe.config_bytes()));
+    let original_hex = art
+        .original()
+        .unwrap()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    assert!(!recipe.powershell().contains(&original_hex));
+    editor.undo().unwrap();
+    assert_eq!(recipe.artwork_bytes(), Some(art.converted()));
+    assert!(
+        BuildSelection::default()
+            .prepare(&editor)
+            .unwrap()
+            .artwork_bytes()
+            .is_none()
+    );
 }

@@ -134,13 +134,12 @@ impl BuildSelection {
             return Err(BuildIssue::Editor(block));
         }
         let normalized = self.normalized()?;
-        let eav = editor.export_binary().map_err(|_| BuildIssue::Configuration)?;
+        let project = editor.accepted_project().map_err(|_| BuildIssue::Configuration)?;
         Ok(BuildRecipe {
             normalized,
-            eav,
-            startup: dashboard_config::startup::StartupProfile::default()
-                .encode()
-                .ok_or(BuildIssue::Startup)?,
+            eav: project.dashboard_bytes().to_vec(),
+            startup: project.profile().encode().ok_or(BuildIssue::Startup)?,
+            artwork: project.artwork().map(|a| a.converted().to_vec()),
             toolchain: repository_toolchain().ok_or(BuildIssue::Toolchain)?,
         })
     }
@@ -237,6 +236,7 @@ pub struct BuildRecipe {
     pub normalized: NormalizedBuildOptions,
     eav: Vec<u8>,
     startup: [u8; 16],
+    artwork: Option<Vec<u8>>,
     toolchain: &'static str,
 }
 impl BuildRecipe {
@@ -244,11 +244,27 @@ impl BuildRecipe {
 
     pub fn startup_bytes(&self) -> &[u8; 16] { &self.startup }
 
+    pub fn artwork_bytes(&self) -> Option<&[u8]> { self.artwork.as_deref() }
+
+    pub fn config_sha256(&self) -> [u8; 32] { dashboard_config_tools::project::digest(&self.eav) }
+
+    pub fn startup_sha256(&self) -> [u8; 32] { dashboard_config_tools::project::digest(&self.startup) }
+
+    pub fn artwork_sha256(&self) -> Option<[u8; 32]> {
+        self.artwork_bytes().map(dashboard_config_tools::project::digest)
+    }
+
     pub fn with_startup(
         mut self,
         profile: dashboard_config::startup::StartupProfile,
     ) -> Result<Self, BuildIssue> {
+        if profile.theme == dashboard_config::startup::StartupTheme::Custom && self.artwork.is_none() {
+            return Err(BuildIssue::Startup);
+        }
         self.startup = profile.encode().ok_or(BuildIssue::Startup)?;
+        if profile.theme != dashboard_config::startup::StartupTheme::Custom {
+            self.artwork = None;
+        }
         Ok(self)
     }
 
@@ -301,6 +317,13 @@ impl BuildRecipe {
             .replace("@@TOOLCHAIN@@", self.toolchain)
             .replace("@@EAV@@", &hex)
             .replace("@@STARTUP@@", &startup_hex)
+            .replace("@@ASSET@@", &hex_bytes(self.artwork_bytes().unwrap_or_default()))
+            .replace("@@EAV_SHA@@", &hex_bytes(&self.config_sha256()))
+            .replace("@@STARTUP_SHA@@", &hex_bytes(&self.startup_sha256()))
+            .replace(
+                "@@ASSET_SHA@@",
+                &self.artwork_sha256().map(|d| hex_bytes(&d)).unwrap_or_default(),
+            )
             .replace("@@OPTIONS@@", &arguments)
     }
 }
@@ -320,4 +343,12 @@ pub fn profile_by_id(id: ProfileId) -> &'static dashboard_build_profiles::Profil
         .iter()
         .find(|p| p.id == id)
         .expect("closed profile catalogue")
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut result = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(result, "{byte:02x}").expect("String write cannot fail");
+    }
+    result
 }

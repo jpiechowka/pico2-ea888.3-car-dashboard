@@ -1,4 +1,4 @@
-# Exported by EA888 View Studio. Contains the accepted dashboard configuration.
+# Exported by EA888 View Studio. Contains the accepted dashboard, startup profile and converted artwork.
 # Builds and validates through the repository wrapper. It never flashes a device.
 # Run in PowerShell 7: .\Build-StudioDashboard.ps1 -Repository 'D:\path\to\repository'
 #Requires -Version 7.0
@@ -27,32 +27,43 @@ $exports = Join-Path $repo 'target/studio-exports'
 [IO.Directory]::CreateDirectory($exports) | Out-Null
 $configPath = Join-Path $exports ($Name + '.eav')
 $startupPath = Join-Path $exports ($Name + '.easp')
-$hex = '@@EAV@@'
-$bytes = [byte[]]::new($hex.Length / 2)
-for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
-# CreateNew preserves an earlier recipe's configuration on a repeated name.
-$file = [IO.File]::Open($configPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-try { $file.Write($bytes, 0, $bytes.Length) } finally { $file.Dispose() }
-$startupHex = '@@STARTUP@@'
-$startupBytes = [byte[]]::new($startupHex.Length / 2)
-for ($i = 0; $i -lt $startupBytes.Length; $i++) { $startupBytes[$i] = [Convert]::ToByte($startupHex.Substring($i * 2, 2), 16) }
-$file = [IO.File]::Open($startupPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-try { $file.Write($startupBytes, 0, $startupBytes.Length) } finally { $file.Dispose() }
+$assetPath = Join-Path $exports ($Name + '.easa')
+function Write-Snapshot([string]$Path, [string]$Hex, [int]$Maximum, [string]$Sha256) {
+    if ($Hex.Length -eq 0 -or $Hex.Length -gt ($Maximum * 2) -or ($Hex.Length % 2) -ne 0 -or $Hex -cnotmatch '^[0-9a-f]+$') {
+        throw 'Exported snapshot exceeds its bound or is malformed. Export a new recipe.'
+    }
+    $content = [Convert]::FromHexString($Hex)
+    $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($content)).ToLowerInvariant()
+    if ($actual -cne $Sha256) { throw 'Exported snapshot identity does not match. Export a new recipe.' }
+    # CreateNew preserves files belonging to an earlier capture.
+    $file = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $file.Write($content, 0, $content.Length) } finally { $file.Dispose() }
+    return $content.Length
+}
+$configLength = Write-Snapshot $configPath '@@EAV@@' 131072 '@@EAV_SHA@@'
+$startupLength = Write-Snapshot $startupPath '@@STARTUP@@' 16 '@@STARTUP_SHA@@'
+if ($startupLength -ne 16) { throw 'Startup profile must be exactly 16 bytes.' }
+$assetHex = '@@ASSET@@'
+$assetLength = 0
+if ($assetHex.Length -gt 0) { $assetLength = Write-Snapshot $assetPath $assetHex 524288 '@@ASSET_SHA@@' }
 $buildOptions = @{
     Name = $Name
     Config = $configPath
 @@OPTIONS@@}
 $previousToolchain = $env:RUSTUP_TOOLCHAIN
 $previousStartup = $env:DASHBOARD_STARTUP_PROFILE
+$previousAsset = $env:DASHBOARD_STARTUP_ASSET
 try {
     $env:RUSTUP_TOOLCHAIN = $expectedToolchain
     $env:DASHBOARD_STARTUP_PROFILE = $startupPath
+    $env:DASHBOARD_STARTUP_ASSET = if ($assetLength -gt 0) { $assetPath } else { $null }
     Write-Host "[Studio] Toolchain: $expectedToolchain" -ForegroundColor Cyan
-    Write-Host "[Studio] Configuration: $($bytes.Length) bytes; capture: $Name" -ForegroundColor Cyan
+    Write-Host "[Studio] Configuration: $configLength bytes; startup: $startupLength bytes; converted artwork: $assetLength bytes; capture: $Name" -ForegroundColor Cyan
     Write-Host '[Studio] Compilation and validation can take time. This command does not flash.' -ForegroundColor Yellow
     & $wrapper @buildOptions
     Write-Host '[Studio] Build wrapper completed. Review its capture results before device operations.' -ForegroundColor Green
 } finally {
     $env:RUSTUP_TOOLCHAIN = $previousToolchain
     $env:DASHBOARD_STARTUP_PROFILE = $previousStartup
+    $env:DASHBOARD_STARTUP_ASSET = $previousAsset
 }
