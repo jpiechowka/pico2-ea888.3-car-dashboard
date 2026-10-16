@@ -1,10 +1,70 @@
 use dashboard_config::startup::{StartupProfile, StartupStatus, StartupTheme};
 
 #[test]
-fn profile_wire_values_and_flags_match_independent_v1_bytes() {
+fn version_two_profile_with_portrait_overrides_is_accepted() {
+    assert!(StartupProfile::decode(b"EASP\x02\x00\x01\x03\x58\x02\xc4\x09\x02\x04\x00\x00").is_some());
+}
+
+#[test]
+fn every_override_pair_roundtrips_and_inheritance_resolves_independently() {
+    use dashboard_config::Orientation;
+    let modes = [
+        None,
+        Some(Orientation::Landscape),
+        Some(Orientation::Portrait),
+        Some(Orientation::LandscapeInverted),
+        Some(Orientation::PortraitInverted),
+    ];
+    for (status_code, status_orientation) in modes.into_iter().enumerate() {
+        for (splash_code, splash_orientation) in modes.into_iter().enumerate() {
+            let profile = StartupProfile {
+                status_orientation,
+                splash_orientation,
+                ..StartupProfile::DEFAULT
+            };
+            let bytes = profile.encode().unwrap();
+            assert_eq!(bytes[12], status_code as u8);
+            assert_eq!(bytes[13], splash_code as u8);
+            assert_eq!(StartupProfile::decode(&bytes), Some(profile));
+            for default in Orientation::ALL {
+                assert_eq!(
+                    profile.effective_status_orientation(default),
+                    status_orientation.unwrap_or(default)
+                );
+                assert_eq!(
+                    profile.effective_splash_orientation(default),
+                    splash_orientation.unwrap_or(default)
+                );
+            }
+            let mut legacy = bytes;
+            legacy[4] = 1;
+            assert_eq!(
+                StartupProfile::decode(&legacy).is_some(),
+                status_code == 0 && splash_code == 0
+            );
+        }
+    }
+    for at in 12..16 {
+        for value in 0..=255 {
+            let mut bytes = StartupProfile::DEFAULT.encode().unwrap();
+            bytes[at] = value;
+            assert_eq!(
+                StartupProfile::decode(&bytes).is_some(),
+                value <= if at < 14 { 4 } else { 0 }
+            );
+        }
+    }
+}
+
+#[test]
+fn profile_wire_values_and_flags_match_independent_bytes() {
+    assert_eq!(
+        StartupProfile::decode(b"EASP\x01\x00\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00"),
+        Some(StartupProfile::DEFAULT)
+    );
     assert_eq!(
         StartupProfile::DEFAULT.encode().unwrap(),
-        *b"EASP\x01\x00\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00"
+        *b"EASP\x02\x00\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00"
     );
     for (theme_byte, theme) in [
         StartupTheme::Aezakmi,
@@ -30,13 +90,15 @@ fn profile_wire_values_and_flags_match_independent_v1_bytes() {
                     loop_animation: flags & 1 != 0,
                     warning_led: flags & 2 != 0,
                     interrupt_on_attention: flags & 4 != 0,
+                    status_orientation: None,
+                    splash_orientation: None,
                 };
                 let bytes = [
                     b'E',
                     b'A',
                     b'S',
                     b'P',
-                    1,
+                    2,
                     theme_byte as u8,
                     status_byte as u8,
                     flags,
@@ -72,15 +134,15 @@ fn profile_rejects_unknown_fields_lengths_and_out_of_range_durations() {
     for (index, value) in [
         (0, b'X'),
         (4, 0),
-        (4, 2),
+        (4, 3),
         (5, 6),
         (5, 255),
         (6, 3),
         (6, 255),
         (7, 8),
         (7, 128),
-        (12, 1),
-        (13, 1),
+        (12, 5),
+        (13, 5),
         (14, 1),
         (15, 1),
     ] {

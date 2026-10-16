@@ -1,9 +1,16 @@
 use dashboard_config::startup_asset::*;
-fn asset(rle: bool) -> Vec<u8> {
+fn asset(rle: bool) -> Vec<u8> { asset_in(rle, 320, 240, 1) }
+
+fn asset_in(
+    rle: bool,
+    width: u16,
+    height: u16,
+    version: u16,
+) -> Vec<u8> {
     let payload = if rle {
         let mut p = Vec::new();
-        for _ in 0..240 {
-            p.extend_from_slice(&0x813F_u16.to_le_bytes());
+        for _ in 0..height {
+            p.extend_from_slice(&(0x8000 | (width - 1)).to_le_bytes());
             p.extend_from_slice(&[0xF8, 0]);
         }
         p
@@ -12,10 +19,10 @@ fn asset(rle: bool) -> Vec<u8> {
     };
     let mut b = vec![0; 52];
     b[..8].copy_from_slice(MAGIC);
-    b[8..10].copy_from_slice(&1_u16.to_le_bytes());
+    b[8..10].copy_from_slice(&version.to_le_bytes());
     b[10..12].copy_from_slice(&32_u16.to_le_bytes());
-    b[16..18].copy_from_slice(&320_u16.to_le_bytes());
-    b[18..20].copy_from_slice(&240_u16.to_le_bytes());
+    b[16..18].copy_from_slice(&width.to_le_bytes());
+    b[18..20].copy_from_slice(&height.to_le_bytes());
     b[20..22].copy_from_slice(&1_u16.to_le_bytes());
     b[24..28].copy_from_slice(&100_u32.to_le_bytes());
     b[32..36].copy_from_slice(&100_u32.to_le_bytes());
@@ -82,10 +89,107 @@ fn refresh_global_crc(bytes: &mut [u8]) {
 }
 
 #[test]
+fn portrait_asset_decodes_all_320_rows_with_240_pixel_stride() {
+    use dashboard_config::Geometry;
+    for rle in [false, true] {
+        for geometry in Geometry::ALL {
+            let width = geometry.width();
+            let height = geometry.height();
+            let mut bytes = asset_in(rle, width, height, 2);
+            if !rle {
+                for (index, pixel) in bytes[52..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
+                    let row = index / usize::from(width);
+                    let column = index % usize::from(width);
+                    pixel.copy_from_slice(&((row * 41 + column * 13) as u16).to_be_bytes());
+                }
+                let crc = crc32(&bytes[52..]);
+                bytes[44..48].copy_from_slice(&crc.to_le_bytes());
+                refresh_global_crc(&mut bytes);
+            }
+            let admitted = Asset::parse(&bytes).expect("v2 asset");
+            assert_eq!(admitted.geometry(), geometry);
+            let frame = admitted.frame(0).unwrap();
+            assert_eq!(frame.geometry(), geometry);
+            let mut rows = frame.rows();
+            let mut output = vec![0; usize::from(width) * 2];
+            for row in 0..height {
+                assert!(rows.next(&mut output).unwrap());
+                for (column, pixel) in output.as_chunks::<2>().0.iter().enumerate() {
+                    let expected = if rle {
+                        0xF800
+                    } else {
+                        (usize::from(row) * 41 + column * 13) as u16
+                    };
+                    assert_eq!(u16::from_be_bytes(*pixel), expected);
+                }
+            }
+            assert!(!rows.next(&mut output).unwrap());
+        }
+    }
+}
+
+#[test]
+fn checksum_failure_cannot_be_resumed_into_success() {
+    let mut bytes = asset(true);
+    bytes[28] ^= 1;
+    let mut validator = Validator::new(&bytes).unwrap();
+    loop {
+        match validator.step() {
+            Err(AssetError::Crc) => break,
+            Ok(false) => {}
+            other => panic!("expected global checksum failure, got {other:?}"),
+        }
+    }
+    for _ in 0..400 {
+        assert_eq!(validator.step(), Err(AssetError::Crc));
+        assert_eq!(validator.finish().unwrap_err(), AssetError::Crc);
+    }
+}
+
+#[test]
+fn portrait_dimensions_rows_and_failed_admission_remain_bounded() {
+    for (width, height, version) in [
+        (240_u16, 320_u16, 1_u16),
+        (320, 320, 2),
+        (240, 240, 2),
+        (0, 320, 2),
+        (u16::MAX, 240, 2),
+    ] {
+        let mut bytes = asset(false);
+        bytes[8..10].copy_from_slice(&version.to_le_bytes());
+        bytes[16..18].copy_from_slice(&width.to_le_bytes());
+        bytes[18..20].copy_from_slice(&height.to_le_bytes());
+        refresh_global_crc(&mut bytes);
+        assert_eq!(Asset::parse(&bytes).unwrap_err(), AssetError::Header);
+    }
+    for mode in 0..3 {
+        let mut bytes = asset_in(true, 240, 320, 2);
+        match mode {
+            0 => bytes[44] ^= 1,                                           // frame CRC, with a valid global CRC
+            1 => bytes[52..54].copy_from_slice(&0x80F0_u16.to_le_bytes()), // 241 pixels in a 240-pixel row
+            _ => bytes[52..54].copy_from_slice(&0xFFFF_u16.to_le_bytes()),
+        }
+        refresh_global_crc(&mut bytes);
+        let mut validator = Validator::new(&bytes).unwrap();
+        let failure = loop {
+            match validator.step() {
+                Ok(false) => {}
+                Ok(true) => panic!("invalid asset admitted"),
+                Err(error) => break error,
+            }
+        };
+        for _ in 0..400 {
+            assert_eq!(validator.step(), Err(failure));
+            assert_eq!(validator.finish().unwrap_err(), failure);
+        }
+    }
+}
+
+#[test]
 fn checksummed_structural_errors_are_rejected_before_pixels() {
     // Repair the envelope checksum so these probe format admission, not CRC rejection.
     let cases: &[(usize, &[u8], AssetError)] = &[
-        (8, &2_u16.to_le_bytes(), AssetError::Header),
+        (8, &3_u16.to_le_bytes(), AssetError::Header),
         (10, &31_u16.to_le_bytes(), AssetError::Header),
         (16, &319_u16.to_le_bytes(), AssetError::Header),
         (18, &241_u16.to_le_bytes(), AssetError::Header),

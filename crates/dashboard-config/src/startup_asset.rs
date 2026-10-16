@@ -1,4 +1,7 @@
-//! Borrowed, bounded EASA v1 assets. No image decoder or allocated frame index.
+//! Borrowed, bounded EASA assets. v1 is landscape; v2 also supports portrait.
+use crate::Geometry;
+
+pub const VERSION: u16 = 2;
 pub const MAX_ASSET_BYTES: usize = 524_288;
 pub const MAX_FRAMES: usize = 300;
 pub const WIDTH: usize = 320;
@@ -21,12 +24,14 @@ pub enum AssetError {
 #[derive(Clone, Copy, Debug)]
 pub struct Asset<'a> {
     bytes: &'a [u8],
+    geometry: Geometry,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Frame<'a> {
     payload: &'a [u8],
     encoding: u8,
     crc: u32,
+    geometry: Geometry,
 }
 fn u16_at(
     b: &[u8],
@@ -69,15 +74,18 @@ impl<'a> Asset<'a> {
             return Err(AssetError::Limit);
         }
         if &bytes[..8] != MAGIC
-            || u16_at(bytes, 8) != 1
+            || !matches!(u16_at(bytes, 8), 1 | VERSION)
             || u16_at(bytes, 10) != 32
             || u32_at(bytes, 12) as usize != bytes.len()
-            || u16_at(bytes, 16) != 320
-            || u16_at(bytes, 18) != 240
             || u16_at(bytes, 22) != 0
         {
             return Err(AssetError::Header);
         }
+        let geometry = match (u16_at(bytes, 16), u16_at(bytes, 18)) {
+            (320, 240) => Geometry::Landscape,
+            (240, 320) if u16_at(bytes, 8) == VERSION => Geometry::Portrait,
+            _ => return Err(AssetError::Header),
+        };
         let count = usize::from(u16_at(bytes, 20));
         let cycle = u32_at(bytes, 24);
         if count == 0
@@ -111,10 +119,12 @@ impl<'a> Asset<'a> {
         if offset != bytes.len() || end != cycle {
             return Err(AssetError::Table);
         }
-        Ok(Self { bytes })
+        Ok(Self { bytes, geometry })
     }
 
     pub const fn bytes(self) -> &'a [u8] { self.bytes }
+
+    pub const fn geometry(self) -> Geometry { self.geometry }
 
     pub fn frame_count(self) -> usize { usize::from(u16_at(self.bytes, 20)) }
 
@@ -134,6 +144,7 @@ impl<'a> Asset<'a> {
             payload: &self.bytes[offset..offset + len],
             encoding: e[16],
             crc: u32_at(e, 12),
+            geometry: self.geometry,
         })
     }
 
@@ -169,6 +180,8 @@ impl<'a> Frame<'a> {
 
     pub const fn encoding(self) -> u8 { self.encoding }
 
+    pub const fn geometry(self) -> Geometry { self.geometry }
+
     pub fn rows(self) -> Rows<'a> {
         Rows {
             frame: self,
@@ -192,10 +205,12 @@ impl Rows<'_> {
         &mut self,
         output: &mut [u8],
     ) -> Result<bool, AssetError> {
-        if self.row as usize == HEIGHT {
+        let width = usize::from(self.frame.geometry.width());
+        let height = self.frame.geometry.height();
+        if self.row == height {
             return Ok(false);
         }
-        if output.len() != WIDTH * 2 {
+        if output.len() != width * 2 {
             return Err(AssetError::Pixels);
         }
         let start = self.offset;
@@ -203,13 +218,13 @@ impl Rows<'_> {
             let bytes = self
                 .frame
                 .payload
-                .get(start..start + WIDTH * 2)
+                .get(start..start + width * 2)
                 .ok_or(AssetError::Pixels)?;
             output.copy_from_slice(bytes);
-            self.offset += WIDTH * 2;
+            self.offset += width * 2;
         } else {
             let mut x = 0;
-            while x < WIDTH {
+            while x < width {
                 let header = self
                     .frame
                     .payload
@@ -218,7 +233,7 @@ impl Rows<'_> {
                 let packet = u16_at(header, 0);
                 self.offset += 2;
                 let count = usize::from(packet & 0x7FFF) + 1;
-                if count > WIDTH - x {
+                if count > width - x {
                     return Err(AssetError::Pixels);
                 }
                 if packet & 0x8000 != 0 {
@@ -245,10 +260,10 @@ impl Rows<'_> {
         }
         self.crc = crc_update(self.crc, &self.frame.payload[start..self.offset]);
         self.row += 1;
-        if self.row as usize == HEIGHT && self.offset != self.frame.payload.len() {
+        if self.row == height && self.offset != self.frame.payload.len() {
             return Err(AssetError::Pixels);
         }
-        if self.row as usize == HEIGHT && !self.crc != self.frame.crc {
+        if self.row == height && !self.crc != self.frame.crc {
             return Err(AssetError::Crc);
         }
         Ok(true)
@@ -266,6 +281,7 @@ pub struct Validator<'a> {
     row: u16,
     frame_crc: u32,
     done: bool,
+    failure: Option<AssetError>,
 }
 impl<'a> Validator<'a> {
     pub fn new(bytes: &'a [u8]) -> Result<Self, AssetError> {
@@ -278,10 +294,22 @@ impl<'a> Validator<'a> {
             row: 0,
             frame_crc: !0,
             done: false,
+            failure: None,
         })
     }
 
     pub fn step(&mut self) -> Result<bool, AssetError> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let result = self.step_inner();
+        if let Err(error) = result {
+            self.failure = Some(error);
+        }
+        result
+    }
+
+    fn step_inner(&mut self) -> Result<bool, AssetError> {
         if self.done {
             return Ok(true);
         }
@@ -295,6 +323,8 @@ impl<'a> Validator<'a> {
             return Ok(false);
         }
         let frame = self.asset.frame(usize::from(self.frame)).ok_or(AssetError::Table)?;
+        let width = usize::from(self.asset.geometry.width());
+        let height = self.asset.geometry.height();
         if frame.encoding == 0 {
             if frame.payload.len() != FRAME_BYTES {
                 return Err(AssetError::Pixels);
@@ -307,19 +337,19 @@ impl<'a> Validator<'a> {
             }
         } else {
             for _ in 0..4 {
-                if usize::from(self.row) == HEIGHT {
+                if self.row == height {
                     break;
                 }
                 let start = self.offset;
                 let mut x = 0;
-                while x < WIDTH {
+                while x < width {
                     let header = frame
                         .payload
                         .get(self.offset..self.offset + 2)
                         .ok_or(AssetError::Pixels)?;
                     let packet = u16_at(header, 0);
                     let count = usize::from(packet & 0x7FFF) + 1;
-                    if count > WIDTH - x {
+                    if count > width - x {
                         return Err(AssetError::Pixels);
                     }
                     self.offset = self
@@ -332,7 +362,7 @@ impl<'a> Validator<'a> {
                 self.frame_crc = crc_update(self.frame_crc, &frame.payload[start..self.offset]);
                 self.row += 1;
             }
-            if usize::from(self.row) < HEIGHT {
+            if self.row < height {
                 return Ok(false);
             }
             if self.offset != frame.payload.len() {
@@ -355,6 +385,9 @@ impl<'a> Validator<'a> {
     }
 
     pub fn finish(&self) -> Result<Asset<'a>, AssetError> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
         if self.done {
             Ok(self.asset)
         } else {
