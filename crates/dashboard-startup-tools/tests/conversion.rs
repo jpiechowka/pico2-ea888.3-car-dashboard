@@ -231,3 +231,104 @@ fn incompressible_output_does_not_expand_asset_budget() {
     );
     assert_eq!(result.err(), Some(ConvertError::AssetLimit));
 }
+
+fn decoded_pixels(
+    asset: &Asset<'_>,
+    at: u64,
+) -> Vec<u16> {
+    let mut rows = asset.frame_at(at, false, false).rows();
+    let mut row = [0; 640];
+    let mut pixels = Vec::new();
+    while rows.next(&mut row).unwrap() {
+        pixels.extend(row.chunks_exact(2).map(|p| u16::from_be_bytes([p[0], p[1]])));
+    }
+    assert_eq!(pixels.len(), 320 * 240);
+    pixels
+}
+
+#[test]
+fn fit_modes_center_letterboxing_crop_and_preserve_every_pixel() {
+    // Four square source stripes make all three fit policies distinguishable.
+    let source = png_image(
+        4,
+        1,
+        &[255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255],
+    );
+    for fit in [Fit::Contain, Fit::Cover, Fit::Stretch] {
+        let converted = convert(
+            &source,
+            &Options {
+                fit,
+                matte_rgb: [255, 0, 255],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let asset = Asset::parse(&converted.asset).unwrap();
+        let pixels = decoded_pixels(&asset, 0);
+        for y in 0..240 {
+            for x in 0..320 {
+                let expected = match fit {
+                    Fit::Contain if !(80..160).contains(&y) => 0xF81F,
+                    Fit::Cover => {
+                        if x < 160 {
+                            0x07E0
+                        } else {
+                            0x001F
+                        }
+                    }
+                    _ => [0xF800, 0x07E0, 0x001F, 0xFFFF][x / 80],
+                };
+                assert_eq!(pixels[y * 320 + x], expected, "{fit:?} ({x},{y})");
+            }
+        }
+    }
+}
+
+#[test]
+fn sheet_trim_samples_row_major_cells_and_extends_short_clips_explicitly() {
+    let source = png_image(
+        2,
+        2,
+        &[255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255],
+    );
+    let options = Options {
+        kind: SourceKind::SpriteSheet,
+        fit: Fit::Stretch,
+        sheet: Some(Sheet {
+            columns: 2,
+            rows: 2,
+            frame_ms: 100,
+        }),
+        trim_start_ms: 100,
+        trim_end_ms: 300,
+        ..Default::default()
+    };
+    let converted = convert(&source, &options).unwrap();
+    assert_eq!(
+        (
+            converted.source_frames,
+            converted.source_duration_ms,
+            converted.trim_end_ms
+        ),
+        (4, 400, 300)
+    );
+    let asset = Asset::parse(&converted.asset).unwrap();
+    assert_eq!((asset.frame_count(), asset.cycle_ms()), (2, 200));
+    for (at, expected) in [(0, 0x07E0), (99, 0x07E0), (100, 0x001F), (u64::MAX, 0x001F)] {
+        assert!(decoded_pixels(&asset, at).iter().all(|pixel| *pixel == expected));
+    }
+    let converted = convert(
+        &source,
+        &Options {
+            trim_start_ms: 399,
+            trim_end_ms: 10000,
+            ..options
+        },
+    )
+    .unwrap();
+    assert_eq!(converted.trim_end_ms, 400);
+    let asset = Asset::parse(&converted.asset).unwrap();
+    assert_eq!((asset.frame_count(), asset.cycle_ms()), (1, 34));
+    assert!(decoded_pixels(&asset, 0).iter().all(|pixel| *pixel == 0xFFFF));
+}
