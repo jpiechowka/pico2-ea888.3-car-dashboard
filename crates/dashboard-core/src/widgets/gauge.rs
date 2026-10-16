@@ -612,21 +612,6 @@ fn endpoint(
     heapless::String::try_from("--").unwrap()
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn compact_endpoint_labels_distinguish_narrow_scales_and_fit_extremes() {
-        assert_eq!(super::endpoint(1.230, 36), "1.23");
-        assert_eq!(super::endpoint(1.234, 36), "1.234");
-        assert_eq!(super::endpoint(1200., 36), "1200");
-        assert_eq!(super::endpoint(-0., 36), "0");
-        assert_eq!(super::endpoint(0.0001, 36), "0");
-        for value in [-1_000_000.0, -2000.0, 0.0, 2000.0, 1_000_000.0] {
-            assert!(super::endpoint(value, 36).len() * 4 <= 36);
-        }
-    }
-}
-
 /// Exact complete-value lane used by gauge rendering and fit diagnostics.
 pub fn value_lane(bounds: Rectangle) -> Option<Rectangle> { regions(bounds).map(|(_, _, value, _)| value) }
 
@@ -669,4 +654,19 @@ fn regions(bounds: Rectangle) -> Option<(Rectangle, Rectangle, Rectangle, u32)> 
         )
     };
     Some((bounds, graphic, value, if height >= 100 || wide { 2 } else { 1 }))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn compact_endpoint_labels_distinguish_narrow_scales_and_fit_extremes() {
+        assert_eq!(super::endpoint(1.230, 36), "1.23");
+        assert_eq!(super::endpoint(1.234, 36), "1.234");
+        assert_eq!(super::endpoint(1200., 36), "1200");
+        assert_eq!(super::endpoint(-0., 36), "0");
+        assert_eq!(super::endpoint(0.0001, 36), "0");
+        for value in [-1_000_000.0, -2000.0, 0.0, 2000.0, 1_000_000.0] {
+            assert!(super::endpoint(value, 36).len() * 4 <= 36);
+        }
+    }
 }

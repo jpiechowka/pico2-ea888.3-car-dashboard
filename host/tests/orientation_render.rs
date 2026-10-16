@@ -153,7 +153,10 @@ fn every_portrait_gauge_span_flags_draws_bottom_row_and_matches_retained() {
                     .unwrap();
                 assert!(
                     full.0[usize::from(rect.y) * 480..]
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .copied()
                         .any(|p| p == [0x07, 0xE0]),
                     "missing primary {kind:?}/{span:?}/{flags}"
                 );
@@ -213,7 +216,10 @@ fn portrait_popups_are_centered_on_actual_frame() {
         };
         let positions: Vec<_> = frame
             .0
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
             .enumerate()
             .filter(|(_, p)| *p != [0, 0])
             .map(|(i, _)| ((i % 240) as i32, (i / 240) as i32))
@@ -367,7 +373,15 @@ fn custom_asset_geometry_mismatch_leaves_frame_untouched() {
             );
             assert!(frame.0.iter().all(|v| *v == 0));
             draw_custom_in(asset, 0, true, false, geometry, &mut frame.0).unwrap();
-            assert!(frame.0.chunks_exact(2).all(|pixel| pixel == [0xF8, 0]));
+            assert!(
+                frame
+                    .0
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .copied()
+                    .all(|pixel| pixel == [0xF8, 0])
+            );
         }
     }
 }
@@ -426,10 +440,10 @@ fn portrait_peak_highlight_is_visible_and_expires() {
     let mut frame = AlignedFrame::boxed();
     scene.now_ms = 1;
     scene.draw_full(&mut St7789Renderer::with_geometry(&mut frame.0, Geometry::Portrait));
-    assert!(frame.0.chunks_exact(2).any(|p| p == [0xF8, 0x1F]));
+    assert!(frame.0.as_chunks::<2>().0.iter().copied().any(|p| p == [0xF8, 0x1F]));
     scene.now_ms = 751;
     scene.draw_full(&mut St7789Renderer::with_geometry(&mut frame.0, Geometry::Portrait));
-    assert!(!frame.0.chunks_exact(2).any(|p| p == [0xF8, 0x1F]));
+    assert!(!frame.0.as_chunks::<2>().0.iter().copied().any(|p| p == [0xF8, 0x1F]));
 }
 
 #[test]
@@ -464,7 +478,7 @@ fn startup_portrait_visual_evidence() {
             },
         );
         let mut ppm = b"P6\n240 320\n255\n".to_vec();
-        for pixel in frame.0.chunks_exact(2) {
+        for pixel in frame.0.as_chunks::<2>().0.iter().copied() {
             let value = u16::from_be_bytes([pixel[0], pixel[1]]);
             ppm.extend_from_slice(&[
                 (((value >> 11) & 31) * 255 / 31) as u8,
