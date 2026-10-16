@@ -266,11 +266,11 @@ jobs:
         with:
           workspaces: firmware
       - name: Build pico2
-        run: cargo build --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf --release --features "${{ matrix.features }}" ${{ matrix.extra_args }}
+        run: python3 scripts/capture_target_bench.py ci-${{ matrix.profile }} --firmware --features "${{ matrix.features }}" ${{ matrix.extra_args }}
         working-directory: firmware
-      - name: Check linked RAM boundaries
+      # Capture runs the complete RAM gate with its explicit pre-build source context.
+      - name: Check captured flash lockout contracts
         run: |
-          python3 scripts/check_memory_layout.py target/thumbv8m.main-none-eabihf/release/pico2
-          python3 scripts/test_flash_lockout.py target/thumbv8m.main-none-eabihf/release/pico2
-          python3 -O scripts/test_flash_lockout.py target/thumbv8m.main-none-eabihf/release/pico2
+          python3 scripts/test_flash_lockout.py target/bench-captures/ci-${{ matrix.profile }}/pico2.elf
+          python3 -O scripts/test_flash_lockout.py target/bench-captures/ci-${{ matrix.profile }}/pico2.elf
         working-directory: firmware
