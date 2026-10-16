@@ -4330,7 +4330,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 destination=Path(directory);source,source_path,record=CaptureMemoryQualification.bound_context(destination,elf,record)
                 frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
                 path=destination/'memory-layout.json';path.write_text(json.dumps(record,sort_keys=True)+'\n')
-                self.assertEqual(capture.read_memory_gate(path,frozen,eav,source)['record'],record)
+                self.assertEqual(capture.read_memory_gate(path,frozen,eav,source,gate='experimental-full')['record'],record)
                 path.unlink();supplied=destination/'supplied-stage-record.json'
                 supplied.write_text(json.dumps(record,sort_keys=True)+'\n',encoding='utf-8')
                 def writer(argv,**kwargs):
@@ -4343,7 +4343,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                     return real_run([sys.executable,'-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_bytes(pathlib.Path(sys.argv[2]).read_bytes())',
                         output,str(supplied)],check=kwargs['check'],timeout=10)
                 with patch.object(capture.subprocess,'run',side_effect=writer):
-                    self.assertEqual(capture.run_memory_gate(frozen,destination,eav,source,source_path)['record'],record)
+                    self.assertEqual(capture.run_memory_gate(frozen,destination,eav,source,source_path,gate='experimental-full')['record'],record)
                 for fault in ('lost','duplicate','context','old','hardware','width_float','nonreturn_intermediate'):
                     bad=deepcopy(record);policy=bad['stack']['policies'][0]
                     if fault=='lost':policy['owned_dependencies'].pop()
@@ -4361,7 +4361,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                     else:bad=bad['stack']
                     path.write_text(json.dumps(bad))
                     with self.subTest(mode=mode,fault=fault),self.assertRaises((AssertionError,ValueError)):
-                        capture.read_memory_gate(path,frozen,eav,source)
+                        capture.read_memory_gate(path,frozen,eav,source,gate='experimental-full')
 
     def test_enclosing_image_wire_bound_is_checked_after_fitting_stack_record(self):
         import check_memory_layout
@@ -4385,18 +4385,18 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory,patch.object(capture,'ElfImage',return_value=elf):
             path=Path(directory)/'boundary.json';wire=json.dumps(image,sort_keys=True)+'\n'
             path.write_bytes(wire.encode())
-            self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav,elf.fixture_source_context)['record'],image)
+            self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav,elf.fixture_source_context,gate='experimental-full')['record'],image)
             path.write_bytes((wire+' ').encode())
-            with self.assertRaises(ValueError):capture.read_memory_gate(path,'synthetic-validator.elf',eav,elf.fixture_source_context)
+            with self.assertRaises(ValueError):capture.read_memory_gate(path,'synthetic-validator.elf',eav,elf.fixture_source_context,gate='experimental-full')
             # Duplicate-key attribution needs a fitting record, not the
             # already-full boundary envelope that rejects before JSON parse.
             small_wire=json.dumps(small_image,sort_keys=True)+'\n'
             with patch.object(capture,'ElfImage',return_value=initial):
                 path.write_bytes(small_wire.encode())
-                self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav,initial.fixture_source_context)['record'],small_image)
+                self.assertEqual(capture.read_memory_gate(path,'synthetic-validator.elf',eav,initial.fixture_source_context,gate='experimental-full')['record'],small_image)
                 path.write_bytes(small_wire.replace('"schema": 2','"schema": 2, "schema": 2',1).encode())
                 with self.assertRaisesRegex(ValueError,'duplicate'):
-                    capture.read_memory_gate(path,'synthetic-validator.elf',eav,initial.fixture_source_context)
+                    capture.read_memory_gate(path,'synthetic-validator.elf',eav,initial.fixture_source_context,gate='experimental-full')
 
 class ValidatorResultBoundary(unittest.TestCase):
     def fixture(self,phase='default_validation',shift=0):
