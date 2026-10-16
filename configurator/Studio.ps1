@@ -51,11 +51,13 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Trunk installation failed' }
         & cargo "+$toolchain" install wasm-bindgen-cli --version 0.2.129 --locked --root $toolRoot
         if ($LASTEXITCODE -ne 0) { throw 'wasm-bindgen installation failed' }
+        . (Join-Path $PSScriptRoot 'SetupTools.ps1')
+        Install-StudioReleaseTools -Repository $repoRoot
         & cargo "+$toolchain" build --manifest-path (Join-Path $repoRoot 'studio-helper/Cargo.toml') --locked --target-dir $helperRoot
         if ($LASTEXITCODE -ne 0) { throw 'Prerequisite checker compilation failed' }
         & cargo "+$toolchain" fetch --manifest-path (Join-Path $repoRoot 'configurator/Cargo.toml') --locked
         if ($LASTEXITCODE -ne 0) { throw 'Studio locked dependency fetch failed' }
-        Write-Host 'Setup completed the Rust/editor CLI steps. Python, MSVC/SDK, Binaryen 133 and picotool 2.3.1 may require the manual steps listed by Check.'
+        Write-Host 'Setup installed the pinned Rust/editor tools, Binaryen 133 and picotool 2.3.1. Python and MSVC/SDK may still require the manual steps listed by Check.'
         & $helperExecutable check --repo $repoRoot
         exit $LASTEXITCODE
     }
