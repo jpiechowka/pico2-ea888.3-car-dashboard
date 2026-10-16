@@ -140,22 +140,23 @@ def warning_colors_interface(objects,rows,proof,state,output,frame,ancestor_prot
             count=Span(0,0),possible_writes=((output,0,2),)))
     if state.count.upper:
         count=Span(max(1,state.count.lower)-1,state.count.upper-1)
-        pending=[SequenceInterface(local,state.decoder,Span(2,2))]
+        pending=[(SequenceInterface(local,state.decoder,Span(2,2)),())]
         for ordinal in range(2):
             following=[]
-            for current in pending:
+            for current,previous in pending:
                 child=color_interface(objects,rows,color,current,_child_frame(frame,8,'Color'),guards+(saved,q,out))
                 children.append(child)
                 for option in child['outcomes']:
                     after=replace(state,count=count,decoder=option['state'].decoder)
-                    if option['kind']=='some':following.append(option['state'])
+                    if option['kind']=='some':following.append((option['state'],previous+((current,
+                        tuple(color.get(k) for k in ('function','role','extent','frame')),option),)))
                     else:
                         error=14 if option['kind']=='none' else option['error']
                         outcomes.append(dict(kind='error',tag=2,error=error,state=after,cursor=after.decoder.cursor,
                             count=count,possible_writes=((output,0,3),),nested_origin=(ordinal,current,
-                                tuple(color.get(k) for k in ('function','role','extent','frame')),option)))
+                                tuple(color.get(k) for k in ('function','role','extent','frame')),option,previous)))
             pending=following
-        for complete in pending:
+        for complete,previous in pending:
             require(complete.count==Span(0,0),'WarningColors omits one source color')
             after=replace(state,count=count,decoder=complete.decoder)
             outcomes.append(dict(kind='some',tag=1,value_domains=((0,65535),(0,65535)),state=after,

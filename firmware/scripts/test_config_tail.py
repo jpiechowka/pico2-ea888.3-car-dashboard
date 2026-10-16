@@ -1042,6 +1042,170 @@ class TailReachedAccesses(unittest.TestCase):
             with self.subTest(change=len(changed)),self.assertRaisesRegex(AssertionError,'collection changed'):
                 _check_tail_uses(replace(self.bridge,uses=changed))
 
+
+
+class TailPublicErrorProjection(unittest.TestCase):
+    def test_prior_occurrences_and_repeated_Tail_labels_are_conserved_once(self):
+        from types import SimpleNamespace
+        from config_abstract import Span
+        from config_decoded_tail import _tail_error_summary
+        prior=dict(error_summary=(('prefix','version',14,-1,56,(),3,0,2),),error_occurrences=3)
+        first=dict(field='normal_pattern',error=4,cursor=Span(50,60))
+        second=dict(first,cursor=Span(55,65))
+        completed=('Controls','history','reduced_motion')
+        edges=tuple(dict(source_error=e,path=(6988,56),completed_groups=completed) for e in (first,second))
+        control=SimpleNamespace(guards=(dict(lineage=dict(errors=edges)),))
+        result,total=_tail_error_summary(prior,control)
+        self.assertEqual(total,5);self.assertEqual(result[0],prior['error_summary'][0])
+        self.assertEqual(result[1][:6],('Tail','normal_pattern',4,-1,56,completed))
+        self.assertEqual(result[1][-3:],(2,50,65))
+        self.assertEqual(_tail_error_summary(prior,None),(prior['error_summary'],3))
+        self.assertEqual(first['cursor'],Span(50,60))
+        with self.assertRaisesRegex(AssertionError,'count changed'):
+            _tail_error_summary(dict(prior,error_occurrences=4),control)
+
+    def test_supplied_projection_padding_checks_exact_65536_and_65537_boundary(self):
+        # Explicit diagnostic stage fixture, not an actual producer/maximum.
+        import json
+        from types import SimpleNamespace as N
+        from config_decoded_tail import _tail_description
+        prior=dict(error_summary=(),error_occurrences=0,error_columns=(),ordinary_domain='fixture',
+            execution_scope={},source_context={},source_qualification={},external_qualifications={'padding':''},
+            exception_graph_limit={})
+        c=N(headers={'visitor':{'proof':{'function':0x1001c654}},'root':{'proof':{'function':0x1001fe64}}})
+        state=N(predecessor_description=prior,predecessor=N(phases=N(widgets=N(views=N(context=c)))),entries=())
+        raw=N(selection=N(selected={}),outside_shared_contexts=(),foreign_restore_contexts=())
+        size=lambda value:len((json.dumps(value,sort_keys=True)+'\n').encode())
+        baseline=_tail_description(state,None,(),(),raw)
+        prior['external_qualifications']['padding']='x'*(65536-size(baseline))
+        self.assertEqual(size(_tail_description(state,None,(),(),raw)),65536)
+        prior['external_qualifications']['padding']+='x'
+        with self.assertRaisesRegex(AssertionError,'oversized'):_tail_description(state,None,(),(),raw)
+
+
+class ActualDecodedVisitorReturn(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_decoded_tail import _first_boot_decoded_visitor_return_state
+        cls.objects,cls.rows,cls.source,_=TailLiteralBodies.fixture(128)
+        cls.result,cls.state=_first_boot_decoded_visitor_return_state(cls.objects,cls.rows,cls.source)
+
+    def test_actual_same_input_normal_return_retires_Visitor_borrows_before_loader(self):
+        import json
+        result=self.result;state=self.state;prior=state.phases.predecessor_description
+        self.assertEqual(result['phase'],'first_boot_decoded_visitor_return_pending_finalize_canonical_validation_and_loader_routes')
+        self.assertTrue(result['successes']);self.assertTrue(state.exits)
+        self.assertEqual(result['Visitor_return']['frontier'],0x1001fe64+130)
+        self.assertTrue(result['Visitor_return']['Visitor_local_borrows_retired'])
+        self.assertFalse(result['Visitor_return']['loader_successor_executed'])
+        self.assertEqual(result['Visitor_return']['original_saved_bytes'],96)
+        for exit in state.exits:
+            phase=state.phases.phases[exit.phase_index]
+            self.assertIs(exit.decoder,phase.suffix['normal']['after'].decoder)
+            self.assertIs(exit.source_normal,phase.suffix['normal'])
+            self.assertEqual((exit.decoder.header.offset,exit.decoder.header.extent),(236,8))
+            self.assertEqual(exit.original_return[-1],0x1001fe64+130)
+        self.assertLessEqual(len((json.dumps(result,sort_keys=True)+'\n').encode()),65536)
+        for key in ('execution_scope','ordinary_domain','source_context','source_qualification','external_qualifications','exception_graph_limit'):
+            self.assertEqual(json.loads(json.dumps(result[key])),json.loads(json.dumps(prior[key])))
+        self.assertEqual(result['error_summary'][:len(prior['error_summary'])],prior['error_summary'])
+        self.assertEqual(sum(v[-3] for v in result['error_summary']),result['error_occurrences'])
+        self.assertTrue(all(n>0 for role,n in result['source_guarded_accesses']['role_counts']))
+        self.assertFalse(result['unconditional_owner']);self.assertFalse(result['hardware_qualified'])
+        self.assertFalse(result['exceptional_resume_established'])
+
+    def test_outgoing_normal_identity_and_late_required_use_cannot_be_replaced(self):
+        state=self.state;old=state.exits
+        object.__setattr__(state,'exits',(replace(old[0],source_normal=dict(old[0].source_normal)),)+old[1:])
+        try:
+            with self.assertRaisesRegex(AssertionError,'exact source/normal/original-return'):state.current()
+        finally:object.__setattr__(state,'exits',old)
+        bridge=state.access_bridge;uses=bridge.uses
+        object.__setattr__(bridge,'uses',tuple(v for v in uses if v.role!='normal_config_words'))
+        try:
+            with self.assertRaisesRegex(AssertionError,'collection changed'):state.current()
+        finally:object.__setattr__(bridge,'uses',uses)
+
+    def test_changed_ELF_cannot_reuse_old_SourceContext_or_a_public_description(self):
+        import copy
+        from config_decoded_tail import first_boot_decoded_visitor_return
+        from test_config_stack import StartupConfigurationCopy
+        objects=copy.deepcopy(self.objects)
+        StartupConfigurationCopy.put(objects,0x1001c654+7108,bytes.fromhex('aff30080'))
+        with self.assertRaisesRegex(AssertionError,'different current ELF'):
+            first_boot_decoded_visitor_return(objects,self.rows,self.source)
+        with self.assertRaises(AssertionError):first_boot_decoded_visitor_return(self.objects,self.rows,self.result)
+
+
+class UnenteredDecodedVisitorReturn(unittest.TestCase):
+    def test_prior_error_only_path_has_no_fabricated_Tail_use_return_or_owner(self):
+        from unittest.mock import patch
+        import config_decoded_tail as subject
+        objects,rows,source,_=TailLiteralBodies.fixture(1)
+        with patch('config_tail_source._controls_source',side_effect=AssertionError('fabricated Tail call')):
+            result,state=subject._first_boot_decoded_visitor_return_state(objects,rows,source)
+        self.assertFalse(state.phases.entries);self.assertIsNone(state.access_bridge)
+        self.assertFalse(state.exits);self.assertTrue(state.error_exits)
+        self.assertTrue(result['Visitor_return']['original_saved_PC'])
+        self.assertEqual(result['Visitor_return']['normal_returns'],0)
+        self.assertEqual(result['Visitor_return']['error_returns'],len(state.error_exits))
+        self.assertTrue(result['declared_return_frontier']['reached'])
+        self.assertFalse(result['source_guarded_accesses']['role_counts'])
+        prior=state.phases.predecessor_description
+        self.assertEqual(result['error_summary'],prior['error_summary'])
+        self.assertEqual(result['error_occurrences'],prior['error_occurrences'])
+        self.assertTrue(result['structural_control']['unentered'])
+        self.assertIs(state.current(),state)
+        original=state.error_exits
+        object.__setattr__(state,'error_exits',(replace(original[0],carrier=original[0].carrier+1),)+original[1:])
+        try:
+            with self.assertRaisesRegex(AssertionError,'outgoing error.*origin/carrier'):state.current()
+        finally:object.__setattr__(state,'error_exits',original)
+        value=prior['hardware_qualified'];prior['hardware_qualified']=not value
+        try:
+            with self.assertRaisesRegex(AssertionError,'changed'):state.current()
+        finally:prior['hardware_qualified']=value
+        with patch('config_decoded_tail._earlier_error_returns',return_value=()):
+            with self.assertRaisesRegex(AssertionError,'actual error occurrence'):
+                subject._first_boot_decoded_visitor_return_state(objects,rows,source)
+
+
+class TailPrivateNormalReturn(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_decoded_tail import _tail_exits,_first_boot_tail_phases
+        from config_tail_uses import _tail_access_group
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        cls.phases=_first_boot_tail_phases(objects,rows,source)
+        cls.bridge,cls.uses=_tail_access_group(cls.phases)
+
+    def test_checked_private_normal_returns_keep_only_caller_D_and_original_PC_SP(self):
+        from config_decoded_tail import _tail_exits
+        exits=_tail_exits(self.phases,self.bridge,self.uses)
+        self.assertTrue(exits)
+        c=self.phases.predecessor.phases.widgets.views.context
+        for exit in exits:
+            phase=self.phases.phases[exit.phase_index]
+            self.assertIs(exit.decoder,phase.suffix['normal']['after'].decoder)
+            self.assertIs(exit.source_normal,phase.suffix['normal'])
+            self.assertIs(exit.decoder.header.storage,c.frame)
+            self.assertEqual((exit.decoder.header.offset,exit.decoder.header.extent),(236,8))
+            self.assertEqual(exit.original_return[-1],0x1001fe64+130)
+            self.assertEqual(self.bridge.control.structural.restore['return_SP'],c.frame.start)
+        with self.assertRaises(AssertionError):_tail_exits(self.phases,dict(uses=self.uses),self.uses)
+
+    def test_missing_late_use_or_wrong_saved_return_cannot_issue_normal_exit(self):
+        from config_decoded_tail import _tail_exits
+        missing=tuple(u for u in self.uses if u.role!='normal_config_words')
+        bridge=replace(self.bridge,uses=missing)
+        with self.assertRaisesRegex(AssertionError,'late normal Config'):_tail_exits(self.phases,bridge,missing)
+        restore=self.bridge.control.structural.restore;old=restore['original_return_PC']
+        restore['original_return_PC']=old+2
+        try:
+            with self.assertRaisesRegex(AssertionError,'saved-PC/SP'):_tail_exits(self.phases,self.bridge,self.uses)
+        finally:restore['original_return_PC']=old
+
+
 class PrefixPrivateErrorFrontiers(unittest.TestCase):
     def test_both_actual_wrapper_positions_retain_origin_cursor_partial_state_and_saved_cells(self):
         from config_decoded_prefix import _first_boot_decoded_u16_state
@@ -1074,6 +1238,7 @@ class PrefixPrivateErrorFrontiers(unittest.TestCase):
             finally:object.__setattr__(error,'packed_r0',old)
         self.assertEqual(seen,{24,46})
 
+
 class ViewsPrivateErrorFrontiers(unittest.TestCase):
     def test_actual_error_frontiers_preserve_source_origins_advanced_strings_and_partial_views(self):
         from config_decoded_views import _first_boot_decoded_views_state
@@ -1103,6 +1268,79 @@ class ViewsPrivateErrorFrontiers(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError,'error.*changed'):state._checked_errors()
             finally:object.__setattr__(item,'origin',value)
         self.assertTrue({'Views length','View id','View short string','View UTF8'}<=stages)
+
+
+class TailEarlierErrorReturn(unittest.TestCase):
+    def test_actual_Source_and_Tail_errors_keep_whole_Warning_carrier_and_original_returns(self):
+        from config_decoded_tail import _first_boot_tail_phases,_source_error_returns,_tail_error_returns
+        from config_tail_uses import _tail_access_group
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        phases=_first_boot_tail_phases(objects,rows,source);bridge,uses=_tail_access_group(phases)
+        errors=_source_error_returns(phases,bridge.control.structural)+_tail_error_returns(phases,bridge)
+        source=phases.predecessor.phases
+        expected=sum(len(p.array['errors'])+(0 if p.remaining is None else len(p.remaining['errors'])) for p in source.phases)
+        expected+=sum(len(g['lineage']['errors']) for g in bridge.control.guards)
+        self.assertEqual(len(errors),expected);self.assertTrue(errors)
+        self.assertTrue(any(v.carrier>>24==2 for v in errors))
+        self.assertEqual({v.group for v in errors},{'Sources','suffix','Tail'})
+        for error in errors:
+            self.assertEqual(error.carrier&255,error.error)
+            self.assertEqual(error.original_return[-1],0x1001fe64+130)
+            self.assertEqual(error.decoder.header.offset,236)
+            if error.carrier>>24:
+                self.assertEqual(error.carrier,0x02000000|error.error)
+
+    def test_all_authored_Widget_carriers_consume_source_choices_not_diagnostic_labels(self):
+        from config_decoded_tail import _first_boot_tail_phases,_widget_error_transport,_earlier_error_returns
+        from config_tail_control import _tail_structural
+        from config_decoded_widgets import _widget_source_prefix,_advanced_source
+        from config_abstract import Span
+        objects,rows,source,_=TailLiteralBodies.fixture(85)
+        phases=_first_boot_tail_phases(objects,rows,source);raw=_tail_structural(phases)
+        widgets=phases.predecessor.phases.widgets;views=widgets.views
+        before=views.exits[0].sequence.decoder
+        # Separately labelled complete abstract adapter coverage, not a public
+        # predecessor or a fabricated additional reachable Widget iteration.
+        broad=replace(before,cursor=Span(before.cursor.lower,before.payload.extent))
+        prefix=_widget_source_prefix(phases.objects,phases.rows,views,widgets.parents,widgets.children,broad)
+        advanced=_advanced_source(phases.objects,phases.rows,views,widgets.parents,widgets.children,broad)
+        for error in prefix.errors+advanced['errors']:
+            path,relation=_widget_error_transport(phases,raw,error['_origin'])
+            self.assertEqual(path[-1],0x1001c654+56);self.assertTrue(relation)
+            if error['stage'].startswith('GraphRange::Fixed'):
+                # Private conditional-record injection only. The complete
+                # retained state graph rejects this mutation earlier.
+                forged=replace(error['_origin'],trace=(('unrelated Fixed label',),))
+                with self.assertRaisesRegex(AssertionError,'Fixed.*actual selector'):
+                    _widget_error_transport(phases,raw,forged)
+        actual=_earlier_error_returns(phases,raw)
+        self.assertTrue(any(v.group=='Widgets' for v in actual))
+        self.assertEqual(len(actual),len(views.context.error_frontiers)+len(views.error_frontiers)+len(widgets.errors))
+
+    def test_earlier_error_only_paths_reach_original_return_without_Tail_entries(self):
+        from config_decoded_tail import _first_boot_tail_phases,_earlier_error_returns
+        from config_tail_control import _tail_structural
+        from unittest.mock import patch
+        groups=set()
+        for extent in (1,4):
+            objects,rows,source,_=TailLiteralBodies.fixture(extent)
+            with patch('config_tail_source._controls_source',side_effect=AssertionError('fabricated Tail call')):
+                phases=_first_boot_tail_phases(objects,rows,source)
+            self.assertFalse(phases.entries)
+            raw=_tail_structural(phases);errors=_earlier_error_returns(phases,raw)
+            widgets=phases.predecessor.phases.widgets
+            self.assertEqual(len(errors),len(widgets.views.context.error_frontiers)+
+                len(widgets.views.error_frontiers)+len(widgets.errors))
+            self.assertTrue(errors)
+            for error in errors:
+                groups.add(error.group)
+                self.assertEqual(error.carrier&255,error.error)
+                self.assertEqual(error.original_return[-1],0x1001fe64+130)
+                self.assertEqual(error.decoder.header.offset,236)
+                self.assertEqual(error.return_SP,widgets.views.context.frame.start)
+                self.assertTrue(error.transport)
+        self.assertEqual(groups,{'prefix','Views','Widgets'})
+
 
 class WidgetPrivateErrorOrigins(unittest.TestCase):
     def test_actual_collection_keeps_length_and_loop_predecessors_and_detects_retained_drift(self):
@@ -1155,7 +1393,11 @@ class WidgetPrivateErrorOrigins(unittest.TestCase):
                 fixed.append(origin)
                 self.assertIn('Fixed',repr(origin.trace))
             if error['stage']=='WidgetColors.warning':
-                nested.add(origin.call.choices[origin.choice_index]['nested_origin'][0])
+                inner=origin.call.choices[origin.choice_index]['nested_origin'];nested.add(inner[0])
+                self.assertEqual(len(inner[4]),inner[0])
+                if inner[0]:
+                    self.assertIs(inner[4][-1][2]['state'],inner[1])
+                    self.assertIs(inner[4][0][0].decoder,origin.call.before.decoder)
         self.assertTrue(fixed);self.assertEqual(nested,{0,1})
         self.assertEqual({e['error'] for e in result.errors},{4,5,6,8,14})
 
@@ -1173,10 +1415,48 @@ class WidgetPrivateErrorOrigins(unittest.TestCase):
             origin=_checked_widget_origin(error['_origin'],state.context)
             stages.add(error['stage'])
             self.assertEqual((origin.error,origin.after.cursor),(error['error'],error['cursor']))
+            if error['stage'].endswith('.label UTF8'):
+                self.assertEqual(origin.call[0],state.context.headers['visitor']['proof']['function']+2828)
             if error['stage'].startswith('Band3.') or error['stage']=='Band capacity':
                 self.assertIn('N>3',repr(origin.trace)+str(origin.condition))
         self.assertTrue({'Bands length','Band0.label short input','Band3.label UTF8','Band capacity',
             'Advanced.readout invalid enum'}<=stages)
+
+
+class TailPublicCurrentArtifacts(unittest.TestCase):
+    def test_same_public_input_rejects_rebound_late_store_and_action_table_changes(self):
+        import copy
+        from config_decoded_tail import first_boot_decoded_visitor_return
+        from test_config_stack import SameBLoaderBoundary,StartupConfigurationCopy
+        from llvm_stack import Instruction
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        positive=first_boot_decoded_visitor_return(objects,rows,source)
+        self.assertTrue(positive['successes'])
+        for label,at,raw,operation,wanted in (
+            ('Controls last hold',0x1001c654+6114,bytes.fromhex('aff30080'),'nop.w',
+                '^foreign Views shared-error predecessor differs$'),
+            ('ControlAction table',0x1001bc64+52,b'\x0b',None,'payload|table')):
+            changed=copy.deepcopy(objects);records=dict(rows)
+            StartupConfigurationCopy.put(changed,at,raw)
+            if operation:records[at]=Instruction(at,raw,operation,'')
+            current=SameBLoaderBoundary.rebound(changed,source)
+            with self.subTest(label=label),self.assertRaisesRegex(AssertionError,wanted):
+                first_boot_decoded_visitor_return(changed,records,current)
+
+    def test_actual_public_Visitor_and_action_relocation_keeps_original_loader_return(self):
+        from config_decoded_tail import first_boot_decoded_visitor_return
+        from config_headers import VISITOR
+        from config_tail_contracts import ROLES
+        from test_config_stack import ActualDecodedViews,SameBLoaderBoundary
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        ActualDecodedViews.move_function(objects,rows,ROLES['ControlAction'],0x10071000)
+        ActualDecodedViews.move_function(objects,rows,VISITOR,0x10078000)
+        result=first_boot_decoded_visitor_return(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+        self.assertTrue(result['successes'])
+        self.assertEqual(result['physical_completion_sites']['Controls'],0x10078000+6114)
+        self.assertEqual(result['Visitor_return']['frontier'],0x1001fe64+130)
+        self.assertTrue(result['Visitor_return']['original_saved_PC'])
+        self.assertFalse(result['Visitor_return']['loader_successor_executed'])
 
 
 if __name__=='__main__':unittest.main()

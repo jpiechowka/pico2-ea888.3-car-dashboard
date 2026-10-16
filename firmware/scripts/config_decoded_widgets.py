@@ -227,10 +227,12 @@ def _band_candidate(objects,rows,state,parents,children,sequence):
     source=UTF8Slice(before.payload,before.cursor,Span(0,maximum))
     taken=replace(before,cursor=Span(before.cursor.lower,n))
     utf8=from_utf8_interface(objects,rows,source,borrow(frame,1440,12,phase,True),_nested_frame(context,24,'Band UTF8'),guards)
+    require(_edge_at(parents,V+2828)[2]==utf8['proof']['function'],
+        'Band label uses another current UTF8 call result')
     if utf8['errors']:errors.append(dict(stage='label UTF8',error=8,cursor=taken.cursor,frontier=V+56,
-        guard='the same advanced p/n pair is invalid UTF8',_origin=_widget_error(context,(V+2838,source,utf8),None,before,taken,8,
+        guard='the same advanced p/n pair is invalid UTF8',_origin=_widget_error(context,(V+2828,source,utf8),None,before,taken,8,
             'the same advanced p/n pair is invalid UTF8',trace)))
-    trace.append(('label UTF8 success',V+2838,source,taken,utf8))
+    trace.append(('label UTF8 success',V+2828,source,taken,utf8))
     extended=extend_string5_interface(objects,rows,_at_child(parents,children,V+2862,'vec_extend_inner'),
         String5Interface(borrow(frame,1440,12,phase,True),Span(0,0)),InitializedPrefix(before.payload,Span(0,maximum)),
         _nested_frame(context,24,'Band String5'),guards)
