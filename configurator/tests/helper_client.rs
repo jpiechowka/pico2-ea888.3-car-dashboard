@@ -283,3 +283,16 @@ fn malformed_gaps_and_terminal_regressions_leave_prior_state_intact() {
     assert!(feed.accept(batch(3, 1, false)).is_err());
     assert!(feed.drained());
 }
+
+#[test]
+fn prerequisite_summary_distinguishes_unchecked_from_completed_zero_counts() {
+    let unchecked = serde_json::json!({"schema_version":1,"ready":false,"checks":[],"reason":"Check not run"});
+    assert_eq!(
+        prerequisite_summary(&unchecked),
+        "Not checked in this helper session. Choose Check prerequisites to inspect installed tool versions."
+    );
+    let empty = serde_json::json!({"schema_version":1,"checks":[]});
+    assert!(prerequisite_summary(&empty).starts_with("0 installed checks passed · 0 need attention."));
+    let checked = serde_json::json!({"checks":[{"status":"passed"},{"status":"missing"},{"status":"incompatible"},{"status":"not_checked"}]});
+    assert!(prerequisite_summary(&checked).starts_with("1 installed checks passed · 2 need attention."));
+}

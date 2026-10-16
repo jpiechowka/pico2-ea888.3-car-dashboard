@@ -288,3 +288,26 @@ impl JobFeed {
 
     pub fn active(&self) -> bool { self.summary.as_ref().is_some_and(|s| !s.events_closed) }
 }
+
+/// The native cache's explicit not-run response is not a completed zero-check report.
+pub fn prerequisite_summary(report: &serde_json::Value) -> String {
+    if report["reason"] == "Check not run" {
+        return "Not checked in this helper session. Choose Check prerequisites to inspect installed tool versions."
+            .into();
+    }
+    let rows = report["checks"].as_array();
+    let passed = rows
+        .into_iter()
+        .flatten()
+        .filter(|row| row["status"] == "passed")
+        .count();
+    let missing = rows
+        .into_iter()
+        .flatten()
+        .filter(|row| row["status"] != "passed" && row["status"] != "not_checked")
+        .count();
+    format!(
+        "{passed} installed checks passed · {missing} need attention. Compilation and device programming are checked \
+         separately."
+    )
+}

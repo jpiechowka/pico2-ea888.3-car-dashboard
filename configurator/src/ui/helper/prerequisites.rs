@@ -4,14 +4,10 @@ use super::*;
 #[component]
 pub fn Results(report: serde_json::Value) -> impl IntoView {
     let rows = report["checks"].as_array().cloned().unwrap_or_default();
-    let passed = rows.iter().filter(|r| r["status"] == "passed").count();
-    let missing = rows
-        .iter()
-        .filter(|r| r["status"] != "passed" && r["status"] != "not_checked")
-        .count();
+    let summary = dashboard_configurator::helper_client::prerequisite_summary(&report);
     view! {
         <details class="build-disclosure" open><summary>"Prerequisite results · installed tool versions"</summary>
-            <p>{format!("{passed} installed checks passed · {missing} need attention. Compilation and device programming are checked separately.")}</p>
+            <p>{summary}</p>
             <div class="helper-checks">{rows.into_iter().map(|row| {
                 let id=row["id"].as_str().unwrap_or("check").replace('_'," ");
                 let status=row["status"].as_str().unwrap_or("unknown").to_owned();
