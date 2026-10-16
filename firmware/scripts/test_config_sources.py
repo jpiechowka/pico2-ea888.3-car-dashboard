@@ -242,8 +242,48 @@ class SourceAggregateInterface(unittest.TestCase):
         args[-1]=args[-1][:-1]+(replace(padding,start=output.start+20),)
         with self.assertRaisesRegex(AssertionError,'protected live storage'):channel_source_interface(*args)
 
+    def test_error_phase_retains_variant_relations_before_the_failed_final_field(self):
+        from config_source_effects import channel_source_interface
+        result=channel_source_interface(*self.fixture(extent=6))
+        self.assertIsNone(result['normal'])
+        self.assertEqual(tuple(v['selector'] for v in result['guarded_routes']),(0,2))
+        self.assertTrue(any(v['field']=='Route payload' for v in result['transitions']))
+        self.assertTrue(any(v['stage']=='freshness_ms.freshness_ms' for v in result['errors']))
+        self.assertFalse(result['completed_Source_issued'])
+
 
 class SourceArrayAdapter(unittest.TestCase):
+    def test_deepest_Source_child_may_be_exactly_adjacent_to_Config(self):
+        from config_decoded_sources import _parents,_source_array
+        from config_regions import Storage,borrow
+        objects,rows,proof,sequence,output,child,guards=SourceAggregateInterface.fixture(extent=96)
+        B=0x2000031c;config_end=B+14604
+        visitor=replace(sequence.header.storage,start=config_end+120)
+        loader=replace(sequence.decoder.header.storage,start=visitor.start+1608)
+        decoder=replace(sequence.decoder,header=borrow(loader,236,8,child.phase,True))
+        sequence=replace(sequence,header=borrow(visitor,1500,8,child.phase,True),decoder=decoder)
+        saved=(replace(guards[0],start=visitor.start+1512),replace(guards[1],start=loader.start+352))
+        old=Storage('address','old Source subarray',B+32,176,4,child.phase,False)
+        result=_source_array(objects,rows,_parents(objects,rows,0x1001c654,B),sequence,saved,old)
+        self.assertEqual(result['sequence'].count.lower,0)
+        self.assertEqual(len(result['packages']),8)
+
+    def test_Source_deepest_child_cannot_alias_untouched_Config_suffix(self):
+        from config_decoded_sources import _parents,_source_array
+        from config_regions import Storage,borrow
+        objects,rows,proof,sequence,output,child,guards=SourceAggregateInterface.fixture(extent=96)
+        B=0x2000031c;config_end=B+14604
+        # Main H72 is above Config. Its varint32 + pop16 reaches eight bytes
+        # inside the enclosing suffix, which the old array alone cannot guard.
+        visitor=replace(sequence.header.storage,start=config_end+112)
+        loader=replace(sequence.decoder.header.storage,start=visitor.start+1608)
+        decoder=replace(sequence.decoder,header=borrow(loader,236,8,child.phase,True))
+        sequence=replace(sequence,header=borrow(visitor,1500,8,child.phase,True),decoder=decoder)
+        saved=(replace(guards[0],start=visitor.start+1512),replace(guards[1],start=loader.start+352))
+        old=Storage('address','old Source subarray',B+32,176,4,child.phase,False)
+        with self.assertRaisesRegex(AssertionError,'Config.*child|overlap'):
+            _source_array(objects,rows,_parents(objects,rows,0x1001c654,B),sequence,saved,old)
+
     def test_all_eight_sources_parse_before_any_fixed_array_commit(self):
         from config_decoded_sources import _parents,_source_array
         from config_regions import Storage
@@ -272,6 +312,8 @@ class SourceArrayAdapter(unittest.TestCase):
         result=_source_array(objects,rows,_parents(objects,rows,0x1001c654,0x2000031c),sequence,guards,old)
         self.assertIsNone(result['sequence'])
         self.assertEqual(len(result['packages']),7)
+        self.assertEqual(len(result['invocations']),8)
+        self.assertIsNone(result['invocations'][-1]['result']['normal'])
         self.assertTrue(any(v['index']==7 for v in result['errors']))
         self.assertTrue(all(v['old_array_unchanged'] for v in result['errors']))
         self.assertFalse(result['fixed_array_committed'])
@@ -310,6 +352,51 @@ class SourceArrayEffects(unittest.TestCase):
         changed=dict(self.array,packages=(self.array['packages'][1],self.array['packages'][0])+self.array['packages'][2:])
         with self.assertRaisesRegex(AssertionError,'paired Source order'):
             _array_effects(self.objects,self.rows,self.parents,changed,self.owner,self.frame,self.guards,self.sequence)
+
+
+class SourceRemainingAggregates(unittest.TestCase):
+    @staticmethod
+    def fixture(extent=160):
+        from config_decoded_sources import _parents
+        from config_regions import Storage,borrow
+        from config_abstract import Span
+        objects,rows,proof,source,output,frame,guards=SourceAggregateInterface.fixture(extent=extent)
+        visitor=source.header.storage;phase=frame.phase
+        owner=Storage('address','supplied private Config',0x2000031c,14604,4,phase,True)
+        payload=Storage('address','embedded_eav',source.decoder.payload.start-12,extent+12,1,phase,False)
+        top=replace(source,header=borrow(visitor,288,8,phase,True),
+            decoder=replace(source.decoder,payload=borrow(payload,12,extent,phase),cursor=Span(56,56)),count=Span(7,7))
+        prefix=Storage('address','supplied already-committed Sources',owner.start+32,176,4,phase,False)
+        return objects,rows,_parents(objects,rows,0x1001c654,owner.start),top,owner,guards+(prefix,)
+
+    def test_warning_Fuel_and_colors_keep_source_counts_unknown_bits_and_partial_stores(self):
+        from config_decoded_sources import _remaining_aggregates
+        result=_remaining_aggregates(*self.fixture())
+        self.assertEqual(result['warning']['scope_domain'],(0,1))
+        self.assertEqual(result['warning']['mode_domain'],(0,1))
+        self.assertEqual(result['warning']['packed_word'],'page_ms | (scope <<16) | (mode <<24)')
+        self.assertEqual(result['warning']['complete_store'],0x1001c654+5040)
+        self.assertEqual(tuple((v['wire_tag'],v['emitted_tag']) for v in result['normal']),((0,2),(1,3),(2,0),(2,1)))
+        for alternative in result['normal']:
+            self.assertEqual(alternative['after'].count.lower,4)
+            self.assertEqual(alternative['Fuel']['complete_store'],0x1001c654+5570)
+            self.assertEqual(alternative['colors']['partial_background_store'],0x1001c654+5618)
+            self.assertEqual(alternative['colors']['complete_store'],0x1001c654+5628)
+            self.assertEqual(alternative['Fuel']['padding'],(30,32))
+        stoich=result['normal'][1]
+        self.assertEqual(stoich['Fuel']['active_fields'],(('ratio','f32_bits',(0,0xffffffff)),))
+        blend=result['normal'][-1]
+        self.assertEqual(blend['Fuel']['density_newtype_count_decrement'],0)
+        self.assertEqual(blend['Fuel']['remaining_sequence_counts'],(4,3,2,1,0))
+        self.assertFalse(result['complete_ordinary_group_issued'])
+
+    def test_short_colors_preserve_completed_warning_and_Fuel_but_no_final_frontier(self):
+        from config_decoded_sources import _remaining_aggregates
+        result=_remaining_aggregates(*self.fixture(extent=60))
+        self.assertFalse(result['normal'])
+        self.assertTrue(any(v['stage']=='global WarningColors' and v['completed_aggregates']==('Sources','WarningPresentation','Fuel')
+            for v in result['errors']))
+        self.assertFalse(result['complete_ordinary_group_issued'])
 
 
 if __name__=='__main__':unittest.main()

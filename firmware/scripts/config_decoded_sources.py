@@ -12,7 +12,7 @@ from config_widget_children import _name
 from validation import require
 from dataclasses import replace
 from config_abstract import SequenceInterface,Span
-from config_regions import Storage,borrow,require_writes
+from config_regions import Storage,borrow,require_writes,require_disjoint
 from config_decode_effects import _object
 from config_source_children import source_children,CHANNEL_SOURCE
 from config_source_effects import channel_source_interface,SOURCE_EPOCHS
@@ -49,6 +49,15 @@ def _source_array(objects,rows,parents,sequence,protected,old_array):
         'Sources fixed array lost its actual eight-element input/old allocation')
     frame=sequence.header.storage;phase=frame.phase
     require(old_array.phase==phase,'Sources array changes its source/protected epoch')
+    loader=sequence.decoder.header.storage
+    require(loader.extent==456 and sequence.decoder.header.offset==236 and loader.start==frame.start+1608,
+        'Sources array loses its actual loader/Visitor/D geometry')
+    # The old Source subarray is not the enclosing private allocation. Check
+    # its full physical extent against the retained caller and deeper Source
+    # chain; coordinate labels and an H72-only check cannot protect the suffix.
+    config=Storage('address','complete Config reserved while parsing Sources',old_array.start-32,14604,4,phase,False)
+    activation=Storage('address','Source deepest child and retained callers',frame.start-120,120+1608+456,8,phase,False)
+    require_disjoint((activation,config))
     expected=tuple(p['function'] for p in parents)
     V=parents[0]['function']-4376
     require(expected==tuple(V+off for off in _WINDOWS) and parents==_parents(objects,rows,V,old_array.start-32),
@@ -60,13 +69,14 @@ def _source_array(objects,rows,parents,sequence,protected,old_array):
         'Sources array omits or reorders an actual current invocation')
     top=borrow(frame,288,8,phase)
     guard=tuple(protected)+(old_array,_object(top,'stable top Q during Sources'))
-    packages=[];errors=[];live=[];current=sequence
+    packages=[];errors=[];live=[];current=sequence;invocations=[]
     child_frame=Storage(frame.space,'actual Sources child',frame.start-72,72,8,phase,True)
     for index,((site,proof),(offset,out,tag)) in enumerate(zip(source_edges,SOURCE_EPOCHS)):
         require(site==V+offset and current.count==Span(8-index,8-index),
             'Sources call consumes another predecessor/count epoch')
         output=borrow(frame,out,22,phase,True)
         result=channel_source_interface(objects,rows,proof,current,output,child_frame,guard+tuple(live))
+        invocations.append(dict(index=index,site=site,before=current,result=result))
         # Error descriptions preserve the exact parsed prefix, same input and
         # decrement-before-child cursor. None is an explicit missing field.
         errors.extend(dict(v,index=index,parsed_prefix=index,old_array_unchanged=True,
@@ -90,7 +100,7 @@ def _source_array(objects,rows,parents,sequence,protected,old_array):
         current=next_sequence
     require(current is None or len(packages)==8 and current.count==Span(0,0),
         'Sources array bypasses one of its eight complete normal invocations')
-    return dict(packages=tuple(packages),errors=tuple(errors),sequence=current,old_array=old_array,
+    return dict(packages=tuple(packages),invocations=tuple(invocations),errors=tuple(errors),sequence=current,old_array=old_array,
         protected_outputs=tuple(live),fixed_array_committed=False,
         requires_actual_predecessor_control_transports_and_owned_use=True)
 
@@ -202,3 +212,148 @@ def _array_effects(objects,rows,parents,array,owner,frame,protected,sequence):
         opaque_Config_padding=tuple((53+22*i,54+22*i) for i in range(8)),
         inactive_variant_payload_remains_opaque=True,complete_ordinary_Source_prefix_issued=False,
         requires_actual_ordinary_source_guards_and_reached_access_uses=True)
+
+
+def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
+    """Fresh source-typed Warning/Fuel/colors after the fixed Source array.
+
+    The folded physical count store differs from conceptual field order.
+    Keep each Fuel arm's paired decoder and emitted niche; do not multiply
+    independent enum alternatives into complete Config histories.
+    """
+    from config_abstract import decoder_interface,sequence_interface
+    from config_decoded_widgets import _at_child,_input_policy
+    from config_widget_children import warning_colors_interface
+    from config_widget_contracts import ROLES as WIDGET
+    from config_source_handoff import _CARRIERS
+    require(type(sequence) is SequenceInterface and sequence.count==Span(7,7) and
+        sequence.header.offset==288 and sequence.header.storage.extent==1608 and
+        owner.space=='address' and owner.extent==14604 and owner.writable and
+        owner.phase==sequence.header.storage.phase,'Sources suffix has another actual top7/Config epoch')
+    frame=sequence.header.storage;phase=frame.phase;V=parents[0]['function']-4376
+    require(parents==_parents(objects,rows,V,owner.start),'Sources suffix uses stale parent/source effects')
+    children=source_children(objects,rows,parents);errors=[];steps=[]
+    inherited=tuple(protected)+tuple(_object(borrow(frame,cell,4,phase),'reserved Source pointer '+str(cell)) for cell,target,sites in _CARRIERS)
+    guards=list(inherited)
+    for g in inherited:
+        for space in ('address',frame.space):
+            if g.space!=space and not any(v.space==space and v.start<=g.start and g.start+g.extent<=v.start+v.extent for v in guards):
+                guards.append(Storage(space,'physical '+g.identity,g.start,g.extent,1,phase,False))
+    guards=tuple(guards)
+    def base(active=None):
+        return guards+(() if active==sequence.header else (_object(sequence.header,'stable physical top Q'),))
+    def nested(proof,label):return Storage(frame.space,'Sources '+label,frame.start-proof['frame'],proof['frame'],8,phase,True)
+    def error(stage,option,completed):
+        errors.append(dict(stage=stage,error=14 if option['kind']=='none' else option['error'],
+            cursor=option['cursor'],completed_aggregates=completed,frontier=V+56,
+            partial_current_aggregate_not_promoted=True))
+    def stable(result,state=None):
+        fixed=(_object(borrow(sequence.decoder.header.storage,sequence.decoder.header.offset+4,4,phase),'stable D.end'),)
+        if state is not None:fixed+=(_object(borrow(state.header.storage,state.header.offset,4,phase),'stable Q.D'),)
+        for option in result['outcomes']:
+            available=tuple(dict.fromkeys(v for v,offset,size in option['possible_writes']))
+            require_writes(available,option['possible_writes'],fixed)
+        return result
+    def direct(label,site,decoder,maximum,completed):
+        if decoder is None:return None
+        proof=_at_child(parents,children,V+site,'take_varint_u32')
+        result=stable(decoder_interface(objects,rows,proof,decoder,nested(proof,label),base(),output=borrow(frame,1064,8,phase,True)))
+        normal=[]
+        for option in result['outcomes']:
+            if option['kind']=='success':
+                normal.append(option['state']);errors.append(dict(stage=label+'.domain',error=14,cursor=option['cursor'],
+                    completed_aggregates=completed,frontier=V+170,source_guard='same parsed selector>'+str(maximum)))
+            else:error(label,option,completed)
+        after=normal[0] if normal else None
+        steps.append(dict(field=label,site=V+site,before=decoder,after=after,domain=(0,maximum),child=result,
+            guard='same parsed selector in source domain'))
+        return after
+    def scalar(label,site,state,semantic,completed):
+        proof=_at_child(parents,children,V+site,semantic);kwargs={}
+        if semantic=='seq_f32':kwargs=dict(output=borrow(frame,1064,8,phase,True),platform_policy=_input_policy(objects,state.decoder))
+        result=stable(sequence_interface(objects,rows,proof,state,nested(proof,label),base(state.header),**kwargs),state)
+        normal=[]
+        for option in result['outcomes']:
+            if option['kind']=='some':normal.append(option['state'])
+            else:error(label,option,completed)
+        require(len(normal)<=1,'Sources scalar has an unpaired normal cursor')
+        steps.append(dict(field=label,site=V+site,before=state,after=normal[0] if normal else None,child=result))
+        return normal[0] if normal else None
+    def assignment(writes):
+        available=tuple(dict.fromkeys(v for v,offset,size in writes))
+        require_writes(available,writes,guards+(_object(sequence.header,'live top Q'),
+            _object(sequence.decoder.header,'live D'),_object(sequence.decoder.payload,'immutable source')))
+    completed=('Sources',);current=direct('Warning scope',4814,sequence.decoder,1,completed)
+    current=direct('Warning mode',4850,current,1,completed)
+    if current is not None:
+        page=scalar('Warning page',5190,SequenceInterface(borrow(frame,1000,8,phase,True),current,Span(1,1)),'seq_u16',completed)
+        current=None if page is None else page.decoder
+    warning=None
+    if current is not None:
+        assignment(((borrow(frame,1000,8,phase,True),0,8),(borrow(frame,1064,3,phase,True),0,3),
+            (borrow(owner,208,4,phase,True),0,4)))
+        warning=dict(before=sequence.decoder,after=current,scope_domain=(0,1),mode_domain=(0,1),page_domain=(0,65535),
+            packed_word='page_ms | (scope <<16) | (mode <<24)',scratch_read=(frame.start+1065,frame.start+1067),
+            complete_store=V+5040,physical_top_before_fold=7,logical_remaining=6,
+            packed_error_tag=0x02000000,packed_error_lowbyte_only=True)
+    completed=('Sources','WarningPresentation')
+    if current is not None:
+        # The actual folded count5 store precedes the Fuel varint, including
+        # its failures. Preserve Q.D while changing only this owned count.
+        require_writes((sequence.header,),((sequence.header,4,4),),guards+
+            (_object(borrow(frame,288,4,phase),'stable top Q.D'),
+             _object(sequence.decoder.header,'live D'),_object(sequence.decoder.payload,'immutable source')))
+    fuel_start=direct('Fuel',5064,current,2,completed)
+    fuel=[]
+    if fuel_start is not None:
+        fuel.append((0,2,fuel_start,(),None))
+        ratio=scalar('Stoich ratio',5110,SequenceInterface(borrow(frame,1000,8,phase,True),fuel_start,Span(1,1)),'seq_f32',completed)
+        if ratio is not None:fuel.append((1,3,ratio.decoder,(('ratio','f32_bits',(0,0xffffffff)),),None))
+        percent=scalar('Blend percent',5744,SequenceInterface(borrow(frame,1000,8,phase,True),fuel_start,Span(8,8)),'seq_f32',completed)
+        blend=None if percent is None else direct('Blend basis',5890,percent.decoder,1,completed)
+        blend=direct('Blend origin',5988,blend,1,completed)
+        blend=direct('Blend density',6236,blend,1,completed)
+        if blend is not None:
+            density=[(0,blend)]
+            proof=_at_child(parents,children,V+6266,'deserialize_seed_f32')
+            extra=stable(decoder_interface(objects,rows,proof,blend,nested(proof,'density temperature'),base(),
+                output=borrow(frame,1064,8,phase,True),platform_policy=_input_policy(objects,blend)))
+            for option in extra['outcomes']:
+                if option['kind']=='success':density.append((1,option['state']))
+                else:error('Blend density temperature',option,completed)
+            for tag,after in density:
+                q=SequenceInterface(borrow(frame,1000,8,phase,True),after,Span(4,4))
+                for field,site in (('gasoline_stoich',6288),('ethanol_stoich',6320),('gasoline_density',6352),('ethanol_density',6384)):
+                    q=scalar('Blend '+field,site,q,'seq_f32',completed)
+                    if q is None:break
+                if q is not None:
+                    require(q.count==Span(0,0),'Blend omitted a counted field')
+                    fields=tuple((name,'f32_bits',(0,0xffffffff)) for name in
+                        ('percent','gasoline_stoich','ethanol_stoich','gasoline_density','ethanol_density'))
+                    if tag:fields+=(('temperature','f32_bits',(0,0xffffffff)),)
+                    fuel.append((2,tag,q.decoder,fields,tag))
+    normals=[]
+    for wire,tag,decoder,fields,density in fuel:
+        writes=((0,4),(29,1),(7,1),(28,1),(8,4),(12,4),(16,4),(20,4),(24,4),(4,1),(5,2))
+        assignment(tuple((borrow(owner,0,32,phase,True),offset,size) for offset,size in writes))
+        record=dict(wire_tag=wire,emitted_tag=tag,active_fields=fields,padding=(30,32),
+            complete_store=V+5570,early_tag_store=V+5568,pending_after_tag=((5,7),),
+            inactive_payload_opaque=True,density_newtype_count_decrement=0,
+            remaining_sequence_counts=(4,3,2,1,0) if wire==2 else (),folded_top_count=5)
+        from config_decoded_widgets import _edge_at
+        edge=_edge_at(parents,V+5578)
+        require(edge[3]==WIDGET['warning_colors'],'global WarningColors uses another current call')
+        proof=children[edge[2],edge[3]]
+        colors=warning_colors_interface(objects,rows,proof,replace(sequence,decoder=decoder,count=Span(5,5)),
+            borrow(frame,1064,6,phase,True),nested(proof,'global WarningColors'),base(sequence.header))
+        stable(colors,sequence)
+        for option in colors['outcomes']:
+            if option['kind']!='some':error('global WarningColors',option,completed+('Fuel',));continue
+            assignment(((borrow(owner,14524,4,phase,True),2,2),(borrow(owner,14524,4,phase,True),0,2)))
+            normals.append(dict(wire_tag=wire,emitted_tag=tag,Fuel=record,after=option['state'],
+                colors=dict(source=colors,partial_background_store=V+5618,complete_store=V+5628,
+                    same_source_order=('foreground','background'))))
+    return dict(warning=warning,normal=tuple(normals),errors=tuple(errors),transitions=tuple(steps),
+        before=sequence,complete_ordinary_group_issued=False,
+        pending_owned_roles=('warning_presentation_local','Fuel_final_halfword'),
+        requires_actual_Source_prefix_ordinary_control_and_reached_uses=True)

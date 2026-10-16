@@ -186,6 +186,7 @@ def channel_source_interface(objects,rows,proof,state,output,frame,ancestor_prot
         evidence_domain=(0,3),route=route,poll=poll,freshness_domain=(0,65535),transitions=tuple(steps),
         output=output,tag_domain=(0,1),return_site=call+4)
     return dict(proof=proof,normal=normal,none=none,errors=tuple(errors),returns=returns,store_partition=partition,physical_child_bytes=120,
+        transitions=tuple(steps),guarded_access=access,guarded_routes=route,guarded_poll=poll,
         output_padding=(21,22),pending_after_early_tag=((12,16),(6,10),(4,6),(3,4)),
         last_output_store=start+734,completed_Source_issued=False,semantic_Config_validated=False,
         pending_owned_roles=('source_route_local','source_route_output'),requires_actual_parent_source_and_guarded_access_use=True)
