@@ -435,12 +435,13 @@ def _entry_data(entry,widgets):
         old_array=entry.old_Source_array,call_site=entry.call_site,call_arguments=entry.call_arguments)
 
 
-def _phase_checkpoint(widgets,entries,parents,children,returns,phases,payload_sha256,structural):
+def _phase_checkpoint(widgets,entries,parents,children,returns,phases,payload_sha256,structural,predecessor_description):
     from config_source_control import _structural_data
     require(len(entries)==len(phases) and all(p.entry is e for p,e in zip(phases,entries)),
         'Sources private phase changed its selected entry association')
     data=tuple(_SourcePhaseData(_entry_data(p.entry,widgets),p.array,p.effects,p.remaining,p.parent_envelopes) for p in phases)
     return _phase_graph(dict(parents=parents,children=children,returns=returns,phases=data,payload_sha256=payload_sha256,
+        predecessor_description=predecessor_description,
         structural=_structural_data(structural,widgets,parents,children)))
 
 
@@ -455,7 +456,7 @@ def _phase_graph(value):
     identity is deliberately absent from this encoding: identical typed
     literal tokens share immutable storage only within this snapshot call.
     """
-    nodes=[];memo={};active=set();literals={}
+    nodes=[];memo={};active=set();literals={};descriptions={}
     def visit(item):
         kind=type(item)
         if kind in (str,bytes,int,bool,type(None)):
@@ -464,8 +465,8 @@ def _phase_graph(value):
             return literals[key]
         identity=id(item)
         require(identity not in active,'cyclic Sources phase snapshot')
-        if identity in memo:return ('reference',memo[identity])
-        index=len(nodes);memo[identity]=index;nodes.append(None);active.add(identity)
+        if identity in memo:return memo[identity]
+        index=len(nodes);token=('reference',index);memo[identity]=token;nodes.append(None);active.add(identity)
         if kind in (dict,MappingProxyType):
             node=('mapping',tuple((visit(k),visit(v)) for k,v in item.items()))
         elif kind in (tuple,list):
@@ -473,8 +474,15 @@ def _phase_graph(value):
         elif is_dataclass(item) and not isinstance(item,type):
             node=('dataclass',kind.__module__,kind.__qualname__,tuple((f.name,visit(getattr(item,f.name))) for f in fields(item)))
         else:require(False,'unsupported Sources phase snapshot value')
-        active.remove(identity);nodes[index]=node
-        return ('reference',index)
+        # Input identities keep their separate slots/indices. Only complete
+        # immutable encoded descriptions can share storage, after every child
+        # was freshly visited. Unusual dataclass metadata keeps the original
+        # unpooled behavior rather than adding hashing/type requirements.
+        eligible=kind in (dict,MappingProxyType,tuple,list) or (
+            type(node[1]) is str and type(node[2]) is str and
+            all(type(name) is str for name,value in node[3]))
+        active.remove(identity);nodes[index]=descriptions.setdefault(node,node) if eligible else node
+        return token
     try:
         # Evaluate the complete immutable result before releasing workspaces.
         # The recursive function otherwise keeps these construction tables
@@ -483,7 +491,7 @@ def _phase_graph(value):
         return root,tuple(nodes)
     finally:
         visit=None
-        nodes.clear();memo.clear();active.clear();literals.clear()
+        nodes.clear();memo.clear();active.clear();literals.clear();descriptions.clear()
 
 
 @dataclass(frozen=True)
@@ -500,6 +508,7 @@ class _SourcePhasesState:
     phases:tuple
     checkpoint:object
     payload_sha256:str
+    predecessor_description:dict
     complete_ordinary_group_issued:bool=False
     ordinary_frontier_pending:int=5630
 
@@ -528,7 +537,7 @@ class _SourcePhasesState:
         payload=c.headers['visitor']['sequence_state'].decoder.payload
         require(_readonly_hash(self.objects,payload.start,payload.extent)==self.payload_sha256,
             'Sources private consumed source bytes changed')
-        require(_phase_checkpoint(self.widgets,self.entries,self.parents,self.children,self.returns,self.phases,self.payload_sha256,self.structural)==self.checkpoint,
+        require(_phase_checkpoint(self.widgets,self.entries,self.parents,self.children,self.returns,self.phases,self.payload_sha256,self.structural,self.predecessor_description)==self.checkpoint,
             'Sources private source/epoch/child/effect record changed')
         return self
 
@@ -544,7 +553,7 @@ def _first_boot_source_phases(objects,rows,source_context):
     from config_source_control import _source_structural_control
     from config_source_parent_effects import _parent_envelopes
     from config_structural import _readonly_hash
-    _,widgets=_first_boot_decoded_widgets_state(objects,rows,source_context)
+    predecessor_description,widgets=_first_boot_decoded_widgets_state(objects,rows,source_context)
     objects=widgets.family_bridge.objects;rows=widgets.family_bridge.rows
     c=widgets.views.context;frame=c.headers['visitor_frame'];V=c.headers['visitor']['proof']['function']
     parents=_parents(objects,rows,V,c.owner.start);children=source_children(objects,rows,parents)
@@ -568,5 +577,153 @@ def _first_boot_source_phases(objects,rows,source_context):
         phases.append(_SourcePhase(entry,array,effects,remaining,envelopes))
     payload=c.headers['visitor']['sequence_state'].decoder.payload
     digest=_readonly_hash(objects,payload.start,payload.extent);phases=tuple(phases)
-    checkpoint=_phase_checkpoint(widgets,entries,parents,children,returns,phases,digest,structural)
-    return _SourcePhasesState(widgets,objects,rows,widgets.family_bridge.source_context,parents,children,returns,structural,entries,phases,checkpoint,digest)
+    checkpoint=_phase_checkpoint(widgets,entries,parents,children,returns,phases,digest,structural,predecessor_description)
+    return _SourcePhasesState(widgets,objects,rows,widgets.family_bridge.source_context,parents,children,returns,structural,entries,phases,checkpoint,digest,predecessor_description)
+
+
+@dataclass(frozen=True)
+class _SourcesExit:
+    phase_index:int
+    sequence:SequenceInterface
+    source_normal:dict
+
+
+def _source_exits(state,control,bridge,uses):
+    """Same-source ordinary outcomes after the authoritative whole-use batch.
+
+    This consumes no description or external completion flag. The caller is
+    the closed internal producer below, immediately after its fresh batch.
+    Later consumers must recheck the private relation, not reuse this tuple
+    as an independent owner or exceptional-resume capability.
+    """
+    from config_source_control import _SourceActiveControl
+    from config_source_uses import _SourceAccessBridge
+    require(type(state) is _SourcePhasesState and type(control) is _SourceActiveControl and
+        control.state is state and type(bridge) is _SourceAccessBridge and bridge.control is control and
+        uses is bridge.uses and len(control.source_guards)==len(state.phases),
+        'Sources exit lacks its actual guarded source/access collection')
+    exits=[]
+    for index,(phase,guard) in enumerate(zip(state.phases,control.source_guards)):
+        require(phase.entry is state.entries[index] and guard['entry_index']==index,
+            'Sources exit changes its original selected source epoch')
+        if phase.remaining is None:continue
+        V=state.widgets.views.context.headers['visitor']['proof']['function']
+        for normal in phase.remaining['normal']:
+            require(guard['complete_Source_array'] and guard['publication_lineage'] is not None and
+                guard['suffix_lineage'] is not None and normal['after'].count==Span(4,4) and
+                normal['after'].decoder.header==phase.entry.sequence.decoder.header and
+                normal['after'].decoder.payload==phase.entry.sequence.decoder.payload and
+                normal['Fuel']['complete_store']==V+5570 and normal['colors']['complete_store']==V+5628 and
+                any(use.role=='Fuel_final_halfword' and use.phase_index==index and
+                    use.source['assignment']['Fuel'] is normal['Fuel'] for use in uses),
+                'Sources exit precedes its same-source last stores/reached Fuel use')
+            exits.append(_SourcesExit(index,normal['after'],normal))
+    return tuple(exits)
+
+
+@dataclass(frozen=True)
+class _SourcesState:
+    phases:_SourcePhasesState
+    control:object
+    access_bridge:object
+    exits:tuple
+
+    def current(self):
+        from config_source_uses import _check_source_uses
+        if not self.phases.entries:
+            require(self.control is None and self.access_bridge is None and not self.exits,
+                'unentered Sources group cannot create an active successor')
+            self.phases.current();return self
+        uses=_check_source_uses(self.access_bridge)
+        fresh=_source_exits(self.phases,self.control,self.access_bridge,uses)
+        require(len(fresh)==len(self.exits) and all(a.phase_index==b.phase_index and
+            a.sequence is b.sequence and a.source_normal is b.source_normal for a,b in zip(fresh,self.exits)),
+            'Sources outgoing state changes its same invocation/normal association')
+        return self
+
+
+def _error_summary(groups):
+    """Lossless occurrence counts with diagnostic cursor envelopes only.
+
+    Exact before/outcome/guard/alias relations remain in the private state.
+    Merging equal labels here is deliberately not a source-path proof; cursor
+    envelopes cannot authorize later reads, continuation or publication.
+    Every supplied error occurrence contributes once, including old errors.
+    """
+    values={};total=0
+    for origin,errors in groups:
+        for error in errors:
+            cursor=error['cursor'];lo,hi=(cursor.lower,cursor.upper) if type(cursor) is Span else tuple(cursor)
+            require(type(lo) is type(hi) is int and 0<=lo<=hi and type(error['error']) is int,
+                'Sources diagnostic error has an untyped cursor/code')
+            completed=tuple(error.get('completed_aggregates',()))
+            key=(origin,error.get('stage','configuration version'),error['error'],error.get('index',-1),
+                error.get('frontier',error.get('ordinary_frontier')),completed)
+            if key not in values:values[key]=[0,lo,hi]
+            value=values[key];value[0]+=1;value[1]=min(value[1],lo);value[2]=max(value[2],hi);total+=1
+    return tuple((*key,*value) for key,value in values.items()),total
+
+
+def _first_boot_decoded_sources_state(objects,instructions,source_context):
+    """Derive the complete current named ordinary Sources group once.
+
+    The public projection is a bounded diagnostic, not a producer result or
+    capability. Private source/error/partial-effect histories remain paired.
+    No unproved exceptional entry/return can resume this ordinary relation.
+    """
+    from collections import Counter
+    from config_source_control import _source_control
+    from config_source_uses import _source_access_bridge,_check_source_uses
+    from config_platform import _bounded_record
+    state=_first_boot_source_phases(objects,instructions,source_context)
+    control=None;bridge=None;uses=();exits=()
+    if state.entries:
+        control=_source_control(state);bridge=_source_access_bridge(control)
+        uses=_check_source_uses(bridge);exits=_source_exits(state,control,bridge,uses)
+    else:
+        # Raw structure still checked the current complete group and foreign
+        # ingress. It cannot fabricate a candidate, Source-Q or active cut.
+        state.current()
+    prior=state.predecessor_description;V=state.widgets.views.context.headers['visitor']['proof']['function']
+    errors=[('prefix',prior['prefix_errors']),('Views',prior['Views_errors']),('Widgets',prior['group_errors'])]
+    errors.extend(('Sources',p.array['errors']) for p in state.phases)
+    errors.extend(('suffix',p.remaining['errors']) for p in state.phases if p.remaining is not None)
+    summaries,error_count=_error_summary(errors)
+    successes=tuple((e.phase_index,state.entries[e.phase_index].exit.initialized_views,
+        len(state.entries[e.phase_index].exit.committed),e.source_normal['wire_tag'],e.source_normal['emitted_tag'],
+        e.sequence.decoder.cursor.lower,e.sequence.decoder.cursor.upper) for e in exits)
+    record=control.record if control is not None else None
+    description=dict(phase='first_boot_decoded_sources_pending_controls_history_led_visitor_return_canonical_and_loader_routes',
+        mode='sizez',Controls_ready=dict(frontier=V+5630,top_count=4,Controls_consumed=False) if exits else None,
+        declared_Controls_frontier=dict(frontier=V+5630,reached=bool(exits)),successes=successes,
+        success_columns=('phase','initialized_views','initialized_widgets','Fuel_wire','Fuel_emitted','cursor_lower','cursor_upper'),
+        error_summary=summaries,error_occurrences=error_count,
+        error_columns=('origin','stage','code','Source_index','frontier','completed_aggregates','occurrences','cursor_lower','cursor_upper'),
+        diagnostic_error_envelopes_are_not_paths=True,exact_error_relations_retained_privately=True,
+        physical_completion_sites=dict(Sources=V+4794,WarningPresentation=V+5040,Fuel=V+5570,WarningColors=V+5628),
+        conditional_Source_accesses=dict(families=() if bridge is None else tuple(v.role for v in bridge.families),
+            static_sites=0 if bridge is None else sum(len(v.sites) for v in bridge.families),
+            descriptors_are_reached_uses=False,actual_inherited16_pending=True),
+        source_guarded_accesses=dict(role_counts=tuple(sorted(Counter(v.role for v in uses).items())),
+            completed_prefix_issued=False,runtime_observation=False),
+        control=None if record is None else dict(selected_instructions=record['selected_instructions'],
+            stopped_frontiers=record['stopped_frontiers'],outside_shared_context_count=len(record['outside_shared_contexts']),
+            pending_contexts_confer_state=False),
+        structural_control=dict(selected_instructions=len(state.structural.selection.selected),
+            outside_shared_context_count=len(state.structural.outside_shared_contexts),
+            confers_active_state=False,unentered=not bool(state.entries)),
+        ordinary_domain=state.widgets.execution.to_record()['domain'],execution_scope=state.widgets.execution.to_record(),
+        source_context=prior['source_context'],source_qualification=prior['source_qualification'],
+        external_qualifications=prior['external_qualifications'],exception_graph_limit=prior['exception_graph_limit'],
+        exceptional_resume_established=False,exception_absence_established=False,all_observers_compatible=False,
+        exception_safe_completion=False,unconditional_owner=False,hardware_qualified=False,initial_facts_reinitialized=False,
+        requires_H8_consumed_input_closure=True,requires_M2_pre_init_source_reconciliation=True,
+        full_visitor_return_pending=True,shared_error_suffix_pending=True,complete_policy_and_resource_producer_pending=True,
+        pending=('Controls/history/LED','full visitor errors and restore','D finalize/canonical Compare',
+            'decoded validator and remaining loader routes/modes','diagnostics/live sinks/PANICKED/full resource graph',
+            'actual complete policy/producer/max envelope','final all-mode/max-input/native CI/H2 gates'))
+    return _bounded_record(description),_SourcesState(state,control,bridge,exits)
+
+
+def first_boot_decoded_sources(objects,instructions,source_context):
+    return _first_boot_decoded_sources_state(objects,instructions,source_context)[0]

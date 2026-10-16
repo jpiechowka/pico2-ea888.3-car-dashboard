@@ -86,12 +86,29 @@ class SourcePrivateHandoff(unittest.TestCase):
 
 class SourceLiteralBodies(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture(delta=0):
         import json
         from pathlib import Path
         from test_config_stack import ActualDecodedWidgets,StartupConfigurationCopy,SameBLoaderBoundary
         from llvm_stack import Instruction
-        objects,rows,source,item=ActualDecodedWidgets.fixture()
+        if delta:
+            from test_config_stack import ActualDecodedU16Prefix
+            objects,rows,source,item=ActualDecodedU16Prefix().fixture(delta)
+            for filename in ('config-decoded-views.json','config-decoded-widgets.json'):
+                extra=json.loads((Path(__file__).parent/'fixtures'/filename).read_bytes())
+                for at,encoded in extra['segments']+extra.get('readonly',[]):
+                    StartupConfigurationCopy.put(objects,at,bytes.fromhex(encoded))
+                for f in extra['functions']:
+                    for name,address,extent,index in f['aliases']:objects.elf.functions[name]=(address,extent,index)
+                    objects.elf.symbol_entries=list(dict.fromkeys(objects.elf.symbol_entries+[tuple(v) for v in f['symbols']]))
+                    objects.elf.mapping_symbols.extend(tuple(v) for v in f['mapping'])
+                    if f['frame'] is not None:objects.sizes[f['address']]=f['frame']
+                for r in extra['records']:
+                    rows[r['address']]=Instruction(r['address'],bytes.fromhex(r['bytes']),r['mnemonic'],r['operands'])
+            import struct
+            for offset in (3508,7124):
+                StartupConfigurationCopy.put(objects,0x1001c654+offset,struct.pack('<I',item['config']+delta))
+        else:objects,rows,source,item=ActualDecodedWidgets.fixture()
         extra=json.loads((Path(__file__).parent/'fixtures/config-decoded-sources.json').read_bytes())
         for at,encoded in extra['segments']:
             StartupConfigurationCopy.put(objects,at,bytes.fromhex(encoded))
@@ -103,6 +120,9 @@ class SourceLiteralBodies(unittest.TestCase):
         objects.elf.mapping_symbols=list(dict.fromkeys(objects.elf.mapping_symbols))
         for r in extra['records']:
             rows[r['address']]=Instruction(r['address'],bytes.fromhex(r['bytes']),r['mnemonic'],r['operands'])
+        if delta:
+            for offset in (3508,7124):
+                StartupConfigurationCopy.put(objects,0x1001c654+offset,struct.pack('<I',item['config']+delta))
         return objects,rows,SameBLoaderBoundary.rebound(objects,source),item
 
     def test_complete_current_Source_retains_guarded_six_targets_and_saved_return_tail(self):
@@ -771,6 +791,59 @@ SOURCE_OUTPUTS=(1128,516,628,744,880,940,1000,1064)
 
 
 class SourcePhaseSnapshot(unittest.TestCase):
+    def test_encoded_descriptions_share_storage_without_merging_input_indices_or_aliases(self):
+        from config_decoded_sources import _phase_graph
+        left=[1];right=[1];value=[left,right,left]
+        graph=_phase_graph(value)
+        expected=(('reference',0),(('list',(('reference',1),('reference',2),('reference',1))),
+            ('list',(('value','int',1),)),('list',(('value','int',1),))))
+        self.assertEqual(graph,expected);self.assertEqual(len(graph[1]),3)
+        self.assertIs(graph[1][1],graph[1][2],
+            'equal encoded descriptions may share storage while both input node slots remain')
+        edges=graph[1][0][1];self.assertIs(edges[0],edges[2]);self.assertIsNot(edges[0],edges[1])
+        another=_phase_graph(value)
+        self.assertEqual(graph,another);self.assertIsNot(graph[1][1],another[1][1]);self.assertIsNot(edges[0],another[1][0][1][0])
+        left.append(2)
+        self.assertEqual(graph,expected);self.assertNotEqual(_phase_graph(value),graph)
+        self.assertNotEqual(_phase_graph([right,right,right]),graph)
+        self.assertNotEqual(_phase_graph([[1],[1],[1]]),graph)
+
+    def test_description_pool_keeps_nested_references_types_order_and_metadata_fallback(self):
+        from dataclasses import make_dataclass
+        from types import MappingProxyType
+        from config_decoded_sources import _phase_graph
+        graph=_phase_graph([{'x':[True]},{'x':[True]}])
+        self.assertIs(graph[1][2],graph[1][4]);self.assertIsNot(graph[1][1],graph[1][3])
+        self.assertNotEqual(graph[1][1],graph[1][3],'distinct referenced child indices remain encoded')
+        value=_phase_graph([[True],[1],[b'x'],['x'],(1,)])
+        self.assertEqual(len({id(v) for v in value[1][1:]}),5)
+        self.assertNotEqual(_phase_graph({'x':1,'y':2}),_phase_graph({'y':2,'x':1}))
+        self.assertEqual(_phase_graph({'x':1}),_phase_graph(MappingProxyType({'x':1})))
+        A=make_dataclass('SameMetadata',[('value',int)]);B=make_dataclass('SameMetadata',[('value',int)])
+        A.__module__=True;B.__module__=1
+        unusual=_phase_graph([A(7),B(7)])
+        self.assertEqual(unusual[1][1],unusual[1][2])
+        self.assertIsNot(unusual[1][1],unusual[1][2]);self.assertIs(type(unusual[1][1][1]),bool)
+        self.assertIs(type(unusual[1][2][1]),int)
+        metadata=['unhashable metadata'];A.__module__=metadata
+        fallback=_phase_graph(A(7));self.assertIs(fallback[1][0][1],metadata)
+
+    def test_pool_eligibility_uses_captured_metadata_before_child_getters_mutate_class(self):
+        from dataclasses import dataclass
+        from config_decoded_sources import _phase_graph
+        metadata=['captured unhashable module']
+        @dataclass
+        class Changing:
+            value:int
+            def __getattribute__(self,name):
+                if name=='value':type(self).__module__='changed_after_capture'
+                return object.__getattribute__(self,name)
+        Changing.__module__=metadata
+        graph=_phase_graph(Changing(7))
+        self.assertIs(graph[1][0][1],metadata)
+        self.assertEqual(graph[1][0][3],(('value',('value','int',7)),))
+        self.assertEqual(Changing.__module__,'changed_after_capture')
+
     def test_construction_workspaces_release_without_cyclic_collection_on_success_and_error(self):
         import gc,sys,weakref
         from config_decoded_sources import _phase_graph
@@ -780,7 +853,7 @@ class SourcePhaseSnapshot(unittest.TestCase):
                 values=frame.f_locals;visitor=values['visit']
                 if not any(ref() is visitor for ref in visitors):
                     visitors.append(weakref.ref(visitor))
-                    tables.append(tuple(values[name] for name in ('nodes','memo','active','literals')))
+                    tables.append(tuple(values[name] for name in ('nodes','memo','active','literals','descriptions')))
         enabled=gc.isenabled();old=sys.getprofile();gc.disable()
         try:
             sys.setprofile(observe)
@@ -1273,6 +1346,223 @@ class SourceAccessFamilies(unittest.TestCase):
             moved(end+112)
         with self.assertRaisesRegex(AssertionError,'interval|physical'):
             moved(-8)
+
+
+class ActualDecodedSources(unittest.TestCase):
+    @staticmethod
+    def fixture(extent=None,delta=0):
+        objects,rows,source,item=SourceLiteralBodies.fixture(delta)
+        if extent is None:return objects,rows,source,item
+        import struct,zlib
+        from llvm_stack import Instruction
+        from test_config_stack import StartupConfigurationCopy,SameBLoaderBoundary
+        address=0x10032b1e;blob=bytearray(objects.read_only(address,12+extent))
+        struct.pack_into('<H',blob,6,extent);crc=zlib.crc32(blob[:8]+blob[12:]);struct.pack_into('<I',blob,8,crc)
+        StartupConfigurationCopy.put(objects,address,blob)
+        StartupConfigurationCopy.put(objects,0x100200bc,struct.pack('<I',crc^0xffffffff))
+        SameBLoaderBoundary.mov(objects,rows,0x1001fe76,'movw','r0',extent)
+        SameBLoaderBoundary.mov(objects,rows,0x1001fef8,'movw','r0',extent)
+        raw=struct.pack('<HH',0xf20c,12+extent);StartupConfigurationCopy.put(objects,0x1001fed8,raw)
+        rows[0x1001fed8]=Instruction(0x1001fed8,raw,'addw','r0, r12, #'+hex(12+extent))
+        return objects,rows,SameBLoaderBoundary.rebound(objects,source),item
+
+    def test_unentered_or_first_Source_error_preserves_previous_errors_without_completion(self):
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        for extent in (1,4,5):
+            objects,rows,source,_=self.fixture(extent)
+            if extent<5:
+                with patch.object(subject,'_source_array',side_effect=AssertionError('fabricated Source call')) as array:
+                    result,state=subject._first_boot_decoded_sources_state(objects,rows,source)
+                array.assert_not_called();self.assertFalse(state.phases.entries)
+                self.assertIsNone(result['control']);self.assertIsNone(state.access_bridge)
+            else:
+                result,state=subject._first_boot_decoded_sources_state(objects,rows,source)
+                self.assertTrue(state.phases.entries);self.assertIsNotNone(result['control'])
+                self.assertTrue(any(row[0]=='Sources' for row in result['error_summary']))
+            self.assertIsNone(result['Controls_ready']);self.assertFalse(result['successes'])
+            self.assertTrue(result['error_occurrences']);self.assertFalse(state.exits)
+            self.assertFalse(result['source_guarded_accesses']['role_counts'])
+            self.assertFalse(result['hardware_qualified']);self.assertFalse(result['unconditional_owner'])
+            prior=state.phases.predecessor_description
+            for origin,key in (('prefix','prefix_errors'),('Views','Views_errors'),('Widgets','group_errors')):
+                self.assertEqual(sum(row[-3] for row in result['error_summary'] if row[0]==origin),len(prior[key]))
+            self.assertEqual(sum(row[-3] for row in result['error_summary']),result['error_occurrences'])
+
+    def test_error_projection_counts_duplicate_labels_without_creating_source_paths(self):
+        from config_abstract import Span
+        from config_decoded_sources import _error_summary
+        first=dict(stage='same label',error=14,cursor=Span(1,3),frontier=56)
+        second=dict(first,cursor=Span(2,7))
+        rows,total=_error_summary((('Views',(first,second)),('Widgets',(first,))))
+        self.assertEqual(total,3);self.assertEqual(len(rows),2)
+        self.assertEqual(rows[0][-3:],(2,1,7));self.assertEqual(rows[1][-3:],(1,1,3))
+        self.assertEqual(tuple(row[0] for row in rows),('Views','Widgets'))
+        self.assertEqual(first['cursor'],Span(1,3));self.assertEqual(second['cursor'],Span(2,7))
+        with self.assertRaisesRegex(AssertionError,'untyped'):
+            _error_summary((('Views',(dict(first,error=True),)),))
+
+    def test_unentered_currentness_binds_retained_predecessor_and_explicit_current_source(self):
+        import json
+        from config_decoded_sources import _first_boot_decoded_sources_state,first_boot_decoded_sources
+        from test_config_stack import StartupConfigurationCopy
+        objects,rows,source,_=self.fixture(1)
+        result,state=_first_boot_decoded_sources_state(objects,rows,source)
+        self.assertFalse(state.phases.entries);state.current()
+        prior=state.phases.predecessor_description
+        for key in ('source_context','source_qualification','external_qualifications','exception_graph_limit'):
+            self.assertEqual(result[key],prior[key])
+        self.assertEqual(json.loads(json.dumps(result['execution_scope'])),
+            json.loads(json.dumps(state.phases.widgets.execution.to_record())))
+        from config_platform import require_exception_safe_execution,require_global_execution_owner
+        with self.assertRaisesRegex(AssertionError,'exception-safe'):
+            require_exception_safe_execution(state.phases.widgets.execution)
+        with self.assertRaisesRegex(AssertionError,'global ownership'):
+            require_global_execution_owner(state.phases.widgets.execution)
+        self.assertFalse(result['exceptional_resume_established'])
+        self.assertIn('reset_reentry_requires_fresh_qualified_epoch',
+            result['execution_scope']['pending_exception_frontier'])
+        original=prior['hardware_qualified'];prior['hardware_qualified']=not original
+        try:
+            with self.assertRaisesRegex(AssertionError,'phase|snapshot|changed'):state.current()
+        finally:prior['hardware_qualified']=original
+        state.current()
+        StartupConfigurationCopy.put(objects,0x1001c654+5570,bytes.fromhex('00bf00bf'))
+        with self.assertRaisesRegex(AssertionError,'different current ELF'):
+            first_boot_decoded_sources(objects,rows,source)
+
+    def test_public_same_small_input_rejects_coherent_late_store_table_return_and_foreign_ingress(self):
+        from config_decoded_sources import first_boot_decoded_sources
+        from test_config_stack import StartupConfigurationCopy,SameBLoaderBoundary
+        from llvm_stack import Instruction
+        objects,rows,source,_=self.fixture(72)
+        self.assertTrue(first_boot_decoded_sources(objects,rows,source)['successes'])
+        V=0x1001c654;H=0x1001b500
+        cases=((V+5570,bytes.fromhex('aff30080'),'nop.w','', 'payload'),
+            (H+364,None,'bl',hex(0x10028682),'payload'),
+            (V+6148,bytes.fromhex('0c46'),'mov','r4, r1','shared-error predecessor'),
+            (V+6652,bytes.fromhex('01d1'),'bne',hex(V+6658),'foreign direct ingress'),
+            (V+6216,bytes.fromhex('00bf'),'nop','','unselected fallthrough'))
+        for site,encoded,operation,args,wanted in cases:
+            objects,rows,source,_=self.fixture(72)
+            if encoded is None:encoded=StartupConfigurationCopy.branch_link(site,0x10028682)
+            StartupConfigurationCopy.put(objects,site,encoded);rows[site]=Instruction(site,encoded,operation,args)
+            self.assertEqual(objects.read_only(site,len(encoded)),encoded)
+            with self.subTest(site=hex(site)),self.assertRaisesRegex(AssertionError,wanted):
+                first_boot_decoded_sources(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+        objects,rows,source,_=self.fixture(72)
+        StartupConfigurationCopy.put(objects,H+78,b'\x77')
+        with self.assertRaisesRegex(AssertionError,'table|payload|mapping'):
+            first_boot_decoded_sources(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+
+    def test_independent_Config_Reset_S_child_and_Visitor_relocations_reach_public_boundary(self):
+        import struct
+        from config_decoded_sources import _first_boot_decoded_sources_state,first_boot_decoded_sources
+        from config_source_children import CHANNEL_SOURCE
+        from config_headers import VISITOR
+        from test_config_stack import ActualDecodedViews,StartupConfigurationCopy,SameBLoaderBoundary
+        objects,rows,source,item=self.fixture(72,0x4000);B=item['config']+0x4000
+        sp=0x2007f800
+        StartupConfigurationCopy.put(objects,objects.elf.named['.vector_table'][3],struct.pack('<I',sp))
+        objects.elf.symbol_entries=[(n,sp if n=='_stack_start' else a,z,t,i) for n,a,z,t,i in objects.elf.symbol_entries]
+        result,state=_first_boot_decoded_sources_state(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+        self.assertTrue(result['successes']);self.assertEqual(state.access_bridge.families[0].context.config.start,B)
+        self.assertEqual(state.access_bridge.families[0].context.visitor.start,sp-544-1608)
+        self.assertTrue(all(u.output.storage.start in (B,sp-544-1608,sp-544-1608-72)
+            for u in state.access_bridge.uses))
+        # Independently relocate actual child/table and full parent/pools;
+        # internal relative targets remain current rather than whitelisted.
+        objects,rows,source,_=self.fixture(72)
+        ActualDecodedViews.move_function(objects,rows,CHANNEL_SOURCE,0x10072000)
+        ActualDecodedViews.move_function(objects,rows,VISITOR,0x10078000)
+        moved=first_boot_decoded_sources(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+        self.assertTrue(moved['successes']);self.assertEqual(moved['Controls_ready']['frontier'],0x10078000+5630)
+        self.assertEqual(moved['physical_completion_sites']['Fuel'],0x10078000+5570)
+        self.assertTrue(all(count>0 for role,count in moved['source_guarded_accesses']['role_counts']))
+
+    def test_small_current_exit_rejects_equal_cloned_sequence_or_source_normal(self):
+        from config_decoded_sources import _first_boot_decoded_sources_state
+        objects,rows,source,_=self.fixture(72)
+        result,state=_first_boot_decoded_sources_state(objects,rows,source)
+        self.assertTrue(state.exits,'coherent72-byte fixture must actually reach a complete Sources exit first')
+        self.assertIsNotNone(result['Controls_ready']);state.current()
+        first=state.exits[0]
+        for changed in (replace(first,sequence=replace(first.sequence)),replace(first,source_normal=dict(first.source_normal))):
+            with self.assertRaisesRegex(AssertionError,'outgoing state'):
+                replace(state,exits=(changed,)+state.exits[1:]).current()
+
+    def test_short_Colors_keeps_reached_Fuel_but_cannot_grant_Controls(self):
+        from config_decoded_sources import _first_boot_decoded_sources_state
+        objects,rows,source,_=self.fixture(66)
+        result,state=_first_boot_decoded_sources_state(objects,rows,source)
+        self.assertTrue(any(p.remaining and p.remaining['Fuel_assignments'] for p in state.phases.phases))
+        self.assertTrue(any(row[1]=='global WarningColors' and 'Fuel' in row[5] for row in result['error_summary']))
+        self.assertTrue(dict(result['source_guarded_accesses']['role_counts']).get('Fuel_final_halfword',0))
+        self.assertIsNone(result['Controls_ready']);self.assertFalse(state.exits)
+
+    def test_failed_fresh_batch_stops_before_exit_or_public_projection(self):
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        import config_platform
+        objects,rows,source,_=self.fixture(5);projected=[];bounded=config_platform._bounded_record
+        def observe(record):
+            if record.get('phase','').startswith('first_boot_decoded_sources'):projected.append(record)
+            return bounded(record)
+        with patch('config_source_uses._check_source_uses',side_effect=AssertionError('fresh batch rejected')),\
+             patch.object(subject,'_source_exits',side_effect=AssertionError('unexpected exit')) as exits,\
+             patch.object(config_platform,'_bounded_record',side_effect=observe):
+            with self.assertRaisesRegex(AssertionError,'fresh batch rejected'):
+                subject.first_boot_decoded_sources(objects,rows,source)
+        exits.assert_not_called();self.assertFalse(projected)
+
+    def test_actual_public_projection_callsite_enforces_exact_wire_limit_with_supplied_padding(self):
+        # Explicit diagnostic padding, not a real maximum producer envelope.
+        import json
+        from unittest.mock import patch
+        import config_platform
+        import config_decoded_sources as subject
+        bounded=config_platform._bounded_record
+        for excess in (0,1):
+            objects,rows,source,_=self.fixture(1);seen=[]
+            def padded(record):
+                if record.get('phase','').startswith('first_boot_decoded_sources'):
+                    seen.append(True);record=dict(record,fixture_padding='')
+                    size=len((json.dumps(record,sort_keys=True)+'\n').encode())
+                    record['fixture_padding']='x'*(65536-size+excess)
+                return bounded(record)
+            with patch.object(config_platform,'_bounded_record',side_effect=padded):
+                if excess:
+                    with self.assertRaisesRegex(AssertionError,'oversized'):
+                        subject.first_boot_decoded_sources(objects,rows,source)
+                else:
+                    result=subject.first_boot_decoded_sources(objects,rows,source)
+                    self.assertEqual(len((json.dumps(result,sort_keys=True)+'\n').encode()),65536)
+            self.assertEqual(len(seen),1)
+
+    def test_public_same_input_derives_private_predecessor_once_and_stops_before_Controls(self):
+        import json
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        import config_decoded_widgets as previous
+        self.assertTrue(callable(getattr(subject,'first_boot_decoded_sources',None)),
+            'complete actual Sources public boundary is unavailable')
+        objects,rows,source,_=self.fixture()
+        with patch.object(previous,'_first_boot_decoded_widgets_state',wraps=previous._first_boot_decoded_widgets_state) as derive:
+            result=subject.first_boot_decoded_sources(objects,rows,source)
+        self.assertEqual(derive.call_count,1)
+        self.assertEqual(result['phase'],'first_boot_decoded_sources_pending_controls_history_led_visitor_return_canonical_and_loader_routes')
+        self.assertEqual(result['Controls_ready'],dict(frontier=0x1001c654+5630,top_count=4,Controls_consumed=False))
+        self.assertTrue(result['successes'])
+        self.assertEqual({tuple(v[3:5]) for v in result['successes']},{(0,2),(1,3),(2,0),(2,1)})
+        self.assertEqual(result['physical_completion_sites'],dict(Sources=0x1001c654+4794,
+            WarningPresentation=0x1001c654+5040,Fuel=0x1001c654+5570,WarningColors=0x1001c654+5628))
+        self.assertEqual(result['conditional_Source_accesses']['families'],
+            ('source_route_local','source_route_output','warning_presentation_local','Fuel_final_halfword'))
+        self.assertTrue(all(v[1]>0 for v in result['source_guarded_accesses']['role_counts']))
+        self.assertFalse(result['exceptional_resume_established']);self.assertFalse(result['unconditional_owner'])
+        self.assertFalse(result['hardware_qualified']);self.assertNotIn('acquired_owner',result)
+        self.assertTrue(result['requires_H8_consumed_input_closure']);self.assertTrue(result['requires_M2_pre_init_source_reconciliation'])
+        self.assertLessEqual(len((json.dumps(result,sort_keys=True)+'\n').encode()),65536)
 
 
 class SourcePolicyV7(unittest.TestCase):
