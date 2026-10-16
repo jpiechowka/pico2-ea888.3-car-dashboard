@@ -57,3 +57,42 @@ Focused state/render tests, existing controls/LED regressions and Wasm/ARM
 compile checks cover this slice. Whole-image RAM/stack/flash and performance
 gates, maximum configurations, browser matrices and physical qualification are
 deferred to the integration batch. Resource limits have not been increased.
+
+## Custom artwork conversion
+
+Rust `dashboard-startup-tools` converts PNG, row-major PNG sprite sheets and
+animated GIF into EASA v1 RGB565 animations. Conversion controls select contain,
+crop-to-fill or stretch, an opaque matte, 1–20 fps sampling, and a clip up to ten
+seconds. PNG alpha is composited over the matte; sRGB is assumed. GIF frames are
+composited before disposal (keep, background or previous), with selectable logical
+or transparent background. Zero delays become 100 ms. GIF loop counts do not
+replace the startup Loop option. Unsupported controls and animated PNG fail.
+
+Sources are limited to 8 MiB, 4096 pixels per side, 1,048,576 canvas pixels,
+300 source frames, 32 million total decoded frame pixels and 60 seconds. Decoder
+buffers are explicitly limited; accounted conversion buffers fit within 32 MiB
+(this is not a measured browser process RSS claim). Output is 320×240, at most
+300 frames and 512 KiB, with at least 34 ms per output frame. Identical sampled
+frames coalesce; short final intervals merge. Incompressible animation can exceed
+the output limit and is rejected with advice to shorten or reduce sampling.
+
+The dedicated same-origin Rust Worker is replaceable and cancellable, with a
+10-second deadline. Editor changes invalidate pending results. Conversion failure
+retains accepted artwork. Trunk emits `startup-worker_loader.js` and its associated
+JavaScript/Wasm assets; packaged Studio must serve these with `worker-src 'self'`.
+The retained-original callback lets the project UI restore options and reconvert
+without selecting the original again. A converted-only project needs reimport
+for source edits.
+
+EASA validates header/table/payload bounds, reserved fields, frame times and CRC32.
+Frames use raw big-endian RGB565 or row-bounded RLE. Seeking uses the elapsed time;
+firmware decodes rows into the existing rendering buffer without a GIF decoder or
+another framebuffer. Boot validation is incremental, yielding between bounded
+chunks, with a separate 250 ms readiness deadline. Invalid assets exit startup.
+Per-frame CRC is also checked during rendering before submission.
+
+Set `DASHBOARD_STARTUP_ASSET` to the EASA file when the EASP selects Custom.
+Custom without an asset and procedural profiles with an asset fail the build.
+The asset is embedded as `startup_asset.bin`, with digest
+`DASHBOARD_STARTUP_ASSET_SHA256`; the profile digest remains
+`DASHBOARD_STARTUP_SHA256`. Runtime assets do not contain original images.
