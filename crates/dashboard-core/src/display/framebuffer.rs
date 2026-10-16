@@ -54,9 +54,14 @@ impl<'a> St7789Renderer<'a> {
     pub fn new(framebuffer: &'a mut FrameBuffer) -> Self { Self { framebuffer } }
 
     /// Bounded RGB565 row for validated startup assets, in panel byte order.
-    pub fn row_bytes_mut(&mut self, row: usize) -> Option<&mut [u8]> {
-        if row>=HEIGHT{return None;}
-        self.framebuffer.get_mut(row*WIDTH*2..(row+1)*WIDTH*2)
+    pub fn row_bytes_mut(
+        &mut self,
+        row: usize,
+    ) -> Option<&mut [u8]> {
+        if row >= HEIGHT {
+            return None;
+        }
+        self.framebuffer.get_mut(row * WIDTH * 2..(row + 1) * WIDTH * 2)
     }
 
     pub fn clear_buffer(

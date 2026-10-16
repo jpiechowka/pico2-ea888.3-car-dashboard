@@ -13,6 +13,9 @@ pub struct RetainedSource {
     pub label: String,
     pub options: Options,
 }
+type WorkerSummary = (u32, u32, u16, u32, u16, bool, u32);
+type WorkerResult = (Vec<u8>, WorkerSummary);
+
 pub struct ArtworkImport {
     pub source: Arc<[u8]>,
     pub converted: Converted,
@@ -45,7 +48,9 @@ struct Importer {
 impl Importer {
     fn cancel(self) {
         if self.busy.try_get_untracked() == Some(true) {
-            let _ = self.message.try_set("Conversion cancelled; accepted artwork retained.".into());
+            let _ = self
+                .message
+                .try_set("Conversion cancelled; accepted artwork retained.".into());
         }
         let _ = self.generation.try_update(|n| *n = n.wrapping_add(1));
         let _ = self.job.try_update_value(|job| *job = None);
@@ -155,7 +160,7 @@ fn start(
                 }
                 return;
             }
-            let result = (|| -> Option<(Vec<u8>, (u32, u32, u16, u32, u16, bool, u32))> {
+            let result = (|| -> Option<WorkerResult> {
                 let asset = js_sys::Reflect::get(&data, &"asset".into())
                     .ok()?
                     .dyn_into::<js_sys::ArrayBuffer>()
@@ -238,7 +243,9 @@ fn start(
             });
         });
         let error = Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |_| {
-            if !state.stale(ui, generation, stamp) { state.fail("Artwork worker failed."); }
+            if !state.stale(ui, generation, stamp) {
+                state.fail("Artwork worker failed.");
+            }
         });
         worker.set_onmessage(Some(message.as_ref().unchecked_ref()));
         worker.set_onerror(Some(error.as_ref().unchecked_ref()));
@@ -291,7 +298,7 @@ pub fn Panel(
         <p class="hint">"PNG, PNG sprite sheet or animated GIF. Original artwork is retained with the project; only converted pixels enter the device. Maximum 8 MiB input and 512 KiB animation."</p>
         <label>"Source format"<select prop:value=move ||match options.get().kind{SourceKind::Png=>"png",SourceKind::Gif=>"gif",SourceKind::SpriteSheet=>"sheet"} on:change=move |e|{state.cancel();options.update(|o|{o.kind=match event_target_value(&e).as_str(){"gif"=>SourceKind::Gif,"sheet"=>SourceKind::SpriteSheet,_=>SourceKind::Png};o.sheet=if o.kind==SourceKind::SpriteSheet{Some(Sheet{columns:1,rows:1,frame_ms:100})}else{None};});}><option value="png">"PNG still"</option><option value="gif">"Animated GIF"</option><option value="sheet">"PNG sprite sheet"</option></select></label>
         <label>"Fit"<select prop:value=move ||match options.get().fit{Fit::Contain=>"contain",Fit::Cover=>"cover",Fit::Stretch=>"stretch"} on:change=move |e|{state.cancel();options.update(|o|o.fit=match event_target_value(&e).as_str(){"cover"=>Fit::Cover,"stretch"=>Fit::Stretch,_=>Fit::Contain});}><option value="contain">"Contain"</option><option value="cover">"Crop to fill"</option><option value="stretch">"Stretch"</option></select></label>
-        <label>"Matte"<input type="color" prop:value=move ||{let c=options.get().matte_rgb;format!("#{:02x}{:02x}{:02x}",c[0],c[1],c[2])} on:input=move |e|{state.cancel();let value=event_target_value(&e);if value.len()==7&&value.starts_with('#'){if let Ok(color)=u32::from_str_radix(&value[1..],16){options.update(|o|o.matte_rgb=[(color>>16)as u8,(color>>8)as u8,color as u8]);}}}/></label>
+        <label>"Matte"<input type="color" prop:value=move ||{let c=options.get().matte_rgb;format!("#{:02x}{:02x}{:02x}",c[0],c[1],c[2])} on:input=move |e|{state.cancel();let value=event_target_value(&e);if value.len()==7&&value.starts_with('#')&& let Ok(color)=u32::from_str_radix(&value[1..],16){options.update(|o|o.matte_rgb=[(color>>16)as u8,(color>>8)as u8,color as u8]);}}/></label>
         <label>"Output fps (1–20)"<input type="number" min="1" max="20" prop:value=move ||options.get().sample_fps.to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|o.sample_fps=value);}}/></label>
         <label>"Clip start (ms)"<input type="number" min="0" max="59999" prop:value=move ||options.get().trim_start_ms.to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|o.trim_start_ms=value);}}/></label>
         <label>"Clip end (ms)"<input type="number" min="1" max="60000" prop:value=move ||options.get().trim_end_ms.to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|o.trim_end_ms=value);}}/></label>
