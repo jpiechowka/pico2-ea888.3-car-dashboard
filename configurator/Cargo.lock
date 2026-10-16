@@ -273,6 +273,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashboard-build-profiles"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "dashboard-config"
 version = "0.1.0"
 dependencies = [
@@ -287,8 +294,10 @@ name = "dashboard-configurator"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "dashboard-build-profiles",
  "dashboard-config",
  "dashboard-core",
+ "dashboard-helper-protocol",
  "embassy-sync",
  "embedded-graphics",
  "heapless",
@@ -311,6 +320,16 @@ dependencies = [
  "heapless",
  "micromath",
  "profont",
+]
+
+[[package]]
+name = "dashboard-helper-protocol"
+version = "0.1.0"
+dependencies = [
+ "dashboard-build-profiles",
+ "dashboard-config",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

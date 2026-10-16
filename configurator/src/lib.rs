@@ -30,6 +30,7 @@
 //! persistent acquisition owner. They are distinct identities.
 
 pub mod appearance_presets;
+pub mod build_flash;
 pub mod cache_reporting;
 pub mod diagnostic;
 pub mod editor;

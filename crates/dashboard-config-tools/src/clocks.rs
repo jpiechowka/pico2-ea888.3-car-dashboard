@@ -12,13 +12,7 @@ pub fn decimal(value: &str) -> Result<u32, String> {
     value.parse().map_err(|_| "clock integer exceeds u32".into())
 }
 pub fn voltage_mv(v: Voltage) -> u32 {
-    match v {
-        Voltage::V1_10 => 1100,
-        Voltage::V1_15 => 1150,
-        Voltage::V1_20 => 1200,
-        Voltage::V1_25 => 1250,
-        Voltage::V1_30 => 1300,
-    }
+    v.millivolts()
 }
 pub fn custom_clock(raw: &[Option<OsString>; 3]) -> Result<Option<ClockSelection>, String> {
     let count = raw.iter().filter(|v| v.is_some()).count();

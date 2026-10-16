@@ -1,0 +1,49 @@
+# Exported by EA888 View Studio. Contains the accepted dashboard configuration.
+# Builds and validates through the repository wrapper. It never flashes a device.
+# Run in PowerShell 7: .\Build-StudioDashboard.ps1 -Repository 'D:\path\to\repository'
+#Requires -Version 7.0
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string]$Repository,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$')]
+    [string]$Name = ('studio-' + [Guid]::NewGuid().ToString('N'))
+)
+$ErrorActionPreference = 'Stop'
+$repo = (Resolve-Path -LiteralPath $Repository).Path
+$wrapper = Join-Path $repo 'firmware/scripts/Build-Dashboard.ps1'
+$expectedToolchain = '@@TOOLCHAIN@@'
+if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
+    throw 'Select the dashboard repository containing firmware/scripts/Build-Dashboard.ps1.'
+}
+foreach ($relative in @('rust-toolchain.toml', 'firmware/rust-toolchain.toml')) {
+    $path = Join-Path $repo $relative
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing toolchain declaration: $relative" }
+    $channels = [regex]::Matches([IO.File]::ReadAllText($path), '(?m)^\s*channel\s*=\s*"([^"]+)"\s*$')
+    if ($channels.Count -ne 1 -or $channels[0].Groups[1].Value -cne $expectedToolchain) {
+        throw 'Repository toolchain changed. Refresh Studio and export a new build recipe.'
+    }
+}
+$exports = Join-Path $repo 'target/studio-exports'
+[IO.Directory]::CreateDirectory($exports) | Out-Null
+$configPath = Join-Path $exports ($Name + '.eav')
+$hex = '@@EAV@@'
+$bytes = [byte[]]::new($hex.Length / 2)
+for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
+# CreateNew preserves an earlier recipe's configuration on a repeated name.
+$file = [IO.File]::Open($configPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+try { $file.Write($bytes, 0, $bytes.Length) } finally { $file.Dispose() }
+$buildOptions = @{
+    Name = $Name
+    Config = $configPath
+@@OPTIONS@@}
+$previousToolchain = $env:RUSTUP_TOOLCHAIN
+try {
+    $env:RUSTUP_TOOLCHAIN = $expectedToolchain
+    Write-Host "[Studio] Toolchain: $expectedToolchain" -ForegroundColor Cyan
+    Write-Host "[Studio] Configuration: $($bytes.Length) bytes; capture: $Name" -ForegroundColor Cyan
+    Write-Host '[Studio] Compilation and validation can take time. This command does not flash.' -ForegroundColor Yellow
+    & $wrapper @buildOptions
+    Write-Host '[Studio] Build wrapper completed. Review its capture results before device operations.' -ForegroundColor Green
+} finally {
+    $env:RUSTUP_TOOLCHAIN = $previousToolchain
+}

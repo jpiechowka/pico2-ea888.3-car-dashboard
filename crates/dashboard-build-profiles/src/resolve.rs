@@ -12,6 +12,18 @@ pub enum Voltage {
     V1_30,
 }
 
+impl Voltage {
+    pub const fn millivolts(self) -> u32 {
+        match self {
+            Self::V1_10 => 1100,
+            Self::V1_15 => 1150,
+            Self::V1_20 => 1200,
+            Self::V1_25 => 1250,
+            Self::V1_30 => 1300,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
