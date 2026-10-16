@@ -46,3 +46,36 @@ fn hidden_grid_drafts_are_preserved_but_only_admitted_for_sheet_conversion() {
     let restored = Numbers::new(&sheet);
     assert_eq!(restored.options(&sheet).unwrap().sheet.unwrap().frame_ms, 100);
 }
+
+#[test]
+fn feedback_tracks_accepted_project_and_own_publication_not_draft_activity() {
+    use dashboard_configurator::artwork_draft::ProjectFeedback;
+    use dashboard_configurator::config::startup::{StartupProfile, StartupTheme};
+    use dashboard_configurator::editor::Editor;
+    let mut editor = Editor::default();
+    let previous = ProjectFeedback::new(&editor, "Conversion accepted".into());
+    let token = editor.begin_import().unwrap();
+    assert_eq!(previous.text(&editor), "Conversion accepted");
+    editor.cancel_import(token).unwrap();
+    editor
+        .set_startup_profile(StartupProfile {
+            theme: StartupTheme::Turbo,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(previous.text(&editor), "");
+    let completed = ProjectFeedback::new(&editor, "Own operation accepted".into());
+    assert_eq!(completed.text(&editor), "Own operation accepted");
+    editor.undo().unwrap();
+    assert_eq!(completed.text(&editor), "");
+    assert_eq!(previous.text(&editor), "");
+    editor.redo().unwrap();
+    assert_eq!(completed.text(&editor), "");
+    let current = ProjectFeedback::new(&editor, "Current project".into());
+    let replacement = Editor::default().accepted_project().unwrap();
+    let token = editor.begin_import().unwrap();
+    editor.complete_prepared_project_import(token, replacement).unwrap();
+    assert_eq!(current.text(&editor), "");
+    let default_feedback = ProjectFeedback::new(&Editor::default(), "Other owner".into());
+    assert_eq!(default_feedback.text(&Editor::default()), "");
+}

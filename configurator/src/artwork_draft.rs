@@ -87,3 +87,34 @@ impl Numbers {
         Ok(next)
     }
 }
+
+/// Operation feedback belongs to one accepted project, including its Editor owner.
+#[derive(Clone)]
+pub struct ProjectFeedback {
+    owner: crate::editor::AcceptedConfigKey,
+    revision: crate::editor::Revision,
+    text: String,
+}
+impl ProjectFeedback {
+    pub fn new(
+        editor: &crate::editor::Editor,
+        text: String,
+    ) -> Self {
+        Self {
+            owner: editor.accepted_config_key(),
+            revision: editor.accepted_revision(),
+            text,
+        }
+    }
+
+    pub fn text<'a>(
+        &'a self,
+        editor: &crate::editor::Editor,
+    ) -> &'a str {
+        if self.owner == editor.accepted_config_key() && self.revision == editor.accepted_revision() {
+            &self.text
+        } else {
+            ""
+        }
+    }
+}

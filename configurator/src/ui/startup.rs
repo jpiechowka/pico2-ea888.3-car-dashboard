@@ -3,18 +3,62 @@ use dashboard_core::startup::{StartupProfile, StartupStatus, StartupTheme};
 
 use super::*;
 
+/// Scope both panel and worker feedback without a reactive reset racing publication.
+#[derive(Clone, Copy)]
+pub(super) struct ProjectMessage {
+    editor: RwSignal<Editor>,
+    value: RwSignal<dashboard_configurator::artwork_draft::ProjectFeedback>,
+}
+impl ProjectMessage {
+    pub(super) fn new(
+        editor: RwSignal<Editor>,
+        text: String,
+    ) -> Self {
+        Self {
+            editor,
+            value: RwSignal::new(
+                editor.with_untracked(|e| dashboard_configurator::artwork_draft::ProjectFeedback::new(e, text)),
+            ),
+        }
+    }
+
+    pub(super) fn set(
+        self,
+        text: String,
+    ) {
+        self.try_set(text);
+    }
+
+    pub(super) fn try_set(
+        self,
+        text: String,
+    ) {
+        if let Some(value) = self
+            .editor
+            .try_with_untracked(|e| dashboard_configurator::artwork_draft::ProjectFeedback::new(e, text))
+        {
+            let _ = self.value.try_set(value);
+        }
+    }
+
+    pub(super) fn get(self) -> String { self.editor.with(|e| self.value.with(|value| value.text(e).to_owned())) }
+}
+
 #[derive(Clone, Copy)]
 pub struct State {
     pub profile: Signal<StartupProfile>,
     pub reduced: RwSignal<bool>,
-    pub message: RwSignal<String>,
+    pub message: ProjectMessage,
 }
 impl State {
     pub fn new(editor: RwSignal<Editor>) -> Self {
         Self {
             profile: Signal::derive(move || editor.with(Editor::startup_profile)),
             reduced: RwSignal::new(false),
-            message: RwSignal::new("Startup belongs to the complete Studio project and shares Undo / Redo.".into()),
+            message: ProjectMessage::new(
+                editor,
+                "Startup belongs to the complete Studio project and shares Undo / Redo.".into(),
+            ),
         }
     }
 

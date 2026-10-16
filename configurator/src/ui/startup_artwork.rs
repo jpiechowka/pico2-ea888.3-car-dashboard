@@ -45,7 +45,7 @@ struct Importer {
     job: StoredValue<Option<Job>, LocalStorage>,
     generation: RwSignal<u64>,
     busy: RwSignal<bool>,
-    message: RwSignal<String>,
+    message: startup::ProjectMessage,
     stamp: RwSignal<Option<EditorStamp>>,
     token: RwSignal<Option<ImportToken>>,
     lease: StoredValue<Option<originals::Materialization>, LocalStorage>,
@@ -54,8 +54,7 @@ struct Importer {
 impl Importer {
     fn cancel(self) {
         if self.busy.try_get_untracked() == Some(true) {
-            let _ = self
-                .message
+            self.message
                 .try_set("Conversion cancelled; accepted artwork retained.".into());
         }
         let _ = self.generation.try_update(|n| *n = n.saturating_add(1));
@@ -91,8 +90,7 @@ impl Importer {
         message: &str,
     ) {
         self.cancel();
-        let _ = self
-            .message
+        self.message
             .try_set(format!("{message} Previous accepted artwork retained."));
     }
 }
@@ -400,7 +398,7 @@ pub fn Panel(
         job: StoredValue::new_local(None),
         generation: RwSignal::new(0),
         busy: RwSignal::new(false),
-        message: RwSignal::new(String::new()),
+        message: startup::ProjectMessage::new(ui.editor, String::new()),
         stamp: RwSignal::new(None),
         token: RwSignal::new(None),
         lease: StoredValue::new_local(None),
