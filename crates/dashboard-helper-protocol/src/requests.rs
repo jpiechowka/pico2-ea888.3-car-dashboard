@@ -178,9 +178,17 @@ pub struct ArtifactSummary {
 }
 impl Wire for ArtifactSummary {
     const MAX_BYTES: usize = 16384;
-    fn validate(&self)->Result<(),Error>{
+
+    fn validate(&self) -> Result<(), Error> {
         self.options.validate()?;
-        if self.hardware_qualified||self.flash_ready||self.uf2_bytes==0||self.uf2_bytes as usize>MAX_UF2_BYTES||self.uf2_bytes%512!=0{return Err(Error::Schema)}
-        serialized_bound(self,Self::MAX_BYTES)
+        if self.hardware_qualified
+            || self.flash_ready
+            || self.uf2_bytes == 0
+            || self.uf2_bytes as usize > MAX_UF2_BYTES
+            || !self.uf2_bytes.is_multiple_of(512)
+        {
+            return Err(Error::Schema);
+        }
+        serialized_bound(self, Self::MAX_BYTES)
     }
 }

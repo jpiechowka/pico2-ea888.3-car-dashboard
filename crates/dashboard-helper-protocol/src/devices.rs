@@ -106,13 +106,46 @@ pub struct DeviceInspection {
 }
 impl Wire for DeviceInspection {
     const MAX_BYTES: usize = 4096;
-    fn validate(&self)->Result<(),Error>{
-        if self.flash_ready||(self.complete!=self.facts.is_some()||self.complete!=self.information_sha256.is_some())||self.capacity.state!=DeviceCapacityState::Unverified||self.capacity.bytes.is_some()||self.capacity.provenance.is_some(){return Err(Error::Schema)}
-        if self.reason.chars().any(char::is_control){return Err(Error::Schema)}
-        if let Some(facts)=&self.facts {
-            let lower_hex=|s:&str|s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b));
-            if facts.chip_id.len()!=18||!facts.chip_id.starts_with("0x")||!lower_hex(&facts.chip_id[2..])||facts.boot_random.len()!=35||facts.boot_random.split(':').count()!=4||!facts.boot_random.split(':').all(|part|part.len()==8&&lower_hex(part))||!matches!(facts.available_cpus.as_str(),"ARM"|"ARM, RISC-V")||facts.unpartitioned_families.chars().any(char::is_control)||facts.flash_size_estimate.is_some_and(|n|n==0||n>16*1024*1024){return Err(Error::Schema)}
-            if !matches!(facts.revision.as_str(),"A2"|"A3"|"A4")||facts.secure_boot||!facts.debug_enabled||!facts.secure_debug_enabled{return Err(Error::Schema)}}
-        serialized_bound(self,Self::MAX_BYTES)
+
+    fn validate(&self) -> Result<(), Error> {
+        if self.flash_ready
+            || (self.complete != self.facts.is_some() || self.complete != self.information_sha256.is_some())
+            || self.capacity.state != DeviceCapacityState::Unverified
+            || self.capacity.bytes.is_some()
+            || self.capacity.provenance.is_some()
+        {
+            return Err(Error::Schema);
+        }
+        if self.reason.chars().any(char::is_control) {
+            return Err(Error::Schema);
+        }
+        if let Some(facts) = &self.facts {
+            let lower_hex = |s: &str| s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            if facts.chip_id.len() != 18
+                || !facts.chip_id.starts_with("0x")
+                || !lower_hex(&facts.chip_id[2..])
+                || facts.boot_random.len() != 35
+                || facts.boot_random.split(':').count() != 4
+                || !facts
+                    .boot_random
+                    .split(':')
+                    .all(|part| part.len() == 8 && lower_hex(part))
+                || !matches!(facts.available_cpus.as_str(), "ARM" | "ARM, RISC-V")
+                || facts.unpartitioned_families.chars().any(char::is_control)
+                || facts
+                    .flash_size_estimate
+                    .is_some_and(|n| n == 0 || n > 16 * 1024 * 1024)
+            {
+                return Err(Error::Schema);
+            }
+            if !matches!(facts.revision.as_str(), "A2" | "A3" | "A4")
+                || facts.secure_boot
+                || !facts.debug_enabled
+                || !facts.secure_debug_enabled
+            {
+                return Err(Error::Schema);
+            }
+        }
+        serialized_bound(self, Self::MAX_BYTES)
     }
 }

@@ -233,16 +233,16 @@ jobs:
             extra_args: ""
           - profile: cpu250-spi62-1v10
             features: cpu250-spi62-1v10
-            extra_args: ""
+            extra_args: --expert
           - profile: cpu280-spi70-1v30
             features: cpu280-spi70-1v30
-            extra_args: ""
+            extra_args: --expert
           - profile: cpu290-spi72-1v30
             features: cpu290-spi72-1v30
-            extra_args: ""
+            extra_args: --expert
           - profile: cpu300-spi75-1v30
             features: demo,frame-trace,te-trace,cpu300-spi75-1v30
-            extra_args: ""
+            extra_args: --expert
           - profile: serial-full-frame
             features: serial-display,full-frame
             extra_args: ""
