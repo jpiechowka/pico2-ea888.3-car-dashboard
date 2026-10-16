@@ -69,6 +69,19 @@ class StackBudget(unittest.TestCase):
         sizes[loader]+=4096
         self.assertEqual(configuration_frames(functions,sizes),6384)
 
+    def test_orientation_serializer_folded_secondary_keeps_widget_parent(self):
+        functions,sizes=self.orientation_fixture()
+        child=next(a&~1 for n,(a,_,_) in functions.items()
+                   if '15serialize_field' in n and '11orientation11Orientation' in n)
+        # Frozen ELF 0x1004888a in Widget calls this shared enum serializer.
+        # Growing the child must retain loader1280 + canonical56 + Widget72,
+        # plus the160-byte conservative startup-helper sum.
+        sizes[child]=4096
+        self.assertEqual(configuration_frames(functions,sizes),5664)
+        # If LLVM retains both names for that address, do not double-count it.
+        functions['dashboard_config_15serialize_field_9Secondary']=(child|1,4,0)
+        self.assertEqual(configuration_frames(functions,sizes),5664)
+
     def test_orientation_required_boundaries_fail_missing_ambiguous_or_metadata(self):
         functions,sizes=self.orientation_fixture()
         for tokens in [('12load_at_boot',),('15decode_in_place4next','11Orientation'),

@@ -144,8 +144,9 @@ def configuration_frames(functions, sizes):
         return select('dashboard_config', *tokens, optional=True)
 
     # Oct17 v5 demo280 source/ELF review: Widget decoding is inlined into
-    # load_at_boot (1280 B observed), Secondary serialization into Widget's
-    # serializer (72 B). Only these wrappers may disappear; their required
+    # load_at_boot (1280 B observed); Secondary serialization is folded into
+    # the emitted Orientation serializer called by Widget (72 B). Only these
+    # wrappers may disappear; their required
     # children and actual parent frames still contribute. A later outline is
     # counted, with multiple distinct boundaries rejected. This is not a
     # general exemption for missing helpers or an instruction-effects proof.
@@ -207,6 +208,13 @@ def configuration_frames(functions, sizes):
     seed = branch(outlined('ConfigSeed'), *fields)
     header = outlined('16inspect_envelope') | outlined('9crc_parts')
     serial_widget_children = [ser('5ColorE'), ser('13WarningColors')]
+    orientation_serializer = ser('11orientation11Orientation') if orientation else set()
+    if orientation:
+        # Frozen ELF: Widget at0x1004888a calls Orientation at0x10049bd4
+        # for AdvancedDisplay::secondary. Preserve this folded child under
+        # Widget even if Secondary has no symbol. Address sets deduplicate
+        # any retained alias; distinct emitted Secondary remains counted.
+        serial_widget_children.append(orientation_serializer)
     if v4:
         secondary = reviewed_inline('15serialize_field', '9Secondary') if orientation else ser('9Secondary')
         serial_widget_children.extend([utf8, ser('7Readout'), secondary, ser('13PeakSelection')])
@@ -219,7 +227,7 @@ def configuration_frames(functions, sizes):
         serial_children.extend([ser('serialize_fieldAtj8_'),
                                 branch(ser('11LedSettings'), ser('10LedPattern'), ser('serialize_fieldb'))])
     if orientation:
-        serial_children.append(ser('11orientation11Orientation'))
+        serial_children.append(orientation_serializer)
     canonical = branch(canonical, *serial_children)
     guarded = any('19visit_invalid_roles' in n or '19visit_stoichiometry' in n
                   for n in functions if 'dashboard_config' in n)
