@@ -45,7 +45,7 @@ try:
  assert status==202
  assert req('/api/v1/jobs/'+second['job_id']+'/cancel','POST',headers)[0]==200
  assert poll(second)['summary']['terminal_cause']=='cancelled'
- assert req('/api/v1/builds','POST',headers)[0]==404
+ assert req('/api/v1/builds','POST',headers)[0]==415
  if '--devices' in sys.argv:
   status,device_job=req('/api/v1/devices/refresh','POST',headers)
   assert status==202

@@ -7,3 +7,5 @@ pub mod jobs;
 pub mod prerequisites;
 mod process;
 pub mod server;
+
+mod terminal;

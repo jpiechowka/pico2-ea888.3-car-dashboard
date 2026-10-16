@@ -340,3 +340,43 @@ impl UploadedProject {
         })
     }
 }
+
+pub(crate) fn capture(frozen: &FrozenInput) -> Result<crate::process::Output, String> {
+    frozen.verify()?;
+    let python = std::env::split_paths(&std::env::var_os("PATH").ok_or("PATH unavailable")?)
+        .map(|p| p.join("python.exe"))
+        .find(|p| p.is_absolute() && p.is_file())
+        .ok_or("Python executable unavailable")?;
+    let input = frozen.attempt.join("input");
+    let options =
+        String::from_utf8(read_bounded(&input.join("options.json"))?).map_err(|_| "Invalid options encoding")?;
+    let script = frozen.source.join("firmware/scripts/capture_target_bench.py");
+    let config = input.join("dashboard.eav");
+    let profile = input.join("startup.easp");
+    let asset = input.join("startup.easa");
+    let mut args = vec![
+        "-I".to_string(),
+        script.to_str().ok_or("Non-UTF8 source path")?.to_string(),
+        "native".into(),
+        "--firmware".into(),
+        "--options-json".into(),
+        options,
+        "--dashboard-config".into(),
+        config.to_str().ok_or("Non-UTF8 input path")?.into(),
+        "--startup-profile".into(),
+        profile.to_str().ok_or("Non-UTF8 input path")?.into(),
+    ];
+    if fs::metadata(&asset).map_err(|e| e.to_string())?.len() > 0 {
+        args.extend([
+            "--startup-asset".into(),
+            asset.to_str().ok_or("Non-UTF8 input path")?.into(),
+        ]);
+    }
+    let output = crate::process::run_capture(
+        &python,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        &frozen.source,
+    )?;
+    frozen.verify()?;
+    Ok(output)
+}

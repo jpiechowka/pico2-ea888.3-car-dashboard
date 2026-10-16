@@ -338,7 +338,7 @@ There are at most 32 HTTP connection tasks, each with 10-second header/body and
 30-second total connection deadlines, 16 KiB headers, 64 header fields, no HTTP
 upgrades and no keepalive. Probe workers remain owned independently of client
 disconnect. Ctrl+C stops accepts, cancels the check, and joins owned work.
-Build, setup, device and flash HTTP routes remain unavailable in this slice.
+Setup and flash HTTP routes remain unavailable. Build capture and descriptor routes are described below.
 
 Focused native HTTP regression command after building the helper:
 `python studio-helper/tests/test_server_http.py` (run from repository root).
@@ -375,3 +375,35 @@ allocation is not claimed to have the same 16-device bound.
 The optional focused smoke check
 `python studio-helper/tests/test_server_http.py --devices` explicitly enumerates
 read-only descriptors. Without `--devices`, the HTTP test does not enumerate USB.
+
+### Accepted project upload and native capture
+
+`POST /api/v1/projects` takes `application/octet-stream` converted-only EAVP,
+maximum 589824 bytes. It returns 201 `ProjectUploadResponse` with session ID,
+fresh project ID and project/configuration/startup profile/startup asset SHA256s.
+Original artwork is rejected. One immutable upload is retained per session;
+replacement is refused while a worker runs, and every replacement gets a fresh
+ID. A job takes its own accepted bytes, so replacement cannot change its input.
+
+`POST /api/v1/builds` takes `application/json` `ProjectBuildRequest`, maximum
+65536 bytes: editor revision, project ID/digest, typed options and optional retry
+job ID. The caller must recheck its accepted EditorStamp and build selection
+after upload before sending this request. The helper checks the session token,
+digest, codec and options independently. Browser-supplied paths or commands are
+not accepted. The shared job/event/cancel routes apply.
+
+The native job copies bounded repository sources and EAV/EASP/EASA/project/options
+into a fresh attempt, records hashes and runs the existing capture script from
+that source copy. Source and accepted input hashes are checked before and after
+capture. This is an exact-byte snapshot with change detection, not a guarantee
+against a malicious process running as the same Windows user. Capture uses the
+owned Job process supervisor, a 30-minute deadline, 8 MiB per output stream and
+offline Cargo resolution. It performs the existing full image checks when the
+user explicitly requests a build; implementation tests do not run that pipeline.
+
+Artifact admission and UF2 equality are not implemented yet. Even a successful
+capture therefore ends with a failed Validation stage and no ArtifactId. It
+cannot enable flashing. Compilation currently includes the capture script's
+existing image gates; output is available after the bounded child completes.
+Terminal transition/error diagnostics use a bounded best-effort queue and honor
+NO_COLOR and non-TTY output. They contain no capabilities or raw project data.

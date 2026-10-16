@@ -240,6 +240,15 @@ async fn start_check(
         OperationKind::PrerequisiteCheck
     };
     let result = inner.jobs.start(id.clone(), operation, None)?;
+    crate::terminal::event(
+        false,
+        id.as_str(),
+        if device_scan {
+            "Device descriptor scan started"
+        } else {
+            "Prerequisite check started"
+        },
+    );
     let stage = StageId::Probe(if device_scan {
         ProbeStage::DeviceDetection
     } else {
@@ -313,10 +322,138 @@ async fn start_check(
                 Some(Text::new("Operation incomplete; inspect the cached prerequisite or device report").unwrap()),
             )
         };
+        crate::terminal::event(
+            state == StageState::Failed,
+            id.as_str(),
+            &format!("{stage:?}: {state:?}"),
+        );
         let _ = inner.jobs.transition(&id, stage, state, reason);
         let _ = inner.jobs.finish(
             &id,
             cause,
+            OutputClosure {
+                workers_joined: true,
+                tree_empty: true,
+                output_incomplete: false,
+                discarded_bytes: 0,
+                discarded_chunks: 0,
+            },
+            None,
+            None,
+        );
+    }));
+    Ok(result)
+}
+async fn start_build(
+    state: Arc<State>,
+    request: ProjectBuildRequest,
+) -> Result<JobSummary, Error> {
+    let previous = {
+        let mut inner = state.inner.lock().unwrap();
+        if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+            return Err(Error::Busy);
+        }
+        inner.worker.take()
+    };
+    if let Some(previous) = previous {
+        previous.await.map_err(|_| Error::InvalidState)?;
+    }
+    let mut inner = state.inner.lock().unwrap();
+    if inner.stopping || crate::process::cleanup_failed() {
+        return Err(Error::InvalidState);
+    }
+    let input = inner
+        .project
+        .as_ref()
+        .ok_or(Error::NotFoundOrUnavailable)?
+        .accepted(&state.session, &request)
+        .map_err(|_| Error::Schema)?;
+    let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
+    let result = inner.jobs.start(id.clone(), OperationKind::Build, request.retry_of)?;
+    crate::terminal::event(false, id.as_str(), "Accepted project build started");
+    let prerequisite = StageId::Firmware(FirmwareStage::Prerequisites);
+    inner.jobs.transition(&id, prerequisite, StageState::Running, None)?;
+    crate::process::reset_cancel();
+    let worker_state = state.clone();
+    inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let mut stage = prerequisite;
+        let transition = |stage, state, reason| {
+            crate::terminal::event(false, id.as_str(), &format!("{stage:?}: {state:?}"));
+            worker_state
+                .inner
+                .lock()
+                .unwrap()
+                .jobs
+                .transition(&id, stage, state, reason)
+        };
+        let execution = (|| -> Result<(), String> {
+            if !crate::host::host().0 {
+                return Err("Unsupported native host".into());
+            }
+            transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
+            stage = StageId::Firmware(FirmwareStage::Snapshot);
+            transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
+            let frozen = crate::build_input::freeze(&worker_state.repo, &input)?;
+            if crate::process::cancelled() {
+                return Err("Build cancelled after snapshot".into());
+            }
+            transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
+            stage = StageId::Firmware(FirmwareStage::Compilation);
+            transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
+            let output = crate::build_input::capture(&frozen)?;
+            for (source, text) in [(Source::Stdout, output.stdout), (Source::Stderr, output.stderr)] {
+                // Runner already sanitized/bounded these fragments. Limit retained job history in JobStore.
+                let mut inner = worker_state.inner.lock().unwrap();
+                for line in text.lines() {
+                    let _ = inner.jobs.append(
+                        &id,
+                        LogInput {
+                            stage,
+                            source,
+                            text: line.chars().take(256).collect(),
+                            progress: false,
+                        },
+                    );
+                }
+            }
+            if output.code != Some(0) {
+                return Err("Firmware capture failed; inspect bounded output".into());
+            }
+            transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
+            stage = StageId::Firmware(FirmwareStage::Validation);
+            transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
+            Err(
+                "Capture completed. Native artifact admission and UF2 equality are not implemented; no flash-ready \
+                 artifact was issued"
+                    .into(),
+            )
+        })();
+        let mut inner = worker_state.inner.lock().unwrap();
+        if crate::process::cleanup_failed() {
+            let _ = inner.jobs.note_cleanup_fatal(&id, true);
+            inner.stopping = true;
+            return;
+        }
+        let cancelled = crate::process::cancelled();
+        let reason = execution.err().unwrap_or_else(|| "Artifact not admitted".into());
+        crate::terminal::event(true, id.as_str(), &reason);
+        let _ = inner.jobs.transition(
+            &id,
+            stage,
+            if cancelled {
+                StageState::Cancelled
+            } else {
+                StageState::Failed
+            },
+            Some(Text::new(reason.chars().take(120).collect::<String>()).unwrap()),
+        );
+        let _ = inner.jobs.finish(
+            &id,
+            if cancelled {
+                TerminalCause::Cancelled
+            } else {
+                TerminalCause::Failed
+            },
             OutputClosure {
                 workers_joined: true,
                 tree_empty: true,
@@ -396,6 +533,26 @@ async fn dispatch(
         if one(headers, "content-type") != Some("application/octet-stream") {
             return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedBinaryProject", origin);
         }
+        if method == Method::POST && path == "/api/v1/builds" {
+            if one(headers, "content-type") != Some("application/json") {
+                return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
+            }
+            if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > REQUEST_BYTES)) {
+                return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin);
+            }
+            let bytes = match bounded_body(request.into_body(), REQUEST_BYTES).await {
+                Ok(b) => b,
+                Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin),
+            };
+            let request = match decode::<ProjectBuildRequest>(&bytes) {
+                Ok(r) => r,
+                Err(e) => return store_error(e, origin),
+            };
+            return match start_build(state.clone(), request).await {
+                Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
+                Err(e) => store_error(e, origin),
+            };
+        }
         if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > PROJECT_UPLOAD_BYTES))
         {
             return error(StatusCode::PAYLOAD_TOO_LARGE, "ProjectBound", origin);
@@ -433,7 +590,7 @@ async fn dispatch(
         ("GET", "/api/v1/session") => {
             response(
                 StatusCode::OK,
-                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Prerequisite jobs available; native build/flash adapters not yet available"}),
+                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Checks, device discovery and project capture available; artifact admission and flashing unavailable"}),
                 origin,
             )
         }
@@ -644,6 +801,45 @@ mod tests {
                 .project_id,
             ids[1]
         );
+    }
+    #[tokio::test]
+    async fn build_rejects_stale_token_and_closes_snapshot_failure_without_artifact() {
+        let state = State::new(std::env::temp_dir().join("studio-definitely-not-a-repository")).unwrap();
+        let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+        let bytes = dashboard_config_tools::project::Project::new(&config, Default::default(), None)
+            .unwrap()
+            .encode(dashboard_config_tools::project::ExportMode::ConvertedOnly)
+            .unwrap();
+        let project = crate::build_input::UploadedProject::admit(state.session.clone(), bytes).unwrap();
+        let mut request = ProjectBuildRequest {
+            editor_revision: 7,
+            project_id: project.response.project_id.clone(),
+            project_sha256: project.response.project_sha256.clone(),
+            options: BuildOptions::default(),
+            retry_of: None,
+        };
+        state.inner.lock().unwrap().project = Some(project);
+        request.project_sha256 = Sha256::new("0".repeat(64)).unwrap();
+        assert_eq!(
+            start_build(state.clone(), request.clone()).await.unwrap_err(),
+            Error::Schema
+        );
+        request.project_sha256 = state
+            .inner
+            .lock()
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap()
+            .response
+            .project_sha256
+            .clone();
+        let job = start_build(state.clone(), request).await.unwrap();
+        let worker = state.inner.lock().unwrap().worker.take().unwrap();
+        worker.await.unwrap();
+        let result = summary(&state, &job.job_id).unwrap();
+        assert!(result.events_closed);
+        assert!(result.artifact_id.is_none());
     }
     #[tokio::test]
     async fn rejects_foreign_origin_and_missing_capability() {

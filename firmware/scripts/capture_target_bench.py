@@ -15,6 +15,7 @@ import zipfile
 FIRMWARE = Path(__file__).resolve().parents[1]
 REPO = FIRMWARE.parent
 sys.path.insert(0, str(REPO / 'host' / 'scripts'))
+sys.path.insert(0, str(FIRMWARE / 'scripts'))
 from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler
 from source_inventory import shared_inputs
 from elf_image import ElfImage
@@ -60,8 +61,18 @@ def check_clock_environment(environment):
 
 
 def run_build(command, environment, destination):
-    build = subprocess.run(command,cwd=FIRMWARE,env=environment,stdout=subprocess.PIPE,text=True,encoding='utf-8')
-    (destination/'cargo-messages.jsonl').write_text(build.stdout,encoding='utf-8')
+    # Retain bounded Cargo JSON; stderr is drained by the owning native supervisor.
+    with subprocess.Popen(command,cwd=FIRMWARE,env=environment,stdout=subprocess.PIPE) as child:
+        output=bytearray()
+        while chunk:=child.stdout.read(4096):
+            if len(output)+len(chunk)>8*1024*1024:
+                child.kill();child.wait()
+                raise ValueError('Cargo JSON exceeds capture bound')
+            output.extend(chunk)
+        status=child.wait()
+    text=output.decode('utf-8')
+    (destination/'cargo-messages.jsonl').write_text(text,encoding='utf-8')
+    build=subprocess.CompletedProcess(command,status,text)
     build.check_returncode()
     return build
 
@@ -300,6 +311,44 @@ def verify_selected_config(destination, environment, embedded, record):
     record['normalized_sha256'] = hashlib.sha256(expected).hexdigest()
 
 
+def freeze_startup(profile_path, asset_path, destination, environment):
+    if profile_path is None:
+        if asset_path is not None: raise ValueError('startup asset requires explicit profile')
+        if any(k in environment for k in ('DASHBOARD_STARTUP_PROFILE','DASHBOARD_STARTUP_ASSET')):
+            raise ValueError('use explicit startup arguments instead of ambient inputs')
+        return None
+    result={}
+    for key,path,name,maximum in [('DASHBOARD_STARTUP_PROFILE',profile_path,'startup_profile.bin',16),('DASHBOARD_STARTUP_ASSET',asset_path,'startup_asset.bin',524288)]:
+        if path is None:data=b''
+        else:
+            with Path(path).open('rb') as stream:data=stream.read(maximum+1)
+        if len(data)>maximum or (key.endswith('PROFILE') and len(data)!=16):raise ValueError('startup input byte bound')
+        target=destination/name;target.write_bytes(data)
+        if data:environment[key]=str(target.resolve())
+        else:environment.pop(key,None)
+        result[name]={'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
+    return result
+
+
+def verify_startup(output,build_dir,destination,record):
+    if record is None:return
+    matches=[]
+    for line in output.splitlines():
+        row=json.loads(line)
+        if row.get('reason')!='build-script-executed':continue
+        env=dict(row.get('env',[]))
+        if 'DASHBOARD_STARTUP_SHA256' not in env:continue
+        for name,key in [('startup_profile.bin','DASHBOARD_STARTUP_SHA256'),('startup_asset.bin','DASHBOARD_STARTUP_ASSET_SHA256')]:
+            path=(Path(row['out_dir'])/name).resolve()
+            if not path.is_relative_to(build_dir.resolve()):raise ValueError('startup output outside build')
+            with path.open('rb') as stream:data=stream.read(524289)
+            expected=record[name]
+            if len(data)!=expected['bytes'] or hashlib.sha256(data).hexdigest()!=expected['sha256'] or env.get(key)!=expected['sha256'] or (destination/name).read_bytes()!=data:
+                raise ValueError('startup snapshot identity mismatch')
+        matches.append(row)
+    if len(matches)!=1:raise ValueError('expected one startup snapshot producer')
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name')
@@ -307,6 +356,8 @@ def main():
     parser.add_argument('--no-default-features',action='store_true')
     parser.add_argument('--firmware',action='store_true', help='allow an ordinary firmware image without target-bench')
     parser.add_argument('--dashboard-config', help='binary .eav file; overrides DASHBOARD_CONFIG')
+    parser.add_argument('--startup-profile', help='explicit EASP16 input')
+    parser.add_argument('--startup-asset', help='explicit converted EASA input')
     parser.add_argument('--options-json', help='bounded shared NormalizedBuildOptions JSON; excludes raw feature switches')
     parser.add_argument('--expert', action='store_true', help='explicit local authorization for experimental/custom clock selection')
     parser.add_argument('--optimization', choices=['3','2','s','z'])
@@ -346,6 +397,7 @@ def main():
     attempt_bytes = json.dumps(options, sort_keys=True, separators=(',',':')).encode('utf-8')
     (destination/'build-options.json').write_bytes(attempt_bytes)
     environment, config_record = freeze_config(selection, destination, selected_environment)
+    startup_record=freeze_startup(args.startup_profile,args.startup_asset,destination,environment)
     environment.update(RUSTC=rustc,CARGO_PROFILE_RELEASE_STRIP='none',CARGO_PROFILE_RELEASE_OPT_LEVEL=options['optimization'])
     if options['custom_clock'] is not None:
         custom = options['custom_clock']
@@ -356,6 +408,7 @@ def main():
              '--target','thumbv8m.main-none-eabihf','--target-dir',str(destination/'build'),
              '--message-format=json','--features',','.join(options['features']),'--no-default-features']
     build=run_build(command, environment, destination)
+    verify_startup(build.stdout,destination/'build',destination,startup_record)
     elf=emitted_elf(build.stdout)
     clock_evidence = generated_clock(build.stdout, destination/'build', firmware_package(build.stdout), options)
     config_bytes = embedded_config(build.stdout, destination/'build')
@@ -398,11 +451,14 @@ def main():
         for name,content in before.items(): archive.writestr(name,content)
         archive.writestr('build-config/source-context.json',source_context_bytes)
         archive.writestr('build-config/dashboard.eav', config_bytes)
+        if startup_record is not None:
+            for name in startup_record:archive.writestr('build-config/'+name,(destination/name).read_bytes())
         archive.writestr('build-config/build-options.json', attempt_bytes)
         archive.writestr('build-config/clock_profile.rs',clock_evidence['source'])
         archive.writestr('build-config/clock_profile.json',clock_evidence['metadata'])
         if selection[1] is not None:
             archive.writestr('build-config/selected.eav', selection[1])
+    verify_startup(build.stdout,destination/'build',destination,startup_record)
     hashes={name:hashlib.sha256(data).hexdigest() for name,data in before.items()}
     record=dict(schema=2,scope='Build artifact only; hardware not executed',rustc=version,rustc_path=rustc,
                 command=command,emitted_executable=str(elf),cargo_config=config,
@@ -411,7 +467,7 @@ def main():
                 options_command=options_command,build_options=options,
                 build_options_sha256=hashlib.sha256(attempt_bytes).hexdigest(),
                 generated_clock={k:v for k,v in clock_evidence.items() if k not in ('source','metadata')},
-                dashboard_config=config_record,source_context=source_context_record,
+                startup=startup_record,dashboard_config=config_record,source_context=source_context_record,
                 memory_layout=memory_evidence['record'],
                 memory_layout_json_sha256=memory_evidence['sha256'],
                 sha256=hashes,elf_sha256=hashlib.sha256(elf_bytes).hexdigest())

@@ -175,7 +175,8 @@ pub(super) fn run(
     command
         .env("RUSTUP_AUTO_INSTALL", "0")
         .env("NO_COLOR", "true")
-        .env("PYTHONDONTWRITEBYTECODE", "1");
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("CARGO_NET_OFFLINE", "true");
     let mut child = command.spawn_with_attributes(&attributes).map_err(|e| e.to_string())?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();

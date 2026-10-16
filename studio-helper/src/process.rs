@@ -45,3 +45,30 @@ pub(crate) fn run(
         Err("native checks require Windows 10/11 x64".into())
     }
 }
+
+/// Fixed capture command only. Build output is bounded independently of short probes.
+pub(crate) fn run_capture(
+    python: &Path,
+    args: &[&str],
+    cwd: &Path,
+) -> Result<Output, String> {
+    if cancelled() || cleanup_failed() {
+        return Err("Capture unavailable after cancellation or cleanup failure".into());
+    }
+    if !python.is_absolute() {
+        return Err("Python executable must be absolute".into());
+    }
+    #[cfg(windows)]
+    {
+        let result = windows::run(python, args, cwd, Duration::from_secs(1800), 8 * 1024 * 1024);
+        if result.as_ref().is_err_and(|e| e.starts_with("cleanup fatal:")) {
+            CLEANUP_FAILED.store(true, Ordering::SeqCst);
+        }
+        result
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (python, args, cwd);
+        Err("Windows native host required".into())
+    }
+}
