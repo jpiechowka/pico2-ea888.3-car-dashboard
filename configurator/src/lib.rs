@@ -33,6 +33,7 @@ pub mod appearance_presets;
 pub mod build_flash;
 pub mod cache_reporting;
 pub mod diagnostic;
+pub mod ecu_reference;
 pub mod editor;
 pub mod event_adapters;
 pub mod events;

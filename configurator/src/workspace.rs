@@ -400,14 +400,16 @@ pub enum Workspace {
     DataWarnings,
     Diagnostics,
     BuildFlash,
+    EcuReference,
 }
 impl Workspace {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Views,
         Self::Device,
         Self::DataWarnings,
         Self::Diagnostics,
         Self::BuildFlash,
+        Self::EcuReference,
     ];
 
     pub const fn index(self) -> usize {
@@ -417,6 +419,7 @@ impl Workspace {
             Self::DataWarnings => 2,
             Self::Diagnostics => 3,
             Self::BuildFlash => 4,
+            Self::EcuReference => 5,
         }
     }
 
@@ -427,6 +430,7 @@ impl Workspace {
             Self::DataWarnings => "Data & warnings",
             Self::Diagnostics => "Diagnostics",
             Self::BuildFlash => "Build & Flash",
+            Self::EcuReference => "ECU Reference",
         }
     }
 
@@ -437,6 +441,7 @@ impl Workspace {
             Self::DataWarnings => "data-warnings",
             Self::Diagnostics => "diagnostics",
             Self::BuildFlash => "build-flash",
+            Self::EcuReference => "ecu-reference",
         }
     }
 }
@@ -554,10 +559,10 @@ impl WorkspaceState {
     ) {
         let index = self.focused.index();
         self.focused = Workspace::ALL[match key {
-            TabKey::Previous => (index + 4) % 5,
-            TabKey::Next => (index + 1) % 5,
+            TabKey::Previous => (index + Workspace::ALL.len() - 1) % Workspace::ALL.len(),
+            TabKey::Next => (index + 1) % Workspace::ALL.len(),
             TabKey::First => 0,
-            TabKey::Last => 4,
+            TabKey::Last => Workspace::ALL.len() - 1,
         }];
     }
 

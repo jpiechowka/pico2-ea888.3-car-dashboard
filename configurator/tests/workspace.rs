@@ -349,7 +349,7 @@ fn strict_preferences_and_bounds_use_safe_defaults() {
     assert_eq!(restored.active(), Workspace::Device);
     assert!(restored.expanded(GroupId::Indicator));
     state.focus(TabKey::Last);
-    assert_eq!(state.focused(), Workspace::BuildFlash);
+    assert_eq!(state.focused(), Workspace::EcuReference);
     state.focus(TabKey::Next);
     assert_eq!(state.focused(), Workspace::Views);
 }
