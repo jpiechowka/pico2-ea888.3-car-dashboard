@@ -32,6 +32,7 @@ pub struct Config {
 pub struct View {
     pub id: u8,
     pub name: String<14>,
+    #[serde(deserialize_with = "crate::orientation::required_override")]
     pub orientation: Option<crate::Orientation>,
 }
 

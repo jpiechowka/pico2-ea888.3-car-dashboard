@@ -1,6 +1,14 @@
 //! Logical panel geometry shared by validation, rendering and editor hit tests.
 use serde::{Deserialize, Serialize};
 
+// A current JSON object must spell out inheritance as null. Without this
+// wrapper serde silently treats a missing Option property as None.
+pub(crate) fn required_override<'de, D: serde::Deserializer<'de>>(
+    deserializer: D
+) -> Result<Option<Orientation>, D::Error> {
+    Option::<Orientation>::deserialize(deserializer)
+}
+
 /// Mounting direction. Portrait assumes a clockwise turn from landscape;
 /// inverted variants turn the corresponding mounting direction by 180 degrees.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]

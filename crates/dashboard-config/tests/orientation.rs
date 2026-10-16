@@ -180,7 +180,11 @@ fn frozen_v4_migrates_identically_from_binary_and_json() {
 #[test]
 fn orientation_unknowns_duplicates_and_legacy_field_injection_fail() {
     let current = to_json(&validate(default_config()).unwrap()).unwrap();
+    let missing = current.replace(",\"orientation\":null", "");
+    assert!(parse_current_json_candidate(missing.as_bytes()).is_err());
+    assert!(parse_current_json_candidate(current.as_bytes()).is_ok());
     for bad in [
+        current.replace(",\"orientation\":null", ""),
         current.replace("\"orientation\":\"Landscape\"", "\"orientation\":\"Sideways\""),
         current.replace("\"orientation\":\"Landscape\"", "\"orientation\":99"),
         current.replace("\"orientation\":null", "\"orientation\":\"Sideways\""),
