@@ -345,6 +345,10 @@ pub(crate) fn capture(
         .map(|p| p.join("python.exe"))
         .find(|p| p.is_absolute() && p.is_file())
         .ok_or("Python executable unavailable")?;
+    // A fixed sibling keeps MSVC outputs below MAX_PATH without a shared cache.
+    let scratch = frozen.attempt.join("b");
+    fs::create_dir(&scratch).map_err(|e| format!("Reserve native build scratch: {e}"))?;
+    let _scratch_locks = crate::file_locks::ancestors(&[scratch.join("owned")])?;
     let input = frozen.attempt.join("input");
     let options =
         String::from_utf8(read_bounded(&input.join("options.json"))?).map_err(|_| "Invalid options encoding")?;
@@ -357,6 +361,7 @@ pub(crate) fn capture(
         script.to_str().ok_or("Non-UTF8 source path")?.to_string(),
         "native".into(),
         "--firmware".into(),
+        "--native-scratch".into(),
         "--options-json".into(),
         options,
         "--dashboard-config".into(),

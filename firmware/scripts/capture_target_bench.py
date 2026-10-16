@@ -144,10 +144,11 @@ def run_build(command, environment, destination):
     return build
 
 
-def fixed_json_tool(arguments, environment):
+def fixed_json_tool(arguments, environment, target_dir=None):
     """Drain stdout without retaining unbounded output; stderr remains live."""
     command = ['cargo', 'run', '--quiet', '--locked', '--offline', '-p',
                'dashboard-config-tools', '--', 'capture-options', *arguments]
+    if target_dir is not None: command[2:2] = ['--target-dir', str(target_dir)]
     with subprocess.Popen(command, cwd=REPO, env=environment, stdout=subprocess.PIPE) as child:
         retained = bytearray()
         oversized = False
@@ -360,7 +361,7 @@ def embedded_config(output, build_dir):
     return matches[0]
 
 
-def verify_selected_config(destination, environment, embedded, record):
+def verify_selected_config(destination, environment, embedded, record, target_dir=None):
     """Compare to the canonical upgrade, retaining the original input identity."""
     if record['selection'] != 'explicit':
         return
@@ -369,7 +370,7 @@ def verify_selected_config(destination, environment, embedded, record):
         raise ValueError('frozen selected configuration changed')
     normalized = destination / 'normalized.eav'
     command = ['cargo', 'run', '--locked', '--release', '-p', 'dashboard-config-tools',
-               '--target-dir', str(destination / 'config-compiler'), '--', 'compile',
+               '--target-dir', str(target_dir if target_dir is not None else destination / 'config-compiler'), '--', 'compile',
                str(destination / 'selected.eav'), str(normalized)]
     subprocess.run(command, cwd=REPO, env=environment, check=True)
     expected = bounded_bytes(normalized)
@@ -419,11 +420,29 @@ def verify_startup(output,build_dir,destination,record):
     if len(matches)!=1:raise ValueError('expected one startup snapshot producer')
 
 
+def build_directories(destination, native):
+    """Native scratch is fixed inside the locked attempt, never a user path/cache."""
+    if not native:
+        return destination/'build', None, None
+    if REPO.name != 'source' or destination != FIRMWARE/'target/bench-captures/native':
+        raise ValueError('native scratch requires the fixed frozen source layout')
+    root = external_tool_path(REPO.parent/'b')
+    if root != REPO.parent/'b' or not root.is_dir() or any(root.iterdir()):
+        raise ValueError('native scratch must be an empty owned attempt directory')
+    paths = tuple(root/name for name in ('f','h','n'))
+    # Allow 145 UTF-16 units for this locked graph's Cargo/MSVC output suffixes.
+    # This is a host path limit, not a flash/RAM budget or arbitrary-package guarantee.
+    if os.name == 'nt' and any(len(str(p).encode('utf-16-le'))//2 + 145 >= 260 for p in paths):
+        raise ValueError('native build path too long for MSVC; move repository to a shorter path')
+    return paths
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name')
     parser.add_argument('--features')
     parser.add_argument('--no-default-features',action='store_true')
+    parser.add_argument('--native-scratch', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--firmware',action='store_true', help='allow an ordinary firmware image without target-bench')
     parser.add_argument('--dashboard-config', help='binary .eav file; overrides DASHBOARD_CONFIG')
     parser.add_argument('--startup-profile', help='explicit EASP16 input')
@@ -442,6 +461,7 @@ def main():
         parser.error('typed options cannot be combined with raw capture overrides')
     destination=FIRMWARE/'target/bench-captures'/args.name
     if destination.exists(): parser.error('capture name already exists')
+    build_dir, host_dir, normalize_dir = build_directories(destination, args.native_scratch)
     if any(k.startswith('DEFMT_') for k in os.environ): parser.error('unset external DEFMT overrides')
     check_clock_environment(os.environ)
     rustc,version=compiler(FIRMWARE)
@@ -456,7 +476,7 @@ def main():
                              '--no-default-features', str(args.no_default_features).lower(), '--expert', str(args.expert).lower()]
         for key, value in [('--optimization',args.optimization),('--cpu-hz',args.cpu_hz),('--spi-hz',args.spi_hz),('--vsel-mv',args.vsel_mv)]:
             if value is not None: options_arguments.extend([key, value])
-    options_command, options = fixed_json_tool(options_arguments, host_environment)
+    options_command, options = fixed_json_tool(options_arguments, host_environment, host_dir)
     if not args.firmware and not options['benchmark']:
         parser.error('non-firmware capture requires explicit target-bench')
     selected_environment = os.environ.copy()
@@ -477,18 +497,18 @@ def main():
             raise ValueError('invalid fixed custom environment framing')
         environment.update(zip(CUSTOM_KEYS,[custom['cpu_hz'],custom['spi_hz'],custom['vsel_mv']]))
     command=['cargo','build','--locked','-p','dashboard-pico2','--release',
-             '--target','thumbv8m.main-none-eabihf','--target-dir',str(destination/'build'),
+             '--target','thumbv8m.main-none-eabihf','--target-dir',str(build_dir),
              '--message-format=json','--features',','.join(options['features']),'--no-default-features']
     print("Capture: compiling accepted frozen project",flush=True)
     build=run_build(command, environment, destination)
-    verify_startup(build.stdout,destination/'build',destination,startup_record)
+    verify_startup(build.stdout,build_dir,destination,startup_record)
     elf=emitted_elf(build.stdout)
-    clock_evidence = generated_clock(build.stdout, destination/'build', firmware_package(build.stdout), options)
-    config_bytes = embedded_config(build.stdout, destination/'build')
-    verify_selected_config(destination, environment, config_bytes, config_record)
+    clock_evidence = generated_clock(build.stdout, build_dir, firmware_package(build.stdout), options)
+    config_bytes = embedded_config(build.stdout, build_dir)
+    verify_selected_config(destination, environment, config_bytes, config_record, normalize_dir)
     (destination/'dashboard.eav').write_bytes(config_bytes)
     config_record['embedded_sha256'] = hashlib.sha256(config_bytes).hexdigest()
-    if not elf.is_relative_to((destination/'build').resolve()):
+    if not elf.is_relative_to(build_dir.resolve()):
         raise ValueError('Cargo emitted an executable outside this capture build')
     frozen=destination/'pico2.elf'
     elf_bytes=elf.read_bytes()
@@ -516,7 +536,7 @@ def main():
     check_clock_environment(os.environ)
     if (destination/'build-options.json').read_bytes() != attempt_bytes:
         raise ValueError('immutable build attempt changed during capture')
-    if clock_evidence != generated_clock(build.stdout,destination/'build',firmware_package(build.stdout),options):
+    if clock_evidence != generated_clock(build.stdout,build_dir,firmware_package(build.stdout),options):
         raise ValueError('clock generation changed during capture')
     if (destination/'build-options.json').read_bytes()!=attempt_bytes or source_context_path.read_bytes()!=source_context_bytes or load_source_context(
             source_context_path,ElfImage(frozen),destination.name,attempt_bytes)!=source_context:
@@ -536,7 +556,7 @@ def main():
         archive.writestr('build-config/clock_profile.json',clock_evidence['metadata'])
         if selection[1] is not None:
             archive.writestr('build-config/selected.eav', selection[1])
-    verify_startup(build.stdout,destination/'build',destination,startup_record)
+    verify_startup(build.stdout,build_dir,destination,startup_record)
     hashes={name:hashlib.sha256(data).hexdigest() for name,data in before.items()}
     record=dict(schema=2,image_gate=args.image_gate,scope='Build artifact only; hardware not executed',rustc=version,rustc_path=rustc,
                 command=command,emitted_executable=str(elf),cargo_config=config,

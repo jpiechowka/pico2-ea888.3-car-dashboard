@@ -13,6 +13,29 @@ import capture_target_bench as capture
 
 
 class CaptureTests(unittest.TestCase):
+    def test_native_scratch_is_fixed_empty_and_path_bounded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            attempt=Path(folder);repo=attempt/'source';firmware=repo/'firmware'
+            firmware.mkdir(parents=True);scratch=attempt/'b';scratch.mkdir()
+            destination=firmware/'target/bench-captures/native'
+            with patch.object(capture,'REPO',repo),patch.object(capture,'FIRMWARE',firmware):
+                self.assertEqual(capture.build_directories(destination,True),tuple(scratch/n for n in ('f','h','n')))
+                with self.assertRaisesRegex(ValueError,'fixed frozen'):
+                    capture.build_directories(destination.with_name('other'),True)
+                (scratch/'unexpected').write_bytes(b'not reusable')
+                with self.assertRaisesRegex(ValueError,'empty owned'):
+                    capture.build_directories(destination,True)
+            self.assertEqual(capture.build_directories(destination,False),(destination/'build',None,None))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows path budget')
+    def test_native_scratch_rejects_too_long_repository_before_cargo(self):
+        with tempfile.TemporaryDirectory() as folder:
+            attempt=Path(folder)/('a'*90);repo=attempt/'source';firmware=repo/'firmware'
+            firmware.mkdir(parents=True);(attempt/'b').mkdir()
+            with patch.object(capture,'REPO',repo),patch.object(capture,'FIRMWARE',firmware):
+                with self.assertRaisesRegex(ValueError,'shorter path'):
+                    capture.build_directories(firmware/'target/bench-captures/native',True)
+
     @unittest.skipUnless(os.name == 'nt', 'Windows source path boundary')
     def test_verbatim_import_inputs_match_ordinary_names_and_hashes(self):
         script = str(Path(capture.__file__).resolve())
@@ -373,7 +396,7 @@ class CaptureMemoryQualification(unittest.TestCase):
         for drift in (False,True,'source_bytes','source_members','options','captured_sources','program_gate'):
             with self.subTest(drift=drift),tempfile.TemporaryDirectory() as folder:
                 firmware=Path(folder);destination=firmware/'target/bench-captures/fixture'
-                emitted=destination/'build/firmware.elf';calls=[]
+                emitted=firmware/'short/firmware.elf';calls=[]
                 input_calls=[]
                 def snapshot():
                     input_calls.append('inputs')
@@ -415,7 +438,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                     return dict(source=b'clock source',metadata=b'clock metadata')
                 options=dict(benchmark=True,features=['demo'],optimization='3',custom_clock=None)
                 with ExitStack() as patches:
-                    for context in (patch.object(capture,'FIRMWARE',firmware),patch.object(capture,'ElfImage',return_value=elf),
+                    for context in (patch.object(capture,'FIRMWARE',firmware),patch.object(capture,'build_directories',return_value=(emitted.parent,None,None)),patch.object(capture,'ElfImage',return_value=elf),
                         patch.object(capture,'check_clock_environment'),patch.object(capture,'compiler',return_value=('rustc','pinned')),
                         patch.object(capture,'configuration',return_value={}),patch.object(capture,'inputs',side_effect=snapshot),
                         patch.object(capture,'linked_configuration',return_value={'test_only_linked_config':True}),
@@ -425,7 +448,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                         patch.object(capture,'freeze_config',return_value=({},{})),patch.object(capture,'verify_selected_config'),
                         patch.object(capture,'run_build',side_effect=build),patch.object(capture,'emitted_elf',return_value=emitted),
                         patch.object(capture,'generated_clock',side_effect=clock),patch.object(capture,'firmware_package',return_value='id'),
-                        patch.object(capture,'embedded_config',return_value=eav),patch.object(capture.subprocess,'run',side_effect=child),
+                        patch.object(capture,'embedded_config',side_effect=lambda output,path: eav if path==emitted.parent else self.fail('embedded config used old build path')),patch.object(capture.subprocess,'run',side_effect=child),
                         patch.object(sys,'argv',['capture','fixture','--image-gate','experimental-full']),patch.dict(os.environ,{},clear=True)):
                         patches.enter_context(context)
                     if drift:
