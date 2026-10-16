@@ -143,6 +143,7 @@ impl Command {
             return Some(match block {
                 ActionBlock::InvalidDraft => "Repair or discard invalid edits first",
                 ActionBlock::JsonPending => "Apply or Discard pending JSON first",
+                ActionBlock::StartupPending => "Apply or discard startup timing first",
                 ActionBlock::PointerActive => "Finish or cancel the active pointer gesture",
                 ActionBlock::ImportPending => "Wait for or cancel the current import",
                 ActionBlock::IdentityExhausted => "Editor identity exhausted; no new action can be accepted",

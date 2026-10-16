@@ -183,6 +183,7 @@ impl BuildIssue {
                     ActionBlock::InvalidDraft => {
                         "Correct or discard invalid configuration edits before exporting a build recipe."
                     }
+                    ActionBlock::StartupPending => "Apply or discard startup timing before preparing a build.",
                     ActionBlock::JsonPending => "Apply or discard the JSON edit before exporting a build recipe.",
                     ActionBlock::PointerActive => "Finish the drag before exporting a build recipe.",
                     ActionBlock::ImportPending => "Finish or cancel the import before exporting a build recipe.",

@@ -200,6 +200,7 @@ fn measure_ready(editor: &Editor) -> Result<ConfigResources, EditorError> {
         return Err(match block {
             ActionBlock::InvalidDraft => EditorError::InvalidDraft,
             ActionBlock::JsonPending => EditorError::JsonPending,
+            ActionBlock::StartupPending => EditorError::StartupPending,
             ActionBlock::PointerActive => EditorError::PointerActive,
             ActionBlock::ImportPending => EditorError::ImportPending,
             ActionBlock::IdentityExhausted => EditorError::CounterExhausted,

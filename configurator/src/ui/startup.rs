@@ -177,6 +177,21 @@ fn accept_artwork(
     }
 }
 #[component]
+fn TimingInput(
+    ui: Ui,
+    field: StartupNumber,
+    label: &'static str,
+) -> impl IntoView {
+    view! {<label>{label}<input type="text" inputmode="numeric" maxlength="32" aria-label=label
+    aria-invalid=move ||ui.editor.with(|e|e.has_startup_draft() && !e.startup_draft_valid()).to_string()
+    prop:value=move ||ui.editor.with(|e|e.startup_timing_text(field))
+    on:input=move |event| {
+        let input=event_target::<web_sys::HtmlInputElement>(&event);
+        let text=io::bounded_input(&input,32).unwrap_or_else(||"[input exceeds 32-character limit]".into());
+        ui.run(|e|e.set_startup_number(e.stamp(),field,&text));
+    }/></label>}
+}
+#[component]
 pub fn Panel(ui: Ui) -> impl IntoView {
     let state = ui.startup;
     let retained = Signal::derive(move || retained_source(ui));
@@ -189,9 +204,13 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                 <option value="0">"Off"</option><option value="1">"Brief"</option><option value="2">"Detailed"</option>
             </select></label>
             </div><p class="hint">"Shows completed checks and the current OBD state. Configured sources do not prove ECU support or a connection."</p>
-            <div class="startup-grid"><label>"Status duration (ms)"<input type="number" min="0" max="2000" step="50" aria-label="Startup status duration" prop:value=move ||state.profile.get().status_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(ui, |p|p.status_ms=v);}else{state.message.set("Enter a status duration from 0 to 2000 ms; the accepted duration was kept.".into());}event_target::<web_sys::HtmlInputElement>(&e).set_value(&state.profile.get_untracked().status_ms.to_string());}/></label>
-            <label>"Splash duration (ms)"<input type="number" min="0" max="10000" step="50" aria-label="Startup splash duration" prop:value=move ||state.profile.get().duration_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(ui, |p|p.duration_ms=v);}else{state.message.set("Enter a splash duration from 0 to 10000 ms; the accepted duration was kept.".into());}event_target::<web_sys::HtmlInputElement>(&e).set_value(&state.profile.get_untracked().duration_ms.to_string());}/></label>
-            </div><p class="hint">"0 skips the animation; the system check has its own duration."</p>
+            <div class="startup-grid"><TimingInput ui=ui field=StartupNumber::StatusMilliseconds label="Status duration (ms)"/><TimingInput ui=ui field=StartupNumber::SplashMilliseconds label="Splash duration (ms)"/></div>
+            <p class="hint">"Status: 0–2000 ms. Splash: 0–10000 ms; 0 skips the animation independently of the system check."</p>
+            <Show when=move ||ui.editor.with(Editor::has_startup_draft)>
+                <p role="status">{move ||ui.editor.with(Editor::startup_draft_label).unwrap_or_default()}</p>
+                <div class="startup-actions"><button disabled=move ||!ui.editor.with(Editor::startup_draft_valid) on:click=move |_|{ui.run(|e|e.apply_startup_timing(e.stamp()));}>"Apply timing"</button><button on:click=move |_|{ui.run(|e|e.discard_startup_timing(e.stamp()));}>"Discard timing"</button></div>
+                <p class="hint">"Preview keeps the last accepted settings. Apply or discard timing before saving, exporting, building or changing other project settings."</p>
+            </Show>
             </section><section class="startup-card"><h3>"During startup"</h3><div class="startup-behavior"><div><label class="startup-toggle"><input type="checkbox" prop:checked=move ||state.profile.get().loop_animation on:change=move |e|state.edit(ui, |p|p.loop_animation=event_target_checked(&e))/>{" Loop animation"}</label>
             <p class="hint">"With looping off, the animation plays once and holds its last frame until the splash duration ends."</p>
             </div><div><label class="startup-toggle"><input type="checkbox" prop:checked=move ||state.profile.get().interrupt_on_attention on:change=move |e|state.edit(ui, |p|p.interrupt_on_attention=event_target_checked(&e))/>{" Show dashboard immediately for attention warnings"}</label>

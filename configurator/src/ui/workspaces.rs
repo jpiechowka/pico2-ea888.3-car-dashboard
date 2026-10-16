@@ -99,13 +99,24 @@ impl PreviewDockState {
         if accepted_key != key || stale_startup {
             let _ = self.startup_stamp.try_set_value(None);
             super::simulation::cancel(_ui);
-            let _ = self.sim.try_update(|s| s.restart(editor.preview().clone()));
+            let _ = self.sim.try_update(|s| {
+                if accepted_key != key {
+                    s.restart(editor.preview().clone());
+                } else {
+                    s.cancel_startup_replay();
+                }
+            });
             let _ = self.accepted_key.try_set_value(key);
             let _ = self.pending.try_set(None);
             let _ = self.consumed.try_set(false);
-            let _ = self
-                .notice
-                .try_set("Simulation restarted · accepted configuration changed; render a current frame".into());
+            let _ = self.notice.try_set(
+                if accepted_key != key {
+                    "Simulation restarted · accepted configuration changed; render a current frame"
+                } else {
+                    "Startup replay cancelled · project changed; acquisition retained"
+                }
+                .into(),
+            );
         }
         if editor.has_invalid_draft() || editor.has_pending_json() {
             let projection = editor.json_draft().map(|draft| draft.projection());

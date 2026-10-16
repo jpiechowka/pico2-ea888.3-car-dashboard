@@ -6,11 +6,17 @@ existing 320×240 Studio display, with play/pause, restart, seeking and a
 reduced-motion still. The preview labels its OBD status as synthetic; browser
 timing is not physical display, LED or ECU qualification.
 
-**Replay full startup** runs the shared startup controller in Simulation mode.
-Use the simulated buttons, encoder, warning conditions and frame-completion
-controls to inspect transitions into Dashboard, including skips and recovery.
-The seekable preview is for inspecting artwork; replay exercises application
-state with synthetic inputs. Neither measures the physical display.
+**Replay full startup** runs the shared startup controller with simulated acquisition,
+controls, warning LED and matching frame completions. Replay and cancellation after
+project edits preserve acquisition history and its clock. Seekable artwork preview
+and full replay are separate modes; neither qualifies physical hardware. Use the
+simulated buttons, encoder, warning conditions and frame-completion controls to
+inspect Dashboard transitions, skips and recovery.
+
+Timing text remains a draft until **Apply timing** or **Discard timing**. Invalid
+text stays inspectable and marks the preview INVALID; accepted pixels/configuration
+remain unchanged. Valid unapplied timing also blocks save, export, build and other
+project changes. Apply creates one Undo entry for both fields; Discard creates none.
 
 The defaults are a **Brief 600 ms** completed-system-check screen followed by
 **AEZAKMI for 2500 ms**, looping. Status can be Off, Brief or Detailed and has its
@@ -44,9 +50,9 @@ of the exported `.easp` alongside the normal `DASHBOARD_CONFIG` selection. Omit
 the startup variable to build the defaults. The build rejects invalid selected
 profiles, copies the canonical 16-byte profile into `startup_profile.bin` in
 `OUT_DIR`, and exposes `DASHBOARD_STARTUP_SHA256`. Existing config hashes alone
-do not identify a changed startup profile. Build & Flash uploads the accepted
-project without its original artwork and binds the artifact to dashboard,
-startup profile, converted asset and normalized build options.
+do not identify a changed startup profile. Helper upload and complete artifact
+identity binding use the converted-only accepted project; the helper verifies linked
+profile/asset bytes before admitting an artifact.
 
 EASP v1 is exactly 16 bytes: `EASP` magic at 0..4, version 1 at byte 4, theme
 0..5 (Custom) at byte 5, status Off/Brief/Detailed as 0..2 at byte 6, flags at byte 7
@@ -54,9 +60,13 @@ EASP v1 is exactly 16 bytes: `EASP` magic at 0..4, version 1 at byte 4, theme
 u16 status/splash milliseconds at 8..10 and 10..12, and four zero reserved bytes.
 Unknown versions, flags, enums, reserved bytes and out-of-range durations fail
 validation. Reduced motion uses the dashboard's existing setting; the extra
-Studio checkbox is a preview-only override.
+Studio checkbox is a preview-only override. The implemented format does not expose
+the earlier proposed separate cycle-duration, background or accent fields. Procedural
+cycles are fixed at two seconds; custom frame timing comes from the converted asset.
+A corrupt optional embedded profile skips startup with a fault rather than panicking;
+explicit invalid build inputs still fail the build.
 
-## Validation boundaries
+## Validation
 
 Complete project packaging, original retention, converted-only export and shared project history are implemented. Artwork conversion/rendering and helper binding have their own focused integration checks; no browser or physical success is implied by the package codec.
 

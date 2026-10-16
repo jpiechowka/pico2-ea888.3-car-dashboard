@@ -532,6 +532,9 @@ pub fn error_text(error: EditorError) -> String {
             format!("{field}: {reason}")
         }
         EditorError::InvalidDraft => "Correct the highlighted fields, or discard the invalid edits first.".into(),
+        EditorError::StartupPending => {
+            "Apply or discard startup timing before changing or exporting the project.".into()
+        }
         EditorError::JsonPending => {
             "Apply or discard the pending JSON edits before changing or exporting the configuration.".into()
         }

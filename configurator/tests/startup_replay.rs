@@ -203,3 +203,25 @@ fn replay_retires_delivery_but_preserves_acquisition_history_and_clock() {
     assert_eq!(sim.snapshot(), snapshot);
     assert_eq!(sim.startup_phase(), Phase::Status);
 }
+
+#[test]
+fn editing_a_captured_startup_cancels_only_presentation() {
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let mut preview = Preview::new();
+    sim.restart_project(&project(StartupProfile::default())).unwrap();
+    sim.advance_to(sim.now_ms() + 50, Some([2.5, 110., 95., 80., 30., 700., 13.8, 1.]));
+    present(&mut sim, &mut preview, 1);
+    let snapshot = sim.snapshot();
+    let clock = sim.now_ms();
+    let visible = sim.completed_warning();
+    preview.render_simulation_submitted(&mut sim, token(2)).unwrap();
+    let source = sim.source_key();
+    sim.cancel_startup_replay();
+    assert_eq!(sim.snapshot(), snapshot);
+    assert_eq!(sim.now_ms(), clock);
+    assert_eq!(sim.completed_warning(), visible);
+    assert_ne!(sim.source_key(), source);
+    assert_eq!(sim.startup_phase(), Phase::Dashboard);
+    assert!(!sim.complete_frame(token(2)));
+    assert!(preview.pending_pixels(&sim, token(2)).is_none());
+}

@@ -56,6 +56,7 @@ pub struct AcceptedConfigKey {
 pub enum ActionBlock {
     InvalidDraft,
     JsonPending,
+    StartupPending,
     PointerActive,
     ImportPending,
     IdentityExhausted,
@@ -381,6 +382,7 @@ pub enum EditorError {
     CounterExhausted,
     InvalidDraft,
     JsonPending,
+    StartupPending,
     JsonTooLong,
     PointerActive,
     ImportPending,
@@ -421,12 +423,47 @@ struct SavedEnvelope<C> {
     artwork: Option<[u8; 32]>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartupNumber {
+    StatusMilliseconds,
+    SplashMilliseconds,
+}
+#[derive(Clone)]
+struct StartupTimingDraft {
+    status: String,
+    splash: String,
+    oversized: [bool; 2],
+}
+impl StartupTimingDraft {
+    fn profile(
+        &self,
+        mut profile: StartupProfile,
+    ) -> Result<StartupProfile, EditorError> {
+        if self.oversized.iter().any(|b| *b) {
+            return Err(EditorError::RawTooLong);
+        }
+        profile.status_ms = self
+            .status
+            .parse()
+            .map_err(|_| EditorError::Project(ProjectError::Profile))?;
+        profile.duration_ms = self
+            .splash
+            .parse()
+            .map_err(|_| EditorError::Project(ProjectError::Profile))?;
+        if !profile.valid() {
+            return Err(EditorError::Project(ProjectError::Profile));
+        }
+        Ok(profile)
+    }
+}
+
 pub struct Editor {
     owner: usize,
     accepted: Box<Accepted>,
     revision: Revision,
     accepted_revision: Revision,
     accepted_config_revision: Revision,
+    startup_timing: Option<StartupTimingDraft>,
     json: Option<JsonDraft>,
     json_epoch: u64,
     undo: VecDeque<Box<Accepted>>,
@@ -467,6 +504,7 @@ impl Editor {
             revision: Revision(0),
             accepted_revision: Revision(0),
             accepted_config_revision: Revision(0),
+            startup_timing: None,
             json: None,
             json_epoch: 0,
             undo: VecDeque::new(),
@@ -484,6 +522,117 @@ impl Editor {
     }
 
     pub fn startup_profile(&self) -> StartupProfile { self.accepted.startup }
+
+    pub fn has_startup_draft(&self) -> bool { self.startup_timing.is_some() }
+
+    pub fn startup_timing_text(
+        &self,
+        field: StartupNumber,
+    ) -> String {
+        match (&self.startup_timing, field) {
+            (Some(d), StartupNumber::StatusMilliseconds) => d.status.clone(),
+            (Some(d), StartupNumber::SplashMilliseconds) => d.splash.clone(),
+            (None, StartupNumber::StatusMilliseconds) => self.accepted.startup.status_ms.to_string(),
+            (None, StartupNumber::SplashMilliseconds) => self.accepted.startup.duration_ms.to_string(),
+        }
+    }
+
+    pub fn startup_draft_valid(&self) -> bool {
+        self.startup_timing
+            .as_ref()
+            .is_some_and(|d| d.profile(self.accepted.startup).is_ok())
+    }
+
+    pub fn startup_draft_label(&self) -> Option<&'static str> {
+        self.startup_timing.as_ref().map(|_| {
+            if self.startup_draft_valid() {
+                "UNAPPLIED STARTUP TIMING · showing accepted preview"
+            } else {
+                "INVALID STARTUP PREVIEW · showing last accepted settings"
+            }
+        })
+    }
+
+    /// Own raw text without publishing it; revision changes retire pending imports and writes.
+    pub fn set_startup_number(
+        &mut self,
+        stamp: EditorStamp,
+        field: StartupNumber,
+        text: &str,
+    ) -> Result<Revision, EditorError> {
+        if stamp != self.stamp() {
+            return Err(EditorError::StaleToken);
+        }
+        if self.has_pending_json() {
+            return Err(EditorError::JsonPending);
+        }
+        if self.has_invalid_draft() {
+            return Err(EditorError::InvalidDraft);
+        }
+        let revision = self.next_revision()?;
+        let mut draft = self.startup_timing.clone().unwrap_or_else(|| {
+            StartupTimingDraft {
+                status: self.accepted.startup.status_ms.to_string(),
+                splash: self.accepted.startup.duration_ms.to_string(),
+                oversized: [false; 2],
+            }
+        });
+        let index = if field == StartupNumber::StatusMilliseconds {
+            0
+        } else {
+            1
+        };
+        draft.oversized[index] = text.len() > 32;
+        let retained = text.chars().take(32).collect();
+        if index == 0 {
+            draft.status = retained;
+        } else {
+            draft.splash = retained;
+        }
+        self.changed(revision);
+        self.startup_timing = Some(draft);
+        Ok(revision)
+    }
+
+    /// Validate both numbers with the shared profile validator and publish one history entry.
+    pub fn apply_startup_timing(
+        &mut self,
+        stamp: EditorStamp,
+    ) -> Result<Revision, EditorError> {
+        if stamp != self.stamp() {
+            return Err(EditorError::StaleToken);
+        }
+        let draft = self.startup_timing.clone().ok_or(EditorError::StartupPending)?;
+        let profile = draft.profile(self.accepted.startup)?;
+        let next = self.next_revision()?;
+        self.startup_timing = None;
+        match self.set_startup_profile(profile) {
+            Ok(revision) => {
+                if revision != next {
+                    self.changed(next);
+                }
+                Ok(self.revision)
+            }
+            Err(e) => {
+                self.startup_timing = Some(draft);
+                Err(e)
+            }
+        }
+    }
+
+    pub fn discard_startup_timing(
+        &mut self,
+        stamp: EditorStamp,
+    ) -> Result<Revision, EditorError> {
+        if stamp != self.stamp() {
+            return Err(EditorError::StaleToken);
+        }
+        if self.startup_timing.is_some() {
+            self.changed(self.next_revision()?);
+            self.startup_timing = None;
+        }
+        Ok(self.revision)
+    }
 
     pub fn startup_artwork(&self) -> Option<&Arc<Artwork>> { self.accepted.artwork.as_ref() }
 
@@ -680,6 +829,8 @@ impl Editor {
     fn snapshot_state_block(&self) -> Option<ActionBlock> {
         if self.has_pending_json() {
             Some(ActionBlock::JsonPending)
+        } else if self.has_startup_draft() {
+            Some(ActionBlock::StartupPending)
         } else if self.has_invalid_draft() {
             Some(ActionBlock::InvalidDraft)
         } else if self.pointer.is_some() {
@@ -694,6 +845,9 @@ impl Editor {
     pub fn json_draft(&self) -> Option<&JsonDraft> { self.json.as_ref() }
 
     pub fn open_json(&mut self) -> Result<JsonDraftHandle, EditorError> {
+        if self.has_startup_draft() {
+            return Err(EditorError::StartupPending);
+        }
         if let Some(draft) = &self.json {
             return Ok(draft.handle);
         }
@@ -1079,7 +1233,7 @@ impl Editor {
     }
 
     pub fn save_status(&self) -> SaveStatus {
-        if self.has_invalid_draft() || self.has_pending_json() {
+        if self.has_invalid_draft() || self.has_pending_json() || self.has_startup_draft() {
             SaveStatus::InvalidDraft
         } else if self.save.is_some() {
             SaveStatus::Saving
@@ -2066,6 +2220,7 @@ impl Editor {
     ) {
         self.revision = revision;
         self.json = None;
+        self.startup_timing = None;
         self.pointer = None;
         self.import = None;
         self.save = None;
@@ -2084,6 +2239,8 @@ impl Editor {
     fn ensure_no_json(&self) -> Result<(), EditorError> {
         if self.has_pending_json() {
             Err(EditorError::JsonPending)
+        } else if self.has_startup_draft() {
+            Err(EditorError::StartupPending)
         } else {
             Ok(())
         }
@@ -2094,6 +2251,7 @@ impl Editor {
             None => Ok(()),
             Some(ActionBlock::InvalidDraft) => Err(EditorError::InvalidDraft),
             Some(ActionBlock::JsonPending) => Err(EditorError::JsonPending),
+            Some(ActionBlock::StartupPending) => Err(EditorError::StartupPending),
             Some(ActionBlock::PointerActive) => Err(EditorError::PointerActive),
             Some(ActionBlock::ImportPending) => Err(EditorError::ImportPending),
             Some(ActionBlock::IdentityExhausted) => Err(EditorError::CounterExhausted),

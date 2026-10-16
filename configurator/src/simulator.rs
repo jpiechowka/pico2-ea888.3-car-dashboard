@@ -149,6 +149,15 @@ impl ControlSimulator {
         if &config != self.config() {
             return Err(SimulationError::InvalidProject);
         }
+        self.retire_startup_delivery()?;
+        self.simulation.replay_startup(project);
+        self.gestures = ControlGestures::new();
+        self.gestures
+            .update_startup(&self.map, self.session().page(), self.held, self.now_ms());
+        Ok(())
+    }
+
+    fn retire_startup_delivery(&mut self) -> Result<(), SimulationError> {
         let epoch = self
             .source_epoch
             .and_then(|e| e.checked_add(1))
@@ -158,11 +167,18 @@ impl ControlSimulator {
         self.source_epoch = Some(epoch);
         self.source_owner = Some(owner);
         self.completed_frame = None;
-        self.simulation.replay_startup(project);
-        self.gestures = ControlGestures::new();
-        self.gestures
-            .update_startup(&self.map, self.session().page(), self.held, self.now_ms());
+        self.simulation.presented.retire_pending();
         Ok(())
+    }
+
+    /// Cancel a captured startup after a project edit, retaining acquisition and visible metadata.
+    pub fn cancel_startup_replay(&mut self) {
+        if self.retire_startup_delivery().is_err() {
+            self.source_epoch = None;
+        }
+        self.simulation.startup = None;
+        self.gestures.suppress_held();
+        self.simulation.prepare(true);
     }
 
     pub fn startup_phase(&self) -> dashboard_core::startup::Phase {
