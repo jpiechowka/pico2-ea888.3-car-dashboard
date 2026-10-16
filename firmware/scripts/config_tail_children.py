@@ -154,5 +154,5 @@ def tail_return_profiles():
         ROLES['ButtonBinding']:{4,74},ROLES['ScreenBindings']:{0,4,248},ROLES['LedPattern']:{0,4,170,174},
         ROLES['OUTLINED_FUNCTION_338']:set(),ROLES['OUTLINED_FUNCTION_21']:set(),
         ROLES['OUTLINED_FUNCTION_75']:{0,4},ROLES['OUTLINED_FUNCTION_155']:{0,4},
-        'seq_bool':{4,22}})
+        'seq_bool':{4,14}})
     return profiles

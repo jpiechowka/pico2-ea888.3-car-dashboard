@@ -540,4 +540,187 @@ class TailPrivateHandoff(unittest.TestCase):
         with self.assertRaises(AssertionError):_tail_entries(self.objects,dict(self.rows),self.state)
 
 
+class TailControlsSource(unittest.TestCase):
+    @staticmethod
+    def fixture(extent=64):
+        from config_decoded_tail import _parents
+        from config_abstract import SequenceInterface,Span
+        from config_regions import borrow
+        from config_structural import _detached_inputs
+        args=TailOutputAggregates.fixture(extent=extent)
+        objects,rows=_detached_inputs(args[0],args[1]);frame=args[4].storage
+        sequence=SequenceInterface(borrow(frame,288,8,frame.phase,True),args[3].decoder,Span(4,4))
+        return objects,rows,_parents(objects,rows,0x1001c654,0x2000031c),sequence,frame,args[6]
+
+    def test_hold_then_three_Screens_preserve_actual_source_and_all_returned_outputs(self):
+        from config_tail_source import _controls_source
+        from config_abstract import Span
+        result=_controls_source(*self.fixture());normal=result['normal']
+        self.assertIsNotNone(normal)
+        self.assertEqual(tuple(v['site']-0x1001c654 for v in result['invocations']),(5656,5712,6198,6426))
+        self.assertEqual(tuple(v['output'].offset for v in normal['screens']),(940,1000,1064))
+        self.assertEqual(normal['after'].count,Span(3,3))
+        self.assertEqual(normal['ControlQ'].count,Span(1,1))
+        self.assertEqual(normal['ScreenQ'].count,Span(0,0))
+        self.assertEqual(normal['after'].decoder.cursor.lower,31)
+        self.assertEqual(normal['hold_domain'],(0,65535))
+        for index,call in enumerate(result['invocations'][1:]):
+            self.assertIs(call['before'],call['result']['before'])
+            self.assertEqual(call['before'].count,Span(3-index,3-index))
+            retained={(v.start,v.extent) for v in call['result']['protected']}
+            self.assertTrue(all((result['invocations'][j]['output'].start,10) in retained for j in range(1,index+1)))
+        self.assertTrue(result['requires_selected_parent_source_control'])
+        self.assertEqual(result['Config_writes'],())
+
+    def test_short_last_Screen_retains_its_error_source_and_never_assigns_Controls(self):
+        from config_tail_source import _controls_source
+        result=_controls_source(*self.fixture(30))
+        self.assertIsNone(result['normal']);self.assertEqual(len(result['invocations']),4)
+        self.assertEqual(result['Config_writes'],())
+        last=result['invocations'][-1]
+        self.assertTrue(any(v['origin'] is last for v in result['errors']))
+        self.assertTrue(all(v['origin'] in result['invocations'] for v in result['errors']))
+        self.assertTrue(all(v['cursor']==v['cause']['cursor'] for v in result['errors']))
+
+
+class TailControlsPublication(unittest.TestCase):
+    @staticmethod
+    def fixture(extent=64):
+        from config_tail_source import _controls_source
+        from config_regions import Storage
+        args=TailControlsSource.fixture(extent);source=_controls_source(*args)
+        owner=Storage('address','supplied same Config',0x2000031c,14604,4,args[4].phase,True)
+        return args[0],args[1],args[2],source,owner,args[4],args[5]
+
+    def test_all_Screen_original_returns_precede_staging_and_exact_partial_Config_writes(self):
+        from config_tail_source import _controls_effects
+        result=_controls_effects(*self.fixture())
+        self.assertEqual(tuple(v['site']-0x1001c654 for v in result['copies']),(6492,6518,6088,6106))
+        self.assertEqual(tuple(v['destination'].offset for v in result['copies']),(516,628,223,233))
+        self.assertEqual(tuple(v['site']-0x1001c654 for v in result['Config_stages']),(6062,6066,6070,6074,6078,6088,6098,6106,6114))
+        self.assertEqual(tuple(v['completed_screens'] for v in result['Config_stages']),(0,0,0,0,1,2,2,3,3))
+        self.assertEqual(result['Config_stages'][2]['changed_bytes'],(212,213,222))
+        self.assertEqual(result['Config_stages'][-1]['changed_bytes'],tuple(range(212,244)))
+        self.assertEqual(result['complete_after'],0x1001c654+6118)
+        self.assertEqual(result['requires_bound_first_Screen_word_access_policy'],True)
+        self.assertFalse(result['completed_ordinary_group_issued'])
+        self.assertEqual(tuple(v['instruction']-0x1001c654 for v in result['first_only_words']),(6496,6510,6074,6078))
+
+    def test_incomplete_source_and_protected_early_second_rotation_do_not_assign(self):
+        from config_tail_source import _controls_effects
+        from config_regions import Storage
+        args=list(self.fixture(30));result=_controls_effects(*args)
+        self.assertEqual(result['Config_stages'],());self.assertIsNone(result['complete_after'])
+        args=list(self.fixture());frame=args[5]
+        args[6]+=(Storage('address','protected early second rotation',args[4].start+222,1,1,frame.phase,False),)
+        with self.assertRaisesRegex(AssertionError,'protected live storage'):_controls_effects(*args)
+
+    def test_unpaired_output_or_original_return_wrong_Config_and_physical_copy_guard_reject(self):
+        from config_tail_source import _controls_effects
+        from config_regions import Storage
+        args=list(self.fixture());normal=args[3]['normal'];second=normal['screens'][1]
+        output=second['output'];second['output']=normal['screens'][0]['output']
+        with self.assertRaisesRegex(AssertionError,'output/source/original-return'):_controls_effects(*args)
+        second['output']=output
+        node=second['original_return'][0];pc=node['return_PC'];node['return_PC']=pc+2
+        with self.assertRaisesRegex(AssertionError,'original return/high-GPR'):_controls_effects(*args)
+        node['return_PC']=pc
+        self.assertIsNotNone(_controls_effects(*args)['complete_after'])
+        saved=args[6];frame=args[5]
+        args[6]+=(Storage('address','physical copy child overlap',frame.start-72,1,1,frame.phase,False),)
+        with self.assertRaisesRegex(AssertionError,'overlap'):_controls_effects(*args)
+        args[6]=saved
+        args[4]=replace(args[4],start=args[5].start-152)
+        with self.assertRaises(AssertionError):_controls_effects(*args)
+
+
+class TailHistoryLEDSource(unittest.TestCase):
+    @staticmethod
+    def fixture(extent=64):
+        from config_tail_source import _controls_effects
+        args=TailControlsPublication.fixture(extent)
+        controls=_controls_effects(*args)
+        return args[0],args[1],args[2],controls,args[5],args[6]
+
+    def test_history_reduced_and_full_LED_keep_order_domains_and_retired_header_epochs(self):
+        from config_tail_source import _history_led_source
+        from config_abstract import Span
+        result=_history_led_source(*self.fixture());normal=result['normal']
+        self.assertIsNotNone(normal)
+        self.assertEqual(tuple(v['site']-0x1001c654 for v in result['history']['invocations']),
+            (6144,6170,6460,6534,6562,6590,6616,6642))
+        self.assertEqual(result['history']['normal']['after'].count,Span(0,0))
+        self.assertEqual(result['reduced']['normal']['after'].count,Span(1,1))
+        self.assertEqual(tuple(v['site']-0x1001c654 for v in result['LED']['invocations']),
+            (6792,6828,6876,6900,6926,6952,6978))
+        self.assertEqual(normal['after'].count,Span(1,1))
+        self.assertEqual(normal['LEDQ'].count,Span(0,0))
+        self.assertEqual(normal['after'].decoder.cursor.lower,55)
+        self.assertEqual(normal['physical_top_count'],1)
+        self.assertFalse(normal['old_history_Q_still_live'])
+        for call in result['LED']['invocations'][:2]:
+            self.assertEqual(call['result']['normal']['fields'][2],('brightness',(0,255)))
+            self.assertEqual(call['result']['normal']['fields'][3],('period_ms',(0,65535)))
+        self.assertTrue(result['requires_selected_parent_source_control'])
+
+    def test_short_LED_keeps_completed_history_reduced_and_exact_failed_child_origin(self):
+        from config_tail_source import _history_led_source
+        result=_history_led_source(*self.fixture(50))
+        self.assertIsNone(result['normal']);self.assertIsNotNone(result['history']['normal'])
+        self.assertIsNotNone(result['reduced']['normal']);self.assertIsNone(result['LED']['normal'])
+        self.assertTrue(any(v['completed_groups']==('Controls','history','reduced_motion') for v in result['errors']))
+        self.assertTrue(all(any(v['origin'] is call for call in result['invocations']) for v in result['errors']))
+
+    def test_bool_actual_pop14_and_all_conditional_returns_keep_original_PC_not_architectural_LR(self):
+        from config_tail_children import tail_children,tail_return_profiles
+        from config_finite_returns import _closed_child_returns
+        from llvm_stack import Instruction
+        objects,rows,parents,_,frame,_=self.fixture()
+        children=tail_children(objects,rows,parents)
+        edge=next(e for p in parents for e in p['ordinary_edges'] if p['function']+e[0]==0x1001c654+6736)
+        proof=children[edge[2],edge[3]];start=proof['function'];pc=0x1001c654+6740
+        parent=dict(function=pc-4,ordinary_edges=((0,'bl',start,edge[3],8),))
+        nodes=_closed_child_returns(rows,(parent,),children,frame.start,tail_return_profiles(),(),objects=objects)
+        node=next(v for v in nodes if v['function']==start and v['return_PC']==pc)
+        self.assertEqual({at-start for at,returned,sp in node['returns']},{22,40,46,52})
+        self.assertTrue(all(returned==pc and sp==frame.start for at,returned,sp in node['returns']))
+        self.assertFalse(node['architectural_LR_preserved'])
+        # Private walker mutation only: complete literal validation is a
+        # separate prerequisite, and no altered machine image is claimed.
+        changed=dict(rows);row=changed[start+14]
+        changed[start+14]=Instruction(row.address,row.raw,row.mnemonic,'{r7, r4}')
+        with self.assertRaisesRegex(AssertionError,'another caller register'):
+            _closed_child_returns(changed,(parent,),children,frame.start,tail_return_profiles(),())
+
+
+class TailSuffixPublication(unittest.TestCase):
+    @staticmethod
+    def fixture(extent=64):
+        from config_tail_source import _history_led_source
+        args=TailHistoryLEDSource.fixture(extent)
+        return args[0],args[1],args[2],_history_led_source(*args),args[4],args[5]
+
+    def test_ordered_history_reduced_and_all_late_LED_stores_preserve_padding(self):
+        from config_tail_source import _suffix_effects
+        result=_suffix_effects(*self.fixture())
+        self.assertEqual(tuple(v['site']-0x1001c654 for v in result['history']),
+            (6672,6680,6690,6698,6706,6714,6722,6728,6732))
+        self.assertEqual(result['reduced']['site'],0x1001c654+6768)
+        self.assertEqual(tuple(v['site']-0x1001c654 for v in result['LED']),
+            (7026,7034,7038,7046,7054,7062,7068,7076,7082,7088,7096,7102,7108))
+        self.assertFalse(result['LED'][-2]['complete_LED']);self.assertTrue(result['LED'][-1]['complete_LED'])
+        self.assertEqual(result['complete_after'],0x1001c654+7112)
+        self.assertEqual(result['preserved_LED_padding'],(14569,))
+        self.assertEqual(result['written_opaque_LED_bytes'],(14545,14549,14553,14555,14559,14563))
+        self.assertNotIn(14569,result['LED'][-1]['changed_bytes'])
+        self.assertEqual(result['early_success_register'],0x1001c654+7100)
+        self.assertFalse(result['completed_ordinary_group_issued'])
+
+    def test_later_LED_failure_keeps_assigned_history_and_reduced_without_LED_writes(self):
+        from config_tail_source import _suffix_effects
+        result=_suffix_effects(*self.fixture(50))
+        self.assertEqual(len(result['history']),9);self.assertIsNotNone(result['reduced'])
+        self.assertEqual(result['LED'],());self.assertIsNone(result['complete_after'])
+
+
 if __name__=='__main__':unittest.main()
