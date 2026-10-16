@@ -19,7 +19,7 @@ fn apply(
         let mut pixels = bytes.as_chunks::<2>().0.iter();
         for y in y0..=y1 {
             for x in x0..=x1 {
-                let at = (usize::from(y) * WIDTH + usize::from(x)) * 2;
+                let at = (usize::from(y) * usize::from(plan.geometry().width()) + usize::from(x)) * 2;
                 panel[at..at + 2].copy_from_slice(pixels.next().unwrap());
             }
         }
@@ -209,14 +209,22 @@ fn portrait_damage_covers_bottom_row_and_uses_bounded_stride() {
     assert!(Region::new_in(geometry, 239, 319, 2, 1).is_none());
     assert!(Region::new_in(geometry, 0, 320, 1, 1).is_none());
     let region = Region::new_in(geometry, 239, 317, 1, 3).unwrap();
-    assert_eq!(region.payload_ranges().collect::<Vec<_>>(), vec![152638..152640, 153118..153120, 153598..153600]);
+    assert_eq!(
+        region.payload_ranges().collect::<Vec<_>>(),
+        vec![152638..152640, 153118..153120, 153598..153600]
+    );
     let previous = Box::<FrameBuffer>::default();
     let mut current = Box::<FrameBuffer>::default();
     current[153599] = 1;
     let plan = DamagePlan::between_in(geometry, &previous, &current);
     assert_eq!(plan.geometry(), geometry);
     assert_eq!(plan.regions(), &[Region::new_in(geometry, 224, 304, 16, 16).unwrap()]);
-    assert!(plan.regions().iter().flat_map(|r| r.payload_ranges()).all(|r| r.end <= 153600));
+    assert!(
+        plan.regions()
+            .iter()
+            .flat_map(|r| r.payload_ranges())
+            .all(|r| r.end <= 153600)
+    );
     let full = DamagePlan::full_in(geometry);
     assert!(full.is_full());
     assert_eq!(full.transfer_count(), 1);
@@ -243,4 +251,49 @@ fn changed_orientation_requires_full_base_even_for_identical_black_pixels() {
     assert_eq!(history.panel_orientation(), Some(Orientation::Portrait));
     assert_eq!(history.reference_for(Orientation::Portrait), Some(b));
     assert_eq!(history.reference_for(Orientation::PortraitInverted), None);
+}
+
+#[test]
+fn both_geometries_reconstruct_every_tile_boundary_and_random_union() {
+    use dashboard_config::Geometry;
+    for geometry in Geometry::ALL {
+        let width = usize::from(geometry.width());
+        let height = usize::from(geometry.height());
+        let previous = Box::<FrameBuffer>::default();
+        let mut next = Box::<FrameBuffer>::default();
+        for y in (0..height).step_by(16) {
+            for x in (0..width).step_by(16) {
+                for (px, py) in [(x, y), (x + 15, y + 15)] {
+                    let at = (py * width + px) * 2;
+                    next[at + 1] = 0x91;
+                    let plan = DamagePlan::between_in(geometry, &previous, &next);
+                    assert_eq!(
+                        plan.regions(),
+                        &[Region::new_in(geometry, x as u16, y as u16, 16, 16).unwrap()]
+                    );
+                    let mut panel = Box::<FrameBuffer>::default();
+                    apply(&mut panel, &next, &plan);
+                    assert!(panel == next);
+                    next[at + 1] = 0;
+                }
+            }
+        }
+        let mut panel = Box::<FrameBuffer>::default();
+        let mut seed = 0x2350u32;
+        for count in 0..100 {
+            for _ in 0..count {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                next[seed as usize % 153600] = (seed >> 24) as u8;
+            }
+            let plan = DamagePlan::between_in(geometry, &panel, &next);
+            assert!(plan.regions().len() <= 16 && plan.transfer_count() <= 128);
+            apply(&mut panel, &next, &plan);
+            assert!(panel == next);
+        }
+        let band = Region::new_in(geometry, 0, geometry.height() - 16, geometry.width(), 16).unwrap();
+        assert_eq!(
+            band.payload_ranges().collect::<Vec<_>>(),
+            vec![153600 - width * 16 * 2..153600]
+        );
+    }
 }

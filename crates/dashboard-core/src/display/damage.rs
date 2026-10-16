@@ -1,8 +1,8 @@
 //! Exact pixel comparison against the last completed, unmodified framebuffer.
 use core::ops::Range;
 
-use heapless::Vec;
 use dashboard_config::{Geometry, Orientation};
+use heapless::Vec;
 
 use super::framebuffer::FRAME_BYTES;
 use super::pipeline::FrameToken;
@@ -32,7 +32,13 @@ impl Region {
         Self::new_in(Geometry::Landscape, x, y, width, height)
     }
 
-    pub fn new_in(geometry: Geometry, x: u16, y: u16, width: u16, height: u16) -> Option<Self> {
+    pub fn new_in(
+        geometry: Geometry,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+    ) -> Option<Self> {
         if width == 0
             || height == 0
             || u32::from(x) + u32::from(width) > u32::from(geometry.width())
@@ -40,7 +46,13 @@ impl Region {
         {
             return None;
         }
-        Some(Self { geometry, x, y, width, height })
+        Some(Self {
+            geometry,
+            x,
+            y,
+            width,
+            height,
+        })
     }
 
     pub const fn full() -> Self { Self::full_in(Geometry::Landscape) }
@@ -101,10 +113,17 @@ impl DamagePlan {
         Self::between_in(Geometry::Landscape, previous, current)
     }
 
-    pub fn between_in(geometry: Geometry, previous: &FrameBuffer, current: &FrameBuffer) -> Self {
+    pub fn between_in(
+        geometry: Geometry,
+        previous: &FrameBuffer,
+        current: &FrameBuffer,
+    ) -> Self {
         let width_pixels = usize::from(geometry.width());
         let height_pixels = usize::from(geometry.height());
-        let mut plan = Self { geometry, regions: Vec::new() };
+        let mut plan = Self {
+            geometry,
+            regions: Vec::new(),
+        };
         for y in (0..height_pixels).step_by(TILE) {
             let changed = |x: usize| {
                 (y..y + TILE).any(|row| {
@@ -209,7 +228,11 @@ impl PanelHistory {
         self.begin_render_in(token, Orientation::Landscape)
     }
 
-    pub fn begin_render_in(&mut self, token: FrameToken, orientation: Orientation) -> Result<(), GenerationError> {
+    pub fn begin_render_in(
+        &mut self,
+        token: FrameToken,
+        orientation: Orientation,
+    ) -> Result<(), GenerationError> {
         if self.pending.is_some_and(|p| p.buffer == token.buffer) {
             return Err(GenerationError::Busy);
         }
@@ -229,7 +252,10 @@ impl PanelHistory {
 
     pub const fn panel_orientation(&self) -> Option<Orientation> { self.panel_orientation }
 
-    pub fn reference_for(&self, orientation: Orientation) -> Option<FrameToken> {
+    pub fn reference_for(
+        &self,
+        orientation: Orientation,
+    ) -> Option<FrameToken> {
         self.reference().filter(|_| self.panel_orientation == Some(orientation))
     }
 
@@ -246,7 +272,10 @@ impl PanelHistory {
         {
             return Err(GenerationError::Stale);
         }
-        if base.is_some() && (base != self.reference_for(self.orientations[token.buffer.index()]) || base.is_some_and(|b| b.buffer == token.buffer)) {
+        if base.is_some()
+            && (base != self.reference_for(self.orientations[token.buffer.index()])
+                || base.is_some_and(|b| b.buffer == token.buffer))
+        {
             return Err(GenerationError::WrongBase);
         }
         self.pending = Some(token);

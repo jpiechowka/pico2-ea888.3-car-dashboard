@@ -1,11 +1,10 @@
 use std::cell::Cell;
-use dashboard_config::{Geometry, Orientation};
-use dashboard_host_validation::display::transfer::{PanelState, FlushError, flush_oriented_plan};
 use std::future::Future;
 use std::task::{Context, Poll, Waker};
 
+use dashboard_config::{Geometry, Orientation};
 use dashboard_host_validation::display::damage::DamagePlan;
-use dashboard_host_validation::display::transfer::{PanelBus, flush_plan};
+use dashboard_host_validation::display::transfer::{FlushError, PanelBus, PanelState, flush_oriented_plan, flush_plan};
 use dashboard_host_validation::display::{FrameBuffer, WIDTH};
 
 struct ModelBus {
@@ -51,10 +50,15 @@ impl PanelBus for ModelBus {
         parameters: &[u8],
     ) -> Result<(), ()> {
         assert!(!self.active);
-        self.operation()?;
+        self.operation()?; // Command byte boundary.
+        self.operation()?; // Parameter write boundary.
         if command == 0x36 {
             assert_eq!(parameters.len(), 1);
-            self.geometry = match parameters[0] { 0x60 | 0xA0 => Geometry::Landscape, 0x00 | 0xC0 => Geometry::Portrait, _ => panic!("unexpected MADCTL") };
+            self.geometry = match parameters[0] {
+                0x60 | 0xA0 => Geometry::Landscape,
+                0x00 | 0xC0 => Geometry::Portrait,
+                _ => panic!("unexpected MADCTL"),
+            };
             self.commands.push((command, parameters.to_vec()));
             return Ok(());
         }
@@ -171,15 +175,31 @@ fn black_rotation_writes_madctl_then_complete_window_and_payload() {
     let frame = Box::<FrameBuffer>::default();
     let mut bus = ModelBus::new(None);
     let mut state = PanelState::initialized(Orientation::Landscape);
-    for (orientation, madctl) in [(Orientation::Portrait, 0x00), (Orientation::LandscapeInverted, 0xA0), (Orientation::PortraitInverted, 0xC0), (Orientation::Landscape, 0x60)] {
+    for (orientation, madctl) in [
+        (Orientation::Portrait, 0x00),
+        (Orientation::LandscapeInverted, 0xA0),
+        (Orientation::PortraitInverted, 0xC0),
+        (Orientation::Landscape, 0x60),
+    ] {
         let before = bus.commands.len();
         let bytes_before = bus.payload_bytes;
         let plan = DamagePlan::full_in(orientation.geometry());
         let started = Cell::new(0);
-        run(flush_oriented_plan(&mut bus, &mut state, &frame, &plan, orientation, || started.set(started.get() + 1))).unwrap();
+        run(flush_oriented_plan(
+            &mut bus,
+            &mut state,
+            &frame,
+            &plan,
+            orientation,
+            || started.set(started.get() + 1),
+        ))
+        .unwrap();
         assert_eq!(started.get(), 1);
         assert_eq!(bus.payload_bytes - bytes_before, 153600);
-        assert_eq!(bus.commands[before..].iter().map(|c| c.0).collect::<Vec<_>>(), vec![0x36, 0x2A, 0x2B, 0x2C]);
+        assert_eq!(
+            bus.commands[before..].iter().map(|c| c.0).collect::<Vec<_>>(),
+            vec![0x36, 0x2A, 0x2B, 0x2C]
+        );
         assert_eq!(bus.commands[before].1, vec![madctl]);
         assert_eq!(bus.columns, [0, usize::from(orientation.geometry().width()) - 1]);
         assert_eq!(bus.rows, [0, usize::from(orientation.geometry().height()) - 1]);
@@ -193,10 +213,24 @@ fn orientation_checked_seam_rejects_empty_partial_and_wrong_geometry_without_io(
     let frame = Box::<FrameBuffer>::default();
     let mut changed = Box::<FrameBuffer>::default();
     changed[153599] = 1;
-    for plan in [DamagePlan::between_in(Geometry::Portrait, &frame, &frame), DamagePlan::between_in(Geometry::Portrait, &frame, &changed), DamagePlan::full()] {
+    for plan in [
+        DamagePlan::between_in(Geometry::Portrait, &frame, &frame),
+        DamagePlan::between_in(Geometry::Portrait, &frame, &changed),
+        DamagePlan::full(),
+    ] {
         let mut bus = ModelBus::new(None);
         let mut state = PanelState::initialized(Orientation::Landscape);
-        assert!(run(flush_oriented_plan(&mut bus, &mut state, &frame, &plan, Orientation::Portrait, || panic!("invalid start"))).is_err());
+        assert!(
+            run(flush_oriented_plan(
+                &mut bus,
+                &mut state,
+                &frame,
+                &plan,
+                Orientation::Portrait,
+                || panic!("invalid start")
+            ))
+            .is_err()
+        );
         assert_eq!(bus.operations, 0);
         assert_eq!(state.programmed_orientation(), Some(Orientation::Landscape));
     }
@@ -206,18 +240,41 @@ fn orientation_checked_seam_rejects_empty_partial_and_wrong_geometry_without_io(
 fn each_rotation_fault_invalidates_completed_content_and_requires_full_rewrite() {
     let frame = Box::<FrameBuffer>::default();
     let plan = DamagePlan::full_in(Geometry::Portrait);
-    for fail_at in 0..5 {
+    for fail_at in 0..8 {
         let mut bus = ModelBus::new(Some(fail_at));
         let mut state = PanelState::initialized(Orientation::Landscape);
         let starts = Cell::new(0);
-        assert_eq!(run(flush_oriented_plan(&mut bus, &mut state, &frame, &plan, Orientation::Portrait, || starts.set(starts.get() + 1))), Err(FlushError::Bus(())));
+        assert_eq!(
+            run(flush_oriented_plan(
+                &mut bus,
+                &mut state,
+                &frame,
+                &plan,
+                Orientation::Portrait,
+                || starts.set(starts.get() + 1)
+            )),
+            Err(FlushError::Bus(()))
+        );
         assert_eq!(state.completed_orientation(), None);
-        assert_eq!(state.programmed_orientation(), if fail_at == 0 { None } else { Some(Orientation::Portrait) });
-        assert_eq!(starts.get(), usize::from(fail_at == 4));
+        assert_eq!(
+            state.programmed_orientation(),
+            if fail_at < 2 { None } else { Some(Orientation::Portrait) }
+        );
+        assert_eq!(starts.get(), usize::from(fail_at == 7));
         assert!(!bus.active);
         let empty = DamagePlan::between_in(Geometry::Portrait, &frame, &frame);
         let operations = bus.operations;
-        assert_eq!(run(flush_oriented_plan(&mut bus, &mut state, &frame, &empty, Orientation::Portrait, || {})), Err(FlushError::FullRewriteRequired));
+        assert_eq!(
+            run(flush_oriented_plan(
+                &mut bus,
+                &mut state,
+                &frame,
+                &empty,
+                Orientation::Portrait,
+                || {}
+            )),
+            Err(FlushError::FullRewriteRequired)
+        );
         assert_eq!(bus.operations, operations);
     }
 }
@@ -226,15 +283,34 @@ fn each_rotation_fault_invalidates_completed_content_and_requires_full_rewrite()
 fn same_orientation_retains_partial_damage_without_madctl() {
     let previous = Box::<FrameBuffer>::default();
     let mut frame = Box::<FrameBuffer>::default();
-    frame[153599] = 0x9a;
+    frame[153599] = 0x9A;
     let mut bus = ModelBus::new(None);
     let mut state = PanelState::initialized(Orientation::Landscape);
-    run(flush_oriented_plan(&mut bus, &mut state, &previous, &DamagePlan::full_in(Geometry::Portrait), Orientation::Portrait, || {})).unwrap();
+    run(flush_oriented_plan(
+        &mut bus,
+        &mut state,
+        &previous,
+        &DamagePlan::full_in(Geometry::Portrait),
+        Orientation::Portrait,
+        || {},
+    ))
+    .unwrap();
     bus.commands.clear();
     let bytes_before = bus.payload_bytes;
     let plan = DamagePlan::between_in(Geometry::Portrait, &previous, &frame);
-    run(flush_oriented_plan(&mut bus, &mut state, &frame, &plan, Orientation::Portrait, || {})).unwrap();
+    run(flush_oriented_plan(
+        &mut bus,
+        &mut state,
+        &frame,
+        &plan,
+        Orientation::Portrait,
+        || {},
+    ))
+    .unwrap();
     assert!(bus.panel == frame);
     assert_eq!(bus.payload_bytes - bytes_before, 512);
-    assert_eq!(bus.commands.iter().map(|c| c.0).collect::<Vec<_>>(), vec![0x2A, 0x2B, 0x2C]);
+    assert_eq!(
+        bus.commands.iter().map(|c| c.0).collect::<Vec<_>>(),
+        vec![0x2A, 0x2B, 0x2C]
+    );
 }

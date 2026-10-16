@@ -1,6 +1,7 @@
 //! ST7789 transaction ordering shared by the device and host fault tests.
-use super::FrameBuffer;
 use dashboard_config::Orientation;
+
+use super::FrameBuffer;
 use super::damage::DamagePlan;
 
 #[allow(async_fn_in_trait)]
@@ -69,10 +70,14 @@ impl PanelState {
     /// Successful controller initialization programs orientation but does not
     /// establish any valid pixel contents. The first update must be full.
     pub const fn initialized(orientation: Orientation) -> Self {
-        Self { programmed: Some(orientation), completed: None }
+        Self {
+            programmed: Some(orientation),
+            completed: None,
+        }
     }
 
     pub const fn programmed_orientation(&self) -> Option<Orientation> { self.programmed }
+
     pub const fn completed_orientation(&self) -> Option<Orientation> { self.completed }
 }
 
@@ -109,10 +114,14 @@ pub async fn flush_oriented_plan<B: PanelBus>(
     if reprogram {
         // Even a command-parameter failure leaves address mode uncertain.
         state.programmed = None;
-        bus.command(0x36, &[madctl(orientation)]).await.map_err(FlushError::Bus)?;
+        bus.command(0x36, &[madctl(orientation)])
+            .await
+            .map_err(FlushError::Bus)?;
         state.programmed = Some(orientation);
     }
-    flush_plan(bus, frame, plan, on_started).await.map_err(FlushError::Bus)?;
+    flush_plan(bus, frame, plan, on_started)
+        .await
+        .map_err(FlushError::Bus)?;
     state.completed = Some(orientation);
     Ok(())
 }

@@ -225,13 +225,31 @@ fn both_geometries_use_packed_rows_and_bound_last_pixel() {
         let mut buffer = Box::<FrameBuffer>::default();
         let mut renderer = St7789Renderer::with_geometry(&mut buffer, geometry);
         assert_eq!(renderer.geometry(), geometry);
-        assert_eq!(renderer.size(), Size::new(geometry.width().into(), geometry.height().into()));
-        assert_eq!(renderer.row_bytes_mut(0).unwrap().len(), usize::from(geometry.width()) * 2);
-        renderer.row_bytes_mut(usize::from(geometry.height()) - 1).unwrap().fill(0x55);
+        assert_eq!(
+            renderer.size(),
+            Size::new(geometry.width().into(), geometry.height().into())
+        );
+        assert_eq!(
+            renderer.row_bytes_mut(0).unwrap().len(),
+            usize::from(geometry.width()) * 2
+        );
+        renderer
+            .row_bytes_mut(usize::from(geometry.height()) - 1)
+            .unwrap()
+            .fill(0x55);
         assert!(renderer.row_bytes_mut(usize::from(geometry.height())).is_none());
-        renderer.draw_iter([Pixel(Point::new(i32::from(geometry.width()) - 1, i32::from(geometry.height()) - 1), Rgb565::RED)]).unwrap();
+        renderer
+            .draw_iter([Pixel(
+                Point::new(i32::from(geometry.width()) - 1, i32::from(geometry.height()) - 1),
+                Rgb565::RED,
+            )])
+            .unwrap();
         assert_eq!(&buffer[buffer.len() - 2..], &Rgb565::RED.into_storage().to_be_bytes());
-        assert!(buffer[..buffer.len() - usize::from(geometry.width()) * 2].iter().all(|byte| *byte == 0));
+        assert!(
+            buffer[..buffer.len() - usize::from(geometry.width()) * 2]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
     }
 }
 
@@ -242,12 +260,21 @@ fn portrait_clipped_bottom_rows_match_reference_for_solid_and_contiguous() {
         let mut buffer = Box::<FrameBuffer>::default();
         let mut renderer = St7789Renderer::with_geometry(&mut buffer, Geometry::Portrait);
         let area = Rectangle::new(Point::new(237, 318), Size::new(7, 5));
-        if contiguous { renderer.fill_contiguous(&area, core::iter::repeat(Rgb565::GREEN)).unwrap(); }
-        else { renderer.fill_solid(&area, Rgb565::GREEN).unwrap(); }
+        if contiguous {
+            renderer
+                .fill_contiguous(&area, core::iter::repeat(Rgb565::GREEN))
+                .unwrap();
+        } else {
+            renderer.fill_solid(&area, Rgb565::GREEN).unwrap();
+        }
         for y in 0..320 {
             for x in 0..240 {
                 let at = (y * 240 + x) * 2;
-                let expected = if y >= 318 && x >= 237 { Rgb565::GREEN } else { Rgb565::BLACK };
+                let expected = if y >= 318 && x >= 237 {
+                    Rgb565::GREEN
+                } else {
+                    Rgb565::BLACK
+                };
                 assert_eq!(&buffer[at..at + 2], &expected.into_storage().to_be_bytes());
             }
         }

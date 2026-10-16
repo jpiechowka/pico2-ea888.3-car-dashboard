@@ -1,7 +1,7 @@
 //! Fixed-size RGB565 storage and hardware-independent drawing.
 use core::ops::{Deref, DerefMut};
-use dashboard_config::Geometry;
 
+use dashboard_config::Geometry;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::RawU16;
 use embedded_graphics::prelude::*;
@@ -55,7 +55,12 @@ pub struct St7789Renderer<'a> {
 impl<'a> St7789Renderer<'a> {
     pub fn new(framebuffer: &'a mut FrameBuffer) -> Self { Self::with_geometry(framebuffer, Geometry::Landscape) }
 
-    pub fn with_geometry(framebuffer: &'a mut FrameBuffer, geometry: Geometry) -> Self { Self { framebuffer, geometry } }
+    pub fn with_geometry(
+        framebuffer: &'a mut FrameBuffer,
+        geometry: Geometry,
+    ) -> Self {
+        Self { framebuffer, geometry }
+    }
 
     pub const fn geometry(&self) -> Geometry { self.geometry }
 

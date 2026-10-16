@@ -147,7 +147,10 @@ fn bounded_channel_moves_the_lease_and_retains_delayed_completion() {
 #[test]
 fn queued_orientation_survives_new_selection_and_delayed_completion() {
     use dashboard_config::Orientation;
-    use dashboard_host_validation::display::{FrameBuffer, damage::{DamagePlan, PanelHistory}, pipeline::FrameLease, telemetry::RenderTrace};
+    use dashboard_host_validation::display::FrameBuffer;
+    use dashboard_host_validation::display::damage::{DamagePlan, PanelHistory};
+    use dashboard_host_validation::display::pipeline::FrameLease;
+    use dashboard_host_validation::display::telemetry::RenderTrace;
     let mut a = Box::<FrameBuffer>::default();
     let mut b = Box::<FrameBuffer>::default();
     let [a, _b] = FrameLease::pair(&mut a, &mut b);
@@ -159,7 +162,12 @@ fn queued_orientation_survives_new_selection_and_delayed_completion() {
     lifecycle.ready(token).unwrap();
     lifecycle.queue(token).unwrap();
     history.queue(token, None).unwrap();
-    let request = a.submit_plan_in(token, RenderTrace::instant(10), DamagePlan::full_in(desired.geometry()), desired);
+    let request = a.submit_plan_in(
+        token,
+        RenderTrace::instant(10),
+        DamagePlan::full_in(desired.geometry()),
+        desired,
+    );
     desired = Orientation::LandscapeInverted;
     assert_eq!(request.orientation(), Orientation::Portrait);
     lifecycle.started(token).unwrap();
@@ -182,10 +190,21 @@ fn queued_orientation_survives_new_selection_and_delayed_completion() {
 #[should_panic(expected = "frame orientation and plan geometry differ")]
 fn queued_request_rejects_geometry_mismatch() {
     use dashboard_config::Orientation;
-    use dashboard_host_validation::display::{FrameBuffer, damage::DamagePlan, pipeline::{FrameLease, FrameToken}, telemetry::RenderTrace};
+    use dashboard_host_validation::display::FrameBuffer;
+    use dashboard_host_validation::display::damage::DamagePlan;
+    use dashboard_host_validation::display::pipeline::{FrameLease, FrameToken};
+    use dashboard_host_validation::display::telemetry::RenderTrace;
     let mut a = Box::<FrameBuffer>::default();
     let mut b = Box::<FrameBuffer>::default();
     let [a, _b] = FrameLease::pair(&mut a, &mut b);
-    let token = FrameToken { buffer: a.id(), sequence: 1 };
-    a.submit_plan_in(token, RenderTrace::instant(10), DamagePlan::full(), Orientation::Portrait);
+    let token = FrameToken {
+        buffer: a.id(),
+        sequence: 1,
+    };
+    a.submit_plan_in(
+        token,
+        RenderTrace::instant(10),
+        DamagePlan::full(),
+        Orientation::Portrait,
+    );
 }
