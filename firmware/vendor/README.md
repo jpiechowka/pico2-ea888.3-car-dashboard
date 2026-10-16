@@ -194,10 +194,12 @@ this focused consumer. Mutation tests reject every changed code byte and
 changed literals, mapping, symbols, frame metadata, branch/return text or pool
 aliases. Historical startup/preclaim/history tests remain unchanged.
 
-The pre-init source qualification follows the selected complete proof through
-private compositions. H8 consumed-input and hardware qualifications stay open;
-the generic public ExecutionReceipt carries no startup proof and remains
-conservative. This is not a substitute for the remaining full capture audit.
+The experimental full-proof path qualifies pre-init through private compositions;
+its complete ordinary execution proof remains unfinished and fails closed.
+Ordinary builds use the separate [practical image gate](../../docs/performance/memory-layout.md),
+which retains source/config identities, memory and conservative stack bounds,
+boot/flash checks and explicit assumptions. It does not issue a complete
+instruction proof. Consumed-input closure and physical qualification remain open.
 
 This does not requalify flash machine-code gates, other profile/feature images,
 RP2040 linking, or physical reset/PIO timing. Those checks remain separate;
