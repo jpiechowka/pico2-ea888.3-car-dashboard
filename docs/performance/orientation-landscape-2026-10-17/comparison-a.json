@@ -1,0 +1,53 @@
+{
+  "before": "orientation_landscape_before_a",
+  "after": "orientation_landscape_after_a",
+  "strict_comparator": "fixture or capture source changed; review workload semantics separately",
+  "selected_fixture_review": "View benchmark body identical after removing unrelated new orientation group; other fixture changes confined to unselected config/rule migrations",
+  "rows": [
+    {
+      "workload": "views_circular_default_retained_moving",
+      "before_ns": 140033.06956201693,
+      "before_ci95_ns": [
+        139051.89393939392,
+        142166.49305555556
+      ],
+      "after_ns": 125293.86645962733,
+      "after_ci95_ns": [
+        124481.03174603175,
+        126706.81818181818
+      ],
+      "change_percent": -10.525515971684097,
+      "median_ci_overlap": false
+    },
+    {
+      "workload": "views_default_full",
+      "before_ns": 174304.4773391813,
+      "before_ci95_ns": [
+        173301.01674641148,
+        179013.15789473685
+      ],
+      "after_ns": 130700.78895463512,
+      "after_ci95_ns": [
+        130257.45192307694,
+        133822.5560897436
+      ],
+      "change_percent": -25.015816604468057,
+      "median_ci_overlap": false
+    },
+    {
+      "workload": "views_default_retained_stationary",
+      "before_ns": 3339.333536929149,
+      "before_ci95_ns": [
+        3318.929712460064,
+        3406.0143769968054
+      ],
+      "after_ns": 3428.2133683528486,
+      "after_ci95_ns": [
+        3355.651717807501,
+        3459.5264469198173
+      ],
+      "change_percent": 2.661603893135922,
+      "median_ci_overlap": true
+    }
+  ]
+}

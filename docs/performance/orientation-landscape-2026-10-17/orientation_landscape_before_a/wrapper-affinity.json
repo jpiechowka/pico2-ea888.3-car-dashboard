@@ -1,0 +1,8 @@
+{
+  "run": "orientation_landscape_before_a",
+  "runner_id": "johnny-desktop-cpu2",
+  "wrapper_pid": 143684,
+  "wrapper_affinity": 4,
+  "observed_utc": "2026-10-16T23:00:03.5307712Z",
+  "command": "python host/scripts/capture_benchmark.py orientation_landscape_before_a --runner-id johnny-desktop-cpu2 --filter '^views/(default_full|default_retained_stationary|Circular_default_retained_moving)$'"
+}

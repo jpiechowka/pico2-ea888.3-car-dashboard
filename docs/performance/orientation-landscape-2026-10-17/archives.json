@@ -1,0 +1,26 @@
+{
+  "orientation_landscape_before_a": {
+    "source_archive_sha256": "08944d696184c929b5f883165685ddfdc448e7d067ca729b0162c59baa80aecc",
+    "source_archive_bytes": 588036,
+    "local_archive": "C:/Users/Johnny/.codex/worktrees/studio-native-prerequisites/pico2-ea888.3-car-dashboard/host/baselines/orientation_landscape_before_a/source.zip",
+    "source_archive_committed": false
+  },
+  "orientation_landscape_after_a": {
+    "source_archive_sha256": "f1479999381fea0e6e42e1cf7a2da32e1c7ce8e398f466d06bd0993fde4d29f7",
+    "source_archive_bytes": 600031,
+    "local_archive": "C:/Users/Johnny/.codex/worktrees/studio-native-prerequisites/pico2-ea888.3-car-dashboard/host/baselines/orientation_landscape_after_a/source.zip",
+    "source_archive_committed": false
+  },
+  "orientation_landscape_after_b": {
+    "source_archive_sha256": "73fd266b28be2b1f2f6868e7ef4895f5d06ee099d2144deebf08b0793bebab98",
+    "source_archive_bytes": 600031,
+    "local_archive": "C:/Users/Johnny/.codex/worktrees/studio-native-prerequisites/pico2-ea888.3-car-dashboard/host/baselines/orientation_landscape_after_b/source.zip",
+    "source_archive_committed": false
+  },
+  "orientation_landscape_before_b": {
+    "source_archive_sha256": "872eff2e5eedb3bc4b5f5a9ff4a53bf074cb4f5dea60a81f71c5cbb25056819d",
+    "source_archive_bytes": 588048,
+    "local_archive": "C:/Users/Johnny/.codex/worktrees/studio-native-prerequisites/pico2-ea888.3-car-dashboard/host/baselines/orientation_landscape_before_b/source.zip",
+    "source_archive_committed": false
+  }
+}

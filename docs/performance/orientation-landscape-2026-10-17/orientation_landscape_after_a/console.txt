@@ -1,0 +1,56 @@
+    Finished `bench` profile [optimized] target(s) in 0.13s
+     Running benches\dashboard_perf.rs (target\release\build\dashboard-host-validation/ffc7b25b7c0642b4\out\dashboard_perf-ffc7b25b7c0642b4.exe)
+Gnuplot not found, using plotters backend
+WORK fill full: written_pixels=76800 contiguous_source_elements=76800
+WORK fill narrow_1px: written_pixels=200 contiguous_source_elements=200
+WORK fill odd_x_width: written_pixels=10287 contiguous_source_elements=10287
+WORK fill clipped_four_edges: written_pixels=76800 contiguous_source_elements=79612
+WORK fill full: written_pixels=76800 contiguous_source_elements=76800
+WORK fill narrow_1px: written_pixels=200 contiguous_source_elements=200
+WORK fill odd_x_width: written_pixels=10287 contiguous_source_elements=10287
+WORK fill clipped_four_edges: written_pixels=76800 contiguous_source_elements=79612
+WORK scene cold_cache_one_frame step=0: dirty_cells=8 clear=true header=true
+WORK scene unit_toggle_one_frame step=0: dirty_cells=1 clear=false header=false
+WORK scene same_rounded_text_one_frame step=0: dirty_cells=0 clear=false header=false
+WORK scene digit_width_one_frame step=0: dirty_cells=1 clear=false header=false
+WORK scene quality_transitions_three_frames step=0: dirty_cells=1 clear=false header=false
+WORK scene quality_transitions_three_frames step=1: dirty_cells=1 clear=false header=false
+WORK scene quality_transitions_three_frames step=2: dirty_cells=1 clear=false header=false
+WORK damage one_digit: bytes=2048 regions=1 transfers=32
+WORK damage digit_width: bytes=6656 regions=2 transfers=48
+WORK damage disjoint_full_fallback: bytes=153600 regions=1 transfers=1
+WORK damage disjoint_sparse_cells: bytes=1024 regions=2 transfers=32
+WORK damage popup_removal: bytes=30720 regions=1 transfers=80
+Benchmarking views/default_full
+Benchmarking views/default_full: Warming up for 1.0000 s
+Benchmarking views/default_full: Collecting 30 samples in estimated 2.0782 s (12k iterations)
+Benchmarking views/default_full: Analyzing
+views/default_full      time:   [135.21 µs 143.61 µs 155.44 µs]
+Found 6 outliers among 30 measurements (20.00%)
+  1 (3.33%) high mild
+  5 (16.67%) high severe
+
+Benchmarking views/default_retained_stationary
+Benchmarking views/default_retained_stationary: Warming up for 1.0000 s
+Benchmarking views/default_retained_stationary: Collecting 30 samples in estimated 2.0007 s (591k iterations)
+Benchmarking views/default_retained_stationary: Analyzing
+views/default_retained_stationary
+                        time:   [3.3553 µs 3.4778 µs 3.6410 µs]
+Found 3 outliers among 30 measurements (10.00%)
+  3 (10.00%) high severe
+
+Benchmarking views/Circular_default_retained_moving
+Benchmarking views/Circular_default_retained_moving: Warming up for 1.0000 s
+Benchmarking views/Circular_default_retained_moving: Collecting 30 samples in estimated 2.0590 s (13k iterations)
+Benchmarking views/Circular_default_retained_moving: Analyzing
+views/Circular_default_retained_moving
+                        time:   [125.99 µs 130.28 µs 137.06 µs]
+Found 4 outliers among 30 measurements (13.33%)
+  1 (3.33%) high mild
+  3 (10.00%) high severe
+
+{
+  "views_circular_default_retained_moving": 125293.86645962733,
+  "views_default_full": 130700.78895463512,
+  "views_default_retained_stationary": 3428.2133683528486
+}
