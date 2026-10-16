@@ -13,6 +13,17 @@ import capture_target_bench as capture
 
 
 class CaptureTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows source path boundary')
+    def test_verbatim_import_inputs_match_ordinary_names_and_hashes(self):
+        script = str(Path(capture.__file__).resolve())
+        extended = script if script.startswith('\\\\?\\') else '\\\\?\\' + script
+        code = ('import runpy,sys,json,hashlib; m=runpy.run_path(sys.argv[1]); '
+                'print(json.dumps({k:hashlib.sha256(v).hexdigest() for k,v in m["inputs"]().items()},sort_keys=True))')
+        def snapshot(path):
+            return subprocess.run([sys.executable, '-I', '-c', code, path],
+                                  capture_output=True, text=True, check=True).stdout
+        self.assertEqual(snapshot(extended), snapshot(script))
+
     @unittest.skipUnless(os.name == 'nt', 'Windows external-tool path boundary')
     def test_extended_script_path_keeps_identity_without_exporting_prefix(self):
         script = str(Path(capture.__file__).resolve())
@@ -30,14 +41,14 @@ class CaptureTests(unittest.TestCase):
         extended = directory if directory.startswith('\\\\?\\') else '\\\\?\\' + directory
         with patch.object(Path, 'samefile', return_value=False):
             with self.assertRaisesRegex(ValueError, 'identity changed'):
-                capture.external_tool_directory(extended)
+                capture.external_tool_path(extended)
 
     def test_tool_directory_requires_existing_path(self):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
-            self.assertTrue(capture.external_tool_directory(directory).samefile(directory))
+            self.assertTrue(capture.external_tool_path(directory).samefile(directory))
             with self.assertRaises(FileNotFoundError):
-                capture.external_tool_directory(directory / 'missing')
+                capture.external_tool_path(directory / 'missing')
 
     def test_custom_environment_presence_is_rejected_even_when_empty(self):
         for key in ['DASHBOARD_CPU_HZ','DASHBOARD_SPI_HZ','DASHBOARD_VSEL_MV']:

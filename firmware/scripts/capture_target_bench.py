@@ -13,8 +13,8 @@ import tomllib
 import unicodedata
 import zipfile
 
-def external_tool_directory(path):
-    """Keep directory identity but avoid MSVC's long verbatim-path argument failure."""
+def external_tool_path(path):
+    """Keep filesystem identity but avoid MSVC's long verbatim-path argument failure."""
     resolved = Path(path).resolve(strict=True)
     value = str(resolved)
     if os.name != 'nt' or not value.startswith('\\\\?\\'):
@@ -26,13 +26,13 @@ def external_tool_directory(path):
     elif re.match(r'^[A-Za-z]:\\', tail):
         candidate = Path(tail)
     else:
-        raise ValueError('unsupported Windows tool directory namespace')
+        raise ValueError('unsupported Windows tool path namespace')
     if not candidate.samefile(resolved):
-        raise ValueError('Windows tool directory identity changed')
+        raise ValueError('Windows tool path identity changed')
     return candidate
 
 
-FIRMWARE = external_tool_directory(Path(__file__).parent.parent)
+FIRMWARE = external_tool_path(Path(__file__).parent.parent)
 REPO = FIRMWARE.parent
 sys.path.insert(0, str(REPO / 'host' / 'scripts'))
 sys.path.insert(0, str(FIRMWARE / 'scripts'))
@@ -278,6 +278,9 @@ def inputs():
     paths.update([Path(__file__).resolve(), REPO/'host/scripts/benchmark_environment.py'])
     paths.update((FIRMWARE/'scripts').glob('*.py'))
     paths.update((FIRMWARE/'scripts').glob('*.ps1'))
+    # __file__ can retain the native launcher's verbatim spelling, including in
+    # imported inventory helpers. Normalize every member before relative keys.
+    paths = {external_tool_path(p) for p in paths}
     return {p.relative_to(REPO).as_posix():p.read_bytes() for p in sorted(paths)}
 
 
