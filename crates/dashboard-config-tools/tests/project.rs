@@ -105,3 +105,16 @@ fn smaller_projection_preserves_exact_pixels_and_does_not_mutate_original() {
     recipe.sample_fps = 21;
     assert!(Artwork::new(Arc::from(art.converted()), recipe, art.original().cloned()).is_err());
 }
+
+#[test]
+fn source_sheet_timing_is_distinct_from_converted_frame_minimum() {
+    let art = artwork();
+    let mut recipe = art.recipe().clone();
+    recipe.source_kind = SourceKind::SpriteSheet;
+    recipe.sheet = Some(Sheet { columns: 2, rows: 1, frame_ms: 1 });
+    assert!(Artwork::new(Arc::from(art.converted()), recipe.clone(), art.original().cloned()).is_ok());
+    recipe.sheet.as_mut().unwrap().frame_ms = 0;
+    assert!(Artwork::new(Arc::from(art.converted()), recipe.clone(), art.original().cloned()).is_err());
+    recipe.sheet.as_mut().unwrap().frame_ms = 60000;
+    assert!(Artwork::new(Arc::from(art.converted()), recipe, art.original().cloned()).is_err());
+}

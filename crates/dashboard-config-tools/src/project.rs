@@ -128,7 +128,8 @@ impl Recipe {
                 if sheet.columns > 0
                     && sheet.rows > 0
                     && u32::from(sheet.columns) * u32::from(sheet.rows) <= 300
-                    && sheet.frame_ms >= 34 =>
+                    && (1..=60000).contains(&sheet.frame_ms)
+                    && u32::from(sheet.columns) * u32::from(sheet.rows) * u32::from(sheet.frame_ms) <= 60000 =>
             {
                 ()
             }
