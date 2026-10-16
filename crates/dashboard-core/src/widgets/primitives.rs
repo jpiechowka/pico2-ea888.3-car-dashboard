@@ -117,7 +117,7 @@ pub fn draw_history_graph<D, F>(
     F: Fn(f32) -> Rgb565,
 {
     use core::fmt::Write;
-    if w < 5 || h < 12 || w > crate::config::SCREEN_WIDTH || h > crate::config::SCREEN_HEIGHT {
+    if w < 5 || h < 12 || w > crate::config::SCREEN_WIDTH || h > 320 {
         return;
     }
     let (Some(label_x), Some(label_y)) = (x.checked_add(w as i32 / 2), y.checked_add(h as i32 - 1)) else {
@@ -171,7 +171,7 @@ fn draw_graph_points<D, F, V>(
         || h < 5
         // Keep raster work bounded and line deltas within the display geometry.
         || w > crate::config::SCREEN_WIDTH
-        || h > crate::config::SCREEN_HEIGHT
+        || h > 320
         || !data_min.is_finite()
         || !data_max.is_finite()
         || !data_range.is_finite()

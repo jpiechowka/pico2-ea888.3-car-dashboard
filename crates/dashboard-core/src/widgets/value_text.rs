@@ -64,9 +64,9 @@ pub fn draw_fitted_value<D: DrawTarget<Color = Rgb565>>(
     // A lane cannot exceed this dashboard's panel. Bound arbitrary public API
     // coordinates before Rectangle/Point arithmetic, including signed overflow.
     if lane.size.width > 320
-        || lane.size.height > 240
+        || lane.size.height > 320
         || !(-320..=320).contains(&lane.top_left.x)
-        || !(-240..=240).contains(&lane.top_left.y)
+        || !(-320..=320).contains(&lane.top_left.y)
     {
         return 0;
     }

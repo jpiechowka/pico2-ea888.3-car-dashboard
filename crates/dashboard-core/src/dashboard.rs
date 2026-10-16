@@ -222,6 +222,22 @@ impl DashboardScene<'_> {
         let Some(sensor) = self.cell_sensor(cell) else {
             return;
         };
+        if configured_scene::target_geometry(display) == dashboard_config::Geometry::Portrait {
+            let row = cell as u8 / 2;
+            let geometry = dashboard_config::Geometry::Portrait;
+            let top = i32::from(geometry.row_edge(row).unwrap());
+            let bottom = i32::from(geometry.row_edge(row + 1).unwrap());
+            let bounds = embedded_graphics::primitives::Rectangle::new(Point::new((cell as i32 % 2) * 120 + 2, top + 2), Size::new(116, (bottom - top - 4) as u32));
+            let mut target = display.clipped(&bounds);
+            target.clear(BLACK).ok();
+            let text = self.cell_key(cell).expect("visible fallback cell").text;
+            let lanes = configured_scene::portrait_content_layout(bounds, core::array::from_fn(|i| text[i].as_str()), 0, false, true, 0, false);
+            let style = embedded_graphics::mono_font::MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, crate::ui::WHITE);
+            embedded_graphics::text::Text::with_text_style(SensorId::ALL[sensor].label(), Point::new(bounds.center().x, top + 7), style, crate::ui::CENTERED).draw(&mut target).ok();
+            crate::widgets::value_text::draw_fitted_value(&mut target, &text[0], lanes.text[0], 2, crate::ui::WHITE);
+            for i in 1..6 { configured_scene::compact_text(&mut target, &text[i], lanes.text[i], crate::ui::WHITE); }
+            return;
+        }
         let state = &self.measurements.sensors[sensor];
         let value = state.value().unwrap_or(0.0);
         let maximum = state.maximum().unwrap_or(0.0);
@@ -523,6 +539,7 @@ type Geometry = [Option<(u16, dashboard_config::Placement)>; 8];
 struct CachedFrame {
     header: Option<HeaderKey>,
     geometry: Geometry,
+    panel: dashboard_config::Geometry,
     cells: [Option<CellKey>; 8],
     overlay: Option<Overlay>,
 }
@@ -531,6 +548,7 @@ impl CachedFrame {
         Self {
             header: None,
             geometry: [None; 8],
+            panel: dashboard_config::Geometry::Landscape,
             cells: [const { None }; 8],
             overlay: None,
         }
@@ -564,6 +582,11 @@ impl DashboardCache {
         buffer: usize,
         scene: &DashboardScene<'_>,
     ) -> Redraw {
+        self.prepare_in(buffer, scene, dashboard_config::Geometry::Landscape)
+    }
+
+    /// Geometry belongs to the frame being produced, not a mutable selected view.
+    pub fn prepare_in(&mut self, buffer: usize, scene: &DashboardScene<'_>, panel: dashboard_config::Geometry) -> Redraw {
         let Some(frame) = self.frames.get_mut(buffer) else {
             return Redraw::FULL;
         };
@@ -577,7 +600,7 @@ impl DashboardCache {
                 .and_then(|layout| layout.widget(slot))
                 .map(|w| (w.id, w.placement))
         });
-        let clear = frame.header.is_none()
+        let clear = frame.panel != panel || frame.header.is_none()
             || frame
                 .header
                 .as_ref()
@@ -585,6 +608,7 @@ impl DashboardCache {
             || frame.geometry != geometry
             || (frame.overlay.is_some() && frame.overlay != overlay);
         frame.geometry = geometry;
+        frame.panel = panel;
         let header = HeaderKey {
             mode: scene.measurements.mode,
             status: scene.status,
@@ -630,7 +654,7 @@ impl DashboardCache {
         buffer: usize,
         scene: &DashboardScene<'_>,
     ) -> Redraw {
-        let redraw = self.prepare(buffer, scene);
+        let redraw = self.prepare_in(buffer, scene, configured_scene::target_geometry(display));
         redraw.begin(display, scene);
         for cell in 0..8 {
             if redraw.cells & (1 << cell) != 0 {

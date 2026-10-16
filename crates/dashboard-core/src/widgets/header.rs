@@ -55,6 +55,14 @@ pub fn draw_status_header<D: DrawTarget<Color = Rgb565>>(
     fps_instant: f32,
     fps_average: f32,
 ) {
+    if crate::configured_scene::target_geometry(display) == dashboard_config::Geometry::Portrait {
+        display.fill_solid(&Rectangle::new(Point::zero(), Size::new(240, 26)), RED).ok();
+        let tiny = embedded_graphics::mono_font::MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, crate::ui::WHITE);
+        Text::new(status.label(), Point::new(4, 7), tiny).draw(display).ok();
+        Text::with_text_style(&format_fps(fps_mode, fps_instant, fps_average), Point::new(235, 7), tiny, RIGHT_ALIGNED).draw(display).ok();
+        Text::with_text_style(if mode == DataMode::Demo { "DEMO" } else { "VEHICLE" }, Point::new(120, 22), LABEL_STYLE_WHITE, CENTERED).draw(display).ok();
+        return;
+    }
     Rectangle::new(HEADER_RECT_POS, HEADER_RECT_SIZE)
         .into_styled(HEADER_FILL_STYLE)
         .draw(display)
@@ -83,6 +91,11 @@ pub fn draw_dividers<D>(display: &mut D)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    if crate::configured_scene::target_geometry(display) == dashboard_config::Geometry::Portrait {
+        Line::new(Point::new(120, 26), Point::new(120, 319)).into_styled(DIVIDER_STYLE).draw(display).ok();
+        for y in [99, 173, 246] { Line::new(Point::new(0, y), Point::new(239, y)).into_styled(DIVIDER_STYLE).draw(display).ok(); }
+        return;
+    }
     Line::new(DIV_V1_START, DIV_V1_END)
         .into_styled(DIVIDER_STYLE)
         .draw(display)

@@ -186,3 +186,11 @@ fn unrepresentable_or_nonpanel_lanes_cannot_overflow_coordinate_arithmetic() {
         assert!(pixels.0.is_empty());
     }
 }
+
+#[test]
+fn portrait_bottom_value_lane_is_visible() {
+    let mut frame = AlignedFrame::boxed();
+    let mut renderer = St7789Renderer::with_geometry(&mut frame.0, dashboard_config::Geometry::Portrait);
+    assert!(draw_fitted_value(&mut renderer, "-123.000C", Rectangle::new(Point::new(2, 270), Size::new(116, 20)), 1, colors::WHITE) >= 8);
+    assert!(frame.0[270 * 240 * 2..290 * 240 * 2].iter().any(|v| *v != 0));
+}

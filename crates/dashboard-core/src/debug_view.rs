@@ -192,7 +192,7 @@ impl<'a> DebugPage<'a> {
         display: &mut D,
     ) {
         display
-            .clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)))
+            .clipped(&Rectangle::new(Point::zero(), display.bounding_box().size))
             .clear(BLACK)
             .ok();
         for line in DebugLine::ALL {
@@ -206,8 +206,12 @@ impl<'a> DebugPage<'a> {
         line: DebugLine,
     ) {
         use DebugLine::*;
-        let (x, y, width) = line.position();
-        let mut text = LineText::new((width / 6) as usize);
+        let portrait = crate::configured_scene::target_geometry(display) == dashboard_config::Geometry::Portrait;
+        let (x, y, width) = if portrait {
+            let index = DebugLine::ALL.iter().position(|v| *v == line).unwrap_or(0);
+            (4, 9 + index as i32 * 9, 232)
+        } else { line.position() };
+        let mut text = LineText::new((width / if portrait { 4 } else { 6 }) as usize);
         let data = self.data;
         let color = match line {
             TimingHeader | BuffersHeader | Core0Header | Core1Header | SystemHeader | TransferNote | ControlsHint => {
@@ -350,7 +354,8 @@ impl<'a> DebugPage<'a> {
                 );
             }
         }
-        draw_row(display, x, y, width, text.value.as_str(), color);
+        if portrait { draw_compact_row(display, x, y, width, text.value.as_str(), color); }
+        else { draw_row(display, x, y, width, text.value.as_str(), color); }
     }
 }
 
@@ -483,4 +488,11 @@ fn util(
         Some(v) => write!(text, "{label}: {}.{}%", v / 10, v % 10),
         None => write!(text, "{label}: --"),
     };
+}
+
+pub(crate) fn draw_compact_row<D: DrawTarget<Color = Rgb565>>(display: &mut D, x: i32, y: i32, width: u32, text: &str, color: Rgb565) {
+    let bounds = Rectangle::new(Point::new(x, y - 5), Size::new(width, 7));
+    let mut row = display.clipped(&bounds);
+    row.clear(BLACK).ok();
+    Text::new(text, Point::new(x, y), MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, color)).draw(&mut row).ok();
 }

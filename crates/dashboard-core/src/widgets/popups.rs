@@ -54,20 +54,22 @@ pub fn draw_reset_popup<D>(display: &mut D)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    Rectangle::new(RESET_BORDER_POS, RESET_BORDER_SIZE)
+    let size = display.bounding_box().size;
+    let offset = Point::new(size.width as i32 / 2 - CENTER_X, size.height as i32 / 2 - CENTER_Y);
+    Rectangle::new(RESET_BORDER_POS + offset, RESET_BORDER_SIZE)
         .into_styled(WHITE_FILL)
         .draw(display)
         .ok();
 
-    Rectangle::new(RESET_BG_POS, RESET_BG_SIZE)
+    Rectangle::new(RESET_BG_POS + offset, RESET_BG_SIZE)
         .into_styled(RED_FILL)
         .draw(display)
         .ok();
 
-    Text::with_text_style("MIN/AVG/MAX", RESET_TEXT1_POS, TITLE_STYLE_WHITE, CENTERED)
+    Text::with_text_style("MIN/AVG/MAX", RESET_TEXT1_POS + offset, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
-    Text::with_text_style("RESET", RESET_TEXT2_POS, TITLE_STYLE_WHITE, CENTERED)
+    Text::with_text_style("RESET", RESET_TEXT2_POS + offset, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
 }
@@ -76,15 +78,17 @@ fn draw_compact_popup<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     label: &str,
 ) {
-    Rectangle::new(FPS_BORDER_POS, FPS_BORDER_SIZE)
+    let size = display.bounding_box().size;
+    let offset = Point::new(size.width as i32 / 2 - CENTER_X, size.height as i32 / 2 - CENTER_Y);
+    Rectangle::new(FPS_BORDER_POS + offset, FPS_BORDER_SIZE)
         .into_styled(WHITE_FILL)
         .draw(display)
         .ok();
-    Rectangle::new(FPS_BG_POS, FPS_BG_SIZE)
+    Rectangle::new(FPS_BG_POS + offset, FPS_BG_SIZE)
         .into_styled(RED_FILL)
         .draw(display)
         .ok();
-    Text::with_text_style(label, FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
+    Text::with_text_style(label, FPS_TEXT_POS + offset, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
 }
@@ -110,6 +114,8 @@ pub fn draw_critical_popup<D>(
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
+    let size = display.bounding_box().size;
+    let offset = Point::new(size.width as i32 / 2 - CENTER_X, size.height as i32 / 2 - CENTER_Y);
     let (bg_style, text_style) = if blink_on {
         (RED_FILL, TITLE_STYLE_WHITE)
     } else {
@@ -118,20 +124,20 @@ pub fn draw_critical_popup<D>(
 
     let border_style = if blink_on { WHITE_FILL } else { RED_FILL };
 
-    Rectangle::new(CRITICAL_BORDER_POS, CRITICAL_BORDER_SIZE)
+    Rectangle::new(CRITICAL_BORDER_POS + offset, CRITICAL_BORDER_SIZE)
         .into_styled(border_style)
         .draw(display)
         .ok();
 
-    Rectangle::new(CRITICAL_BG_POS, CRITICAL_BG_SIZE)
+    Rectangle::new(CRITICAL_BG_POS + offset, CRITICAL_BG_SIZE)
         .into_styled(bg_style)
         .draw(display)
         .ok();
 
-    Text::with_text_style("WARNING", CRITICAL_TEXT1_POS, text_style, CENTERED)
+    Text::with_text_style("WARNING", CRITICAL_TEXT1_POS + offset, text_style, CENTERED)
         .draw(display)
         .ok();
-    Text::with_text_style(sensor.label(), CRITICAL_TEXT2_POS, text_style, CENTERED)
+    Text::with_text_style(sensor.label(), CRITICAL_TEXT2_POS + offset, text_style, CENTERED)
         .draw(display)
         .ok();
 }
@@ -147,15 +153,17 @@ pub fn draw_view_popup<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     name: &str,
 ) {
-    Rectangle::new(Point::new(CENTER_X - 108, CENTER_Y - 28), Size::new(216, 56))
+    let size = display.bounding_box().size;
+    let offset = Point::new(size.width as i32 / 2 - CENTER_X, size.height as i32 / 2 - CENTER_Y);
+    Rectangle::new(Point::new(CENTER_X + offset.x - 108, CENTER_Y + offset.y - 28), Size::new(216, 56))
         .into_styled(WHITE_FILL)
         .draw(display)
         .ok();
-    Rectangle::new(Point::new(CENTER_X - 105, CENTER_Y - 25), Size::new(210, 50))
+    Rectangle::new(Point::new(CENTER_X + offset.x - 105, CENTER_Y + offset.y - 25), Size::new(210, 50))
         .into_styled(RED_FILL)
         .draw(display)
         .ok();
-    Text::with_text_style(name, FPS_TEXT_POS, TITLE_STYLE_WHITE, CENTERED)
+    Text::with_text_style(name, FPS_TEXT_POS + offset, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
 }
@@ -164,6 +172,8 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     page: crate::view_state::WarningPage,
 ) {
+    let size = display.bounding_box().size;
+    let offset = Point::new(size.width as i32 / 2 - CENTER_X, size.height as i32 / 2 - CENTER_Y);
     use core::fmt::Write;
     let fg = crate::configured_scene::panel_color(page.colors.foreground);
     let bg = crate::configured_scene::panel_color(page.colors.background);
@@ -171,20 +181,20 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     let background = PrimitiveStyle::with_fill(bg);
     let border = PrimitiveStyle::with_fill(fg);
     let text = MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_10X20, fg);
-    let outer = Rectangle::new(Point::new(CENTER_X - 108, CENTER_Y - 68), Size::new(216, 136));
+    let outer = Rectangle::new(Point::new(CENTER_X + offset.x - 108, CENTER_Y + offset.y - 68), Size::new(216, 136));
     let mut display = display.clipped(&outer);
     outer.into_styled(border).draw(&mut display).ok();
-    Rectangle::new(Point::new(CENTER_X - 105, CENTER_Y - 65), Size::new(210, 130))
+    Rectangle::new(Point::new(CENTER_X + offset.x - 105, CENTER_Y + offset.y - 65), Size::new(210, 130))
         .into_styled(background)
         .draw(&mut display)
         .ok();
-    Text::with_text_style("WARNING", Point::new(CENTER_X, CENTER_Y - 40), text, CENTERED)
+    Text::with_text_style("WARNING", Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 40), text, CENTERED)
         .draw(&mut display)
         .ok();
     for (row, line) in page.lines().iter().enumerate() {
         Text::with_text_style(
             line.as_str(),
-            Point::new(CENTER_X, CENTER_Y - 24 + row as i32 * 28),
+            Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 24 + row as i32 * 28),
             text,
             CENTERED,
         )
@@ -193,7 +203,7 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
         let small = MonoTextStyle::new(crate::ui::LABEL_FONT, fg);
         Text::with_text_style(
             page.status(row),
-            Point::new(CENTER_X, CENTER_Y - 13 + row as i32 * 28),
+            Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 13 + row as i32 * 28),
             small,
             CENTERED,
         )
@@ -203,7 +213,7 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     let mut page_text: heapless::String<8> = heapless::String::new();
     write!(page_text, "{}/{}", page.number, page.total).ok();
     let small = MonoTextStyle::new(crate::ui::LABEL_FONT, text.text_color.unwrap());
-    Text::with_text_style(&page_text, Point::new(CENTER_X, CENTER_Y + 59), small, CENTERED)
+    Text::with_text_style(&page_text, Point::new(CENTER_X + offset.x, CENTER_Y + offset.y + 59), small, CENTERED)
         .draw(&mut display)
         .ok();
 }

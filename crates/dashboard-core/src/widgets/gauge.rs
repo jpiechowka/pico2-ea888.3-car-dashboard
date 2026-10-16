@@ -254,11 +254,11 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
     paint: Paint<'_>,
 ) {
     let Paint { colors, decorations } = paint;
-    if !(-320..=320).contains(&bounds.top_left.x) || !(-240..=240).contains(&bounds.top_left.y) {
+    if !(-320..=320).contains(&bounds.top_left.x) || !(-320..=320).contains(&bounds.top_left.y) {
         return;
     }
     let (value_color, accent, track, ticks) = colors;
-    let width = bounds.size.width.min(156);
+    let width = bounds.size.width.min(320);
     let height = bounds.size.height.min(198);
     if width < 20 || height < 28 {
         return;
@@ -267,7 +267,7 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
     let mut display = display.clipped(&bounds);
     // Wide, short cells spend their extra width on the primary reading rather
     // than squeezing a larger font into the compact graphic's vertical lane.
-    let wide = width >= 120 && height < 100;
+    let wide = (width >= 120 || height < 60) && height < 100;
     let number_height = if height >= 100 || wide { 36.min(height - 10) } else { 22 };
     let graphic_height = if wide {
         height - 10
@@ -289,7 +289,7 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
     };
     draw_fitted_value(
         &mut display,
-        text,
+        if crate::widgets::value_text::fit_value(text, value.size, 2).is_some() { text } else { "FIT!" },
         value,
         if height >= 100 || wide { 2 } else { 1 },
         value_color,

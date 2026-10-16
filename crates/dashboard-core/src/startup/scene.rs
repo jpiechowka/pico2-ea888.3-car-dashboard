@@ -32,7 +32,7 @@ fn rect(
     h: u32,
     c: Rgb565,
 ) {
-    let _ = Rectangle::new(Point::new(x, y), Size::new(w, h))
+    let _ = Rectangle::new(Point::new(px(d, x), py(d, y)), Size::new(if portrait(d) { w * 3 / 4 } else { w }, h))
         .into_styled(PrimitiveStyle::with_fill(c))
         .draw(d);
 }
@@ -43,7 +43,7 @@ fn line(
     width: u32,
     c: Rgb565,
 ) {
-    let _ = Line::new(Point::new(a.0, a.1), Point::new(b.0, b.1))
+    let _ = Line::new(Point::new(px(d, a.0), py(d, a.1)), Point::new(px(d, b.0), py(d, b.1)))
         .into_styled(PrimitiveStyle::with_stroke(c, width))
         .draw(d);
 }
@@ -54,7 +54,7 @@ fn disk(
     diameter: u32,
     c: Rgb565,
 ) {
-    let _ = Circle::new(Point::new(x, y), diameter)
+    let _ = Circle::new(Point::new(px(d, x), py(d, y)), if portrait(d) { diameter * 3 / 4 } else { diameter })
         .into_styled(PrimitiveStyle::with_fill(c))
         .draw(d);
 }
@@ -65,7 +65,7 @@ fn tri(
     c: (i32, i32),
     color: Rgb565,
 ) {
-    let _ = Triangle::new(Point::new(a.0, a.1), Point::new(b.0, b.1), Point::new(c.0, c.1))
+    let _ = Triangle::new(Point::new(px(d, a.0), py(d, a.1)), Point::new(px(d, b.0), py(d, b.1)), Point::new(px(d, c.0), py(d, c.1)))
         .into_styled(PrimitiveStyle::with_fill(color))
         .draw(d);
 }
@@ -79,7 +79,7 @@ fn text(
     let font = if big { &FONT_10X20 } else { &FONT_6X10 };
     let _ = Text::with_alignment(
         value,
-        Point::new(160, y),
+        Point::new(i32::from(d.geometry().width()) / 2, py(d, y)),
         MonoTextStyle::new(font, color),
         Alignment::Center,
     )
@@ -283,3 +283,7 @@ pub fn draw(
     }
     text(d, "TAP TO SKIP  /  HOLD Y TO RECOVER", 231, WHITE, false);
 }
+
+fn portrait(d: &St7789Renderer<'_>) -> bool { d.geometry() == dashboard_config::Geometry::Portrait }
+fn px(d: &St7789Renderer<'_>, x: i32) -> i32 { if portrait(d) { x * 3 / 4 } else { x } }
+fn py(d: &St7789Renderer<'_>, y: i32) -> i32 { if portrait(d) { y + 30 } else { y } }
