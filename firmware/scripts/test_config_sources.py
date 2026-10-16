@@ -771,6 +771,38 @@ SOURCE_OUTPUTS=(1128,516,628,744,880,940,1000,1064)
 
 
 class SourcePhaseSnapshot(unittest.TestCase):
+    def test_construction_workspaces_release_without_cyclic_collection_on_success_and_error(self):
+        import gc,sys,weakref
+        from config_decoded_sources import _phase_graph
+        visitors=[];tables=[]
+        def observe(frame,event,arg):
+            if event=='call' and frame.f_code.co_name=='visit' and frame.f_code.co_filename==_phase_graph.__code__.co_filename:
+                values=frame.f_locals;visitor=values['visit']
+                if not any(ref() is visitor for ref in visitors):
+                    visitors.append(weakref.ref(visitor))
+                    tables.append(tuple(values[name] for name in ('nodes','memo','active','literals')))
+        enabled=gc.isenabled();old=sys.getprofile();gc.disable()
+        try:
+            sys.setprofile(observe)
+            shared={'tag':True,'payload':[1,b'bytes',None]};value=(shared,shared)
+            snapshots=tuple(_phase_graph(value) for _ in range(4))
+            cycle=[];cycle.append(cycle)
+            for invalid,message in ((cycle,'cyclic'),({'unsupported':object()},'unsupported')):
+                with self.assertRaisesRegex(AssertionError,message):_phase_graph(invalid)
+            sys.setprofile(old)
+            self.assertEqual(len(visitors),6)
+            self.assertTrue(all(not table for group in tables for table in group),
+                'completed/failed snapshots must release construction-only tables without waiting for GC')
+            self.assertTrue(all(ref() is None for ref in visitors),
+                'recursive visitor closure must not keep itself alive')
+            self.assertTrue(all(snapshot==snapshots[0] for snapshot in snapshots))
+            shared['tag']=1
+            self.assertNotEqual(_phase_graph(value),snapshots[0])
+            self.assertEqual(snapshots[0][1][0][1],(('reference',1),('reference',1)))
+        finally:
+            sys.setprofile(old)
+            if enabled:gc.enable()
+
     def test_local_scalar_tokens_share_without_changing_literal_values_types_or_container_aliases(self):
         from config_decoded_sources import _phase_graph
         shared={'x':1,'y':True,'z':[1,False,None,'x',b'x']};value=[shared,shared]

@@ -475,8 +475,15 @@ def _phase_graph(value):
         else:require(False,'unsupported Sources phase snapshot value')
         active.remove(identity);nodes[index]=node
         return ('reference',index)
-    root=visit(value)
-    return root,tuple(nodes)
+    try:
+        # Evaluate the complete immutable result before releasing workspaces.
+        # The recursive function otherwise keeps these construction tables
+        # cyclically reachable after both successful and failed traversals.
+        root=visit(value)
+        return root,tuple(nodes)
+    finally:
+        visit=None
+        nodes.clear();memo.clear();active.clear();literals.clear()
 
 
 @dataclass(frozen=True)
