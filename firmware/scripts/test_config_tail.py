@@ -436,6 +436,75 @@ class TailParentBodies(unittest.TestCase):
             with self.subTest(off=off),self.assertRaises(AssertionError):_parents(objects,rows,V,0x2000031c)
 
 
+class TailParentStructuralInputs(unittest.TestCase):
+    def test_same_detached_parent_windows_do_not_repeat_literal_work_or_cache_B(self):
+        import sys
+        from config_decoded_tail import _parents
+        from config_structural import _detached_inputs
+        from config_decoded_sources import _phase_graph
+        from config_finite import _literal_body
+        objects,rows,_,_=TailLiteralBodies.fixture();objects,rows=_detached_inputs(objects,rows)
+        previous=sys.getprofile();calls=[]
+        def observe(frame,event,value):
+            if event=='call' and frame.f_code is _literal_body.__code__ and str(frame.f_locals.get('shape','')).startswith('decoded_tail_'):
+                calls.append(frame.f_locals['shape'])
+        try:
+            sys.setprofile(observe)
+            first=_parents(objects,rows,0x1001c654,0x2000031c)
+            second=_parents(objects,rows,0x1001c654,0x2000031c)
+        finally:sys.setprofile(previous)
+        self.assertEqual(first,second);self.assertEqual(_phase_graph(first),_phase_graph(second))
+        self.assertEqual(len(calls),8,'one detached parent bundle must match its eight windows once')
+        first[0]['objects']['changed']=True
+        self.assertEqual(_parents(objects,rows,0x1001c654,0x2000031c),second)
+        with self.assertRaisesRegex(AssertionError,'same.*Config'):_parents(objects,rows,0x1001c654,0x20000320)
+
+    def test_parent_bundle_copies_stay_tagged_and_wrong_row_or_role_cannot_borrow_them(self):
+        from config_tail_children import tail_coverage
+        from config_headers import VISITOR
+        from config_widget_children import _name
+        from config_structural import _detached_inputs
+        objects,rows,_,_=TailLiteralBodies.fixture();objects,rows=_detached_inputs(objects,rows);name=_name(objects,VISITOR)
+        result=tail_coverage(objects,name,rows)
+        self.assertEqual(result['kind'],'tail_parent_literal_windows_only')
+        self.assertFalse(set(result)&{'coverage','owner','B','state','source_context','effects','returns','completed'})
+        result['windows'][0]['objects']['injected']=False
+        fresh=tail_coverage(objects,name,rows,outline_role=None)
+        self.assertNotIn('injected',fresh['windows'][0]['objects'])
+        for other in ((objects,name,dict(rows)),(objects,name,rows,'@outline:tail_restore_high_low36'),(objects,'unknown',rows)):
+            with self.assertRaises(AssertionError):tail_coverage(*other)
+
+    def test_old_parent_snapshot_detaches_and_fresh_body_pool_and_frame_reject(self):
+        from config_decoded_tail import _parents
+        from config_structural import _detached_inputs
+        from test_config_stack import StartupConfigurationCopy
+        for mutation in ('body','pool','frame'):
+            objects,rows,_,_=TailLiteralBodies.fixture();frozen,current=_detached_inputs(objects,rows)
+            saved=_parents(frozen,current,0x1001c654,0x2000031c)
+            if mutation=='frame':objects.sizes[0x1001c654]=1616
+            elif mutation=='pool':StartupConfigurationCopy.put(objects,0x1001c654+7124,(0x20000320).to_bytes(4,'little'))
+            else:StartupConfigurationCopy.put(objects,0x1001c654+7108,bytes.fromhex('00bf00bf'))
+            self.assertEqual(_parents(frozen,current,0x1001c654,0x2000031c),saved)
+            fresh,new_rows=_detached_inputs(objects,rows)
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):_parents(fresh,new_rows,0x1001c654,0x2000031c)
+
+    def test_custom_parent_reader_rechecks_non_site_bytes_without_ELF_metadata_change(self):
+        from config_stack import DiagnosticObjects
+        from config_decoded_tail import _parents
+        class Custom(DiagnosticObjects):
+            changed=False;reads=0
+            def read_only(self,address,extent):
+                self.reads+=1;raw=super().read_only(address,extent);site=0x1001c654+7112
+                if self.changed and address<=site<address+extent:
+                    off=site-address;raw=raw[:off]+bytes((raw[off]^1,))+raw[off+1:]
+                return raw
+        objects,rows,_,_=TailLiteralBodies.fixture();custom=Custom(objects.elf,objects.sizes)
+        first=_parents(custom,rows,0x1001c654,0x2000031c);count=custom.reads
+        self.assertEqual(_parents(custom,rows,0x1001c654,0x2000031c),first);self.assertGreater(custom.reads,count)
+        custom.changed=True
+        with self.assertRaises(AssertionError):_parents(custom,rows,0x1001c654,0x2000031c)
+
+
 class TailPrivateHandoff(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

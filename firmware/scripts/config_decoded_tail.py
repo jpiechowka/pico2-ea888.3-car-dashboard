@@ -7,10 +7,9 @@ separate checked obligations. Public descriptions cannot initialize state.
 from dataclasses import dataclass
 from config_abstract import SequenceInterface,Span
 from config_decode_effects import _object
-from config_finite import _literal_body
 from config_headers import VISITOR
 from config_regions import Storage,borrow,require_disjoint
-from config_tail_children import _function,_outline
+from config_tail_children import tail_coverage
 from config_tail_parent_contracts import GRAMMARS
 from config_widget_children import _name
 from validation import require
@@ -21,12 +20,20 @@ _WINDOWS=(170,5630,5922,6018,6412,6450,7000,56)
 
 def _parents(objects,rows,V,B):
     """All current selected Tail windows, with the same private Config pool."""
-    name=_name(objects,VISITOR,V)
-    def object_value(objects,value,descriptor):
-        require(descriptor==dict(kind='same_Config') and value==B,'Tail reload loses the same private Config')
-        return ()
-    return tuple(_literal_body(objects,name,rows,VISITOR,'decoded_tail_'+str(off),GRAMMARS['visitor_'+str(off)],
-        object_value,_outline,window=V+off,function_consumer=_function) for off in _WINDOWS)
+    bundle=tail_coverage(objects,_name(objects,VISITOR,V),rows)
+    require(bundle['kind']=='tail_parent_literal_windows_only' and bundle['role']==VISITOR and
+        bundle['function']==V and (bundle['extent'],bundle['frame'])==(7128,1608),
+        'Tail parent literals belong to another current source parent')
+    windows=bundle['windows']
+    require(tuple(p['function']-V for p in windows)==_WINDOWS and
+        all(p['shape']=='decoded_tail_'+str(off) and p['role']==VISITOR and
+            (p['extent'],p['frame'])==(GRAMMARS['visitor_'+str(off)]['extent'],1608) for off,p in zip(_WINDOWS,windows)),
+        'Tail parent literals change the exact selected window family')
+    actual=tuple((p['function']-V,ordinal,value) for p in windows for ordinal,value in p['objects'].items())
+    require(bundle['pool_values']==actual and tuple((off,ordinal) for off,ordinal,value in actual)==
+        ((6018,0),(6450,0),(6450,1),(7000,0)) and all(value==B for off,ordinal,value in actual),
+        'Tail reload loses the same private Config')
+    return windows
 
 
 @dataclass(frozen=True)

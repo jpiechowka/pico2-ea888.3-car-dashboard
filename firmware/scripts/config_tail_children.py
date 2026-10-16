@@ -6,7 +6,7 @@ Every dynamic adapter must bind its current source, frames and returns.
 import re
 from config_tail_contracts import GRAMMARS,ROLES
 from config_widget_children import _outline as _widget_outline,_function as _widget_function
-from config_finite import _complete_body
+from config_finite import _complete_body,_literal_body
 from config_regions import Region,Transfer,audit_coverage,_control
 from config_owner_entry import _direct_target
 from config_stack import canonical_symbol
@@ -55,7 +55,11 @@ def tail_body(objects,name,rows,outline_role=None,ancestry=()):
 
 @_structural(2)
 def tail_coverage(objects,name,rows,outline_role=None):
-    """Complete current literal/table/typed-child/ordinary-ingress structure."""
+    """Complete child coverage or the explicitly limited parent literal bundle."""
+    from config_headers import VISITOR
+    if canonical_symbol(name)==VISITOR:
+        require(outline_role is None,'Tail parent literals cannot borrow an outline identity')
+        return _parent_literals(objects,name,rows)
     proof=tail_body(objects,name,rows,outline_role);start=proof['function'];contract=GRAMMARS[proof['shape']]
     calls={start+off:(operation,target,role,frame) for off,operation,target,role,frame in proof['ordinary_edges']}
     transfers=[]
@@ -92,6 +96,29 @@ def tail_coverage(objects,name,rows,outline_role=None):
         return p['extent'],p['frame'],names[0]
     proof['coverage']=audit_coverage(objects,name,rows,context,regions,_function_consumer=child)
     return proof
+
+
+def _parent_literals(objects,name,rows):
+    """Fixed literal bundle only, explicitly not whole-Visitor coverage.
+
+    Actual Config pointer VALUES are immutable input facts. The private
+    consumer must freshly compare them with its own same-B/source relation.
+    No owner or evaluated source/return state is accepted or retained here.
+    """
+    from config_headers import VISITOR
+    from config_tail_parent_contracts import GRAMMARS as PARENTS
+    offsets=(170,5630,5922,6018,6412,6450,7000,56)
+    require(name in objects.elf.functions and canonical_symbol(name)==VISITOR,'unreviewed Tail parent identity')
+    start=objects.elf.functions[name][0]&~1;extent,frame,_=_function(objects,start,VISITOR)
+    require((extent,frame)==(7128,1608),'Tail parent literal extent/frame differs')
+    def pointer_value(objects,value,descriptor):
+        require(descriptor==dict(kind='same_Config') and type(value) is int and 0<=value<=0xffffffff,
+            'Tail parent has another readonly literal descriptor')
+        return ()
+    windows=tuple(_literal_body(objects,name,rows,VISITOR,'decoded_tail_'+str(off),PARENTS['visitor_'+str(off)],
+        pointer_value,_outline,window=start+off,function_consumer=_function) for off in offsets)
+    return dict(kind='tail_parent_literal_windows_only',role=VISITOR,function=start,extent=extent,frame=frame,
+        windows=windows,pool_values=tuple((p['function']-start,ordinal,value) for p in windows for ordinal,value in p['objects'].items()))
 
 
 def tail_children(objects,rows,parents):
