@@ -1,5 +1,6 @@
 //! Fixed-size RGB565 storage and hardware-independent drawing.
 use core::ops::{Deref, DerefMut};
+use dashboard_config::Geometry;
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::RawU16;
@@ -48,20 +49,26 @@ fn representable_rectangle(area: &embedded_graphics::primitives::Rectangle) -> b
 
 pub struct St7789Renderer<'a> {
     framebuffer: &'a mut FrameBuffer,
+    geometry: Geometry,
 }
 
 impl<'a> St7789Renderer<'a> {
-    pub fn new(framebuffer: &'a mut FrameBuffer) -> Self { Self { framebuffer } }
+    pub fn new(framebuffer: &'a mut FrameBuffer) -> Self { Self::with_geometry(framebuffer, Geometry::Landscape) }
+
+    pub fn with_geometry(framebuffer: &'a mut FrameBuffer, geometry: Geometry) -> Self { Self { framebuffer, geometry } }
+
+    pub const fn geometry(&self) -> Geometry { self.geometry }
 
     /// Bounded RGB565 row for validated startup assets, in panel byte order.
     pub fn row_bytes_mut(
         &mut self,
         row: usize,
     ) -> Option<&mut [u8]> {
-        if row >= HEIGHT {
+        if row >= usize::from(self.geometry.height()) {
             return None;
         }
-        self.framebuffer.get_mut(row * WIDTH * 2..(row + 1) * WIDTH * 2)
+        let stride = usize::from(self.geometry.width()) * 2;
+        self.framebuffer.get_mut(row * stride..(row + 1) * stride)
     }
 
     pub fn clear_buffer(
@@ -84,8 +91,8 @@ impl<'a> St7789Renderer<'a> {
         y: i32,
         color: Rgb565,
     ) {
-        if x >= 0 && x < WIDTH as i32 && y >= 0 && y < HEIGHT as i32 {
-            let idx = (y as usize * WIDTH + x as usize) * 2;
+        if x >= 0 && x < i32::from(self.geometry.width()) && y >= 0 && y < i32::from(self.geometry.height()) {
+            let idx = (y as usize * usize::from(self.geometry.width()) + x as usize) * 2;
             let raw: RawU16 = color.into();
             let bytes = raw.into_inner().to_be_bytes();
             self.framebuffer[idx] = bytes[0];
@@ -95,7 +102,7 @@ impl<'a> St7789Renderer<'a> {
 }
 
 impl OriginDimensions for St7789Renderer<'_> {
-    fn size(&self) -> Size { Size::new(WIDTH as u32, HEIGHT as u32) }
+    fn size(&self) -> Size { Size::new(self.geometry.width().into(), self.geometry.height().into()) }
 }
 
 impl DrawTarget for St7789Renderer<'_> {
@@ -151,7 +158,7 @@ impl DrawTarget for St7789Renderer<'_> {
             if hidden_left > 0 && colors.nth(hidden_left - 1).is_none() {
                 return Ok(());
             }
-            let start = ((first_y + row) * WIDTH + first_x) * 2;
+            let start = ((first_y + row) * usize::from(self.geometry.width()) + first_x) * 2;
             let row_bytes = &mut self.framebuffer[start..start + visible_width * 2];
             for pixel in row_bytes.as_chunks_mut::<2>().0 {
                 let Some(color) = colors.next() else {
@@ -190,7 +197,7 @@ impl DrawTarget for St7789Renderer<'_> {
         let width = drawable_area.size.width as usize;
 
         for y in drawable_area.rows() {
-            let start = (y as usize * WIDTH + x_start) * 2;
+            let start = (y as usize * usize::from(self.geometry.width()) + x_start) * 2;
             let mut row_bytes = &mut self.framebuffer[start..start + width * 2];
 
             if !x_start.is_multiple_of(2) {
