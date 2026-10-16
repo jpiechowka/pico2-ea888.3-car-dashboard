@@ -89,7 +89,7 @@
     "src/pwm.rs": "e4e60fa655e00b8be097520dfbb26504e9177e1fa6ff4648e0553b5b688758ff",
     "Cargo.toml": "b7d76043e2d22e326719e938f4ae145a3d6ce63d8925b27997759e029a18612e",
     "Cargo.toml.orig": "1704f5ae8bd42b51ea6c77bc6cd426c74dff4f1afdaa999db1e22e924879dbe6",
-    "src/lib.rs": "8c069e5de3134708387926082eb79138072712cca88b248548ff4afb6f3136e3"
+    "src/lib.rs": "b064db6619b6d4ef55435327c427f33d482e7a279ef4c4f9e451239ca4c96927"
   },
   "compatibility_backports": {
     "pio_0_4": {

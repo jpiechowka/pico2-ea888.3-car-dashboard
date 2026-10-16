@@ -205,3 +205,10 @@ This does not requalify flash machine-code gates, other profile/feature images,
 RP2040 linking, or physical reset/PIO timing. Those checks remain separate;
 no hardware was accessed. The single linked artifact is evidence for this
 startup backport, not approval to flash a new image.
+
+## ACTLR ordering review (16 October 2026)
+
+The EXTEXCLALL helper comment now describes external exclusive transactions,
+without claiming that it changes every memory region's shareability. No register
+operation or startup instruction changed. See the [source review](../../docs/hardware/actlr-startup-review.md)
+for the distinct core0/core1 paths and the limit of the barrier finding.

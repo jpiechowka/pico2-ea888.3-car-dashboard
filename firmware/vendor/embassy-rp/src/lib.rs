@@ -773,17 +773,14 @@ __pre_init:
 "#
 );
 
-/// Set the EXTEXCLALL bit in ACTLR.
+/// Enable external exclusive transactions on this core (ACTLR.EXTEXCLALL).
 ///
-/// The default MPU memory map marks all memory as non-shareable, so atomics don't
-/// synchronize memory accesses between cores at all. This bit forces all memory to be
-/// considered shareable regardless of what the MPU says.
+/// Exclusive loads/stores use the external monitor even when the address is
+/// non-shareable. This does not change MPU memory attributes or replace the
+/// ordering required by shared-data atomics. See Cortex-M33 TRM B2.2.
 ///
-/// TODO: does this interfere somehow if the user wants to use a custom MPU configuration?
-/// maybe we need to add a way to disable this?
-///
-/// This must be done FOR EACH CORE. Core 0 does this in `__pre_init`; this function is
-/// called after runtime initialization for core 1.
+/// Core 0 sets the same bit in stackless `__pre_init`; core 1 calls this after
+/// runtime initialization, before GPIO setup and the application entry point.
 #[cfg(feature = "_rp235x")]
 unsafe fn enable_actlr_extexclall() {
     (&*cortex_m::peripheral::ICB::PTR).actlr.modify(|w| w | (1 << 29));
