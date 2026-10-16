@@ -28,7 +28,9 @@ Choose numeric/history, circular, needle, horizontal, vertical or segmented
 gauges. [Gauge and colour controls](docs/configurator/gauges-and-colours.md) include
 fixed or expanding scales, per-widget palettes and separate combined warnings.
 
-Embed the exported file in a checked build using the working profile:
+For a complete project, use **Build & Flash** or **Download build recipe** so
+startup settings and converted artwork are included. For a dashboard-only `.eav`
+export, build with the user's observed working profile:
 
 ```powershell
 ./firmware/scripts/Build-Dashboard.ps1 -Name my-views -Profile 280-70 -Mode Demo -Config ./dashboard.eav -Expert

@@ -1,9 +1,10 @@
 # Configuration files and firmware builds
 
-The editable document is strict JSON. The runtime file uses the bounded `.eav`
-format described in [configuration-format.md](configuration-format.md). Both
-imports use the same Rust validator. Files cannot qualify an adapter, invent a
-decoder, or bypass ECU capability discovery.
+Complete Studio projects use `.eavp` to keep dashboard views, startup settings
+and artwork together. Dashboard-only editing also supports strict JSON and the
+bounded `.eav` format described in [configuration-format.md](configuration-format.md).
+All dashboard imports use the same Rust validator. Files cannot qualify an
+adapter, invent a decoder, or bypass ECU capability discovery.
 
 From the repository root in PowerShell:
 
@@ -51,14 +52,18 @@ physical FPS. A smaller SPI request can select a larger divisor and substantiall
 slow transfers; equal SPI rates still leave different CPU rendering budgets.
 
 **Download build recipe** creates a PowerShell 7 script containing the current
-accepted dashboard, startup profile and build options. Invalid/pending edits or
+accepted dashboard, startup profile, converted artwork and build options. Invalid/pending edits or
 an active drag block export. Run the downloaded file with `-Repository` pointing
-to this checkout. It creates fresh `.eav`/`.easp` inputs under
-`target/studio-exports`, checks the pinned toolchain and invokes the build wrapper
-below. Existing capture names are never overwritten. The recipe builds and
+to this checkout. It checks each embedded input's SHA-256 and creates fresh
+`.eav`/`.easp` inputs and optional `.easa` artwork under `target/studio-exports`.
+It checks the pinned toolchain and invokes the build wrapper below. Original
+PNG/GIF artwork stays out of firmware. Existing capture names are never overwritten. The recipe builds and
 validates; it does not flash a device. Re-export after changing the toolchain.
 
 ## Reproducible PowerShell workflow
+
+The wrapper's `-Config` parameter takes dashboard-only `.eav`. Use the exported
+build recipe or Studio's native build for a complete project with custom startup.
 
 ```powershell
 .\firmware\scripts\Build-Dashboard.ps1 -Name custom-demo-01 -Mode Demo -Profile 280-70 -Config .\my-dashboard.eav
@@ -256,11 +261,13 @@ explicit setup instruction. `-Setup` explicitly installs the repository's dated
 Rust nightly, ARM/Wasm targets and LLVM component, installs Trunk 0.21.14 and
 wasm-bindgen CLI 0.2.129 into `target/configurator-tools/bin`, compiles the checker
 into `target/studio-helper/debug`, and fetches the editor's locked dependencies.
-Setup may download and compile. It ends with Check; exit 4 means a listed manual
-prerequisite remains. Python, Visual Studio Build Tools/Windows SDK, Binaryen 133,
-and official USB-enabled picotool 2.3.1 are separate manual prerequisites. Put
-`wasm-opt.exe` in `target/configurator-tools/bin`; this slice still checks the
-legacy `firmware/tools/picotool.exe` location and does not replace its binary.
+Setup may download and compile. It also verifies and installs Binaryen 133 and
+official USB-enabled picotool 2.3.1 under `target/configurator-tools/bin` from
+pinned release archives. It ends with Check; exit 4 means a listed manual
+prerequisite remains. Python and Visual Studio Build Tools/Windows SDK require
+manual installation. The legacy tracked `firmware/tools/picotool.exe` is
+unchanged; the native helper uses the ignored tool directory. See
+[explicit tool setup](setup-tools.md) for release hashes and installation checks.
 
 Existing `Studio.ps1` (build) and `Studio.ps1 -Serve -Port 8080` remain the static
 editor workflow. They now use offline mode and fail with setup instructions
@@ -285,7 +292,8 @@ Cortex-M33/FPU fixture remains the existing build validation adapter's check.
 MSVC registration and SDK libraries are detected, while actual host linking,
 Wasm pipeline validation and device access are explicitly `not_checked`.
 `ready` therefore does not admit firmware, prove USB access, or enable flashing.
-The helper's HTTP/build/flash adapters are not delivered by this command.
+This command checks prerequisites only; the separate `serve` command provides
+the HTTP/build/flash adapters.
 
 Native checks require Windows 10/11 x64. Each fixed probe is assigned to a
 non-inheritable Windows Job Object at process creation, with no breakaway flag,
@@ -338,7 +346,8 @@ There are at most 32 HTTP connection tasks, each with 10-second header/body and
 30-second total connection deadlines, 16 KiB headers, 64 header fields, no HTTP
 upgrades and no keepalive. Probe workers remain owned independently of client
 disconnect. Ctrl+C stops accepts, cancels the check, and joins owned work.
-Setup and flash HTTP routes remain unavailable. Build capture and descriptor routes are described below.
+Setup remains an explicit PowerShell command. Build, device inspection, Flash
+and local-record cleanup routes share the authenticated job lifecycle below.
 
 Focused native HTTP regression command after building the helper:
 `python studio-helper/tests/test_server_http.py` (run from repository root).
@@ -354,14 +363,14 @@ serial/product strings, descriptor status, reason, and explicit capacity state.
 Missing/unsupported serials and duplicates stay unqualified. No candidate is
 automatically selected. Refresh replaces the snapshot and all IDs.
 
-This slice uses nusb 0.2.7 Windows descriptor discovery in a fixed helper child,
+Discovery uses nusb 0.2.8 Windows descriptors in a fixed helper child,
 under the existing 15-second deadline/64 KiB output/owned-Job cleanup boundary.
 It does not call picotool, claim/reset the PICOBOOT interface, read program or
 OTP memory, or program anything. Every returned entry has `flash_ready:false`
-and `capacity:{state:"unverified",bytes:null,provenance:null}`. A future explicit
-genuine-Pico-2 confirmation can use the shared `user_confirmed` state with
-manufacturer 4 MiB provenance; this scanner never fabricates that assertion or
-presents it as a measurement.
+and `capacity:{state:"unverified",bytes:null,provenance:null}`. The separate Flash
+confirmation uses the shared `user_confirmed` state with manufacturer 4 MiB
+provenance; this scanner never fabricates that assertion or presents it as a
+measurement.
 
 `complete:true` means the bounded descriptor producer finished. nusb can omit
 inaccessible Windows descriptors and allocates its device list before returning;
@@ -416,7 +425,9 @@ restart discards the cache. Every summary binds the complete project, startup
 inputs, normalized options, source, converter, ELF and UF2 identities. All have
 `hardware_qualified:false` and `flash_ready:false`. These conditional software
 artifacts do not qualify arbitrary boards, partition/security states, or A2/E10
-mass-storage fallback. No USB writes or flash route are enabled.
+mass-storage fallback. Explicit Flash admission requires a matching artifact,
+fresh device inspection and the user's genuine-Pico-2 confirmation; artifact
+metadata alone grants no write authority.
 
 Compilation currently includes the capture script's existing image gates.
 Sanitized stdout/stderr is streamed into bounded job logs while the child runs;
@@ -446,3 +457,31 @@ A bounded hash of native descriptor identity is compared before and after the
 information pair. Matching snapshots do not prove continuous attachment or
 prevent a device spoofing descriptors. Every inspection still has
 `flash_ready:false`. No physical inspection was performed in feature tests.
+
+### Explicit Flash and recovery
+
+**Flash selected device** submits the accepted artifact, inspected device and
+session-bound confirmation to `POST /api/v1/flashes`. The native worker repeats
+identity and policy checks before fixed picotool commands. Transfer,
+verification and reboot request are separate stages with bounded logs.
+Verification compares device contents; a successful reboot request does not
+establish application startup, electrical stability or ECU support.
+
+Cancellation, disconnect or a helper restart never resumes a write. **Flash
+history** shows retained outcomes, including incomplete attempts that need
+inspection. Device selection and inspection are invalidated after an attempt.
+Retry is explicit and needs current evidence again. See the
+[flashing contract](flashing-design.md) for stage and recovery details.
+
+### Local build storage
+
+**Build storage** reports retained successful and failed attempts separately.
+Cleanup requires an explicit selected record and confirmation. Active attempts,
+retained artifacts and unknown or incomplete ownership records are protected;
+cleanup does not affect a device or project stored in the browser.
+
+Successful attempts are bounded to 16 records / 8 GiB, failed attempts to four
+records / 1 GiB, and active scratch space to 4 GiB. Admission reserves space
+before building; these caps are not a measured minimum disk requirement. The
+[storage policy](../../studio-helper/BUILD_STORAGE.md) explains quarantine,
+ownership and cleanup behavior. Flash history has its own cleanup controls.
