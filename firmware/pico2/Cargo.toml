@@ -50,9 +50,9 @@ micromath = "2.1.0"
 profont = "0.7.0"
 cortex-m-rt = "0.7.7"
 cortex-m = "0.7.9"
-defmt = "1.1.1"
+defmt = "1.2.0"
 # Keep the multicore critical-section encoder. Never enable drop-on-contention.
-defmt-rtt = { version = "1.3.0", features = ["disable-blocking-mode"] }
+defmt-rtt = { version = "1.3.1", features = ["disable-blocking-mode"] }
 embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "defmt", "executor-thread"] }
 embassy-futures = "0.1.2"
 embassy-rp = { version = "0.10.0", features = ["binary-info", "critical-section-impl", "defmt", "rp235xa", "time-driver", "unstable-pac"] }
