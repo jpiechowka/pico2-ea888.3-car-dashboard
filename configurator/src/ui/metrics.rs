@@ -64,19 +64,23 @@ pub fn first_frame(ui: Ui) {
 pub fn file_operation(
     ui: Ui,
     import: bool,
-    json: bool,
+    format: ImportFormat,
     bytes: usize,
     started: f64,
 ) {
     let timing = FileTiming {
-        format: if json { "json" } else { "eav" },
+        format: match format {
+            ImportFormat::Project => "eavp",
+            ImportFormat::Json => "json",
+            ImportFormat::Binary => "eav",
+        },
         bytes,
         elapsed_ms: (now() - started).max(0.0),
     };
     ui.trace.update(|t| {
         if import {
             t.operations.last_import = Some(timing);
-        } else if json {
+        } else if matches!(format, ImportFormat::Json) {
             t.operations.export_json = Some(timing);
         } else {
             t.operations.export_binary = Some(timing);

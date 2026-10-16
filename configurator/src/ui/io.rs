@@ -562,7 +562,13 @@ pub fn export(
                 &bytes,
             ) {
                 Ok(()) => {
-                    metrics::file_operation(ui, false, json, bytes.len(), started);
+                    metrics::file_operation(
+                        ui,
+                        false,
+                        if json { ImportFormat::Json } else { ImportFormat::Binary },
+                        bytes.len(),
+                        started,
+                    );
                     ui.event(Notice::info(
                         Category::ImportExport,
                         "export.started",
@@ -698,7 +704,7 @@ fn import_file(
                     complete_import(ui, token, format, &bytes)
                 };
                 if success {
-                    metrics::file_operation(ui, true, matches!(format, ImportFormat::Json), count, started);
+                    metrics::file_operation(ui, true, format, count, started);
                 }
             }
             Err(_) => {

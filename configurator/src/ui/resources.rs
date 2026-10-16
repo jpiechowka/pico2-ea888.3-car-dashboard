@@ -1,7 +1,6 @@
 //! Browser presentation of accepted serialization and separate build evidence.
 use dashboard_configurator::config::{Readout, Secondary};
 use dashboard_configurator::resources::{
-    ArtifactEvidenceState,
     ConfigResources,
     ResourceAvailability,
     ResourceLimits,
@@ -142,8 +141,8 @@ pub fn Resources(ui: Ui) -> impl IntoView {
         }}
         <section class="resource-target" aria-label="Target build measurements">
             <h3>"Target measurements"</h3>
-            <p>{format!("{:?} · no admitted build artifact",ArtifactEvidenceState::NotMeasured)}</p>
-            <dl><div><dt>"Static SRAM"</dt><dd>"Not measured"</dd></div><div><dt>"Flash"</dt><dd>"Not measured"</dd></div><div><dt>"Core 0 / Core 1 stack"</dt><dd>"Not measured"</dd></div><div><dt>"Requested clock"</dt><dd>"Not measured"</dd></div><div><dt>"Resolved actual clock"</dt><dd>"Not measured"</dd></div></dl>
+            <p>"Inspect admitted firmware files and their validation status in Build & Flash. This panel reports accepted configuration sizes and layout limits."</p>
+            <button on:click=move |_| workspaces::activate(ui, Workspace::BuildFlash)>"Open Build & Flash"</button>
             <p class="hint">"Software build evidence requires matching source, compiler, tools, profile, effective options and successful gates. Physical panel speed, voltage accuracy, long-duration stability and ECU qualification require separate hardware evidence."</p>
         </section>
     </div> }
