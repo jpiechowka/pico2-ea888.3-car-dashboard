@@ -142,23 +142,23 @@ pub fn Panel(ui: Ui) -> impl IntoView {
     let retained = Signal::derive(move || retained_source(ui));
     let on_accept = Callback::new(move |input| accept_artwork(ui, input));
     view! {
-        <details class="workspace-group" id="studio-startup" open><summary>"Startup"</summary>
-            <p class="hint">"A brief system check, your animation, then the dashboard. Acquisition keeps running throughout."</p>
-            <label>"Animation"<select disabled=move ||ui.snapshot_blocked() aria-label="Startup animation" prop:value=move ||(state.profile.get().theme as u8).to_string() on:change=move |e|{if let Ok(n)=event_target_value(&e).parse::<usize>() {if n==5 {state.edit(ui, |p|p.theme=StartupTheme::Custom);} else if let Some(theme)=StartupTheme::ALL.get(n) {state.edit(ui, |p|p.theme = *theme);}}}>{StartupTheme::ALL.into_iter().enumerate().map(|(i,t)|view!{<option value=i.to_string()>{t.label()}</option>}).collect_view()}<Show when=move ||ui.editor.with(|e|e.startup_artwork().is_some())><option value="5">"Custom artwork"</option></Show></select></label>
+        <details class="workspace-group startup-panel" id="studio-startup" open><summary>"Startup"</summary><div class="startup-body">
+            <p class="hint startup-intro">"A brief system check, your animation, then the dashboard. Acquisition keeps running throughout."</p>
+            <section class="startup-card"><h3>"Playback and timing"</h3><div class="startup-grid"><label>"Animation"<select disabled=move ||ui.snapshot_blocked() aria-label="Startup animation" prop:value=move ||(state.profile.get().theme as u8).to_string() on:change=move |e|{if let Ok(n)=event_target_value(&e).parse::<usize>() {if n==5 {state.edit(ui, |p|p.theme=StartupTheme::Custom);} else if let Some(theme)=StartupTheme::ALL.get(n) {state.edit(ui, |p|p.theme = *theme);}}}>{StartupTheme::ALL.into_iter().enumerate().map(|(i,t)|view!{<option value=i.to_string()>{t.label()}</option>}).collect_view()}<Show when=move ||ui.editor.with(|e|e.startup_artwork().is_some())><option value="5">"Custom artwork"</option></Show></select></label>
             <label>"System check"<select aria-label="Startup system check" prop:value=move ||(state.profile.get().status as u8).to_string() on:change=move |e|{let value=match event_target_value(&e).as_str(){"0"=>StartupStatus::Off,"2"=>StartupStatus::Detailed,_=>StartupStatus::Brief};state.edit(ui, |p|p.status=value);}>
                 <option value="0">"Off"</option><option value="1">"Brief"</option><option value="2">"Detailed"</option>
             </select></label>
-            <p class="hint">"Shows completed checks and the current OBD state. Configured sources do not prove ECU support or a connection."</p>
-            <label>"Status duration (ms)"<input type="number" min="0" max="2000" step="50" aria-label="Startup status duration" prop:value=move ||state.profile.get().status_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(ui, |p|p.status_ms=v);}else{state.message.set("Enter a status duration from 0 to 2000 ms; the accepted duration was kept.".into());}event_target::<web_sys::HtmlInputElement>(&e).set_value(&state.profile.get_untracked().status_ms.to_string());}/></label>
+            </div><p class="hint">"Shows completed checks and the current OBD state. Configured sources do not prove ECU support or a connection."</p>
+            <div class="startup-grid"><label>"Status duration (ms)"<input type="number" min="0" max="2000" step="50" aria-label="Startup status duration" prop:value=move ||state.profile.get().status_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(ui, |p|p.status_ms=v);}else{state.message.set("Enter a status duration from 0 to 2000 ms; the accepted duration was kept.".into());}event_target::<web_sys::HtmlInputElement>(&e).set_value(&state.profile.get_untracked().status_ms.to_string());}/></label>
             <label>"Splash duration (ms)"<input type="number" min="0" max="10000" step="50" aria-label="Startup splash duration" prop:value=move ||state.profile.get().duration_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(ui, |p|p.duration_ms=v);}else{state.message.set("Enter a splash duration from 0 to 10000 ms; the accepted duration was kept.".into());}event_target::<web_sys::HtmlInputElement>(&e).set_value(&state.profile.get_untracked().duration_ms.to_string());}/></label>
-            <p class="hint">"0 skips the animation; the system check has its own duration."</p>
-            <label><input type="checkbox" prop:checked=move ||state.profile.get().loop_animation on:change=move |e|state.edit(ui, |p|p.loop_animation=event_target_checked(&e))/>{" Loop animation"}</label>
+            </div><p class="hint">"0 skips the animation; the system check has its own duration."</p>
+            </section><section class="startup-card"><h3>"During startup"</h3><div class="startup-behavior"><div><label class="startup-toggle"><input type="checkbox" prop:checked=move ||state.profile.get().loop_animation on:change=move |e|state.edit(ui, |p|p.loop_animation=event_target_checked(&e))/>{" Loop animation"}</label>
             <p class="hint">"With looping off, the animation plays once and holds its last frame until the splash duration ends."</p>
-            <label><input type="checkbox" prop:checked=move ||state.profile.get().interrupt_on_attention on:change=move |e|state.edit(ui, |p|p.interrupt_on_attention=event_target_checked(&e))/>{" Show dashboard immediately for attention warnings"}</label>
+            </div><div><label class="startup-toggle"><input type="checkbox" prop:checked=move ||state.profile.get().interrupt_on_attention on:change=move |e|state.edit(ui, |p|p.interrupt_on_attention=event_target_checked(&e))/>{" Show dashboard immediately for attention warnings"}</label>
             <p class="hint">"By default warnings wait for the dashboard. Faults and protected Y recovery always exit startup; a fresh tap or rotation skips it without also activating its usual action."</p>
-            <label><input type="checkbox" prop:checked=move ||state.profile.get().warning_led on:change=move |e|state.edit(ui, |p|p.warning_led=event_target_checked(&e))/>{" Warning LED during startup"}</label>
+            </div><div><label class="startup-toggle"><input type="checkbox" prop:checked=move ||state.profile.get().warning_led on:change=move |e|state.edit(ui, |p|p.warning_led=event_target_checked(&e))/>{" Warning LED during startup"}</label>
             <p class="hint">"The configured LED pattern can indicate warnings while splash text stays hidden. A hidden warning cannot be acknowledged."</p>
-            <div class="toolbar"><button on:click=move |_|show(ui)>"Preview startup"</button><button disabled=move ||ui.snapshot_blocked() on:click=move |_|{
+            </div></div></section><div class="startup-actions"><button on:click=move |_|show(ui)>"Preview startup"</button><button disabled=move ||ui.snapshot_blocked() on:click=move |_|{
                 if let Some(bytes)=state.profile.get_untracked().encode() && io::download(ui,"startup.easp","application/octet-stream",&bytes).is_err(){state.message.set("Could not download the startup profile.".into());}
             }>"Export startup profile"</button></div>
             <label>"Import startup profile (.easp)"<input type="file" disabled=move ||ui.snapshot_blocked() accept=".easp" on:change=move |event| {
@@ -176,14 +176,14 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                 }
             }/></label>
             <startup_artwork::Panel ui=ui on_accept=on_accept retained=retained/>
-            <p role="status" class="hint">{move ||state.message.get()}</p>
+            <p role="status" class="startup-status">{move ||state.message.get()}</p>
             <p class="hint">"Save a complete .eavp project to keep dashboard, startup and artwork together. Dashboard-only .eav and JSON omit startup. Choosing a procedural theme replaces custom artwork in the current state; Undo restores it."</p>
-        </details>
+        </div></details>
     }
 }
 #[component]
 pub fn Playback(ui: Ui) -> impl IntoView {
-    view! {<div hidden=move ||ui.dock.mode.get()!=PreviewMode::Startup>
+    view! {<div class="startup-playback" hidden=move ||ui.dock.mode.get()!=PreviewMode::Startup>
         <div class="preview-toolbar"><span>"STARTUP PREVIEW"</span><div>
             <button on:click=move |_|{if !ui.playing.get_untracked() && ui.sample_ms.get_untracked()>=ui.startup.profile.get_untracked().total_duration(){ui.sample_ms.set(0);}ui.playing.update(|p|*p = !*p);}>{move ||if ui.playing.get(){"Pause"}else{"Play"}}</button>
             <button on:click=move |_|{ui.playing.set(false);ui.sample_ms.set(0);}>"Restart"</button>
