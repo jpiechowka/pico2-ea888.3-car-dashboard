@@ -14,11 +14,14 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 Launch the Rust/Wasm editor from the repository root:
 
 ```powershell
+./configurator/Studio.ps1 -Setup
+./configurator/Studio.ps1 -Check
 ./configurator/Studio.ps1 -Serve
 ```
 
 Open `http://127.0.0.1:8080`. Drag widgets onto a 4×2 grid, configure up to eight
-named views, and export editable JSON plus a compact `.eav` file. The preview
+named views, and export a complete `.eavp` project. Dashboard-only JSON and compact
+`.eav` exports remain available. The preview
 uses the firmware renderer. See the [View Studio guide](docs/configurator/studio.md)
 for warnings, fuel/AFR, ECU source evidence, local saving and import/export.
 Choose numeric/history, circular, needle, horizontal, vertical or segmented
@@ -28,7 +31,7 @@ fixed or expanding scales, per-widget palettes and separate combined warnings.
 Embed the exported file in a checked build using the working profile:
 
 ```powershell
-./firmware/scripts/Build-Dashboard.ps1 -Name my-views -Profile 280-70 -Mode Demo -Config ./dashboard.eav
+./firmware/scripts/Build-Dashboard.ps1 -Name my-views -Profile 280-70 -Mode Demo -Config ./dashboard.eav -Expert
 ```
 
 This builds and validates an artifact without flashing. See the
@@ -37,6 +40,33 @@ fallback and hardware validation. Vehicle source qualification remains required.
 The [configurator validation record](docs/configurator/validation.md) maps the
 completed implementation, final review corrections, measurements and remaining
 device checks.
+
+### Build & Flash from Studio
+
+In a second terminal, run `./configurator/Studio.ps1 -Helper`. Open **Build & Flash**,
+connect the helper and check prerequisites. Choose Demo or Vehicle, a named
+profile or validated custom clocks, and inspect the actual frequencies and
+compiler options before building the accepted project. Invalid drafts block a
+new build; changes after a build mark its firmware as different.
+
+After a build passes its artifact checks, Studio offers a checked UF2 download
+and explicit flashing. Hold BOOTSEL while connecting the isolated board, scan,
+inspect the intended device and confirm it is a genuine Pico 2. Its 4 MB capacity
+is manufacturer specified and user confirmed, not measured by picotool.
+The job shows **transfer → verification → reboot request** separately. A reboot
+request does not establish that firmware is running correctly. Interrupted jobs
+never resume a write automatically; retained history explains the last known
+outcome. The downloadable PowerShell recipe is a build-only fallback.
+
+The helper currently runs on **Windows 10/11 x64**. Setup needs rustup, MSVC Build
+Tools with a Windows SDK, Python, and Internet access for the pinned Rust/tool
+downloads. Check reports missing tools before a build. Browser editing of an
+already served Studio build does not require a Rust toolchain on the browser's
+computer. No minimum PC RAM specification has been qualified. A full development
+firmware-image validation previously sampled up to **16.5 GB of process private
+memory**; this is a heavy validation workload, not browser editing or Pico RAM.
+See [setup details](docs/configurator/setup-tools.md) and the
+[flashing contract and clock references](docs/configurator/flashing-design.md).
 
 ## Firmware build and validation
 
@@ -50,9 +80,9 @@ cargo clippy --locked -p dashboard-pico2 -- -D warnings
 ```
 
 `demo` and `longan-rx12` are mutually exclusive. All Rust workspaces pin
-`nightly-2026-10-12`, installed after `rustup update`; firmware also requests
-`thumbv8m.main-none-eabihf`. The root `rustfmt.toml` applies to the workspaces.
-The [dependency review](docs/dependencies/upgrade-2026-10-11.md) records current
+`nightly-2026-10-16`, installed after `rustup update`; firmware also requests
+`thumbv8m.main-none-eabihf` and `target-cpu=cortex-m33`. The root `rustfmt.toml` applies to the workspaces.
+The [dependency review](docs/dependencies/upgrade-2026-10-16.md) records current
 releases, compatibility constraints and reviewed local HAL corrections.
 
 Run shared correctness checks from `host/`:
@@ -138,8 +168,9 @@ Ordinary assigned holds default to 800 ms and suppress the release tap. Dashboar
 A/B holds select previous/next view; Debug A/B/X holds lower/raise/toggle brightness;
 Logs A/B/X holds scroll older/newer/return live. A fixed two-second Y hold always
 recovers Dashboard, the selected view and Full brightness, even from Off.
-The [complete v4 release](docs/configurator/advanced-v4-release.md) delivers advanced
-units/history/markers/warnings/RGB; later workspace and flash stages remain planned.
+The [v4 release](docs/configurator/advanced-v4-release.md) describes advanced
+units/history/markers/warnings/RGB. Studio also includes organized workspaces,
+the ECU reference, startup artwork and local Build & Flash.
 
 | Button | Default tap action |
 |---|---|
@@ -193,6 +224,14 @@ Logs retain 128 entries of up to 40 UTF-8 bytes, with truncation/overwrite
 counters and a separately protected latest fault. Scrolled views use stable
 sequence anchors. See [logging contracts](docs/performance/logging.md).
 
+Studio **Diagnostics** provides filtered browser events and console output.
+Its optional terminal relay forwards new warning/error context to the connected
+helper: severity, approved event code, workspace, sequence, timing and accepted
+revision. Raw messages, configuration and artwork remain in the browser. Terminal
+output uses colours when supported; bounded queues may drop context under load
+without blocking builds or flashing. The UI reports those drops. The ordinary
+Trunk terminal cannot receive browser events by itself.
+
 ## Experimental clock profiles
 
 Stock configuration is 150 MHz CPU and 37.5 MHz SPI. Optional mutually exclusive
@@ -214,7 +253,9 @@ See [the shared catalogue and build options](docs/configurator/building.md) and
 crates/dashboard-core/  Shared no_std rendering, models and diagnostic contracts
 crates/dashboard-config/  Bounded schema, catalogue, fuel model and binary codec
 crates/dashboard-config-tools/  Host validation and build snapshot tools
+crates/dashboard-startup-tools/ Rust artwork conversion and worker contracts
 configurator/       Rust/Wasm view editor, shared pixel preview and local saving
+studio-helper/      Native prerequisites, builds, device inspection and flashing
 configs/            Reviewed default JSON and compact runtime configuration
 firmware/pico2/src/  Hardware application, tasks, profiling and drivers
 firmware/vendor/    Reviewed Embassy RP source and provenance manifest
