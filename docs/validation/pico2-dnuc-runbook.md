@@ -44,8 +44,8 @@ These power and IO rules were rechecked against the
 ## 2. Build, check and freeze the image
 
 After the merge, update a clean checkout from `master`. Keep local evidence out
-of commits. The four Cargo roots (shared crates, firmware, host and configurator) use the
-reviewed `nightly-2026-10-12`; a newer
+of commits. The shared crates, firmware, host, configurator and native helper use
+the pinned `nightly-2026-10-16`; a newer
 compiler requires rerunning the checks, including the exact flash-code gates.
 
 Run this PowerShell block. It builds only, without contacting the Pico:

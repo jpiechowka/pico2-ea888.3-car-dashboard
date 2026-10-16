@@ -96,13 +96,15 @@ validator operation; decode and encode include the complete byte operation.
 This is a first baseline, not a claimed gain, MCU execution time or physical
 FPS measurement. The parser runs at startup, not in the frame loop.
 
-## Dependency evidence
+## Initial dependency evidence
 
 New direct dependencies are Postcard1.1.3, Serde1.0.229 and optional
 serde_json1.0.154; heapless0.9.3 gains its Serde feature. Postcard defaults are
 disabled, avoiding its separate heapless compatibility edge. Serde defaults
-are disabled on the device. The four lockfiles agree on Syn3.0.8 for current
-derive macros; unrelated reviewed versions are retained.
+are disabled on the device. The initial four lockfiles agreed on Syn3.0.8 for
+derive macros. The [16 October refresh](../dependencies/upgrade-2026-10-16.md)
+records later versions; historical parser measurements retain their original
+dependencies.
 
 The implementation was checked against the resolved crate source, including
 [Postcard's flavor interface](https://docs.rs/postcard/1.1.3/postcard/ser_flavors/trait.Flavor.html)
@@ -122,8 +124,10 @@ Version4 is the complete advanced contract shared by ordinary editor save/export
 JSON/EAV codecs, host migration, configured acquisition, rendering, warning
 acknowledgment and RGB policy. See [advanced controls](advanced-controls.md) for
 actual defaults and capabilities and [release evidence](advanced-v4-release.md)
-for the software resource gates and physical-validation limits. Organized editor
-workspaces, all-screen browser pixels and native Build & Flash remain planned.
+for historical software resource gates and physical-validation limits. Organized
+editor workspaces, all-screen browser pixels and native Build & Flash adapters
+are implemented; see [Studio](studio.md) and [building](building.md) for their
+current workflows and verification boundaries.
 
 Config appends channel-indexed `history_seconds[8]` (10–900, default120),
 `reduced_motion` (defaultfalse), and `led`. Widget appends `advanced`; warnings

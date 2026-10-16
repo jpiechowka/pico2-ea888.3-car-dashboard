@@ -4,20 +4,25 @@ The editor is a static Rust/Leptos application compiled to WebAssembly. It runs
 the same validator, acquisition simulation, warning pager and pixel renderer as
 the firmware. HTML and CSS provide the surrounding workbench; wasm-bindgen and
 Trunk generate the browser loader. There is no authored JavaScript, Node/npm
-toolchain, server API, account or uploaded configuration.
+toolchain or account. Editing stays in the browser. Optional Build & Flash uses
+an authenticated local Rust helper; accepted build inputs are sent only to that
+helper on this computer.
 
 ## Start on Windows
 
 From the repository root:
 
 ```powershell
+./configurator/Studio.ps1 -Setup
+./configurator/Studio.ps1 -Check
 ./configurator/Studio.ps1 -Serve
 ```
 
-Open `http://127.0.0.1:8080`. Use `-Port 8081` if necessary. The script installs
-the pinned Trunk 0.21.14 into the repository's ignored `target` directory when
-missing, ensures the pinned nightly's Wasm target is present, then serves a
-release build on localhost. Stop the foreground server with Ctrl+C.
+Open `http://127.0.0.1:8080`. Explicit Setup installs the pinned toolchain and
+repository-local tools; Check reports remaining prerequisites. Normal builds
+and serving run offline and do not install missing tools. Use `-Port 8081` for
+editing if necessary; the native helper accepts only port 8080. Stop the
+foreground server with Ctrl+C. See [setup details](setup-tools.md).
 
 For a static release directory only, omit `-Serve`. Output is
 `configurator/dist`. On another platform, enter `configurator`, install
@@ -50,9 +55,12 @@ uses synthetic completed presentations, including its clear phase. Changing
 the accepted configuration restarts the simulator explicitly; navigating device
 pages retains view/units/FPS choices. Rejected bindings are inspection only under
 **INVALID SIMULATION**, with the accepted layout and protected recovery. This
-stage also offers a persistent Dashboard timing canvas with explicit submit and
+simulator also offers Dashboard, Debug and Logs pixels with explicit submit and
 completion, sample/fault/stale/recovery controls, shared-history gaps/duration,
-and warning latch/acknowledgment state. Debug/Logs raster is a later stage.
+and warning latch/acknowledgment state. **Device → Startup → Replay full startup**
+exercises the shared status/splash controller. Startup-only edits cancel replay
+without discarding acquisition history; dashboard configuration changes restart
+the configured source session.
 
 1. Start with Overview or add an empty view. Name it using 1–14 printable ASCII
    characters. Reorder view tabs using the arrows; that is the Pico encoder order.
@@ -141,9 +149,12 @@ your work or explicitly use **Save here**. A denied/quota write never says Saved
 Other pages on the same origin that ignore the studio's lock are outside this
 coordination contract. Always export a portable backup.
 
-**Files & build** imports/exports editable JSON or the compact `.eav` runtime
-file. Imports are transactional, including async stale-file protection. A
-128 KiB JSON or 16 KiB binary limit applies. The shared decoder checks version,
+**Diagnostics → Configuration files** imports/exports complete `.eavp` projects,
+dashboard-only JSON and compact `.eav` runtime files. Complete projects retain
+startup settings and original artwork by default; an explicit smaller export
+keeps only converted animation. See [project storage](projects.md). Imports
+are transactional, including async stale-file protection. Limits are 9 MiB for
+projects, 128 KiB for JSON and 16 KiB for `.eav`. The shared decoder checks version,
 length, checksum, canonical encoding and every field. Decimal input and JSON
 use identical single-precision rounding, including midpoint boundaries.
 
@@ -158,7 +169,10 @@ for the complete workflow. The device parses the file once before core 1 starts.
 Returning from Debug/Logs restores the selected view in RAM. Reboot uses the
 configured boot view. Default encoder click cycles Full / 50% Dim / delayed
 Off; accepted per-screen mappings select the actual actions. Protected Y hold
-always recovers Dashboard and Full brightness. No new firmware is flashed by the studio.
+always recovers Dashboard and Full brightness. **Build & Flash** can build the
+complete accepted project and explicitly program an inspected Pico 2 through the
+local helper. Exporting, downloading a recipe or running the wrapper above never
+flashes a device.
 
 ## Verification and limits
 
@@ -166,7 +180,7 @@ Native tests exercise the same transactional reducer, scaled drag geometry,
 pixel conversion, actual configured renderer, warning paging and elapsed-time
 clock used in the page. CI also compiles/lints Wasm and builds production assets.
 
-Under Files & build, **Browser performance trace** records up to 512 interactions
+Under **Diagnostics → Configuration files**, **Browser performance trace** records up to 512 interactions
 and long tasks locally. Warm the desired document, start a trace, perform edits,
 stop and export it. Input latency runs from handler entry through the animation
 boundary after canvas submission, including an opportunity for browser paint.

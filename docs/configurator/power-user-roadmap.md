@@ -25,10 +25,12 @@ policy, units, smoothing/reduced motion, channel history, markers/bands and
 advanced warnings. The editor uses the shared catalogue, configured acquisition,
 prepared presentation and completion-aware Dashboard simulation; invalid edits
 remain repairable with atomic undo/redo. See [release evidence](advanced-v4-release.md)
-for admitted software artifacts and physical limits. Stages 8 through 11 remain
-planned work, including full Debug/Logs pixels, organized power tools, JSON
-Apply/diff/resources and native Build & Flash. Stage 1's historical `4a2ca28`
-record passed all 14 CI jobs; it is not current v4 CI evidence.
+for historical software artifacts and physical limits. Stages 8 through 11 are
+implemented: organized workspaces, Debug/Logs pixels, JSON Apply/diff/resources,
+and native Build & Flash adapters. Current integration and production image
+qualification are separate from that implementation status. See the
+[Studio guide](studio.md) and [build workflow](building.md). Stage 1's historical
+`4a2ca28` record passed all 14 CI jobs; it is not current CI evidence.
 
 The reviewed [static configuration storage plan](../superpowers/plans/2026-10-12-config-storage.md),
 render-cache recovery and persistent simulation ownership precede the admitted
