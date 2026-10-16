@@ -574,6 +574,7 @@ pub fn error_text(error: EditorError) -> String {
         EditorError::Codec(ConfigError::Json { line, column }) => {
             format!("Invalid JSON at line {line}, column {column}. Check fields, types and duplicate keys.")
         }
+        EditorError::Project(_) => "Project or startup data is invalid, incomplete, oversized or failed its integrity checks. Current accepted state was kept.".into(),
         EditorError::Codec(_) => "The file is invalid, incompatible, oversized or has a failed checksum.".into(),
         _ => format!("Cannot apply this action: {error:?}."),
     }

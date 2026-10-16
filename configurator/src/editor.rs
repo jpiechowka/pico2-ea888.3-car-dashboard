@@ -175,6 +175,7 @@ pub struct ImportToken {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportFormat {
+    Project,
     Json,
     Binary,
 }
@@ -1190,12 +1191,14 @@ impl Editor {
         format: ImportFormat,
         bytes: &[u8],
     ) -> Result<Revision, EditorError> {
+        if format == ImportFormat::Project { return self.complete_project_import(token,bytes); }
         if self.import != Some(token) || token.revision != self.revision {
             return Err(EditorError::StaleToken);
         }
         self.ensure_clean()?;
         self.import = None;
         let preview = match format {
+            ImportFormat::Project => unreachable!("project handled before dashboard parsing"),
             ImportFormat::Json => from_json_bytes(bytes),
             ImportFormat::Binary => decode(bytes),
         }

@@ -3,59 +3,34 @@ use dashboard_core::startup::{StartupProfile, StartupStatus, StartupTheme};
 
 use super::*;
 
-const KEY: &str = "ea888-startup-profile-v1";
 #[derive(Clone, Copy)]
 pub struct State {
-    pub profile: RwSignal<StartupProfile>,
+    pub profile: Signal<StartupProfile>,
     pub reduced: RwSignal<bool>,
-    revision: RwSignal<u64>,
     pub message: RwSignal<String>,
 }
 impl State {
-    pub fn new() -> Self {
-        let restored = io::storage().ok().and_then(|s| s.get_item(KEY).ok().flatten());
-        let profile = restored
-            .as_deref()
-            .filter(|text| text.len() <= 1024)
-            .and_then(|text| serde_json::from_str::<StartupProfile>(text).ok())
-            .filter(|p| p.valid());
-        let message = if restored.is_some() && profile.is_none() {
-            "Saved startup profile is invalid; defaults shown. Export a profile to keep a portable copy."
-        } else {
-            "Startup profile is saved separately in this browser."
-        };
+    pub fn new(editor: RwSignal<Editor>) -> Self {
         Self {
-            profile: RwSignal::new(profile.unwrap_or_default()),
+            profile: Signal::derive(move || editor.with(Editor::startup_profile)),
             reduced: RwSignal::new(false),
-            revision: RwSignal::new(0),
-            message: RwSignal::new(message.into()),
+            message: RwSignal::new("Startup belongs to the complete Studio project and shares Undo / Redo.".into()),
         }
     }
 
     fn edit(
         self,
+        ui: Ui,
         f: impl FnOnce(&mut StartupProfile),
     ) {
         let mut next = self.profile.get_untracked();
         f(&mut next);
-        if !next.valid() {
+        if ui.run(|e| e.set_startup_profile(next)) {
             self.message
-                .set("Status must be 0–2000 ms; splash must be 0–10000 ms.".into());
-            return;
+                .set("Startup accepted. Undo restores the previous project state.".into());
+        } else {
+            self.message.set(ui.notice.get_untracked());
         }
-        self.profile.set(next);
-        self.revision.update(|r| *r = r.wrapping_add(1));
-        let saved = serde_json::to_string(&next)
-            .ok()
-            .is_some_and(|text| io::storage().ok().is_some_and(|s| s.set_item(KEY, &text).is_ok()));
-        self.message.set(
-            if saved {
-                "Startup profile saved in this browser."
-            } else {
-                "Browser storage unavailable. Export startup.easp to preserve these settings."
-            }
-            .into(),
-        );
     }
 }
 fn show(ui: Ui) {
@@ -71,38 +46,39 @@ pub fn Panel(ui: Ui) -> impl IntoView {
     view! {
         <details class="workspace-group" id="studio-startup" open><summary>"Startup"</summary>
             <p class="hint">"A brief system check, your animation, then the dashboard. Acquisition keeps running throughout."</p>
-            <label>"Animation"<select aria-label="Startup animation" prop:value=move ||(state.profile.get().theme as u8).to_string() on:change=move |e|{if let Ok(n)=event_target_value(&e).parse::<usize>() && let Some(theme)=StartupTheme::ALL.get(n) {state.edit(|p|p.theme = *theme);}}>{StartupTheme::ALL.into_iter().enumerate().map(|(i,t)|view!{<option value=i.to_string()>{t.label()}</option>}).collect_view()}</select></label>
-            <label>"System check"<select aria-label="Startup system check" prop:value=move ||(state.profile.get().status as u8).to_string() on:change=move |e|{let value=match event_target_value(&e).as_str(){"0"=>StartupStatus::Off,"2"=>StartupStatus::Detailed,_=>StartupStatus::Brief};state.edit(|p|p.status=value);}>
+            <label>"Animation"<select disabled=move ||ui.snapshot_blocked() aria-label="Startup animation" prop:value=move ||(state.profile.get().theme as u8).to_string() on:change=move |e|{if let Ok(n)=event_target_value(&e).parse::<usize>() {if n==5 {state.edit(ui, |p|p.theme=StartupTheme::Custom);} else if let Some(theme)=StartupTheme::ALL.get(n) {state.edit(ui, |p|p.theme = *theme);}}}>{StartupTheme::ALL.into_iter().enumerate().map(|(i,t)|view!{<option value=i.to_string()>{t.label()}</option>}).collect_view()}<Show when=move ||ui.editor.with(|e|e.startup_artwork().is_some())><option value="5">"Custom artwork"</option></Show></select></label>
+            <label>"System check"<select aria-label="Startup system check" prop:value=move ||(state.profile.get().status as u8).to_string() on:change=move |e|{let value=match event_target_value(&e).as_str(){"0"=>StartupStatus::Off,"2"=>StartupStatus::Detailed,_=>StartupStatus::Brief};state.edit(ui, |p|p.status=value);}>
                 <option value="0">"Off"</option><option value="1">"Brief"</option><option value="2">"Detailed"</option>
             </select></label>
             <p class="hint">"Shows completed checks and the current OBD state. Configured sources do not prove ECU support or a connection."</p>
-            <label>"Status duration (ms)"<input type="number" min="0" max="2000" step="50" aria-label="Startup status duration" prop:value=move ||state.profile.get().status_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(|p|p.status_ms=v);}else{state.message.set("Enter a status duration from 0 to 2000 ms.".into());}}/></label>
-            <label>"Splash duration (ms)"<input type="number" min="0" max="10000" step="50" aria-label="Startup splash duration" prop:value=move ||state.profile.get().duration_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(|p|p.duration_ms=v);}else{state.message.set("Enter a splash duration from 0 to 10000 ms.".into());}}/></label>
+            <label>"Status duration (ms)"<input type="number" min="0" max="2000" step="50" aria-label="Startup status duration" prop:value=move ||state.profile.get().status_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(ui, |p|p.status_ms=v);}else{state.message.set("Enter a status duration from 0 to 2000 ms; the accepted duration was kept.".into());}event_target::<web_sys::HtmlInputElement>(&e).set_value(&state.profile.get_untracked().status_ms.to_string());}/></label>
+            <label>"Splash duration (ms)"<input type="number" min="0" max="10000" step="50" aria-label="Startup splash duration" prop:value=move ||state.profile.get().duration_ms.to_string() on:change=move |e|{if let Ok(v)=event_target_value(&e).parse::<u16>(){state.edit(ui, |p|p.duration_ms=v);}else{state.message.set("Enter a splash duration from 0 to 10000 ms; the accepted duration was kept.".into());}event_target::<web_sys::HtmlInputElement>(&e).set_value(&state.profile.get_untracked().duration_ms.to_string());}/></label>
             <p class="hint">"0 skips the animation; the system check has its own duration."</p>
-            <label><input type="checkbox" prop:checked=move ||state.profile.get().loop_animation on:change=move |e|state.edit(|p|p.loop_animation=event_target_checked(&e))/>{" Loop animation"}</label>
+            <label><input type="checkbox" prop:checked=move ||state.profile.get().loop_animation on:change=move |e|state.edit(ui, |p|p.loop_animation=event_target_checked(&e))/>{" Loop animation"}</label>
             <p class="hint">"With looping off, the animation plays once and holds its last frame until the splash duration ends."</p>
-            <label><input type="checkbox" prop:checked=move ||state.profile.get().interrupt_on_attention on:change=move |e|state.edit(|p|p.interrupt_on_attention=event_target_checked(&e))/>{" Show dashboard immediately for attention warnings"}</label>
+            <label><input type="checkbox" prop:checked=move ||state.profile.get().interrupt_on_attention on:change=move |e|state.edit(ui, |p|p.interrupt_on_attention=event_target_checked(&e))/>{" Show dashboard immediately for attention warnings"}</label>
             <p class="hint">"By default warnings wait for the dashboard. Faults and protected Y recovery always exit startup; a fresh tap or rotation skips it without also activating its usual action."</p>
-            <label><input type="checkbox" prop:checked=move ||state.profile.get().warning_led on:change=move |e|state.edit(|p|p.warning_led=event_target_checked(&e))/>{" Warning LED during startup"}</label>
+            <label><input type="checkbox" prop:checked=move ||state.profile.get().warning_led on:change=move |e|state.edit(ui, |p|p.warning_led=event_target_checked(&e))/>{" Warning LED during startup"}</label>
             <p class="hint">"The configured LED pattern can indicate warnings while splash text stays hidden. A hidden warning cannot be acknowledged."</p>
-            <div class="toolbar"><button on:click=move |_|show(ui)>"Preview startup"</button><button on:click=move |_|{
+            <div class="toolbar"><button on:click=move |_|show(ui)>"Preview startup"</button><button disabled=move ||ui.snapshot_blocked() on:click=move |_|{
                 if let Some(bytes)=state.profile.get_untracked().encode() && io::download(ui,"startup.easp","application/octet-stream",&bytes).is_err(){state.message.set("Could not download the startup profile.".into());}
             }>"Export startup profile"</button></div>
-            <label>"Import startup profile (.easp)"<input type="file" accept=".easp" on:change=move |event| {
+            <label>"Import startup profile (.easp)"<input type="file" disabled=move ||ui.snapshot_blocked() accept=".easp" on:change=move |event| {
                 let input=event_target::<web_sys::HtmlInputElement>(&event);
                 let file=input.files().and_then(|files|files.get(0)); input.set_value("");
                 if let Some(file)=file {
                     if file.size()!=16.0 {state.message.set("Select a 16-byte .easp startup profile.".into());return;}
-                    state.revision.update(|r|*r=r.wrapping_add(1)); let revision=state.revision.get_untracked();
+                    let mut request=Err(EditorError::InvalidDraft);ui.editor.update(|e|request=e.begin_import());let Ok(token)=request else{state.message.set("Finish current edits before importing startup settings.".into());return;};
                     wasm_bindgen_futures::spawn_local(async move {
                         let result=wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await.ok().and_then(|buffer|StartupProfile::decode(&js_sys::Uint8Array::new(&buffer).to_vec()));
-                        if state.revision.try_get_untracked()!=Some(revision){return;}
-                        match result {Some(profile)=>state.edit(|p|*p=profile),None=>state.message.set("Invalid startup profile; current settings retained.".into())}
+                        if ui.editor.try_with_untracked(|e|e.import_is_current(token))!=Some(true){return;}
+                        ui.editor.update(|e|{let _=e.cancel_import(token);});
+                        match result {Some(profile)=>state.edit(ui, |p|*p=profile),None=>state.message.set("Invalid startup profile; current settings retained.".into())}
                     });
                 }
             }/></label>
             <p role="status" class="hint">{move ||state.message.get()}</p>
-            <p class="hint">"Legacy .eav files still contain dashboard settings only. Startup uses a separate .easp profile; complete projects, custom artwork and helper upload are the next delivery."</p>
+            <p class="hint">"Save a complete .eavp project to keep dashboard, startup and artwork together. Dashboard-only .eav and JSON omit startup. Choosing a procedural theme replaces custom artwork in the current state; Undo restores it."</p>
         </details>
     }
 }

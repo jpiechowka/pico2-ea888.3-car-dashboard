@@ -1,8 +1,6 @@
 use dashboard_configurator::event_adapters::{
-    DraftSaveAttempt,
     ImportFailure,
     TransferFailure,
-    attempt_draft_save,
     import_outcome,
     reload_preset_attempt,
     transfer_failure,
@@ -134,7 +132,7 @@ pub(super) fn reload_presets(ui: Ui) {
 }
 
 pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
-    match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
+    let (mut editor,mut notice,saved,status)=match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
         Ok(Some(json)) => {
             match Editor::from_saved_state(json.as_bytes()) {
                 Ok(editor) => (editor, String::new(), Some(json), Ok(())),
@@ -159,7 +157,17 @@ pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
                 Err(StorageIssue::Failure(failure)),
             )
         }
+    };
+    // Migrate the earlier separate profile only when the dashboard envelope predates project state.
+    let has_startup=saved.as_deref().filter(|text|text.len()<=MAX_SAVED_BYTES).and_then(|text|serde_json::from_str::<serde_json::Value>(text).ok()).is_some_and(|v|v.get("startup").is_some());
+    if !has_startup {
+        if let Some(text)=storage().ok().and_then(|s|s.get_item("ea888-startup-profile-v1").ok().flatten()).filter(|s|s.len()<=1024) {
+            if let Ok(profile)=serde_json::from_str::<dashboard_core::startup::StartupProfile>(&text) {
+                if editor.set_startup_profile(profile).is_ok(){notice="Earlier startup settings migrated into the complete project. Export .eavp for a portable backup.".into();}
+            }
+        }
     }
+    (editor,notice,saved,status)
 }
 
 // web-sys 0.3.106 still gates Web Locks behind a global unstable flag. This
@@ -169,12 +177,6 @@ pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
 extern "C" {
     #[wasm_bindgen::prelude::wasm_bindgen(extends=js_sys::Object)]
     type DraftLocks;
-    #[wasm_bindgen::prelude::wasm_bindgen(method,catch,js_name=request)]
-    fn request_draft_lock(
-        this: &DraftLocks,
-        name: &str,
-        callback: &js_sys::Function,
-    ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen::prelude::wasm_bindgen(method,catch,js_name=request)]
     fn request_preset_lock(
         this: &DraftLocks,
@@ -198,17 +200,7 @@ pub(super) fn cancel_presets(ui: Ui) {
     }
     let _ = ui.preset_abort.try_update_value(|slot| *slot = None);
 }
-fn request_lock(
-    key: &str,
-    callback: &js_sys::Function,
-) -> Result<js_sys::Promise, JsValue> {
-    let navigator = web_sys::window().ok_or(JsValue::NULL)?.navigator();
-    let locks = js_sys::Reflect::get(navigator.as_ref(), &"locks".into())?;
-    if locks.is_null() || locks.is_undefined() {
-        return Err(JsValue::NULL);
-    }
-    locks.unchecked_into::<DraftLocks>().request_draft_lock(key, callback)
-}
+
 
 pub(super) fn save_presets(
     ui: Ui,
@@ -427,6 +419,7 @@ fn conflict(
 }
 
 pub fn storage_changed(ui: Ui) {
+    if ui.project_store.ready.get_untracked() {return;}
     // Events can arrive after a later write. Compare the actual current value.
     match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
         Ok(current) if current != ui.saved_bytes.get_untracked() => conflict(ui, true),
@@ -435,80 +428,7 @@ pub fn storage_changed(ui: Ui) {
     }
 }
 
-pub fn save(
-    ui: Ui,
-    replace: bool,
-) {
-    let mut prepared = None;
-    ui.editor.update(|e| prepared = e.begin_save().ok());
-    let Some(request) = prepared else {
-        return;
-    };
-    let token = request.token();
-    let callback = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new(move |_| {
-        if !ui
-            .editor
-            .try_with_untracked(|e| e.save_is_current(token))
-            .unwrap_or(false)
-        {
-            return;
-        }
-        let attempt = match storage() {
-            Ok(s) => {
-                attempt_draft_save(
-                    replace,
-                    s.get_item(STORAGE_KEY).map_err(storage_error),
-                    &ui.saved_bytes.get_untracked(),
-                    || s.set_item(STORAGE_KEY, request.json()).map_err(storage_error),
-                )
-            }
-            Err(failure) => DraftSaveAttempt::Completed(Err(failure)),
-        };
-        if attempt.is_conflict() {
-            conflict(ui, false);
-        } else {
-            ui.conflict.set(false);
-            if attempt.acknowledgment().is_ok() {
-                ui.saved_bytes.set(Some(request.json().to_string()));
-            }
-        }
-        ui.editor.update(|e| {
-            let _ = e.acknowledge_save(token, attempt.acknowledgment());
-        });
-        if let Some(result) = attempt.storage_result() {
-            ui.storage_outcome(StorageArea::Draft, result);
-            if result.is_ok() {
-                ui.storage_read_outcome(StorageArea::Draft, Ok(()));
-            }
-        }
-    });
-    let promise = request_lock(STORAGE_KEY, callback.as_ref().unchecked_ref());
-    spawn_local(async move {
-        let outcome = match promise {
-            Ok(p) => JsFuture::from(p).await,
-            Err(e) => Err(e),
-        };
-        if outcome.is_err()
-            && ui
-                .editor
-                .try_with_untracked(|e| e.save_is_current(token))
-                .unwrap_or(false)
-        {
-            let _ = ui.editor.try_update(|e| {
-                let _ = e.acknowledge_save(token, Err(StorageFailure::Unavailable));
-            });
-            ui.storage_outcome(
-                StorageArea::Draft,
-                Err(StorageIssue::Failure(StorageFailure::Unavailable)),
-            );
-            let _ = ui.notice.try_set(
-                "Browser saving needs Web Locks and storage permission. Export a file to keep your work.".into(),
-            );
-        }
-        // Keep the callback alive until request completion releases the lock.
-        drop(callback);
-    });
-}
+pub fn save(ui: Ui, replace: bool) { super::project_io::save(ui,replace); }
 
 pub(super) fn download(
     ui: Ui,
@@ -636,9 +556,9 @@ pub fn export(
                     ));
                     ui.notice.set(
                         if json {
-                            "Editable JSON exported. Keep it as the source for future changes."
+                            "Dashboard-only JSON exported. Use .eavp to retain startup and artwork."
                         } else {
-                            "Runtime .eav exported. Use it with Build-Dashboard.ps1 -Config to embed it."
+                            "Dashboard-only .eav exported. Startup settings and artwork are not included."
                         }
                         .into(),
                     )
@@ -668,9 +588,11 @@ fn import_file(
     file: web_sys::File,
 ) {
     let started = now();
-    if !file.size().is_finite() || file.size() > MAX_JSON_BYTES as f64 {
+    let project_file=file.name().to_ascii_lowercase().ends_with(".eavp");
+    let limit=if project_file {dashboard_config_tools::project::MAX_PROJECT_BYTES} else {MAX_JSON_BYTES};
+    if !file.size().is_finite() || file.size() < 0.0 || file.size() > limit as f64 {
         ui.event(import_outcome(Err(ImportFailure::TooLarge)));
-        ui.notice.set("Import is limited to 128 KiB. No file was read.".into());
+        ui.notice.set("Project import is limited to 9 MiB; dashboard JSON to 128 KiB. No file was read.".into());
         return;
     }
     let mut request = Err(EditorError::InvalidDraft);
@@ -695,16 +617,16 @@ fn import_file(
         match outcome {
             Ok(buffer) => {
                 let array = js_sys::Uint8Array::new(&buffer);
-                if array.length() as usize > MAX_JSON_BYTES {
+                if array.length() as usize > limit {
                     ui.editor.update(|e| {
                         let _ = e.cancel_import(token);
                     });
                     ui.event(import_outcome(Err(ImportFailure::TooLarge)));
-                    ui.notice.set("Import exceeds 128 KiB.".into());
+                    ui.notice.set("Import exceeds its format size limit.".into());
                     return;
                 }
                 let bytes = array.to_vec();
-                let format = if bytes.starts_with(b"EAV1") || file.name().to_ascii_lowercase().ends_with(".eav") {
+                let format = if project_file || bytes.starts_with(b"EAVPROJ\0") { ImportFormat::Project } else if bytes.starts_with(b"EAV1") || file.name().to_ascii_lowercase().ends_with(".eav") {
                     ImportFormat::Binary
                 } else {
                     ImportFormat::Json
@@ -748,15 +670,19 @@ fn complete_import(
 #[component]
 pub fn Files(ui: Ui) -> impl IntoView {
     view! {
-        <div class="settings-content"><div class="settings-copy"><h3>"Configuration files"</h3><p>"Keep the JSON to edit later. The compact .eav contains the same validated settings and is parsed once when the firmware starts."</p>
+        <div class="settings-content"><div class="settings-copy"><h3>"Studio project files"</h3><p>"Keep a complete project to preserve dashboard views, startup settings and original artwork. Only the converted animation enters firmware."</p>
 
         </div><div class="settings-form">
-            <button class="primary" disabled=move ||ui.snapshot_blocked() on:click=move |_|export(ui,false)>"Export runtime .eav"</button>
-            <button disabled=move ||ui.snapshot_blocked() on:click=move |_|export(ui,true)>"Export editable JSON"</button>
-            <label class="field"><span>"Import JSON or .eav"</span><input type="file" accept=".json,.eav,application/json,application/octet-stream" disabled=move ||ui.snapshot_blocked() on:change=move |event|{
+            <button class="primary" disabled=move ||ui.snapshot_blocked() on:click=move |_|super::project_io::export(ui,dashboard_config_tools::project::ExportMode::Complete)>"Export complete project (.eavp)"</button>
+            <p class="hint">"Includes original artwork when available, so it can be converted again later. An imported smaller project cannot restore an omitted original."</p>
+            <button disabled=move ||ui.snapshot_blocked() on:click=move |_|super::project_io::export(ui,dashboard_config_tools::project::ExportMode::ConvertedOnly)>"Smaller project: converted animation only"</button>
+            <p class="hint">"Keeps exact pixels and settings. Reimport the original to change crop or conversion later. This export does not remove the original from your current project."</p>
+            <button disabled=move ||ui.snapshot_blocked() on:click=move |_|export(ui,false)>"Export dashboard-only .eav"</button>
+            <button disabled=move ||ui.snapshot_blocked() on:click=move |_|export(ui,true)>"Export dashboard-only JSON"</button>
+            <label class="field"><span>"Import .eavp project or dashboard-only JSON / .eav"</span><input type="file" accept=".eavp,.json,.eav,application/json,application/octet-stream" disabled=move ||ui.snapshot_blocked() on:change=move |event|{
                 let input=event_target::<web_sys::HtmlInputElement>(&event);
                 if let Some(file)=input.files().and_then(|files|files.get(0)){import_file(ui,file);}input.set_value("");
-            }/><small>"Maximum 128 KiB JSON or 16 KiB device binary"</small></label>
+            }/><small>"Maximum 9 MiB project, 128 KiB JSON or 16 KiB .eav. Dashboard-only import keeps current startup and artwork."</small></label>
             <super::json_editor::JsonEditor ui/>
             <p class="hint">"Local saving is per browser and origin. Export a file for a portable backup. Unknown fields, bad checksums and invalid limits are rejected."</p>
             <super::metrics::Measurements ui/>

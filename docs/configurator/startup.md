@@ -31,11 +31,7 @@ Normal Dashboard encoder rotation and Full/Dim/Off clicks resume afterward.
 
 ## Profile files and builds
 
-For this procedural delivery, startup is a **separate profile** saved in browser
-storage and exportable/importable as `startup.easp`. Dashboard `.eav` imports and
-exports retain their existing dashboard-only meaning. Startup is not yet part
-of dashboard undo/redo or the accepted project history. The UI states this
-boundary rather than presenting a dashboard export as a complete project.
+Startup settings now belong to the accepted Studio project and share Undo/Redo. Export a [complete `.eavp` project](projects.md) to keep dashboard, startup, converted pixels and original artwork together. The explicit smaller export omits only the original; dashboard-only `.eav` and JSON omit startup. A standalone `startup.easp` remains useful for profile-only transfer and does not contain custom pixels.
 
 For a local firmware build, set `DASHBOARD_STARTUP_PROFILE` to the absolute path
 of the exported `.easp` alongside the normal `DASHBOARD_CONFIG` selection. Omit
@@ -46,7 +42,7 @@ do not identify a changed startup profile. Helper upload and complete artifact
 identity binding remain part of the next project delivery.
 
 EASP v1 is exactly 16 bytes: `EASP` magic at 0..4, version 1 at byte 4, theme
-0..4 at byte 5, status Off/Brief/Detailed as 0..2 at byte 6, flags at byte 7
+0..5 (Custom) at byte 5, status Off/Brief/Detailed as 0..2 at byte 6, flags at byte 7
 (bit 0 loop, bit 1 warning LED, bit 2 attention interruption), little-endian
 u16 status/splash milliseconds at 8..10 and 10..12, and four zero reserved bytes.
 Unknown versions, flags, enums, reserved bytes and out-of-range durations fail
@@ -55,10 +51,7 @@ Studio checkbox is a preview-only override.
 
 ## Next delivery and validation
 
-Custom PNG/sprite-sheet/GIF conversion, bounded compiled artwork, the complete
-portable `.eavp` project with retained originals and converted-only export,
-shared project history, helper upload and startup-aware artifact binding are
-still pending. No custom artwork is silently discarded or substituted here.
+Complete project packaging, original retention, converted-only export and shared project history are implemented. Artwork conversion/rendering and helper binding have their own focused integration checks; no browser or physical success is implied by the package codec.
 
 Focused state/render tests, existing controls/LED regressions and Wasm/ARM
 compile checks cover this slice. Whole-image RAM/stack/flash and performance

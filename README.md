@@ -236,5 +236,5 @@ timing, looping, warning interruption and warning LED controls. Defaults are a
 600 ms Brief status then 2500 ms AEZAKMI. Zero splash duration leaves status
 independent; loop off holds the final frame. Warnings normally wait for Dashboard
 while the LED may indicate them, and hidden warnings cannot be acknowledged.
-Export/import the separate `.easp` profile; legacy `.eav` remains dashboard-only.
-See [startup behavior, local builds and pending complete-project support](docs/configurator/startup.md).
+Export a complete `.eavp` project with original artwork by default, or an explicit smaller converted-only project. Startup shares Undo/Redo and atomic browser storage; legacy `.eav` and JSON are clearly dashboard-only.
+See [startup behavior](docs/configurator/startup.md) and [complete projects, source retention and storage](docs/configurator/projects.md).

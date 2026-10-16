@@ -12,6 +12,7 @@ mod json_editor;
 mod led;
 mod metrics;
 mod resources;
+mod project_io;
 mod simulation;
 mod stage;
 mod startup;
@@ -79,6 +80,7 @@ pub struct Ui {
     menu: RwSignal<Option<widget_menu::Menu>>,
     playing: RwSignal<bool>,
     startup: startup::State,
+    project_store: project_io::State,
     workspace: RwSignal<WorkspaceState>,
     inspection: RwSignal<Option<FieldTarget>>,
     error_inspection: RwSignal<Option<InspectionTarget>>,
@@ -543,10 +545,11 @@ pub fn Studio() -> impl IntoView {
     let (workspace, preference_notice, preference_storage) = workspaces::restore();
     let (presets, preset_storage) = io::restore_presets();
     let dock = PreviewDockState::new(&editor);
+    let editor = RwSignal::new(editor);
     let ui = Ui {
         cache_seen: RwSignal::new(dashboard_core::cache_diagnostics::CacheExhaustionSeen::new()),
         mount_started,
-        editor: RwSignal::new(editor),
+        editor,
         build: RwSignal::new(dashboard_configurator::build_flash::BuildSelection::default()),
         helper: helper::State::new(),
         resources: StoredValue::new(ResourceCache::default()),
@@ -579,7 +582,8 @@ pub fn Studio() -> impl IntoView {
         capture: RwSignal::new(None),
         menu: RwSignal::new(None),
         playing: RwSignal::new(false),
-        startup: startup::State::new(),
+        startup: startup::State::new(editor),
+        project_store: project_io::State::new(),
         workspace: RwSignal::new(workspace),
         inspection: RwSignal::new(None),
         error_inspection: RwSignal::new(None),
@@ -590,6 +594,7 @@ pub fn Studio() -> impl IntoView {
         trace: RwSignal::new(metrics::Trace::default()),
         observer: RwSignal::new(None),
     };
+    project_io::restore(ui);
     ui.event(Notice::info(
         Category::Editor,
         "studio.initialized",
