@@ -85,3 +85,86 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
 }
+
+/// A selected regular file retained with DELETE access; disposition targets this handle.
+pub(crate) struct DeleteFile(File);
+impl DeleteFile {
+    pub(crate) fn open(path: &Path) -> Result<Self, String> { Self::open_kind(path, false) }
+
+    pub(crate) fn directory(path: &Path) -> Result<Self, String> { Self::open_kind(path, true) }
+
+    fn open_kind(
+        path: &Path,
+        directory: bool,
+    ) -> Result<Self, String> {
+        reject_reparse(path)?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+            let file = OpenOptions::new()
+                .access_mode(0x80000000 | 0x10000)
+                .share_mode(1)
+                .custom_flags(0x00200000 | 0x02000000)
+                .open(path)
+                .map_err(|e| e.to_string())?;
+            let metadata = file.metadata().map_err(|e| e.to_string())?;
+            if metadata.is_dir() != directory
+                || (!directory && !metadata.is_file())
+                || metadata.file_attributes() & 0x400 != 0
+            {
+                return Err("Cleanup accepts regular files only".into());
+            }
+            Ok(Self(file))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = directory;
+            Err("Native cleanup requires Windows".into())
+        }
+    }
+
+    pub(crate) fn len(&self) -> Result<u64, String> { self.0.metadata().map(|m| m.len()).map_err(|e| e.to_string()) }
+
+    pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        (&self.0)
+            .take(65537)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > 65536 {
+            return Err("Flash record bound".into());
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn remove(self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_DISPOSITION_INFO,
+                FileDispositionInfo,
+                SetFileInformationByHandle,
+            };
+            let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+            if unsafe {
+                SetFileInformationByHandle(
+                    self.0.as_raw_handle(),
+                    FileDispositionInfo,
+                    &info as *const _ as *const _,
+                    std::mem::size_of_val(&info) as u32,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        {
+            Err("Native cleanup requires Windows".into())
+        }
+    }
+}

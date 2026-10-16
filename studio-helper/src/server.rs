@@ -731,6 +731,107 @@ async fn start_flash(
     }));
     Ok(summary)
 }
+async fn start_cleanup(
+    state: Arc<State>,
+    request: CleanupRequest,
+) -> Result<JobSummary, Error> {
+    request.validate()?;
+    let previous = {
+        let mut inner = state.inner.lock().unwrap();
+        if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+            return Err(Error::Busy);
+        }
+        inner.worker.take()
+    };
+    if let Some(previous) = previous {
+        previous.await.map_err(|_| Error::InvalidState)?;
+    }
+    let mut inner = state.inner.lock().unwrap();
+    if inner.stopping || crate::process::cleanup_failed() {
+        return Err(Error::InvalidState);
+    }
+    // JobStore admission refuses every open job, including stopped-but-unclosed attempts.
+    let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
+    let summary = inner.jobs.start(id.clone(), OperationKind::Cleanup, None)?;
+    let stage = StageId::Cleanup(CleanupStage::Cleanup);
+    inner.jobs.transition(&id, stage, StageState::Running, None)?;
+    crate::process::reset_cancel();
+    let worker_state = state.clone();
+    inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let mut failure = None;
+        let mut cancelled = false;
+        for attempt in request.attempts.iter() {
+            if crate::process::cancelled() {
+                cancelled = true;
+                break;
+            }
+            let result = crate::flash_cleanup::remove(&worker_state.repo, attempt);
+            let text = match result {
+                Ok(()) => {
+                    format!(
+                        "Removed local flash record {}. Device and artifacts unchanged.",
+                        attempt.as_str()
+                    )
+                }
+                Err(error) => {
+                    failure = Some(error);
+                    format!(
+                        "Could not remove record {}; earlier removals are retained.",
+                        attempt.as_str()
+                    )
+                }
+            };
+            let _ = worker_state.inner.lock().unwrap().jobs.append(
+                &id,
+                LogInput {
+                    stage,
+                    source: Source::Internal,
+                    text,
+                    progress: false,
+                },
+            );
+            if failure.is_some() {
+                break;
+            }
+        }
+        let mut inner = worker_state.inner.lock().unwrap();
+        cancelled |= inner
+            .jobs
+            .poll(&id, PollRequest { after: 0, limit: 1 })
+            .is_ok_and(|b| b.summary.cancel_requested);
+        let (status, cause, reason) = if let Some(error) = failure {
+            (
+                StageState::Failed,
+                TerminalCause::Failed,
+                Some(Text::new(error.chars().take(512).collect::<String>()).unwrap()),
+            )
+        } else if cancelled {
+            (
+                StageState::Cancelled,
+                TerminalCause::Cancelled,
+                Some(Text::new("Cleanup stopped before the next record; completed removals remain").unwrap()),
+            )
+        } else {
+            (StageState::Succeeded, TerminalCause::Succeeded, None)
+        };
+        let _ = inner.jobs.transition(&id, stage, status, reason);
+        let _ = inner.jobs.finish(
+            &id,
+            cause,
+            OutputClosure {
+                workers_joined: true,
+                tree_empty: true,
+                output_incomplete: false,
+                discarded_bytes: 0,
+                discarded_chunks: 0,
+            },
+            None,
+            None,
+        );
+    }));
+    Ok(summary)
+}
+
 async fn dispatch(
     state: Arc<State>,
     request: Request<Body>,
@@ -803,6 +904,26 @@ async fn dispatch(
     }
     if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
         return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
+    }
+    if method == Method::POST && path == "/api/v1/flash-attempts/cleanup" {
+        if one(headers, "content-type") != Some("application/json") {
+            return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
+        }
+        if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > REQUEST_BYTES)) {
+            return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin);
+        }
+        let bytes = match bounded_body(request.into_body(), REQUEST_BYTES).await {
+            Ok(b) => b,
+            Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin),
+        };
+        let request = match decode::<CleanupRequest>(&bytes) {
+            Ok(r) => r,
+            Err(e) => return store_error(e, origin),
+        };
+        return match start_cleanup(state.clone(), request).await {
+            Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
+            Err(e) => store_error(e, origin),
+        };
     }
     if method == Method::POST && path == "/api/v1/flashes" {
         if one(headers, "content-type") != Some("application/json") {
@@ -1147,6 +1268,42 @@ async fn serve_async(state: Arc<State>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cleanup_requires_authority_and_a_closed_operation() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let body = serde_json::json!({"attempts":["1".repeat(32)]}).to_string();
+        let unauthenticated = Request::builder()
+            .method("POST")
+            .uri("/api/v1/flash-attempts/cleanup")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("content-type", "application/json")
+            .body(Body::from(body.clone()))
+            .unwrap();
+        assert_eq!(
+            dispatch(state.clone(), unauthenticated).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .jobs
+            .start(JobId::new("2".repeat(32)).unwrap(), OperationKind::Build, None)
+            .unwrap();
+        let authorized = Request::builder()
+            .method("POST")
+            .uri("/api/v1/flash-attempts/cleanup")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("content-type", "application/json")
+            .header("x-studio-capability", &state.capability)
+            .body(Body::from(body))
+            .unwrap();
+        assert_eq!(dispatch(state.clone(), authorized).await.status(), StatusCode::CONFLICT);
+        assert!(state.inner.lock().unwrap().worker.is_none());
+    }
+
     #[tokio::test]
     async fn flash_route_rejects_unowned_artifact_without_starting_work() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
