@@ -193,6 +193,26 @@ def _direct_family(row):
 
 
 @dataclass(frozen=True)
+class _PrefixErrorFrontier:
+    site:int
+    before:SequenceInterface
+    after:SequenceInterface
+    outcome:dict
+    invocation:dict
+    packed_r0:int
+    frontier:int
+    assigned_fields:tuple
+    retired_initial:tuple
+    saved:Storage
+    original_child_return:dict
+
+
+def _prefix_error_graph(headers,invocations,frontiers,success):
+    from config_decoded_sources import _phase_graph
+    return _phase_graph((headers,invocations,frontiers,success))
+
+
+@dataclass(frozen=True)
 class _PrefixState:
     boundary:dict
     frame:Storage
@@ -203,6 +223,46 @@ class _PrefixState:
     outer:dict
     helpers:dict
     success:tuple
+    error_invocations:tuple=()
+    error_frontiers:tuple=()
+    error_checkpoint:object=None
+
+    def _checked_errors(self):
+        """Retained finite relation; enclosing input/body currentness is due.
+
+        This is not a public receipt or an independently fresh return grant.
+        The later actual consumer must also check this same current context.
+        """
+        require(self.error_checkpoint is not None and
+            _prefix_error_graph(self.headers,self.error_invocations,self.error_frontiers,self.success)==self.error_checkpoint,
+            'Prefix private error relation changed')
+        V=self.headers['visitor']['proof']['function'];frame=self.headers['visitor_frame']
+        first=self.headers['visitor']['sequence_state'];D=first.decoder
+        for i,call in enumerate(self.error_invocations):
+            before=call['before'];previous=call['predecessor'];bound=call['result']
+            require(call['site']==V+(24 if i==0 else 46) and before.header is first.header and
+                before.decoder.header is D.header and before.decoder.payload is D.payload and
+                before.count==Span(13-i,13-i) and bound['proof']==self.outer['proof'],
+                'Prefix private error invocation/header/source changed')
+            if i==0:require(previous is None and before.decoder.cursor==Span(0,0),'Prefix first error invocation changed')
+            else:
+                prior=self.error_invocations[0]['result']
+                require(any(previous is v and v['error'] is None and before is v['state'] for v in prior['outcomes']),
+                    'Prefix second error invocation lost its actual successful predecessor')
+        for error in self.error_frontiers:
+            require(type(error) is _PrefixErrorFrontier and any(error.invocation is v for v in self.error_invocations) and
+                any(error.outcome is v for v in error.invocation['result']['outcomes']) and
+                error.site==error.invocation['site'] and error.before is error.invocation['before'] and
+                error.after is error.outcome['state'] and error.outcome['inner']['state'] is error.after and
+                type(error.outcome['error']) is int and error.outcome['error'] in (4,5) and
+                error.packed_r0==error.outcome['packed_r0']==(error.outcome['error']<<8)|1 and
+                error.frontier==V+54 and error.saved.start==frame.start+1512 and error.saved.extent==96 and
+                error.saved in self.headers['visitor']['protected'] and
+                error.original_child_return==_returns(error.invocation['result'],self.helpers,frame.start,error.site),
+                'Prefix error origin/carrier/original-return association changed')
+        require(sum(v['error'] is not None for c in self.error_invocations for v in c['result']['outcomes'])==len(self.error_frontiers),
+            'Prefix private error occurrence collection changed')
+        return self.error_frontiers
 
 
 def _first_boot_decoded_u16_state(objects,instructions,source_context):
@@ -238,10 +298,13 @@ def _first_boot_decoded_u16_state(objects,instructions,source_context):
     require((initial['address'],initial['extent'],initial['active_bytes'],initial['opaque_bytes'],
         initial['initial_collection_lengths'])==(B,14604,185,14419,(0,0)),
         'decoded prefix loses copied initialized active/opaque source state')
-    initial_live=set(active_bytes)-{14600};outcomes=[];success=[];pending=[(state,(),(),outer)]
+    initial_live=set(active_bytes)-{14600};outcomes=[];success=[];error_frontiers=[];invocations=[]
+    pending=[(state,(),(),outer,None)]
     for ordinal,(field,offset) in enumerate(U16_FIELDS):
         next_pending=[]
-        for before,fields,retired,bound in pending:
+        for before,fields,retired,bound,previous in pending:
+            call=dict(site=V+(24 if ordinal==0 else 46),before=before,result=bound,predecessor=previous)
+            invocations.append(call)
             for alternative in bound['outcomes']:
                 after=alternative['state'];error=alternative['error']
                 require(after.count==Span(12-ordinal,12-ordinal) and error in (None,4,5),
@@ -251,6 +314,10 @@ def _first_boot_decoded_u16_state(objects,instructions,source_context):
                     require_writes((view,),((view,0,2),),protected+(_object(state.header,'Q'),_object(state.decoder.header,'D')))
                     assigned=fields+((field,(0,65535)),);expired=retired+((offset,offset+2),)
                 else:assigned=fields;expired=retired
+                if error is not None:
+                    saved=next(v for v in visitor['protected'] if v.space==active.space and v.start==vf+1512 and v.extent==96)
+                    error_frontiers.append(_PrefixErrorFrontier(call['site'],before,after,alternative,call,
+                        alternative['packed_r0'],V+54,assigned,expired,saved,_returns(bound,helpers,vf,call['site'])))
                 if error is not None or ordinal==1:
                     expired_bytes={i for a,b in expired for i in range(a,b)}
                     outcomes.append(dict(completed_fields=len(assigned),field_domains=assigned,error=error,
@@ -264,7 +331,7 @@ def _first_boot_decoded_u16_state(objects,instructions,source_context):
                 else:
                     second=_next_u16_interface(objects,wname,instructions,after,nested,visitor['protected'])
                     require('r4' in second['normal_preserves'],'second wrapper changes actual Config r4')
-                    next_pending.append((after,assigned,expired,second))
+                    next_pending.append((after,assigned,expired,second,alternative))
         pending=next_pending
     description=dict(phase='first_boot_decoded_u16_prefix_pending_remaining_visitor_canonical_and_loader_routes',mode='sizez',
         config=(B,14604),root_frame=(frame.start,456),visitor_frame=(vf,1608),decoder=(D.header.start,8),sequence=(state.header.start,8),
@@ -281,7 +348,11 @@ def _first_boot_decoded_u16_state(objects,instructions,source_context):
         pending=('shared error suffix/visitor restore','boot_view and all remaining visitor groups','finalize and complete canonical Compare',
             'decoded validator and all other loader alternatives','diagnostic/default Formatter/sink/PANICKED closure',
             'complete same-B loader before acquired owner','full graph and resource gates'))
-    return description,_PrefixState(boundary,frame,guards,owner,headers,regions,outer,helpers,tuple(success))
+    invocations=tuple(invocations);error_frontiers=tuple(error_frontiers);success=tuple(success)
+    checkpoint=_prefix_error_graph(headers,invocations,error_frontiers,success)
+    context=_PrefixState(boundary,frame,guards,owner,headers,regions,outer,helpers,success,invocations,error_frontiers,checkpoint)
+    context._checked_errors()
+    return description,context
 
 
 def first_boot_decoded_u16_prefix(objects,instructions,source_context):

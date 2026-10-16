@@ -34,6 +34,22 @@ class _ViewsExit:
 
 
 @dataclass(frozen=True)
+class _ViewsErrorFrontier:
+    source:object
+    before:object
+    after:object
+    origin:object
+    trace:tuple
+    summary:dict
+    saved:Storage
+
+
+def _views_error_graph(context,frontiers):
+    from config_decoded_sources import _phase_graph
+    return _phase_graph((context.headers,context.success,frontiers))
+
+
+@dataclass(frozen=True)
 class _ViewsState:
     prefix:dict
     context:object
@@ -41,6 +57,27 @@ class _ViewsState:
     children:dict
     exits:tuple
     control:dict
+    error_frontiers:tuple=()
+    error_checkpoint:object=None
+
+    def _checked_errors(self):
+        """Retained private source relation, not standalone input authority."""
+        self.context._checked_errors()
+        require(self.error_checkpoint is not None and
+            _views_error_graph(self.context,self.error_frontiers)==self.error_checkpoint,
+            'Views private error relation changed')
+        frame=self.context.headers['visitor_frame'];D=self.context.headers['visitor']['sequence_state'].decoder
+        for error in self.error_frontiers:
+            require(type(error) is _ViewsErrorFrontier and any(error.source is v[0] for v in self.context.success) and
+                error.before.header is D.header and error.before.payload is D.payload and
+                error.after.header is D.header and error.after.payload is D.payload and
+                (error.after.cursor.lower,error.after.cursor.upper)==error.summary['cursor'] and
+                error.summary['frontier']==self.context.headers['visitor']['proof']['function']+56 and
+                type(error.summary['error']) is int and error.summary['error'] in (4,5,8,14) and
+                error.saved in self.context.headers['visitor']['protected'] and
+                (error.saved.start,error.saved.extent)==(frame.start+1512,96) and error.origin and error.trace,
+                'Views private error origin/header/carrier association changed')
+        return self.error_frontiers
 
 
 def _outline(objects,name,rows,role,ancestry=()):
@@ -145,7 +182,7 @@ def _local_effects(context):
         loop_reuse_after_publication=(388,396),next_Result_write_only_after_C_last_read=True)
 
 
-def _stage_effects(objects,rows,context,parents,children,index,decoder,string_before,string_length):
+def _stage_effects(objects,rows,context,parents,children,index,decoder,string_before,string_length,*,_origin_sink=None):
     """Bind one affine element's complete string/copy/publication effects.
 
     The source predicate is a paired p/n domain, not independent choices of
@@ -189,6 +226,9 @@ def _stage_effects(objects,rows,context,parents,children,index,decoder,string_be
         second=opaque_copy_interface(objects,rows,_edge(parents,370)[2],borrow(frame,940,19,phase),destination,19,frame,guards+prefix)
         length=borrow(context.owner,244,4,phase,True);require_writes((length,),((length,0,4),),guards)
         element_writes=((element.start,1),(element.start+1,19),(element.start+20,1),(B+244,4))
+    if _origin_sink is not None:
+        require(type(_origin_sink) is list and not _origin_sink,'Views private stage origin channel changed')
+        _origin_sink.append((utf8,extended,copy,second))
     return dict(index=index,normal_string_length=(0,min(14,string_length.upper)),
         actual_source_pair='p=payload+cursor_before; n<=payload_end-p',
         cursor_advance_before_UTF8=True,byte_header_reset_after_capture=V+296,
@@ -206,12 +246,20 @@ def _stage_effects(objects,rows,context,parents,children,index,decoder,string_be
 def _phase_outcomes(objects,rows,context,parents,children):
     V=parents[0]['function']-82;frame=context.headers['visitor_frame'];B=context.owner.start
     top=context.headers['visitor']['sequence_state'].header
-    errors=[];successes=[];iterations=[];exits=[]
-    def error(stage,code,cursor,index,cleared,boot=True,guard=None):
-        errors.append(dict(stage=stage,error=code,r5=code,frontier=V+56,cursor=(cursor.lower,cursor.upper),
+    errors=[];successes=[];iterations=[];exits=[];frontiers=[]
+    saved=next(v for v in context.headers['visitor']['protected'] if v.space==frame.space and v.start==frame.start+1512 and v.extent==96)
+    def origin(site,before,result,choice):
+        require(any(choice is v for v in result['outcomes']),'Views source error choice leaves its actual invocation')
+        p=result['proof']
+        require(_child(children,parents,site)['function']==p['function'],'Views error origin changes its current parent target')
+        return (V+site,(p['function'],p['role'],p['extent'],p['frame']),before,choice)
+    def error(stage,code,cursor,index,cleared,boot=True,guard=None,*,before,after,cause,trace,source):
+        summary=dict(stage=stage,error=code,r5=code,frontier=V+56,cursor=(cursor.lower,cursor.upper),
             top_Q_physical_count=10,initialized_views=index,views_cleared=cleared,boot_view_assigned=boot,
             initial_active_bytes_preserved=175 if cleared else 179 if boot else 180,guard=guard,
-            no_rollback=True,unfinished_element_not_published=True))
+            no_rollback=True,unfinished_element_not_published=True)
+        require(after.cursor==cursor,'Views error loses its actual post-error source cursor')
+        errors.append(summary);frontiers.append(_ViewsErrorFrontier(source,before,after,cause,trace,summary,saved))
     for state,assigned,expired in context.success:
         require(state.count==Span(11,11) and len(assigned)==2,'Views did not consume an actual successful u16 prefix')
         boot=_sequence(objects,rows,context,_child(children,parents,82),state)
@@ -219,7 +267,8 @@ def _phase_outcomes(objects,rows,context,parents,children):
             require(option['count']==Span(10,10),'boot field loses decrement-before-child')
             if option['kind']!='some':
                 require(option['kind']=='error4','actual positive boot count produced an unbound None/error')
-                error('boot_view',4,option['cursor'],0,False,False);continue
+                error('boot_view',4,option['cursor'],0,False,False,before=state.decoder,after=option['state'].decoder,
+                    cause=origin(82,state,boot,option),trace=((state,assigned,expired),),source=state);continue
             require(option['value_domain']==(0,255),'boot_view was restricted before semantic validation')
             boot_view=borrow(context.owner,14575,1,frame.phase,True)
             require_writes((boot_view,),((boot_view,0,1),),context.headers['visitor']['protected']+(_object(top,'top Q'),_object(state.decoder.header,'D')))
@@ -227,10 +276,16 @@ def _phase_outcomes(objects,rows,context,parents,children):
             guards=context.headers['visitor']['protected']+(_object(top,'top Q'),)
             length=_length(objects,rows,context,_child(children,parents,130),decoder,guards)
             for choice in length['outcomes']:
-                if choice['kind']!='success':error('Views length',choice['error'],choice['cursor'],0,False);continue
+                prefix=((state,assigned,expired),origin(82,state,boot,option))
+                if choice['kind']!='success':
+                    error('Views length',choice['error'],choice['cursor'],0,False,before=decoder,after=choice['state'],
+                        cause=origin(130,decoder,length,choice),trace=prefix,source=state);continue
                 require(choice['value_domain']==(0,0xffffffff),'Views length lacks source usize domain')
                 current=choice['state'];n=current.payload.extent;remaining=n-current.cursor.lower
-                if remaining>=9:error('Views pre-clear capacity',14,current.cursor,0,False,guard='N>8 AND remaining>=N')
+                trace=prefix+(origin(130,decoder,length,choice),)
+                if remaining>=9:error('Views pre-clear capacity',14,current.cursor,0,False,guard='N>8 AND remaining>=N',
+                    before=current,after=current,cause=('preclear',choice,remaining),trace=trace,source=state)
+                trace+=(('preclear normal guard','N<=8 OR remaining<N',choice),)
                 clear=borrow(context.owner,244,4,frame.phase,True);require_writes((clear,),((clear,0,4),),guards+(_object(current.header,'D'),))
                 for i in range(9):
                     # Completion is the paired branch N==i. N>i follows the
@@ -244,31 +299,48 @@ def _phase_outcomes(objects,rows,context,parents,children):
                     require_writes((q,),((q,0,8),),guards+(_object(current.header,'D'),))
                     element_seq=SequenceInterface(q,current,Span(2,2))
                     ids=_sequence(objects,rows,context,_child(children,parents,214),element_seq)
+                    candidate_trace=trace+(('actual View candidate',i,'N>i',choice),)
                     id_success=[v for v in ids['outcomes'] if v['kind']=='some']
                     for v in ids['outcomes']:
-                        if v['kind']!='some':error('View id',v['error'],v['cursor'],i,True)
+                        if v['kind']!='some':error('View id',v['error'],v['cursor'],i,True,before=current,
+                            after=v['state'].decoder,cause=origin(214,element_seq,ids,v),trace=candidate_trace,source=state)
                     if not id_success:break
                     id_state=id_success[0]['state'];require(id_state.count==Span(1,1),'View name lacks current positive count')
                     strings=_length(objects,rows,context,_child(children,parents,246),id_state.decoder,guards+(_object(q,'View Q'),))
                     next_cursor=None
                     for string in strings['outcomes']:
-                        if string['kind']!='success':error('View string length',string['error'],string['cursor'],i,True);continue
+                        element_trace=candidate_trace+(origin(214,element_seq,ids,id_success[0]),)
+                        if string['kind']!='success':
+                            error('View string length',string['error'],string['cursor'],i,True,before=id_state.decoder,after=string['state'],
+                                cause=origin(246,id_state.decoder,strings,string),trace=element_trace,source=state);continue
                         before=string['state'];maximum=n-before.cursor.lower
-                        error('View short string',4,before.cursor,i,True,guard='decoded n>remaining; no n-byte advance')
+                        string_trace=element_trace+(origin(246,id_state.decoder,strings,string),)
+                        error('View short string',4,before.cursor,i,True,guard='decoded n>remaining; no n-byte advance',
+                            before=before,after=before,cause=('short string',string,maximum),trace=string_trace,source=state)
                         # After the exact remaining check, actual p/n stays
                         # paired; no representative pointer or value is chosen.
                         taken=replace(before,cursor=Span(before.cursor.lower,n))
-                        stage=_stage_effects(objects,rows,context,parents,children,i,taken,before.cursor,Span(0,maximum))
+                        capture=[]
+                        stage=_stage_effects(objects,rows,context,parents,children,i,taken,before.cursor,Span(0,maximum),_origin_sink=capture)
+                        utf8,extended,copy,second=capture[0]
                         iterations.append(stage)
-                        if maximum:error('View UTF8',8,taken.cursor,i,True,guard='same advanced p/n UTF8 error')
-                        if maximum>14:error('View String14 capacity',14,taken.cursor,i,True,guard='n>14 after UTF8 success')
+                        if maximum:error('View UTF8',8,taken.cursor,i,True,guard='same advanced p/n UTF8 error',before=before,after=taken,
+                            cause=('UTF8',V+282,utf8['success']['source'],utf8['errors']),trace=string_trace,source=state)
+                        if maximum>14:error('View String14 capacity',14,taken.cursor,i,True,guard='n>14 after UTF8 success',
+                            before=before,after=taken,cause=('String14 capacity',V+302,utf8['success'],
+                                tuple(v for v in extended['outcomes'] if v['kind']=='capacity_error')),
+                            trace=string_trace,source=state)
                         if i==8:
                             error('View precommit capacity',14,Span(before.cursor.lower,min(n,before.cursor.upper+14)),i,True,
-                                guard='N>i AND i==8 after element parsing/staging');continue
+                                guard='N>i AND i==8 after element parsing/staging',before=before,
+                                after=replace(before,cursor=Span(before.cursor.lower,min(n,before.cursor.upper+14))),
+                                cause=('precommit',i,utf8['success'],tuple(v for v in extended['outcomes'] if v['kind']=='success'),stage),
+                                trace=string_trace,source=state);continue
                         next_cursor=Span(before.cursor.lower,min(n,before.cursor.upper+14))
+                        next_trace=string_trace+(('completed View',i,before,taken,next_cursor,utf8['success'],stage),)
                     if next_cursor is None:break
-                    current=replace(current,cursor=next_cursor)
-    return tuple(errors),tuple(successes),tuple(iterations),tuple(exits)
+                    current=replace(current,cursor=next_cursor);trace=next_trace
+    return tuple(errors),tuple(successes),tuple(iterations),tuple(exits),tuple(frontiers)
 
 
 def _views_return_profiles():
@@ -524,7 +596,7 @@ def _first_boot_decoded_views_state(objects,instructions,source_context):
     prefix,context=_first_boot_decoded_u16_state(objects,instructions,source_context)
     parents=_parent(objects,instructions,context);children=_children(objects,instructions,parents)
     locals_=_local_effects(context)
-    errors,successes,iterations,exits=_phase_outcomes(objects,instructions,context,parents,children)
+    errors,successes,iterations,exits,frontiers=_phase_outcomes(objects,instructions,context,parents,children)
     # The enlarged invocation must be checked independently of the public
     # prefix control summary. Deferred diagnostics/restores never become cuts
     # that pretend to prove a nonreturning machine edge.
@@ -548,7 +620,9 @@ def _first_boot_decoded_views_state(objects,instructions,source_context):
         pending=('Widgets and remaining source groups','full visitor error/normal restore','D finalize and canonical Compare',
             'decoded validation and all other loader routes/modes','diagnostic/default sink/PANICKED graph',
             'acquired owner/publication/full resource and final H2 gates'))
-    return description,_ViewsState(prefix,context,parents,children,exits,closure)
+    state=_ViewsState(prefix,context,parents,children,exits,closure,frontiers,_views_error_graph(context,frontiers))
+    state._checked_errors()
+    return description,state
 
 
 def first_boot_decoded_views(objects,instructions,source_context):

@@ -1042,5 +1042,141 @@ class TailReachedAccesses(unittest.TestCase):
             with self.subTest(change=len(changed)),self.assertRaisesRegex(AssertionError,'collection changed'):
                 _check_tail_uses(replace(self.bridge,uses=changed))
 
+class PrefixPrivateErrorFrontiers(unittest.TestCase):
+    def test_both_actual_wrapper_positions_retain_origin_cursor_partial_state_and_saved_cells(self):
+        from config_decoded_prefix import _first_boot_decoded_u16_state
+        seen=set()
+        for extent in (1,4):
+            objects,rows,source,_=TailLiteralBodies.fixture(extent)
+            description,context=_first_boot_decoded_u16_state(objects,rows,source)
+            errors=context._checked_errors()
+            self.assertEqual(len(errors),sum(v['error'] is not None for v in description['outcomes']))
+            for error in errors:
+                seen.add(error.site-0x1001c654)
+                self.assertIs(error.after,error.outcome['state'])
+                self.assertIs(error.outcome['inner']['state'],error.after)
+                self.assertEqual(error.packed_r0,(error.outcome['error']<<8)|1)
+                self.assertEqual(error.frontier,0x1001c654+54)
+                self.assertEqual(error.saved.extent,96)
+                self.assertEqual(error.saved.start,context.headers['visitor_frame'].start+1512)
+                self.assertIs(error.before.decoder.header,error.after.decoder.header)
+                self.assertIs(error.before.decoder.payload,error.after.decoder.payload)
+                self.assertEqual(error.before.count.lower-error.after.count.lower,1)
+            old=context.error_frontiers
+            object.__setattr__(context,'error_frontiers',old[:-1])
+            try:
+                with self.assertRaisesRegex(AssertionError,'error.*changed'):context._checked_errors()
+            finally:object.__setattr__(context,'error_frontiers',old)
+            error=errors[0];old=error.packed_r0
+            object.__setattr__(error,'packed_r0',old^0x100)
+            try:
+                with self.assertRaisesRegex(AssertionError,'error.*changed|carrier'):context._checked_errors()
+            finally:object.__setattr__(error,'packed_r0',old)
+        self.assertEqual(seen,{24,46})
+
+class ViewsPrivateErrorFrontiers(unittest.TestCase):
+    def test_actual_error_frontiers_preserve_source_origins_advanced_strings_and_partial_views(self):
+        from config_decoded_views import _first_boot_decoded_views_state
+        stages=set()
+        for extent in (4,24):
+            objects,rows,source,_=TailLiteralBodies.fixture(extent)
+            description,state=_first_boot_decoded_views_state(objects,rows,source)
+            frontiers=state._checked_errors()
+            self.assertEqual(len(frontiers),len(description['group_errors']))
+            D=state.context.headers['visitor']['sequence_state'].decoder
+            for error in frontiers:
+                stages.add(error.summary['stage'])
+                self.assertIs(error.after.header,D.header);self.assertIs(error.after.payload,D.payload)
+                self.assertEqual((error.after.cursor.lower,error.after.cursor.upper),error.summary['cursor'])
+                self.assertEqual(error.saved.extent,96)
+                self.assertTrue(error.origin and error.trace)
+                if error.summary['stage']=='View short string':self.assertIs(error.after,error.before)
+                self.assertFalse(error.summary['unfinished_element_not_published'] is False)
+            old=state.error_frontiers
+            object.__setattr__(state,'error_frontiers',old[:-1])
+            try:
+                with self.assertRaisesRegex(AssertionError,'error.*changed'):state._checked_errors()
+            finally:object.__setattr__(state,'error_frontiers',old)
+            item=frontiers[-1];value=item.origin
+            object.__setattr__(item,'origin',frontiers[0].origin)
+            try:
+                with self.assertRaisesRegex(AssertionError,'error.*changed'):state._checked_errors()
+            finally:object.__setattr__(item,'origin',value)
+        self.assertTrue({'Views length','View id','View short string','View UTF8'}<=stages)
+
+class WidgetPrivateErrorOrigins(unittest.TestCase):
+    def test_actual_collection_keeps_length_and_loop_predecessors_and_detects_retained_drift(self):
+        from config_decoded_widgets import _first_boot_decoded_widgets_state,_checked_widget_origin
+        for extent in (1,4,85):
+            objects,rows,source,_=TailLiteralBodies.fixture(extent)
+            public,state=_first_boot_decoded_widgets_state(objects,rows,source)
+            frontiers=state._checked_errors()
+            self.assertEqual(len(frontiers),len(public['group_errors']))
+            if extent==1:
+                self.assertEqual(frontiers,());self.assertEqual(state.family_bridge.entries,())
+                self.assertTrue(state.views.context.error_frontiers)
+                continue
+            self.assertTrue(frontiers)
+            for frontier in frontiers:
+                origin=_checked_widget_origin(frontier.summary['_origin'],state.views.context)
+                self.assertEqual(origin.after.cursor,frontier.summary['cursor'])
+                if frontier.head is not None:
+                    self.assertTrue(any(frontier.head is item for item in state.exits))
+                    self.assertEqual(frontier.index,len(frontier.prefix))
+            original=state.errors
+            object.__setattr__(state,'errors',original[:-1])
+            try:
+                with self.assertRaisesRegex(AssertionError,'Widget private error'):state._checked_errors()
+            finally:object.__setattr__(state,'errors',original)
+            frontier=frontiers[0];summary=frontier.summary;origin=summary['_origin']
+            summary['_origin']=replace(origin,error=99)
+            try:
+                with self.assertRaisesRegex(AssertionError,'Widget private error'):state._checked_errors()
+            finally:summary['_origin']=origin
+            self.assertEqual(state._checked_errors(),frontiers)
+
+    def test_source_prefix_keeps_actual_call_choices_Fixed_guard_and_nested_Color_position(self):
+        from config_decoded_widgets import _widget_source_prefix,_checked_widget_origin
+        from test_config_stack import WidgetFiniteReturns
+        from config_abstract import Span
+        from dataclasses import replace
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        before=state.exits[0].sequence.decoder
+        # Explicit abstract adapter input: the broad upper cursor also allows
+        # short Fixed-float alternatives; the original narrow public head does not.
+        result=_widget_source_prefix(objects,rows,state,parents,children,
+            replace(before,cursor=Span(before.cursor.lower,before.payload.extent)))
+        nested=set();fixed=[]
+        for error in result.errors:
+            origin=_checked_widget_origin(error['_origin'],state.context)
+            self.assertEqual(origin.error,error['error']);self.assertEqual(origin.after.cursor,error['cursor'])
+            self.assertEqual(origin.saved.extent,96)
+            if error['stage'].startswith('GraphRange::Fixed'):
+                fixed.append(origin)
+                self.assertIn('Fixed',repr(origin.trace))
+            if error['stage']=='WidgetColors.warning':
+                nested.add(origin.call.choices[origin.choice_index]['nested_origin'][0])
+        self.assertTrue(fixed);self.assertEqual(nested,{0,1})
+        self.assertEqual({e['error'] for e in result.errors},{4,5,6,8,14})
+
+    def test_Band_and_Advanced_errors_keep_attempted_index_and_actual_before_outcome(self):
+        from config_decoded_widgets import _advanced_source,_checked_widget_origin
+        from test_config_stack import WidgetFiniteReturns
+        from config_abstract import Span
+        from dataclasses import replace
+        objects,rows,state,parents,children=WidgetFiniteReturns.fixture()
+        before=state.exits[0].sequence.decoder
+        result=_advanced_source(objects,rows,state,parents,children,
+            replace(before,cursor=Span(before.cursor.lower,before.payload.extent)))
+        stages=set()
+        for error in result['errors']:
+            origin=_checked_widget_origin(error['_origin'],state.context)
+            stages.add(error['stage'])
+            self.assertEqual((origin.error,origin.after.cursor),(error['error'],error['cursor']))
+            if error['stage'].startswith('Band3.') or error['stage']=='Band capacity':
+                self.assertIn('N>3',repr(origin.trace)+str(origin.condition))
+        self.assertTrue({'Bands length','Band0.label short input','Band3.label UTF8','Band capacity',
+            'Advanced.readout invalid enum'}<=stages)
+
 
 if __name__=='__main__':unittest.main()

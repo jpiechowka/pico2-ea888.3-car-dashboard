@@ -185,47 +185,59 @@ def _band_candidate(objects,rows,state,parents,children,sequence):
     require(isinstance(sequence,SequenceInterface) and sequence.header==q and sequence.count==Span(4,4) and
         sequence.decoder.header==actual.header and sequence.decoder.payload==actual.payload,
         'Band loses its actual four-field Q/same-D/source epoch')
-    errors=[];history=[];current=sequence
-    def collect(stage,result):
+    errors=[];history=[];current=sequence;trace=[('incoming Band',sequence)]
+    def collect(stage,result,before,site):
+        call=_widget_call(context,V+site,before,result,parents,children)
         normal=[]
-        for option in result['outcomes']:
+        for index,option in enumerate(result['outcomes']):
             if option['kind']=='some':normal.append(option['state'])
             else:errors.append(dict(stage=stage,error=14 if option['kind']=='none' else option['error'],
-                cursor=option['cursor'],frontier=V+56,source_field_consumed_before_error=option['kind']!='none'))
+                cursor=option['cursor'],frontier=V+56,source_field_consumed_before_error=option['kind']!='none',
+                _origin=_widget_error(context,call,index,before,option['state'],
+                    14 if option['kind']=='none' else option['error'],None,trace)))
         require(len(normal)<=1,'Band primitive has multiple unpaired normal states')
         history.append((stage,result))
+        if normal:trace.append((stage,call,next(v for v in call.choices if v['kind']=='some')))
         return normal[0] if normal else None
     for label,site in (('min',2676),('max',2708)):
         result=_source_sequence(objects,rows,context,parents,children,V+site,'seq_f32',current,1440)
-        current=collect(label,result)
+        current=collect(label,result,current,site)
         if current is None:return dict(normal_decoder=None,errors=tuple(errors),children=tuple(history),completed_Band_slot_issued=False)
     edge=_edge_at(parents,V+2736);proof=children[edge[2],edge[3]]
     require(proof['role']==ROLES['color'],'Band color does not use binary u16 Color')
     current=collect('color',color_interface(objects,rows,proof,current,_nested_frame(context,8,'Band Color'),
-        _primitive_guards(context,q)))
+        _primitive_guards(context,q)),current,2736)
     if current is None:return dict(normal_decoder=None,errors=tuple(errors),children=tuple(history),completed_Band_slot_issued=False)
     require(current.count==Span(1,1),'Band label guard lacks the remaining fourth source field')
     length_proof=_at_child(parents,children,V+2784,'take_varint_u32')
     output=borrow(frame,1440,8,phase,True);guards=_primitive_guards(context,q)+(_object(q,'Band Q'),)
     length=decoder_interface(objects,rows,length_proof,current.decoder,_nested_frame(context,32,'Band length'),guards,output=output)
+    call=_widget_call(context,V+2784,current.decoder,length,parents,children)
     history.append(('label length',length));normal=[v for v in length['outcomes'] if v['kind']=='success']
-    for option in length['outcomes']:
-        if option['kind']!='success':errors.append(dict(stage='label length',error=option['error'],cursor=option['cursor'],frontier=V+56))
+    for index,option in enumerate(length['outcomes']):
+        if option['kind']!='success':errors.append(dict(stage='label length',error=option['error'],cursor=option['cursor'],frontier=V+56,
+            _origin=_widget_error(context,call,index,current.decoder,option['state'],option['error'],None,trace)))
     if not normal:return dict(normal_decoder=None,errors=tuple(errors),children=tuple(history),completed_Band_slot_issued=False)
     require(len(normal)==1,'Band length loses its paired same-source outcome')
+    trace.append(('label length',call,normal[0]))
     before=normal[0]['state'];n=before.payload.extent;maximum=n-before.cursor.lower
     errors.append(dict(stage='label short input',error=4,cursor=before.cursor,frontier=V+56,
-        guard='decoded length>remaining; no label-byte advance'))
+        guard='decoded length>remaining; no label-byte advance',_origin=_widget_error(context,call,None,before,before,4,
+            'decoded length>remaining; no label-byte advance',trace)))
     source=UTF8Slice(before.payload,before.cursor,Span(0,maximum))
     taken=replace(before,cursor=Span(before.cursor.lower,n))
     utf8=from_utf8_interface(objects,rows,source,borrow(frame,1440,12,phase,True),_nested_frame(context,24,'Band UTF8'),guards)
     if utf8['errors']:errors.append(dict(stage='label UTF8',error=8,cursor=taken.cursor,frontier=V+56,
-        guard='the same advanced p/n pair is invalid UTF8'))
+        guard='the same advanced p/n pair is invalid UTF8',_origin=_widget_error(context,(V+2838,source,utf8),None,before,taken,8,
+            'the same advanced p/n pair is invalid UTF8',trace)))
+    trace.append(('label UTF8 success',V+2838,source,taken,utf8))
     extended=extend_string5_interface(objects,rows,_at_child(parents,children,V+2862,'vec_extend_inner'),
         String5Interface(borrow(frame,1440,12,phase,True),Span(0,0)),InitializedPrefix(before.payload,Span(0,maximum)),
         _nested_frame(context,24,'Band String5'),guards)
     if maximum>5:errors.append(dict(stage='String5 capacity',error=14,cursor=taken.cursor,frontier=V+56,
-        guard='same UTF8 length>5; append does not write'))
+        guard='same UTF8 length>5; append does not write',_origin=_widget_error(context,(V+2862,extended),None,before,taken,14,
+            'same UTF8 length>5; append does not write',trace)))
+    trace.append(('String5 success',V+2862,extended,'same length<=5'))
     copies=[]
     for site,origin,destination in ((2886,1441,1420),(2896,1420,1185)):
         edge=_edge_at(parents,V+site);require(edge[3]=='__aeabi_memcpy','Band String5 staging copy target differs')
@@ -245,7 +257,8 @@ def _band_candidate(objects,rows,state,parents,children,sequence):
     copied=None
     if max_length:
         copied=label_copy_interface(objects,rows,copy_edge[2],InitializedPrefix(normalized_source,Span(1,max_length)),label,frame,guards)
-        errors.extend(dict(stage=stage,error=14,cursor=taken.cursor,frontier=V+56,guard=guard) for stage,guard in
+        errors.extend(dict(stage=stage,error=14,cursor=taken.cursor,frontier=V+56,guard=guard,
+            _origin=_widget_error(context,(V+2960,range_proof,source,extended),None,before,taken,14,guard,trace)) for stage,guard in
             (('Band ASCII','1<=length<=5 AND some byte outside32..126'),('Band all spaces','1<=length<=5 AND all bytes==32')))
     after=replace(before,cursor=Span(before.cursor.lower,min(n,before.cursor.upper+5)))
     return dict(normal_decoder=after,incoming_decoder=sequence.decoder,errors=tuple(errors),children=tuple(history),utf8=utf8,extend=extended,
@@ -260,6 +273,71 @@ def _band_candidate(objects,rows,state,parents,children,sequence):
 
 
 @dataclass(frozen=True)
+class _WidgetCallOrigin:
+    site:int
+    before:object
+    edge:tuple
+    root_body:tuple
+    body:tuple
+    choices:tuple
+
+
+@dataclass(frozen=True)
+class _WidgetErrorOrigin:
+    call:object
+    choice_index:object
+    before:object
+    after:object
+    error:int
+    condition:object
+    trace:tuple
+    saved:Storage
+
+
+def _widget_decoder(value):
+    return value.decoder if isinstance(value,SequenceInterface) else value
+
+
+def _widget_call(context,site,before,result,parents,children):
+    proof=result['proof'];edge=_edge_at(parents,site);root=children[edge[2],edge[3]]
+    require(root['function']==edge[2] and root['frame']==edge[4] and
+        (root['function']==proof['function'] or root['frame']==0 and len(root['ordinary_edges'])==1 and
+            root['ordinary_edges'][0][1]=='b.w' and root['ordinary_edges'][0][2]==proof['function']),
+        'Widget error origin loses its typed actual parent/transport/leaf pair')
+    return _WidgetCallOrigin(site,before,edge,tuple(root.get(k) for k in ('function','role','extent','frame')),
+        tuple(proof.get(k) for k in ('function','role','semantic_role','extent','frame')),
+        tuple(result['outcomes']))
+
+
+def _widget_error(context,call,index,before,after,code,condition,trace):
+    frame=context.headers['visitor_frame']
+    saved=next(v for v in context.headers['visitor']['protected'] if v.space==frame.space and
+        v.start==frame.start+1512 and v.extent==96)
+    return _WidgetErrorOrigin(call,index,_widget_decoder(before),_widget_decoder(after),code,condition,tuple(trace),saved)
+
+
+def _checked_widget_origin(origin,context):
+    """Check retained local associations; enclosing current inputs remain required."""
+    require(type(origin) is _WidgetErrorOrigin and origin.trace and origin.error in (4,5,6,8,14),
+        'Widget error has no actual retained source relation')
+    actual=context.headers['visitor']['sequence_state'].decoder;frame=context.headers['visitor_frame']
+    require(all(v.header==actual.header and v.payload==actual.payload for v in (origin.before,origin.after)) and
+        origin.saved in context.headers['visitor']['protected'] and
+        (origin.saved.start,origin.saved.extent)==(frame.start+1512,96),
+        'Widget error changed its decoder/source or original saved activation')
+    if origin.choice_index is not None:
+        require(type(origin.call) is _WidgetCallOrigin and type(origin.choice_index) is int and
+            0<=origin.choice_index<len(origin.call.choices),'Widget error lost its actual primitive choice')
+        choice=origin.call.choices[origin.choice_index]
+        require(origin.before is _widget_decoder(origin.call.before) and origin.after is _widget_decoder(choice['state']) and
+            (choice['kind'] in ('some','success') if origin.condition else
+                origin.error==(14 if choice['kind']=='none' else choice['error'])),
+            'Widget error splices another primitive before/outcome')
+    else:require(origin.condition is not None,'Widget conditional error has no source guard')
+    return origin
+
+
+@dataclass(frozen=True)
 class _WidgetSourcePrefix:
     decoder:object
     fields:tuple
@@ -268,6 +346,7 @@ class _WidgetSourcePrefix:
     physical_counts:tuple
     incoming_decoder:object
     completed_source_Widget:bool=False
+    normal_trace:tuple=()
 
 
 def _widget_source_prefix(objects,rows,state,parents,children,decoder):
@@ -282,22 +361,28 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
     V=context.headers['visitor']['proof']['function'];actual=context.headers['visitor']['sequence_state'].decoder
     require(decoder.header==actual.header and decoder.payload==actual.payload,
         'Widget source prefix has another actual D/source allocation')
-    errors=[];history=[];fields=[];counts=[]
-    def error(label,code,cursor,guard=None):
-        errors.append(dict(stage=label,error=code,cursor=cursor,guard=guard,frontier=V+56))
-    def select(label,result):
+    errors=[];history=[];fields=[];counts=[];trace=[('incoming Widget',decoder)]
+    last_call=None
+    def error(label,code,cursor,guard=None,origin=None):
+        require(origin is not None,'Widget error emission omitted its actual source origin')
+        errors.append(dict(stage=label,error=code,cursor=cursor,guard=guard,frontier=V+56,_origin=origin))
+    def select(label,result,before,site):
+        nonlocal last_call
+        call=_widget_call(context,V+site,before,result,parents,children);last_call=call
         normal=[v for v in result['outcomes'] if v['kind'] in ('some','success')]
-        for option in result['outcomes']:
+        for index,option in enumerate(result['outcomes']):
             if option['kind'] not in ('some','success'):
-                error(label,14 if option['kind']=='none' else option['error'],option['cursor'])
+                code=14 if option['kind']=='none' else option['error']
+                error(label,code,option['cursor'],origin=_widget_error(context,call,index,before,option['state'],code,None,trace))
         history.append((label,result));require(len(normal)<=1,'Widget source child has unpaired successful states')
+        if normal:trace.append((label,call,normal[0],None))
         return normal[0]['state'] if normal else None
     def sequence(label,offset,count,steps,before):
         q=SequenceInterface(borrow(frame,offset,8,phase,True),before,Span(count,count));physical=[count]
         for field,site,semantic in steps:
             result=_source_sequence(objects,rows,context,parents,children,V+site,semantic,q,
                 1064 if semantic=='seq_f32' else None)
-            q=select(label+'.'+field,result)
+            q=select(label+'.'+field,result,q,site)
             if q is None:return None,tuple(physical)
             require(q.count.lower==q.count.upper and q.count.lower==physical[-1]-1,
                 'Widget nested sequence loses decrement-before-child')
@@ -308,9 +393,13 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
         q=borrow(frame,q_offset,8,phase,True)
         result=decoder_interface(objects,rows,proof,before,_nested_frame(context,32,label),
             _primitive_guards(context,q)+(_object(q,'live '+label+' Q'),),output=borrow(frame,1064,8,phase,True))
-        after=select(label,result)
+        after=select(label,result,before,site)
         if after is not None and maximum is not None:
-            error(label+' invalid enum',14,after.cursor,'same decoded u32>'+str(maximum))
+            guard='same decoded u32>'+str(maximum)
+            index=next(i for i,v in enumerate(last_call.choices) if v['kind']=='success')
+            error(label+' invalid enum',14,after.cursor,guard,
+                _widget_error(context,last_call,index,before,after,14,guard,trace))
+            trace.append((label+' normal domain','same decoded u32<='+str(maximum),last_call))
         return after
     def manual_count(label,q,count_before,count_after,site):
         require(q.count==Span(count_before,count_before) and count_after>=0,
@@ -318,25 +407,34 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
         cell=borrow(q.header.storage,q.header.offset+4,4,phase,True)
         require_writes((cell,),((cell,0,4),),_primitive_guards(context,q.header)+(_object(q.decoder.header,'live D'),
             _object(borrow(q.header.storage,q.header.offset,4,phase),'stable Q.D')))
+        after=replace(q,count=Span(count_after,count_after))
         history.append((label+' physical count',dict(site=V+site,before=count_before,after=count_after)))
-        return replace(q,count=Span(count_after,count_after))
+        trace.append((label+' physical count',V+site,q,after))
+        return after
     def string(label,capacity,length_site,utf8_site,extend_site,copy_site,before,q_offset):
         after=varint(label+' length',length_site,before,q_offset)
         if after is None:return None
         n=after.payload.extent;maximum=n-after.cursor.lower
-        error(label+' short input',4,after.cursor,'length>remaining; no string-byte advance')
+        guard='length>remaining; no string-byte advance'
+        error(label+' short input',4,after.cursor,guard,_widget_error(context,last_call,None,after,after,4,guard,trace))
         taken=replace(after,cursor=Span(after.cursor.lower,n))
         guards=_primitive_guards(context,borrow(frame,q_offset,8,phase,True))+(_object(borrow(frame,q_offset,8,phase),'live string Q'),)
         pair=UTF8Slice(after.payload,after.cursor,Span(0,maximum))
         utf8=from_utf8_interface(objects,rows,pair,borrow(frame,1064,12,phase,True),_nested_frame(context,24,label+' UTF8'),guards)
         require(_edge_at(parents,V+utf8_site)[2]==utf8['proof']['function'],'Widget string uses another UTF8 result')
         history.append((label+' UTF8',utf8))
-        if utf8['errors']:error(label+' UTF8',8,taken.cursor,'the same advanced p/n pair is invalid UTF8')
+        if utf8['errors']:
+            guard='the same advanced p/n pair is invalid UTF8'
+            error(label+' UTF8',8,taken.cursor,guard,_widget_error(context,(V+utf8_site,pair,utf8),None,after,taken,8,guard,trace))
+        trace.append((label+' UTF8 success',V+utf8_site,pair,taken,utf8))
         proof=_at_child(parents,children,V+extend_site,'vec_extend'+str(capacity))
         appended=extend_interface(objects,rows,proof,VecInterface(borrow(frame,1064,capacity+4,phase,True),capacity,Span(0,0)),
             InitializedPrefix(after.payload,Span(0,maximum)),_nested_frame(context,16,label+' append'),guards)
         history.append((label+' append',appended))
-        if maximum>capacity:error(label+' capacity',14,taken.cursor,'length>'+str(capacity)+' after UTF8 success')
+        if maximum>capacity:
+            guard='length>'+str(capacity)+' after UTF8 success'
+            error(label+' capacity',14,taken.cursor,guard,
+                _widget_error(context,(V+extend_site,appended),None,after,taken,14,guard,trace))
         edge=_edge_at(parents,V+copy_site);transport=children[edge[2],edge[3]]
         require(len(transport['ordinary_edges'])==1 and transport['ordinary_edges'][0][3]=='__aeabi_memcpy',
             'Widget successful string loses its captured byte-preserving tail')
@@ -345,7 +443,8 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
         history.append((label+' captured string tail',copied))
         return replace(after,cursor=Span(after.cursor.lower,min(n,after.cursor.upper+capacity)))
     def finish(before):
-        return _WidgetSourcePrefix(before,tuple(fields),tuple(errors),tuple(history),tuple(counts),decoder)
+        return _WidgetSourcePrefix(before,tuple(fields),tuple(errors),tuple(history),tuple(counts),decoder,
+            normal_trace=tuple(trace))
     q,physical=sequence('Widget',1360,10,(('id',574,'seq_u16'),('view',606,'seq_u8')),decoder)
     counts.append(('Widget',physical))
     if q is None:return finish(None)
@@ -369,12 +468,15 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
     if display is None:return finish(None)
     current=varint('GraphRange',1094,display.decoder,880,1)
     if current is None:return finish(None)
+    auto_trace=tuple(trace);trace.append(('GraphRange::Fixed guard',last_call,'same GraphRange==Fixed'))
     fixed,fixed_counts=sequence('GraphRange::Fixed',1000,2,(('min',1134,'seq_f32'),('max',1166,'seq_f32')),current)
     # Auto takes no float payload; Fixed consumes both. Keep the branch source
     # relation beside the conservative joined cursor, never initialize Auto's
     # inactive payload from the Fixed alternative.
     history.append(('GraphRange paired variants',dict(Auto=current,Fixed=None if fixed is None else fixed.decoder,
         Auto_payload_opaque=True,Fixed_counts=fixed_counts)))
+    fixed_trace=tuple(trace);trace=list(auto_trace)+[('GraphRange paired variants',current,
+        None if fixed is None else fixed.decoder,fixed_trace)]
     current=replace(current,cursor=Span(current.cursor.lower,max(current.cursor.upper,
         current.cursor.upper if fixed is None else fixed.decoder.cursor.upper)))
     fields.append(('display',dict(decimals=(0,255),bools=(0,1),graph_range=('Auto','Fixed'),f32_bits=(0,0xffffffff))))
@@ -390,7 +492,7 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
     for field,site,semantic in (('trigger',1368,'seq_f32'),('clear',1402,'seq_f32'),('min_load',1436,'seq_f32'),
         ('on_ms',1466,'seq_u16'),('off_ms',1502,'seq_u16')):
         warning=select('Warning.'+field,_source_sequence(objects,rows,context,parents,children,V+site,semantic,warning,
-            1064 if semantic=='seq_f32' else None))
+            1064 if semantic=='seq_f32' else None),warning,site)
         if warning is None:return finish(None)
         warning_counts.append(warning.count.lower)
     warning=manual_count('Warning message',warning,6,5,1550);warning_counts.append(5)
@@ -399,14 +501,14 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
     warning=replace(warning,decoder=current)
     for field,site,semantic in (('trigger_high',1666,'seq_f32'),('clear_high',1700,'seq_f32'),('snooze',1730,'seq_u16')):
         warning=select('Warning.'+field,_source_sequence(objects,rows,context,parents,children,V+site,semantic,warning,
-            1064 if semantic=='seq_f32' else None))
+            1064 if semantic=='seq_f32' else None),warning,site)
         if warning is None:return finish(None)
         warning_counts.append(warning.count.lower)
     warning=manual_count('Warning priority',warning,2,1,1778);warning_counts.append(1)
     current=varint('WarningPriority',1786,warning.decoder,1176,3)
     if current is None:return finish(None)
-    warning=select('Warning.latch',_source_sequence(objects,rows,context,parents,children,V+1814,'seq_bool',
-        replace(warning,decoder=current)))
+    warning=replace(warning,decoder=current)
+    warning=select('Warning.latch',_source_sequence(objects,rows,context,parents,children,V+1814,'seq_bool',warning),warning,1814)
     if warning is None:return finish(None)
     warning_counts.append(warning.count.lower);counts.append(('Warning',tuple(warning_counts)))
     fields.append(('warning',dict(source_Wire_fields=14,f32_bits=(0,0xffffffff),u16=(0,65535),
@@ -421,12 +523,12 @@ def _widget_source_prefix(objects,rows,state,parents,children,decoder):
     for ordinal in range(14):
         site=V+2038+36*ordinal;edge=_edge_at(parents,site);proof=children[edge[2],edge[3]]
         colors=select('WidgetColors.'+str(ordinal),color_interface(objects,rows,proof,colors,
-            _nested_frame(context,8,'Widget Color'),_primitive_guards(context,colors.header)))
+            _nested_frame(context,8,'Widget Color'),_primitive_guards(context,colors.header)),colors,site-V)
         if colors is None:return finish(None)
         color_counts.append(colors.count.lower)
     edge=_edge_at(parents,V+2544);proof=children[edge[2],edge[3]]
     colors=select('WidgetColors.warning',warning_colors_interface(objects,rows,proof,colors,
-        borrow(frame,1000,6,phase,True),_nested_frame(context,24,'Widget WarningColors'),_primitive_guards(context,colors.header)))
+        borrow(frame,1000,6,phase,True),_nested_frame(context,24,'Widget WarningColors'),_primitive_guards(context,colors.header)),colors,2544)
     if colors is None:return finish(None)
     color_counts.append(colors.count.lower);counts.append(('WidgetColors',tuple(color_counts)))
     fields.append(('colors',('Color16',16,(0,65535))))
@@ -470,36 +572,49 @@ def _advanced_source(objects,rows,state,parents,children,decoder):
     proof=_at_child(parents,children,V+2598,'take_varint_u32')
     length=decoder_interface(objects,rows,proof,decoder,_nested_frame(context,32,'Bands length'),guards,
         output=borrow(frame,1064,8,phase,True))
+    length_call=_widget_call(context,V+2598,decoder,length,parents,children)
     normal=[v for v in length['outcomes'] if v['kind']=='success']
-    errors.extend(dict(stage='Bands length',error=v['error'],cursor=v['cursor'],frontier=V+56) for v in length['outcomes'] if v['kind']!='success')
+    errors.extend(dict(stage='Bands length',error=v['error'],cursor=v['cursor'],frontier=V+56,
+        _origin=_widget_error(context,length_call,index,decoder,v['state'],v['error'],None,(('incoming Advanced',decoder),)))
+        for index,v in enumerate(length['outcomes']) if v['kind']!='success')
     if not normal:return dict(normal=(),errors=tuple(errors),children=(length,),Band_length=length,completed_Advanced_slot_issued=False)
     require(len(normal)==1,'Band Vec length has unpaired normal states')
-    current=normal[0]['state'];bands=[]
+    current=normal[0]['state'];bands=[];band_trace=[('Bands length',length_call,normal[0])]
     for j in range(4):
         # Completion N==j consumes no next candidate. N>j must parse a complete
         # candidate BEFORE the j==3 capacity check, including every parse exit.
-        bands.append((j,current))
+        bands.append((j,current,tuple(band_trace)))
         candidate=_band_candidate(objects,rows,state,parents,children,
             SequenceInterface(borrow(frame,1400,8,phase,True),current,Span(4,4)))
         history.append(('Band'+str(j),candidate))
-        errors.extend(dict(v,stage='Band'+str(j)+'.'+v['stage'],completed_Band_source_prefix=j) for v in candidate['errors'])
+        attempt=tuple(band_trace)+(('attempted Band',j,'N>'+str(j),current),)
+        errors.extend(dict(v,stage='Band'+str(j)+'.'+v['stage'],completed_Band_source_prefix=j,
+            _origin=replace(v['_origin'],trace=attempt+v['_origin'].trace)) for v in candidate['errors'])
         after=candidate['normal_decoder']
         if after is None:break
         if j==3:
             errors.append(dict(stage='Band capacity',error=14,cursor=after.cursor,frontier=V+56,
-                completed_Band_source_prefix=3,guard='N>3 AND fourth candidate decoded before j==3 guard'))
-        else:current=after
+                completed_Band_source_prefix=3,guard='N>3 AND fourth candidate decoded before j==3 guard',
+                _origin=_widget_error(context,(V+3042,candidate['source_fields'],candidate['normal_label_guard']),None,
+                    current,after,14,'N>3 AND fourth candidate decoded before j==3 guard',attempt)))
+        else:
+            band_trace.append(('completed Band source',j,current,after,candidate['normal_label_guard']))
+            current=after
     outcomes=[];attribute_histories=[]
-    for j,before in bands:
+    for j,before,prefix_trace in bands:
+        trace=list(prefix_trace)+[('Band source completion','N=='+str(j),before)]
         seq=SequenceInterface(q,before,Span(7,7));physical=[7];attributes=[]
         for label,site,semantic in (('reference',3132,'seq_f32'),('smoothing',3162,'seq_u16'),('peak_hold',3196,'seq_u16')):
             result=_source_sequence(objects,rows,context,parents,children,V+site,semantic,seq,1064 if semantic=='seq_f32' else None)
+            call=_widget_call(context,V+site,seq,result,parents,children)
             attributes.append((label,result));success=[v for v in result['outcomes'] if v['kind']=='some']
-            for v in result['outcomes']:
+            for index,v in enumerate(result['outcomes']):
                 if v['kind']!='some':errors.append(dict(stage='Advanced.'+label,error=14 if v['kind']=='none' else v['error'],
-                    cursor=v['cursor'],frontier=V+56,Band_count=j))
+                    cursor=v['cursor'],frontier=V+56,Band_count=j,_origin=_widget_error(context,call,index,seq,v['state'],
+                        14 if v['kind']=='none' else v['error'],None,trace)))
             if not success:seq=None;break
             require(len(success)==1,'Advanced source scalar has unpaired normal states')
+            trace.append((label,call,success[0]))
             seq=success[0]['state'];physical.append(seq.count.lower)
         if seq is None:continue
         require(tuple(physical)==(7,6,5,4),'Advanced folded enum residual differs')
@@ -508,14 +623,20 @@ def _advanced_source(objects,rows,state,parents,children,decoder):
             proof=_at_child(parents,children,V+site,'take_varint_u32')
             result=decoder_interface(objects,rows,proof,after,_nested_frame(context,32,'Advanced '+label),guards,
                 output=borrow(frame,1064,8,phase,True));attributes.append((label,result))
+            call=_widget_call(context,V+site,after,result,parents,children)
             success=[v for v in result['outcomes'] if v['kind']=='success']
-            for v in result['outcomes']:
-                if v['kind']!='success':errors.append(dict(stage='Advanced.'+label,error=v['error'],cursor=v['cursor'],frontier=V+56,Band_count=j))
+            for index,v in enumerate(result['outcomes']):
+                if v['kind']!='success':errors.append(dict(stage='Advanced.'+label,error=v['error'],cursor=v['cursor'],frontier=V+56,
+                    Band_count=j,_origin=_widget_error(context,call,index,after,v['state'],v['error'],None,trace)))
             if not success:after=None;break
             require(len(success)==1,'Advanced enum has unpaired normal states')
+            trace.append((label,call,success[0]))
             after=success[0]['state']
             errors.append(dict(stage='Advanced.'+label+' invalid enum',error=14,cursor=after.cursor,frontier=V+56,
-                Band_count=j,guard='same decoded u32>'+str(maximum)))
+                Band_count=j,guard='same decoded u32>'+str(maximum),_origin=_widget_error(context,call,
+                    next(index for index,v in enumerate(call.choices) if v is success[0]),call.before,after,14,
+                    'same decoded u32>'+str(maximum),trace)))
+            trace.append((label+' normal domain',call,'same decoded u32<='+str(maximum)))
         if after is not None:outcomes.append(dict(Band_count=j,decoder=after,guard='decoded Band length=='+str(j),
             source_fields=(('reference','f32_bits',(0,0xffffffff)),('smoothing','u16',(0,65535)),('peak_hold','u16',(0,65535)),
                 ('readout','enum',(0,9)),('secondary','enum',(0,3)),('peak_mode','enum',(0,2)),('reference_mode','enum',(0,2)))))
@@ -722,7 +843,8 @@ def _widget_lengths(objects,rows,state,parents,children):
             'Widget length has another inherited Views/top-Q epoch')
         decoder=incoming.sequence.decoder
         result=decoder_interface(objects,rows,proof,decoder,_nested_frame(context,32,'Widgets length'),guards,output=output)
-        for option in result['outcomes']:
+        call=_widget_call(context,V+416,decoder,result,parents,children)
+        for choice_index,option in enumerate(result['outcomes']):
             require_writes((decoder.header,output),option['possible_writes'],
                 (_object(borrow(decoder.header.storage,decoder.header.offset+4,4,phase),'stable D.end'),))
             if option['kind']=='success':
@@ -731,7 +853,9 @@ def _widget_lengths(objects,rows,state,parents,children):
                     incoming.initialized_views,result))
             else:
                 errors.append(dict(stage='Widgets length',error=option['error'],cursor=option['cursor'],
-                    initialized_views=incoming.initialized_views,initialized_widgets=0,widgets_cleared=False,frontier=V+56))
+                    initialized_views=incoming.initialized_views,initialized_widgets=0,widgets_cleared=False,frontier=V+56,
+                    _views_entry=incoming,_origin=_widget_error(context,call,choice_index,decoder,option['state'],option['error'],None,
+                        (('actual Views successor',incoming.sequence,incoming.initialized_views),))))
     # The clear's spatial permission is not an unconditional early write. The
     # guarded loop consumer below applies it only to successful length paths
     # satisfying N<=64 OR the actual remaining input R<N.
@@ -910,6 +1034,34 @@ class _WidgetExit:
 
 
 @dataclass(frozen=True)
+class _WidgetPathError:
+    summary:dict
+    entry:object
+    head:object
+    index:int
+    prefix:tuple
+
+
+def _widget_prefix(committed):
+    return tuple((v.index,v.before,v.after,v.commit) for v in committed)
+
+
+def _widget_error_graph(state):
+    from config_decoded_sources import _phase_graph
+    entries=state.family_bridge.entries
+    def identity_index(item,values,label):
+        if item is None:return None
+        found=[i for i,v in enumerate(values) if v is item]
+        require(len(found)==1,'Widget private error changed its actual '+label)
+        return found[0]
+    records=tuple((v.summary,identity_index(v.entry,entries,'length successor'),
+        identity_index(v.head,state.exits,'loop head'),v.index,v.prefix) for v in state.error_frontiers)
+    # Heads/commits retain independently checked use graphs. Keep only their
+    # actual identity indices and compact source/prefix projections here.
+    return _phase_graph((state.views.context.headers,state.views.exits,entries,state.errors,records))
+
+
+@dataclass(frozen=True)
 class _WidgetsState:
     views:object
     parents:tuple
@@ -921,6 +1073,35 @@ class _WidgetsState:
     execution:object
     family_bridge:object
     reached_uses:tuple
+    error_frontiers:tuple=()
+    error_checkpoint:object=None
+
+    def _checked_errors(self):
+        """Private retained source relation inside the enclosing current boundary."""
+        self.views._checked_errors()
+        require(self.error_checkpoint is not None and _widget_error_graph(self)==self.error_checkpoint and
+            len(self.errors)==len(self.error_frontiers) and
+            all(v.summary is error for v,error in zip(self.error_frontiers,self.errors)),
+            'Widget private error relation changed')
+        V=self.views.context.headers['visitor']['proof']['function']
+        for path in self.error_frontiers:
+            summary=path.summary;origin=_checked_widget_origin(summary['_origin'],self.views.context)
+            require((origin.error,origin.after.cursor)==(summary['error'],summary['cursor']) and summary['frontier']==V+56,
+                'Widget private error carrier/cursor changed')
+            if path.entry is None:
+                source=summary['_views_entry']
+                require(any(source is v for v in self.views.exits) and path.head is None and path.index==0 and not path.prefix and
+                    origin.before is source.sequence.decoder,'Widget private error lost its pre-length predecessor')
+            elif path.head is None:
+                require(path.index==0 and not path.prefix and origin.before is path.entry.sequence.decoder,
+                    'Widget private error lost its pre-clear predecessor')
+            else:
+                require(path.index==len(path.head.committed) and path.prefix==_widget_prefix(path.head.committed) and
+                    summary['initialized_widgets']==path.index and summary['initialized_views']==path.entry.initialized_views and
+                    path.head.sequence.decoder.header==path.entry.sequence.decoder.header and
+                    path.head.sequence.decoder.payload==path.entry.sequence.decoder.payload,
+                    'Widget private error lost its actual prior committed prefix')
+        return self.error_frontiers
 
     def __post_init__(self):
         from config_decoded_views import _ViewsState,_StructuralControl
@@ -1009,16 +1190,24 @@ def _first_boot_decoded_widgets_state(objects,rows,source_context):
     from config_widget_uses import _widget_family_bridge
     family_bridge=_widget_family_bridge(objects,rows,state,parents,children,returns,structural,source_context,entries)
     errors=list(length_errors);exits=[];control=None;iterations=[];reached_uses=[]
-    def record_errors(options,entry,index):
+    error_frontiers=[_WidgetPathError(v,None,None,0,()) for v in errors]
+    def record_errors(options,entry,index,head,committed,preceding=()):
         for option in options:
-            errors.append(dict(option,initialized_views=entry.initialized_views,initialized_widgets=index,
-                widgets_cleared=True,ordinary_current_candidate_unpublished=True))
+            origin=option['_origin']
+            trace=(('actual candidate',head.sequence.decoder,index,'N>'+str(index),
+                'N<=64 OR actual post-length remaining<N'),)+tuple(preceding)+origin.trace
+            summary=dict(option,initialized_views=entry.initialized_views,initialized_widgets=index,
+                widgets_cleared=True,ordinary_current_candidate_unpublished=True,_origin=replace(origin,trace=trace))
+            errors.append(summary);error_frontiers.append(_WidgetPathError(summary,entry,head,index,_widget_prefix(committed)))
     for entry in entries:
         current=entry.sequence.decoder;committed=();n=current.payload.extent
         if n-current.cursor.lower>=65:
-            errors.append(dict(stage='Widgets pre-clear capacity',error=14,cursor=current.cursor,
+            summary=dict(stage='Widgets pre-clear capacity',error=14,cursor=current.cursor,
                 initialized_views=entry.initialized_views,initialized_widgets=0,widgets_cleared=False,frontier=V+56,
-                guard='same N>=65 AND actual post-length remaining>=N'))
+                guard='same N>=65 AND actual post-length remaining>=N',_origin=_widget_error(context,
+                    (V+432,entry.length_result),None,current,current,14,'same N>=65 AND actual post-length remaining>=N',
+                    (('actual length successor',entry.sequence),)))
+            errors.append(summary);error_frontiers.append(_WidgetPathError(summary,entry,None,0,()))
         # Every success below implies N==i<=64, hence satisfies the complementary
         # preclear guard. Attempted candidates also retain N>i AND (N<=64 OR R<N).
         # The latter includes oversized short-input sequences; never force N<=64.
@@ -1029,14 +1218,15 @@ def _first_boot_decoded_widgets_state(objects,rows,source_context):
             next_top=replace(entry.sequence,count=Span(7,7),decoder=current)
             source_q=SequenceInterface(borrow(frame,1500,8,phase,True),current,Span(8,8))
             exits.append(_WidgetExit(next_top,source_q,entry.initialized_views,committed))
+            head=exits[-1]
             # N>i must still attempt parsing even if fewer than80 bytes remain.
             # Primitive errors, not the minimum-byte estimate, stop that path.
             active=_iteration_state(state,index)
             source=_widget_source_prefix(objects,rows,active,parents,children,current)
-            record_errors(source.errors,entry,index)
+            record_errors(source.errors,entry,index,head,committed)
             advanced=(dict(normal=(),errors=()) if source.decoder is None else
                 _advanced_source(objects,rows,active,parents,children,source.decoder))
-            record_errors(advanced['errors'],entry,index)
+            record_errors(advanced['errors'],entry,index,head,committed,source.normal_trace)
             scratch=_scratch_effects(objects,rows,active,parents,children)
             value=_WidgetControlInput(state,parents,children,source,advanced,scratch,returns)
             if control is None:control=_widget_control(objects,rows,value)
@@ -1048,9 +1238,13 @@ def _first_boot_decoded_widgets_state(objects,rows,source_context):
             if decision['kind']=='source_error':break
             normal=advanced['normal'];after=decision['after']
             if decision['kind']=='capacity_error':
-                errors.append(dict(stage='Widget precommit capacity',error=14,cursor=after.cursor,
+                summary=dict(stage='Widget precommit capacity',error=14,cursor=after.cursor,
                     initialized_views=entry.initialized_views,initialized_widgets=64,widgets_cleared=True,frontier=V+56,
-                    guard='N>64 AND complete candidate decoded before i==64 guard',spare_Widget_borrow_created=False))
+                    guard='N>64 AND complete candidate decoded before i==64 guard',spare_Widget_borrow_created=False,
+                    _origin=_widget_error(active.context,(V+3758,tuple((v['Band_count'],v['decoder']) for v in normal)),None,
+                        current,after,14,'N>64 AND complete candidate decoded before i==64 guard',
+                        (('actual candidate',current,index),)+source.normal_trace))
+                errors.append(summary);error_frontiers.append(_WidgetPathError(summary,entry,head,index,_widget_prefix(committed)))
                 break
             evidence=_ordinary_commit_evidence(objects,rows,value,control,index)
             require(evidence.domain=='named_ordinary_and_callback_paths' and evidence.exception_safe_completion is False,
@@ -1079,7 +1273,8 @@ def _first_boot_decoded_widgets_state(objects,rows,source_context):
         successes=tuple(dict(initialized_views=e.initialized_views,initialized_widgets=len(e.committed),
             cursor=(e.sequence.decoder.cursor.lower,e.sequence.decoder.cursor.upper),top_count=7,source_count=8,
             guard='same decoded N==initialized_widgets; all prior fresh candidates committed') for e in exits),
-        group_errors=tuple(dict(v,cursor=(v['cursor'].lower,v['cursor'].upper)) for v in errors),
+        group_errors=tuple(dict({k:item for k,item in v.items() if not k.startswith('_')},
+            cursor=(v['cursor'].lower,v['cursor'].upper)) for v in errors),
         iterations=tuple((views,index,(before.lower,before.upper),(after.lower,after.upper))
             for views,index,before,after in iterations),control=dict(selected_instructions=control['selected_instructions'],
             stopped_frontiers=control['stopped_frontiers'],outside_shared_context_count=len(control['outside_shared_contexts']),
@@ -1102,7 +1297,11 @@ def _first_boot_decoded_widgets_state(objects,rows,source_context):
         pending=('Sources and remaining visitor groups','full visitor errors and restore','D finalize/canonical Compare',
             'decoded validation and other loader modes/routes','diagnostic/sink/PANICKED/full resource graph',
             'complete execution/result consumers and actual full producer','final all-mode/max-input/native CI/H2 gates'))
-    return description,_WidgetsState(state,parents,children,control,tuple(exits),tuple(errors),structural,receipt,family_bridge,tuple(reached_uses))
+    private=_WidgetsState(state,parents,children,control,tuple(exits),tuple(errors),structural,receipt,family_bridge,
+        tuple(reached_uses),tuple(error_frontiers))
+    object.__setattr__(private,'error_checkpoint',_widget_error_graph(private))
+    private._checked_errors()
+    return description,private
 
 
 def first_boot_decoded_widgets(objects,instructions,source_context):

@@ -109,6 +109,8 @@ def color_interface(objects,rows,proof,state,frame,ancestor_protected):
             outcomes.append(dict(kind='some' if success else 'error',tag=1 if success else 2,
                 count=count,cursor=after.decoder.cursor,state=after,error=None if success else option['error'],
                 value_domain=(0,65535) if success else None,
+                child_origin=(state.decoder,tuple(scalar.get(k) for k in
+                    ('function','role','semantic_role','extent','frame')),option),
                 possible_writes=((state.header,4,4),)+option['possible_writes']))
     return dict(proof=proof,outcomes=tuple(outcomes),children=tuple(children),
         physical_child_paths=((8,24,16),),normal_preserves=tuple('r'+str(i) for i in range(4,12))+('sp',),
@@ -150,7 +152,8 @@ def warning_colors_interface(objects,rows,proof,state,output,frame,ancestor_prot
                     else:
                         error=14 if option['kind']=='none' else option['error']
                         outcomes.append(dict(kind='error',tag=2,error=error,state=after,cursor=after.decoder.cursor,
-                            count=count,possible_writes=((output,0,3),)))
+                            count=count,possible_writes=((output,0,3),),nested_origin=(ordinal,current,
+                                tuple(color.get(k) for k in ('function','role','extent','frame')),option)))
             pending=following
         for complete in pending:
             require(complete.count==Span(0,0),'WarningColors omits one source color')
