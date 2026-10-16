@@ -5,6 +5,7 @@ not a whole-program stack proof or a device high-water measurement. Changes to
 those paths/dependencies require disassembly review of the child allowances.
 See docs/configurator/configuration-storage.md. Never increase budgets to pass.
 """
+import re
 import struct
 from validation import require
 
@@ -54,6 +55,32 @@ def task_frames(functions, sizes, name):
     # LLVM may outline the future body behind a tiny TaskStorage::poll shim.
     # Count all task-associated bodies/closures conservatively, not only the shim.
     return sum(sizes[address] for address in matches)
+
+
+# LLVM 23 / nightly 2026-10-16 ARM release: exact identities, only crate
+# disambiguators normalized. No module-wide or generic unwrap exemption.
+REVIEWED_STARTUP_FRAMES = {
+    '_RNvMNtCs_16dashboard_config13startup_assetNtB2_5Asset5frame': 24,
+    '_RNvNtCs_16dashboard_config13startup_asset10crc_update': 32,
+    '_RINvNtCs_4core6result13unwrap_failedNtNtNtB4_3str5error9Utf8ErrorECs_16dashboard_config': 16,
+    '_RINvNtCs_4core6result13unwrap_failedNtNtCs_16dashboard_config8validate15ValidationErrorEBN_': 16,
+}
+
+
+def startup_frames(functions, sizes):
+    names, addresses = set(), set()
+    for identity, ceiling in REVIEWED_STARTUP_FRAMES.items():
+        matches = {n for n in functions
+                   if re.sub(r'Cs[A-Za-z0-9]+_', 'Cs_', n) == identity}
+        entries = {functions[n][0] & ~1 for n in matches}
+        require(len(entries) <= 1, 'ambiguous reviewed startup helper: ' + identity)
+        for address in entries:
+            size = sizes.get(address)
+            require(type(size) is int and 0 <= size <= ceiling,
+                    'missing or enlarged startup helper frame: ' + identity)
+        names.update(matches)
+        addresses.update(entries)
+    return names, addresses
 
 
 def configuration_frames(functions, sizes):
@@ -197,6 +224,13 @@ def configuration_frames(functions, sizes):
     covered.update(n for n in functions if all(token in n for token in (
         '14dashboard_core11acquisitionI', '16AcquisitionOwnerR',
         '16dashboard_config8validate15ValidatedConfigE8snapshot')))
+    # CRC is a leaf; frame() only calls bounds/slice panic children. The two
+    # unwrap adapters call unwrap_failed_inner. Panic descendants retain the
+    # existing 1024 B allowance. Conservatively add all emitted frames even
+    # though CRC/render/validation branches are not simultaneously resident.
+    startup_names, startup_addresses = startup_frames(functions, sizes)
+    covered.update(startup_names)
+    result |= startup_addresses
     relevant = [n for n in functions if 'dashboard_config' in n]
     require(all(n in covered for n in relevant),
             'unreviewed config stack helpers: ' + str([n for n in relevant if n not in covered]))

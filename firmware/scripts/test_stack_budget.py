@@ -1,7 +1,7 @@
 """Frame metadata and cumulative-budget regressions, including rejected fixes."""
 import struct
 import unittest
-from check_stack_budget import frames, budgets, task_frames, configuration_frames
+from check_stack_budget import frames, budgets, task_frames, configuration_frames, REVIEWED_STARTUP_FRAMES
 
 
 # Literal .stack_sizes/symbol evidence from slot2-demo280-probe2.
@@ -51,6 +51,39 @@ class StackBudget(unittest.TestCase):
         rows = [line.split(maxsplit=2) for line in SLOT_CAPTURE.splitlines() if line]
         return ({n: (int(a, 16) | 1, 4, 0) for a, _, n in rows},
                 {int(a, 16): int(size) for a, size, _ in rows})
+
+    def test_exact_startup_helpers_count_and_reject_drift(self):
+        functions, sizes = self.slot_fixture()
+        baseline = configuration_frames(functions, sizes)
+        for index, (name, ceiling) in enumerate(REVIEWED_STARTUP_FRAMES.items()):
+            name = name.replace('Cs_', 'CsReviewed_')
+            address = 0x11000000 + index * 1024
+            functions[name] = (address | 1, 42, 0)
+            sizes[address] = ceiling
+        self.assertEqual(configuration_frames(functions, sizes), baseline + 88)
+        for name in list(functions):
+            if 'CsReviewed_' not in name:
+                continue
+            address = functions[name][0] & ~1
+            old = sizes[address]
+            for invalid in [old + 4, -1, True, None]:
+                sizes[address] = invalid
+                with self.assertRaises(AssertionError):
+                    configuration_frames(functions, sizes)
+            del sizes[address]
+            with self.assertRaises(AssertionError):
+                configuration_frames(functions, sizes)
+            sizes[address] = old
+            entry = functions.pop(name)
+            functions[name + 'unreviewed'] = entry
+            with self.assertRaises(AssertionError):
+                configuration_frames(functions, sizes)
+            del functions[name + 'unreviewed']
+            functions[name] = entry
+            functions[name.replace('CsReviewed_', 'CsOther_')] = (address + 513, 42, 0)
+            with self.assertRaises(AssertionError):
+                configuration_frames(functions, sizes)
+            del functions[name.replace('CsReviewed_', 'CsOther_')]
 
     def guarded_fixture(self):
         functions, sizes = self.slot_fixture()

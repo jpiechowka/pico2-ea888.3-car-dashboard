@@ -106,3 +106,30 @@ M33 disassembly includes floating-point register saves.
 
 The complete v4 data contract is admitted here. Advanced runtime adapters and
 final integrated admission remain unfinished and this series is unreleased.
+
+
+### October 16 startup helper admission
+
+LLVM 23 / nightly 2026-10-16 emits four additional configuration-related
+boundaries in the current ARM release. The gate matches their full Rust symbol
+identities after removing only crate disambiguators, requires frame metadata,
+and caps `startup_asset::Asset::frame` at 24 B, `startup_asset::crc_update` at
+32 B, and the `Result::unwrap_failed` instantiations for `Utf8Error` and
+`ValidationError` at 16 B each. An unknown method/type, ambiguous entry,
+missing metadata, or larger frame fails admission.
+
+Source and linked-code review found CRC to be a leaf; `Asset::frame` has only
+slice/bounds panic callees; both result adapters call `unwrap_failed_inner`.
+The bounded ASCII label and reviewed default configuration checks remain
+fail-closed invariants. They are not replaced with silent defaults or unchecked
+UTF-8. Panic formatting descendants remain within the existing 1024 B allowance;
+dashboard startup drawing retains its existing 16 KiB child allowance.
+All four emitted frames are additionally counted together on the configuration
+bound, a conservative 88 B even though these branches are not simultaneously
+resident. No reserve or allowance was increased. Frozen predecessor captures
+retain their previous values when these helpers are absent.
+
+Focused admission of the existing unstripped ARM release gave boot 2896 B,
+core1 construction 18744 B, core1 runtime 15640 B, and dashboard 26224 B.
+These are static admission bounds, not hardware high-water measurements or a
+replacement for the complete capture audit.

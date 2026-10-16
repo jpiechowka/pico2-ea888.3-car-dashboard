@@ -30,23 +30,27 @@ def check_app_sources():
             check_source(path.read_text(encoding="utf-8"), path)
 
 
+def check_metadata(metadata):
+    packages = {p["id"]: p for p in metadata["packages"]}
+    rtt = [n for n in metadata["resolve"]["nodes"] if packages[n["id"]]["name"] == "defmt-rtt"]
+    require(len(rtt) == 1, "expected one reviewed RTT implementation")
+    require(packages[rtt[0]["id"]]["version"] == "1.3.1", "review the new RTT source before changing this guard")
+    features = set(rtt[0]["features"])
+    require("disable-blocking-mode" in features, "ordinary RTT writes must ignore probe blocking flags")
+    require("drop-on-contention" not in features, "IPSR-only ownership is unsafe across cores")
+
+
 def check():
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--offline", "--format-version", "1",
          "--all-features", "--filter-platform", "thumbv8m.main-none-eabihf"],
         cwd=ROOT, text=True, encoding="utf-8",
     ))
-    packages = {p["id"]: p for p in metadata["packages"]}
-    rtt = [n for n in metadata["resolve"]["nodes"] if packages[n["id"]]["name"] == "defmt-rtt"]
-    require(len(rtt) == 1, "expected one reviewed RTT implementation")
-    require(packages[rtt[0]["id"]]["version"] == "1.3.0", "review the new RTT source before changing this guard")
-    features = set(rtt[0]["features"])
-    require("disable-blocking-mode" in features, "ordinary RTT writes must ignore probe blocking flags")
-    require("drop-on-contention" not in features, "IPSR-only ownership is unsafe across cores")
+    check_metadata(metadata)
     # Require explicit macro paths. Reject aliases/grouped imports/globs, which
     # could otherwise hide a flush call from this small source guard.
     check_app_sources()
-    print("RTT1.3.0 all-feature graph: nonblocking writes, multicore encoder; no app flush calls/imports")
+    print("RTT1.3.1 all-feature graph: nonblocking writes, multicore encoder; no app flush calls/imports")
 
 
 if __name__ == "__main__":
