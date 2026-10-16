@@ -90,7 +90,7 @@ fn compact_numeric_lanes_keep_primary_and_history_with_maximum_warning_content()
     ] {
         let lanes = portrait_content_layout(bounds, strings, 2, true, true, 0, true);
         assert!(lanes.text[0].size.height >= 8);
-        assert_eq!(lanes.graph.size.height, 12);
+        assert!(lanes.graph.size.height.saturating_sub(7 + 4) >= 5);
         let all: Vec<_> = lanes
             .text
             .into_iter()
@@ -101,6 +101,115 @@ fn compact_numeric_lanes_keep_primary_and_history_with_maximum_warning_content()
             assert_eq!(a.intersection(&bounds), *a, "lane outside widget: {a:?}");
             for b in &all[i + 1..] {
                 assert!(a.intersection(b).size == Size::zero(), "overlap {a:?}/{b:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn portrait_numeric_history_keeps_curve_variation_separate_from_duration() {
+    use dashboard_config::{Color, ControlAction, GraphRange};
+    use dashboard_core::samples::SensorId;
+    use embedded_graphics::mono_font::MonoTextStyle;
+    use embedded_graphics::mono_font::ascii::FONT_4X6;
+    use embedded_graphics::pixelcolor::Rgb565;
+    use embedded_graphics::text::{Alignment, Text, TextStyleBuilder};
+
+    for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
+        for crowded in [false, true] {
+            for warning in [false, true] {
+                let mut raw = default_config();
+                raw.orientation = Orientation::Portrait;
+                raw.history_seconds[0] = 10;
+                raw.widgets.truncate(1);
+                raw.controls.screens[0].buttons[0].tap = ControlAction::AcknowledgeWarnings;
+                let widget = &mut raw.widgets[0];
+                widget.gauge.kind = GaugeKind::Numeric;
+                widget.placement.column = 0;
+                widget.placement.row = if span == Span::TwoByTwo { 2 } else { 3 };
+                widget.placement.span = span;
+                widget.display.graph = true;
+                widget.display.graph_range = GraphRange::Auto;
+                widget.display.average = crowded;
+                widget.display.extrema = crowded;
+                widget.display.trend = crowded;
+                widget.colors.graph = Color(0x07FF);
+                widget.warning.enabled = warning;
+                widget.warning.trigger = 0.5;
+                widget.warning.clear = 0.2;
+                widget.warning.on_ms = 100;
+                widget.warning.advanced.latch = warning;
+                let config = validate(raw).unwrap();
+                let mut model = AcquisitionModel::demo_configured(&config);
+                for now in (0..=10_000).step_by(100) {
+                    let value = 1. + ((now / 100) % 21) as f32 / 10.;
+                    assert!(model.ingest_batch([value, 90., 95., 80., 30., 700., 13.8, 1.], now));
+                    model.tick(now);
+                }
+                let snapshot = model.snapshot();
+                let eligibility =
+                    snapshot.warning_eligibility(dashboard_core::alarms::RuleIndex::new(0).unwrap(), 10_000);
+                assert_eq!(eligibility.latched, warning);
+                let history = snapshot.sensor(SensorId::Boost).history();
+                assert_eq!(history.count(), 60);
+                let (min, max) = history.bounds().unwrap();
+                assert!(max - min > 1.);
+                let mut scene = scene(&config, &snapshot);
+                scene.now_ms = 10_000;
+                let widget = &config.config().widgets[0];
+                let rect = widget.placement.rect_in(Geometry::Portrait).unwrap();
+                let interior = Rectangle::new(
+                    Point::new(i32::from(rect.x) + 2, i32::from(rect.y) + 2),
+                    Size::new(u32::from(rect.width) - 4, u32::from(rect.height) - 4),
+                );
+                let text = scene.configured_text(0).unwrap();
+                let lanes = portrait_content_layout(
+                    interior,
+                    core::array::from_fn(|i| text[i].as_str()),
+                    u32::from(warning),
+                    true,
+                    true,
+                    0,
+                    widget.shows_trend(),
+                );
+                assert!(lanes.fits, "metadata does not fit {span:?}/{crowded}/{warning}");
+                let graph = lanes.graph;
+                let mut frame = AlignedFrame::boxed();
+                scene.draw_full(&mut St7789Renderer::with_geometry(&mut frame.0, Geometry::Portrait));
+                let pixel = |frame: &AlignedFrame, x: i32, y: i32| {
+                    let offset = (y as usize * 240 + x as usize) * 2;
+                    u16::from_be_bytes([frame.0[offset], frame.0[offset + 1]])
+                };
+                let bottom = graph.top_left.y + graph.size.height as i32;
+                // Exclude the seven duration rows: text must not make a flat curve pass.
+                let curve_rows = (graph.top_left.y..bottom - 7)
+                    .filter(|&y| {
+                        (graph.top_left.x..graph.top_left.x + graph.size.width as i32)
+                            .any(|x| pixel(&frame, x, y) == 0x07FF)
+                    })
+                    .count();
+                assert!(
+                    curve_rows >= 3,
+                    "flat history: {curve_rows} rows, {span:?}/{crowded}/{warning}"
+                );
+                let mut label = AlignedFrame::boxed();
+                Text::with_text_style(
+                    "10s",
+                    Point::new(graph.top_left.x + graph.size.width as i32 / 2, bottom - 1),
+                    MonoTextStyle::new(&FONT_4X6, Rgb565::new(0, 63, 31)),
+                    TextStyleBuilder::new().alignment(Alignment::Center).build(),
+                )
+                .draw(&mut St7789Renderer::with_geometry(&mut label.0, Geometry::Portrait))
+                .unwrap();
+                let mut label_pixels = 0;
+                for y in bottom - 7..bottom {
+                    for x in graph.top_left.x..graph.top_left.x + graph.size.width as i32 {
+                        let expected = pixel(&label, x, y) == 0x07FF;
+                        label_pixels += usize::from(expected);
+                        assert_eq!(pixel(&frame, x, y) == 0x07FF, expected, "duration overlaps curve");
+                    }
+                }
+                assert!(label_pixels > 0);
             }
         }
     }

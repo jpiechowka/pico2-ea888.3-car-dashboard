@@ -716,7 +716,9 @@ pub fn portrait_content_layout(
         }
     }
     let top = 7 + warning_rows * 7;
-    let graph_height = if graph { 12 } else { 0 };
+    // History reserves seven rows for its duration and four for plot padding.
+    // Leave five actual curve rows so changing values remain visible.
+    let graph_height = if graph { 16 } else { 0 };
     let reserved = top + row * 7 + legend_rows * 7 + graph_height;
     let minimum = if numeric { 8 } else { 28 };
     let fits_height = reserved + minimum <= bounds.size.height;
