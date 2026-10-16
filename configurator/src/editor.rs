@@ -41,7 +41,8 @@ impl Revision {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Owner and revision cannot be supplied by a caller.
 /// ```compile_fail
-/// let stamp = dashboard_configurator::editor::EditorStamp { owner: 1, revision: 0 };
+/// let mut stamp = dashboard_configurator::editor::Editor::default().stamp();
+/// stamp.owner = 1;
 /// ```
 pub struct EditorStamp {
     owner: usize,

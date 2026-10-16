@@ -10,7 +10,9 @@ use crate::editor::{EditorError, EditorStamp, Revision};
 /// an old handle to an editable transaction after repair.
 ///
 /// ```compile_fail
-/// let handle = dashboard_configurator::json_draft::JsonDraftHandle { epoch: 1 };
+/// let mut editor = dashboard_configurator::editor::Editor::default();
+/// let mut handle = editor.open_json().unwrap();
+/// handle.epoch = 1;
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct JsonDraftHandle {
