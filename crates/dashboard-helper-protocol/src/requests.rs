@@ -118,3 +118,33 @@ impl Wire for SessionResponse {
         }
     }
 }
+
+/// Binary project upload has a separate bound from small JSON commands.
+pub const PROJECT_UPLOAD_BYTES: usize = 589824;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectUploadResponse {
+    pub session_id: SessionId,
+    pub project_id: ProjectId,
+    pub project_sha256: Sha256,
+    pub config_sha256: Sha256,
+    pub startup_profile_sha256: Sha256,
+    pub startup_asset_sha256: Sha256,
+}
+impl Wire for ProjectUploadResponse {
+    const MAX_BYTES: usize = 4096;
+    fn validate(&self) -> Result<(), Error> { Ok(()) }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectBuildRequest {
+    pub editor_revision: u64,
+    pub project_id: ProjectId,
+    pub project_sha256: Sha256,
+    pub options: BuildOptions,
+    pub retry_of: Option<JobId>,
+}
+impl Wire for ProjectBuildRequest {
+    const MAX_BYTES: usize = REQUEST_BYTES;
+    fn validate(&self) -> Result<(), Error> { normalize(&self.options)?; Ok(()) }
+}

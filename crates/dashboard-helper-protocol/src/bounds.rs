@@ -150,6 +150,7 @@ macro_rules! hex_id {
     };
 }
 hex_id!(JobId, 32);
+hex_id!(ProjectId, 32);
 hex_id!(AttemptId, 32);
 hex_id!(SessionId, 32);
 hex_id!(DeviceId, 32);

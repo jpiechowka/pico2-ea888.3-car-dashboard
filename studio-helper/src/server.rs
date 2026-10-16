@@ -17,6 +17,7 @@ struct Inner {
     jobs: JobStore,
     cached: Value,
     devices: DeviceScanReport,
+    project: Option<crate::build_input::UploadedProject>,
     worker: Option<tokio::task::JoinHandle<()>>,
     stopping: bool,
 }
@@ -42,6 +43,7 @@ impl State {
                 jobs: JobStore::new(session.clone()),
                 devices: crate::devices::empty(session, "Device scan not run"),
                 cached: json!({"schema_version":1,"ready":false,"checks":[],"reason":"Check not run"}),
+                project: None,
                 worker: None,
                 stopping: false,
             }),
@@ -128,6 +130,25 @@ fn poll_query(query: Option<&str>) -> Result<PollRequest, Error> {
     };
     p.validate()?;
     Ok(p)
+}
+async fn bounded_body(
+    mut body: Body,
+    maximum: usize,
+) -> Result<Vec<u8>, ()> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut bytes = Vec::new();
+        while let Some(frame) = std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await {
+            let frame = frame.map_err(|_| ())?;
+            let data = frame.data_ref().ok_or(())?;
+            if data.len() > maximum.saturating_sub(bytes.len()) {
+                return Err(());
+            }
+            bytes.extend_from_slice(data);
+        }
+        Ok(bytes)
+    })
+    .await
+    .map_err(|_| ())?
 }
 async fn empty_body(mut body: Body) -> bool {
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -371,6 +392,30 @@ async fn dispatch(
     if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
         return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
     }
+    if method == Method::POST && path == "/api/v1/projects" {
+        if one(headers, "content-type") != Some("application/octet-stream") {
+            return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedBinaryProject", origin);
+        }
+        if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > PROJECT_UPLOAD_BYTES))
+        {
+            return error(StatusCode::PAYLOAD_TOO_LARGE, "ProjectBound", origin);
+        }
+        let bytes = match bounded_body(request.into_body(), PROJECT_UPLOAD_BYTES).await {
+            Ok(b) => b,
+            Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "ProjectBodyBound", origin),
+        };
+        let mut inner = state.inner.lock().unwrap();
+        if inner.stopping || inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+            return store_error(Error::Busy, origin);
+        }
+        let upload = match crate::build_input::UploadedProject::admit(state.session.clone(), bytes) {
+            Ok(p) => p,
+            Err(_) => return error(StatusCode::BAD_REQUEST, "InvalidConvertedProject", origin),
+        };
+        let result = serde_json::to_value(&upload.response).unwrap();
+        inner.project = Some(upload);
+        return response(StatusCode::CREATED, result, origin);
+    }
     if one(headers, "content-length").is_some_and(|l| l != "0") {
         return error(StatusCode::BAD_REQUEST, "ExpectedEmptyBody", origin);
     }
@@ -540,6 +585,66 @@ async fn serve_async(state: Arc<State>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn project_upload_is_bounded_and_replacement_gets_a_new_token() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+        let bytes = dashboard_config_tools::project::Project::new(&config, Default::default(), None)
+            .unwrap()
+            .encode(dashboard_config_tools::project::ExportMode::ConvertedOnly)
+            .unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let req = Request::builder()
+                .uri("/api/v1/projects")
+                .method("POST")
+                .header("host", AUTHORITY)
+                .header("origin", ORIGINS[0])
+                .header("x-studio-capability", &state.capability)
+                .header("content-type", "application/octet-stream")
+                .body(Body::from(bytes.clone()))
+                .unwrap();
+            assert_eq!(dispatch(state.clone(), req).await.status(), StatusCode::CREATED);
+            ids.push(
+                state
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .project
+                    .as_ref()
+                    .unwrap()
+                    .response
+                    .project_id
+                    .clone(),
+            );
+        }
+        assert_ne!(ids[0], ids[1]);
+        let req = Request::builder()
+            .uri("/api/v1/projects")
+            .method("POST")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .header("content-type", "application/octet-stream")
+            .body(Body::from(vec![0; PROJECT_UPLOAD_BYTES + 1]))
+            .unwrap();
+        assert_eq!(
+            dispatch(state.clone(), req).await.status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert_eq!(
+            state
+                .inner
+                .lock()
+                .unwrap()
+                .project
+                .as_ref()
+                .unwrap()
+                .response
+                .project_id,
+            ids[1]
+        );
+    }
     #[tokio::test]
     async fn rejects_foreign_origin_and_missing_capability() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();

@@ -60,4 +60,3 @@ finally:
  _,stderr=child.communicate(timeout=10)
  if child.returncode is None:raise RuntimeError('Owned helper did not exit')
  print('Owned helper stopped and joined; no capability logged.')
-
