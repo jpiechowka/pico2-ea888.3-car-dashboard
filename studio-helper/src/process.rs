@@ -17,6 +17,19 @@ pub(crate) struct Output {
 }
 #[cfg(windows)]
 mod windows;
+thread_local! {static PROBE_DEADLINE:std::cell::Cell<Option<std::time::Instant>>=const{std::cell::Cell::new(None)};}
+pub(crate) fn with_probe_deadline<T>(
+    duration: Duration,
+    work: impl FnOnce() -> T,
+) -> T {
+    struct Reset(Option<std::time::Instant>);
+    impl Drop for Reset {
+        fn drop(&mut self) { PROBE_DEADLINE.set(self.0); }
+    }
+    let previous = PROBE_DEADLINE.replace(Some(std::time::Instant::now() + duration));
+    let _reset = Reset(previous);
+    work()
+}
 pub(crate) fn run(
     path: &Path,
     args: &[&str],
@@ -33,7 +46,18 @@ pub(crate) fn run(
     }
     #[cfg(windows)]
     {
-        let result = windows::run(path, args, cwd, Duration::from_secs(15), 65536);
+        let timeout = PROBE_DEADLINE
+            .get()
+            .map(|deadline| {
+                deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .min(Duration::from_secs(15))
+            })
+            .unwrap_or(Duration::from_secs(15));
+        if timeout.is_zero() {
+            return Err("deadline: inspection budget exhausted".into());
+        }
+        let result = windows::run(path, args, cwd, timeout, 65536);
         if result.as_ref().is_err_and(|e| e.starts_with("cleanup fatal:")) {
             CLEANUP_FAILED.store(true, Ordering::SeqCst);
         }

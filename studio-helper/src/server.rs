@@ -19,6 +19,7 @@ struct Inner {
     devices: DeviceScanReport,
     project: Option<crate::build_input::UploadedProject>,
     artifacts: Vec<crate::artifacts::Artifact>,
+    inspections: std::collections::BTreeMap<DeviceId, DeviceInspection>,
     worker: Option<tokio::task::JoinHandle<()>>,
     stopping: bool,
 }
@@ -46,6 +47,7 @@ impl State {
                 cached: json!({"schema_version":1,"ready":false,"checks":[],"reason":"Check not run"}),
                 project: None,
                 artifacts: Vec::new(),
+                inspections: std::collections::BTreeMap::new(),
                 worker: None,
                 stopping: false,
             }),
@@ -220,6 +222,7 @@ fn log_report(
 async fn start_check(
     state: Arc<State>,
     device_scan: bool,
+    selected: Option<DeviceSummary>,
 ) -> Result<JobSummary, Error> {
     let previous = {
         let mut inner = state.inner.lock().unwrap();
@@ -236,6 +239,19 @@ async fn start_check(
         return Err(Error::InvalidState);
     }
     let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
+    if let Some(selected) = &selected {
+        if !inner.devices.complete
+            || !inner.devices.devices.iter().any(|d| d == selected)
+            || inner
+                .devices
+                .devices
+                .iter()
+                .any(|d| d.status != DeviceStatus::DescriptorOnly)
+        {
+            return Err(Error::InvalidState);
+        }
+    }
+    let inspection = selected.is_some();
     let operation = if device_scan {
         OperationKind::DeviceScan
     } else {
@@ -262,7 +278,10 @@ async fn start_check(
         LogInput {
             stage,
             source: Source::Internal,
-            text: if device_scan {
+            text: if inspection {
+                "Inspecting explicitly selected BOOTSEL device; no persistent programming or reboot; transient \
+                 interface/XIP changes possible"
+            } else if device_scan {
                 "Reading BOOTSEL descriptors only; no interface reset, programming or capacity claim"
             } else {
                 "Checking installed tools; no installation, build or USB access"
@@ -274,13 +293,45 @@ async fn start_check(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(tokio::task::spawn_blocking(move || {
-        let report = if device_scan {
+        let report = if let Some(selected) = selected {
+            serde_json::to_value(crate::device_inspection::inspect(
+                &worker_state.repo,
+                worker_state.session.clone(),
+                selected,
+            ))
+            .unwrap()
+        } else if device_scan {
             serde_json::to_value(crate::devices::scan(&worker_state.repo, worker_state.session.clone())).unwrap()
         } else {
             crate::prerequisites::check(&worker_state.repo)
         };
         let mut inner = worker_state.inner.lock().unwrap();
-        if device_scan {
+        if inspection {
+            let mut observed: DeviceInspection = serde_json::from_value(report.clone()).unwrap();
+            if crate::process::cancelled()
+                || inner
+                    .jobs
+                    .poll(&id, PollRequest { after: 0, limit: 1 })
+                    .is_ok_and(|b| b.summary.cancel_requested)
+            {
+                observed.complete = false;
+                observed.facts = None;
+                observed.information_sha256 = None;
+                observed.reason = Text::new("Inspection cancelled; no device qualification retained").unwrap();
+            }
+            let text = observed.reason.as_str().to_owned();
+            inner.inspections.insert(observed.device_id.clone(), observed);
+            let _ = inner.jobs.append(
+                &id,
+                LogInput {
+                    stage,
+                    source: Source::Internal,
+                    text,
+                    progress: false,
+                },
+            );
+        } else if device_scan {
+            inner.inspections.clear();
             inner.devices = serde_json::from_value(report.clone()).unwrap();
             let text = format!(
                 "{} BOOTSEL descriptor candidates. {}",
@@ -657,7 +708,7 @@ async fn dispatch(
             )
         }
         ("POST", "/api/v1/devices/refresh") => {
-            match start_check(state.clone(), true).await {
+            match start_check(state.clone(), true, None).await {
                 Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
                 Err(e) => store_error(e, origin),
             }
@@ -687,13 +738,42 @@ async fn dispatch(
             )
         }
         ("POST", "/api/v1/prerequisites/check") => {
-            match start_check(state.clone(), false).await {
+            match start_check(state.clone(), false, None).await {
                 Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
                 Err(e) => store_error(e, origin),
             }
         }
         _ => {
             let parts: Vec<_> = path.split('/').collect();
+            if parts.len() == 6 && parts[1] == "api" && parts[2] == "v1" && parts[3] == "devices" {
+                let Ok(id) = DeviceId::new(parts[4]) else {
+                    return store_error(Error::Schema, origin);
+                };
+                if method == Method::GET && parts[5] == "inspection" {
+                    return match state.inner.lock().unwrap().inspections.get(&id) {
+                        Some(report) => response(StatusCode::OK, serde_json::to_value(report).unwrap(), origin),
+                        None => store_error(Error::NotFoundOrUnavailable, origin),
+                    };
+                }
+                if method == Method::POST && parts[5] == "inspect" {
+                    let selected = state
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .devices
+                        .devices
+                        .iter()
+                        .find(|d| d.device_id == id)
+                        .cloned();
+                    let Some(selected) = selected else {
+                        return store_error(Error::NotFoundOrUnavailable, origin);
+                    };
+                    return match start_check(state.clone(), true, Some(selected)).await {
+                        Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
+                        Err(e) => store_error(e, origin),
+                    };
+                }
+            }
             if method == Method::GET
                 && matches!(parts.len(), 5 | 6)
                 && parts[1] == "api"
@@ -1048,6 +1128,20 @@ mod tests {
                 );
             }
         }
+    }
+    #[tokio::test]
+    async fn device_inspection_requires_cached_selected_id() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let request = Request::builder()
+            .uri(format!("/api/v1/devices/{}/inspect", "1".repeat(32)))
+            .method("POST")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(dispatch(state.clone(), request).await.status(), StatusCode::NOT_FOUND);
+        assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
     }
     #[tokio::test]
     async fn rejects_foreign_origin_and_missing_capability() {

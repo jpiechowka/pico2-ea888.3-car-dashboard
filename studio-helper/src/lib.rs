@@ -14,3 +14,5 @@ pub mod relay;
 mod artifacts;
 
 mod file_locks;
+
+mod device_inspection;

@@ -6,6 +6,7 @@ fn report() -> DeviceScanReport {
         complete: true,
         reason: Text::new("descriptor scan").unwrap(),
         devices: BoundedVec::new(vec![DeviceSummary {
+            descriptor_sha256: Sha256::new("1".repeat(64)).unwrap(),
             device_id: DeviceId::new("1".repeat(32)).unwrap(),
             vid: 0x2E8A,
             pid: 0x000F,
@@ -39,4 +40,10 @@ fn capacity_requires_explicit_provenance() {
     devices[0].capacity.bytes = Some(4194304);
     r.devices = BoundedVec::new(devices).unwrap();
     assert!(r.validate().is_err());
+}
+
+#[test]
+fn incomplete_inspection_cannot_retain_trusted_information_digest(){
+ let report=DeviceInspection{session_id:SessionId::new("1".repeat(32)).unwrap(),device_id:DeviceId::new("2".repeat(32)).unwrap(),descriptor_sha256:Sha256::new("3".repeat(64)).unwrap(),complete:false,facts:None,information_sha256:Some(Sha256::new("4".repeat(64)).unwrap()),reason:Text::new("incomplete").unwrap(),capacity:DeviceCapacity{state:DeviceCapacityState::Unverified,bytes:None,provenance:None},flash_ready:false};
+ assert!(encode(&report).is_err());
 }

@@ -424,3 +424,25 @@ contended log ingress is dropped with explicit loss accounting, never blocking
 pipe draining or cancellation. Terminal transition/error
 diagnostics use a bounded best-effort queue and honor NO_COLOR/non-TTY output.
 They contain no capabilities or raw project data.
+
+### Explicit BOOTSEL information inspection
+
+`POST /api/v1/devices/{id}/inspect` (empty body) inspects one explicitly selected
+cached descriptor ID; the browser cannot supply a serial or tool arguments.
+`GET /api/v1/devices/{id}/inspection` returns cached `DeviceInspection` only.
+Refresh invalidates all inspection reports. The job shares the existing
+operation permit and cancellation path. A single30-second inspection budget
+covers the fixed subprocess sequence; owned cleanup has its separate watchdog.
+
+The fixed commands are `info -d --debug` and `partition info`, with exact
+VID/PID and the stored literal serial. They perform no persistent flash/OTP
+programming or reboot. They do cause transient PICOBOOT interface reset,
+exclusive access and XIP changes. Missing, duplicate or unsupported fields,
+security/CPU policy, partition presence and permission failures reject the
+inspection. Capacity remains unverified; reported flash size is a content-based
+estimate and never a measured capacity or genuine-board assertion.
+
+A bounded hash of native descriptor identity is compared before and after the
+information pair. Matching snapshots do not prove continuous attachment or
+prevent a device spoofing descriptors. Every inspection still has
+`flash_ready:false`. No physical inspection was performed in feature tests.

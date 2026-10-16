@@ -42,6 +42,47 @@ fn qualify(devices: &mut [DeviceSummary]) {
         }
     }
 }
+fn descriptor_digest(d: &nusb::DeviceInfo) -> Result<Sha256, String> {
+    let mut bytes = Vec::new();
+    let mut add = |value: &[u8], maximum: usize| -> Result<(), String> {
+        if value.len() > maximum {
+            return Err("Descriptor identity bound".into());
+        }
+        bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(value);
+        Ok(())
+    };
+    add(&d.vendor_id().to_le_bytes(), 2)?;
+    add(&d.product_id().to_le_bytes(), 2)?;
+    add(d.serial_number().unwrap_or("").as_bytes(), 126)?;
+    add(d.bus_id().as_bytes(), 1024)?;
+    add(d.port_chain(), 16)?;
+    add(&[d.device_address()], 1)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        for (value, max) in [(d.instance_id(), 400), (d.parent_instance_id(), 400)] {
+            let raw = value
+                .encode_wide()
+                .take(max / 2 + 1)
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>();
+            add(&raw, max)?;
+        }
+        if d.location_paths().len() > 8 {
+            return Err("Device location count bound".into());
+        }
+        for value in d.location_paths() {
+            let raw = value
+                .encode_wide()
+                .take(1025)
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>();
+            add(&raw, 2048)?;
+        }
+    }
+    Sha256::new(crate::build_input::digest(&bytes)).map_err(|e| e.to_string())
+}
 fn enumerate() -> Result<DeviceScanReport, String> {
     use nusb::MaybeFuture;
     let mut report = empty(
@@ -64,6 +105,7 @@ fn enumerate() -> Result<DeviceScanReport, String> {
         }
         devices.push(DeviceSummary {
             device_id: id()?,
+            descriptor_sha256: descriptor_digest(&d)?,
             vid: d.vendor_id(),
             pid: d.product_id(),
             serial: text(d.serial_number()),
@@ -134,6 +176,7 @@ mod tests {
     fn device(serial: Option<&str>) -> DeviceSummary {
         DeviceSummary {
             device_id: id().unwrap(),
+            descriptor_sha256: Sha256::new("1".repeat(64)).unwrap(),
             vid: 0x2E8A,
             pid: 0xF,
             serial: text(serial),
