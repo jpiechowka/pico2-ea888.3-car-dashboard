@@ -12,7 +12,10 @@ use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 use super::*;
 
-struct BrowserConsole;
+struct BrowserConsole {
+    revision: u64,
+    workspace: Workspace,
+}
 // The pinned web-sys write_text binding returns a Promise but does not catch a
 // synchronous host exception. Keep the same Clipboard API with a caught call.
 #[wasm_bindgen::prelude::wasm_bindgen]
@@ -31,7 +34,11 @@ impl ConsoleSink for BrowserConsole {
         severity: Severity,
         text: &str,
     ) {
-        let value = wasm_bindgen::JsValue::from_str(text);
+        let value = wasm_bindgen::JsValue::from_str(&format!(
+            "[workspace={} accepted-revision={}] {text}",
+            self.workspace.label(),
+            self.revision
+        ));
         // Constant formatting prevents message '%' sequences becoming directives.
         let format = wasm_bindgen::JsValue::from_str("%c%s");
         let style = wasm_bindgen::JsValue::from_str(match severity {
@@ -61,6 +68,11 @@ pub(super) fn record(
     };
     let wall = checked_wall_clock(js_sys::Date::now());
     let mut outcome = Ok(());
+    let mut relay_event = None;
+    let mut console = BrowserConsole {
+        revision: ui.editor.with_untracked(|e| e.accepted_revision().get()),
+        workspace: ui.workspace.with_untracked(|s| s.active()),
+    };
     let enabled = ui.console_enabled.try_get_untracked().unwrap_or(false);
     if ui.events.try_with_untracked(|store| store.status()) != Some(EventStatus::Accepting) {
         let _ = ui
@@ -69,8 +81,15 @@ pub(super) fn record(
         return;
     }
     let _ = ui.events.try_update(|store| {
-        outcome = emit(store, &mut BrowserConsole, enabled, notice.input(elapsed, wall)).map(|_| ());
+        outcome = emit(store, &mut console, enabled, notice.input(elapsed, wall)).map(|result| {
+            if result.console == dashboard_configurator::events::ConsoleDisposition::Emit {
+                relay_event = store.get(result.seq).cloned();
+            }
+        });
     });
+    if let Some(event) = relay_event {
+        relay::offer(ui, &event);
+    }
     if outcome.is_err() {
         let _ = ui
             .notice
@@ -230,6 +249,7 @@ pub fn EventLog(ui: Ui) -> impl IntoView {
                     match json {Ok(bytes)=>{if io::download(ui,"studio-events.jsonl","application/x-ndjson",&bytes).is_err(){failed(ui,TransferFailure::Download);}},Err(_)=>failed(ui,TransferFailure::Serialization)}
                 }>"Download filtered JSONL"</button>
             </div>
+            <relay::Controls ui=ui/>
             <div class="event-console">
                 <label><input type="checkbox" prop:checked=move ||ui.console_enabled.get() on:change=move |event|ui.console_enabled.set(event_target_checked(&event))/><span>"Browser console output (Warn/Error by default)"</span></label>
                 <label><input type="checkbox" prop:checked=move ||debug.get() on:change=move |event|{let enabled=event_target_checked(&event);debug.set(enabled);ui.events.update(|store|store.set_debug_console(enabled));}/><span>"Opt in to Debug/Trace console · shared 10 per rolling second"</span></label>

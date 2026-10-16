@@ -10,6 +10,7 @@ pub struct Lease {
     pub id: u64,
     pub epoch: u64,
     pub count: u8,
+    generation: u64,
 }
 #[derive(Default)]
 pub struct Queue {
@@ -19,6 +20,7 @@ pub struct Queue {
     gate: wire::RateGate,
     inflight: Option<Lease>,
     next: u64,
+    generation: u64,
     pub dropped: u64,
     pub admitted: u64,
 }
@@ -30,11 +32,12 @@ impl Queue {
     ) -> bool {
         let changed = self.epoch != epoch || self.enabled != enabled;
         if changed {
+            self.generation = self.generation.saturating_add(1);
             self.dropped = self.dropped.saturating_add(self.events.len() as u64);
             self.events.clear();
         }
         self.epoch = epoch;
-        self.enabled = enabled;
+        self.enabled = enabled && self.generation < u64::MAX;
         // Retain an unsettled lease even across disconnect: never accumulate abandoned futures.
         changed
     }
@@ -113,6 +116,7 @@ impl Queue {
             id: next,
             epoch,
             count: count as u8,
+            generation: self.generation,
         };
         self.inflight = Some(lease);
         Some((lease, bytes))
@@ -136,6 +140,6 @@ impl Queue {
             }
             None => self.dropped = self.dropped.saturating_add(u64::from(lease.count)),
         }
-        self.epoch == Some(lease.epoch) && self.enabled
+        self.epoch == Some(lease.epoch) && self.enabled && self.generation == lease.generation
     }
 }

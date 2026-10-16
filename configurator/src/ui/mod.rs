@@ -4,6 +4,7 @@ mod command_palette;
 mod controls;
 mod ecu_reference;
 mod event_log;
+mod relay;
 mod fields;
 mod helper;
 mod inspector;
@@ -53,6 +54,7 @@ pub struct Ui {
     editor: RwSignal<Editor>,
     build: RwSignal<dashboard_configurator::build_flash::BuildSelection>,
     helper: helper::State,
+    relay: relay::State,
     resources: StoredValue<ResourceCache>,
     json: json_editor::State,
     notice: RwSignal<String>,
@@ -552,6 +554,7 @@ pub fn Studio() -> impl IntoView {
         editor,
         build: RwSignal::new(dashboard_configurator::build_flash::BuildSelection::default()),
         helper: helper::State::new(),
+        relay: relay::State::new(),
         resources: StoredValue::new(ResourceCache::default()),
         json: json_editor::State::new(),
         events: RwSignal::new(EventStore::default()),
@@ -606,6 +609,7 @@ pub fn Studio() -> impl IntoView {
     ui.storage_read_outcome(StorageArea::Presets, preset_storage);
     dock.install(ui);
     ui.helper.install();
+    ui.relay.install(ui);
     stage::install_playback(ui);
     widget_menu::install(ui);
     metrics::install(ui);

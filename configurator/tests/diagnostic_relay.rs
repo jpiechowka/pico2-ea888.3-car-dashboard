@@ -56,3 +56,23 @@ fn flood_is_bounded_and_disconnect_clears_queued_context() {
     assert_eq!(q.queued(), 0);
     assert!(q.begin().is_none());
 }
+
+#[test]
+fn toggle_retains_lease_and_old_ack_cannot_update_new_session_status() {
+    let mut q = Queue::default();
+    q.synchronize(Some(1), true);
+    q.offer(&event(), 1, Workspace::Views, 0);
+    let (lease, _) = q.begin().unwrap();
+    q.synchronize(Some(1), false);
+    q.synchronize(Some(1), true);
+    q.offer(&event(), 2, Workspace::Views, 1);
+    assert!(q.begin().is_none());
+    let ack = dashboard_helper_protocol::diagnostics::Response {
+        version: 1,
+        admitted: 1,
+        dropped: 0,
+    };
+    assert!(!q.settle(lease, Some(ack)));
+    assert_eq!(q.admitted, 1);
+    assert!(q.begin().is_some());
+}
