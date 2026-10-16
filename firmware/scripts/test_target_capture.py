@@ -329,6 +329,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                     for context in (patch.object(capture,'FIRMWARE',firmware),patch.object(capture,'ElfImage',return_value=elf),
                         patch.object(capture,'check_clock_environment'),patch.object(capture,'compiler',return_value=('rustc','pinned')),
                         patch.object(capture,'configuration',return_value={}),patch.object(capture,'inputs',side_effect=snapshot),
+                        patch.object(capture,'linked_configuration',return_value={'test_only_linked_config':True}),
                         patch.object(capture,'inspect_program',side_effect=AssertionError('program rejected') if drift=='program_gate' else None,return_value=({}, {'test_only_program_gate':True})),
                         patch.object(capture,'fixed_json_tool',return_value=(['tool'],options)),
                         patch.object(capture,'selected_config',return_value=('default',None)),
@@ -344,7 +345,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                     else:
                         capture.main();manifest=json.loads((destination/'manifest.json').read_text())
                         self.assertEqual(manifest['schema'],2)
-                        self.assertEqual(manifest['program_image'],{'test_only_program_gate':True})
+                        self.assertEqual(manifest['program_image'],{'test_only_program_gate':True,'linked_configuration':{'test_only_linked_config':True}})
                         self.assertEqual(manifest['memory_layout'],record)
                         self.assertEqual(manifest['memory_layout']['stack']['execution_scope']['schema'],1)
                         self.assertNotIn('execution_scope',manifest)

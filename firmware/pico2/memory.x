@@ -98,3 +98,15 @@ SECTIONS {
 } INSERT AFTER .end_block;
 
 
+
+/* The sole runtime configuration array is retained for independent ELF admission. */
+SECTIONS {
+    .dashboard_config : ALIGN(4)
+    {
+        __dashboard_config_start = .;
+        KEEP(*(.dashboard_config));
+        __dashboard_config_end = .;
+    } > FLASH
+} INSERT AFTER .rodata;
+ASSERT(__dashboard_config_end > __dashboard_config_start, "missing embedded dashboard configuration");
+ASSERT(__dashboard_config_end <= ORIGIN(FLASH) + LENGTH(FLASH), "dashboard configuration outside program flash");

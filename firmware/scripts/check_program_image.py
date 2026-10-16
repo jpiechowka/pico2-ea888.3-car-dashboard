@@ -113,6 +113,29 @@ def boot_metadata(elf,mapping):
     return {'policy':'slot0_secure_self_link_v1','root_address':root,'root_sha256':hashlib.sha256(expected).hexdigest()}
 
 
+def linked_configuration(elf,expected):
+    sections=[(index,section) for index,name,section in elf.section_entries if name=='.dashboard_config']
+    require(len(sections)==1,"unique dashboard configuration section required")
+    index,section=sections[0]
+    require(section[1]==1 and section[2]&2 and not section[2]&1,"dashboard configuration section flags")
+    require(section[5]==len(expected)>0,"dashboard configuration length mismatch")
+    def symbol(name):
+        found=[row for row in elf.symbol_entries if row[0]==name]
+        require(len(found)==1,"unique dashboard configuration symbol required")
+        return found[0]
+    obj=symbol('DASHBOARD_EMBEDDED_CONFIG');start=symbol('__dashboard_config_start');end=symbol('__dashboard_config_end')
+    require(obj[1]==section[3] and obj[2]==section[5] and obj[3]&15==1 and obj[4]==index,"dashboard configuration object mismatch")
+    require(start[1]==section[3] and end[1]==section[3]+section[5],"dashboard configuration linker boundary mismatch")
+    mappings=[]
+    for kind,offset,virtual,physical,filesz,memsz,flags,alignment in elf.segments:
+        if kind==1 and virtual<=section[3] and section[3]+section[5]<=virtual+filesz and offset+section[3]-virtual==section[4]:
+            mappings.append(physical+section[3]-virtual)
+    require(len(mappings)==1 and FLASH_START<=mappings[0]<mappings[0]+len(expected)<=SETTINGS_START,"dashboard configuration load mapping")
+    actual=elf.data[section[4]:section[4]+section[5]]
+    require(actual==expected,"linked configuration differs from accepted EAV")
+    return {'sha256':hashlib.sha256(actual).hexdigest(),'bytes':len(actual),'physical_address':mappings[0]}
+
+
 def inspect_program(elf):
     mapping=program_map(elf)
     metadata=boot_metadata(elf,mapping)

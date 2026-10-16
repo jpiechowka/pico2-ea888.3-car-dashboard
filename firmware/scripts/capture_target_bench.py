@@ -19,7 +19,7 @@ sys.path.insert(0, str(FIRMWARE / 'scripts'))
 from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler
 from source_inventory import shared_inputs
 from elf_image import ElfImage
-from check_program_image import inspect_program
+from check_program_image import inspect_program, linked_configuration
 from check_memory_layout import read_image_result
 from config_build_source import make_source_context,write_source_context,load_source_context,inspect_source_context
 
@@ -422,6 +422,7 @@ def main():
     elf_bytes=elf.read_bytes()
     frozen.write_bytes(elf_bytes)
     _,program_image=inspect_program(ElfImage(elf_bytes))
+    program_image["linked_configuration"]=linked_configuration(ElfImage(elf_bytes),config_bytes)
     source_context=make_source_context(elf_bytes,destination.name,attempt_bytes,before)
     source_context_path=destination/'source-context.json'
     write_source_context(source_context_path,source_context)

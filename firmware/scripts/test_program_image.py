@@ -2,7 +2,7 @@
 import struct,unittest
 from types import SimpleNamespace
 from elf_image import ElfImage
-from check_program_image import program_map,verify_uf2,boot_metadata,FLASH_START as B
+from check_program_image import program_map,verify_uf2,boot_metadata,linked_configuration,FLASH_START as B
 
 def elf_fixture():
     data=bytearray(256)
@@ -29,6 +29,17 @@ def independent_uf2():
     return bytes(result)
 
 class ProgramImage(unittest.TestCase):
+    def test_linked_configuration_object_identity(self):
+        data=b'accepted eav';section=(0,1,2,B,0,len(data),0,0,4,0)
+        obj=('DASHBOARD_EMBEDDED_CONFIG',B,len(data),0x11,1)
+        symbols=[obj,('__dashboard_config_start',B,0,0x10,1),('__dashboard_config_end',B+len(data),0,0x10,1)]
+        elf=SimpleNamespace(data=data,section_entries=[(1,'.dashboard_config',section)],symbol_entries=symbols.copy(),segments=[(1,0,B,B,len(data),len(data),5,1)])
+        self.assertEqual(linked_configuration(elf,data)['bytes'],len(data))
+        with self.assertRaises(AssertionError):linked_configuration(elf,b'wrong bytes!')
+        elf.symbol_entries.append(obj)
+        with self.assertRaises(AssertionError):linked_configuration(elf,data)
+        elf.symbol_entries=symbols;elf.segments.append(elf.segments[0])
+        with self.assertRaises(AssertionError):linked_configuration(elf,data)
     def test_boot_window_literals_and_roots(self):
         root=struct.pack('<5I',0xffffded3,0x10210142,0x000001ff,0,0xab123579)
         def fixture(extra_offset=None,extra=b''):
