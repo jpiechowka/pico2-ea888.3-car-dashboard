@@ -1,0 +1,139 @@
+{
+  "order": [
+    "group5_control_before1",
+    "group5_control_after1",
+    "group5_control_after2",
+    "group5_control_before2"
+  ],
+  "method": "median of two run medians per implementation; 30 Criterion samples per run/case; sequential ABBA",
+  "head": "f628941409cbbbc2e6310f604a68741d118571e4",
+  "changed_source": [
+    "crates/dashboard-core/src/display/framebuffer.rs"
+  ],
+  "source_hashes": {
+    "before": "6ca8eada807bfc115187037a1342a46422dde74ed69f036c50eb3be31fed7556",
+    "after": "cdaae7f0d3008bff2bf8ff7aaec0ad660030ae9b40502542a6ba01a2f6e9fbd3"
+  },
+  "rows": [
+    {
+      "case": "debug_full_ordinary",
+      "before1_ns": 89366.45390070922,
+      "after1_ns": 70654.98470522804,
+      "after2_ns": 69706.90524193548,
+      "before2_ns": 94137.05716586151,
+      "before_median_ns": 91751.75553328537,
+      "after_median_ns": 70180.94497358176,
+      "change_percent": -23.50997039165994
+    },
+    {
+      "case": "fill_contiguous/clipped_four_edges",
+      "before1_ns": 82586.72785547786,
+      "after1_ns": 71758.56240981241,
+      "after2_ns": 70964.73958333333,
+      "before2_ns": 82602.45562130178,
+      "before_median_ns": 82594.59173838982,
+      "after_median_ns": 71361.65099657286,
+      "change_percent": -13.60009233703362
+    },
+    {
+      "case": "fill_contiguous/full",
+      "before1_ns": 82878.60976918947,
+      "after1_ns": 71926.58128908128,
+      "after2_ns": 71475.09523809524,
+      "before2_ns": 82465.86538461539,
+      "before_median_ns": 82672.23757690244,
+      "after_median_ns": 71700.83826358826,
+      "change_percent": -13.270959677495709
+    },
+    {
+      "case": "fill_contiguous/narrow_1px",
+      "before1_ns": 573.024962875242,
+      "after1_ns": 451.5033430597101,
+      "after2_ns": 432.15661620266883,
+      "before2_ns": 578.9265496348152,
+      "before_median_ns": 575.9757562550285,
+      "after_median_ns": 441.8299796311895,
+      "change_percent": -23.29017761026081
+    },
+    {
+      "case": "fill_contiguous/odd_x_width",
+      "before1_ns": 11202.6953125,
+      "after1_ns": 9602.883489461357,
+      "after2_ns": 9544.62641898865,
+      "before2_ns": 10920.077666295057,
+      "before_median_ns": 11061.38648939753,
+      "after_median_ns": 9573.754954225004,
+      "change_percent": -13.44887041600471
+    },
+    {
+      "case": "fill_solid/clipped_four_edges",
+      "before1_ns": 14888.535052910054,
+      "after1_ns": 2203.730802792321,
+      "after2_ns": 2250.550854926846,
+      "before2_ns": 14886.941246345028,
+      "before_median_ns": 14887.738149627541,
+      "after_median_ns": 2227.1408288595835,
+      "change_percent": -85.04043524626807
+    },
+    {
+      "case": "fill_solid/full",
+      "before1_ns": 15087.454545454546,
+      "after1_ns": 2219.0839207971294,
+      "after2_ns": 2250.9462608541553,
+      "before2_ns": 15276.429221477621,
+      "before_median_ns": 15181.941883466083,
+      "after_median_ns": 2235.0150908256423,
+      "change_percent": -85.27846366439007
+    },
+    {
+      "case": "fill_solid/narrow_1px",
+      "before1_ns": 68.35368778856363,
+      "after1_ns": 84.93020673874219,
+      "after2_ns": 84.98140949255404,
+      "before2_ns": 71.0333147278677,
+      "before_median_ns": 69.69350125821566,
+      "after_median_ns": 84.95580811564811,
+      "change_percent": 21.89918225070273
+    },
+    {
+      "case": "fill_solid/odd_x_width",
+      "before1_ns": 1582.4996572055397,
+      "after1_ns": 364.71165698186303,
+      "after2_ns": 320.7733645622511,
+      "before2_ns": 1593.354743378275,
+      "before_median_ns": 1587.9272002919074,
+      "after_median_ns": 342.7425107720571,
+      "change_percent": -78.415728963579
+    },
+    {
+      "case": "framebuffer/clear_full",
+      "before1_ns": 2206.565381659836,
+      "after1_ns": 2280.359950584007,
+      "after2_ns": 2212.170913822723,
+      "before2_ns": 2324.1823511261955,
+      "before_median_ns": 2265.3738663930158,
+      "after_median_ns": 2246.265432203365,
+      "change_percent": -0.8435002483751508
+    },
+    {
+      "case": "protocol_rx12_record",
+      "before1_ns": 13.615373829591661,
+      "after1_ns": 13.456645349727033,
+      "after2_ns": 15.255323870008215,
+      "before2_ns": 15.618019397154676,
+      "before_median_ns": 14.616696613373168,
+      "after_median_ns": 14.355984609867624,
+      "change_percent": -1.7836588553600596
+    },
+    {
+      "case": "views_default_full",
+      "before1_ns": 184136.90476190476,
+      "after1_ns": 166130.2566137566,
+      "after2_ns": 163225.92592592593,
+      "before2_ns": 191990.508361204,
+      "before_median_ns": 188063.7065615544,
+      "after_median_ns": 164678.09126984124,
+      "change_percent": -12.434943306862289
+    }
+  ]
+}

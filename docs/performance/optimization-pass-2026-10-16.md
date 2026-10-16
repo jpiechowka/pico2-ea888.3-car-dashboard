@@ -33,12 +33,61 @@ ECU support. See the [workload definitions](benchmark-coverage.md) and
 | Contiguous odd-x/width rectangle | 23.570 µs |
 | Contiguous four-edge-clipped rectangle | 165.833 µs |
 
+## Framebuffer fill results
+
+The [complete after capture](../../host/baselines/group5_after/) at `f628941`
+also contains 143 cases with 30 samples each. All compiler, workload, options and
+archive checks match. [The full comparison](data/2026-10-16/full-comparison.md)
+has no case crossing its 20% review threshold. However, unchanged acquisition,
+protocol and stationary-scene kernels also became substantially faster. That
+host-wide timing shift prevents attributing the broad differences to this patch.
+
+A focused **before, after, after, before** sequence therefore repeated 12 existing
+cases without changing their harness. The only source difference between these
+runs is `framebuffer.rs`: the pre-patch `9ffdb83` file versus the integrated
+candidate. Both sets otherwise use `f628941`; each archive identifies actual
+source bytes rather than relying on its Git HEAD alone. The current candidate
+was restored byte-for-byte after capture. No other task build ran concurrently.
+
+[Raw before 1](../../host/baselines/group5_control_before1/),
+[after 1](../../host/baselines/group5_control_after1/),
+[after 2](../../host/baselines/group5_control_after2/) and
+[before 2](../../host/baselines/group5_control_before2/)
+retain all 30 samples per case, hashes and exact commands. The
+[derived comparison](data/2026-10-16/fill-interleaved.json) takes the median of
+the two run medians for each implementation:
+
+| Fixture | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Solid full rectangle | 15.182 µs | 2.235 µs | -85.3% |
+| Solid odd-x/width rectangle | 1.588 µs | 0.343 µs | -78.4% |
+| Contiguous full rectangle | 82.672 µs | 71.701 µs | -13.3% |
+| Contiguous four-edge-clipped rectangle | 82.595 µs | 71.362 µs | -13.6% |
+| Configured default full view | 188.064 µs | 164.678 µs | -12.4% |
+| Ordinary Debug full page | 91.752 µs | 70.181 µs | -23.5% |
+| Solid one-pixel-wide, 200-row rectangle | 69.694 ns | 84.956 ns | **+21.9%** |
+| Unchanged full clear control | 2.265 µs | 2.246 µs | -0.8% |
+| Unchanged RX12 parser control | 14.617 ns | 14.356 ns | -1.8% |
+
+The narrow solid-fill regression exceeds the generic 20% budget and is **accepted
+explicitly**, not classified as passing or noise. Its cost is about 15.3 ns per
+entire 200-row call. Wider fills and both complete-page fixtures consistently
+improved in both after runs. No measured narrow-fill workload or target deadline
+justifies adding another special-case branch here. Revisit this tradeoff if
+on-device profiling identifies that path as material.
+
+The change obtains one bounded byte slice per row, then writes fixed-size pixel
+chunks. It adds no unchecked access, allocation or persistent state. Clipping,
+big-endian panel bytes and exact source-iterator consumption remain unchanged.
+These observations support the simpler row-based implementation on this host;
+they do not establish target cycle counts or physical FPS.
+
 ## Measurement and implementation rules
 
 Keep representative full paths beside microbenchmarks, compare identical work,
 and treat wall-time variability explicitly. That follows the
 [Rust Performance Book's benchmarking guidance](https://nnethercote.github.io/perf-book/benchmarking.html).
-The planned fill experiment uses bounded row slices to make loop bounds explicit,
+The fill implementation uses bounded row slices to make loop bounds explicit,
 as described in its [bounds-check discussion](https://nnethercote.github.io/perf-book/bounds-checks.html),
 while retaining every clipping and iterator-consumption guard. A source-level
 hypothesis is not a speedup result.
@@ -111,3 +160,109 @@ undo/redo, imports, owner replacement, same-stamp JSON drafts, pending pointer
 actions and invalid/repaired build options. Native/Wasm strict Clippy and the
 existing upload/flash authority tests cover the changed path. Native timings
 do not establish browser response latency or Pico FPS.
+
+## Native build compiler reuse
+
+Each native attempt now reuses its private host configuration compiler for the
+final EAV canonicalization command. Previously it compiled the same tool again
+in release mode. The host tool now uses its existing debug build; **firmware
+still uses the selected optimized ARM profile**. Canonicalization still runs
+and compares its exact output with the configuration linked into the image.
+The public non-native CLI keeps its existing release canonicalizer.
+
+One sequential pair used the same 1,824-byte accepted project, no custom artwork,
+Stock Demo options, pinned compiler and locks. Registry downloads were warm;
+each attempt's compiler output directories were fresh. Tiny phase markers were
+identical on both sides. The patch is `165c405`, integrated as `f628941`.
+
+| Interval | Before | After |
+| --- | ---: | ---: |
+| Complete admitted native job | 69.740 s | 45.810 s |
+| Prerequisites | 0.124 s | 0.146 s |
+| Source snapshot | 2.088 s | 1.655 s |
+| Capture stage, including its checks | 62.936 s | 40.428 s |
+| Independent artifact admission | 4.592 s | 3.581 s |
+| Within capture: host options tool | 8.094 s | 9.064 s |
+| Within capture: ARM Cargo | 29.598 s | 28.369 s |
+| Within capture: canonicalization | 22.140 s | 0.104 s |
+
+The complete job was 23.930 seconds shorter in this pair; removal of the second
+host compilation accounts for about 22.037 seconds. Other intervals varied and
+are not attributed to the patch. This **single pair is observational**, not a
+statistically established 34% improvement or a minimum PC specification.
+[Exact timings, options and input/source/artifact identities](data/2026-10-16/native-build-pair.json)
+retain the comparison. Different attempt paths and source produce different ELF
+hashes; both artifacts independently passed admission with identical input hashes,
+canonical EAV bytes and practical-gate verdicts.
+
+Five actual EAV fixtures (current default, accepted project, and versions 1–3)
+produced identical canonical bytes using the debug and release executables.
+Both rejected malformed input without replacing an existing output. Focused
+capture tests passed in normal and optimized Python execution. No image, source,
+memory, ownership, cancellation or UF2 check was removed.
+
+Two excluded attempts are retained locally: verbose Cargo instrumentation
+overloaded log processing and was cancelled; a restricted process-inspection
+attempt failed with access denied. Neither contributes a timing result. The
+successful pair used normal compiler output and the same helper process.
+
+The observed running `pico2` compiler command contained
+`--target thumbv8m.main-none-eabihf -C target-cpu=cortex-m33`, `opt-level=3` and
+fat LTO. Cargo aliases, PowerShell recipes, native captures and CI all inherit
+the firmware configuration; captures additionally reject ambient compiler and
+profile overrides. Run raw firmware Cargo commands from `firmware/`: a manifest
+path alone does not discover a descendant Cargo configuration, as documented by
+[Cargo's configuration rules](https://doc.rust-lang.org/cargo/reference/config.html).
+
+## Other candidates and unchanged contracts
+
+The pass traced acquisition, presentation, retained rendering, transfer completion,
+startup, controls and logs; Studio drafts, storage, workers, preview and helper
+identity; and native setup, snapshots, compilation, admission and cleanup.
+It follows the separate source refactor and existing-test audit, rather than
+treating timing results as a correctness review.
+
+- Reusing formatted widget strings or prepared layouts could remove bounded work,
+  but would add lifetime, cache-identity or resident-memory costs. No measured
+  benefit justified those changes in this pass.
+- Studio resource-report cloning, repeated clock normalization and canvas copies
+  remain candidates for browser profiling. The artifact-list measurements do not
+  establish them as bottlenecks.
+- Streaming native source verification could reduce temporary host allocations.
+  The measured snapshot interval was much smaller than duplicate compilation;
+  snapshot membership, repeated byte verification and identity locks stay intact.
+- No peripheral clock, voltage, DMA register, stack allocation, history capacity
+  or framebuffer count changed. Raw measurements still drive warnings, extrema
+  and history; smoothing affects presentation only. Animation time and completed
+  transfers retain their existing separate responsibilities.
+
+The practical image gate checks static bounds and documented assumptions. It
+does not prove live stack high-water, interrupt interleavings, optical scanout,
+electrical margins or the car's diagnostic responses. Those remain the
+[hardware validation runbook](../validation/pico2-dnuc-runbook.md)'s responsibility.
+
+## Correctness and target checks
+
+The integrated code at `f628941` passed
+[all 18 CI jobs](https://github.com/jpiechowka/pico2-ea888.3-car-dashboard/actions/runs/38970518699),
+including strict nightly Clippy, host contracts, Wasm, native helper contracts
+and 12 firmware configurations. The fill iterator regression test passed before
+the change and rejected a deliberate extra-consumption mutation. Fifty focused
+render/framebuffer checks passed with each outline mode. Native canonicalization
+tests passed in both normal and optimized Python; the display-cache oracle and
+existing action-authorization tests cover independent identity and readiness.
+
+The conservative named stack-path bounds were identical in baseline and candidate
+CI for both Stock and Longan. These are static admission bounds, not measured
+stack high-water:
+
+| Image | Boot | Core1 construction | Core1 runtime | Dashboard |
+| --- | ---: | ---: | ---: | ---: |
+| Stock | 2,896 B | 18,744 B | 15,640 B | 26,208 B |
+| Longan | 2,896 B | 28,008 B | 17,312 B | 28,728 B |
+
+The standalone Cortex-M33 solid-fill function's emitted frame remained 88 bytes.
+No persistent buffer or allocation was added by the fill implementation; the
+two 153,600-byte framebuffers and existing stack reserves remain unchanged.
+Every image still passed its practical memory and linked-input checks. The
+instruction-by-instruction research proof was not run or claimed complete.

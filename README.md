@@ -222,6 +222,33 @@ BOOTSEL active, `cargo run --locked -p dashboard-pico2 --release` uses the bundl
 `firmware/tools/picotool.exe` runner to load and execute the image. No hardware
 was flashed during this software verification pass.
 
+## Performance optimizations
+
+The [measured optimization report](docs/performance/optimization-pass-2026-10-16.md)
+records reproducible workloads, raw samples, source identities and limitations.
+The pass preserves all gauges, animations, controls and validation gates.
+
+- **Framebuffer fills:** an interleaved host comparison measured about 85% less
+  time for full solid fills and 12% less for the complete configured view. A narrow
+  one-pixel fill became 15 ns slower per 200-row call; the report records this
+  accepted tradeoff and the separate, confounded full-suite comparison.
+- **Studio artifact matching:** changing selection or build options reuses small
+  display digests instead of repeatedly packaging artwork. A maximum-artwork
+  native query measured about 5.5 ms before and 3.6 µs after; this is a host seam
+  measurement, not browser latency. Content edits still recompute identity, and
+  actual Build/Flash actions perform fresh checks.
+- **Local builds:** reuse of the attempt's configuration compiler removed a
+  duplicate compilation. One matched admitted build pair took 69.7 s before and
+  45.8 s after. Firmware optimization settings remain unchanged; timings vary by
+  PC and cache state.
+- **Pico 2 targeting:** every firmware route selects the RP2350's Cortex-M33
+  with `-C target-cpu=cortex-m33` and the hard-float ARM target. The two RGB565
+  framebuffers, DMA ownership and stack reserves remain unchanged.
+
+Host benchmarks do not establish physical FPS or target CPU-cycle gains.
+For target measurements, use the [bounded on-device kernels](docs/performance/target-benchmarks.md)
+and [frame timing capture](docs/performance/telemetry-windows.md).
+
 ## Architecture
 
 - **Core0:** cooperative rendering, buttons, I2C encoder, PWM backlight, DMA

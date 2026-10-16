@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-16",
+  "method": "one sequential normal-output pair; warm registry downloads; fresh private Cargo targets; identical phase instrumentation",
+  "baseline_source": "3712decae9ad4e9948de3bd96160a608a8990db4",
+  "patch": "165c405dea087f7bda660eb3d75365f1046bae3d",
+  "integrated_commit": "f628941",
+  "compiler": "nightly-2026-10-16 / rustc 4ebd25825 / LLVM 23.1.4",
+  "options": {
+    "mode": "demo",
+    "clock": {
+      "named": "stock"
+    },
+    "optimization": "speed3",
+    "simple_outline": true,
+    "serial_display": false,
+    "full_frame": false,
+    "frame_trace": true,
+    "te_trace": true,
+    "expert": false
+  },
+  "fixture_bytes": 1824,
+  "runs": [
+    {
+      "label": "baseline",
+      "artifact_id": "1e760a32e417ce989052f34c0193ffd1808c51edecf890c36f5d844cae5e42d6",
+      "job_ms": 69740,
+      "wall_ns": 70018954900,
+      "phases_ms": {
+        "options": 8093.8326,
+        "firmware": 29597.5682,
+        "canonical": 22140.2729
+      },
+      "stages_ms": {
+        "prerequisites": 124,
+        "snapshot": 2088,
+        "compilation": 62936,
+        "validation": 4592
+      },
+      "input_hashes": {
+        "dashboard.eav": "02ac94ad4297918ac14fef41db9cf5678d10e1a77976ed1f223b60c518ff2d27",
+        "options.json": "e3af36e1299fbcc6685d52aea11d9b6e029ee13bf87e6d76a35dc88bb51d02b5",
+        "project.eavp": "888707dd087949e9a027683810472731354cc7cb1424cbb02280e5650c53d6da",
+        "startup.easa": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "startup.easp": "44abeb79a179b83c13c6ade93d7085ba8c4dc78270106ca8dc8a36d258a94e81"
+      },
+      "gates": {
+        "image_gate": "practical",
+        "memory_status": "STATIC_IMAGE_CHECKS_PASS",
+        "hardware_qualified": false
+      },
+      "canonical_sha256": "02ac94ad4297918ac14fef41db9cf5678d10e1a77976ed1f223b60c518ff2d27",
+      "elf_sha256": "6d13784f3771cffefae9ff8146b9598a95f7d847aaea2323ef6a16ea3bcd3e88",
+      "source_manifest_sha256": "57f260f1a1dea450dc8aec7bad0c9589dc921faef0cbd787adc482683ad9e717"
+    },
+    {
+      "label": "candidate",
+      "artifact_id": "d8f596101b844ce2f0b5ff2ae49327e6318102063885420ad30e4cc405219981",
+      "job_ms": 45810,
+      "wall_ns": 46055679200,
+      "phases_ms": {
+        "options": 9063.9754,
+        "firmware": 28368.9178,
+        "canonical": 103.731
+      },
+      "stages_ms": {
+        "prerequisites": 146,
+        "snapshot": 1655,
+        "compilation": 40428,
+        "validation": 3581
+      },
+      "input_hashes": {
+        "dashboard.eav": "02ac94ad4297918ac14fef41db9cf5678d10e1a77976ed1f223b60c518ff2d27",
+        "options.json": "e3af36e1299fbcc6685d52aea11d9b6e029ee13bf87e6d76a35dc88bb51d02b5",
+        "project.eavp": "888707dd087949e9a027683810472731354cc7cb1424cbb02280e5650c53d6da",
+        "startup.easa": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "startup.easp": "44abeb79a179b83c13c6ade93d7085ba8c4dc78270106ca8dc8a36d258a94e81"
+      },
+      "gates": {
+        "image_gate": "practical",
+        "memory_status": "STATIC_IMAGE_CHECKS_PASS",
+        "hardware_qualified": false
+      },
+      "canonical_sha256": "02ac94ad4297918ac14fef41db9cf5678d10e1a77976ed1f223b60c518ff2d27",
+      "elf_sha256": "c9eef21833de4076897c59e68e6701fa234e45fe3c041db02c053150cbad25fd",
+      "source_manifest_sha256": "9412f672b1f422b085234f385f7d4d330118bc3ef90ae79b182202b43c1c38d6"
+    }
+  ],
+  "excluded_runs": [
+    {
+      "reason": "verbose instrumentation dominated output-processing time; cancelled",
+      "elapsed_ms": 300804
+    },
+    {
+      "reason": "restricted process-inspection access denied",
+      "elapsed_ms": 7615
+    }
+  ],
+  "observed_pico2_compiler_flags": [
+    "--target thumbv8m.main-none-eabihf",
+    "-C target-cpu=cortex-m33",
+    "-C opt-level=3",
+    "-C lto=fat"
+  ],
+  "limitations": [
+    "one pair, not a statistical guarantee",
+    "different attempt paths and source yield different ELF hashes",
+    "input project contents retained privately",
+    "no hardware operation or physical FPS measurement"
+  ]
+}
