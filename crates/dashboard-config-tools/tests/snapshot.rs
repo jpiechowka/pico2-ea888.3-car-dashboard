@@ -197,7 +197,9 @@ fn byte_encoding_is_lowercase_zero_padded_and_roundtrips_every_byte() {
     assert!(text.starts_with("000102030405060708090a0b0c0d0e0f"));
     let decoded = text
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(decoded, bytes);
