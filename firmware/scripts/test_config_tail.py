@@ -5,13 +5,15 @@ from dataclasses import replace
 
 class TailLiteralBodies(unittest.TestCase):
     @staticmethod
-    def fixture():
+    def fixture(extent=None,delta=0):
         import json
+        import struct
         from pathlib import Path
-        from test_config_sources import SourceLiteralBodies
+        from test_config_sources import ActualDecodedSources
         from test_config_stack import StartupConfigurationCopy,SameBLoaderBoundary
         from llvm_stack import Instruction
-        objects,rows,source,item=SourceLiteralBodies.fixture()
+        objects,rows,source,item=ActualDecodedSources.fixture(extent,delta)
+        B=objects.read_only(0x1001c654+7124,4)
         extra=json.loads((Path(__file__).parent/'fixtures/config-decoded-tail.json').read_bytes())
         for at,encoded in extra['segments']:StartupConfigurationCopy.put(objects,at,bytes.fromhex(encoded))
         for f in extra['functions']:
@@ -22,6 +24,7 @@ class TailLiteralBodies(unittest.TestCase):
         objects.elf.mapping_symbols=list(dict.fromkeys(objects.elf.mapping_symbols))
         for r in extra['records']:
             rows[r['address']]=Instruction(r['address'],bytes.fromhex(r['bytes']),r['mnemonic'],r['operands'])
+        for offset in (3508,7124):StartupConfigurationCopy.put(objects,0x1001c654+offset,B)
         return objects,rows,SameBLoaderBoundary.rebound(objects,source),item
 
     def test_complete_control_and_LED_bodies_bind_actual_targets_and_partial_output_order(self):
@@ -404,6 +407,68 @@ class TailOutputAggregates(unittest.TestCase):
         for offset in (0,2,5,9):
             args[6]=original+(replace(pad,start=output.start+offset),)
             with self.subTest(offset=offset),self.assertRaises(AssertionError):led_pattern_interface(*args)
+
+
+class TailParentBodies(unittest.TestCase):
+    def test_all_parent_windows_bind_complete_tail_calls_same_B_and_restore(self):
+        from config_decoded_tail import _parents
+        objects,rows,_,_=TailLiteralBodies.fixture();V=0x1001c654;B=0x2000031c
+        parents=_parents(objects,rows,V,B)
+        self.assertEqual(tuple(p['function']-V for p in parents),(170,5630,5922,6018,6412,6450,7000,56))
+        edges=tuple((p['function']+e[0]-V,e[3]) for p in parents for e in p['ordinary_edges'])
+        from config_tail_contracts import ROLES
+        self.assertEqual(tuple(at for at,role in edges if role==ROLES['ScreenBindings']),(5712,6198,6426))
+        self.assertEqual(tuple(at for at,role in edges if role==ROLES['LedPattern']),(6792,6828))
+        self.assertIn((68,ROLES['OUTLINED_FUNCTION_155']),edges)
+        self.assertFalse(any(p['function']<=V+7122<p['function']+p['extent'] for p in parents))
+        with self.assertRaisesRegex(AssertionError,'same.*Config'):_parents(objects,rows,V,B+4)
+
+    def test_coherent_early_success_late_store_and_original_restore_changes_reject(self):
+        from config_decoded_tail import _parents
+        from test_config_stack import StartupConfigurationCopy
+        from llvm_stack import Instruction
+        for off in (7100,7108,68):
+            objects,rows,_,_=TailLiteralBodies.fixture();V=0x1001c654;at=V+off;row=rows[at]
+            if off==68:
+                raw=StartupConfigurationCopy.branch_link(at,0x100289f0);op='bl';args=hex(0x100289f0)
+            else:raw=bytes.fromhex('00bf')*(len(row.raw)//2);op='nop' if len(raw)==2 else 'nop.w';args=''
+            StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,op,args)
+            with self.subTest(off=off),self.assertRaises(AssertionError):_parents(objects,rows,V,0x2000031c)
+
+
+class TailPrivateHandoff(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_decoded_sources import _first_boot_decoded_sources_state
+        objects,rows,source,_=TailLiteralBodies.fixture(72)
+        _,cls.state=_first_boot_decoded_sources_state(objects,rows,source)
+        cls.objects=cls.state.phases.objects;cls.rows=cls.state.phases.rows
+
+    def test_actual_Source_exit_initializes_no_Tail_fields_and_retires_only_saved7(self):
+        from config_decoded_tail import _tail_entries
+        from config_abstract import Span
+        entries=_tail_entries(self.objects,self.rows,self.state)
+        self.assertTrue(entries);self.assertEqual(len(entries),len(self.state.exits))
+        for entry,source in zip(entries,self.state.exits):
+            frame=self.state.phases.widgets.views.context.headers['visitor_frame'];V=0x1001c654
+            self.assertIs(entry.exit,source);self.assertIs(entry.sequence,source.sequence)
+            self.assertEqual(entry.sequence.count,Span(4,4));self.assertEqual(entry.frontier,V+5630)
+            self.assertEqual(entry.r4_pointer,(frame.start+1064,V+5538,V+5578))
+            self.assertEqual((entry.second_screen_pointer[0].start,entry.second_screen_pointer[1]),(frame.start+216,frame.start+1001))
+            self.assertTrue(any(v.start==frame.start+216 and v.extent==4 for v in entry.protected))
+            self.assertFalse(any(v.space==frame.space and v.start==frame.start+280 and v.extent==4 for v in entry.protected))
+            self.assertEqual(entry.retired_saved_count[1:3],(7,V+5052))
+            self.assertIsNone(entry.Controls_sequence)
+            self.assertEqual((entry.old_controls.offset,entry.old_controls.extent),(212,32))
+            self.assertFalse(entry.completed_ordinary_group_issued)
+
+    def test_copied_public_receipt_or_cloned_Source_exit_is_not_handoff(self):
+        from config_decoded_tail import _tail_entries
+        with self.assertRaises(AssertionError):_tail_entries(self.objects,self.rows,dict(Controls_ready=True))
+        first=self.state.exits[0]
+        changed=replace(self.state,exits=(replace(first,source_normal=dict(first.source_normal)),)+self.state.exits[1:])
+        with self.assertRaisesRegex(AssertionError,'outgoing state'):_tail_entries(self.objects,self.rows,changed)
+        with self.assertRaises(AssertionError):_tail_entries(self.objects,dict(self.rows),self.state)
 
 
 if __name__=='__main__':unittest.main()
