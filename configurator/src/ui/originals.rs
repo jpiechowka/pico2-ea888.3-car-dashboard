@@ -279,6 +279,9 @@ async fn maintain(
     settled(&tx).await
 }
 pub async fn externalize(art: Arc<Artwork>) -> Result<Arc<Artwork>, JsValue> {
+    locked(async move { externalize_locked(art).await }).await
+}
+async fn externalize_locked(art: Arc<Artwork>) -> Result<Arc<Artwork>, JsValue> {
     let Some(source) = art.original() else { return Ok(art) };
     let reference = register(Arc::new(
         OriginalReference::new(art.recipe().source_sha256, source.len()).map_err(|_| JsValue::NULL)?,
@@ -290,13 +293,10 @@ pub async fn externalize(art: Arc<Artwork>) -> Result<Arc<Artwork>, JsValue> {
     drop(art);
     let id = owner().await?;
     let k = reference.key();
-    locked(async move {
-        let db = database().await?;
-        let result = maintain(&db, &id, Some((k, blob))).await;
-        db.close();
-        result
-    })
-    .await?;
+    let db = database().await?;
+    let result = maintain(&db, &id, Some((k, blob))).await;
+    db.close();
+    result?;
     Ok(external)
 }
 pub async fn prepare(project: Project) -> Result<Project, JsValue> {
@@ -307,13 +307,20 @@ pub async fn prepare(project: Project) -> Result<Project, JsValue> {
         Ok(project)
     }
 }
-pub async fn restore(
+/// Caller holds the origin lock from the current-record read through pin publication.
+pub async fn restore_locked(
     project: Project,
     record: &JsValue,
 ) -> Result<Project, JsValue> {
     let source = get(record, "original")?;
     if source.is_undefined() || source.is_null() {
-        return prepare(project).await;
+        return if let Some(art) = project.artwork().cloned() {
+            project
+                .with_artwork(externalize_locked(art).await?)
+                .map_err(|_| JsValue::NULL)
+        } else {
+            Ok(project)
+        };
     }
     let k = key(source)?;
     let art = project.artwork().ok_or(JsValue::NULL)?;
@@ -326,20 +333,17 @@ pub async fn restore(
     }
     let id = owner().await?;
     let r = reference.clone();
-    locked(async move {
-        let db = database().await?;
-        let result = async {
-            let blob = read(&db, BLOBS, &k).await?.dyn_into::<web_sys::Blob>()?;
-            if blob.size() != r.len() as f64 {
-                return Err(JsValue::NULL);
-            }
-            maintain(&db, &id, None).await
+    let db = database().await?;
+    let result = async {
+        let blob = read(&db, BLOBS, &k).await?.dyn_into::<web_sys::Blob>()?;
+        if blob.size() != r.len() as f64 {
+            return Err(JsValue::NULL);
         }
-        .await;
-        db.close();
-        result
-    })
-    .await?;
+        maintain(&db, &id, None).await
+    }
+    .await;
+    db.close();
+    result?;
     project
         .with_artwork(Arc::new(art.externalized(reference).map_err(|_| JsValue::NULL)?))
         .map_err(|_| JsValue::NULL)

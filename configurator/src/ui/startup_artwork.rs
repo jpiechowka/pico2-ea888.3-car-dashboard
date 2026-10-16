@@ -326,6 +326,51 @@ fn start(
     });
 }
 
+fn start_retained(
+    ui: Ui,
+    state: Importer,
+    source: RetainedSource,
+    options: Options,
+    on_accept: Callback<ArtworkImport>,
+) {
+    state.cancel();
+    if state.generation.get_untracked() == u64::MAX {
+        state.fail("Import generation exhausted.");
+        return;
+    }
+    let mut token = Err(EditorError::InvalidDraft);
+    ui.editor.update(|e| token = e.begin_import());
+    let Ok(token) = token else {
+        state.fail("Finish current edits before reopening artwork.");
+        return;
+    };
+    let stamp = ui.editor.with_untracked(Editor::stamp);
+    let generation = state.generation.get_untracked();
+    state.token.set(Some(token));
+    state.stamp.set(Some(stamp));
+    state.busy.set(true);
+    state.message.set("Verifying retained original…".into());
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = originals::verified_blob(source.source).await;
+        if state.stale(ui, generation, stamp)
+            || ui.editor.try_with_untracked(|e| e.import_is_current(token)) != Some(true)
+        {
+            return;
+        }
+        match result {
+            Ok(blob) => {
+                let parts = js_sys::Array::new();
+                parts.push(&blob);
+                match web_sys::File::new_with_blob_sequence(&parts, &source.label) {
+                    Ok(file) => start(ui, state, file, options, on_accept),
+                    Err(_) => state.fail("Could not reopen retained original."),
+                }
+            }
+            Err(_) => state.fail("Retained original could not be verified."),
+        }
+    });
+}
+
 #[component]
 pub fn Panel(
     ui: Ui,
@@ -367,7 +412,7 @@ pub fn Panel(
         </div>
         <label hidden=move ||options.get().kind!=SourceKind::Gif>"GIF disposal background"<select prop:value=move ||if options.get().gif_background==GifBackground::Logical{"logical"}else{"transparent"} on:change=move |e|{state.cancel();options.update(|o|o.gif_background=if event_target_value(&e)=="transparent"{GifBackground::Transparent}else{GifBackground::Logical});}><option value="logical">"GIF logical background"</option><option value="transparent">"Transparent compatibility"</option></select></label>
         <div class="startup-actions"><button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){state.cancel();options.set(source.options);}}>"Restore original conversion settings"</button>
-        <button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){let captured_options=options.get_untracked();let stamp=ui.editor.with_untracked(Editor::stamp);wasm_bindgen_futures::spawn_local(async move{match originals::verified_blob(source.source).await{Ok(blob) if ui.editor.try_with_untracked(Editor::stamp)==Some(stamp)=>{let parts=js_sys::Array::new();parts.push(&blob);match web_sys::File::new_with_blob_sequence(&parts,&source.label){Ok(file)=>start(ui,state,file,captured_options,on_accept),Err(_)=>state.fail("Could not reopen retained original.")}},_=>state.fail("Original storage unavailable or project changed.")}});}}>"Convert retained original"</button></div>
+        <button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){start_retained(ui,state,source,options.get_untracked(),on_accept);}}>"Convert retained original"</button></div>
         <p class="hint" hidden=move ||retained.and_then(|r|r.get()).is_some()>"No retained original is available. Reimport the source to change conversion options."</p>
         <label>"Choose artwork"<input type="file" accept="image/png,image/gif,.png,.gif" on:change=move |e|{let input=event_target::<web_sys::HtmlInputElement>(&e);let file=input.files().and_then(|files|files.get(0));input.set_value("");if let Some(file)=file{start(ui,state,file,options.get_untracked(),on_accept);}}/></label>
         <button disabled=move ||!state.busy.get() on:click=move |_|{state.cancel();state.message.set("Conversion cancelled; accepted artwork retained.".into());}>"Cancel conversion"</button>

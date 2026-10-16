@@ -121,7 +121,8 @@ pub fn restore(ui: Ui) {
     let stamp = ui.editor.with_untracked(Editor::stamp);
     ui.project_store.busy.set(true);
     spawn_local(async move {
-        let result = async {
+        let result = originals::locked(async {
+            let _lease = originals::Materialization::acquire()?;
             let db = database().await?;
             let outcome = async {
                 let tx = db.transaction_with_str(STORE)?;
@@ -130,29 +131,30 @@ pub fn restore(ui: Ui) {
             }
             .await;
             db.close();
-            outcome
-        }
+            let record = outcome?;
+            let decoded = async {
+                let text = envelope(&record).ok().flatten()?;
+                let value = js_sys::Reflect::get(&record, &"project".into()).ok()?;
+                let array = value.dyn_into::<js_sys::Uint8Array>().ok()?;
+                if array.length() as usize > MAX_PROJECT_BYTES {
+                    return None;
+                }
+                let project = dashboard_config_tools::project::Project::decode(&array.to_vec()).ok()?;
+                let project = originals::restore_locked(project, &record).await.ok()?;
+                Editor::from_prepared_project_saved(project, &text).ok()
+            }
+            .await;
+            Ok((record, decoded))
+        })
         .await;
         if ui.editor.try_with_untracked(Editor::stamp).is_none() {
             return;
         }
         let mut conflict = false;
         match result {
-            Ok(record) => {
+            Ok((record, decoded)) => {
                 match envelope(&record) {
                     Ok(Some(text)) => {
-                        let decoded = async {
-                            let _lease = originals::Materialization::acquire().ok()?;
-                            let value = js_sys::Reflect::get(&record, &"project".into()).ok()?;
-                            let array = value.dyn_into::<js_sys::Uint8Array>().ok()?;
-                            if array.length() as usize > MAX_PROJECT_BYTES {
-                                return None;
-                            }
-                            let project = dashboard_config_tools::project::Project::decode(&array.to_vec()).ok()?;
-                            let project = originals::restore(project, &record).await.ok()?;
-                            Editor::from_prepared_project_saved(project, &text).ok()
-                        }
-                        .await;
                         ui.project_store.base.set(Some(text.clone()));
                         match decoded {
                             Some(editor)
