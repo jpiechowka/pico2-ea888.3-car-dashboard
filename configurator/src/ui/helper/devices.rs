@@ -3,14 +3,6 @@ use dashboard_helper_protocol::DeviceStatus;
 
 use super::*;
 
-fn unavailable(ui: Ui) -> bool {
-    let state = ui.helper;
-    state.busy.get()
-        || state.building.get()
-        || !state.view.with(|v| v.connected)
-        || state.view.with(|v| v.feed.active())
-}
-
 #[component]
 pub fn Panel(ui: Ui) -> impl IntoView {
     let state = ui.helper;
@@ -26,7 +18,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                         <span>{format!("{:04x}:{:04x} · {:?}",device.vid,device.pid,device.status)}</span>
                         <p>{device.reason.as_str().to_string()}</p>
                         <small>{format!("Serial: {}",device.serial.as_ref().map_or("unavailable",|s|s.as_str()))}</small>
-                        <button disabled=move ||unsupported||unavailable(ui) on:click=move |_| {
+                        <button disabled=move ||unsupported||operation_unavailable(ui) on:click=move |_| {
                             let mut result=Ok(());state.device.update(|d|result=d.select(selected.clone()));
                             if let Err(message)=result {state.view.update(|v|v.message=message.into());return;}
                             state.inspecting.set_value(true);send(ui,Action::Inspect);
@@ -43,7 +35,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                     <dt>"Identity"</dt><dd><code>{facts.chip_id.as_str().to_string()}</code></dd>
                     <dt>"Security"</dt><dd>"Secure boot off · debug access enabled"</dd>
                     <dt>"Flash capacity"</dt><dd>"Unverified"<small>"A tool estimate cannot establish installed flash capacity."</small></dd></dl>})}
-                <label class="build-toggle helper-confirmation"><input type="checkbox" disabled=move ||unavailable(ui)||!state.device.with(|d|d.inspection().is_some_and(|r|r.complete))
+                <label class="build-toggle helper-confirmation"><input type="checkbox" disabled=move ||operation_unavailable(ui)||!state.device.with(|d|d.inspection().is_some_and(|r|r.complete))
                     prop:checked=move ||state.device.with(|d|d.acknowledgement().is_some()) on:change=move |event| {
                         let mut result=Ok(());state.device.update(|d|result=d.acknowledge(event_target_checked(&event)));
                         if let Err(message)=result {state.view.update(|v|v.message=message.into());}

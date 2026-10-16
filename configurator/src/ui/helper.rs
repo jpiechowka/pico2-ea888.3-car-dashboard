@@ -20,8 +20,8 @@ use dashboard_helper_protocol::{
     Wire,
 };
 use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
-use wasm_bindgen_futures::{JsFuture, spawn_local};
-use web_sys::{AbortController, ReadableStreamDefaultReader, Request, RequestInit, Response};
+use wasm_bindgen_futures::spawn_local;
+use web_sys::{AbortController, Request};
 
 use super::*;
 mod artifacts;
@@ -29,6 +29,8 @@ mod devices;
 mod history;
 mod prerequisites;
 mod storage;
+mod transport;
+use transport::{fetch_bounded, request_init};
 
 const BASE: &str = "http://127.0.0.1:8765/api/v1";
 #[derive(Clone, Default)]
@@ -213,13 +215,7 @@ async fn request(
         abort: abort.clone(),
         timer,
     };
-    let init = RequestInit::new();
-    init.set_method(method);
-    init.set_signal(Some(&abort.signal()));
-    init.set_mode(web_sys::RequestMode::Cors);
-    init.set_credentials(web_sys::RequestCredentials::Omit);
-    init.set_cache(web_sys::RequestCache::NoStore);
-    init.set_redirect(web_sys::RequestRedirect::Error);
+    let init = request_init(method, &abort);
     let payload = match action {
         Action::Cleanup | Action::CleanupBuild => {
             let attempt = if matches!(action, Action::CleanupBuild) {
@@ -313,65 +309,6 @@ async fn request(
         matches!(action, Action::Storage),
     )
     .await
-}
-
-async fn fetch_bounded(
-    request: &Request,
-    max_bytes: usize,
-    accept_storage_conflict: bool,
-) -> Result<Vec<u8>, &'static str> {
-    let response = JsFuture::from(
-        web_sys::window()
-            .ok_or("Browser window unavailable")?
-            .fetch_with_request(request),
-    )
-    .await
-    .map_err(|_| "Helper unreachable or request timed out. Check the local terminal, then reconnect.")?
-    .dyn_into::<Response>()
-    .map_err(|_| "Invalid helper response")?;
-    if !response.ok() && !(accept_storage_conflict && response.status() == 409) {
-        return Err(match response.status() {
-            403 => "Helper session expired or origin rejected. Reconnect from Studio on port 8080.",
-            409 => "Another helper job is active. Reconnect to inspect its status.",
-            404 => "This helper does not support the requested operation.",
-            _ => "Helper request failed. Check its terminal for details.",
-        });
-    }
-    let stream = response.body().ok_or("Helper response body unavailable")?;
-    let reader = stream
-        .get_reader()
-        .dyn_into::<ReadableStreamDefaultReader>()
-        .map_err(|_| "Cannot read helper response")?;
-    let mut bytes = Vec::new();
-    let result = async {
-        loop {
-            let chunk = JsFuture::from(reader.read())
-                .await
-                .map_err(|_| "Helper response was interrupted")?;
-            if js_sys::Reflect::get(&chunk, &"done".into())
-                .ok()
-                .and_then(|v| v.as_bool())
-                == Some(true)
-            {
-                break;
-            }
-            let value = js_sys::Reflect::get(&chunk, &"value".into()).map_err(|_| "Invalid helper stream")?;
-            let data = value
-                .dyn_into::<js_sys::Uint8Array>()
-                .map_err(|_| "Invalid helper byte stream")?;
-            let count = data.length() as usize;
-            if count > max_bytes.saturating_sub(bytes.len()) {
-                return Err("Helper response exceeds the allowed size");
-            }
-            let at = bytes.len();
-            bytes.resize(at + count, 0);
-            data.copy_to(&mut bytes[at..]);
-        }
-        Ok(bytes)
-    }
-    .await;
-    reader.release_lock();
-    result
 }
 
 fn parse<T: serde::de::DeserializeOwned + Wire>(bytes: &[u8]) -> Result<T, &'static str> {
@@ -701,13 +638,15 @@ pub fn options_changed(ui: Ui) {
         .options_revision
         .update(|value| *value = value.and_then(|v| v.checked_add(1)));
 }
+/// Eligibility shared by ordinary helper operations; Connect and Cancel have separate admission.
+fn operation_unavailable(ui: Ui) -> bool {
+    let state = ui.helper;
+    state.busy.get() || state.building.get() || state.view.with(|v| !v.connected || v.feed.active())
+}
 pub fn build_disabled(ui: Ui) -> bool {
     let state = ui.helper;
-    state.busy.get()
-        || state.building.get()
+    operation_unavailable(ui)
         || state.options_revision.get().is_none()
-        || !state.view.with(|v| v.connected)
-        || state.view.with(|v| v.feed.active())
         || ui.editor.with(|e| e.action_readiness().block.is_some())
         || ui.build.with(|s| s.normalized().is_err())
 }
@@ -767,8 +706,8 @@ pub fn Panel(ui: Ui) -> impl IntoView {
         <section class="build-card helper-panel" aria-labelledby="helper-title"><div class="build-section-title"><span>"LOCAL"</span><h2 id="helper-title">"Computer & devices"</h2></div>
             <p>"Run the helper in a terminal, then connect here. Connecting only reads status; checks and scans run when you request them."</p><code class="helper-command">".\\configurator\\Studio.ps1 -Helper"</code>
             <div class="helper-actions"><button class="primary" disabled=move ||state.busy.get()||state.building.get() on:click=move |_|send(ui,Action::Connect)>{move ||if state.view.with(|v|v.connected){"Reconnect"}else{"Connect local helper"}}</button>
-                <button disabled=move ||state.busy.get()||state.building.get()||!state.view.with(|v|v.connected)||state.view.with(|v|v.feed.active()) on:click=move |_|send(ui,Action::Check)>"Check prerequisites"</button>
-                <button disabled=move ||state.busy.get()||state.building.get()||!state.view.with(|v|v.connected)||state.view.with(|v|v.feed.active()) on:click=move |_|send(ui,Action::Scan)>"Find BOOTSEL devices"</button>
+                <button disabled=move ||operation_unavailable(ui) on:click=move |_|send(ui,Action::Check)>"Check prerequisites"</button>
+                <button disabled=move ||operation_unavailable(ui) on:click=move |_|send(ui,Action::Scan)>"Find BOOTSEL devices"</button>
                 <button disabled=move ||!state.view.with(|v|v.connected&&v.feed.active())||state.cancel.get() on:click=move |_|{if state.busy.get_untracked(){state.cancel.set(true);}else{send(ui,Action::Cancel);}}>"Cancel job"</button></div>
             <p class="helper-status" role="status"><span class="chip">{move ||if state.busy.get(){"COMMUNICATING"}else if state.view.with(|v|v.connected){"CONNECTED"}else{"DISCONNECTED"}}</span>{move ||state.view.with(|v|v.message.clone())}</p>
             <small class="build-note">"Open Studio at localhost:8080 or 127.0.0.1:8080. The connection stays in memory. Reloading the page does not cancel a native job; reconnect to resume its status."</small>
@@ -812,13 +751,7 @@ pub async fn relay_post(
         .connection
         .get_value()
         .ok_or("Diagnostic connection unavailable")?;
-    let init = RequestInit::new();
-    init.set_method("POST");
-    init.set_signal(Some(&abort.signal()));
-    init.set_mode(web_sys::RequestMode::Cors);
-    init.set_credentials(web_sys::RequestCredentials::Omit);
-    init.set_cache(web_sys::RequestCache::NoStore);
-    init.set_redirect(web_sys::RequestRedirect::Error);
+    let init = request_init("POST", abort);
     init.set_body(&js_sys::Uint8Array::from(body));
     let request = Request::new_with_str_and_init(&format!("{BASE}/diagnostics"), &init)
         .map_err(|_| "Cannot create diagnostic request")?;

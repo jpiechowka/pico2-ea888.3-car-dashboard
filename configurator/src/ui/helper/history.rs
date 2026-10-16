@@ -3,16 +3,11 @@ use dashboard_helper_protocol::{FlashPhase, WriteOutcome};
 
 use super::*;
 
-fn unavailable(ui: Ui) -> bool {
-    let state = ui.helper;
-    state.busy.get() || state.building.get() || state.view.with(|v| !v.connected || v.feed.active())
-}
-
 fn remove(
     ui: Ui,
     id: &str,
 ) {
-    if unavailable(ui)
+    if operation_unavailable(ui)
         || !ui.helper.view.with_untracked(|v| {
             v.history
                 .as_ref()
@@ -45,10 +40,10 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                         {attempt.exit.map(|exit|view!{<dt>"Process exit"</dt><dd>{format!("{} (0x{:08X})",exit.interpreted_i32,exit.windows_u32)}</dd>})}
                     </dl>
                     <small>"To try again: reconnect in BOOTSEL, scan and inspect the device, confirm its board type, and explicitly choose a matching firmware file."</small>
-                    <div class="helper-actions" hidden=move ||confirming.get()><button disabled=move ||unavailable(ui) on:click=move |_|confirming.set(true)>"Remove local record"</button></div>
+                    <div class="helper-actions" hidden=move ||confirming.get()><button disabled=move ||operation_unavailable(ui) on:click=move |_|confirming.set(true)>"Remove local record"</button></div>
                     <div class="build-caution" hidden=move ||!confirming.get()>
                         <p>"Permanently remove this attempt's local recovery record? This does not change the Pico or its firmware. The record cannot be restored from Studio."</p>
-                        <div class="helper-actions"><button disabled=move ||unavailable(ui) on:click=move |_|{confirming.set(false);remove(ui,&id);}>"Confirm removal"</button><button on:click=move |_|confirming.set(false)>"Keep record"</button></div>
+                        <div class="helper-actions"><button disabled=move ||operation_unavailable(ui) on:click=move |_|{confirming.set(false);remove(ui,&id);}>"Confirm removal"</button><button on:click=move |_|confirming.set(false)>"Keep record"</button></div>
                     </div>
                 </div>}
             }).collect_view()}

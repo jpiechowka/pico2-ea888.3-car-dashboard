@@ -3,15 +3,11 @@ use dashboard_helper_protocol::BuildAttemptState;
 
 use super::*;
 
-fn unavailable(ui: Ui) -> bool {
-    let state = ui.helper;
-    state.busy.get() || state.building.get() || state.view.with(|v| !v.connected || v.feed.active())
-}
 fn remove(
     ui: Ui,
     id: &str,
 ) {
-    if unavailable(ui) {
+    if operation_unavailable(ui) {
         return;
     }
     let Some(id) = ui.helper.view.with_untracked(|v| v.storage.as_ref()?.cleanup_id(id)) else {
@@ -25,7 +21,7 @@ fn remove(
 pub fn Panel(ui: Ui) -> impl IntoView {
     view! {<details class="build-disclosure"><summary>"Build storage"</summary>
         <p>"Review the files retained by local builds. Removing an attempt frees its compiler output and saved inputs; your open Studio project and the Pico are unchanged."</p>
-        <div class="helper-actions"><button disabled=move ||unavailable(ui) on:click=move |_|send(ui,Action::Storage)>"Refresh build storage"</button></div>
+        <div class="helper-actions"><button disabled=move ||operation_unavailable(ui) on:click=move |_|send(ui,Action::Storage)>"Refresh build storage"</button></div>
         {move ||ui.helper.view.with(|v|v.storage.clone()).map(|storage| {
             let message=storage.explanation().to_string();
             view! {<p class="build-note" role="status">{message}</p>{if let BuildStorageView::Ready(report)=storage {
@@ -41,9 +37,9 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                             <code>{attempt.attempt_id.as_str().to_string()}</code>
                             {(attempt.protected&&attempt.state==BuildAttemptState::Artifact).then(||view!{<small>"In use by a retained firmware file. Download what you need, then restart the helper to release its session. Rebuild before flashing afterward."</small>})}
                             {(!closed).then(||view!{<small>"Process closure was not confirmed. Studio will not delete this attempt automatically."</small>})}
-                            <div class="helper-actions" hidden=move ||confirming.get()><button disabled=move ||!eligible||unavailable(ui) on:click=move |_|confirming.set(true)>"Remove build files"</button></div>
+                            <div class="helper-actions" hidden=move ||confirming.get()><button disabled=move ||!eligible||operation_unavailable(ui) on:click=move |_|confirming.set(true)>"Remove build files"</button></div>
                             <div class="build-caution" hidden=move ||!confirming.get()><p>"Permanently remove this attempt's local build files and diagnostic evidence? Download any logs or firmware you want to keep first."</p>
-                                <div class="helper-actions"><button disabled=move ||!eligible||unavailable(ui) on:click=move |_|{confirming.set(false);remove(ui,&id);}>"Confirm removal"</button><button on:click=move |_|confirming.set(false)>"Keep files"</button></div>
+                                <div class="helper-actions"><button disabled=move ||!eligible||operation_unavailable(ui) on:click=move |_|{confirming.set(false);remove(ui,&id);}>"Confirm removal"</button><button on:click=move |_|confirming.set(false)>"Keep files"</button></div>
                             </div>
                         </div>}
                     }).collect_view()}
