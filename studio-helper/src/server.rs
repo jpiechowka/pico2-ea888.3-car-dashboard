@@ -1,4 +1,4 @@
-//! Bounded loopback transport for explicit prerequisite jobs. No build/flash routes.
+//! Bounded authenticated loopback transport for explicit helper actions.
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,6 +27,7 @@ struct State {
     repo: PathBuf,
     session: SessionId,
     capability: String,
+    relay: crate::relay::Relay,
     inner: Mutex<Inner>,
 }
 fn random_hex<const N: usize>() -> Result<String, String> {
@@ -41,6 +42,7 @@ impl State {
             repo,
             session: session.clone(),
             capability: random_hex::<32>()?,
+            relay: crate::relay::Relay::new(),
             inner: Mutex::new(Inner {
                 jobs: JobStore::new(session.clone()),
                 devices: crate::devices::empty(session, "Device scan not run"),
@@ -632,6 +634,23 @@ async fn dispatch(
     if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
         return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
     }
+    if method == Method::POST && path == "/api/v1/diagnostics" {
+        if one(headers, "content-type") != Some("application/json") {
+            return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
+        }
+        let limit = diagnostics::REQUEST_BYTES;
+        if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > limit)) {
+            return error(StatusCode::PAYLOAD_TOO_LARGE, "DiagnosticBound", origin);
+        }
+        let bytes = match bounded_body(request.into_body(), limit).await {
+            Ok(bytes) => bytes,
+            Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "DiagnosticBound", origin),
+        };
+        return match state.relay.admit(&bytes) {
+            Ok(reply) => response(StatusCode::OK, serde_json::to_value(reply).unwrap(), origin),
+            Err(e) => store_error(e, origin),
+        };
+    }
     if method == Method::POST && path == "/api/v1/builds" {
         if one(headers, "content-type") != Some("application/json") {
             return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
@@ -931,6 +950,28 @@ async fn serve_async(state: Arc<State>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn diagnostics_route_requires_authority_and_bounds_without_jobs() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let good = serde_json::json!({"version":1,"events":[{
+            "severity":"Warn","category":"Storage","code":"storage.failed",
+            "workspace":"Diagnostics","sequence":"1","client_elapsed_ms":"0",
+            "accepted_revision":"0"}]}).to_string();
+        for (capability, origin, body, expected) in [
+            ("", ORIGINS[0], good.clone(), StatusCode::FORBIDDEN),
+            (state.capability.as_str(), "http://localhost:8081", good.clone(), StatusCode::FORBIDDEN),
+            (state.capability.as_str(), ORIGINS[0], "x".repeat(diagnostics::REQUEST_BYTES + 1), StatusCode::PAYLOAD_TOO_LARGE),
+            (state.capability.as_str(), ORIGINS[0], "{\"message\":\"secret\"}".into(), StatusCode::BAD_REQUEST),
+            (state.capability.as_str(), ORIGINS[0], good, StatusCode::OK),
+        ] {
+            let request = Request::builder().method("POST").uri("/api/v1/diagnostics")
+                .header("host", AUTHORITY).header("origin", origin)
+                .header("x-studio-capability", capability).header("content-type", "application/json")
+                .body(Body::from(body)).unwrap();
+            assert_eq!(dispatch(state.clone(), request).await.status(), expected);
+        }
+        assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
+    }
     #[tokio::test]
     async fn project_upload_is_bounded_and_replacement_gets_a_new_token() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
