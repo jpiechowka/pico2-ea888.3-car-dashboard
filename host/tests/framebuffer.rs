@@ -146,3 +146,74 @@ fn unrepresentable_geometry_cannot_overflow_or_consume_unbounded_colors() {
         assert!(buffer.iter().all(|byte| *byte == 0));
     }
 }
+
+#[test]
+fn contiguous_fill_preserves_consumption_at_clipping_and_exhaustion_boundaries() {
+    // An extra next(), a missing row skip, or a write after exhaustion must fail.
+    for (x, y, width, height) in [
+        (-2, -1, 5, 4),
+        (318, 238, 5, 4),
+        (-2, 238, 324, 4),
+        (3, 7, 3, 2),
+        (320, 0, 3, 2),
+        (0, 240, 3, 2),
+        (0, 0, 0, 2),
+    ] {
+        let source_index = |px: usize, py: usize| {
+            let sx = px as i64 - i64::from(x);
+            let sy = py as i64 - i64::from(y);
+            (sx >= 0 && sy >= 0 && sx < i64::from(width) && sy < i64::from(height))
+                .then_some((sy * i64::from(width) + sx) as usize)
+        };
+        let required = (0..HEIGHT)
+            .flat_map(|py| (0..WIDTH).filter_map(move |px| source_index(px, py)))
+            .max()
+            .map_or(0, |last| last + 1);
+        let color = |index: usize| Rgb565::new((index % 32) as u8, ((index / 3) % 64) as u8, ((index / 7) % 32) as u8);
+        let first = (0..HEIGHT)
+            .flat_map(|py| (0..WIDTH).filter_map(move |px| source_index(px, py)))
+            .min()
+            .unwrap_or(0);
+        for available in [
+            0,
+            first.saturating_sub(1),
+            first,
+            first + 1,
+            first + 2,
+            first + 3,
+            width as usize - usize::from(width > 0),
+            width as usize,
+            width as usize + 1,
+            required.saturating_sub(1),
+            required,
+            required + 1,
+        ] {
+            let expected_calls = required.min(available + 1);
+            let mut calls = 0;
+            let mut buffer = Box::<FrameBuffer>::default();
+            buffer.fill(0xA5);
+            let colors = std::iter::from_fn(|| {
+                assert!(
+                    calls < expected_calls,
+                    "excess next: rect=({x},{y},{width},{height}), available={available}"
+                );
+                let index = calls;
+                calls += 1;
+                (index < available).then(|| color(index))
+            });
+            St7789Renderer::new(&mut buffer)
+                .fill_contiguous(&Rectangle::new(Point::new(x, y), Size::new(width, height)), colors)
+                .unwrap();
+            assert_eq!(calls, expected_calls, "source consumption for {available} colors");
+            for py in 0..HEIGHT {
+                for px in 0..WIDTH {
+                    let expected = source_index(px, py)
+                        .filter(|index| *index < available)
+                        .map_or([0xA5; 2], |index| color(index).into_storage().to_be_bytes());
+                    let at = (py * WIDTH + px) * 2;
+                    assert_eq!(buffer[at..at + 2], expected, "pixel=({px},{py}), available={available}");
+                }
+            }
+        }
+    }
+}
