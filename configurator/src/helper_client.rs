@@ -35,6 +35,37 @@ pub struct PreparedBuild {
     hashes: [String; 4],
 }
 impl PreparedBuild {
+    /// Called from a freshly captured accepted project immediately before dispatch.
+    pub fn authorize_flash(
+        &self,
+        artifact: &dashboard_helper_protocol::ArtifactSummary,
+        connection: &Connection,
+        device: &DeviceSelection,
+    ) -> Result<dashboard_helper_protocol::FlashRequest, &'static str> {
+        artifact.validate().map_err(|_| "Invalid firmware artifact")?;
+        if !self.matches_artifact(artifact) || artifact.session_id != *connection.session() {
+            return Err("Build this accepted project and options in the current helper session first");
+        }
+        let acknowledgement = device
+            .acknowledgement()
+            .ok_or("Inspect and explicitly confirm the selected Pico 2 first")?;
+        if acknowledgement.session_id != *connection.session() {
+            return Err("Device inspection belongs to another helper session");
+        }
+        let request = dashboard_helper_protocol::FlashRequest {
+            artifact_id: artifact.artifact_id.clone(),
+            device_id: acknowledgement.device_id.clone(),
+            editor_revision: artifact.editor_revision,
+            project_sha256: artifact.project_sha256.clone(),
+            config_sha256: artifact.config_sha256.clone(),
+            expected_options: self.options.clone(),
+            retry_of: None,
+            board_acknowledgement: acknowledgement.clone(),
+        };
+        request.validate().map_err(|_| "Invalid flash request")?;
+        Ok(request)
+    }
+
     pub fn matches_artifact(
         &self,
         artifact: &dashboard_helper_protocol::ArtifactSummary,

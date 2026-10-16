@@ -103,6 +103,11 @@ fn artifact_identity_and_download_are_independently_checked() {
         flash_ready: false,
     };
     assert!(prepared.matches_artifact(&artifact));
+    assert!(
+        prepared
+            .authorize_flash(&artifact, &connection(), &DeviceSelection::default())
+            .is_err()
+    );
     verify_artifact_download(&artifact, &bytes).unwrap();
     assert!(verify_artifact_download(&artifact, &bytes[..511]).is_err());
     let mut altered = bytes.clone();

@@ -113,3 +113,78 @@ fn failed_reinspection_removes_previous_confirmation() {
     assert!(state.selected().is_none());
     assert!(state.inspection().is_none());
 }
+
+#[test]
+fn flash_request_binds_complete_project_artifact_options_and_confirmed_device() {
+    use dashboard_configurator::build_flash::BuildSelection;
+    use dashboard_configurator::editor::Editor;
+    use dashboard_configurator::helper_client::PreparedBuild;
+    let selection = BuildSelection::default();
+    let mut editor = Editor::default();
+    let prepared = PreparedBuild::capture(&editor, &selection, 0).unwrap();
+    let project = dashboard_config_tools::project::Project::decode(prepared.bytes()).unwrap();
+    let hash = |bytes: &[u8]| {
+        Sha256::new(
+            dashboard_config_tools::project::digest(bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+        )
+        .unwrap()
+    };
+    let artifact = ArtifactSummary {
+        artifact_id: ArtifactId::new("1".repeat(64)).unwrap(),
+        session_id: connection().session().clone(),
+        editor_revision: 12,
+        project_sha256: hash(prepared.bytes()),
+        config_sha256: hash(project.dashboard_bytes()),
+        startup_profile_sha256: hash(&project.profile().encode().unwrap()),
+        startup_asset_sha256: hash(&[]),
+        source_sha256: hash(b"source"),
+        elf_sha256: hash(b"elf"),
+        uf2_sha256: hash(b"uf2"),
+        converter_sha256: hash(b"converter"),
+        options: selection.normalized().unwrap(),
+        uf2_bytes: 512,
+        hardware_qualified: false,
+        flash_ready: false,
+    };
+    let mut device_state = DeviceSelection::default();
+    device_state.select(device()).unwrap();
+    device_state.accept(&connection(), inspection()).unwrap();
+    device_state.acknowledge(true).unwrap();
+    let request = prepared
+        .authorize_flash(&artifact, &connection(), &device_state)
+        .unwrap();
+    assert_eq!(request.device_id, device().device_id);
+    assert_eq!(
+        request.board_acknowledgement.information_sha256.as_str(),
+        "e".repeat(64)
+    );
+    assert_eq!(request.project_sha256, artifact.project_sha256);
+    assert_eq!(request.editor_revision, 12);
+    for variant in 0..3 {
+        let mut wrong = artifact.clone();
+        match variant {
+            0 => wrong.project_sha256 = hash(b"other"),
+            1 => wrong.session_id = SessionId::new("f".repeat(32)).unwrap(),
+            _ => wrong.startup_asset_sha256 = hash(b"newart"),
+        };
+        assert!(prepared.authorize_flash(&wrong, &connection(), &device_state).is_err());
+    }
+    let mut profile = editor.startup_profile();
+    profile.duration_ms += 1;
+    editor.set_startup_profile(profile).unwrap();
+    let changed = PreparedBuild::capture(&editor, &selection, 0).unwrap();
+    assert!(
+        changed
+            .authorize_flash(&artifact, &connection(), &device_state)
+            .is_err()
+    );
+    device_state.clear();
+    assert!(
+        prepared
+            .authorize_flash(&artifact, &connection(), &device_state)
+            .is_err()
+    );
+}

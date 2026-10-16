@@ -25,6 +25,7 @@ use web_sys::{AbortController, ReadableStreamDefaultReader, Request, RequestInit
 use super::*;
 mod artifacts;
 mod devices;
+mod prerequisites;
 
 const BASE: &str = "http://127.0.0.1:8765/api/v1";
 #[derive(Clone, Default)]
@@ -50,6 +51,7 @@ pub struct State {
     prepared: StoredValue<Option<PreparedBuild>>,
     uploaded: StoredValue<Option<ProjectUploadResponse>>,
     download: StoredValue<Option<ArtifactSummary>>,
+    flashing: StoredValue<Option<ArtifactSummary>>,
     device: RwSignal<DeviceSelection>,
     inspecting: StoredValue<bool>,
 }
@@ -71,6 +73,7 @@ impl State {
             prepared: StoredValue::new(None),
             uploaded: StoredValue::new(None),
             download: StoredValue::new(None),
+            flashing: StoredValue::new(None),
             device: RwSignal::new(DeviceSelection::default()),
             inspecting: StoredValue::new(false),
         }
@@ -89,6 +92,7 @@ impl State {
             let _ = self.prepared.try_set_value(None);
             let _ = self.uploaded.try_set_value(None);
             let _ = self.download.try_set_value(None);
+            let _ = self.flashing.try_set_value(None);
         });
     }
 }
@@ -108,6 +112,7 @@ enum Action {
     Download,
     Inspect,
     Inspection,
+    Flash,
 }
 struct ReadGuard {
     abort: AbortController,
@@ -135,6 +140,7 @@ async fn request(
         Action::Devices => ("GET", "/devices".into()),
         Action::Upload => ("POST", "/projects".into()),
         Action::Build => ("POST", "/builds".into()),
+        Action::Flash => ("POST", "/flashes".into()),
         Action::Artifacts => ("GET", "/artifacts".into()),
         Action::Inspect | Action::Inspection => {
             let device = state
@@ -196,6 +202,22 @@ async fn request(
     init.set_cache(web_sys::RequestCache::NoStore);
     init.set_redirect(web_sys::RequestRedirect::Error);
     let payload = match action {
+        Action::Flash => {
+            let artifact = state.flashing.get_value().ok_or("No firmware selected")?;
+            let connection = connection.as_ref().ok_or("Helper session lost")?;
+            let command = ui.editor.with_untracked(|editor| {
+                ui.build.with_untracked(|selection| {
+                    let prepared = PreparedBuild::capture(editor, selection, 0)?;
+                    state
+                        .device
+                        .with_untracked(|device| prepared.authorize_flash(&artifact, connection, device))
+                })
+            })?;
+            Some((
+                "application/json",
+                serde_json::to_vec(&command).map_err(|_| "Cannot encode flash request")?,
+            ))
+        }
         Action::Upload => {
             Some((
                 "application/octet-stream",
@@ -364,7 +386,7 @@ fn apply(
                 Ok(Some(Action::Report))
             }
         }
-        Action::Check | Action::Scan | Action::Build | Action::Inspect => {
+        Action::Check | Action::Scan | Action::Build | Action::Inspect | Action::Flash => {
             let job = parse::<JobSummary>(bytes)?;
             let conn = state.connection.get_value().ok_or("Helper session lost")?;
             let mut result = Ok(());
@@ -373,6 +395,12 @@ fn apply(
                 v.message = "Local job running. Detailed status and logs follow below.".into();
             });
             result?;
+            if matches!(action, Action::Flash) {
+                state.flashing.set_value(None);
+                state.device.update(|d| {
+                    let _ = d.acknowledge(false);
+                });
+            }
             if matches!(action, Action::Build) {
                 state.prepared.set_value(None);
                 state.uploaded.set_value(None);
@@ -414,10 +442,21 @@ fn apply(
             result?;
             if state.view.with_untracked(|v| v.feed.drained()) {
                 state.view.update(|v| {
-                    v.message = format!(
-                        "Job closed: {:?}. Review the results below.",
-                        v.feed.summary.as_ref().and_then(|s| s.terminal_cause)
-                    )
+                    use dashboard_helper_protocol::TerminalCause;
+                    v.message = match v.feed.summary.as_ref().and_then(|s| s.terminal_cause) {
+                        Some(TerminalCause::Succeeded) => "Job completed. Review its stages and results below.",
+                        Some(TerminalCause::Cancelled) => {
+                            "Job cancelled and cleanup completed. Review the write outcome before retrying."
+                        }
+                        Some(TerminalCause::Deadline) => {
+                            "Job reached its deadline. Review the logs and write outcome before retrying."
+                        }
+                        Some(TerminalCause::OwnershipCleanupFatal) => {
+                            "Cleanup could not be confirmed. Check the helper terminal before starting another job."
+                        }
+                        _ => "Job failed. Review its stage details and logs before retrying.",
+                    }
+                    .into();
                 });
                 Ok(Some(if state.inspecting.get_value() {
                     Action::Inspection
@@ -582,6 +621,7 @@ fn send(
                 state.uploaded.set_value(None);
                 state.building.set(false);
                 state.download.set_value(None);
+                state.flashing.set_value(None);
                 state.device.update(DeviceSelection::clear);
                 state.inspecting.set_value(false);
                 ui.event(Notice {
@@ -636,10 +676,23 @@ pub fn start_build(ui: Ui) {
     }
 }
 fn stage_label(stage: dashboard_helper_protocol::StageId) -> String {
-    use dashboard_helper_protocol::{ProbeStage, StageId};
+    use dashboard_helper_protocol::{FirmwareStage, ProbeStage, StageId};
     match stage {
         StageId::Probe(ProbeStage::Prerequisites) => "Installed tools".into(),
         StageId::Probe(ProbeStage::DeviceDetection) => "BOOTSEL device discovery".into(),
+        StageId::Firmware(stage) => {
+            match stage {
+                FirmwareStage::Prerequisites => "Required tools",
+                FirmwareStage::Snapshot => "Freeze project & source",
+                FirmwareStage::Compilation => "Compile Pico 2 firmware",
+                FirmwareStage::Validation => "Validate firmware image",
+                FirmwareStage::DeviceSelection => "Recheck selected Pico 2",
+                FirmwareStage::Transfer => "Write firmware",
+                FirmwareStage::Verification => "Verify written bytes",
+                FirmwareStage::Reboot => "Request ARM reboot",
+            }
+            .into()
+        }
         _ => format!("{stage:?}"),
     }
 }
@@ -656,9 +709,11 @@ pub fn Panel(ui: Ui) -> impl IntoView {
             <p class="helper-status" role="status"><span class="chip">{move ||if state.busy.get(){"COMMUNICATING"}else if state.view.with(|v|v.connected){"CONNECTED"}else{"DISCONNECTED"}}</span>{move ||state.view.with(|v|v.message.clone())}</p>
             <small class="build-note">"Open Studio at localhost:8080 or 127.0.0.1:8080. The connection stays in memory. Reloading the page does not cancel a native job; reconnect to resume its status."</small>
             {move ||state.view.with(|v|v.feed.summary.clone()).map(|job|view!{<div class="helper-stages">{job.stages.iter().map(|s|view!{<div><strong>{stage_label(s.stage)}</strong><span>{format!("{:?}",s.state)}</span><small>{s.reason.as_ref().map(|r|r.as_str().to_string()).unwrap_or_default()}</small></div>}).collect_view()}</div>})}
-            {move ||state.view.with(|v|v.report.clone()).map(|report|{
-                let rows=report["checks"].as_array().cloned().unwrap_or_default();
-                view!{<details class="build-disclosure" open><summary>"Prerequisite results · installed tool versions"</summary><p>"These checks inspect tools and versions. Build/link capability and device programming are separate gates."</p><div class="helper-checks">{rows.into_iter().map(|r|view!{<div><strong>{r["id"].as_str().unwrap_or("check").to_string()}</strong><span>{r["status"].as_str().unwrap_or("unknown").to_string()}</span><p>{r["evidence"].as_str().unwrap_or("").to_string()}</p><small>{r["setup"].as_str().unwrap_or("").to_string()}</small></div>}).collect_view()}</div></details>}
+            {move ||state.view.with(|v|v.report.clone()).map(|report|view!{<prerequisites::Results report/>})}
+            {move ||state.view.with(|v|v.feed.summary.clone()).filter(|job|job.operation==dashboard_helper_protocol::OperationKind::Flash).map(|job| {
+                use dashboard_helper_protocol::WriteOutcome;
+                let status=match job.write_outcome {WriteOutcome::NotStarted=>"No write started",WriteOutcome::InProgress=>"Write in progress",WriteOutcome::TransferredUnverified=>"Transferred · verification pending",WriteOutcome::Verified=>"Written bytes verified",WriteOutcome::Unknown=>"Write result unknown · inspect before retrying"};
+                view!{<div class="helper-write-outcome" role="status"><strong>{status}</strong><small>"A successful reboot request does not prove that the firmware is running correctly. Check the physical display afterward."</small></div>}
             })}
             <devices::Panel ui/>
             <artifacts::Panel ui/>
