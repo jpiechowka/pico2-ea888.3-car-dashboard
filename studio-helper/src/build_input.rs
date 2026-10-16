@@ -200,14 +200,6 @@ fn write_new(
     file.sync_all().map_err(|e| e.to_string())?;
     Ok(())
 }
-pub fn freeze(
-    repo: &Path,
-    input: &AcceptedInput,
-) -> Result<FrozenInput, String> {
-    let repo = repo.canonicalize().map_err(|e| e.to_string())?;
-    let reservation = crate::build_storage::reserve(&repo)?;
-    freeze_at(&repo, input, &reservation.path)
-}
 pub(crate) fn freeze_at(
     repo: &Path,
     input: &AcceptedInput,
@@ -386,4 +378,80 @@ pub(crate) fn capture(
     )?;
     frozen.verify()?;
     Ok(output)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    fn request() -> BuildRequest {
+        let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+        let mut buf = vec![0; dashboard_config::MAX_FILE_BYTES];
+        let bytes = dashboard_config::encode(&config, &mut buf).unwrap();
+        BuildRequest {
+            editor_revision: 1,
+            config_sha256: Sha256::new(digest(bytes)).unwrap(),
+            eav_hex: Text::new(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap(),
+            options: BuildOptions::default(),
+            retry_of: None,
+        }
+    }
+    #[test]
+    fn snapshot_is_independent_and_detects_input_mutation() {
+        use std::fs;
+        let repo = std::env::temp_dir().join(format!(
+            "studio-frozen-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&repo).unwrap();
+        for name in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "firmware/Cargo.toml",
+            "firmware/Cargo.lock",
+            "firmware/rust-toolchain.toml",
+            "firmware/.cargo/config.toml",
+            "crates/example/lib.rs",
+            "firmware/pico2/src/main.rs",
+            "firmware/vendor/embassy-rp/src/lib.rs",
+            "firmware/scripts/capture.py",
+            "host/scripts/environment.py",
+        ] {
+            let path = repo.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"source").unwrap();
+        }
+        let mut reservation = crate::build_storage::reserve(&repo).unwrap();
+        let frozen = freeze_at(
+            &repo,
+            &AcceptedInput::from_request(&request()).unwrap(),
+            &reservation.path,
+        )
+        .unwrap();
+        fs::write(repo.join("crates/example/lib.rs"), b"changed live source").unwrap();
+        assert!(frozen.verify().is_ok());
+        assert!(
+            fs::write(
+                frozen.attempt_root().join("input/dashboard.eav"),
+                b"changed frozen input"
+            )
+            .is_err()
+        );
+        assert!(frozen.verify().is_ok());
+        drop(frozen);
+        reservation.close(false, Some("Snapshot fixture completed")).unwrap();
+        let records = crate::build_storage::list(&repo, &Default::default()).unwrap();
+        assert_eq!(records.attempts[0].state, BuildAttemptState::Failed);
+        // Closure must release the active reservation for another explicit attempt.
+        let mut next = crate::build_storage::reserve(&repo).unwrap();
+        next.close(false, Some("Follow-up fixture completed")).unwrap();
+        drop((next, reservation));
+        // Fixture path was created above under the OS temporary directory.
+        assert!(repo.starts_with(std::env::temp_dir()));
+        fs::remove_dir_all(repo).unwrap();
+    }
 }
