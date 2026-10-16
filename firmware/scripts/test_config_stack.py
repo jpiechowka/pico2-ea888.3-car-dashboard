@@ -2583,7 +2583,7 @@ class OwnedPlatformDependencies(unittest.TestCase):
             'widget'+str(i),borrow(config.owner.storage,444+220*i,220,config.frame.phase,writable=True),
             config.frame,'r4',config.protected,i) for i in range(8))
         policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
-        self.assertEqual(policy.schema,6)
+        self.assertEqual(policy.schema,7)
         self.assertEqual(policy.owned_dependencies,dependencies)
         record=policy.to_record()
         self.assertEqual(config_platform.read_policy(json.loads(json.dumps(record)),policy),policy)
@@ -4060,7 +4060,8 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                 DecodedWidgetAccess.dependencies() if include_led else ())
         if include_led:
             from test_config_sources import SourcePolicyV7
-            return SourcePolicyV7.augment(values)
+            from test_config_tail_access import TailPolicyV8
+            return TailPolicyV8.augment(SourcePolicyV7.augment(values))
         return values
 
     def artifact(self,mode):
@@ -4103,26 +4104,35 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             # Conditional site/metadata fixture only, including the new
             # complete typed Source extent. It grants no Source body proof.
             from config_source_children import CHANNEL_SOURCE
-            sources=self.dependencies(mode)[-4:];source_start=sources[0].parent
+            dependencies=self.dependencies(mode)
+            sources=dependencies[20:24];source_start=sources[0].parent
             enlarged=bytearray(start+len(merged)-source_start)
             enlarged[start-source_start:]=merged
             for family in sources:
                 for at,raw,field,width,direction,source in family.sites:
                     enlarged[at-source_start:at-source_start+4]=bytes.fromhex(raw)
             start=source_start;merged=enlarged
+            # These six sites and Screen metadata are requirements only;
+            # synthetic unused body bytes never establish a reached use.
+            from config_tail_contracts import ROLES as TAIL_ROLES
+            for family in dependencies[24:]:
+                for at,raw,field,width,direction,source in family.sites:
+                    merged[at-start:at-start+4]=bytes.fromhex(raw)
+            screen=dependencies[24].parent
+            elf.functions[TAIL_ROLES['ScreenBindings']]=(screen|1,312,0);sizes[screen]=64
             text=(0,1,6,start,0,len(merged),0,0,2,0);data=(0,1,7,base,len(merged),14604,0,0,4,0)
             elf.data=bytes(merged)+bytes(14604);elf.sections=[text,data];elf.named={'.data':data}
             elf.mapping_symbols=[('$t',start,0)]
             elf.functions[CHANNEL_SOURCE]=(source_start|1,754,0);sizes[source_start]=72
         return config_stack.DiagnosticObjects(elf,sizes)
 
-    def test_v5_policy_retains_exact_closed_family_sets_and_rejects_stale_or_lost_qualifiers(self):
+    def test_v8_policy_retains_exact_closed_family_sets_and_rejects_stale_or_lost_qualifiers(self):
         import config_platform
         self.assertEqual((config_platform.POLICY_SCHEMA,config_platform.SCOPE,config_platform.SCOPE_SHA256),
-            (6,'h2-rp2350-secure-owned-access-v7','50408f1a4774caff701c236184a4f17060cb9e17ade5fffaa0ca208d4f1b6181'))
+            (7,'h2-rp2350-secure-owned-access-v8','0decd7e28e1eaa62d95730efe4bb0eb02ced8f457c92939190c0f7eb722bcf03'))
         from copy import deepcopy
         objects,view,context=ConditionalStackPolicy.fixture(self)
-        for mode,count in (('speed2',7),('sizes',4),('sizez',24)):
+        for mode,count in (('speed2',7),('sizes',4),('sizez',27)):
             dependencies=self.dependencies(mode)
             policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
             self.assertEqual(policy.owned_family,mode+'_configuration')
@@ -4225,6 +4235,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         from config_led_access import LedFamily
         from config_widget_access import WidgetFamily
         from config_source_access import SourceFamily
+        from config_tail_access import TailFamily
         from dataclasses import replace
         from config_regions import Storage
         import check_memory_layout
@@ -4276,13 +4287,13 @@ class ValidatorPlatformFamilies(unittest.TestCase):
             # retain the old default caller/output epoch, not its old PC.
             legacy=tuple(replace(v,anchor=0x1001c270,site=0x1001c270+84)
                 if v.role=='advanced_default_fields' else v for v in legacy)
-        sources=[]
+        sources_and_tails=[]
         for value in self.dependencies(mode):
-            if not isinstance(value,SourceFamily):continue
+            if not isinstance(value,(SourceFamily,TailFamily)):continue
             c=value.context;delta=0x20000000-c.config.start
             config=replace(c.config,storage=replace(c.config.storage,start=0x20000000))
             guards=tuple(replace(v,start=v.start+delta) if v.space=='address' else v for v in c.protected)
-            sources.append(replace(value,context=replace(c,config=config,protected=guards)))
+            sources_and_tails.append(replace(value,context=replace(c,config=config,protected=guards)))
         if mode=='sizez':
             # Reuse the supplied physical loader geometry of the conditional
             # families; this is still not a complete actual graph producer.
@@ -4294,12 +4305,12 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                     protected=tuple(replace(g,start=g.start+shift) if g.space.startswith('stack:') else g for g in value.protected))
             legacy=tuple(physical_legacy(v) for v in legacy)
         policy=PlatformPolicy(0x1000000c,0x10000000+len(eav),hashlib.sha256(eav[12:]).hexdigest(),
-            hashlib.sha256(elf.data).hexdigest(),owned_dependencies=legacy+tuple(validators)+tuple(leds)+tuple(widgets)+tuple(sources),owned_family=mode+'_configuration')
+            hashlib.sha256(elf.data).hexdigest(),owned_dependencies=legacy+tuple(validators)+tuple(leds)+tuple(widgets)+tuple(sources_and_tails),owned_family=mode+'_configuration')
         _,headroom=check_memory_layout.geometry(elf)
         stack=supplied_stack_record(dict(boot=4096,constructor=4096,runtime=8192,dashboard=16384),headroom,policy,elf)
         return elf,eav,stack
 
-    def test_actual_image_and_capture_readers_preserve_v5_with_supplied_stage_facts(self):
+    def test_actual_image_and_capture_readers_preserve_v8_with_supplied_stage_facts(self):
         import check_memory_layout,capture_target_bench as capture
         from test_target_capture import CaptureMemoryQualification
         from unittest.mock import patch
@@ -7661,17 +7672,17 @@ class DecodedWidgetAccess(unittest.TestCase):
             else:changed['role']='band_assembly'
             with self.subTest(fault=fault),self.assertRaises(AssertionError):read_widget_family(changed)
 
-    def test_current_image_reader_preserves_v7_and_rejects_stale_v6_qualification(self):
+    def test_current_image_reader_preserves_v8_and_rejects_stale_v7_qualification(self):
         # This exercises the existing real artifact reader. The supplied
         # producer fixture is deliberately readonly, with no Widget ownership
-        # or complete-graph claim. V6 must not silently stand in for V7.
+        # or complete-graph claim. V7 must not silently stand in for V8.
         from test_validation_policy import MemoryQualification
         from config_platform import current_image_policy
         elf,eav,stack=MemoryQualification().fixture()
         record=stack['policies'][0]
         current=dict(record)
-        record.update(schema=5,scope='h2-rp2350-secure-owned-access-v6',
-            scope_sha256='627f472cf991e64d868d29eb67ef302218d57327a726cdfbc535ed5a97e6eeed')
+        record.update(schema=6,scope='h2-rp2350-secure-owned-access-v7',
+            scope_sha256='50408f1a4774caff701c236184a4f17060cb9e17ade5fffaa0ca208d4f1b6181')
         with self.assertRaisesRegex(AssertionError,'stale'):current_image_policy(record,elf,eav)
         record=current
         result=current_image_policy(record,elf,eav)
@@ -7679,22 +7690,22 @@ class DecodedWidgetAccess(unittest.TestCase):
         self.assertEqual(result.status,'assumed_external')
         self.assertFalse(result.hardware_qualified)
 
-    def test_full_v7_set_cannot_omit_reorder_or_cross_pair_widget_families(self):
+    def test_full_v8_set_cannot_omit_reorder_or_cross_pair_widget_families(self):
         import config_platform
         from dataclasses import replace
         objects,view,context=ConditionalStackPolicy().fixture()
         dependencies=ValidatorPlatformFamilies().dependencies('sizez')
         policy=config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=dependencies)
-        self.assertEqual(len(policy.owned_dependencies),24)
-        self.assertEqual(sum(len(v.sites) for v in dependencies[-8:-4]),8)
+        self.assertEqual(len(policy.owned_dependencies),27)
+        self.assertEqual(sum(len(v.sites) for v in dependencies[16:20]),8)
         for fault in ('missing','duplicate','reordered','old16','other_visitor','other_Config','other_loader'):
             values=list(dependencies)
-            if fault=='missing':values.pop(-5)
-            elif fault=='duplicate':values[-5]=values[-6]
-            elif fault=='reordered':values[-8],values[-7]=values[-7],values[-8]
-            elif fault=='old16':values=values[:-8]+values[-4:]
+            if fault=='missing':values.pop(19)
+            elif fault=='duplicate':values[19]=values[18]
+            elif fault=='reordered':values[16],values[17]=values[17],values[16]
+            elif fault=='old16':values=values[:16]+values[20:]
             else:
-                family=values[-8];c=family.context
+                family=values[16];c=family.context
                 if fault=='other_visitor':
                     visitor=replace(c.visitor,identity='different invocation')
                     c=replace(c,visitor=visitor,frame=visitor,owner=replace(c.owner,storage=visitor))
@@ -7703,7 +7714,7 @@ class DecodedWidgetAccess(unittest.TestCase):
                     config=replace(c.config,storage=replace(c.config.storage,start=c.config.start+0x4000))
                     guards=tuple(replace(v,start=v.start+0x4000) if v.space=='address' else v for v in c.protected)
                     c=replace(c,config=config,protected=guards)
-                values[-8]=replace(family,context=c)
+                values[16]=replace(family,context=c)
             with self.subTest(fault=fault),self.assertRaises(AssertionError):
                 config_platform.reviewed_eav_policy(objects,view,context,contradictory_effects=(),owned_dependencies=tuple(values))
 
