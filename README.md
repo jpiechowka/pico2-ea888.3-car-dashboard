@@ -9,6 +9,14 @@ adapter bring-up and sends no diagnostic CAN requests.
 
 Browse the offline **ECU Reference** workspace while configuring views: searchable source/scaling evidence, family limitations and unresolved definitions, with the shared preview retained. [Studio usage](docs/configurator/ecu-reference.md) · [Technical ECU library](docs/vehicle/ecu-reference/README.md).
 
+[Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
+[Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
+[Architecture](#architecture) · [Validation](#firmware-build-and-validation)
+
+[![Studio Views workspace with the shared dashboard preview](docs/images/gallery/workflows/editor.jpg)](docs/configurator/gallery.md#edit-and-repair)
+
+*Studio edits a shared-renderer dashboard. Preview readings are synthetic; they do not establish vehicle support.*
+
 ## Configure dashboard views
 
 Launch the Rust/Wasm editor from the repository root:
@@ -43,13 +51,93 @@ The [original configurator validation record](docs/configurator/validation.md)
 preserves its dated implementation checks and measurements; later feature
 guides describe the current workflows and remaining device checks.
 
-### Build & Flash from Studio
+
+### Edit, inspect and save
+
+1. Add widgets from the library, then place and resize them on the grid. Name,
+   reorder and choose the boot view. The widget menu provides explicit move/delete
+   actions when overlapping widgets are hard to select.
+2. Adjust units, palette, scale, history and warnings. Search settings or use the
+   command palette to reach a control. Appearance presets reuse styling; inspect
+   their scope before applying them to a view.
+3. An **INVALID PREVIEW** keeps rejected edits visible for repair. It does not
+   replace the accepted project. Fix the fields or discard invalid edits; pending
+   JSON and startup timing need Apply or Discard before save/export/build.
+4. Use Undo/Redo for accepted changes. Export a complete project for a portable
+   backup; browser storage belongs to this browser and origin and can fail or fill.
+
+| Export | Keeps | Use |
+|---|---|---|
+| Complete `.eavp` | Views, startup, converted animation and original artwork when available | Portable editing backup |
+| Converted-only `.eavp` | Views, startup and converted animation | Smaller copy; source edits require the original again |
+| Dashboard-only `.eav` / JSON | Dashboard configuration | Runtime configuration or text editing; no startup/artwork |
+
+Dashboard-only import preserves startup in an existing project. Full project
+import replaces the complete accepted project atomically. Original artwork is
+retained separately from ordinary history entries and never enters firmware.
+See [projects and storage](docs/configurator/projects.md),
+[editor state](docs/configurator/editor-state.md) and the
+[editing screenshots](docs/configurator/gallery.md#edit-and-repair).
+
+## Widget gallery
+
+These are native shared-renderer crops with synthetic inputs, not live readings
+or recommended DNUC thresholds. Click a crop for its full 320×240 frame. Each
+channel below uses a 2×1 numeric/history widget; the renderer and reproducible
+fixture are described in the [gallery](docs/configurator/gallery.md#shared-renderer-widgets).
+
+| Measurement | Measurement |
+|---|---|
+| **Relative boost**<br>[![Synthetic Relative boost: 1.20 bar with PSI companion](docs/images/gallery/widgets/widget-boost.png)](docs/images/gallery/widgets/full/widget-boost.png)<br>1.20 bar with PSI companion | **Engine oil**<br>[![Synthetic Engine oil: 95 °C](docs/images/gallery/widgets/widget-oil.png)](docs/images/gallery/widgets/full/widget-oil.png)<br>95 °C |
+| **Coolant**<br>[![Synthetic Coolant: 90 °C](docs/images/gallery/widgets/widget-coolant.png)](docs/images/gallery/widgets/full/widget-coolant.png)<br>90 °C | **DSG oil**<br>[![Synthetic DSG oil: 80 °C; vehicle source unqualified](docs/images/gallery/widgets/widget-dsg.png)](docs/images/gallery/widgets/full/widget-dsg.png)<br>80 °C; vehicle source unqualified |
+| **Intake air**<br>[![Synthetic Intake air: 30 °C](docs/images/gallery/widgets/widget-iat.png)](docs/images/gallery/widgets/full/widget-iat.png)<br>30 °C | **Exhaust gas**<br>[![Synthetic Exhaust gas: 700 °C; vehicle source unqualified](docs/images/gallery/widgets/widget-egt.png)](docs/images/gallery/widgets/full/widget-egt.png)<br>700 °C; vehicle source unqualified |
+| **ECU voltage**<br>[![Synthetic ECU voltage: 13.8 V; not a battery-post measurement](docs/images/gallery/widgets/widget-ecu-voltage.png)](docs/images/gallery/widgets/full/widget-ecu-voltage.png)<br>13.8 V; not a battery-post measurement | **Lambda & AFR**<br>[![Synthetic Lambda & AFR: Lambda 1.00; gasoline-equivalent AFR 14.7](docs/images/gallery/widgets/widget-lambda-afr.png)](docs/images/gallery/widgets/full/widget-lambda-afr.png)<br>Lambda 1.00; gasoline-equivalent AFR 14.7 |
+
+### Six styles, three sizes
+
+The 4×2 grid supports 1×1 (80×107), 2×1 (160×107) and 2×2 (160×214)
+widgets below the 26-pixel header. All examples use the same synthetic boost
+sample. Numeric companions work at every size; gauge companions need 2×1 or 2×2.
+
+| Style | 1×1 | 2×1 | 2×2 |
+|---|---|---|---|
+| Numeric & history | [![Numeric & history, 1x1, synthetic boost](docs/images/gallery/widgets/gauge-numeric-1x1.png)](docs/images/gallery/widgets/full/gauge-numeric-1x1.png) | [![Numeric & history, 2x1, synthetic boost](docs/images/gallery/widgets/gauge-numeric-2x1.png)](docs/images/gallery/widgets/full/gauge-numeric-2x1.png) | [![Numeric & history, 2x2, synthetic boost](docs/images/gallery/widgets/gauge-numeric-2x2.png)](docs/images/gallery/widgets/full/gauge-numeric-2x2.png) |
+| Circular arc | [![Circular arc, 1x1, synthetic boost](docs/images/gallery/widgets/gauge-circular-1x1.png)](docs/images/gallery/widgets/full/gauge-circular-1x1.png) | [![Circular arc, 2x1, synthetic boost](docs/images/gallery/widgets/gauge-circular-2x1.png)](docs/images/gallery/widgets/full/gauge-circular-2x1.png) | [![Circular arc, 2x2, synthetic boost](docs/images/gallery/widgets/gauge-circular-2x2.png)](docs/images/gallery/widgets/full/gauge-circular-2x2.png) |
+| Needle dial | [![Needle dial, 1x1, synthetic boost](docs/images/gallery/widgets/gauge-needle-1x1.png)](docs/images/gallery/widgets/full/gauge-needle-1x1.png) | [![Needle dial, 2x1, synthetic boost](docs/images/gallery/widgets/gauge-needle-2x1.png)](docs/images/gallery/widgets/full/gauge-needle-2x1.png) | [![Needle dial, 2x2, synthetic boost](docs/images/gallery/widgets/gauge-needle-2x2.png)](docs/images/gallery/widgets/full/gauge-needle-2x2.png) |
+| Horizontal bar | [![Horizontal bar, 1x1, synthetic boost](docs/images/gallery/widgets/gauge-horizontal-1x1.png)](docs/images/gallery/widgets/full/gauge-horizontal-1x1.png) | [![Horizontal bar, 2x1, synthetic boost](docs/images/gallery/widgets/gauge-horizontal-2x1.png)](docs/images/gallery/widgets/full/gauge-horizontal-2x1.png) | [![Horizontal bar, 2x2, synthetic boost](docs/images/gallery/widgets/gauge-horizontal-2x2.png)](docs/images/gallery/widgets/full/gauge-horizontal-2x2.png) |
+| Vertical bar | [![Vertical bar, 1x1, synthetic boost](docs/images/gallery/widgets/gauge-vertical-1x1.png)](docs/images/gallery/widgets/full/gauge-vertical-1x1.png) | [![Vertical bar, 2x1, synthetic boost](docs/images/gallery/widgets/gauge-vertical-2x1.png)](docs/images/gallery/widgets/full/gauge-vertical-2x1.png) | [![Vertical bar, 2x2, synthetic boost](docs/images/gallery/widgets/gauge-vertical-2x2.png)](docs/images/gallery/widgets/full/gauge-vertical-2x2.png) |
+| Segmented bar | [![Segmented bar, 1x1, synthetic boost](docs/images/gallery/widgets/gauge-segmented-1x1.png)](docs/images/gallery/widgets/full/gauge-segmented-1x1.png) | [![Segmented bar, 2x1, synthetic boost](docs/images/gallery/widgets/gauge-segmented-2x1.png)](docs/images/gallery/widgets/full/gauge-segmented-2x1.png) | [![Segmented bar, 2x2, synthetic boost](docs/images/gallery/widgets/gauge-segmented-2x2.png)](docs/images/gallery/widgets/full/gauge-segmented-2x2.png) |
+
+- **Raw versus displayed:** smoothing changes the current number and gauge;
+  warnings, extrema, peaks and recorded history use accepted raw measurements.
+- **Shared history:** widgets of one channel share its duration and 60 buckets.
+  Changing duration clears that history; missing or stale intervals remain gaps.
+- **Ranges:** expanding scales keep observed extremes until statistics reset.
+  Fixed scales clip the indicator, while the numeric value still reports the sample.
+- **Units:** Follow dashboard boost responds to the bar/PSI toggle; fixed units do
+  not. Thresholds and ranges remain canonical. AFR is derived from the declared
+  fuel basis; `EQ 14.7` and an E5 label do not measure fuel composition.
+- **Markers and bands:** peak holds, manual references and up to three bands are
+  configurable. A manual reference is your setting, not an ECU-requested target.
+
+[Units, history and warning details](docs/configurator/advanced-controls.md) ·
+[Gauge colours and scales](docs/configurator/gauges-and-colours.md)
+
+## Build & Flash from Studio
 
 In a second terminal, run `./configurator/Studio.ps1 -Helper`. Open **Build & Flash**,
 connect the helper and check prerequisites. Choose Demo or Vehicle, a named
 profile or validated custom clocks, and inspect the actual frequencies and
 compiler options before building the accepted project. Invalid drafts block a
-new build; changes after a build mark its firmware as different.
+new build; changes after a build mark its firmware as different. Identity includes
+startup and converted artwork as well as dashboard configuration. Requested clocks
+may differ from actual PLL/divider results; inspect CPU, peripheral and SPI values.
+Payload-only transfer estimates do not measure physical display FPS.
+
+[![Build and Flash workspace with profile options and artifact workflow](docs/images/gallery/workflows/build-flash.jpg)](docs/configurator/gallery.md#build-and-flash)
+
+*Build, artifact validation and device operations are separate stages. See the
+[profile and clock screenshots](docs/configurator/gallery.md#build-and-flash).*
 
 After a build passes its artifact checks, Studio offers a checked UF2 download
 and explicit flashing. The [practical image checks](docs/performance/memory-layout.md#practical-image-checks-and-experimental-proof)
@@ -162,9 +250,26 @@ remain disabled until source-specific policies are qualified.
 
 ## Controls and startup
 
-Startup presentation is configurable: a brief status screen, then the selected
-animation. Acquisition continues throughout; the dashboard header shows the
-actual transport/sample state. See [startup settings](docs/configurator/startup.md).
+Studio **Device → Startup** configures Status → Splash → Dashboard. Defaults are
+Brief status for 600 ms, then AEZAKMI for 2500 ms. Five shared Rust animations
+include AEZAKMI, turbo/SUTUTU, Sanic/GOTTA GO FAST, HOW MUCH BOOST BRO and WHERE
+LAMBO. PNG, sprite-sheet and GIF imports convert to bounded RGB565 pixels; the
+firmware does not decode the source image. Retain the original to change its
+crop, matte or sampling later.
+
+Status and splash have independent durations: splash **0** skips only splash;
+**Loop off** holds its final frame for the remaining duration. Reduced motion
+uses a still. Preview offers seeking; full startup replay exercises simulated
+controls and frame completions without resetting acquisition.
+
+Acquisition and warning evaluation continue during startup. By default warning
+text waits until Dashboard while the configured LED can indicate attention.
+Hidden warnings cannot be acknowledged. Warning interruption and startup LED
+indication are configurable; faults and protected Y recovery leave startup.
+A fresh button tap or encoder action skips startup without also activating a
+Dashboard action. See [startup settings and artwork](docs/configurator/startup.md)
+and [startup screenshots](docs/configurator/gallery.md#startup-and-device-controls).
+
 Valid saved preferences restore boost units and FPS mode; every boot starts at
 Full brightness. Defaults apply when no valid journal exists. Persistence failures are
 visible. See [startup status](docs/vehicle/startup-status.md) and
@@ -203,6 +308,11 @@ pending Off feedback cancels shutdown. The default configuration has one view;
 rotation switches configured views and displays their names. Returning from
 Debug/Logs preserves the selected view; reboot selects the configured boot view.
 
+The following LED behavior describes the default policy; Device offers separate
+normal/warning Off, Solid, Blink and Breathe patterns and off-screen policy.
+Reduced motion makes Breathe solid while preserving explicit warning Blink.
+See [LED policy](docs/configurator/led-policy-design.md).
+
 Debug keeps its legacy 5% control scale and 1.5-second toggle popup. Button
 feedback takes priority over dashboard warnings; warnings resume blinking after
 feedback expires and stay off Debug/Logs. The RGB LED blinks red with the last
@@ -239,6 +349,26 @@ revision. Raw messages, configuration and artwork remain in the browser. Termina
 output uses colours when supported; bounded queues may drop context under load
 without blocking builds or flashing. The UI reports those drops. The ordinary
 Trunk terminal cannot receive browser events by itself.
+
+### Diagnostics, warnings and ECU evidence
+
+The persistent simulator renders Dashboard, Debug and Logs and can inject
+missing/stale/faulted samples, delayed reset acknowledgments and dropped frame
+completions. Appearance preview uses synthetic reconstructed history; use the
+simulator for timing and completion behavior. Resources distinguish encoded file
+sizes from artifact-bound target figures; absent measurements remain explicit.
+
+Warning rules support hysteresis, dwell, priority, latching and snooze. Dwell needs
+new qualified measurements. Acknowledging an active warning does not clear it;
+statistics reset is separate. Acknowledgment refers to the warning page actually
+completed. A new episode interrupts snooze.
+
+The offline ECU Reference provides searchable request/decoder definitions, source
+links, runtime availability and qualification limits. Family evidence and candidate
+signals do not establish exact-controller support or activate a decoder.
+[Browse diagnostic and reference screenshots](docs/configurator/gallery.md#diagnostics-and-source-evidence),
+[workspace guide](docs/configurator/workspace-and-diagnostics-design.md) and
+[warning controls](docs/configurator/advanced-controls.md).
 
 ## Experimental clock profiles
 
@@ -277,13 +407,3 @@ docs/               Architecture, source checks and validation records
 ## License
 
 [MIT](LICENSE).
-
-## Startup presentation
-
-Studio **Device → Startup** offers five shared Rust animations, factual status,
-timing, looping, warning interruption and warning LED controls. Defaults are a
-600 ms Brief status then 2500 ms AEZAKMI. Zero splash duration leaves status
-independent; loop off holds the final frame. Warnings normally wait for Dashboard
-while the LED may indicate them, and hidden warnings cannot be acknowledged.
-Export a complete `.eavp` project with original artwork by default, or an explicit smaller converted-only project. Startup shares Undo/Redo and atomic browser storage; legacy `.eav` and JSON are clearly dashboard-only.
-See [startup behavior](docs/configurator/startup.md) and [complete projects, source retention and storage](docs/configurator/projects.md).
