@@ -1998,10 +1998,10 @@ class SourcePolicyV7(unittest.TestCase):
         self.assertEqual(len(wire),65536)
         with tempfile.TemporaryDirectory() as folder,patch.object(capture,'ElfImage',return_value=elf):
             path=Path(folder)/'memory-layout.json';path.write_bytes(wire)
-            self.assertEqual(capture.read_memory_gate(path,'supplied.elf',eav,elf.fixture_source_context)['record'],record)
+            self.assertEqual(capture.read_memory_gate(path,'supplied.elf',eav,elf.fixture_source_context,gate='experimental-full')['record'],record)
             path.write_bytes(wire+b' ')
             with self.assertRaisesRegex(ValueError,'oversized'):
-                capture.read_memory_gate(path,'supplied.elf',eav,elf.fixture_source_context)
+                capture.read_memory_gate(path,'supplied.elf',eav,elf.fixture_source_context,gate='experimental-full')
 
 
 class SourceClosedProducer(unittest.TestCase):
