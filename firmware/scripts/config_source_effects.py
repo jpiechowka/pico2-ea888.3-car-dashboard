@@ -144,7 +144,7 @@ def channel_source_interface(objects,rows,proof,state,output,frame,ancestor_prot
         objects.read_only(call,len(row.raw))==row.raw,'Source original return has another actual caller')
     parent=dict(function=call,ordinary_edges=((0,'bl',start,CHANNEL_SOURCE,72),))
     returns=_closed_child_returns(rows,(parent,),{(start,CHANNEL_SOURCE):proof,**children},
-        visitor.start,source_return_profiles(),())
+        visitor.start,source_return_profiles(),(),objects=objects)
     require(returns and min(v['lowest_SP'] for v in returns)==visitor.start-120,
         'Source original-return or deepest child geometry differs')
     errors=[];steps=[];invocations=[];current=decoder;count=Span(max(1,state.count.lower)-1,state.count.upper-1) if state.count.upper else Span(0,0)

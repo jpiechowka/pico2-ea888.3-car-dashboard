@@ -1565,6 +1565,127 @@ class ActualDecodedSources(unittest.TestCase):
         self.assertLessEqual(len((json.dumps(result,sort_keys=True)+'\n').encode()),65536)
 
 
+class SourceReturnBodySelection(unittest.TestCase):
+    """Indexing-only checks; no body selection creates source authority."""
+    @staticmethod
+    def fixture():
+        from config_decoded_sources import _parents
+        from config_source_children import source_children,source_return_profiles
+        from config_structural import _detached_inputs
+        objects,rows,_,_=SourceLiteralBodies.fixture()
+        objects,rows=_detached_inputs(objects,rows)
+        parents=_parents(objects,rows,0x1001c654,0x2000031c)
+        return objects,rows,parents,source_children(objects,rows,parents),source_return_profiles()
+
+    def test_current_frozen_walk_avoids_repeated_full_map_scans_without_caching_returns(self):
+        import inspect,sys
+        from config_finite_returns import _closed_child_returns
+        from config_widget_contracts import ROLES
+        objects,rows,parents,children,profiles=self.fixture();calls=[];previous=sys.getprofile()
+        def observe(frame,event,value):
+            if event=='c_call' and getattr(value,'__self__',None) is rows and getattr(value,'__name__',None)=='items':
+                calls.append(True)
+        # This compatibility branch lets the original implementation expose
+        # the real repeated-scan RED, rather than a missing-keyword error.
+        context={'objects':objects} if 'objects' in inspect.signature(_closed_child_returns).parameters else {}
+        try:
+            sys.setprofile(observe)
+            result=_closed_child_returns(rows,parents,children,0x20070000,profiles,('seq_f32',ROLES['warning_colors']),**context)
+        finally:sys.setprofile(previous)
+        self.assertTrue(result)
+        self.assertEqual(len(calls),1,'only the per-invocation eligibility check may scan the full immutable map')
+
+    def test_fast_and_fallback_complete_records_keep_values_aliases_and_fresh_activations(self):
+        from config_finite_returns import _closed_child_returns
+        from config_decoded_sources import _phase_graph
+        from config_widget_contracts import ROLES
+        objects,rows,parents,children,profiles=self.fixture()
+        args=(rows,parents,children,0x20070000,profiles,('seq_f32',ROLES['warning_colors']))
+        original=_closed_child_returns(*args)
+        current=_closed_child_returns(*args,objects=objects)
+        self.assertEqual(current,original);self.assertEqual(_phase_graph(current),_phase_graph(original))
+        self.assertTrue(all(a is not b for a,b in zip(original,current)))
+        self.assertTrue(all(v['architectural_LR_preserved'] is False for v in current))
+
+    def test_byte_lookup_keeps_odd_and_interior_keys_with_original_body_values(self):
+        from llvm_stack import Instruction
+        from config_finite_returns import _body_selector
+        from config_structural import _detached_inputs
+        objects,_,_,_=SourceLiteralBodies.fixture();start=0x1001b500
+        rows={start+i:Instruction(start+i,b'\x00\xbf','nop','') for i in (0,1,2,5,20,21,22,23)}
+        frozen,rows=_detached_inputs(objects,rows);select=_body_selector(rows,frozen)
+        self.assertEqual(select(start,6),{a:r for a,r in rows.items() if start<=a<start+6})
+        self.assertIn(start+1,select(start,6));self.assertIn(start+5,select(start,6))
+        self.assertFalse(select(start+8,1))
+
+    def test_fresh_fast_bodies_preserve_save_and_original_PC_rejections(self):
+        # Private transfer-record injections, not current-byte mutants. Public
+        # complete literal matching still rejects these before the solver.
+        from config_finite_returns import _closed_child_returns
+        from config_decoded_sources import _parents
+        from config_source_children import source_children,source_return_profiles
+        from config_structural import _detached_inputs
+        from config_widget_contracts import ROLES
+        objects,rows,_,_=SourceLiteralBodies.fixture()
+        parents=_parents(objects,rows,0x1001c654,0x2000031c);children=source_children(objects,rows,parents)
+        for site,operands in ((0x1001b500,'{r4, r5, r6, r7, r3}'),(0x1001b508,'sp, #0x20')):
+            changed=dict(rows);changed[site]=replace(changed[site],operands=operands)
+            frozen,current=_detached_inputs(objects,changed);errors=[]
+            for context in ({},{'objects':frozen}):
+                with self.assertRaises(AssertionError) as rejected:
+                    _closed_child_returns(current,parents,children,0x20070000,source_return_profiles(),
+                        ('seq_f32',ROLES['warning_colors']),**context)
+                errors.append(str(rejected.exception))
+            self.assertEqual(errors[0],errors[1]);self.assertRegex(errors[0],'save|restore|saved return PC')
+
+    def test_fast_unsaved_high_GPR_transfer_matches_fallback_and_carrier_rejection(self):
+        # Private transfer-record injection, not a coherent byte/literal mutant.
+        from config_finite_returns import _closed_child_returns
+        from config_source_control import _source_carrier_returns
+        from config_decoded_sources import _phase_graph,_parents
+        from config_source_children import source_children,source_return_profiles
+        from config_structural import _detached_inputs
+        from config_widget_contracts import ROLES
+        objects,rows,_,_=SourceLiteralBodies.fixture()
+        parents=_parents(objects,rows,0x1001c654,0x2000031c)
+        children=source_children(objects,rows,parents);profiles=source_return_profiles();changed=dict(rows)
+        at=0x10029178;self.assertEqual(changed[at].operands,'r4, r0')
+        changed[at]=replace(changed[at],operands='r8, r0')
+        frozen,current=_detached_inputs(objects,changed)
+        args=(current,parents,children,0x20070000,profiles,('seq_f32',ROLES['warning_colors']))
+        fallback=_closed_child_returns(*args);fast=_closed_child_returns(*args,objects=frozen)
+        self.assertEqual(fast,fallback);self.assertEqual(_phase_graph(fast),_phase_graph(fallback))
+        self.assertTrue(any(n['entry_SP']==0x20070000 and 'r8' not in n['preserved_high_gprs'] for n in fast))
+        errors=[]
+        for nodes in (fallback,fast):
+            with self.assertRaises(AssertionError) as rejected:
+                _source_carrier_returns(current,parents,children,nodes,0x20070000)
+            errors.append(str(rejected.exception))
+        self.assertEqual(errors[0],errors[1]);self.assertIn('actual live high GPR',errors[0])
+
+    def test_custom_duplicate_items_malformed_and_huge_spans_preserve_eager_fallback(self):
+        from llvm_stack import Instruction
+        from config_finite_returns import _body_selector
+        from config_structural import _detached_inputs,_FrozenObjects
+        objects,_,_,_=SourceLiteralBodies.fixture();at=0x1001b500
+        first=Instruction(at,b'\x00\xbf','nop','');last=replace(first,operands='duplicate last')
+        class ItemsOnly:
+            def items(self):return ((at,first),(at,last),(at+2,first))
+            def __contains__(self,key):raise AssertionError('custom provider indexing bypassed .items')
+            def __getitem__(self,key):raise AssertionError('custom provider indexing bypassed .items')
+        custom=ItemsOnly();select=_body_selector(custom,objects)
+        self.assertEqual(select(at,2),{at:last})
+        frozen,rows=_detached_inputs(objects,{at:first,at+2:replace(first,address=at+2)})
+        select=_body_selector(rows,frozen)
+        for start,extent in ((at,2**40),(at,3),(at,-1),(float(at),2),(at,True)):
+            with self.subTest(start=start,extent=extent):
+                self.assertEqual(select(start,extent),{a:r for a,r in rows.items() if start<=a<start+extent})
+        # Direct construction does not inherit the factory's key validation.
+        malformed=_FrozenObjects(frozen.elf,{}, {str(at):first})
+        with self.assertRaises(TypeError):_body_selector(malformed._rows,malformed)(at,2)
+        with self.assertRaisesRegex(AssertionError,'input package'):_body_selector(dict(rows),frozen)
+
+
 class SourcePolicyV7(unittest.TestCase):
     @staticmethod
     def augment(dependencies):

@@ -105,7 +105,7 @@ def _source_structural_control(objects,rows,widgets,parents,children):
         frozenset((base.cuts-{V+4376})|{V+5630}),base.widget,widgets,parents,children,tuple(lineage))
     successors,returns,dormant=_selected_successors(selection)
     nested=_closed_child_returns(rows,parents,children,c.headers['visitor_frame'].start,source_return_profiles(),
-        ('seq_f32',WIDGET['warning_colors']))
+        ('seq_f32',WIDGET['warning_colors']),objects=objects)
     require(nested and min(v['lowest_SP'] for v in nested)==c.headers['visitor_frame'].start-120,
         'Sources structure loses its current child save/return geometry')
     carriers=_source_carrier_returns(rows,parents,children,nested,c.headers['visitor_frame'].start)

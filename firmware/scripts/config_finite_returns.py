@@ -45,7 +45,32 @@ def _high_definitions(row,control):
     return tuple(reg for reg in _HIGH if reg in writes)
 
 
-def _closed_child_returns(rows,parents,children,sp,stacks,scratch_restores):
+def _body_selector(rows,objects=None):
+    """Fresh body dictionaries; only detached input permits address lookup.
+
+    Validate keys once here: direct _FrozenObjects construction alone does
+    not inherit the factory's integer-key/address invariant. Unsupported or
+    malformed providers retain the original eager items comprehension.
+    This selects records only; it caches no body or evaluated return state.
+    """
+    from config_structural import _FrozenObjects
+    from llvm_stack import Instruction
+    indexed=type(objects) is _FrozenObjects
+    if indexed:
+        require(rows is objects._rows,'finite child return input package differs')
+        indexed=all(type(at) is int and type(row) is Instruction and at==row.address for at,row in rows.items())
+    count=len(rows) if indexed else 0
+    def select(start,extent):
+        if indexed and type(start) is type(extent) is int and 0<=start<start+extent<=2**32 and extent<=count:
+            # Every byte address preserves odd/interior keys as well. The
+            # bound makes lookup work no larger than the original full scan.
+            return {at:rows[at] for at in range(start,start+extent) if at in rows}
+        return {at:row for at,row in rows.items() if start<=at<start+extent}
+    return select
+
+
+def _closed_child_returns(rows,parents,children,sp,stacks,scratch_restores,*,objects=None):
+    select_body=_body_selector(rows,objects)
     completed={};nodes=[];active=[];activation=[0]
     def walk(proof,entry,token,expected_sp,cells=(),lr=None,shuttle=None,high=_HIGH):
         start=proof['function'];family=proof.get('semantic_role',proof['role'])
@@ -58,7 +83,7 @@ def _closed_child_returns(rows,parents,children,sp,stacks,scratch_restores):
         # Repeated definitions of an unknown value cannot prove preservation.
         incoming=tuple(('incoming',activation[0],reg) for reg in _HIGH)
         resolve=dict(zip(incoming,high))
-        body={a:r for a,r in rows.items() if start<=a<start+proof['extent']}
+        body=select_body(start,proof['extent'])
         edges={start+e[0]:e for e in proof['ordinary_edges']}
         require(not proof['indirect_sites'],'finite child child adds an executable callback')
         pending=[(start,entry,token if lr is None else lr,cells,shuttle,incoming)];seen=set();returns=[];carrier_returns=[];link_returns=[];minimum=entry
