@@ -4,8 +4,6 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Text, TextStyle};
 
-use crate::ui::{BLACK, WHITE};
-
 pub fn draw_cell_background<D>(
     display: &mut D,
     x: u32,
@@ -237,16 +235,7 @@ fn draw_graph_points<D, F, V>(
 
 #[inline]
 pub(crate) fn outline_color_for_text(text_color: Rgb565) -> Rgb565 {
-    let raw = text_color.into_storage();
-    let r5 = u32::from((raw >> 11) & 0x1F);
-    let g6 = u32::from((raw >> 5) & 0x3F);
-    let b5 = u32::from(raw & 0x1F);
-    let r8 = (r5 << 3) | (r5 >> 2);
-    let g8 = (g6 << 2) | (g6 >> 4);
-    let b8 = (b5 << 3) | (b5 >> 2);
-    let luma = (r8 * 77 + g8 * 150 + b8 * 29) >> 8;
-
-    if luma >= 128 { BLACK } else { WHITE }
+    crate::ui::colors::readable_foreground(text_color)
 }
 
 #[cfg(feature = "simple-outline")]
