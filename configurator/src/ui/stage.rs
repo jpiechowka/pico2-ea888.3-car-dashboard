@@ -417,7 +417,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                         let simulation = ui.dock.mode.get_untracked() == PreviewMode::Simulation;
                         let draft = e.diagnostic();
                         if ui.dock.mode.get_untracked() == PreviewMode::Startup {
-                            p.render_startup(e.preview(), e.selection().view, ui.startup.profile.get_untracked(), ui.sample_ms.get_untracked(), ui.startup.reduced.get_untracked() || e.preview().config().reduced_motion).map(|_| ())
+                            p.render_startup_asset(e.preview(), e.selection().view, ui.startup.profile.get_untracked(), ui.sample_ms.get_untracked(), ui.startup.reduced.get_untracked() || e.preview().config().reduced_motion, e.startup_artwork().map(|a|a.converted())).map(|_| ())
                         } else if e.has_pending_json() {
                             use dashboard_configurator::json_draft::{JsonState, inspection_view};
                             match e.json_draft().map(|draft| draft.state()) {

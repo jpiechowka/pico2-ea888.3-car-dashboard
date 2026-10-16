@@ -40,9 +40,107 @@ fn show(ui: Ui) {
     ui.sample_ms.set(0);
     ui.dock.mode.set(PreviewMode::Startup);
 }
+fn retained_source(ui: Ui) -> Option<startup_artwork::RetainedSource> {
+    use dashboard_config_tools::project as p;
+    use dashboard_startup_tools as c;
+    ui.editor.with(|e| {
+        let art = e.startup_artwork()?;
+        let r = art.recipe();
+        Some(startup_artwork::RetainedSource {
+            source: art.original()?.clone(),
+            label: r.label.clone(),
+            options: c::Options {
+                kind: match r.source_kind {
+                    p::SourceKind::Png => c::SourceKind::Png,
+                    p::SourceKind::Gif => c::SourceKind::Gif,
+                    p::SourceKind::SpriteSheet => c::SourceKind::SpriteSheet,
+                },
+                fit: match r.fit {
+                    p::Fit::Contain => c::Fit::Contain,
+                    p::Fit::Cover => c::Fit::Cover,
+                    p::Fit::Stretch => c::Fit::Stretch,
+                },
+                matte_rgb: r.matte_rgb,
+                sample_fps: r.sample_fps,
+                trim_start_ms: r.trim_start_ms,
+                trim_end_ms: r.trim_end_ms,
+                sheet: r.sheet.as_ref().map(|s| {
+                    c::Sheet {
+                        columns: s.columns,
+                        rows: s.rows,
+                        frame_ms: s.frame_ms,
+                    }
+                }),
+                gif_background: match r.gif_background {
+                    p::GifBackground::Logical => c::GifBackground::Logical,
+                    p::GifBackground::Transparent => c::GifBackground::Transparent,
+                },
+            },
+        })
+    })
+}
+fn accept_artwork(
+    ui: Ui,
+    input: startup_artwork::ArtworkImport,
+) {
+    use dashboard_config_tools::project as p;
+    use dashboard_startup_tools as c;
+    let o = input.options;
+    let recipe = p::Recipe {
+        version: 1,
+        converter: p::CONVERTER.into(),
+        label: input.label,
+        source_kind: match o.kind {
+            c::SourceKind::Png => p::SourceKind::Png,
+            c::SourceKind::Gif => p::SourceKind::Gif,
+            c::SourceKind::SpriteSheet => p::SourceKind::SpriteSheet,
+        },
+        source_sha256: p::digest(&input.source),
+        source_length: input.source.len() as u32,
+        original_included: true,
+        asset_sha256: p::digest(&input.converted.asset),
+        fit: match o.fit {
+            c::Fit::Contain => p::Fit::Contain,
+            c::Fit::Cover => p::Fit::Cover,
+            c::Fit::Stretch => p::Fit::Stretch,
+        },
+        matte_rgb: o.matte_rgb,
+        sample_fps: o.sample_fps,
+        trim_start_ms: o.trim_start_ms,
+        trim_end_ms: input.converted.trim_end_ms,
+        sheet: o.sheet.map(|s| {
+            p::Sheet {
+                columns: s.columns,
+                rows: s.rows,
+                frame_ms: s.frame_ms,
+            }
+        }),
+        gif_background: match o.gif_background {
+            c::GifBackground::Logical => p::GifBackground::Logical,
+            c::GifBackground::Transparent => p::GifBackground::Transparent,
+        },
+    };
+    match p::Artwork::new(input.converted.asset.into(), recipe, Some(input.source)) {
+        Ok(art) => {
+            if ui.run(|e| e.set_artwork_if_current(input.stamp, std::sync::Arc::new(art))) {
+                ui.startup
+                    .message
+                    .set("Custom artwork accepted with original source. Undo restores the previous project.".into());
+                show(ui);
+            }
+        }
+        Err(_) => {
+            ui.startup
+                .message
+                .set("Converted artwork did not pass project validation. Current project retained.".into())
+        }
+    }
+}
 #[component]
 pub fn Panel(ui: Ui) -> impl IntoView {
     let state = ui.startup;
+    let retained = Signal::derive(move || retained_source(ui));
+    let on_accept = Callback::new(move |input| accept_artwork(ui, input));
     view! {
         <details class="workspace-group" id="studio-startup" open><summary>"Startup"</summary>
             <p class="hint">"A brief system check, your animation, then the dashboard. Acquisition keeps running throughout."</p>
@@ -77,6 +175,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                     });
                 }
             }/></label>
+            <startup_artwork::Panel ui=ui on_accept=on_accept retained=retained/>
             <p role="status" class="hint">{move ||state.message.get()}</p>
             <p class="hint">"Save a complete .eavp project to keep dashboard, startup and artwork together. Dashboard-only .eav and JSON omit startup. Choosing a procedural theme replaces custom artwork in the current state; Undo restores it."</p>
         </details>

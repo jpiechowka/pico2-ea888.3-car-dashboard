@@ -160,12 +160,12 @@ pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
     };
     // Migrate the earlier separate profile only when the dashboard envelope predates project state.
     let has_startup=saved.as_deref().filter(|text|text.len()<=MAX_SAVED_BYTES).and_then(|text|serde_json::from_str::<serde_json::Value>(text).ok()).is_some_and(|v|v.get("startup").is_some());
-    if !has_startup {
-        if let Some(text)=storage().ok().and_then(|s|s.get_item("ea888-startup-profile-v1").ok().flatten()).filter(|s|s.len()<=1024) {
-            if let Ok(profile)=serde_json::from_str::<dashboard_core::startup::StartupProfile>(&text) {
-                if editor.set_startup_profile(profile).is_ok(){notice="Earlier startup settings migrated into the complete project. Export .eavp for a portable backup.".into();}
-            }
-        }
+    if !has_startup
+        && let Some(text) = storage().ok().and_then(|s|s.get_item("ea888-startup-profile-v1").ok().flatten()).filter(|s|s.len()<=1024)
+        && let Ok(profile) = serde_json::from_str::<dashboard_core::startup::StartupProfile>(&text)
+        && editor.set_startup_profile(profile).is_ok()
+    {
+        notice="Earlier startup settings migrated into the complete project. Export .eavp for a portable backup.".into();
     }
     (editor,notice,saved,status)
 }
