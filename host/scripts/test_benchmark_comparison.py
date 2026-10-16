@@ -54,7 +54,9 @@ class Comparison(unittest.TestCase):
         for value in [None, "", "   "]:
             before[0]["runner_id"] = value
             with self.assertRaises(ValueError): compare(before, before, 20)
-        with self.assertRaises(ValueError): compare(before, (metadata(), {}), 20)
+        before = (metadata(), {"fixture": (100, 95, 105)})
+        with self.assertRaisesRegex(ValueError, "measurement coverage differs"):
+            compare(before, (metadata(), {}), 20)
         for budget in [0, -1, float("nan"), float("inf")]:
             with self.assertRaises(ValueError): compare(before, before, budget)
 
