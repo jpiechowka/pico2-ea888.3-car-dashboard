@@ -120,6 +120,7 @@ impl Recipe {
             || !(1..=20).contains(&self.sample_fps)
             || self.trim_end_ms <= self.trim_start_ms
             || self.trim_end_ms > 60000
+            || self.trim_end_ms - self.trim_start_ms > 10000
         {
             return Err(ProjectError::Recipe);
         }

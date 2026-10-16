@@ -122,3 +122,14 @@ fn source_sheet_timing_is_distinct_from_converted_frame_minimum() {
     recipe.sheet.as_mut().unwrap().frame_ms = 60000;
     assert!(Artwork::new(Arc::from(art.converted()), recipe, art.original().cloned()).is_err());
 }
+
+#[test]
+fn portable_recipe_cannot_exceed_converter_clip_duration() {
+    let art=artwork();
+    let mut recipe=art.recipe().clone();
+    recipe.trim_start_ms=20000;
+    recipe.trim_end_ms=30000;
+    assert!(Artwork::new(Arc::from(art.converted()),recipe.clone(),art.original().cloned()).is_ok());
+    recipe.trim_end_ms=30001;
+    assert!(matches!(Artwork::new(Arc::from(art.converted()),recipe,art.original().cloned()),Err(ProjectError::Recipe)));
+}
