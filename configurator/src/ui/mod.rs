@@ -1,6 +1,7 @@
 mod advanced;
 mod command_palette;
 mod controls;
+mod ecu_reference;
 mod event_log;
 mod fields;
 mod inspector;
@@ -76,6 +77,7 @@ pub struct Ui {
     error_inspection: RwSignal<Option<InspectionTarget>>,
     focus: RwSignal<command_palette::FocusState>,
     source_channel: RwSignal<Channel>,
+    reference: RwSignal<dashboard_configurator::ecu_reference::ReferenceState>,
     dock: PreviewDockState,
     trace: RwSignal<metrics::Trace>,
     observer: RwSignal<Option<web_sys::PerformanceObserver>>,
@@ -573,6 +575,7 @@ pub fn Studio() -> impl IntoView {
         error_inspection: RwSignal::new(None),
         focus: RwSignal::new(command_palette::FocusState::default()),
         source_channel: RwSignal::new(Channel::Oil),
+        reference: RwSignal::new(dashboard_configurator::ecu_reference::ReferenceState::default()),
         dock,
         trace: RwSignal::new(metrics::Trace::default()),
         observer: RwSignal::new(None),
@@ -654,6 +657,7 @@ pub fn Studio() -> impl IntoView {
                     <Group ui group=GroupId::Files><io::Files ui/></Group>
                     <Group ui group=GroupId::Measurements><resources::Resources ui/></Group>
                 </section>
+                <section class="workspace-panel settings-panel" id="studio-panel-ecu-reference" role="tabpanel" aria-labelledby="studio-tab-ecu-reference" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::EcuReference)><ecu_reference::ReferenceWorkspace ui/></section>
                 <section class="workspace-panel settings-panel" id="studio-panel-build-flash" role="tabpanel" aria-labelledby="studio-tab-build-flash" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::BuildFlash)><workspaces::BuildFlashEmpty ui/></section>
                 <section class="preview-dock" id="studio-preview-dock" aria-label="Persistent display preview">
                     <workspaces::InspectionDetail ui/>

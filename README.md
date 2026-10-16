@@ -7,6 +7,8 @@ unverified.** The default build shows unavailable vehicle channels. Demo data
 requires `demo`; the optional Longan transport currently performs unqualified
 adapter bring-up and sends no diagnostic CAN requests.
 
+Browse the offline **ECU Reference** workspace while configuring views: searchable source/scaling evidence, family limitations and unresolved definitions, with the shared preview retained. [Studio usage](docs/configurator/ecu-reference.md) · [Technical ECU library](docs/vehicle/ecu-reference/README.md).
+
 ## Configure dashboard views
 
 Launch the Rust/Wasm editor from the repository root:

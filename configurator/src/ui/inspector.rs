@@ -385,6 +385,7 @@ fn SourcePanel(
             })/>
             <div class="source-evidence"><span class="chip">{move ||format!("{:?}",source().evidence)}</span><code>{move ||format!("{:?}",source().access)}</code><p>{move ||definition(source().definition).interpretation}</p>
                 <p class="hint">{move ||match definition(source().definition).unavailable{Some(reason)=>format!("Unavailable in vehicle mode: {reason:?}"),None if source().definition==DefinitionId::Disabled=>"Channel disabled".into(),None=>"Implemented generic decoder. Deployment qualification and ECU capability are still required.".into()}}</p>
+                <button on:click=move |_|{ui.reference.update(|state|state.open_definition(source().definition));workspaces::activate(ui,Workspace::EcuReference);}>"Why this source? Open ECU Reference"</button>
                 <div class="source-links">{move ||definition(source().definition).references().iter().enumerate().map(|(n,url)|view!{<a href=*url target="_blank" rel="noopener noreferrer">{format!("Reference {} ↗",n+1)}</a>}).collect_view()}</div>
             </div>
             <Choice ui repair_invalid_draft=true label="Route" value=Signal::derive(move ||match source().route{Route::DeploymentProfile=>"profile",Route::Unknown=>"unknown",Route::Physical11{..}=>"physical"}.to_string()) options=choices(&[("profile","Deployment profile"),("unknown","Unknown"),("physical","Explicit physical 11-bit pair")]) on_change=Callback::new(move |(token,value):(FieldToken,String)| {

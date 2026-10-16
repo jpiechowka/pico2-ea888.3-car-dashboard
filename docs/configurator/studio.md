@@ -187,3 +187,7 @@ Implementation references: [Leptos 0.8.22](https://github.com/leptos-rs/leptos/r
 [Pointer Events](https://www.w3.org/TR/pointerevents3/),
 [Web Locks](https://www.w3.org/TR/web-locks/), and
 [Long Tasks](https://www.w3.org/TR/longtasks-1/).
+
+## ECU Reference
+
+The retained ECU Reference workspace adds offline searchable signal and research cards, section/status filters, and source-detail links without changing configuration or acquisition. See [usage](ecu-reference.md) and the [technical library](../vehicle/ecu-reference/README.md).
