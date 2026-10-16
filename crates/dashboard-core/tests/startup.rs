@@ -256,3 +256,13 @@ fn exact_preview_boundaries_and_status_rendering() {
         assert!(frame.iter().any(|v| *v != 0));
     }
 }
+
+#[test]
+fn completion_is_a_monotonic_clock_observation() {
+    let profile=StartupProfile::DEFAULT;
+    let mut state=Startup::new(profile,10);
+    state.submitted(TOKEN);
+    state.completed(TOKEN,100);
+    state.advance(profile,99,false,false);
+    assert_eq!(state.exit(),Some(Exit::Clock));
+}

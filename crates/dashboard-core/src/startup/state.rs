@@ -98,6 +98,7 @@ impl Startup {
             if now < self.last {
                 self.finish(Exit::Clock);
             } else {
+                self.last = now;
                 self.visible = Some(now);
                 self.first = None;
             }
