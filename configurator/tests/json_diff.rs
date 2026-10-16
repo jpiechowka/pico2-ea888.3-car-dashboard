@@ -41,6 +41,7 @@ fn unique_ids_match_reorders_separately_from_leaf_changes() {
     before
         .views
         .push(View {
+            orientation: None,
             id: 2,
             name: "SECOND".try_into().unwrap(),
         })

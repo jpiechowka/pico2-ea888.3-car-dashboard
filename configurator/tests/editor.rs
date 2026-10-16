@@ -1372,8 +1372,8 @@ fn malformed_oversize_duplicate_unknown_and_trailing_imports_are_atomic() {
     let mut editor = empty();
     let good = Editor::default().export_json().unwrap();
     let bad_inputs = [
-        good.replacen("\"version\":4", "\"version\":4, \"version\":4", 1),
-        good.replacen("\"version\":4", "\"version\":4, \"unknown\":1", 1),
+        good.replacen("\"version\":5", "\"version\":5, \"version\":5", 1),
+        good.replacen("\"version\":5", "\"version\":5, \"unknown\":1", 1),
         format!("{good} null"),
         good.replacen("14.7", "null", 1)
             .replacen("\"trigger\":2.5", "\"trigger\":null", 1),

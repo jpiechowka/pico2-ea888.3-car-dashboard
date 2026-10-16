@@ -1,6 +1,6 @@
 //! Revision-bound context actions shared by the browser and native tests.
 
-use dashboard_config::Placement;
+use dashboard_config::{Geometry, Placement};
 
 use crate::editor::{Edit, Editor, EditorError, FieldToken, Revision, Selection};
 use crate::geometry::PanelPoint;
@@ -20,7 +20,15 @@ impl Direction {
         self,
         old: Placement,
     ) -> Option<Placement> {
-        old.rect()?;
+        self.placement_in(Geometry::Landscape, old)
+    }
+
+    pub fn placement_in(
+        self,
+        geometry: Geometry,
+        old: Placement,
+    ) -> Option<Placement> {
+        old.rect_in(geometry)?;
         let mut next = old;
         match self {
             Self::Left => next.column = next.column.checked_sub(1)?,
@@ -28,7 +36,7 @@ impl Direction {
             Self::Up => next.row = next.row.checked_sub(1)?,
             Self::Down => next.row = next.row.checked_add(1)?,
         }
-        next.rect()?;
+        next.rect_in(geometry)?;
         Some(next)
     }
 }
@@ -58,6 +66,11 @@ impl WidgetMenu {
             view,
             widget: Some(target),
         })?;
+        let geometry = editor
+            .editing_config()
+            .view_orientation(view)
+            .ok_or(EditorError::MissingView(view))?
+            .geometry();
         let widgets = editor
             .editing_config()
             .widgets
@@ -67,7 +80,7 @@ impl WidgetMenu {
                 w.view == view
                     && (w.id == target
                         || point.is_some_and(|point| {
-                            w.placement.rect().is_some_and(|r| {
+                            w.placement.rect_in(geometry).is_some_and(|r| {
                                 (f64::from(r.x)..f64::from(r.x + r.width)).contains(&point.x)
                                     && (f64::from(r.y)..f64::from(r.y + r.height)).contains(&point.y)
                             })
@@ -134,7 +147,13 @@ impl WidgetMenu {
                 .widgets
                 .iter()
                 .find(|w| w.id == self.target)
-                .is_some_and(|w| direction.placement(w.placement).is_some())
+                .is_some_and(|w| {
+                    editor
+                        .editing_config()
+                        .view_orientation(w.view)
+                        .and_then(|o| direction.placement_in(o.geometry(), w.placement))
+                        .is_some()
+                })
     }
 
     pub fn move_widget(
@@ -149,7 +168,14 @@ impl WidgetMenu {
             .iter()
             .find(|w| w.id == self.target)
             .ok_or(EditorError::MissingWidget(self.target))?;
-        let Some(placement) = direction.placement(widget.placement) else {
+        let Some(placement) = direction.placement_in(
+            editor
+                .editing_config()
+                .view_orientation(widget.view)
+                .ok_or(EditorError::MissingView(widget.view))?
+                .geometry(),
+            widget.placement,
+        ) else {
             return Ok(editor.revision());
         };
         editor.apply_if_current(

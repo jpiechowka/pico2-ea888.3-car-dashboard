@@ -47,6 +47,7 @@ pub mod geometry;
 pub mod helper_client;
 pub mod json_diff;
 pub mod json_draft;
+pub mod orientation;
 pub mod preview;
 pub mod resources;
 mod simulation;

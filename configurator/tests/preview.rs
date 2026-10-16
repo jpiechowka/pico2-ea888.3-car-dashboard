@@ -317,6 +317,7 @@ fn unapplied_candidate_simulation_matches_control_units_popup_fps_view_and_time(
     let mut raw = default_config();
     raw.views
         .push(View {
+            orientation: None,
             id: 2,
             name: "SECOND".try_into().unwrap(),
         })
@@ -907,6 +908,7 @@ fn warning_pages_use_configured_messages_modes_intervals_and_scope() {
     config
         .views
         .push(View {
+            orientation: None,
             id: 2,
             name: "Other".try_into().unwrap(),
         })
@@ -1309,6 +1311,7 @@ fn hidden_view_round_trip_without_intermediate_render_snaps_original_widgets() {
     raw.widgets[0].advanced.smoothing_ms = 5000;
     raw.views
         .push(View {
+            orientation: None,
             id: 2,
             name: "Other".try_into().unwrap(),
         })
@@ -1345,6 +1348,7 @@ fn same_batch_view_round_trip_snaps_existing_trajectory_without_changing_acquisi
     raw.controls.screens[0].encoder_click = dashboard_config::ControlAction::NextView;
     raw.views
         .push(View {
+            orientation: None,
             id: 2,
             name: "Other".try_into().unwrap(),
         })

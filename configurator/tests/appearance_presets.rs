@@ -181,6 +181,7 @@ fn all_64_widgets_are_one_transaction_and_noop_is_explicit() {
     for view in 1..=8 {
         c.views
             .push(View {
+                orientation: None,
                 id: view,
                 name: "View".try_into().unwrap(),
             })

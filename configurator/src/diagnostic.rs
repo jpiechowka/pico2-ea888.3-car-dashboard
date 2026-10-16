@@ -173,6 +173,7 @@ impl Draft {
             .filter(|w| w.view == view)
             .filter(|w| {
                 accepted.config().widgets.iter().find(|a| a.id == w.id) != Some(*w)
+                    || self.config.view_orientation(w.view) != accepted.config().view_orientation(w.view)
                     || (w.channel == Channel::Lambda && self.config.fuel != accepted.config().fuel)
                     || self.config.sources[w.channel.index()] != accepted.config().sources[w.channel.index()]
                     || self.config.warnings != accepted.config().warnings
@@ -199,8 +200,20 @@ impl Draft {
         for (i, a) in self.config.widgets.iter().enumerate().filter(|(_, w)| w.view == view) {
             for b in self.config.widgets.iter().skip(i + 1).filter(|w| w.view == view) {
                 if a.placement
-                    .occupied()
-                    .zip(b.placement.occupied())
+                    .occupied_in(
+                        self.config
+                            .view_orientation(view)
+                            .unwrap_or(self.config.orientation)
+                            .geometry(),
+                    )
+                    .zip(
+                        b.placement.occupied_in(
+                            self.config
+                                .view_orientation(view)
+                                .unwrap_or(self.config.orientation)
+                                .geometry(),
+                        ),
+                    )
                     .is_some_and(|(a, b)| a & b != 0)
                 {
                     if !ids.contains(&a.id) {
@@ -235,7 +248,16 @@ impl Draft {
                     u16::from(widget.placement.row) + 1,
                     widget.placement.span.columns(),
                     widget.placement.span.rows(),
-                    if widget.placement.rect().is_none() {
+                    if widget
+                        .placement
+                        .rect_in(
+                            self.config
+                                .view_orientation(widget.view)
+                                .unwrap_or(self.config.orientation)
+                                .geometry()
+                        )
+                        .is_none()
+                    {
                         " (outside screen; diagnostic position clamped to the grid)"
                     } else {
                         ""
@@ -338,8 +360,12 @@ pub(crate) fn isolated_widget(
     let mut config = accepted.config().clone();
     config.widgets.clear();
     let mut safe = widget.clone();
-    safe.placement.column = safe.placement.column.min(4 - safe.placement.span.columns());
-    safe.placement.row = safe.placement.row.min(2 - safe.placement.span.rows());
+    let geometry = config.view_orientation(widget.view)?.geometry();
+    safe.placement.column = safe
+        .placement
+        .column
+        .min(geometry.columns() - safe.placement.span.columns());
+    safe.placement.row = safe.placement.row.min(geometry.rows() - safe.placement.span.rows());
     safe.label = "INVALID".try_into().ok()?;
     safe.display.decimals = safe.display.decimals.min(3);
     safe.display.afr &= safe.channel == Channel::Lambda;

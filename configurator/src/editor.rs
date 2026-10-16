@@ -311,6 +311,11 @@ pub struct RawInput {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
+    SetOrientation(Orientation),
+    SetViewOrientation {
+        id: u8,
+        orientation: Option<Orientation>,
+    },
     ApplyAppearance(AppearanceRequest),
     SetHistory {
         channel: Channel,
@@ -394,6 +399,7 @@ pub enum EditorError {
     WidgetCapacity,
     TextCapacity,
     InvalidIndex,
+    LayoutCannotFit(u8),
     SelectionMismatch,
     NoUndo,
     NoRedo,
@@ -1832,6 +1838,17 @@ impl Editor {
         match edit {
             Edit::ApplyAppearance(_) => unreachable!("appearance is admitted atomically above"),
             Edit::SetHistory { channel, seconds } => config.history_seconds[channel.index()] = seconds,
+            Edit::SetOrientation(orientation) => {
+                let before = config.clone();
+                config.orientation = orientation;
+                crate::orientation::repack_changed_views(&before, &mut config)?;
+            }
+            Edit::SetViewOrientation { id, orientation } => {
+                let index = view_index(&config, id)?;
+                let before = config.clone();
+                config.views[index].orientation = orientation;
+                crate::orientation::repack_changed_views(&before, &mut config)?;
+            }
             Edit::SetReducedMotion(value) => config.reduced_motion = value,
             Edit::SetLed(value) => config.led = value,
             Edit::RemoveBand { id, index } => {

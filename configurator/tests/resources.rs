@@ -116,6 +116,7 @@ fn maximum_counts_and_mixed_spans_use_actual_occupied_cells() {
         config
             .views
             .push(View {
+                orientation: None,
                 id: view,
                 name: format!("View {view}").as_str().try_into().unwrap(),
             })

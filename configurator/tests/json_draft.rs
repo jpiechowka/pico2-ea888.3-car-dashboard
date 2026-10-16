@@ -52,6 +52,7 @@ fn json_view_fallback_is_guarded_and_does_not_select_another_firmware_view() {
     candidate
         .views
         .push(View {
+            orientation: None,
             id: 4,
             name: "ONE".try_into().unwrap(),
         })

@@ -13,6 +13,7 @@ fn unapplied_json_controls_use_candidate_view_membership_and_order() {
     for id in [9, 4, 7] {
         raw.views
             .push(View {
+                orientation: None,
                 id,
                 name: format!("VIEW {id}").as_str().try_into().unwrap(),
             })

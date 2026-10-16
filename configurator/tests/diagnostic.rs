@@ -56,6 +56,7 @@ fn collecting_report_is_bounded_with_an_exact_omitted_count() {
         config
             .views
             .push(View {
+                orientation: None,
                 id: view,
                 name: "MAX".try_into().unwrap(),
             })

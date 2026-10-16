@@ -246,6 +246,7 @@ fn drop_validation_obeys_references_labels_capacity_and_sparse_widget_ids() {
     for view in 2..=8 {
         full.views
             .push(View {
+                orientation: None,
                 id: view,
                 name: format!("View {view}").as_str().try_into().unwrap(),
             })
