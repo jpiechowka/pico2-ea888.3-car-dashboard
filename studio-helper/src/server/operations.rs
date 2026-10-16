@@ -1,6 +1,18 @@
 //! Serialized worker admission and operation completion. Transfer cancellation,
 //! artifact publication and cleanup failure each keep their operation-specific rules.
 use super::*;
+// Reserve a footer inside the disk bound so omitted output is never silent.
+fn retain_diagnostic(
+    bytes: &mut Vec<u8>,
+    limit: usize,
+    line: &str,
+) -> usize {
+    let available = limit.saturating_sub(512).saturating_sub(bytes.len());
+    let end = line.floor_char_boundary(line.len().min(available));
+    bytes.extend_from_slice(&line.as_bytes()[..end]);
+    line.len() - end
+}
+
 fn log_report(
     store: &mut JobStore,
     id: &JobId,
@@ -236,6 +248,7 @@ pub(super) async fn start_build(
         };
         let mut reservation = None;
         let mut diagnostics = Vec::new();
+        let mut omitted_diagnostic_bytes = 0u64;
         let mut lost_bytes = 0u64;
         let mut lost_chunks = 0u64;
         let mut log_output = |stage, stderr, text: &str| {
@@ -248,8 +261,8 @@ pub(super) async fn start_build(
             } else {
                 128 * 1024usize
             };
-            let remaining = limit.saturating_sub(diagnostics.len());
-            diagnostics.extend_from_slice(&line.as_bytes()[..line.floor_char_boundary(line.len().min(remaining))]);
+            omitted_diagnostic_bytes =
+                omitted_diagnostic_bytes.saturating_add(retain_diagnostic(&mut diagnostics, limit, &line) as u64);
             if let Ok(mut inner) = worker_state.inner.try_lock() {
                 let _ = inner.jobs.append(
                     &id,
@@ -314,6 +327,15 @@ pub(super) async fn start_build(
                     chunks: lost_chunks,
                     counter_overflow: false,
                 },
+            );
+        }
+        if omitted_diagnostic_bytes > 0 {
+            diagnostics.extend_from_slice(
+                format!(
+                    "\n[Retained log truncated: {omitted_diagnostic_bytes} formatted UTF-8 bytes omitted; live job \
+                     logs have separate bounds.]\n"
+                )
+                .as_bytes(),
             );
         }
         let execution = if let Some(reservation) = reservation.as_ref() {
@@ -707,4 +729,19 @@ async fn idle(state: &State) -> Result<std::sync::MutexGuard<'_, Inner>, Error> 
         return Err(Error::InvalidState);
     }
     Ok(inner)
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    #[test]
+    fn bounded_prefix_reserves_footer_and_validation_space() {
+        let mut bytes = Vec::new();
+        assert_eq!(super::retain_diagnostic(&mut bytes, 1024, &"x".repeat(512)), 0);
+        assert_eq!(super::retain_diagnostic(&mut bytes, 1024, "overflow"), 8);
+        assert_eq!(super::retain_diagnostic(&mut bytes, 2048, "validation failure"), 0);
+        assert!(std::str::from_utf8(&bytes).unwrap().ends_with("validation failure"));
+        let mut unicode = vec![b'x'; 511];
+        assert_eq!(super::retain_diagnostic(&mut unicode, 1024, "é"), 2);
+        assert_eq!(unicode.len(), 511);
+    }
 }
