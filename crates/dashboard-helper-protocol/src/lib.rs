@@ -10,3 +10,5 @@ pub use requests::*;
 pub mod devices;
 pub mod setup;
 pub use devices::*;
+
+pub mod diagnostics;

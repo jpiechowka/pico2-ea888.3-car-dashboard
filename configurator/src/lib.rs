@@ -52,3 +52,5 @@ pub mod widget_actions;
 pub mod workspace;
 
 pub use dashboard_config as config;
+
+pub mod diagnostic_relay;
