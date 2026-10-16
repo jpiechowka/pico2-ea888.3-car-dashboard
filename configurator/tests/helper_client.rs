@@ -73,6 +73,47 @@ fn build_upload_binds_editor_options_session_and_all_component_hashes() {
     );
 }
 
+#[test]
+fn artifact_identity_and_download_are_independently_checked() {
+    let selection = BuildSelection::default();
+    let prepared = PreparedBuild::capture(&Editor::default(), &selection, 0).unwrap();
+    let receipt = receipt(&prepared);
+    let bytes = vec![42; 512];
+    let mut artifact = ArtifactSummary {
+        artifact_id: ArtifactId::new("1".repeat(64)).unwrap(),
+        session_id: connection().session().clone(),
+        editor_revision: 0,
+        project_sha256: receipt.project_sha256,
+        config_sha256: receipt.config_sha256,
+        startup_profile_sha256: receipt.startup_profile_sha256,
+        startup_asset_sha256: receipt.startup_asset_sha256,
+        source_sha256: Sha256::new("a".repeat(64)).unwrap(),
+        elf_sha256: Sha256::new("b".repeat(64)).unwrap(),
+        converter_sha256: Sha256::new("c".repeat(64)).unwrap(),
+        uf2_sha256: Sha256::new(
+            dashboard_config_tools::project::digest(&bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+        )
+        .unwrap(),
+        options: selection.normalized().unwrap(),
+        uf2_bytes: 512,
+        hardware_qualified: false,
+        flash_ready: false,
+    };
+    assert!(prepared.matches_artifact(&artifact));
+    verify_artifact_download(&artifact, &bytes).unwrap();
+    assert!(verify_artifact_download(&artifact, &bytes[..511]).is_err());
+    let mut altered = bytes.clone();
+    altered[3] ^= 1;
+    assert!(verify_artifact_download(&artifact, &altered).is_err());
+    artifact.startup_asset_sha256 = Sha256::new("e".repeat(64)).unwrap();
+    assert!(!prepared.matches_artifact(&artifact));
+    artifact.uf2_bytes = MAX_UF2_BYTES as u32 + 512;
+    assert!(verify_artifact_download(&artifact, &bytes).is_err());
+}
+
 fn connection() -> Connection {
     Connection::decode(
         format!(

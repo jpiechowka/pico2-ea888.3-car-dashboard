@@ -4,7 +4,6 @@ mod command_palette;
 mod controls;
 mod ecu_reference;
 mod event_log;
-mod relay;
 mod fields;
 mod helper;
 mod inspector;
@@ -13,6 +12,7 @@ mod json_editor;
 mod led;
 mod metrics;
 mod project_io;
+mod relay;
 mod resources;
 mod simulation;
 mod stage;
@@ -637,7 +637,7 @@ pub fn Studio() -> impl IntoView {
                     <command_palette::CommandPalette ui/>
                     <button title="Undo accepted edit" disabled=move || ui.snapshot_blocked() || ui.editor.with(|e| e.history_len().0 == 0) on:click=move |_| { ui.run(Editor::undo); }>"↶ Undo"</button>
                     <button title="Redo accepted edit" disabled=move || ui.snapshot_blocked() || ui.editor.with(|e| e.history_len().1 == 0) on:click=move |_| { ui.run(Editor::redo); }>"↷ Redo"</button>
-                    <button class="primary" disabled=move || ui.snapshot_blocked() on:click=move |_| io::export(ui,false)>"Export for Pico"<span>"↗"</span></button>
+                    <button class="primary" disabled=move || ui.snapshot_blocked() on:click=move |_| project_io::export(ui,dashboard_config_tools::project::ExportMode::Complete)>"Export project"<span>"↗"</span></button>
                 </div>
             </header>
             <workspaces::WorkspaceTabs ui/>

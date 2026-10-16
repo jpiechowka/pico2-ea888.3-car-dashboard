@@ -22,6 +22,7 @@ pub const MAX_RESPONSE_BYTES: usize = 262_144;
 pub const MAX_VISIBLE_EVENTS: usize = 512;
 
 /// Frozen accepted project; originals never cross the native build boundary.
+#[derive(PartialEq, Eq)]
 pub struct PreparedBuild {
     stamp: EditorStamp,
     revision: u64,
@@ -31,6 +32,19 @@ pub struct PreparedBuild {
     hashes: [String; 4],
 }
 impl PreparedBuild {
+    pub fn matches_artifact(
+        &self,
+        artifact: &dashboard_helper_protocol::ArtifactSummary,
+    ) -> bool {
+        artifact.options.requested == self.options
+            && [
+                artifact.project_sha256.as_str(),
+                artifact.config_sha256.as_str(),
+                artifact.startup_profile_sha256.as_str(),
+                artifact.startup_asset_sha256.as_str(),
+            ] == self.hashes.each_ref().map(String::as_str)
+    }
+
     pub fn capture(
         editor: &Editor,
         selection: &BuildSelection,
@@ -104,6 +118,21 @@ impl PreparedBuild {
             retry_of: None,
         })
     }
+}
+
+pub fn verify_artifact_download(
+    artifact: &dashboard_helper_protocol::ArtifactSummary,
+    bytes: &[u8],
+) -> Result<(), &'static str> {
+    artifact.validate().map_err(|_| "Invalid artifact metadata")?;
+    if bytes.len() != artifact.uf2_bytes as usize || bytes.len() > dashboard_helper_protocol::MAX_UF2_BYTES {
+        return Err("Artifact download length does not match its admitted metadata");
+    }
+    let hash: String = digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+    if hash != artifact.uf2_sha256.as_str() {
+        return Err("Artifact download checksum mismatch");
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

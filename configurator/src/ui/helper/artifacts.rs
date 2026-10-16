@@ -1,0 +1,28 @@
+//! Downloads preserve the identity of a completed native build across later edits.
+use super::*;
+
+#[component]
+pub fn Panel(ui: Ui) -> impl IntoView {
+    let state = ui.helper;
+    let current = Memo::new(move |_| {
+        ui.editor.with(|editor| {
+            ui.build
+                .with(|selection| PreparedBuild::capture(editor, selection, 0).ok())
+        })
+    });
+    view! {
+        <details class="build-disclosure" open><summary>"Admitted firmware files"</summary>
+            <p>"A successful build appears here only after its image and UF2 checks pass. The helper retains the latest two files for this session. Editing your project leaves older files available and marks them as different."</p>
+            <p hidden=move ||state.view.with(|v|!v.artifacts.is_empty())>"No admitted firmware file in this helper session."</p>
+            {move ||state.view.with(|v|v.artifacts.clone()).into_iter().map(|artifact| {
+                let status=artifact.clone(); let selected=artifact.clone();
+                view! {<div class="helper-artifact"><strong>{format!("{:?} · {} bytes",artifact.options.requested.mode,artifact.uf2_bytes)}</strong>
+                    <span class="chip">{move ||if current.with(|p|p.as_ref().is_some_and(|p|p.matches_artifact(&status))){"MATCHES ACCEPTED PROJECT"}else{"DIFFERENT PROJECT / OPTIONS"}}</span>
+                    <small>"Image checks passed · physical hardware remains unverified"</small>
+                    <dl><dt>"Project SHA256"</dt><dd><code>{artifact.project_sha256.as_str().to_string()}</code></dd><dt>"UF2 SHA256"</dt><dd><code>{artifact.uf2_sha256.as_str().to_string()}</code></dd></dl>
+                    <button disabled=move ||state.busy.get()||state.building.get()||!state.view.with(|v|v.connected)||state.view.with(|v|v.feed.active()) on:click=move |_|{state.download.set_value(Some(selected.clone()));send(ui,Action::Download);}>"Download verified UF2"</button>
+                </div>}
+            }).collect_view()}
+        </details>
+    }
+}

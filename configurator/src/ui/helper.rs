@@ -1,13 +1,28 @@
 //! Explicit loopback connection; bounded reads and one owned polling chain.
 use std::time::Duration;
 
-use dashboard_configurator::helper_client::{Connection, JobFeed, MAX_RESPONSE_BYTES, PreparedBuild};
-use dashboard_helper_protocol::{BoundedVec, DeviceScanReport, EventBatch, JobSummary, ProjectUploadResponse, Wire};
+use dashboard_configurator::helper_client::{
+    Connection,
+    JobFeed,
+    MAX_RESPONSE_BYTES,
+    PreparedBuild,
+    verify_artifact_download,
+};
+use dashboard_helper_protocol::{
+    ArtifactSummary,
+    BoundedVec,
+    DeviceScanReport,
+    EventBatch,
+    JobSummary,
+    ProjectUploadResponse,
+    Wire,
+};
 use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{AbortController, ReadableStreamDefaultReader, Request, RequestInit, Response};
 
 use super::*;
+mod artifacts;
 
 const BASE: &str = "http://127.0.0.1:8765/api/v1";
 #[derive(Clone, Default)]
@@ -17,6 +32,7 @@ struct ViewState {
     feed: JobFeed,
     report: Option<serde_json::Value>,
     devices: Option<DeviceScanReport>,
+    artifacts: Vec<ArtifactSummary>,
 }
 #[derive(Clone, Copy)]
 pub struct State {
@@ -31,6 +47,7 @@ pub struct State {
     options_revision: RwSignal<Option<u64>>,
     prepared: StoredValue<Option<PreparedBuild>>,
     uploaded: StoredValue<Option<ProjectUploadResponse>>,
+    download: StoredValue<Option<ArtifactSummary>>,
 }
 impl State {
     pub fn new() -> Self {
@@ -49,6 +66,7 @@ impl State {
             options_revision: RwSignal::new(Some(0)),
             prepared: StoredValue::new(None),
             uploaded: StoredValue::new(None),
+            download: StoredValue::new(None),
         }
     }
 
@@ -64,6 +82,7 @@ impl State {
             let _ = self.connection.try_set_value(None);
             let _ = self.prepared.try_set_value(None);
             let _ = self.uploaded.try_set_value(None);
+            let _ = self.download.try_set_value(None);
         });
     }
 }
@@ -79,6 +98,8 @@ enum Action {
     Devices,
     Upload,
     Build,
+    Artifacts,
+    Download,
 }
 struct ReadGuard {
     abort: AbortController,
@@ -106,6 +127,21 @@ async fn request(
         Action::Devices => ("GET", "/devices".into()),
         Action::Upload => ("POST", "/projects".into()),
         Action::Build => ("POST", "/builds".into()),
+        Action::Artifacts => ("GET", "/artifacts".into()),
+        Action::Download => {
+            (
+                "GET",
+                format!(
+                    "/artifacts/{}/uf2",
+                    state
+                        .download
+                        .get_value()
+                        .ok_or("No artifact selected")?
+                        .artifact_id
+                        .as_str()
+                ),
+            )
+        }
         Action::Poll | Action::Cancel => {
             state.view.with_untracked(|v| -> Result<(&str, String), &'static str> {
                 let job = v.feed.summary.as_ref().ok_or("No helper job selected")?;
@@ -192,7 +228,15 @@ async fn request(
             .set("Content-Type", content_type)
             .map_err(|_| "Cannot set build content type")?;
     }
-    fetch_bounded(&request, MAX_RESPONSE_BYTES).await
+    fetch_bounded(
+        &request,
+        if matches!(action, Action::Download) {
+            dashboard_helper_protocol::MAX_UF2_BYTES
+        } else {
+            MAX_RESPONSE_BYTES
+        },
+    )
+    .await
 }
 
 async fn fetch_bounded(
@@ -275,6 +319,7 @@ fn apply(
                     v.feed = JobFeed::default();
                     v.report = None;
                     v.devices = None;
+                    v.artifacts.clear();
                 });
             }
             state.connection.set_value(Some(conn));
@@ -392,6 +437,35 @@ fn apply(
                 return Err("Device report belongs to another helper session");
             }
             state.view.update(|v| v.devices = Some(report));
+            Ok(Some(Action::Artifacts))
+        }
+        Action::Artifacts => {
+            let artifacts: BoundedVec<ArtifactSummary, 2> =
+                serde_json::from_slice(bytes).map_err(|_| "Invalid artifact list")?;
+            let connection = state.connection.get_value().ok_or("Helper session lost")?;
+            for artifact in artifacts.iter() {
+                artifact.validate().map_err(|_| "Invalid artifact metadata")?;
+                if artifact.session_id != *connection.session() {
+                    return Err("Artifact belongs to another helper session");
+                }
+            }
+            state.view.update(|v| v.artifacts = artifacts.iter().cloned().collect());
+            Ok(None)
+        }
+        Action::Download => {
+            let artifact = state
+                .download
+                .get_value()
+                .ok_or("Artifact download selection changed")?;
+            verify_artifact_download(&artifact, bytes)?;
+            let name = format!("dashboard-{}.uf2", &artifact.artifact_id.as_str()[..12]);
+            io::download(ui, &name, "application/octet-stream", bytes).map_err(|_| "Browser could not save the UF2")?;
+            state.download.set_value(None);
+            state.view.update(|v| {
+                v.message = "UF2 download started after checking its admitted size and SHA256. Downloading does not \
+                             program a device."
+                    .into()
+            });
             Ok(None)
         }
     }
@@ -469,6 +543,7 @@ fn send(
                 state.prepared.set_value(None);
                 state.uploaded.set_value(None);
                 state.building.set(false);
+                state.download.set_value(None);
                 ui.event(Notice {
                     severity: dashboard_configurator::events::Severity::Warn,
                     ..Notice::info(Category::HostTools, "helper.request_failed", None, message)
@@ -546,6 +621,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                 view!{<details class="build-disclosure" open><summary>"Prerequisite results · installed tool versions"</summary><p>"These checks inspect tools and versions. Build/link capability and device programming are separate gates."</p><div class="helper-checks">{rows.into_iter().map(|r|view!{<div><strong>{r["id"].as_str().unwrap_or("check").to_string()}</strong><span>{r["status"].as_str().unwrap_or("unknown").to_string()}</span><p>{r["evidence"].as_str().unwrap_or("").to_string()}</p><small>{r["setup"].as_str().unwrap_or("").to_string()}</small></div>}).collect_view()}</div></details>}
             })}
             {move ||state.view.with(|v|v.devices.clone()).map(|report|view!{<details class="build-disclosure" open><summary>{format!("BOOTSEL candidates · {}",report.devices.len())}</summary><p>{report.reason.as_str().to_string()}</p>{report.devices.iter().map(|d|view!{<div class="helper-device"><strong>{d.product.as_ref().map_or("RP2350 BOOTSEL",|p|p.as_str()).to_string()}</strong><span>{format!("{:04x}:{:04x} · {:?}",d.vid,d.pid,d.status)}</span><p>{d.reason.as_str().to_string()}</p><small>"Flash capacity unverified · not ready to flash"</small></div>}).collect_view()}</details>})}
+            <artifacts::Panel ui/>
             <details class="build-disclosure" open><summary>"Job logs"</summary><p>{move ||state.view.with(|v|format!("{} retained events · {} omitted by bounded history",v.feed.events.len(),v.feed.omitted))}</p><div class="helper-log" role="log" aria-live="off">{move ||state.view.with(|v|v.feed.events.iter().map(|e|view!{<div class=match e.level{dashboard_helper_protocol::Level::Error=>"error",dashboard_helper_protocol::Level::Warning=>"warning",_=>"info"}><span>{format!("{:>6} ms",e.elapsed_ms)}</span><code>{e.text.as_str().to_string()}</code></div>}).collect_view())}</div>
                 <button disabled=move ||state.view.with(|v|v.feed.events.is_empty()) on:click=move |_|{let text=state.view.with_untracked(|v|v.feed.events.iter().map(|e|format!("{} ms {:?} {}",e.elapsed_ms,e.level,e.text.as_str())).collect::<Vec<_>>().join("\n"));if io::download(ui,"studio-helper.log","text/plain;charset=utf-8",text.as_bytes()).is_err(){state.view.update(|v|v.message="Could not download job logs.".into());}}>"Download logs"</button>
             </details>
@@ -555,10 +631,11 @@ pub fn Panel(ui: Ui) -> impl IntoView {
 
 /// The relay owns its queue and cancellation lease; authority stays in this module.
 pub fn relay_epoch(ui: Ui) -> Option<u64> {
-    ui.helper
-        .view
-        .with(|v| v.connected)
-        .then(|| ui.helper.epoch.get_value())
+    if ui.helper.view.try_with(|v| v.connected).unwrap_or(false) {
+        ui.helper.epoch.try_get_value()
+    } else {
+        None
+    }
 }
 pub async fn relay_post(
     ui: Ui,
@@ -592,7 +669,7 @@ pub async fn relay_post(
         .headers()
         .set("Content-Type", "application/json")
         .map_err(|_| "Cannot set diagnostic content type")?;
-    let reply = fetch_bounded(&request, 16384).await?;
+    let reply = fetch_bounded(&request, dashboard_helper_protocol::diagnostics::Response::MAX_BYTES).await?;
     if relay_epoch(ui) != Some(epoch) {
         return Err("Diagnostic connection changed");
     }
