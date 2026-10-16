@@ -36,6 +36,14 @@ Choose numeric/history, circular, needle, horizontal, vertical or segmented
 gauges. [Gauge and colour controls](docs/configurator/gauges-and-colours.md) include
 fixed or expanding scales, per-widget palettes and separate combined warnings.
 
+Browser editing of an already served build needs no local Rust toolchain. Native
+builds require Windows x64, the documented tools, and **4 GiB scratch space plus
+256 MiB free headroom**, in addition to installations and caches. A practical
+build and verified download succeeded on Windows 11 Pro with an i9-13900HX and
+31.8 GiB RAM; a minimum RAM specification has not been established. The earlier
+16.5 GB observation belongs to the separate experimental instruction proof.
+[PC requirements and measurement limits](docs/configurator/setup-tools.md#pc-requirements-and-measurement-limits).
+
 For a complete project, use **Build & Flash** or **Download build recipe** so
 startup settings and converted artwork are included. For a dashboard-only `.eav`
 export, build with the user's observed working profile:
@@ -256,6 +264,16 @@ include AEZAKMI, turbo/SUTUTU, Sanic/GOTTA GO FAST, HOW MUCH BOOST BRO and WHERE
 LAMBO. PNG, sprite-sheet and GIF imports convert to bounded RGB565 pixels; the
 firmware does not decode the source image. Retain the original to change its
 crop, matte or sampling later.
+
+| AEZAKMI | Turbo / SUTUTU | Sanic |
+|---|---|---|
+| ![AEZAKMI shared-renderer sample](docs/images/gallery/startup/aezakmi.png) | ![Turbo shared-renderer sample](docs/images/gallery/startup/turbo.png) | ![Sanic shared-renderer sample](docs/images/gallery/startup/sanic.png) |
+
+| How much boost, bro? | Where Lambo? |
+|---|---|
+| ![Boost banner shared-renderer sample](docs/images/gallery/startup/boost-bro.png) | ![Shitbox car shared-renderer sample](docs/images/gallery/startup/where-lambo.png) |
+
+*Synthetic frames at 1,200 ms into each animation. [Native frames and reproduction](docs/configurator/startup-gallery.md).*
 
 Status and splash have independent durations: splash **0** skips only splash;
 **Loop off** holds its final frame for the remaining duration. Reduced motion

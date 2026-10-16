@@ -76,6 +76,11 @@ High/Low/window rules, dwell, priority, latch and snooze use qualified raw sampl
 
 Filter bounded browser events and inspect shared Dashboard/Debug/Logs simulation. Optional warning/error context relay requires a connected helper; bounded drops are reported. Raw messages, configuration and artwork are not relayed.
 
+[![Synthetic Logs screen reached through the configured Y button](../images/gallery/workflows/logs-simulator.jpg)](../images/gallery/workflows/logs-simulator.jpg)
+
+This second capture shows Logs after the configured Y action and an explicit
+simulated frame completion. These are host-generated log rows, not device telemetry.
+
 ### Browse ECU definitions and qualification
 
 [![Studio: browse ECU definitions and qualification](../images/gallery/workflows/ecu-reference.jpg)](../images/gallery/workflows/ecu-reference.jpg)
@@ -128,3 +133,12 @@ widget crops, configuration EAVs and coverage.tsv. Committed PNGs are lossless
 conversions of those PPM pixels. Rendering stills do not establish animation,
 physical scanout or warning timing. The distinct measured performance pass is
 separate; [benchmark scope](../performance/benchmark-coverage.md) remains explicit.
+
+## Capture record
+
+Workflow images were captured from the actual local Studio release built at
+`6b051b1` on 16 October 2026. The invalid-overlap capture uses the preceding
+`4d692f8` release; its placement behavior is unchanged. The native build shown
+used `d9c493d`, completed its practical checks, and produced a hash-verified UF2
+download. No device scan, transfer or reboot was performed. The images preserve
+actual UI states, including the explicit unverified hardware labels.
