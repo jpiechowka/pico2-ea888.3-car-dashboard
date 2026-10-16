@@ -15,7 +15,7 @@ import capture_target_bench as capture
 class CaptureTests(unittest.TestCase):
     def test_native_scratch_is_fixed_empty_and_path_bounded(self):
         with tempfile.TemporaryDirectory() as folder:
-            attempt=Path(folder);repo=attempt/'source';firmware=repo/'firmware'
+            attempt=Path(folder).resolve();repo=attempt/'source';firmware=repo/'firmware'
             firmware.mkdir(parents=True);scratch=attempt/'b';scratch.mkdir()
             destination=firmware/'target/bench-captures/native'
             with patch.object(capture,'REPO',repo),patch.object(capture,'FIRMWARE',firmware):
@@ -30,7 +30,7 @@ class CaptureTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'nt', 'Windows path budget')
     def test_native_scratch_rejects_too_long_repository_before_cargo(self):
         with tempfile.TemporaryDirectory() as folder:
-            attempt=Path(folder)/('a'*90);repo=attempt/'source';firmware=repo/'firmware'
+            attempt=Path(folder).resolve()/('a'*90);repo=attempt/'source';firmware=repo/'firmware'
             firmware.mkdir(parents=True);(attempt/'b').mkdir()
             with patch.object(capture,'REPO',repo),patch.object(capture,'FIRMWARE',firmware):
                 with self.assertRaisesRegex(ValueError,'shorter path'):
@@ -66,9 +66,33 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'identity changed'):
                 capture.external_tool_path(extended)
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows 8.3 path identity')
+    def test_short_name_import_uses_the_same_canonical_inventory(self):
+        import ctypes
+        script = Path(capture.__file__).resolve()
+        short_name = ctypes.windll.kernel32.GetShortPathNameW
+        short_name.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+        short_name.restype = ctypes.c_uint32
+        size = short_name(str(script), None, 0)
+        if not size:
+            self.skipTest('volume has no usable 8.3 alias')
+        buffer = ctypes.create_unicode_buffer(size)
+        self.assertTrue(short_name(str(script), buffer, size))
+        alias = Path(buffer.value)
+        if str(alias).lower() == str(script).lower():
+            self.skipTest('volume does not generate distinct 8.3 aliases')
+        self.assertTrue(alias.samefile(script))
+        self.assertEqual(capture.external_tool_path(alias), script)
+        code = ('import runpy,sys,json,hashlib; m=runpy.run_path(sys.argv[1]); '
+                'print(json.dumps({k:hashlib.sha256(v).hexdigest() for k,v in m["inputs"]().items()},sort_keys=True))')
+        def snapshot(path):
+            return subprocess.run([sys.executable, '-I', '-c', code, str(path)],
+                                  capture_output=True, text=True, check=True).stdout
+        self.assertEqual(snapshot(alias), snapshot(script))
+
     def test_tool_directory_requires_existing_path(self):
         with tempfile.TemporaryDirectory() as folder:
-            directory = Path(folder)
+            directory = Path(folder).resolve()
             self.assertTrue(capture.external_tool_path(directory).samefile(directory))
             with self.assertRaises(FileNotFoundError):
                 capture.external_tool_path(directory / 'missing')
@@ -88,7 +112,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_failed_build_keeps_raw_stdout_before_raising(self):
         with tempfile.TemporaryDirectory() as folder:
-            destination=Path(folder)
+            destination=Path(folder).resolve()
             command=[sys.executable,'-c','import sys; print("{\\"reason\\":\\"build-finished\\",\\"success\\":false}"); sys.exit(7)']
             with self.assertRaises(subprocess.CalledProcessError) as error:
                 capture.run_build(command,os.environ.copy(),destination)
@@ -97,7 +121,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_failed_build_streams_safe_rendered_diagnostics_and_retains_them(self):
         with tempfile.TemporaryDirectory() as folder:
-            destination=Path(folder);stream=io.StringIO()
+            destination=Path(folder).resolve();stream=io.StringIO()
             record=dict(reason='compiler-message',message=dict(rendered='error: fixture missing linker\n\x1b[31munsafe\x00\r\n'))
             command=[sys.executable,'-c','import sys; print('+repr(json.dumps(record))+'); sys.exit(7)']
             with redirect_stderr(stream),self.assertRaises(subprocess.CalledProcessError):
@@ -108,7 +132,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_diagnostics_are_bounded_utf8_and_do_not_forward_artifact_json(self):
         with tempfile.TemporaryDirectory() as folder:
-            destination=Path(folder);stream=io.StringIO()
+            destination=Path(folder).resolve();stream=io.StringIO()
             diagnostic=capture.CargoDiagnostics(destination)
             with redirect_stderr(stream):
                 diagnostic.record(json.dumps(dict(reason='compiler-artifact',message=dict(rendered='must not be logged'))))
@@ -129,12 +153,12 @@ class CaptureTests(unittest.TestCase):
             command=[sys.executable,'-c','import time; print('+repr(record)+',flush=True); time.sleep(30)']
             with patch.object(capture.CargoDiagnostics,'emit',side_effect=OSError('fixture full disk')):
                 with self.assertRaisesRegex(OSError,'fixture full disk'):
-                    capture.run_build(command,os.environ.copy(),Path(folder))
-            self.assertIn('compiler-message',(Path(folder)/'cargo-messages.jsonl').read_text())
+                    capture.run_build(command,os.environ.copy(),Path(folder).resolve())
+            self.assertIn('compiler-message',(Path(folder).resolve()/'cargo-messages.jsonl').read_text())
 
     def test_diagnostic_is_published_before_compiler_exit(self):
         with tempfile.TemporaryDirectory() as folder:
-            destination=Path(folder);stream=io.StringIO()
+            destination=Path(folder).resolve();stream=io.StringIO()
             record=json.dumps(dict(reason='compiler-message',message=dict(rendered='error: live fixture')))
             script=('import pathlib,time,sys; print('+repr(record)+',flush=True); '
                     'p=pathlib.Path('+repr(str(destination/'cargo-diagnostics.log'))+'); '
@@ -149,7 +173,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_generated_clock_is_bound_to_firmware_package_and_exact_attempt(self):
         with tempfile.TemporaryDirectory() as folder:
-            build=Path(folder)/'build';out=build/'out';out.mkdir(parents=True)
+            build=Path(folder).resolve()/'build';out=build/'out';out.mkdir(parents=True)
             source=b'''// Generated from dashboard-build-profiles; do not edit.
 pub const REQUESTED_CPU_HZ: u32 = 150000000;
 pub const ACTUAL_CPU_HZ: u32 = 150000000;
@@ -189,7 +213,7 @@ pub const LEGACY_ROUNDING: bool = false;
             self.assertEqual(data[path],(capture.REPO/path).read_bytes())
     def test_only_matching_build_snapshot_is_archived(self):
         with tempfile.TemporaryDirectory() as folder:
-            build = Path(folder) / 'build'
+            build = Path(folder).resolve() / 'build'
             out = build / 'out'
             out.mkdir(parents=True)
             data = b'validated configuration snapshot'
@@ -210,7 +234,7 @@ pub const LEGACY_ROUNDING: bool = false;
 
     def test_external_configuration_is_bounded_frozen_and_captured_by_content(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()
             selected = root / 'external.eav'
             selected.write_bytes(b'first snapshot')
             environment = {'DASHBOARD_CONFIG': str(selected)}
@@ -237,7 +261,7 @@ pub const LEGACY_ROUNDING: bool = false;
 
     def test_migration_compares_canonical_bytes_and_keeps_original_identity(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()
             original, upgraded = b'original v1', b'canonical v2'
             (root / 'selected.eav').write_bytes(original)
             record = dict(selection='explicit', sha256=capture.hashlib.sha256(original).hexdigest())
@@ -342,7 +366,7 @@ class CaptureMemoryQualification(unittest.TestCase):
     def test_actual_child_result_is_retained_and_rechecked_against_current_input(self):
         elf,eav,record=self.fixture()
         with tempfile.TemporaryDirectory() as folder:
-            destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+            destination=Path(folder).resolve();frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
             source,path,record=self.bound_context(destination,elf,record)
             def child(argv,**kwargs):
                 self.assertEqual(Path(argv[argv.index('--source-context')+1]),path.resolve());self.assertTrue(kwargs['check'])
@@ -360,7 +384,7 @@ class CaptureMemoryQualification(unittest.TestCase):
         elf,eav,record=self.fixture()
         for kind in ('nonzero','missing','intermediate','lost','stale','owned_lost','owned_changed','oversized'):
             with self.subTest(kind=kind),tempfile.TemporaryDirectory() as folder:
-                destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+                destination=Path(folder).resolve();frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
                 source,path,record=self.bound_context(destination,elf,record)
                 def child(argv,**kwargs):
                     value=json.loads(json.dumps(record['stack'] if kind=='intermediate' else record))
@@ -378,7 +402,7 @@ class CaptureMemoryQualification(unittest.TestCase):
     def test_real_nonzero_child_preserves_file_without_admitting_it(self):
         elf,eav,record=self.fixture();real_run=subprocess.run
         with tempfile.TemporaryDirectory() as folder:
-            destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+            destination=Path(folder).resolve();frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
             source,path,record=self.bound_context(destination,elf,record)
             def child(argv,**kwargs):
                 return real_run([sys.executable,'-c',
@@ -395,7 +419,7 @@ class CaptureMemoryQualification(unittest.TestCase):
         before_sources={name:(capture.REPO/name).read_bytes() for name in SOURCE_PATHS}
         for drift in (False,True,'source_bytes','source_members','options','captured_sources','program_gate'):
             with self.subTest(drift=drift),tempfile.TemporaryDirectory() as folder:
-                firmware=Path(folder);destination=firmware/'target/bench-captures/fixture'
+                firmware=Path(folder).resolve();destination=firmware/'target/bench-captures/fixture'
                 emitted=firmware/'short/firmware.elf';calls=[]
                 input_calls=[]
                 def snapshot():
@@ -478,7 +502,7 @@ class CaptureMemoryQualification(unittest.TestCase):
         elf,eav,record=self.fixture()
         for fault in (None,'missing_pair','missing_context','missing_both','attempt','changed_bytes','semantics'):
             with self.subTest(fault=fault),tempfile.TemporaryDirectory() as folder:
-                destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+                destination=Path(folder).resolve();frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
                 before={name:(capture.REPO/name).read_bytes() for name in SOURCE_PATHS}
                 if fault=='semantics':before[SOURCE_PATHS[1]]+=b' pub fn leak() { CONFIGURATION.take(); }'
                 value=make_source_context(elf.data,'other' if fault=='attempt' else destination.name,b'{}',before)
@@ -505,7 +529,7 @@ class CaptureMemoryQualification(unittest.TestCase):
         from config_build_source import SOURCE_PATHS,make_source_context,write_source_context
         elf,eav,record=self.fixture();real_run=subprocess.run
         with tempfile.TemporaryDirectory() as folder:
-            destination=Path(folder);frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
+            destination=Path(folder).resolve();frozen=destination/'pico2.elf';frozen.write_bytes(elf.data)
             before={name:(capture.REPO/name).read_bytes() for name in SOURCE_PATHS}
             value=make_source_context(elf.data,destination.name,b'{}',before)
             source=destination/'source-context.json';write_source_context(source,value)
