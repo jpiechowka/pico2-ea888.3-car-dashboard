@@ -336,6 +336,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "dashboard-build-profiles",
+ "dashboard-config",
  "dashboard-config-tools",
  "dashboard-core",
  "defmt",

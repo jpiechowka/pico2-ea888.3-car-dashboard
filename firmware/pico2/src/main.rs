@@ -315,6 +315,12 @@ async fn dashboard_task(
     let btn_y = Input::new(p.PIN_15, Pull::Up);
 
     let mut gestures = ControlGestures::new();
+    let startup_profile = dashboard_pico2::startup::StartupProfile::decode(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/startup_profile.bin"
+    )))
+    .expect("build-validated startup profile");
+    let mut startup = dashboard_pico2::startup::Startup::new(startup_profile, Instant::now().as_millis());
     log_info!("Buttons initialized");
 
     let mut input_tracker = dashboard_pico2::input_trace::InputTracker::new();
@@ -377,10 +383,37 @@ async fn dashboard_task(
 
         let controls = &dashboard_configuration.config.config().controls;
         let pressed = [btn_a.is_low(), btn_b.is_low(), btn_x.is_low(), btn_y.is_low()];
-        let encoder = ENCODER_EVENTS.take_observed();
+        let mut encoder = ENCODER_EVENTS.take_observed();
         // Sample after taking the batch: concurrently accepted observations are eligible.
         let input_ms = Instant::now().as_millis();
-        let buttons = gestures.update(controls, session.page(), pressed, input_ms);
+        let mut buttons = if startup.active() {
+            gestures.update_startup(controls, session.page(), pressed, input_ms)
+        } else {
+            gestures.update(controls, session.page(), pressed, input_ms)
+        };
+        if startup.active() {
+            if buttons.recovery.is_some() {
+                startup.finish_at(dashboard_pico2::startup::Exit::Recovery, input_ms);
+                gestures.suppress_held();
+            } else if buttons.startup_skip || encoder.delta != 0 || encoder.presses != 0 {
+                startup.finish_at(dashboard_pico2::startup::Exit::Skip, input_ms);
+                gestures.suppress_held();
+                buttons.actions.clear();
+            }
+            // The startup transaction cannot also invoke mapped encoder actions.
+            encoder = Default::default();
+        } else if let Some(ended) = startup.ended_at() {
+            // A delayed batch originating during startup remains consumed.
+            let boundary = ended.saturating_mul(1000);
+            if encoder.motion.is_some_and(|o| o.observed_us <= boundary) {
+                encoder.delta = 0;
+                encoder.motion = None;
+            }
+            if encoder.button.is_some_and(|o| o.observed_us <= boundary) {
+                encoder.presses = 0;
+                encoder.button = None;
+            }
+        }
         let input = session.apply(
             &dashboard_configuration.config,
             controls,
@@ -519,8 +552,36 @@ async fn dashboard_task(
             average_fps = rate.average;
         }
 
-        let user_overlay = session.overlay(&dashboard_configuration.config);
-        let warning_page = if session.page() == Page::Dashboard && user_overlay.is_none() {
+        let startup_before = startup.active();
+        let startup_scene = if startup.active() {
+            PresentedScene::capture(
+                &dashboard_configuration.config,
+                &measurements,
+                session.page(),
+                session.view_id(),
+                None,
+                now_ms,
+            )
+        } else {
+            PresentedScene::EMPTY
+        };
+        startup.advance(
+            startup_profile,
+            now_ms,
+            dashboard_configuration.fault.is_some()
+                || vehicle_status == dashboard_pico2::vehicle_status::VehicleStatus::ResetRequired,
+            startup_scene.attention,
+        );
+        if startup_before && !startup.active() {
+            gestures.suppress_held();
+            presentation.reset();
+        }
+        let user_overlay = if startup.active() {
+            None
+        } else {
+            session.overlay(&dashboard_configuration.config)
+        };
+        let warning_page = if !startup.active() && session.page() == Page::Dashboard && user_overlay.is_none() {
             warning_pager.select(
                 &dashboard_configuration.config,
                 &measurements,
@@ -533,14 +594,18 @@ async fn dashboard_task(
             None
         };
         let visible_overlay = Overlay::configured_for_page(session.page(), user_overlay, warning_page);
-        let presented_scene = PresentedScene::capture(
-            &dashboard_configuration.config,
-            &measurements,
-            session.page(),
-            session.view_id(),
-            visible_overlay,
-            now_ms,
-        );
+        let presented_scene = if startup.active() {
+            startup_scene.startup(startup_profile.warning_led)
+        } else {
+            PresentedScene::capture(
+                &dashboard_configuration.config,
+                &measurements,
+                session.page(),
+                session.view_id(),
+                visible_overlay,
+                now_ms,
+            )
+        };
         input_tracker.exclude_obscured(visible_overlay.and_then(Overlay::warning_phase).is_some());
         let render_start = Instant::now();
         let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
@@ -551,99 +616,124 @@ async fn dashboard_task(
         panel_history.begin_render(token).expect("invalid render generation");
         let mut display = St7789Renderer::new(render_frame.buffer());
 
-        match session.page() {
-            Page::Dashboard => {
-                let readings = presentation.prepare(
-                    &dashboard_configuration.config,
-                    &measurements,
-                    session.view_id(),
-                    now_ms,
-                    session.boost_psi(),
-                );
-                let scene = DashboardScene {
-                    readings: Some(&readings),
-                    layout: Some(dashboard_layout),
-                    measurements: &measurements,
-                    status: vehicle_status,
-                    now_ms,
-                    blink_on,
-                    boost_psi: session.boost_psi(),
-                    fps_mode: session.fps(),
-                    fps_instant: current_fps,
-                    fps_average: average_fps,
-                    backgrounds: [BLACK; 8], // Shared configured renderer owns warning colours.
-                    overlay: visible_overlay,
-                };
-                let redraw = dashboard_cache.prepare(render_idx, &scene);
-                redraw.begin(&mut display, &scene);
-                render_work.checkpoint().await;
-                for cell in 0..8 {
-                    if redraw.cells & (1 << cell) != 0 {
-                        scene.draw_cell(&mut display, cell);
-                        render_work.checkpoint().await;
+        if startup.active() {
+            presentation.reset();
+            dashboard_cache.invalidate(render_idx);
+            dashboard_pico2::startup::draw(
+                &mut display,
+                startup.phase(),
+                startup_profile,
+                startup.elapsed(now_ms),
+                dashboard_configuration.config.config().reduced_motion,
+                dashboard_pico2::startup::StartupFacts {
+                    vehicle: vehicle_status,
+                    config_ok: dashboard_configuration.fault.is_none(),
+                    settings_loaded: has_saved_settings,
+                    configured_sources: dashboard_configuration
+                        .config
+                        .config()
+                        .sources
+                        .iter()
+                        .filter(|s| s.definition != dashboard_pico2::view_config::DefinitionId::Disabled)
+                        .count() as u8,
+                },
+            );
+            render_work.checkpoint().await;
+        } else {
+            match session.page() {
+                Page::Dashboard => {
+                    let readings = presentation.prepare(
+                        &dashboard_configuration.config,
+                        &measurements,
+                        session.view_id(),
+                        now_ms,
+                        session.boost_psi(),
+                    );
+                    let scene = DashboardScene {
+                        readings: Some(&readings),
+                        layout: Some(dashboard_layout),
+                        measurements: &measurements,
+                        status: vehicle_status,
+                        now_ms,
+                        blink_on,
+                        boost_psi: session.boost_psi(),
+                        fps_mode: session.fps(),
+                        fps_instant: current_fps,
+                        fps_average: average_fps,
+                        backgrounds: [BLACK; 8], // Shared configured renderer owns warning colours.
+                        overlay: visible_overlay,
+                    };
+                    let redraw = dashboard_cache.prepare(render_idx, &scene);
+                    redraw.begin(&mut display, &scene);
+                    render_work.checkpoint().await;
+                    for cell in 0..8 {
+                        if redraw.cells & (1 << cell) != 0 {
+                            scene.draw_cell(&mut display, cell);
+                            render_work.checkpoint().await;
+                        }
                     }
+                    redraw.finish(&mut display, &scene);
                 }
-                redraw.finish(&mut display, &scene);
-            }
 
-            Page::Debug => {
-                presentation.reset();
-                dashboard_cache.invalidate(render_idx);
-                display.clear(BLACK).ok();
-                render_work.checkpoint().await;
-                let mem_stats = crate::profiling::MemoryStats::collect();
+                Page::Debug => {
+                    presentation.reset();
+                    dashboard_cache.invalidate(render_idx);
+                    display.clear(BLACK).ok();
+                    render_work.checkpoint().await;
+                    let mem_stats = crate::profiling::MemoryStats::collect();
 
-                let requested_spi_hz = display_spi_config().frequency;
-                let actual_spi_hz = get_actual_spi_freq(embassy_rp::clocks::clk_peri_freq());
+                    let requested_spi_hz = display_spi_config().frequency;
+                    let actual_spi_hz = get_actual_spi_freq(embassy_rp::clocks::clk_peri_freq());
 
-                draw_profiling_page(
-                    &mut display,
-                    &ProfilingData {
-                        current_fps,
-                        reset_cause,
-                        vehicle_status: vehicle_status.label(),
-                        config_fault: dashboard_configuration.fault.is_some(),
-                        average_fps,
-                        frame_count,
-                        trace: last_trace,
-                        brightness: session.backlight().brightness(),
-                        settings_status: settings_status.label(has_saved_settings),
-                        buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
-                        buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
-                        render_buffer_idx: render_idx,
-                        flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
-                        core0_stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
-                            1
-                        } else {
-                            mem_stats.stack_used / 1024
+                    draw_profiling_page(
+                        &mut display,
+                        &ProfilingData {
+                            current_fps,
+                            reset_cause,
+                            vehicle_status: vehicle_status.label(),
+                            config_fault: dashboard_configuration.fault.is_some(),
+                            average_fps,
+                            frame_count,
+                            trace: last_trace,
+                            brightness: session.backlight().brightness(),
+                            settings_status: settings_status.label(has_saved_settings),
+                            buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
+                            buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
+                            render_buffer_idx: render_idx,
+                            flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
+                            core0_stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
+                                1
+                            } else {
+                                mem_stats.stack_used / 1024
+                            },
+                            core0_stack_total_kb: mem_stats.stack_total / 1024,
+                            core1_stack_used_kb: crate::tasks::CORE1_STACK_USED_KB.load(Ordering::Relaxed),
+                            core1_stack_total_kb: crate::tasks::CORE1_STACK_BYTES / 1024,
+                            static_ram_kb: mem_stats.static_ram / 1024,
+                            ram_total_kb: mem_stats.ram_total / 1024,
+                            cpu0_util_percent,
+                            cpu1_util_percent,
+                            frame_cycles: frame_cycles_used,
+                            requested_cpu_hz: dashboard_pico2::clock_profile::REQUESTED_CPU_HZ,
+                            configured_cpu_hz: cpu_freq_hz,
+                            requested_spi_hz,
+                            configured_spi_hz: actual_spi_hz,
+                            requested_voltage_mv: dashboard_pico2::clock_profile::VOLTAGE_MV,
+                            vreg_setting_mv: vreg_setting_mv(),
                         },
-                        core0_stack_total_kb: mem_stats.stack_total / 1024,
-                        core1_stack_used_kb: crate::tasks::CORE1_STACK_USED_KB.load(Ordering::Relaxed),
-                        core1_stack_total_kb: crate::tasks::CORE1_STACK_BYTES / 1024,
-                        static_ram_kb: mem_stats.static_ram / 1024,
-                        ram_total_kb: mem_stats.ram_total / 1024,
-                        cpu0_util_percent,
-                        cpu1_util_percent,
-                        frame_cycles: frame_cycles_used,
-                        requested_cpu_hz: dashboard_pico2::clock_profile::REQUESTED_CPU_HZ,
-                        configured_cpu_hz: cpu_freq_hz,
-                        requested_spi_hz,
-                        configured_spi_hz: actual_spi_hz,
-                        requested_voltage_mv: dashboard_pico2::clock_profile::VOLTAGE_MV,
-                        vreg_setting_mv: vreg_setting_mv(),
-                    },
-                    controls,
-                    &mut render_work,
-                )
-                .await;
-            }
+                        controls,
+                        &mut render_work,
+                    )
+                    .await;
+                }
 
-            Page::Logs => {
-                presentation.reset();
-                dashboard_cache.invalidate(render_idx);
-                display.clear(BLACK).ok();
-                render_work.checkpoint().await;
-                draw_logs_page(&mut display, session.log_anchor(), controls, &mut render_work).await;
+                Page::Logs => {
+                    presentation.reset();
+                    dashboard_cache.invalidate(render_idx);
+                    display.clear(BLACK).ok();
+                    render_work.checkpoint().await;
+                    draw_logs_page(&mut display, session.log_anchor(), controls, &mut render_work).await;
+                }
             }
         }
 
@@ -662,6 +752,7 @@ async fn dashboard_task(
         let next_frame = if let Some(expected) = flush_in_progress.take() {
             let completed = wait_completed(&mut lifecycle, expected).await;
             assert!(led_presentation.complete(expected), "wrong indicator completion");
+            startup.completed(expected, Instant::now().as_millis());
             session
                 .backlight_mut()
                 .frame_completed(expected, Instant::now().as_millis());
@@ -773,6 +864,7 @@ async fn dashboard_task(
                 led_presentation.submit(token, presented_scene),
                 "pending indicator submission"
             );
+            startup.submitted(token);
             session.backlight_mut().frame_submitted(token);
             input_tracker.submitted();
             assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");
@@ -781,6 +873,7 @@ async fn dashboard_task(
             if cfg!(feature = "serial-display") {
                 let completed = wait_completed(&mut lifecycle, token).await;
                 assert!(led_presentation.complete(token), "wrong serial indicator completion");
+                startup.completed(token, Instant::now().as_millis());
                 session
                     .backlight_mut()
                     .frame_completed(token, Instant::now().as_millis());

@@ -252,7 +252,13 @@ pub fn install_playback(ui: Ui) {
         match set_interval_with_handle(
             move || {
                 let _ = clock.try_update(|c| {
-                    let _ = ui.sample_ms.try_set(c.sample(now()));
+                    let mut sample = c.sample(now());
+                    if ui.dock.mode.get_untracked() == PreviewMode::Startup {
+                        let end = ui.startup.profile.get_untracked().total_duration();
+                        sample = sample.min(end);
+                        if sample == end { let _ = ui.playing.try_set(false); }
+                    }
+                    let _ = ui.sample_ms.try_set(sample);
                 });
             },
             std::time::Duration::from_millis(50),
@@ -261,7 +267,9 @@ pub fn install_playback(ui: Ui) {
                 on_cleanup(move || {
                     handle.clear();
                     let _ = clock.try_update(|c| {
-                        let _ = ui.sample_ms.try_set(c.pause(now()));
+                        let sample = c.pause(now());
+                        let sample = if ui.dock.mode.get_untracked() == PreviewMode::Startup { sample.min(ui.startup.profile.get_untracked().total_duration()) } else { sample };
+                        let _ = ui.sample_ms.try_set(sample);
                     });
                 })
             }
@@ -340,6 +348,8 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         ui.warnings.get();
         ui.sample_ms.get();
         ui.sample_set.get();
+        ui.startup.profile.get();
+        ui.startup.reduced.get();
         ui.dock.mode.get();
         if ui.dock.mode.get_untracked() == PreviewMode::Simulation && ui.inspection_active() {
             ui.dock.sim.with(|s| {
@@ -406,7 +416,9 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                     result = (|| {
                         let simulation = ui.dock.mode.get_untracked() == PreviewMode::Simulation;
                         let draft = e.diagnostic();
-                        if e.has_pending_json() {
+                        if ui.dock.mode.get_untracked() == PreviewMode::Startup {
+                            p.render_startup(e.preview(), e.selection().view, ui.startup.profile.get_untracked(), ui.sample_ms.get_untracked(), ui.startup.reduced.get_untracked() || e.preview().config().reduced_motion).map(|_| ())
+                        } else if e.has_pending_json() {
                             use dashboard_configurator::json_draft::{JsonState, inspection_view};
                             match e.json_draft().map(|draft| draft.state()) {
                                 Some(JsonState::Candidate { config, .. }) => {
@@ -500,7 +512,9 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 .pixels
                 .set(json_editor::projection(ui).filter(|_| ui.json_pending()));
             ui.dock.displayed.set(
-                if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.inspection_active() {
+                if ui.dock.mode.get_untracked() == PreviewMode::Startup {
+                    PreviewMode::Startup
+                } else if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.inspection_active() {
                     PreviewMode::Simulation
                 } else {
                     PreviewMode::Appearance
@@ -549,7 +563,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
     view! {
         <div class="json-preview-status" hidden=move ||json.get().is_none() role="status"><strong>{move ||json_editor::label(ui)}</strong><span hidden=move ||!ui.json_pending()>"Apply or Discard to resume accepted edits, export and timing completion."</span><button hidden=move ||!ui.json_pending() on:click=move |_|json_editor::open(ui)>"Resolve JSON edits"</button></div>
         <div class="invalid-preview-heading" hidden=move || !ui.invalid() && !ui.dock.invalid_pixels.get() role="status"><strong>"INVALID PREVIEW"</strong><span>{move ||if ui.invalid(){"Rejected draft · save and export blocked"}else{"Last inspection pixels · restore timing pixels in Diagnostics"}}</span></div>
-        <p class="hint">{move ||if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW · candidate only; accepted acquisition and pending pixels retained"}else if ui.dock.pixels_key.get()!=Some(ui.editor.with(Editor::accepted_config_key)){"Last frame · configuration changed · submit a current frame in Diagnostics"}else if ui.dock.displayed.get()==PreviewMode::Simulation {"Synthetic Dashboard / Debug / Logs · browser completion is not physical scanout"}else if ui.dock.mode.get()==PreviewMode::Simulation {"Last appearance frame · submit or restore timing pixels in Diagnostics"}else{"Appearance preview · generated history"}}</p>
+        <p class="hint">{move ||if ui.dock.displayed.get()==PreviewMode::Startup{"Startup preview · shared Rust pixels · synthetic OBD status"}else if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW · candidate only; accepted acquisition and pending pixels retained"}else if ui.dock.pixels_key.get()!=Some(ui.editor.with(Editor::accepted_config_key)){"Last frame · configuration changed · submit a current frame in Diagnostics"}else if ui.dock.displayed.get()==PreviewMode::Simulation {"Synthetic Dashboard / Debug / Logs · browser completion is not physical scanout"}else if ui.dock.mode.get()==PreviewMode::Simulation {"Last appearance frame · submit or restore timing pixels in Diagnostics"}else{"Appearance preview · generated history"}}</p>
         <div class="display-stage" class:invalid-preview=move ||ui.invalid() ||ui.dock.invalid_pixels.get()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
                 <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if ui.json_pending(){json_editor::label(ui)}else if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent all-screen synthetic timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>

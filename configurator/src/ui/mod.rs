@@ -12,6 +12,7 @@ mod metrics;
 mod resources;
 mod simulation;
 mod stage;
+mod startup;
 mod widget_menu;
 mod workspaces;
 
@@ -72,6 +73,7 @@ pub struct Ui {
     capture: RwSignal<Option<(i32, web_sys::Element)>>,
     menu: RwSignal<Option<widget_menu::Menu>>,
     playing: RwSignal<bool>,
+    startup: startup::State,
     workspace: RwSignal<WorkspaceState>,
     inspection: RwSignal<Option<FieldTarget>>,
     error_inspection: RwSignal<Option<InspectionTarget>>,
@@ -570,6 +572,7 @@ pub fn Studio() -> impl IntoView {
         capture: RwSignal::new(None),
         menu: RwSignal::new(None),
         playing: RwSignal::new(false),
+        startup: startup::State::new(),
         workspace: RwSignal::new(workspace),
         inspection: RwSignal::new(None),
         error_inspection: RwSignal::new(None),
@@ -641,6 +644,7 @@ pub fn Studio() -> impl IntoView {
                 <section class="workspace-panel settings-panel" id="studio-panel-device" role="tabpanel" aria-labelledby="studio-tab-device" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Device)>
                     <Group ui group=GroupId::Bindings><controls::DeviceControls ui/></Group>
                     <Group ui group=GroupId::Indicator><led::LedPanel ui/></Group>
+                    <startup::Panel ui/>
                     <div class="resource-navigation"><p>"Review the accepted configuration and captured build evidence in Diagnostics."</p><button on:click=move |_|workspaces::activate(ui,Workspace::BuildFlash)>"Open Build & Flash"</button></div>
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-data-warnings" role="tabpanel" aria-labelledby="studio-tab-data-warnings" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::DataWarnings)>
@@ -679,6 +683,7 @@ pub fn Studio() -> impl IntoView {
                         </select><span>"Synthetic only · not operating limits"</span>
                     </label>
                     </div>
+                    <startup::Playback ui/>
                     <stage::Canvas ui/>
                     <div class="canvas-caption"><span>{move ||if ui.dock.mode.get()==PreviewMode::Appearance && ui.workspace.with(|s|s.active()==Workspace::Views){"Drag to place · right-click for actions · arrows to move · Esc to cancel"}else{"Synthetic device display · controls in Diagnostics"}}</span><span>{move ||if ui.dock.mode.get()==PreviewMode::Appearance{format!("Appearance preview render {:.1} ms",ui.render_ms.get())}else{"Synthetic frame · no physical timing measurement".into()}}</span></div>
                 </section>

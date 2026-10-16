@@ -8,6 +8,7 @@ use super::*;
 pub const PREFERENCES_KEY: &str = "ea888-studio-workspaces-v1";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreviewMode {
+    Startup,
     Appearance,
     Simulation,
 }

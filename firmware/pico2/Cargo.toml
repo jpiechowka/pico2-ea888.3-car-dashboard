@@ -62,5 +62,6 @@ panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 static_cell = "2.1.1"
 
 [build-dependencies]
+dashboard-config = { path = "../../crates/dashboard-config" }
 dashboard-config-tools = { path = "../../crates/dashboard-config-tools" }
 dashboard-build-profiles = { path = "../../crates/dashboard-build-profiles" }

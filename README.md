@@ -226,3 +226,13 @@ docs/               Architecture, source checks and validation records
 ## License
 
 [MIT](LICENSE).
+
+## Startup presentation
+
+Studio **Device → Startup** offers five shared Rust animations, factual status,
+timing, looping, warning interruption and warning LED controls. Defaults are a
+600 ms Brief status then 2500 ms AEZAKMI. Zero splash duration leaves status
+independent; loop off holds the final frame. Warnings normally wait for Dashboard
+while the LED may indicate them, and hidden warnings cannot be acknowledged.
+Export/import the separate `.easp` profile; legacy `.eav` remains dashboard-only.
+See [startup behavior, local builds and pending complete-project support](docs/configurator/startup.md).

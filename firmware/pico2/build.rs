@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn main() {
+    embed_startup();
     use dashboard_config_tools::clocks::{CUSTOM_KEYS, generate, selection};
     for key in CUSTOM_KEYS {
         println!("cargo:rerun-if-env-changed={key}");
@@ -86,4 +87,33 @@ fn main() {
     println!("cargo:rerun-if-changed=rp235x_riscv.x");
 
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+fn embed_startup() {
+    use std::io::Read;
+
+    use dashboard_config::startup::StartupProfile;
+    println!("cargo:rerun-if-env-changed=DASHBOARD_STARTUP_PROFILE");
+    let profile = match std::env::var_os("DASHBOARD_STARTUP_PROFILE") {
+        None => StartupProfile::DEFAULT,
+        Some(path) => {
+            assert!(!path.is_empty(), "DASHBOARD_STARTUP_PROFILE cannot be empty");
+            let path = PathBuf::from(path).canonicalize().expect("startup profile path");
+            println!("cargo:rerun-if-changed={}", path.display());
+            let mut bytes = Vec::new();
+            File::open(path)
+                .expect("open startup profile")
+                .take(17)
+                .read_to_end(&mut bytes)
+                .expect("read startup profile");
+            StartupProfile::decode(&bytes).expect("invalid .easp startup profile")
+        }
+    };
+    let bytes = profile.encode().expect("validated startup profile");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::write(out.join("startup_profile.bin"), bytes).expect("write startup profile");
+    println!(
+        "cargo:rustc-env=DASHBOARD_STARTUP_SHA256={}",
+        dashboard_config_tools::sha256_hex(&bytes)
+    );
 }

@@ -129,6 +129,54 @@ impl Preview {
 
     pub const fn mode(&self) -> PreviewMode { self.mode }
 
+    /// Same startup pixels as Pico; browser seeking makes no scanout timing claim.
+    pub fn render_startup(
+        &mut self,
+        config: &ValidatedConfig,
+        view: u8,
+        profile: dashboard_core::startup::StartupProfile,
+        elapsed: u64,
+        reduced_motion: bool,
+    ) -> Result<&[u8], PreviewError> {
+        if self.pending.is_some() {
+            return Err(PreviewError::PendingFrame);
+        }
+        let (phase, time) = dashboard_core::startup::Startup::preview(profile, elapsed);
+        if phase == dashboard_core::startup::Phase::Dashboard {
+            return self.render(
+                config,
+                view,
+                PreviewOptions {
+                    sample_ms: elapsed,
+                    ..PreviewOptions::default()
+                },
+            );
+        }
+        dashboard_core::startup::draw(
+            &mut St7789Renderer::new(&mut self.framebuffer),
+            phase,
+            profile,
+            time,
+            reduced_motion,
+            dashboard_core::startup::StartupFacts {
+                vehicle: VehicleStatus::Demo,
+                config_ok: true,
+                settings_loaded: false,
+                configured_sources: config
+                    .config()
+                    .sources
+                    .iter()
+                    .filter(|s| s.definition != dashboard_config::DefinitionId::Disabled)
+                    .count() as u8,
+            },
+        );
+        rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
+        // Appearance caches must never retain assumptions about startup pixels.
+        self.configuration = None;
+        self.presentation.reset();
+        Ok(&self.rgba)
+    }
+
     /// Draw-only adapter for borrowed synthetic/unknown diagnostics and the
     /// actual bindings. This never submits a simulator frame or advances it.
     pub fn render_debug(
