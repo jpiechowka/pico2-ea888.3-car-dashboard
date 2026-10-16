@@ -1,15 +1,18 @@
 //! Bounded complete Studio projects. Container integrity is not a signature.
 use std::sync::Arc;
 
-use dashboard_config::ValidatedConfig;
-use dashboard_config::startup::StartupProfile;
+use dashboard_config::startup::{StartupProfile, StartupTheme};
+use dashboard_config::{Geometry, ValidatedConfig};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_PROJECT_BYTES: usize = 9 * 1024 * 1024;
 pub const MAX_REDUCED_BYTES: usize = 576 * 1024;
 pub const MAX_ORIGINAL_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_RECIPE_BYTES: usize = 4096;
-pub const CONVERTER: &str = "dashboard-startup-tools/1";
+pub const CONVERTER: &str = "dashboard-startup-tools/2";
+const LEGACY_CONVERTER: &str = "dashboard-startup-tools/1";
+pub const PROJECT_VERSION: u16 = 2;
+pub const RECIPE_VERSION: u16 = 2;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectError {
     Length,
@@ -22,6 +25,8 @@ pub enum ProjectError {
     Recipe,
     Source,
     SourceUnavailable,
+    /// Converted artwork does not match the effective Splash geometry.
+    Orientation,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportMode {
@@ -73,6 +78,53 @@ pub struct Recipe {
     pub trim_end_ms: u32,
     pub sheet: Option<Sheet>,
     pub gif_background: GifBackground,
+    pub geometry: Geometry,
+}
+/// Frozen v1 JSON shape. Canonical bytes are checked before migration.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyRecipeV1 {
+    version: u16,
+    converter: String,
+    label: String,
+    source_kind: SourceKind,
+    source_sha256: [u8; 32],
+    source_length: u32,
+    original_included: bool,
+    asset_sha256: [u8; 32],
+    fit: Fit,
+    matte_rgb: [u8; 3],
+    sample_fps: u8,
+    trim_start_ms: u32,
+    trim_end_ms: u32,
+    sheet: Option<Sheet>,
+    gif_background: GifBackground,
+}
+impl LegacyRecipeV1 {
+    fn upgrade(self) -> Result<Recipe, ProjectError> {
+        if self.version != 1 || self.converter != LEGACY_CONVERTER {
+            return Err(ProjectError::Recipe);
+        }
+        Ok(Recipe {
+            version: RECIPE_VERSION,
+            // Pixels were not reconverted; retain their actual producer.
+            converter: self.converter,
+            label: self.label,
+            source_kind: self.source_kind,
+            source_sha256: self.source_sha256,
+            source_length: self.source_length,
+            original_included: self.original_included,
+            asset_sha256: self.asset_sha256,
+            fit: self.fit,
+            matte_rgb: self.matte_rgb,
+            sample_fps: self.sample_fps,
+            trim_start_ms: self.trim_start_ms,
+            trim_end_ms: self.trim_end_ms,
+            sheet: self.sheet,
+            gif_background: self.gif_background,
+            geometry: Geometry::Landscape,
+        })
+    }
 }
 /// Immutable backing identity. Browser ownership/pins retain this Arc, not source bytes.
 #[derive(Debug, PartialEq, Eq)]
@@ -114,6 +166,7 @@ pub struct Project {
     dashboard: Arc<[u8]>,
     profile: StartupProfile,
     artwork: Option<Arc<Artwork>>,
+    splash_geometry: Geometry,
 }
 
 pub fn digest(bytes: &[u8]) -> [u8; 32] { sha2_const_stable::Sha256::new().update(bytes).finalize() }
@@ -141,8 +194,9 @@ fn crc(bytes: &[u8]) -> u32 {
 }
 impl Recipe {
     fn validate(&self) -> Result<(), ProjectError> {
-        if self.version != 1
-            || self.converter != CONVERTER
+        if self.version != RECIPE_VERSION
+            || !(self.converter == CONVERTER
+                || (self.converter == LEGACY_CONVERTER && self.geometry == Geometry::Landscape))
             || self.label.len() > 128
             || self.label.chars().any(|c| c.is_control() || matches!(c, '/' | '\\'))
             || self.source_length == 0
@@ -174,7 +228,12 @@ impl Artwork {
         original: Option<Arc<[u8]>>,
     ) -> Result<Self, ProjectError> {
         recipe.validate()?;
-        validate_asset(&converted)?;
+        let asset = dashboard_config::startup_asset::Asset::parse(&converted).map_err(|_| ProjectError::Asset)?;
+        if asset.geometry() != recipe.geometry
+            || u16le(&converted, 8) != if recipe.converter == LEGACY_CONVERTER { 1 } else { 2 }
+        {
+            return Err(ProjectError::Recipe);
+        }
         if digest(&converted) != recipe.asset_sha256 {
             return Err(ProjectError::Integrity);
         }
@@ -245,14 +304,10 @@ impl Artwork {
 
     pub fn recipe(&self) -> &Recipe { &self.recipe }
 
+    pub fn geometry(&self) -> Geometry { self.recipe.geometry }
+
     pub fn original(&self) -> Option<&Arc<[u8]>> { self.original.as_ref() }
 }
-fn validate_asset(bytes: &[u8]) -> Result<(), ProjectError> {
-    dashboard_config::startup_asset::Asset::parse(bytes)
-        .map(|_| ())
-        .map_err(|_| ProjectError::Asset)
-}
-
 const HEADER: usize = 32;
 const DESCRIPTOR: usize = 48;
 const PREFIX: usize = HEADER + 5 * DESCRIPTOR;
@@ -262,14 +317,13 @@ impl Project {
         profile: StartupProfile,
         artwork: Option<Arc<Artwork>>,
     ) -> Result<Self, ProjectError> {
-        if !profile.valid() || (profile.theme as u8 == 5) != artwork.is_some() {
-            return Err(ProjectError::Profile);
-        }
+        let splash_geometry = check_project(config, profile, artwork.as_deref())?;
         let dashboard = crate::compile(config).map_err(|_| ProjectError::Dashboard)?.into();
         Ok(Self {
             dashboard,
             profile,
             artwork,
+            splash_geometry,
         })
     }
 
@@ -277,13 +331,17 @@ impl Project {
         &self,
         artwork: Arc<Artwork>,
     ) -> Result<Self, ProjectError> {
-        if self.profile.theme as u8 != 5 {
+        if self.profile.theme != StartupTheme::Custom {
             return Err(ProjectError::Profile);
+        }
+        if artwork.geometry() != self.splash_geometry {
+            return Err(ProjectError::Orientation);
         }
         Ok(Self {
             dashboard: self.dashboard.clone(),
             profile: self.profile,
             artwork: Some(artwork),
+            splash_geometry: self.splash_geometry,
         })
     }
 
@@ -334,7 +392,7 @@ impl Project {
         }
         let mut out = vec![0; PREFIX];
         out[..8].copy_from_slice(b"EAVPROJ\0");
-        out[8..10].copy_from_slice(&1u16.to_le_bytes());
+        out[8..10].copy_from_slice(&PROJECT_VERSION.to_le_bytes());
         out[10..12].copy_from_slice(&5u16.to_le_bytes());
         out[12..16].copy_from_slice(&(size as u32).to_le_bytes());
         out[16..20].copy_from_slice(&(HEADER as u32).to_le_bytes());
@@ -359,7 +417,8 @@ impl Project {
         if bytes.len() < PREFIX || bytes.len() > MAX_PROJECT_BYTES {
             return Err(ProjectError::Length);
         }
-        if &bytes[..8] != b"EAVPROJ\0" || u16le(bytes, 8) != 1 {
+        let version = u16le(bytes, 8);
+        if &bytes[..8] != b"EAVPROJ\0" || !matches!(version, 1 | PROJECT_VERSION) {
             return Err(ProjectError::Version);
         }
         if u16le(bytes, 10) != 5
@@ -413,35 +472,65 @@ impl Project {
         }
         let dashboard = dashboard_config::decode(sections[0]).map_err(|_| ProjectError::Dashboard)?;
         let canonical = crate::compile(&dashboard).map_err(|_| ProjectError::Dashboard)?;
-        if canonical != sections[0] {
+        // The old project writer emitted canonical EAVv4 and EASPv1 only.
+        // decode() already checks the frozen EAV payload before upgrading it.
+        if u16le(sections[0], 4) != if version == 1 { 4 } else { dashboard_config::VERSION }
+            || (version == PROJECT_VERSION && canonical != sections[0])
+        {
             return Err(ProjectError::Dashboard);
         }
         let profile = StartupProfile::decode(sections[1]).ok_or(ProjectError::Profile)?;
+        if sections[1][4] != if version == 1 { 1 } else { 2 } {
+            return Err(ProjectError::Profile);
+        }
         let artwork = if sections[2].is_empty() {
             if !sections[3].is_empty() || !sections[4].is_empty() {
                 return Err(ProjectError::Structure);
             }
             None
         } else {
-            let recipe: Recipe = serde_json::from_slice(sections[3]).map_err(|_| ProjectError::Recipe)?;
-            if serde_json::to_vec(&recipe).map_err(|_| ProjectError::Recipe)? != sections[3] {
-                return Err(ProjectError::Recipe);
-            }
+            let recipe = if version == 1 {
+                parse_canonical::<LegacyRecipeV1>(sections[3])?.upgrade()?
+            } else {
+                parse_canonical::<Recipe>(sections[3])?
+            };
             Some(Arc::new(Artwork::new(
                 Arc::from(sections[2]),
                 recipe,
                 (!sections[4].is_empty()).then(|| Arc::from(sections[4])),
             )?))
         };
-        if (profile.theme as u8 == 5) != artwork.is_some() {
-            return Err(ProjectError::Profile);
-        }
+        let splash_geometry = check_project(&dashboard, profile, artwork.as_deref())?;
         Ok(Self {
             dashboard: canonical.into(),
             profile,
             artwork,
+            splash_geometry,
         })
     }
+}
+fn check_project(
+    config: &ValidatedConfig,
+    profile: StartupProfile,
+    artwork: Option<&Artwork>,
+) -> Result<Geometry, ProjectError> {
+    if !profile.valid() || (profile.theme == StartupTheme::Custom) != artwork.is_some() {
+        return Err(ProjectError::Profile);
+    }
+    let geometry = profile
+        .effective_splash_orientation(config.config().orientation)
+        .geometry();
+    if artwork.is_some_and(|art| art.geometry() != geometry) {
+        return Err(ProjectError::Orientation);
+    }
+    Ok(geometry)
+}
+fn parse_canonical<T: serde::de::DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<T, ProjectError> {
+    let value = serde_json::from_slice(bytes).map_err(|_| ProjectError::Recipe)?;
+    if serde_json::to_vec(&value).map_err(|_| ProjectError::Recipe)? != bytes {
+        return Err(ProjectError::Recipe);
+    }
+    Ok(value)
 }
 fn u16le(
     b: &[u8],

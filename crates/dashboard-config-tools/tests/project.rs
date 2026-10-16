@@ -2,6 +2,21 @@ use dashboard_config::startup::{StartupProfile, StartupTheme};
 use dashboard_config::{default_config, validate};
 use dashboard_config_tools::project::*;
 #[test]
+fn frozen_legacy_project_migrates_to_current_dashboard_and_profile() {
+    let project = Project::decode(include_bytes!("fixtures/v1-landscape.eavp")).unwrap();
+    let dashboard = dashboard_config::decode(project.dashboard_bytes()).unwrap();
+    assert_eq!(dashboard.config().orientation, dashboard_config::Orientation::Landscape);
+    assert!(dashboard.config().views.iter().all(|view| view.orientation.is_none()));
+    assert!(project.profile().status_orientation.is_none());
+    assert!(project.profile().splash_orientation.is_none());
+    let bytes = project.encode(ExportMode::Complete).unwrap();
+    assert_eq!(u16::from_le_bytes(bytes[8..10].try_into().unwrap()), 2);
+    assert_eq!(
+        Project::decode(&bytes).unwrap().encode(ExportMode::Complete).unwrap(),
+        bytes
+    );
+}
+#[test]
 fn complete_project_round_trip_and_header_bounds() {
     let config = validate(default_config()).unwrap();
     let profile = StartupProfile {
@@ -23,7 +38,7 @@ fn complete_project_round_trip_and_header_bounds() {
     bad.push(0);
     assert!(Project::decode(&bad).is_err());
     let mut bad = bytes.clone();
-    bad[8] = 2;
+    bad[8] = 3;
     assert!(Project::decode(&bad).is_err());
     let mut bad = bytes.clone();
     *bad.last_mut().unwrap() ^= 1;
@@ -31,21 +46,22 @@ fn complete_project_round_trip_and_header_bounds() {
 }
 
 use std::sync::Arc;
-fn artwork() -> Arc<Artwork> {
+fn artwork() -> Arc<Artwork> { artwork_in(dashboard_config::Geometry::Landscape) }
+fn artwork_in(geometry: dashboard_config::Geometry) -> Arc<Artwork> {
     use dashboard_config::startup_asset::{MAGIC, asset_crc32, crc32};
     let mut asset = vec![0; 52];
     asset[..8].copy_from_slice(MAGIC);
-    asset[8..10].copy_from_slice(&1u16.to_le_bytes());
+    asset[8..10].copy_from_slice(&dashboard_config::startup_asset::VERSION.to_le_bytes());
     asset[10..12].copy_from_slice(&32u16.to_le_bytes());
-    asset[16..18].copy_from_slice(&320u16.to_le_bytes());
-    asset[18..20].copy_from_slice(&240u16.to_le_bytes());
+    asset[16..18].copy_from_slice(&geometry.width().to_le_bytes());
+    asset[18..20].copy_from_slice(&geometry.height().to_le_bytes());
     asset[20..22].copy_from_slice(&1u16.to_le_bytes());
     asset[24..28].copy_from_slice(&100u32.to_le_bytes());
     asset[32..36].copy_from_slice(&100u32.to_le_bytes());
     asset[36..40].copy_from_slice(&52u32.to_le_bytes());
     let mut payload = Vec::new();
-    for _ in 0..240 {
-        payload.extend_from_slice(&0x813Fu16.to_le_bytes());
+    for _ in 0..geometry.height() {
+        payload.extend_from_slice(&(0x8000 | (geometry.width() - 1)).to_le_bytes());
         payload.extend_from_slice(&[0xF8, 0]);
     }
     asset[40..44].copy_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -58,7 +74,7 @@ fn artwork() -> Arc<Artwork> {
     asset[28..32].copy_from_slice(&crc.to_le_bytes());
     let source: Arc<[u8]> = Arc::from(&b"\x89PNG\r\n\x1a\nsynthetic-original"[..]);
     let recipe = Recipe {
-        version: 1,
+        version: RECIPE_VERSION,
         converter: CONVERTER.into(),
         label: "Example".into(),
         source_kind: SourceKind::Png,
@@ -73,6 +89,7 @@ fn artwork() -> Arc<Artwork> {
         trim_end_ms: 100,
         sheet: None,
         gif_background: GifBackground::Logical,
+        geometry,
     };
     Arc::new(Artwork::new(asset.into(), recipe, Some(source)).unwrap())
 }
@@ -106,6 +123,197 @@ fn smaller_projection_preserves_exact_pixels_and_does_not_mutate_original() {
     let mut recipe = art.recipe().clone();
     recipe.sample_fps = 21;
     assert!(Artwork::new(Arc::from(art.converted()), recipe, art.original().cloned()).is_err());
+}
+
+#[test]
+fn splash_geometry_mismatch_cannot_be_admitted_as_a_project() {
+    let config = validate(default_config()).unwrap();
+    let profile = StartupProfile {
+        theme: StartupTheme::Custom,
+        splash_orientation: Some(dashboard_config::Orientation::Portrait),
+        ..StartupProfile::default()
+    };
+    assert!(matches!(
+        Project::new(&config, profile, Some(artwork())),
+        Err(ProjectError::Orientation)
+    ));
+}
+
+#[test]
+fn all_mountings_resolve_inheritance_without_reinterpreting_artwork() {
+    use dashboard_config::{Geometry, Orientation};
+    for default in Orientation::ALL {
+        let mut config = default_config();
+        config.orientation = default;
+        // Keep the default eight single-cell widgets in the new grid.
+        for (index, widget) in config.widgets.iter_mut().enumerate() {
+            widget.placement.column = index as u8 % default.geometry().columns();
+            widget.placement.row = index as u8 / default.geometry().columns();
+        }
+        let config = validate(config).unwrap();
+        for override_ in [None].into_iter().chain(Orientation::ALL.map(Some)) {
+            let geometry = override_.unwrap_or(default).geometry();
+            let profile = StartupProfile {
+                theme: StartupTheme::Custom,
+                splash_orientation: override_,
+                status_orientation: Some(Orientation::PortraitInverted),
+                ..Default::default()
+            };
+            let art = artwork_in(geometry);
+            let project = Project::new(&config, profile, Some(art.clone())).unwrap();
+            let bytes = project.encode(ExportMode::Complete).unwrap();
+            let restored = Project::decode(&bytes).unwrap();
+            assert_eq!(restored.profile(), profile);
+            assert_eq!(restored.artwork().unwrap().converted(), art.converted());
+            assert_eq!(restored.encode(ExportMode::Complete).unwrap(), bytes);
+            let other = if geometry == Geometry::Portrait {
+                Geometry::Landscape
+            } else {
+                Geometry::Portrait
+            };
+            assert!(matches!(
+                project.with_artwork(artwork_in(other)),
+                Err(ProjectError::Orientation)
+            ));
+        }
+    }
+}
+
+fn sections(bytes: &[u8]) -> [Vec<u8>; 5] {
+    core::array::from_fn(|index| {
+        let at = 32 + index * 48;
+        let offset = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        let length = u32::from_le_bytes(bytes[at + 8..at + 12].try_into().unwrap()) as usize;
+        bytes[offset..offset + length].to_vec()
+    })
+}
+
+/// Independently reseal containers so semantic failures survive valid checksums.
+fn container(
+    version: u16,
+    parts: &[Vec<u8>; 5],
+) -> Vec<u8> {
+    let mut bytes = vec![0u8; 272];
+    bytes[..8].copy_from_slice(b"EAVPROJ\0");
+    bytes[8..10].copy_from_slice(&version.to_le_bytes());
+    bytes[10..12].copy_from_slice(&5u16.to_le_bytes());
+    bytes[16..20].copy_from_slice(&32u32.to_le_bytes());
+    for (index, part) in parts.iter().enumerate() {
+        let at = 32 + index * 48;
+        bytes[at..at + 2].copy_from_slice(&(index as u16 + 1).to_le_bytes());
+        if part.is_empty() {
+            continue;
+        }
+        let offset = bytes.len() as u32;
+        bytes[at + 4..at + 8].copy_from_slice(&offset.to_le_bytes());
+        bytes[at + 8..at + 12].copy_from_slice(&(part.len() as u32).to_le_bytes());
+        bytes[at + 12..at + 16].copy_from_slice(&dashboard_config::crc32(part).to_le_bytes());
+        bytes[at + 16..at + 48].copy_from_slice(&digest(part));
+        bytes.extend_from_slice(part);
+    }
+    let length = bytes.len() as u32;
+    bytes[12..16].copy_from_slice(&length.to_le_bytes());
+    let crc = dashboard_config::crc32(&bytes[..28]);
+    bytes[28..32].copy_from_slice(&crc.to_le_bytes());
+    bytes
+}
+
+#[test]
+fn legacy_artwork_migration_preserves_pixels_original_and_producer() {
+    let mut parts = sections(include_bytes!("fixtures/v1-landscape.eavp"));
+    let art = artwork();
+    let profile = StartupProfile {
+        theme: StartupTheme::Custom,
+        ..Default::default()
+    };
+    parts[1] = profile.encode().unwrap().to_vec();
+    parts[1][4] = 1;
+    parts[2] = art.converted().to_vec();
+    parts[2][8..10].copy_from_slice(&1u16.to_le_bytes());
+    let crc = dashboard_config::startup_asset::asset_crc32(&parts[2]).unwrap();
+    parts[2][28..32].copy_from_slice(&crc.to_le_bytes());
+    // Synthetic historical artwork section: exactly the old field order/shape.
+    let mut recipe = art.recipe().clone();
+    recipe.version = 1;
+    recipe.converter = "dashboard-startup-tools/1".into();
+    recipe.asset_sha256 = digest(&parts[2]);
+    let json = serde_json::to_string(&recipe).unwrap();
+    parts[3] = format!("{}}}", json.strip_suffix(",\"geometry\":\"Landscape\"}").unwrap()).into_bytes();
+    parts[4] = art.original().unwrap().to_vec();
+    let restored = Project::decode(&container(1, &parts)).unwrap();
+    let migrated = restored.artwork().unwrap();
+    assert_eq!(migrated.recipe().version, RECIPE_VERSION);
+    assert_eq!(migrated.recipe().converter, "dashboard-startup-tools/1");
+    assert_eq!(migrated.geometry(), dashboard_config::Geometry::Landscape);
+    assert_eq!(migrated.converted(), parts[2]);
+    assert_eq!(migrated.original().unwrap().as_ref(), parts[4]);
+    let current = restored.encode(ExportMode::Complete).unwrap();
+    assert_eq!(
+        Project::decode(&current).unwrap().encode(ExportMode::Complete).unwrap(),
+        current
+    );
+    // A current profile in a resealed old container is not a historical file.
+    parts[1][4] = 2;
+    assert_eq!(
+        Project::decode(&container(1, &parts)).unwrap_err(),
+        ProjectError::Profile
+    );
+}
+
+#[test]
+fn resealed_mixed_versions_mismatch_and_noncanonical_recipes_are_rejected() {
+    let project = Project::new(
+        &validate(default_config()).unwrap(),
+        StartupProfile {
+            theme: StartupTheme::Custom,
+            ..Default::default()
+        },
+        Some(artwork()),
+    )
+    .unwrap();
+    let original = sections(&project.encode(ExportMode::Complete).unwrap());
+    let mut parts = original.clone();
+    parts[0] = sections(include_bytes!("fixtures/v1-landscape.eavp"))[0].clone();
+    assert_eq!(
+        Project::decode(&container(PROJECT_VERSION, &parts)).unwrap_err(),
+        ProjectError::Dashboard
+    );
+    assert_eq!(
+        Project::decode(&container(1, &original)).unwrap_err(),
+        ProjectError::Dashboard
+    );
+    let mut parts = original.clone();
+    parts[1][4] = 1;
+    assert_eq!(
+        Project::decode(&container(PROJECT_VERSION, &parts)).unwrap_err(),
+        ProjectError::Profile
+    );
+    let mut parts = original.clone();
+    parts[1][13] = 2; // Valid Portrait override, wrong for the retained landscape pixels.
+    assert_eq!(
+        Project::decode(&container(PROJECT_VERSION, &parts)).unwrap_err(),
+        ProjectError::Orientation
+    );
+    for changed in [
+        String::from_utf8(original[3].clone())
+            .unwrap()
+            .replace("\"geometry\":\"Landscape\"", "\"geometry\":\"Portrait\""),
+        String::from_utf8(original[3].clone())
+            .unwrap()
+            .replace(",\"geometry\":\"Landscape\"", ""),
+        String::from_utf8(original[3].clone()).unwrap().replace(
+            "\"geometry\":\"Landscape\"",
+            "\"geometry\":\"Landscape\",\"geometry\":\"Landscape\"",
+        ),
+        format!(" {}", String::from_utf8(original[3].clone()).unwrap()),
+    ] {
+        let mut parts = original.clone();
+        parts[3] = changed.into_bytes();
+        assert_eq!(
+            Project::decode(&container(PROJECT_VERSION, &parts)).unwrap_err(),
+            ProjectError::Recipe
+        );
+    }
 }
 
 #[test]
