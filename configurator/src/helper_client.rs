@@ -1,7 +1,8 @@
 //! Bounded browser-side job history. Capabilities stay outside diagnostic state.
 use std::collections::VecDeque;
 
-use dashboard_config_tools::project::{ExportMode, digest};
+use dashboard_config_tools::project::ExportMode;
+use dashboard_config_tools::sha256_hex;
 use dashboard_helper_protocol::{
     BuildOptions,
     Event,
@@ -99,12 +100,11 @@ impl PreparedBuild {
         if bytes.len() > dashboard_helper_protocol::PROJECT_UPLOAD_BYTES {
             return Err("Project exceeds the build upload bound");
         }
-        let hash = |data: &[u8]| digest(data).iter().map(|b| format!("{b:02x}")).collect();
         let hashes = [
-            hash(&bytes),
-            hash(project.dashboard_bytes()),
-            hash(&project.profile().encode().ok_or("Invalid startup profile")?),
-            hash(project.artwork().map_or(&[], |a| a.converted())),
+            sha256_hex(&bytes),
+            sha256_hex(project.dashboard_bytes()),
+            sha256_hex(&project.profile().encode().ok_or("Invalid startup profile")?),
+            sha256_hex(project.artwork().map_or(&[], |a| a.converted())),
         ];
         Ok(Self {
             stamp: editor.stamp(),
@@ -164,7 +164,7 @@ pub fn verify_artifact_download(
     if bytes.len() != artifact.uf2_bytes as usize || bytes.len() > dashboard_helper_protocol::MAX_UF2_BYTES {
         return Err("Artifact download length does not match its admitted metadata");
     }
-    let hash: String = digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+    let hash = sha256_hex(bytes);
     if hash != artifact.uf2_sha256.as_str() {
         return Err("Artifact download checksum mismatch");
     }

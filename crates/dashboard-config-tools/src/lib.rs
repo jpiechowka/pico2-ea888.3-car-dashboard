@@ -49,14 +49,16 @@ impl core::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::new().update(bytes).finalize();
-    let mut text = String::with_capacity(64);
-    for byte in digest {
+/// Lowercase, zero-padded bytes shared by identities and portable recipe snapshots.
+pub fn hex_bytes(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
         write!(text, "{byte:02x}").expect("writing a String cannot fail");
     }
     text
 }
+
+pub fn sha256_hex(bytes: &[u8]) -> String { hex_bytes(&Sha256::new().update(bytes).finalize()) }
 
 pub fn read_bounded(
     path: &Path,

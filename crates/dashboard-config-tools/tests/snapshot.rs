@@ -188,3 +188,18 @@ fn v3_input_and_complete_v4_globals_use_ordinary_prepare_and_compile() {
     assert_eq!(prepared.bytes(), bytes);
     assert_eq!(decode(prepared.bytes()).unwrap(), expected);
 }
+
+#[test]
+fn byte_encoding_is_lowercase_zero_padded_and_roundtrips_every_byte() {
+    let bytes = (0..=255u8).collect::<Vec<_>>();
+    let text = hex_bytes(&bytes);
+    assert_eq!(text.len(), 512);
+    assert!(text.starts_with("000102030405060708090a0b0c0d0e0f"));
+    let decoded = text
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(decoded, bytes);
+    assert_eq!(hex_bytes(&[]), "");
+}

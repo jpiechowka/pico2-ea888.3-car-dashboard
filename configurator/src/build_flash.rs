@@ -2,6 +2,7 @@
 use std::fmt::Write;
 
 use dashboard_build_profiles::{ClockError, ClockSelection, CustomClock, ProfileId, ResolvedClock, Voltage};
+use dashboard_config_tools::hex_bytes;
 use dashboard_helper_protocol::{BuildOptions, Mode, NormalizedBuildOptions, normalize};
 
 use crate::editor::{ActionBlock, Editor};
@@ -270,14 +271,6 @@ impl BuildRecipe {
     }
 
     pub fn powershell(&self) -> String {
-        let mut hex = String::with_capacity(self.eav.len() * 2);
-        for byte in &self.eav {
-            write!(hex, "{byte:02x}").expect("writing to String cannot fail");
-        }
-        let mut startup_hex = String::with_capacity(32);
-        for byte in &self.startup {
-            write!(startup_hex, "{byte:02x}").expect("writing to String cannot fail");
-        }
         let opts = &self.normalized.requested;
         let mut arguments = format!(
             "    Mode = '{}'\n    Optimization = '{}'\n    FrameTrace = ${}\n    TeTrace = ${}\n    SerialDisplay = \
@@ -316,8 +309,8 @@ impl BuildRecipe {
         }
         include_str!("build_flash/recipe.ps1.in")
             .replace("@@TOOLCHAIN@@", self.toolchain)
-            .replace("@@EAV@@", &hex)
-            .replace("@@STARTUP@@", &startup_hex)
+            .replace("@@EAV@@", &hex_bytes(&self.eav))
+            .replace("@@STARTUP@@", &hex_bytes(&self.startup))
             .replace("@@ASSET@@", &hex_bytes(self.artwork_bytes().unwrap_or_default()))
             .replace("@@EAV_SHA@@", &hex_bytes(&self.config_sha256()))
             .replace("@@STARTUP_SHA@@", &hex_bytes(&self.startup_sha256()))
@@ -344,12 +337,4 @@ pub fn profile_by_id(id: ProfileId) -> &'static dashboard_build_profiles::Profil
         .iter()
         .find(|p| p.id == id)
         .expect("closed profile catalogue")
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut result = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(result, "{byte:02x}").expect("String write cannot fail");
-    }
-    result
 }

@@ -100,7 +100,7 @@ impl OriginalReference {
 
     pub fn is_empty(&self) -> bool { false }
 
-    pub fn key(&self) -> String { self.sha256.iter().map(|b| format!("{b:02x}")).collect() }
+    pub fn key(&self) -> String { crate::hex_bytes(&self.sha256) }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artwork {
