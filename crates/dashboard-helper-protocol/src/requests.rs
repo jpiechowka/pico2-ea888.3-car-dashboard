@@ -133,6 +133,7 @@ pub struct ProjectUploadResponse {
 }
 impl Wire for ProjectUploadResponse {
     const MAX_BYTES: usize = 4096;
+
     fn validate(&self) -> Result<(), Error> { Ok(()) }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,5 +147,9 @@ pub struct ProjectBuildRequest {
 }
 impl Wire for ProjectBuildRequest {
     const MAX_BYTES: usize = REQUEST_BYTES;
-    fn validate(&self) -> Result<(), Error> { normalize(&self.options)?; Ok(()) }
+
+    fn validate(&self) -> Result<(), Error> {
+        normalize(&self.options)?;
+        Ok(())
+    }
 }

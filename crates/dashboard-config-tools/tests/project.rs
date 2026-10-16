@@ -111,7 +111,11 @@ fn source_sheet_timing_is_distinct_from_converted_frame_minimum() {
     let art = artwork();
     let mut recipe = art.recipe().clone();
     recipe.source_kind = SourceKind::SpriteSheet;
-    recipe.sheet = Some(Sheet { columns: 2, rows: 1, frame_ms: 1 });
+    recipe.sheet = Some(Sheet {
+        columns: 2,
+        rows: 1,
+        frame_ms: 1,
+    });
     assert!(Artwork::new(Arc::from(art.converted()), recipe.clone(), art.original().cloned()).is_ok());
     recipe.sheet.as_mut().unwrap().frame_ms = 0;
     assert!(Artwork::new(Arc::from(art.converted()), recipe.clone(), art.original().cloned()).is_err());

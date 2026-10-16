@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use dashboard_config::*;
 use dashboard_config::startup::StartupProfile;
-use dashboard_config_tools::project::{Project, ProjectError, Artwork, ExportMode};
-use std::sync::Arc;
+use dashboard_config::*;
+use dashboard_config_tools::project::{Artwork, ExportMode, Project, ProjectError};
 use serde::{Deserialize, Serialize};
 
 use crate::appearance_presets::{
@@ -458,7 +458,12 @@ impl Editor {
             .map_err(|_| EditorError::CounterExhausted)?;
         Ok(Self {
             owner,
-            accepted: Box::new(Accepted { preview, selection, startup: StartupProfile::default(), artwork: None }),
+            accepted: Box::new(Accepted {
+                preview,
+                selection,
+                startup: StartupProfile::default(),
+                artwork: None,
+            }),
             revision: Revision(0),
             accepted_revision: Revision(0),
             accepted_config_revision: Revision(0),
@@ -479,45 +484,103 @@ impl Editor {
     }
 
     pub fn startup_profile(&self) -> StartupProfile { self.accepted.startup }
+
     pub fn startup_artwork(&self) -> Option<&Arc<Artwork>> { self.accepted.artwork.as_ref() }
 
     /// A cheap immutable snapshot; artwork byte allocations are shared with history.
-    pub fn accepted_project(&self) -> Result<Project,EditorError> {
+    pub fn accepted_project(&self) -> Result<Project, EditorError> {
         self.ensure_snapshot_ready()?;
-        Project::new(self.preview(),self.accepted.startup,self.accepted.artwork.clone()).map_err(EditorError::Project)
+        Project::new(self.preview(), self.accepted.startup, self.accepted.artwork.clone()).map_err(EditorError::Project)
     }
-    pub fn export_project(&self, mode: ExportMode) -> Result<Vec<u8>,EditorError> {
+
+    pub fn export_project(
+        &self,
+        mode: ExportMode,
+    ) -> Result<Vec<u8>, EditorError> {
         self.accepted_project()?.encode(mode).map_err(EditorError::Project)
     }
-    pub fn set_startup_profile(&mut self, profile: StartupProfile) -> Result<Revision, EditorError> {
+
+    pub fn set_startup_profile(
+        &mut self,
+        profile: StartupProfile,
+    ) -> Result<Revision, EditorError> {
         self.ensure_snapshot_ready()?;
-        let artwork = if profile.theme == dashboard_config::startup::StartupTheme::Custom { self.accepted.artwork.clone() } else { None };
-        Project::new(self.preview(),profile,artwork.clone()).map_err(EditorError::Project)?;
-        self.accept_project(self.preview().clone(),self.accepted.selection,profile,artwork)
+        let artwork = if profile.theme == dashboard_config::startup::StartupTheme::Custom {
+            self.accepted.artwork.clone()
+        } else {
+            None
+        };
+        Project::new(self.preview(), profile, artwork.clone()).map_err(EditorError::Project)?;
+        self.accept_project(self.preview().clone(), self.accepted.selection, profile, artwork)
     }
-    pub fn set_artwork_if_current(&mut self, stamp:EditorStamp, artwork:Arc<Artwork>) -> Result<Revision,EditorError> {
-        if stamp != self.stamp() {return Err(EditorError::StaleToken);}
+
+    pub fn set_artwork_if_current(
+        &mut self,
+        stamp: EditorStamp,
+        artwork: Arc<Artwork>,
+    ) -> Result<Revision, EditorError> {
+        if stamp != self.stamp() {
+            return Err(EditorError::StaleToken);
+        }
         self.ensure_snapshot_ready()?;
-        let mut profile = self.accepted.startup; profile.theme = dashboard_config::startup::StartupTheme::Custom;
-        self.accept_project(self.preview().clone(),self.accepted.selection,profile,Some(artwork))
+        let mut profile = self.accepted.startup;
+        profile.theme = dashboard_config::startup::StartupTheme::Custom;
+        self.accept_project(self.preview().clone(), self.accepted.selection, profile, Some(artwork))
     }
-    fn accept_project(&mut self, preview:ValidatedConfig, selection:Selection, startup:StartupProfile, artwork:Option<Arc<Artwork>>) -> Result<Revision,EditorError> {
+
+    fn accept_project(
+        &mut self,
+        preview: ValidatedConfig,
+        selection: Selection,
+        startup: StartupProfile,
+        artwork: Option<Arc<Artwork>>,
+    ) -> Result<Revision, EditorError> {
         let same_config = same_canonical_config(self.preview(), &preview)?;
-        let same_artwork = match (&self.accepted.artwork,&artwork) { (None,None)=>true, (Some(a),Some(b))=>Arc::ptr_eq(a,b) || a.recipe()==b.recipe(), _=>false };
-        if same_config && selection == self.accepted.selection && startup == self.accepted.startup && same_artwork {return Ok(self.revision);}
-        let revision=self.next_revision()?;
-        let current=std::mem::replace(&mut self.accepted, Box::new(Accepted{preview,selection,startup,artwork}));
-        push_history(&mut self.undo,current); self.redo.clear(); self.changed(revision); self.accepted_revision=revision;
-        if !same_config {self.accepted_config_revision=revision;}
+        let same_artwork = match (&self.accepted.artwork, &artwork) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.recipe() == b.recipe(),
+            _ => false,
+        };
+        if same_config && selection == self.accepted.selection && startup == self.accepted.startup && same_artwork {
+            return Ok(self.revision);
+        }
+        let revision = self.next_revision()?;
+        let current = std::mem::replace(
+            &mut self.accepted,
+            Box::new(Accepted {
+                preview,
+                selection,
+                startup,
+                artwork,
+            }),
+        );
+        push_history(&mut self.undo, current);
+        self.redo.clear();
+        self.changed(revision);
+        self.accepted_revision = revision;
+        if !same_config {
+            self.accepted_config_revision = revision;
+        }
         Ok(revision)
     }
-    pub fn complete_project_import(&mut self, token:ImportToken, bytes:&[u8]) -> Result<Revision,EditorError> {
-        if !self.import_is_current(token) {return Err(EditorError::StaleToken);}
-        self.ensure_clean()?; self.import=None;
-        let project=Project::decode(bytes).map_err(EditorError::Project)?;
-        let preview=decode(project.dashboard_bytes()).map_err(EditorError::Codec)?;
-        let selection=Selection{view:preview.config().boot_view,widget:None};
-        self.accept_project(preview,selection,project.profile(),project.artwork().cloned())
+
+    pub fn complete_project_import(
+        &mut self,
+        token: ImportToken,
+        bytes: &[u8],
+    ) -> Result<Revision, EditorError> {
+        if !self.import_is_current(token) {
+            return Err(EditorError::StaleToken);
+        }
+        self.ensure_clean()?;
+        self.import = None;
+        let project = Project::decode(bytes).map_err(EditorError::Project)?;
+        let preview = decode(project.dashboard_bytes()).map_err(EditorError::Codec)?;
+        let selection = Selection {
+            view: preview.config().boot_view,
+            widget: None,
+        };
+        self.accept_project(preview, selection, project.profile(), project.artwork().cloned())
     }
 
     pub fn preview(&self) -> &ValidatedConfig { &self.accepted.preview }
@@ -691,7 +754,12 @@ impl Editor {
         };
         let changed_config = !same_canonical_config(self.preview(), &preview)?;
         let revision = self.next_revision()?;
-        let next = Box::new(Accepted { preview, selection, startup: self.accepted.startup, artwork: self.accepted.artwork.clone() });
+        let next = Box::new(Accepted {
+            preview,
+            selection,
+            startup: self.accepted.startup,
+            artwork: self.accepted.artwork.clone(),
+        });
         let current = std::mem::replace(&mut self.accepted, next);
         push_history(&mut self.undo, current);
         self.redo.clear();
@@ -1021,7 +1089,7 @@ impl Editor {
             selected_widget: self.selection().widget,
             config: self.preview().config(),
             startup: self.accepted.startup,
-            artwork: self.accepted.artwork.as_ref().map(|a|a.identity()),
+            artwork: self.accepted.artwork.as_ref().map(|a| a.identity()),
         };
         let json = serde_json::to_string(&envelope).map_err(json_error)?;
         if json.len() > MAX_SAVED_BYTES {
@@ -1077,9 +1145,14 @@ impl Editor {
         };
         let restored =
             dashboard_config::from_json_bytes(envelope.config.get().as_bytes()).map_err(EditorError::Codec)?;
-        if !envelope.startup.valid() || envelope.artwork.is_some() || envelope.startup.theme == dashboard_config::startup::StartupTheme::Custom {return Err(EditorError::Project(ProjectError::Profile));}
+        if !envelope.startup.valid()
+            || envelope.artwork.is_some()
+            || envelope.startup.theme == dashboard_config::startup::StartupTheme::Custom
+        {
+            return Err(EditorError::Project(ProjectError::Profile));
+        }
         let mut editor = Self::new(restored.config().clone())?;
-        editor.accepted.startup=envelope.startup;
+        editor.accepted.startup = envelope.startup;
         check_selection(editor.preview().config(), selection)?;
         editor.accepted.selection = selection;
         editor.saved_revision = Some(editor.revision);
@@ -1087,17 +1160,38 @@ impl Editor {
     }
 
     /// Restore the atomically stored complete project and its bounded selection envelope.
-    pub fn from_project_saved(bytes:&[u8], envelope:&str) -> Result<Self,EditorError> {
-        if envelope.len()>MAX_SAVED_BYTES {return Err(EditorError::Codec(ConfigError::Length));}
-        let saved:SavedEnvelope<Box<serde_json::value::RawValue>>=serde_json::from_str(envelope).map_err(json_error)?;
-        if saved.editor_version!=SAVED_STATE_VERSION {return Err(EditorError::SavedVersion);}
-        let project=Project::decode(bytes).map_err(EditorError::Project)?;
-        let dashboard=from_json_bytes(saved.config.get().as_bytes()).map_err(EditorError::Codec)?;
-        let expected=Project::new(&dashboard,saved.startup,project.artwork().cloned()).map_err(EditorError::Project)?;
-        if expected.dashboard_bytes()!=project.dashboard_bytes() || saved.startup!=project.profile() || saved.artwork!=project.artwork().map(|a|a.identity()) {return Err(EditorError::Project(ProjectError::Integrity));}
-        let mut editor=Self::new(dashboard.config().clone())?;
-        let selection=Selection{view:saved.selected_view,widget:saved.selected_widget}; check_selection(editor.preview().config(),selection)?;
-        editor.accepted.selection=selection;editor.accepted.startup=project.profile();editor.accepted.artwork=project.artwork().cloned();editor.saved_revision=Some(editor.revision);
+    pub fn from_project_saved(
+        bytes: &[u8],
+        envelope: &str,
+    ) -> Result<Self, EditorError> {
+        if envelope.len() > MAX_SAVED_BYTES {
+            return Err(EditorError::Codec(ConfigError::Length));
+        }
+        let saved: SavedEnvelope<Box<serde_json::value::RawValue>> =
+            serde_json::from_str(envelope).map_err(json_error)?;
+        if saved.editor_version != SAVED_STATE_VERSION {
+            return Err(EditorError::SavedVersion);
+        }
+        let project = Project::decode(bytes).map_err(EditorError::Project)?;
+        let dashboard = from_json_bytes(saved.config.get().as_bytes()).map_err(EditorError::Codec)?;
+        let expected =
+            Project::new(&dashboard, saved.startup, project.artwork().cloned()).map_err(EditorError::Project)?;
+        if expected.dashboard_bytes() != project.dashboard_bytes()
+            || saved.startup != project.profile()
+            || saved.artwork != project.artwork().map(|a| a.identity())
+        {
+            return Err(EditorError::Project(ProjectError::Integrity));
+        }
+        let mut editor = Self::new(dashboard.config().clone())?;
+        let selection = Selection {
+            view: saved.selected_view,
+            widget: saved.selected_widget,
+        };
+        check_selection(editor.preview().config(), selection)?;
+        editor.accepted.selection = selection;
+        editor.accepted.startup = project.profile();
+        editor.accepted.artwork = project.artwork().cloned();
+        editor.saved_revision = Some(editor.revision);
         Ok(editor)
     }
 
@@ -1191,7 +1285,9 @@ impl Editor {
         format: ImportFormat,
         bytes: &[u8],
     ) -> Result<Revision, EditorError> {
-        if format == ImportFormat::Project { return self.complete_project_import(token,bytes); }
+        if format == ImportFormat::Project {
+            return self.complete_project_import(token, bytes);
+        }
         if self.import != Some(token) || token.revision != self.revision {
             return Err(EditorError::StaleToken);
         }
@@ -1904,7 +2000,12 @@ impl Editor {
             return Ok(self.revision);
         }
         let revision = self.next_revision()?;
-        let next = Box::new(Accepted { preview, selection, startup: self.accepted.startup, artwork: self.accepted.artwork.clone() });
+        let next = Box::new(Accepted {
+            preview,
+            selection,
+            startup: self.accepted.startup,
+            artwork: self.accepted.artwork.clone(),
+        });
         let current = std::mem::replace(&mut self.accepted, next);
         push_history(&mut self.undo, current);
         self.redo.clear();

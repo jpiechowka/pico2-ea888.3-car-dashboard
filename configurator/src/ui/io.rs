@@ -132,42 +132,51 @@ pub(super) fn reload_presets(ui: Ui) {
 }
 
 pub fn restore() -> (Editor, String, Option<String>, Result<(), StorageIssue>) {
-    let (mut editor,mut notice,saved,status)=match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
-        Ok(Some(json)) => {
-            match Editor::from_saved_state(json.as_bytes()) {
-                Ok(editor) => (editor, String::new(), Some(json), Ok(())),
-                Err(_) => {
-                    (
-                        Editor::default(),
-                        "The browser draft is invalid or incompatible. Default view loaded; the old draft has not \
-                         been overwritten."
-                            .into(),
-                        Some(json),
-                        Err(StorageIssue::Corrupt),
-                    )
+    let (mut editor, mut notice, saved, status) =
+        match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
+            Ok(Some(json)) => {
+                match Editor::from_saved_state(json.as_bytes()) {
+                    Ok(editor) => (editor, String::new(), Some(json), Ok(())),
+                    Err(_) => {
+                        (
+                            Editor::default(),
+                            "The browser draft is invalid or incompatible. Default view loaded; the old draft has not \
+                             been overwritten."
+                                .into(),
+                            Some(json),
+                            Err(StorageIssue::Corrupt),
+                        )
+                    }
                 }
             }
-        }
-        Ok(None) => (Editor::default(), String::new(), None, Ok(())),
-        Err(failure) => {
-            (
-                Editor::default(),
-                "Browser storage is unavailable. You can still export your configuration to a file.".into(),
-                None,
-                Err(StorageIssue::Failure(failure)),
-            )
-        }
-    };
+            Ok(None) => (Editor::default(), String::new(), None, Ok(())),
+            Err(failure) => {
+                (
+                    Editor::default(),
+                    "Browser storage is unavailable. You can still export your configuration to a file.".into(),
+                    None,
+                    Err(StorageIssue::Failure(failure)),
+                )
+            }
+        };
     // Migrate the earlier separate profile only when the dashboard envelope predates project state.
-    let has_startup=saved.as_deref().filter(|text|text.len()<=MAX_SAVED_BYTES).and_then(|text|serde_json::from_str::<serde_json::Value>(text).ok()).is_some_and(|v|v.get("startup").is_some());
+    let has_startup = saved
+        .as_deref()
+        .filter(|text| text.len() <= MAX_SAVED_BYTES)
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .is_some_and(|v| v.get("startup").is_some());
     if !has_startup
-        && let Some(text) = storage().ok().and_then(|s|s.get_item("ea888-startup-profile-v1").ok().flatten()).filter(|s|s.len()<=1024)
+        && let Some(text) = storage()
+            .ok()
+            .and_then(|s| s.get_item("ea888-startup-profile-v1").ok().flatten())
+            .filter(|s| s.len() <= 1024)
         && let Ok(profile) = serde_json::from_str::<dashboard_core::startup::StartupProfile>(&text)
         && editor.set_startup_profile(profile).is_ok()
     {
-        notice="Earlier startup settings migrated into the complete project. Export .eavp for a portable backup.".into();
+        notice =
+            "Earlier startup settings migrated into the complete project. Export .eavp for a portable backup.".into();
     }
-    (editor,notice,saved,status)
+    (editor, notice, saved, status)
 }
 
 // web-sys 0.3.106 still gates Web Locks behind a global unstable flag. This
@@ -200,7 +209,6 @@ pub(super) fn cancel_presets(ui: Ui) {
     }
     let _ = ui.preset_abort.try_update_value(|slot| *slot = None);
 }
-
 
 pub(super) fn save_presets(
     ui: Ui,
@@ -419,7 +427,9 @@ fn conflict(
 }
 
 pub fn storage_changed(ui: Ui) {
-    if ui.project_store.ready.get_untracked() {return;}
+    if ui.project_store.ready.get_untracked() {
+        return;
+    }
     // Events can arrive after a later write. Compare the actual current value.
     match storage().and_then(|s| s.get_item(STORAGE_KEY).map_err(storage_error)) {
         Ok(current) if current != ui.saved_bytes.get_untracked() => conflict(ui, true),
@@ -428,7 +438,12 @@ pub fn storage_changed(ui: Ui) {
     }
 }
 
-pub fn save(ui: Ui, replace: bool) { super::project_io::save(ui,replace); }
+pub fn save(
+    ui: Ui,
+    replace: bool,
+) {
+    super::project_io::save(ui, replace);
+}
 
 pub(super) fn download(
     ui: Ui,
@@ -588,11 +603,16 @@ fn import_file(
     file: web_sys::File,
 ) {
     let started = now();
-    let project_file=file.name().to_ascii_lowercase().ends_with(".eavp");
-    let limit=if project_file {dashboard_config_tools::project::MAX_PROJECT_BYTES} else {MAX_JSON_BYTES};
+    let project_file = file.name().to_ascii_lowercase().ends_with(".eavp");
+    let limit = if project_file {
+        dashboard_config_tools::project::MAX_PROJECT_BYTES
+    } else {
+        MAX_JSON_BYTES
+    };
     if !file.size().is_finite() || file.size() < 0.0 || file.size() > limit as f64 {
         ui.event(import_outcome(Err(ImportFailure::TooLarge)));
-        ui.notice.set("Project import is limited to 9 MiB; dashboard JSON to 128 KiB. No file was read.".into());
+        ui.notice
+            .set("Project import is limited to 9 MiB; dashboard JSON to 128 KiB. No file was read.".into());
         return;
     }
     let mut request = Err(EditorError::InvalidDraft);
@@ -626,7 +646,9 @@ fn import_file(
                     return;
                 }
                 let bytes = array.to_vec();
-                let format = if project_file || bytes.starts_with(b"EAVPROJ\0") { ImportFormat::Project } else if bytes.starts_with(b"EAV1") || file.name().to_ascii_lowercase().ends_with(".eav") {
+                let format = if project_file || bytes.starts_with(b"EAVPROJ\0") {
+                    ImportFormat::Project
+                } else if bytes.starts_with(b"EAV1") || file.name().to_ascii_lowercase().ends_with(".eav") {
                     ImportFormat::Binary
                 } else {
                     ImportFormat::Json

@@ -31,7 +31,6 @@
 
 pub mod appearance_presets;
 pub mod build_flash;
-pub mod helper_client;
 pub mod cache_reporting;
 pub mod diagnostic;
 pub mod ecu_reference;
@@ -41,6 +40,7 @@ pub mod events;
 pub mod field_registry;
 pub mod frame_callbacks;
 pub mod geometry;
+pub mod helper_client;
 pub mod json_diff;
 pub mod json_draft;
 pub mod preview;

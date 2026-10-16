@@ -256,7 +256,9 @@ pub fn install_playback(ui: Ui) {
                     if ui.dock.mode.get_untracked() == PreviewMode::Startup {
                         let end = ui.startup.profile.get_untracked().total_duration();
                         sample = sample.min(end);
-                        if sample == end { let _ = ui.playing.try_set(false); }
+                        if sample == end {
+                            let _ = ui.playing.try_set(false);
+                        }
                     }
                     let _ = ui.sample_ms.try_set(sample);
                 });
@@ -268,7 +270,11 @@ pub fn install_playback(ui: Ui) {
                     handle.clear();
                     let _ = clock.try_update(|c| {
                         let sample = c.pause(now());
-                        let sample = if ui.dock.mode.get_untracked() == PreviewMode::Startup { sample.min(ui.startup.profile.get_untracked().total_duration()) } else { sample };
+                        let sample = if ui.dock.mode.get_untracked() == PreviewMode::Startup {
+                            sample.min(ui.startup.profile.get_untracked().total_duration())
+                        } else {
+                            sample
+                        };
                         let _ = ui.sample_ms.try_set(sample);
                     });
                 })
@@ -417,7 +423,15 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                         let simulation = ui.dock.mode.get_untracked() == PreviewMode::Simulation;
                         let draft = e.diagnostic();
                         if ui.dock.mode.get_untracked() == PreviewMode::Startup {
-                            p.render_startup_asset(e.preview(), e.selection().view, ui.startup.profile.get_untracked(), ui.sample_ms.get_untracked(), ui.startup.reduced.get_untracked() || e.preview().config().reduced_motion, e.startup_artwork().map(|a|a.converted())).map(|_| ())
+                            p.render_startup_asset(
+                                e.preview(),
+                                e.selection().view,
+                                ui.startup.profile.get_untracked(),
+                                ui.sample_ms.get_untracked(),
+                                ui.startup.reduced.get_untracked() || e.preview().config().reduced_motion,
+                                e.startup_artwork().map(|a| a.converted()),
+                            )
+                            .map(|_| ())
                         } else if e.has_pending_json() {
                             use dashboard_configurator::json_draft::{JsonState, inspection_view};
                             match e.json_draft().map(|draft| draft.state()) {
@@ -511,15 +525,15 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
             ui.json
                 .pixels
                 .set(json_editor::projection(ui).filter(|_| ui.json_pending()));
-            ui.dock.displayed.set(
-                if ui.dock.mode.get_untracked() == PreviewMode::Startup {
+            ui.dock
+                .displayed
+                .set(if ui.dock.mode.get_untracked() == PreviewMode::Startup {
                     PreviewMode::Startup
                 } else if ui.dock.mode.get_untracked() == PreviewMode::Simulation && !ui.inspection_active() {
                     PreviewMode::Simulation
                 } else {
                     PreviewMode::Appearance
-                },
-            );
+                });
             ui.dock.invalid_pixels.set(
                 ui.invalid()
                     || json_editor::projection(ui).is_some_and(|p| {
