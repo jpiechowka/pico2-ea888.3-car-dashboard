@@ -56,5 +56,58 @@ Presentation smoothing cannot alter warning timing, and cached display facts
 cannot authorize a build or flash. The separate unfinished instruction proof is
 research; production retains the documented practical image checks.
 
-This baseline record contains no optimization gain claim. Matched candidate
-measurements and their disposition follow in this same report after review.
+## Studio artifact matching
+
+The Build & Flash artifact list now caches only display digests. Selection and
+build-option changes reuse them; accepted configuration, startup profile and
+artwork identities invalidate them. Pending edits and invalid options are checked
+on every query. Actual Build and Flash actions still capture the current project
+and perform their original authorization checks.
+
+The reproducible native Rust harness is
+[`artifact_identity_perf.rs`](../../configurator/examples/artifact_identity_perf.rs):
+
+```text
+cargo run --manifest-path configurator/Cargo.toml --locked --release --example artifact_identity_perf -- 100
+```
+
+It runs five batches of 100 real editor-action/query iterations per case,
+alternating fresh-capture and cached order. Both operations run in the same
+release executable (`opt-level=3`, fat LTO, one codegen unit), using the compiler
+and host above. Fixture admission and warmup are outside timing. The large
+fixture contains an exactly 524,288-byte validated RGB565 asset and a
+526,267-byte converted project. Its original artwork is an external handle;
+queries do not materialize it. The tiny procedural project is 1,445 bytes.
+
+| Query, median µs | Fresh capture and projection | Cached display |
+| --- | ---: | ---: |
+| Tiny project: selection | 20.781 | 0.936 |
+| Tiny project: options | 22.040 | 0.985 |
+| Tiny project: content changed | 39.434 | 40.503 |
+| Tiny project: blocked/repair | 11.152 | 0.545 |
+| Maximum artwork: selection | 5,540.671 | 3.563 |
+| Maximum artwork: options | 5,741.586 | 3.592 |
+| Maximum artwork: content changed | 8,912.165 | 8,868.705 |
+| Maximum artwork: blocked/repair | 4,495.377 | 3.292 |
+
+[All 80 raw samples and fixture hashes](data/2026-10-16/studio-identity-raw.txt)
+are retained (SHA-256 `8dc6e0e562559797c4199920bfc2ee1a370d3528d3e6d0583d072056030a0848`).
+The harness and implementation were measured at `b288eb4`, integrated unchanged
+as `f275deb`. Large content-miss batches ranged from about 5.7 to 9.3 ms on both
+paths: **no content-miss gain is claimed**. Tiny misses added about 1.1 µs.
+The old-operation harness projects a fresh build into four copied digest strings;
+the former UI retained that build directly. These are equivalent-query timings,
+not exact old/new browser instruction traces. The mounted artifact list is the
+consumer; an empty list need not evaluate the lazy memo at all.
+
+The display memo no longer retains the 526,267-byte project payload in the large
+fixture (1,445 bytes for the tiny fixture). It retains bounded keys, options and
+digest strings; cold misses still transiently package the full project. This is
+a retained-payload reduction, not a measured browser RSS or peak-memory figure.
+No renderer, animation clock, source pin or firmware data path changes here.
+
+Oracle tests compare cached results with fresh captures through content changes,
+undo/redo, imports, owner replacement, same-stamp JSON drafts, pending pointer
+actions and invalid/repaired build options. Native/Wasm strict Clippy and the
+existing upload/flash authority tests cover the changed path. Native timings
+do not establish browser response latency or Pico FPS.

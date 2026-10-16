@@ -220,7 +220,7 @@ For USB programming, first follow the power-domain isolation in the
 can backfeed the adapter/regulator from USB. With the assembly isolated and
 BOOTSEL active, `cargo run --locked -p dashboard-pico2 --release` uses the bundled
 `firmware/tools/picotool.exe` runner to load and execute the image. No hardware
-was flashed during the software overhaul.
+was flashed during this software verification pass.
 
 ## Architecture
 
