@@ -201,3 +201,46 @@ fn only_ready_frames_can_be_discarded_without_a_transfer() {
     lifecycle.started(next).unwrap();
     assert!(lifecycle.discard(next).is_err());
 }
+
+#[test]
+fn portrait_damage_covers_bottom_row_and_uses_bounded_stride() {
+    use dashboard_config::Geometry;
+    let geometry = Geometry::Portrait;
+    assert!(Region::new_in(geometry, 239, 319, 2, 1).is_none());
+    assert!(Region::new_in(geometry, 0, 320, 1, 1).is_none());
+    let region = Region::new_in(geometry, 239, 317, 1, 3).unwrap();
+    assert_eq!(region.payload_ranges().collect::<Vec<_>>(), vec![152638..152640, 153118..153120, 153598..153600]);
+    let previous = Box::<FrameBuffer>::default();
+    let mut current = Box::<FrameBuffer>::default();
+    current[153599] = 1;
+    let plan = DamagePlan::between_in(geometry, &previous, &current);
+    assert_eq!(plan.geometry(), geometry);
+    assert_eq!(plan.regions(), &[Region::new_in(geometry, 224, 304, 16, 16).unwrap()]);
+    assert!(plan.regions().iter().flat_map(|r| r.payload_ranges()).all(|r| r.end <= 153600));
+    let full = DamagePlan::full_in(geometry);
+    assert!(full.is_full());
+    assert_eq!(full.transfer_count(), 1);
+    assert_eq!(full.bytes(), 153600);
+}
+
+#[test]
+fn changed_orientation_requires_full_base_even_for_identical_black_pixels() {
+    use dashboard_config::Orientation;
+    use dashboard_host_validation::display::damage::GenerationError;
+    let mut history = PanelHistory::new();
+    let a = token(BufferId::A, 1);
+    let b = token(BufferId::B, 2);
+    history.begin_render_in(a, Orientation::Landscape).unwrap();
+    history.queue(a, None).unwrap();
+    history.complete(a).unwrap();
+    history.begin_render_in(b, Orientation::Portrait).unwrap();
+    assert_eq!(history.reference_for(Orientation::Portrait), None);
+    assert_eq!(history.queue(b, Some(a)), Err(GenerationError::WrongBase));
+    history.queue(b, None).unwrap();
+    assert_eq!(history.panel_orientation(), Some(Orientation::Landscape));
+    assert!(history.complete(a).is_err());
+    history.complete(b).unwrap();
+    assert_eq!(history.panel_orientation(), Some(Orientation::Portrait));
+    assert_eq!(history.reference_for(Orientation::Portrait), Some(b));
+    assert_eq!(history.reference_for(Orientation::PortraitInverted), None);
+}
