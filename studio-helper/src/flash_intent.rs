@@ -242,6 +242,18 @@ mod tests {
             WriteOutcome::Verified
         );
         drop(journal);
+        #[cfg(windows)]
+        {
+            for n in 0..15 {
+                let other = JobId::new(format!("{n:032x}")).unwrap();
+                drop(Journal::new(&repo, &other, &session, &request).unwrap());
+            }
+            let next = JobId::new("f".repeat(32)).unwrap();
+            assert!(Journal::new(&repo, &next, &session, &request).is_err());
+            crate::flash_cleanup::remove(&repo, &AttemptId::new(job.as_str()).unwrap()).unwrap();
+            drop(Journal::new(&repo, &next, &session, &request).unwrap());
+            assert_eq!(history(&repo).unwrap().attempts.len(), 16);
+        }
         std::fs::remove_dir_all(repo).unwrap();
     }
 }
