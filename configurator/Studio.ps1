@@ -12,25 +12,25 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $toolRoot = Join-Path $repoRoot 'target/configurator-tools'
 $trunk = Join-Path $toolRoot 'bin/trunk.exe'
 $helperRoot = Join-Path $repoRoot 'target/studio-helper'
-$helper = Join-Path $helperRoot 'debug/studio-helper.exe'
+$helperExecutable = Join-Path $helperRoot 'debug/studio-helper.exe'
 $toolchainText = Get-Content -LiteralPath (Join-Path $repoRoot 'rust-toolchain.toml') -Raw
 if ($toolchainText -notmatch '(?m)^channel = "(nightly-\d{4}-\d{2}-\d{2})"\s*$') { throw 'Expected dated nightly in rust-toolchain.toml' }
 $toolchain = $Matches[1]
 if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Platform -ne 'Win32NT' -or [Environment]::OSVersion.Version.Major -lt 10 -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'Native Studio launcher requires Windows 10/11 x64. Static browser editing/export is independent.' }
 if ($Helper) {
-    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { throw 'Native helper is missing. Run .\configurator\Studio.ps1 -Setup explicitly first.' }
-    & $helper serve --repo $repoRoot
+    if (-not (Test-Path -LiteralPath $helperExecutable -PathType Leaf)) { throw 'Native helper is missing. Run .\configurator\Studio.ps1 -Setup explicitly first.' }
+    & $helperExecutable serve --repo $repoRoot
     exit $LASTEXITCODE
 }
 if ($Check) {
-    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $helperExecutable -PathType Leaf)) {
         if ($Json) { '{"schema_version":1,"ready":false,"checks":[{"id":"native_helper","status":"missing","required":true,"evidence":"Run configurator/Studio.ps1 -Setup to compile the prerequisite checker"}]}' }
         else { Write-Output 'Prerequisite checker is missing. Run .\configurator\Studio.ps1 -Setup explicitly. Check did not install or build anything.' }
         exit 4
     }
     $checkArgs = @('check', '--repo', $repoRoot)
     if ($Json) { $checkArgs += '--json' }
-    & $helper @checkArgs
+    & $helperExecutable @checkArgs
     exit $LASTEXITCODE
 }
 $previousColor = $env:NO_COLOR
@@ -56,7 +56,7 @@ try {
         & cargo "+$toolchain" fetch --manifest-path (Join-Path $repoRoot 'configurator/Cargo.toml') --locked
         if ($LASTEXITCODE -ne 0) { throw 'Studio locked dependency fetch failed' }
         Write-Host 'Setup completed the Rust/editor CLI steps. Python, MSVC/SDK, Binaryen 133 and picotool 2.3.1 may require the manual steps listed by Check.'
-        & $helper check --repo $repoRoot
+        & $helperExecutable check --repo $repoRoot
         exit $LASTEXITCODE
     }
     if (-not (Test-Path -LiteralPath $trunk -PathType Leaf)) { throw 'Trunk is missing. Run .\configurator\Studio.ps1 -Setup explicitly first.' }
