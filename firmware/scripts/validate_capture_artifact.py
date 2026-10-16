@@ -24,6 +24,10 @@ def unique(pairs):
 def record(path,maximum):return json.loads(bounded(path,maximum),object_pairs_hook=unique)
 def sha(data):return hashlib.sha256(data).hexdigest()
 
+def canonical(value):
+    # Match JSON array representation without Python's bool/int equality coercion.
+    return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False)
+
 def validate(capture,inputs,uf2):
     capture=Path(capture);inputs=Path(inputs)
     manifest=record(capture/'manifest.json',4*1024*1024)
@@ -36,18 +40,18 @@ def validate(capture,inputs,uf2):
     require(manifest['dashboard_config']['embedded_sha256']==sha(eav),'capture configuration hash mismatch')
     options=record(inputs/'options.json',65536)
     attempt=bounded(capture/'build-options.json',65536)
-    require(manifest['build_options']==json.loads(attempt,object_pairs_hook=unique) and manifest['build_options']['normalized']==options and manifest['build_options_sha256']==sha(attempt),'capture options mismatch')
+    require(canonical(manifest['build_options'])==canonical(json.loads(attempt,object_pairs_hook=unique)) and canonical(manifest['build_options']['normalized'])==canonical(options) and manifest['build_options_sha256']==sha(attempt),'capture options mismatch')
     context_path=capture/'source-context.json'
     context=load_source_context(context_path,elf,capture.name,attempt)
     require(manifest['source_context']['sha256']==sha(bounded(context_path,262144)),'source context identity mismatch')
     memory_raw=bounded(capture/'memory-layout.json',65536)
     memory=check_memory_layout.read_selected_image_result(json.loads(memory_raw,object_pairs_hook=unique),elf,eav,context,gate='practical')
-    require(manifest['memory_layout']==memory and manifest['memory_layout_json_sha256']==sha(memory_raw),'practical image evidence mismatch')
+    require(canonical(manifest['memory_layout'])==canonical(memory) and manifest['memory_layout_json_sha256']==sha(memory_raw),'practical image evidence mismatch')
     mapping,program=inspect_program(elf)
     program['linked_configuration']=linked_configuration(elf,eav)
     profile=bounded(inputs/'startup.easp',16);asset=bounded(inputs/'startup.easa',524288)
     program['linked_startup']=linked_startup(elf,profile,asset)
-    require(program==manifest['program_image'],'program image identity mismatch')
+    require(canonical(program)==canonical(manifest['program_image']),'program image identity mismatch')
     converted=read_uf2(uf2);comparison=verify_uf2(converted,mapping)
     return {'schema_version':2,'scope':'practical_software_artifact','image_gate':'practical','complete_instruction_proof':False,'hardware_qualified':False,'flash_ready':False,'elf_sha256':sha(elf.data),'uf2_sha256':sha(converted),'uf2_bytes':len(converted),'config_sha256':sha(eav),'startup_profile_sha256':sha(profile),'startup_asset_sha256':sha(asset),'options':options,'program_image':program,'uf2':comparison,'memory_layout':memory}
 

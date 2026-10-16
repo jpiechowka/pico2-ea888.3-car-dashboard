@@ -33,11 +33,17 @@ class Consumer(unittest.TestCase):
   eav=b'eav';profile=b'profile';asset=b'asset';elf_data=b'elf';uf2=b'uf2'
   options={'mode':'demo'};build={'normalized':options};attempt=json.dumps(build).encode()
   memory={'schema':3,'gate':'practical_image'};memory_raw=json.dumps(memory).encode()
-  program={'linked_configuration':{'sha':'config'},'linked_startup':{'sha':'startup'}}
+  import struct
+  from check_program_image import inspect_program,FLASH_START
+  boot=struct.pack('<5I',0xffffded3,0x10210142,0x000001ff,0,0xab123579)
+  fixture=SimpleNamespace(data=boot,segments=[(1,0,FLASH_START,FLASH_START,20,20,5,1)],
+   section_entries=[(1,'.start_block',(0,1,2,FLASH_START,0,20,0,0,4,0))])
+  _,base_program=inspect_program(fixture)
+  program=dict(base_program,linked_configuration={'sha':'config'},linked_startup={'sha':'startup'})
   manifest={'schema':2,'image_gate':'practical','elf_sha256':artifact.sha(elf_data),
    'dashboard_config':{'embedded_sha256':artifact.sha(eav)},'build_options':build,
    'build_options_sha256':artifact.sha(attempt),'source_context':{'sha256':artifact.sha(b'context')},
-   'memory_layout':memory,'memory_layout_json_sha256':artifact.sha(memory_raw),'program_image':program}
+   'memory_layout':memory,'memory_layout_json_sha256':artifact.sha(memory_raw),'program_image':json.loads(json.dumps(program))}
   blobs={'dashboard.eav':eav,'build-options.json':attempt,'source-context.json':b'context',
    'memory-layout.json':memory_raw,'startup.easp':profile,'startup.easa':asset}
   with ExitStack() as stack:
@@ -47,12 +53,16 @@ class Consumer(unittest.TestCase):
    elf=SimpleNamespace(data=elf_data);context=object()
    mock('ElfImage',return_value=elf);mock('load_source_context',return_value=context)
    reader=stack.enter_context(patch.object(artifact.check_memory_layout,'read_selected_image_result',create=True,return_value=memory))
-   mock('inspect_program',return_value=({},{}));mock('linked_configuration',return_value=program['linked_configuration'])
+   mock('inspect_program',side_effect=lambda elf:({},dict(base_program)));mock('linked_configuration',return_value=program['linked_configuration'])
    mock('linked_startup',return_value=program['linked_startup']);mock('read_uf2',return_value=uf2);mock('verify_uf2',return_value={})
    report=artifact.validate(Path('capture'),Path('input'),Path('program.uf2'))
    reader.assert_called_once_with(memory,elf,eav,context,gate='practical')
    self.assertEqual(report['schema_version'],2);self.assertEqual(report['image_gate'],'practical')
    self.assertFalse(report['complete_instruction_proof']);self.assertFalse(report['hardware_qualified'])
+   manifest['program_image']['schema_version']=True
+   with self.assertRaisesRegex(AssertionError,'program image identity mismatch'):
+    artifact.validate(Path('capture'),Path('input'),Path('program.uf2'))
+   manifest['program_image']['schema_version']=1
    reader.return_value={'schema':3,'tampered':True}
    with self.assertRaisesRegex(AssertionError,'practical image evidence mismatch'):
     artifact.validate(Path('capture'),Path('input'),Path('program.uf2'))
