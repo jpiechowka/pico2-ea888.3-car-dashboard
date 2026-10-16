@@ -14,6 +14,9 @@ from check_program_image import inspect_program,linked_configuration
 from config_build_source import validate_source_context
 from validation import require
 
+# Current-only device envelope; historical files migrate through host tooling.
+CURRENT_EAV_VERSION = 5
+
 ASSUMPTIONS=(
     'supported_rp2350_pico2_fresh_boot_and_selected_profile',
     'source_reviewed_named_paths_and_fixed_child_stack_allowances',
@@ -33,7 +36,7 @@ def _configuration(elf,expected):
     section=sections[0];require(12<section[5]<=16384,'linked EAV byte bound')
     raw=elf.data[section[4]:section[4]+section[5]]
     require(len(raw)==section[5] and raw[:4]==b'EAV1' and
-            struct.unpack_from('<HH',raw,4)==(4,len(raw)-12) and
+            struct.unpack_from('<HH',raw,4)==(CURRENT_EAV_VERSION,len(raw)-12) and
             zlib.crc32(raw[:8]+raw[12:])==struct.unpack_from('<I',raw,8)[0],
             'linked EAV envelope/checksum mismatch')
     if expected is not None:require(type(expected) is bytes and raw==expected,'accepted EAV differs from image')

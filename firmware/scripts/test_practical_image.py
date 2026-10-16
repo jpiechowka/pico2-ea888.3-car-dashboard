@@ -17,11 +17,11 @@ from config_build_source import make_source_context,SOURCE_PATHS,write_source_co
 import test_stack_budget
 
 
-def fixture():
+def fixture(version=5):
     B=0x10000000
     data=bytearray(4096)
     data[0x100:0x114]=struct.pack('<5I',0xffffded3,0x10210142,0x000001ff,0,0xab123579)
-    payload=b'bounded fixture payload';eav=b'EAV1'+struct.pack('<HH',4,len(payload))+bytes(4)+payload
+    payload=b'bounded fixture payload';eav=b'EAV1'+struct.pack('<HH',version,len(payload))+bytes(4)+payload
     eav=eav[:8]+struct.pack('<I',zlib.crc32(eav[:8]+payload))+payload
     data[512:512+len(eav)]=eav
     functions,sizes=test_stack_budget.StackBudget().slot_fixture()
@@ -62,6 +62,29 @@ class PracticalImage(unittest.TestCase):
     def setUp(self):
         self.enterContext(redirect_stdout(io.StringIO()))
         self.flash=self.enterContext(patch.object(image,'check_flash_lockout'))
+
+    def test_current_envelope_admission_rejects_legacy_and_preserves_exact_bounds(self):
+        elf,eav,_=fixture()
+        self.assertEqual(practical._configuration(elf,eav),eav)
+        for version in (0,1,2,3,4,6,65535):
+            legacy,raw,_=fixture(version)
+            with self.subTest(version=version),self.assertRaisesRegex(AssertionError,'envelope/checksum'):
+                practical._configuration(legacy,raw)
+        for fault in ('length','magic','crc','payload','truncated','expected'):
+            elf,eav,_=fixture();raw=bytearray(eav)
+            if fault=='length':
+                struct.pack_into('<H',raw,6,len(raw)-13)
+                struct.pack_into('<I',raw,8,zlib.crc32(raw[:8]+raw[12:]))
+            elif fault=='magic':
+                raw[0]^=1
+                struct.pack_into('<I',raw,8,zlib.crc32(raw[:8]+raw[12:]))
+            elif fault=='crc':raw[8]^=1
+            elif fault=='payload':raw[-1]^=1
+            data=bytearray(elf.data);data[512:512+len(raw)]=raw;elf.data=bytes(data)
+            if fault=='truncated':elf.data=elf.data[:512+len(raw)-1]
+            expected=eav+b'x' if fault=='expected' else None
+            with self.subTest(fault=fault),self.assertRaises(AssertionError):
+                practical._configuration(elf,expected)
 
     def test_producer_rechecks_named_frames_geometry_source_and_linked_eav(self):
         elf,eav,context=fixture();record=practical.check(elf,eav,context)
