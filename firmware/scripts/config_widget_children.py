@@ -23,9 +23,33 @@ from config_logger import logger_body
 _CUSTOM={v:k for k,v in ROLES.items() if v.startswith('@outline:')}
 
 
+def _typed_names(objects):
+    """Index immutable names only; unsupported metadata keeps the old scan.
+
+    Every original name and its order remain present, including ambiguous
+    canonical roles. This stores no body proof, source or return result.
+    """
+    from types import MappingProxyType
+    from config_structural import _FrozenObjects,_FrozenElf
+    if type(objects) is not _FrozenObjects or type(objects.elf) is not _FrozenElf:return None
+    functions=objects.elf.functions
+    if type(functions) is not MappingProxyType:return None
+    cached=objects._typed_names
+    if type(cached) is tuple and len(cached)==2 and cached[0] is functions:return cached[1]
+    if not all(type(n) is str and type(e) is tuple and len(e)==3 and
+        all(type(v) is int for v in e) for n,e in functions.items()):return None
+    names={}
+    for n,e in functions.items():names.setdefault(canonical_symbol(n),[]).append((n,e[0]&~1))
+    index=MappingProxyType({role:tuple(values) for role,values in names.items()})
+    object.__setattr__(objects,'_typed_names',(functions,index))
+    return index
+
+
 def _name(objects,role,address=None):
-    names=[n for n,e in objects.elf.functions.items() if canonical_symbol(n)==role and
-        (address is None or e[0]&~1==address)]
+    index=_typed_names(objects) if type(role) is str and (address is None or type(address) is int) else None
+    names=([n for n,at in index.get(role,()) if address is None or at==address] if index is not None else
+        [n for n,e in objects.elf.functions.items() if canonical_symbol(n)==role and
+            (address is None or e[0]&~1==address)])
     require(len(names)==1,'Widget child has no unique current typed role');return names[0]
 
 

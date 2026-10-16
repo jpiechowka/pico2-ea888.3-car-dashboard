@@ -89,6 +89,12 @@ def _tail_entries(objects,rows,state):
     state.current()
     if not state.exits:return ()
     c=phases.widgets.views.context;frame=c.headers['visitor_frame'];V=c.headers['visitor']['proof']['function'];owner=c.owner
+    from config_loader_boundary import _physical
+    startup=c.boundary['history']['preclaim']['startup']['copy']
+    # Tail's checked Screen descendant reaches eight bytes below the
+    # inherited Widget envelope. Check the complete physical allocation,
+    # including unnamed ELF allocations and the actual Reset stack bottom.
+    _physical(objects,frame.start-152,startup['initial_sp'],startup['stack_bottom'])
     parents=_parents(objects,rows,V,owner.start)
     require(tuple(p['function']-V for p in parents)==_WINDOWS,'Tail entry has another current parent family')
     # Child activation cannot alias any physical Config byte, including the

@@ -50,7 +50,7 @@ class _FrozenElf:
 
 class _FrozenObjects(DiagnosticObjects):
     # Properties keep the inherited __dict__ from replacing any consumed input.
-    __slots__=('_image','_sizes','_rows','_memo','_counts','_hashes')
+    __slots__=('_image','_sizes','_rows','_memo','_counts','_hashes','_typed_names')
 
     def __init__(self,elf,sizes,rows):
         object.__setattr__(self,'_image',elf)
@@ -59,6 +59,7 @@ class _FrozenObjects(DiagnosticObjects):
         object.__setattr__(self,'_memo',{})
         object.__setattr__(self,'_counts',{})
         object.__setattr__(self,'_hashes',{})
+        object.__setattr__(self,'_typed_names',None)
     @property
     def elf(self):return self._image
     @property

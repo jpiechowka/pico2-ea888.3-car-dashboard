@@ -1423,6 +1423,138 @@ class WidgetPrivateErrorOrigins(unittest.TestCase):
             'Advanced.readout invalid enum'}<=stages)
 
 
+class TailActivationPhysical(unittest.TestCase):
+    @staticmethod
+    def source(kind):
+        from config_decoded_sources import _first_boot_decoded_sources_state
+        from test_config_stack import SameBLoaderBoundary
+        objects,rows,source,_=TailLiteralBodies.fixture(72);elf=objects.elf
+        S=0x20080000;V=S-544-1608;low=V-152
+        address=low-4 if kind=='adjacent' else low
+        if kind in ('section','adjacent'):elf.sections.append((0,8,3,address,0,4,0,0,4,0))
+        if kind in ('LOAD','adjacent'):elf.segments.append((1,0,address,address,0,4,6,4))
+        if kind in ('OBJECT','adjacent'):
+            index=next(i for i,s in enumerate(elf.sections) if s[2]&2)
+            elf.symbol_entries.append(('supplied_Tail_lower_object',address,4,17,index))
+        if kind=='bottom':
+            old=elf.named['.uninit'];index=elf.sections.index(old);limit=V-144
+            new=tuple(limit-old[3] if i==5 else v for i,v in enumerate(old))
+            elf.sections[index]=new;elf.named['.uninit']=new
+            elf.symbol_entries=[(n,limit if n in ('_stack_end','__euninit') else a,z,t,i)
+                for n,a,z,t,i in elf.symbol_entries]
+            elf.segments=[tuple(new[5] if i==5 else v for i,v in enumerate(s)) if s[2]==old[3] else s
+                for s in elf.segments]
+        _,state=_first_boot_decoded_sources_state(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+        c=state.phases.widgets.views.context
+        assert c.headers['visitor_frame'].start==V and state.exits
+        return state,low
+
+    def test_actual_entered_Tail_rejects_new_lower_eight_allocation_and_Reset_bottom(self):
+        from config_decoded_tail import _tail_entries
+        for kind in ('section','LOAD','OBJECT','bottom'):
+            state,low=self.source(kind)
+            with self.subTest(kind=kind),self.assertRaisesRegex(AssertionError,'physical frame intersects|Reset-derived stack allocation'):
+                _tail_entries(state.phases.objects,state.phases.rows,state)
+
+    def test_actual_entered_Tail_accepts_allocations_ending_at_exact_new_low_boundary(self):
+        from config_decoded_tail import _tail_entries
+        state,low=self.source('adjacent')
+        entries=_tail_entries(state.phases.objects,state.phases.rows,state)
+        self.assertTrue(entries)
+        self.assertEqual(low,state.phases.widgets.views.context.headers['visitor_frame'].start-152)
+
+    def test_unentered_earlier_error_does_not_fabricate_the_deeper_Tail_activation(self):
+        from config_decoded_tail import first_boot_decoded_visitor_return
+        from test_config_stack import SameBLoaderBoundary
+        objects,rows,source,_=TailLiteralBodies.fixture(1)
+        low=0x20080000-544-1608-152
+        objects.elf.sections.append((0,8,3,low,0,4,0,0,4,0))
+        result=first_boot_decoded_visitor_return(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+        self.assertEqual(result['Visitor_return']['normal_returns'],0)
+        self.assertGreater(result['Visitor_return']['error_returns'],0)
+        self.assertFalse(result['source_guarded_accesses']['role_counts'])
+
+
+class DetachedTypedNames(unittest.TestCase):
+    def test_repeated_exact_detached_role_lookup_canonicalizes_each_name_only_once(self):
+        from unittest.mock import patch
+        import config_widget_children as child
+        from config_structural import _detached_inputs
+        from config_tail_contracts import ROLES
+        objects,rows,_,_=TailLiteralBodies.fixture();objects,rows=_detached_inputs(objects,rows)
+        with patch.object(child,'canonical_symbol',wraps=child.canonical_symbol) as canonical:
+            first=child._name(objects,ROLES['ControlAction'])
+            self.assertEqual(child._name(objects,ROLES['ControlAction'],0x1001bc64),first)
+        self.assertEqual(canonical.call_count,len(objects.elf.functions))
+
+    def test_complete_order_address_ambiguity_and_new_package_metadata_match_reference(self):
+        from config_structural import _detached_inputs
+        from config_stack import canonical_symbol
+        from config_widget_children import _name
+        from config_tail_contracts import ROLES
+        original,rows,_,_=TailLiteralBodies.fixture();frozen,detached=_detached_inputs(original,rows)
+        reference=lambda objects,role,address=None:[n for n,e in objects.elf.functions.items()
+            if canonical_symbol(n)==role and (address is None or e[0]&~1==address)]
+        for role in ROLES.values():
+            names=reference(frozen,role)
+            if len(names)!=1:continue
+            address=frozen.elf.functions[names[0]][0]&~1
+            self.assertEqual(_name(frozen,role),names[0]);self.assertEqual(_name(frozen,role,address),names[0])
+            with self.assertRaisesRegex(AssertionError,'unique current typed role'):_name(frozen,role,address+2)
+        name=_name(frozen,ROLES['ControlAction']);entry=original.elf.functions[name]
+        original.elf.functions[name+'.7654']=entry
+        self.assertEqual(_name(frozen,ROLES['ControlAction']),name)
+        new,newrows=_detached_inputs(original,rows)
+        with self.assertRaisesRegex(AssertionError,'unique current typed role'):_name(new,ROLES['ControlAction'])
+        self.assertEqual(reference(new,ROLES['ControlAction']),[name,name+'.7654'])
+        del original.elf.functions[name+'.7654']
+        original.elf.functions[name]=(entry[0]+0x1000,*entry[1:])
+        moved,_=_detached_inputs(original,rows)
+        # A different package's index is never a metadata-validation token.
+        object.__setattr__(moved,'_typed_names',frozen._typed_names)
+        self.assertEqual(_name(moved,ROLES['ControlAction'],(entry[0]&~1)+0x1000),name)
+        self.assertIs(moved._typed_names[0],moved.elf.functions)
+        with self.assertRaises(TypeError):moved._typed_names[1][ROLES['ControlAction']]=()
+        self.assertIsInstance(moved._typed_names[1][ROLES['ControlAction']],tuple)
+        with self.assertRaisesRegex(AssertionError,'unique current typed role'):
+            _name(frozen,ROLES['ControlAction'],(entry[0]&~1)+0x1000)
+        with self.assertRaisesRegex(AssertionError,'unique current typed role'):_name(frozen,'unknown role')
+
+    def test_unsupported_mutable_provider_retains_fresh_lookup_and_malformed_fallback(self):
+        from config_widget_children import _name
+        from config_structural import _FrozenObjects,_FrozenElf
+        from config_tail_contracts import ROLES
+        objects,rows,_,_=TailLiteralBodies.fixture();name=_name(objects,ROLES['ControlAction'])
+        entry=objects.elf.functions[name];objects.elf.functions[name+'.7654']=entry
+        with self.assertRaisesRegex(AssertionError,'unique current typed role'):_name(objects,ROLES['ControlAction'])
+        del objects.elf.functions[name+'.7654'];self.assertEqual(_name(objects,ROLES['ControlAction']),name)
+        # Direct private construction is not a typed-metadata validation grant.
+        malformed=_FrozenObjects(_FrozenElf(dict(functions={name:(entry[0],)})),{}, {})
+        self.assertEqual(_name(malformed,ROLES['ControlAction']),name)
+
+    def test_complete_conditional_records_and_aliases_equal_legacy_lookup_with_fresh_dynamic_checks(self):
+        from unittest.mock import patch
+        from config_decoded_sources import _phase_graph
+        from config_tail_source import _controls_source
+        from config_tail_children import tail_coverage
+        from config_tail_contracts import ROLES
+        from config_widget_children import _name
+        objects,rows,parents,state,frame,guards=TailControlsSource.fixture()
+        with patch('config_widget_children._typed_names',return_value=None):
+            _controls_source(objects,rows,parents,state,frame,guards) # warm the same structural APIs
+            old=_controls_source(objects,rows,parents,state,frame,guards)
+        new=_controls_source(objects,rows,parents,state,frame,guards)
+        self.assertEqual(_phase_graph(old),_phase_graph(new))
+        # Warm names never authorize a stale body or a caller-selected role.
+        proof=tail_coverage(objects,_name(objects,ROLES['ControlAction']),rows)
+        proof['action_targets']=()
+        from config_tail_effects import control_action_interface
+        args=list(TailActionInterface.fixture())
+        args[2]=proof
+        with self.assertRaisesRegex(AssertionError,'stale complete body'):
+            control_action_interface(*args)
+
+
 class TailPublicCurrentArtifacts(unittest.TestCase):
     def test_same_public_input_rejects_rebound_late_store_and_action_table_changes(self):
         import copy
