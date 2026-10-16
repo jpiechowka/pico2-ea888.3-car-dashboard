@@ -5,18 +5,25 @@ use super::*;
 
 fn unavailable(ui: Ui) -> bool {
     let state = ui.helper;
-    state.busy.get()
-        || state.building.get()
-        || state.view.with(|v| !v.connected || v.feed.active())
+    state.busy.get() || state.building.get() || state.view.with(|v| !v.connected || v.feed.active())
 }
 
-fn remove(ui: Ui, id: &str) {
-    if unavailable(ui) || !ui.helper.view.with_untracked(|v| {
-        v.history.as_ref().is_some_and(|h| h.attempts.iter().any(|a| a.job_id.as_str() == id))
-    }) {
+fn remove(
+    ui: Ui,
+    id: &str,
+) {
+    if unavailable(ui)
+        || !ui.helper.view.with_untracked(|v| {
+            v.history
+                .as_ref()
+                .is_some_and(|h| h.attempts.iter().any(|a| a.job_id.as_str() == id))
+        })
+    {
         return;
     }
-    let Ok(id) = dashboard_helper_protocol::AttemptId::new(id) else { return };
+    let Ok(id) = dashboard_helper_protocol::AttemptId::new(id) else {
+        return;
+    };
     ui.helper.removing.set_value(Some(id));
     send(ui, Action::Cleanup);
 }

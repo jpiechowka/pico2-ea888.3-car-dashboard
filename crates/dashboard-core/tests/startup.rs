@@ -259,10 +259,10 @@ fn exact_preview_boundaries_and_status_rendering() {
 
 #[test]
 fn completion_is_a_monotonic_clock_observation() {
-    let profile=StartupProfile::DEFAULT;
-    let mut state=Startup::new(profile,10);
+    let profile = StartupProfile::DEFAULT;
+    let mut state = Startup::new(profile, 10);
     state.submitted(TOKEN);
-    state.completed(TOKEN,100);
-    state.advance(profile,99,false,false);
-    assert_eq!(state.exit(),Some(Exit::Clock));
+    state.completed(TOKEN, 100);
+    state.advance(profile, 99, false, false);
+    assert_eq!(state.exit(), Some(Exit::Clock));
 }

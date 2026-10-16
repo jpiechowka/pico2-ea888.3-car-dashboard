@@ -4,9 +4,11 @@ use dashboard_config_tools::project::*;
 #[test]
 fn complete_project_round_trip_and_header_bounds() {
     let config = validate(default_config()).unwrap();
-    let mut profile = StartupProfile::default();
-    profile.theme = StartupTheme::Turbo;
-    profile.duration_ms = 7134;
+    let profile = StartupProfile {
+        theme: StartupTheme::Turbo,
+        duration_ms: 7134,
+        ..StartupProfile::default()
+    };
     let project = Project::new(&config, profile, None).unwrap();
     let bytes = project.encode(ExportMode::Complete).unwrap();
     assert!(bytes.starts_with(b"EAVPROJ\0"));
@@ -125,11 +127,14 @@ fn source_sheet_timing_is_distinct_from_converted_frame_minimum() {
 
 #[test]
 fn portable_recipe_cannot_exceed_converter_clip_duration() {
-    let art=artwork();
-    let mut recipe=art.recipe().clone();
-    recipe.trim_start_ms=20000;
-    recipe.trim_end_ms=30000;
-    assert!(Artwork::new(Arc::from(art.converted()),recipe.clone(),art.original().cloned()).is_ok());
-    recipe.trim_end_ms=30001;
-    assert!(matches!(Artwork::new(Arc::from(art.converted()),recipe,art.original().cloned()),Err(ProjectError::Recipe)));
+    let art = artwork();
+    let mut recipe = art.recipe().clone();
+    recipe.trim_start_ms = 20000;
+    recipe.trim_end_ms = 30000;
+    assert!(Artwork::new(Arc::from(art.converted()), recipe.clone(), art.original().cloned()).is_ok());
+    recipe.trim_end_ms = 30001;
+    assert!(matches!(
+        Artwork::new(Arc::from(art.converted()), recipe, art.original().cloned()),
+        Err(ProjectError::Recipe)
+    ));
 }
