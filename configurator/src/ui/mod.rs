@@ -11,6 +11,7 @@ mod io;
 mod json_editor;
 mod led;
 mod metrics;
+mod idb;
 mod originals;
 mod project_io;
 mod relay;

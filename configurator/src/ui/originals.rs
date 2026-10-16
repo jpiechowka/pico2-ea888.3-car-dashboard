@@ -11,9 +11,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
-use super::project_io::{database, request};
-const BLOBS: &str = "originals";
-const PINS: &str = "original-pins";
+use super::idb::{CURRENT, ORIGINALS as BLOBS, PINS, PROJECTS, database, request, settled};
 const LOCK: &str = "ea888-original-store";
 const PREFIX: &str = "ea888-original-tab-";
 // Current + 32 undo/redo entries + one captured export + one incoming import.
@@ -136,25 +134,6 @@ fn current_pins() -> Result<BTreeSet<String>, JsValue> {
         Ok(keys)
     }
 }
-async fn settled(tx: &web_sys::IdbTransaction) -> Result<(), JsValue> {
-    let mut complete = None;
-    let mut abort = None;
-    let promise = js_sys::Promise::new(&mut |resolve, reject| {
-        complete = Some(Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-            let _ = resolve.call0(&JsValue::NULL);
-        }));
-        abort = Some(Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-            let _ = reject.call0(&JsValue::NULL);
-        }));
-        tx.set_oncomplete(complete.as_ref().map(|c| c.as_ref().unchecked_ref()));
-        tx.set_onabort(abort.as_ref().map(|c| c.as_ref().unchecked_ref()));
-    });
-    let result = JsFuture::from(promise).await;
-    tx.set_oncomplete(None);
-    tx.set_onabort(None);
-    drop((complete, abort));
-    result.map(|_| ())
-}
 async fn read(
     db: &web_sys::IdbDatabase,
     store: &str,
@@ -239,7 +218,7 @@ async fn maintain(
             retained.insert(key(value)?);
         }
     }
-    let record = read(db, "projects", "current").await?;
+    let record = read(db, PROJECTS, CURRENT).await?;
     if !record.is_undefined() {
         let source = get(&record, "original")?;
         if !source.is_undefined() && !source.is_null() {
