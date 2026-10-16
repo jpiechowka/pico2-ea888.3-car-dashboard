@@ -1,7 +1,9 @@
+use dashboard_config::Geometry;
 use dashboard_config::startup_asset::*;
 
 use crate::{ConvertError as Error, Fit, Options};
 pub(crate) struct Output {
+    geometry: Geometry,
     frames: Vec<(u32, u8, Vec<u8>)>,
     previous: Vec<u8>,
     bytes: usize,
@@ -20,6 +22,7 @@ impl Output {
             return Err(Error::Timeline);
         }
         Ok(Self {
+            geometry: options.geometry,
             frames: Vec::new(),
             previous: Vec::new(),
             bytes: HEADER_BYTES,
@@ -48,7 +51,7 @@ impl Output {
             if raw == self.previous && !self.frames.is_empty() {
                 self.frames.last_mut().unwrap().0 = relative_end;
             } else {
-                let encoded = encode_frame(&raw);
+                let encoded = encode_frame(&raw, self.geometry);
                 let encoding = if encoded.len() < raw.len() { 1 } else { 0 };
                 let payload = if encoding == 1 { encoded } else { raw.clone() };
                 self.bytes = self
@@ -75,11 +78,11 @@ impl Output {
         let mut out = Vec::with_capacity(self.bytes);
         out.resize(table_end, 0);
         out[..8].copy_from_slice(MAGIC);
-        put16(&mut out, 8, 1);
+        put16(&mut out, 8, VERSION);
         put16(&mut out, 10, 32);
         put32(&mut out, 12, self.bytes as u32);
-        put16(&mut out, 16, 320);
-        put16(&mut out, 18, 240);
+        put16(&mut out, 16, self.geometry.width());
+        put16(&mut out, 18, self.geometry.height());
         put16(&mut out, 20, self.frames.len() as u16);
         put32(&mut out, 24, self.frames.last().unwrap().0);
         for (index, (end, encoding, payload)) in self.frames.into_iter().enumerate() {
@@ -112,13 +115,17 @@ fn put32(
 ) {
     b[at..at + 4].copy_from_slice(&v.to_le_bytes());
 }
-fn encode_frame(raw: &[u8]) -> Vec<u8> {
+fn encode_frame(
+    raw: &[u8],
+    geometry: Geometry,
+) -> Vec<u8> {
+    let width = usize::from(geometry.width());
     let mut out = Vec::with_capacity(FRAME_BYTES);
-    for row in raw.as_chunks::<{ WIDTH * 2 }>().0 {
+    for row in raw.chunks_exact(width * 2) {
         let mut x = 0;
-        while x < WIDTH {
+        while x < width {
             let mut run = 1;
-            while x + run < WIDTH && row[x * 2..x * 2 + 2] == row[(x + run) * 2..(x + run) * 2 + 2] {
+            while x + run < width && row[x * 2..x * 2 + 2] == row[(x + run) * 2..(x + run) * 2 + 2] {
                 run += 1;
             }
             if run >= 2 {
@@ -128,8 +135,8 @@ fn encode_frame(raw: &[u8]) -> Vec<u8> {
             } else {
                 let start = x;
                 x += 1;
-                while x < WIDTH {
-                    if x + 1 < WIDTH && row[x * 2..x * 2 + 2] == row[(x + 1) * 2..(x + 1) * 2 + 2] {
+                while x < width {
+                    if x + 1 < width && row[x * 2..x * 2 + 2] == row[(x + 1) * 2..(x + 1) * 2 + 2] {
                         break;
                     }
                     x += 1;
@@ -151,28 +158,30 @@ fn resize(
     o: &Options,
 ) -> Vec<u8> {
     let mut out = vec![0; FRAME_BYTES];
+    let width = usize::from(o.geometry.width());
+    let height = usize::from(o.geometry.height());
     // Integer nearest-neighbor, centered contain/cover and deterministic alpha matte.
     let (scaled_w, scaled_h) = match o.fit {
-        Fit::Stretch => (320, 240),
+        Fit::Stretch => (width, height),
         Fit::Contain => {
-            if w * 240 > h * 320 {
-                (320, (h * 320 / w).max(1))
+            if w * height > h * width {
+                (width, (h * width / w).max(1))
             } else {
-                ((w * 240 / h).max(1), 240)
+                ((w * height / h).max(1), height)
             }
         }
         Fit::Cover => {
-            if w * 240 > h * 320 {
-                ((w * 240 / h).max(320), 240)
+            if w * height > h * width {
+                ((w * height / h).max(width), height)
             } else {
-                (320, (h * 320 / w).max(240))
+                (width, (h * width / w).max(height))
             }
         }
     };
-    let ox = (320_i32 - scaled_w as i32) / 2;
-    let oy = (240_i32 - scaled_h as i32) / 2;
-    for y in 0..240 {
-        for x in 0..320 {
+    let ox = (width as i32 - scaled_w as i32) / 2;
+    let oy = (height as i32 - scaled_h as i32) / 2;
+    for y in 0..height {
+        for x in 0..width {
             let sx = x as i32 - ox;
             let sy = y as i32 - oy;
             let mut rgb = o.matte_rgb;
@@ -186,7 +195,7 @@ fn resize(
             let pixel = ((u16::from(rgb[0]) * 31 + 127) / 255) << 11
                 | ((u16::from(rgb[1]) * 63 + 127) / 255) << 5
                 | ((u16::from(rgb[2]) * 31 + 127) / 255);
-            out[(y * 320 + x) * 2..(y * 320 + x) * 2 + 2].copy_from_slice(&pixel.to_be_bytes());
+            out[(y * width + x) * 2..(y * width + x) * 2 + 2].copy_from_slice(&pixel.to_be_bytes());
         }
     }
     out

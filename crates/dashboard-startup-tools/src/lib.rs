@@ -10,7 +10,7 @@ pub const MAX_SIDE: u32 = 4096;
 pub const MAX_SOURCE_FRAMES: usize = 300;
 pub const MAX_DECODED_PIXELS: usize = 32_000_000;
 pub const MAX_SOURCE_MS: u32 = 60_000;
-pub const CONVERTER: &str = "dashboard-startup-tools/1";
+pub const CONVERTER: &str = "dashboard-startup-tools/2";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceKind {
     Png,
@@ -38,6 +38,7 @@ pub struct Sheet {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Options {
+    pub geometry: dashboard_config::Geometry,
     pub kind: SourceKind,
     pub fit: Fit,
     pub matte_rgb: [u8; 3],
@@ -71,6 +72,7 @@ impl Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            geometry: dashboard_config::Geometry::Landscape,
             kind: SourceKind::Png,
             fit: Fit::Contain,
             matte_rgb: [0; 3],

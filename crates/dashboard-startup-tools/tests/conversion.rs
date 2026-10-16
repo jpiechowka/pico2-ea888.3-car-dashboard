@@ -1,3 +1,4 @@
+use dashboard_config::Geometry;
 use dashboard_config::startup_asset::Asset;
 use dashboard_startup_tools::*;
 fn png_image(
@@ -47,6 +48,14 @@ fn png_alpha_matte_and_determinism() {
     let mut row = [0; 640];
     asset.frame(0).unwrap().rows().next(&mut row).unwrap();
     assert_eq!(&row[..2], &[0x80, 0x0F]);
+}
+#[test]
+fn conversion_emits_current_native_asset_format() {
+    let converted = convert(&png_image(1, 1, &[255, 0, 0, 255]), &Options::default()).unwrap();
+    assert_eq!(
+        u16::from_le_bytes(converted.asset[8..10].try_into().unwrap()),
+        dashboard_config::startup_asset::VERSION
+    );
 }
 #[test]
 fn gif_resampling_and_loop_seeks() {
@@ -216,20 +225,23 @@ fn incompressible_output_does_not_expand_asset_budget() {
         pixel[3] = 255;
     }
     let source = png_image(640, 480, &pixels);
-    let result = convert(
-        &source,
-        &Options {
-            kind: SourceKind::SpriteSheet,
-            fit: Fit::Stretch,
-            sheet: Some(Sheet {
-                columns: 2,
-                rows: 2,
-                frame_ms: 100,
-            }),
-            ..Default::default()
-        },
-    );
-    assert_eq!(result.err(), Some(ConvertError::AssetLimit));
+    for geometry in Geometry::ALL {
+        let result = convert(
+            &source,
+            &Options {
+                geometry,
+                kind: SourceKind::SpriteSheet,
+                fit: Fit::Stretch,
+                sheet: Some(Sheet {
+                    columns: 2,
+                    rows: 2,
+                    frame_ms: 100,
+                }),
+                ..Default::default()
+            },
+        );
+        assert_eq!(result.err(), Some(ConvertError::AssetLimit));
+    }
 }
 
 fn decoded_pixels(
@@ -237,12 +249,12 @@ fn decoded_pixels(
     at: u64,
 ) -> Vec<u16> {
     let mut rows = asset.frame_at(at, false, false).rows();
-    let mut row = [0; 640];
+    let mut row = vec![0; usize::from(asset.geometry().width()) * 2];
     let mut pixels = Vec::new();
     while rows.next(&mut row).unwrap() {
         pixels.extend(row.as_chunks::<2>().0.iter().map(|p| u16::from_be_bytes(*p)));
     }
-    assert_eq!(pixels.len(), 320 * 240);
+    assert_eq!(pixels.len(), Geometry::PIXELS);
     pixels
 }
 
@@ -254,35 +266,101 @@ fn fit_modes_center_letterboxing_crop_and_preserve_every_pixel() {
         1,
         &[255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255],
     );
-    for fit in [Fit::Contain, Fit::Cover, Fit::Stretch] {
-        let converted = convert(
-            &source,
-            &Options {
-                fit,
-                matte_rgb: [255, 0, 255],
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let asset = Asset::parse(&converted.asset).unwrap();
-        let pixels = decoded_pixels(&asset, 0);
-        for y in 0..240 {
-            for x in 0..320 {
-                let expected = match fit {
-                    Fit::Contain if !(80..160).contains(&y) => 0xF81F,
-                    Fit::Cover => {
-                        if x < 160 {
-                            0x07E0
-                        } else {
-                            0x001F
+    for (geometry, width, height, band) in [
+        (Geometry::Landscape, 320, 240, 80..160),
+        (Geometry::Portrait, 240, 320, 130..190),
+    ] {
+        for fit in [Fit::Contain, Fit::Cover, Fit::Stretch] {
+            let converted = convert(
+                &source,
+                &Options {
+                    geometry,
+                    fit,
+                    matte_rgb: [255, 0, 255],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let asset = Asset::parse(&converted.asset).unwrap();
+            assert_eq!(asset.geometry(), geometry);
+            let pixels = decoded_pixels(&asset, 0);
+            for y in 0..height {
+                for x in 0..width {
+                    let expected = match fit {
+                        Fit::Contain if !band.contains(&y) => 0xF81F,
+                        Fit::Cover => {
+                            if x < width / 2 {
+                                0x07E0
+                            } else {
+                                0x001F
+                            }
                         }
-                    }
-                    _ => [0xF800, 0x07E0, 0x001F, 0xFFFF][x / 80],
-                };
-                assert_eq!(pixels[y * 320 + x], expected, "{fit:?} ({x},{y})");
+                        _ => [0xF800, 0x07E0, 0x001F, 0xFFFF][x / (width / 4)],
+                    };
+                    assert_eq!(pixels[y * width + x], expected, "{geometry:?} {fit:?} ({x},{y})");
+                }
             }
         }
     }
+}
+
+#[test]
+fn gif_and_sheet_keep_timing_and_exact_rows_in_both_geometries() {
+    let sheet = png_image(2, 1, &[255, 0, 0, 255, 0, 255, 0, 255]);
+    for geometry in Geometry::ALL {
+        for (source, kind) in [(gif_image(), SourceKind::Gif), (sheet.clone(), SourceKind::SpriteSheet)] {
+            let converted = convert(
+                &source,
+                &Options {
+                    geometry,
+                    kind,
+                    fit: Fit::Stretch,
+                    sheet: (kind == SourceKind::SpriteSheet).then_some(Sheet {
+                        columns: 2,
+                        rows: 1,
+                        frame_ms: 100,
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let asset = Asset::parse(&converted.asset).unwrap();
+            assert_eq!(asset.geometry(), geometry);
+            assert_eq!((asset.frame_count(), asset.cycle_ms()), (2, 200));
+            for (at, color) in [(0, 0xF800), (99, 0xF800), (100, 0x07E0), (u64::MAX, 0x07E0)] {
+                assert!(decoded_pixels(&asset, at).iter().all(|pixel| *pixel == color));
+            }
+        }
+    }
+}
+
+#[test]
+fn raw_fallback_preserves_native_portrait_stride() {
+    let mut pixels = Vec::with_capacity(240 * 320 * 4);
+    let mut expected = Vec::with_capacity(240 * 320);
+    for y in 0..320 {
+        for x in 0..240 {
+            let rgb = if (x + y) % 2 == 0 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 255, 0, 255]
+            };
+            pixels.extend_from_slice(&rgb);
+            expected.push(if rgb[0] == 255 { 0xF800 } else { 0x07E0 });
+        }
+    }
+    let result = convert(
+        &png_image(240, 320, &pixels),
+        &Options {
+            geometry: Geometry::Portrait,
+            trim_end_ms: 50,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let asset = Asset::parse(&result.asset).unwrap();
+    assert_eq!(result.asset[48], 0, "incompressible rows use raw RGB565");
+    assert_eq!(decoded_pixels(&asset, 0), expected);
 }
 
 #[test]
