@@ -5714,7 +5714,7 @@ class FirstBootSourceContract(unittest.TestCase):
         from config_boot_source import first_boot_source_contract
         for old,new in (('static CONFIGURATION:','pub static CONFIGURATION:'),
             ("-> &'static BootConfig","-> &'static mut BootConfig"),
-            ('CONFIGURATION.take().load_at_boot(EMBEDDED)','CONFIGURATION.take().load_at_boot(other())'),
+            ('CONFIGURATION.take().load_at_boot(&DASHBOARD_EMBEDDED_CONFIG)','CONFIGURATION.take().load_at_boot(other())'),
             ('#[inline(never)]','#[inline(always)]')):
             documents=self.sources();text=documents['view_config.rs'].decode();self.assertIn(old,text)
             documents['view_config.rs']=text.replace(old,new).encode()

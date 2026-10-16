@@ -116,7 +116,7 @@ def _widget_family_bridge(objects,rows,state,parents,children,returns,structural
     require(history['source_context']==source.binding() and semantics==history['source_semantics'] and
         semantics['Config_visibility']=='private_static_single_take_immutable_return' and
         semantics['ordered_boot_operations']==('initialize','enqueue_Dashboard') and
-        semantics['take_source_expression']=='CONFIGURATION.take().load_at_boot(EMBEDDED)',
+        semantics['take_source_expression']=='CONFIGURATION.take().load_at_boot(&DASHBOARD_EMBEDDED_CONFIG)',
         'Widget family lineage source/private take/order binding differs')
     B=c.owner.start;frame=c.frame;visitor=h['visitor_frame'];geometry=boundary['loader_geometry']
     startup=p['startup'];entry=startup['entry'];S=startup['copy']['initial_sp'];P=frame.start

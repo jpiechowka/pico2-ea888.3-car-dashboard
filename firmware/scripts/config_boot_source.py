@@ -19,10 +19,14 @@ _PRIVATE = """
 use dashboard_pico2::view_config::{BootConfig, ConfigSlot};
 use static_cell::ConstStaticCell;
 static CONFIGURATION: ConstStaticCell<ConfigSlot> = ConstStaticCell::new(ConfigSlot::new());
-static EMBEDDED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dashboard.eav"));
+#[used]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".dashboard_config")]
+static DASHBOARD_EMBEDDED_CONFIG: [u8; include_bytes!(concat!(env!("OUT_DIR"), "/dashboard.eav")).len()] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/dashboard.eav"));
 pub const SHA256: &str = env!("DASHBOARD_CONFIG_SHA256");
 #[inline(never)]
-pub fn initialize() -> &'static BootConfig { CONFIGURATION.take().load_at_boot(EMBEDDED) }
+pub fn initialize() -> &'static BootConfig { CONFIGURATION.take().load_at_boot(&DASHBOARD_EMBEDDED_CONFIG) }
 """
 _BOOT = """
 async fn main(spawner: Spawner) {
@@ -133,7 +137,7 @@ def first_boot_source_contract(documents):
         ordered_boot_operations=('initialize','enqueue_Dashboard'),
         Boot_main_attribute='embassy_executor::main_default_pool',
         Config_source_expression='ConstStaticCell::new(ConfigSlot::new())',
-        take_source_expression='CONFIGURATION.take().load_at_boot(EMBEDDED)',
+        take_source_expression='CONFIGURATION.take().load_at_boot(&DASHBOARD_EMBEDDED_CONFIG)',
         requires_checked_build_source_ELF_binding=True,
         requires_actual_machine_and_first_batch_composition=True,
         requires_all_direct_computed_indirect_and_address_taken_reference_closure=True)
