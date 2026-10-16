@@ -54,6 +54,8 @@ pub struct FlashRequest {
     pub artifact_id: ArtifactId,
     pub device_id: DeviceId,
     pub editor_revision: u64,
+    /// Digest of the complete canonical converted-only accepted project.
+    pub project_sha256: Sha256,
     pub config_sha256: Sha256,
     pub expected_options: BuildOptions,
     pub retry_of: Option<JobId>,

@@ -128,6 +128,7 @@ fn layouts_and_board_confirmation_are_closed() {
         artifact_id: ArtifactId::new("a".repeat(64)).unwrap(),
         device_id: id.clone(),
         editor_revision: u64::MAX,
+        project_sha256: Sha256::new("d".repeat(64)).unwrap(),
         config_sha256: Sha256::new("b".repeat(64)).unwrap(),
         expected_options: Default::default(),
         retry_of: None,
