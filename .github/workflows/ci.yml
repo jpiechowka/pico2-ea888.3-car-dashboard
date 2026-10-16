@@ -69,6 +69,11 @@ jobs:
           cargo run --locked -p dashboard-config-tools -- compile configs/default.json /tmp/default.eav
           cmp configs/default.eav /tmp/default.eav
 
+      - name: Bounded startup artwork conversion contracts
+        run: |
+          cargo test --locked -p dashboard-startup-tools
+          cargo clippy --locked -p dashboard-startup-tools --all-targets -- -D warnings
+
       - name: Shared helper protocol contracts
         run: |
           cargo test --locked -p dashboard-helper-protocol
