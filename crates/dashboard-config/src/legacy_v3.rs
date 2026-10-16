@@ -159,20 +159,20 @@ mod tests {
     use super::*;
     #[test]
     fn frozen_v3_default_and_maximum_are_canonical() {
-        for bytes in [
-            include_bytes!("../tests/fixtures/v3-default.eav").as_slice(),
-            include_bytes!("../tests/fixtures/v3-maximum.eav").as_slice(),
+        for (bytes, expected_widgets, json) in [
+            (
+                include_bytes!("../tests/fixtures/v3-default.eav").as_slice(),
+                8,
+                Some(include_str!("../tests/fixtures/v3-default.json")),
+            ),
+            (include_bytes!("../tests/fixtures/v3-maximum.eav").as_slice(), 64, None),
         ] {
             let (c, rest) = postcard::take_from_bytes::<LegacyConfigV3>(&bytes[12..]).unwrap();
             assert!(rest.is_empty());
             crate::codec::compare_canonical(&c, &bytes[12..]).unwrap();
-            if bytes.len() == 944 {
-                assert_eq!(
-                    serde_json::to_string_pretty(&c).unwrap(),
-                    core::str::from_utf8(include_bytes!("../tests/fixtures/v3-default.json"))
-                        .unwrap()
-                        .trim_end()
-                );
+            assert_eq!(c.widgets.len(), expected_widgets);
+            if let Some(json) = json {
+                assert_eq!(serde_json::to_string_pretty(&c).unwrap(), json.trim_end());
             }
             c.upgrade().unwrap();
         }

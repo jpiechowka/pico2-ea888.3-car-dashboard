@@ -222,39 +222,12 @@ fn boot_held_y_never_recovers_until_a_fresh_press() {
 }
 
 #[test]
-fn exact_preview_boundaries_and_status_rendering() {
+fn exact_preview_boundaries() {
     let p = StartupProfile::DEFAULT;
     assert_eq!(Startup::preview(p, 599), (Phase::Status, 599));
     assert_eq!(Startup::preview(p, 600), (Phase::Splash, 0));
     assert_eq!(Startup::preview(p, 3099), (Phase::Splash, 2499));
     assert_eq!(Startup::preview(p, 3100), (Phase::Dashboard, 0));
-    let mut frame = Box::new(FrameBuffer::new());
-    for vehicle in [
-        VehicleStatus::Demo,
-        VehicleStatus::Disabled,
-        VehicleStatus::Starting,
-        VehicleStatus::ResetRequired,
-        VehicleStatus::Stale,
-        VehicleStatus::Data,
-    ] {
-        draw(
-            &mut St7789Renderer::new(&mut frame),
-            Phase::Status,
-            StartupProfile {
-                status: StartupStatus::Detailed,
-                ..p
-            },
-            u64::MAX,
-            false,
-            StartupFacts {
-                vehicle,
-                config_ok: false,
-                settings_loaded: true,
-                configured_sources: 8,
-            },
-        );
-        assert!(frame.iter().any(|v| *v != 0));
-    }
 }
 
 #[test]
@@ -280,4 +253,117 @@ fn invalid_optional_profile_skips_startup_without_panicking() {
     assert_eq!(decoded, profile);
     assert_eq!(state.phase(), Phase::Status);
     assert_eq!(state.exit(), None);
+}
+
+#[test]
+fn status_facts_change_only_their_visible_rows() {
+    fn render(
+        status: StartupStatus,
+        facts: StartupFacts,
+    ) -> Box<FrameBuffer> {
+        let mut frame = Box::new(FrameBuffer::new());
+        draw(
+            &mut St7789Renderer::new(&mut frame),
+            Phase::Status,
+            StartupProfile {
+                status,
+                ..StartupProfile::DEFAULT
+            },
+            0,
+            false,
+            facts,
+        );
+        frame
+    }
+    let base = StartupFacts {
+        vehicle: VehicleStatus::Demo,
+        config_ok: true,
+        settings_loaded: false,
+        configured_sources: 0,
+    };
+    for status in [StartupStatus::Brief, StartupStatus::Detailed] {
+        let before = render(status, base);
+        let mut cases = vec![
+            (
+                StartupFacts {
+                    config_ok: false,
+                    ..base
+                },
+                80..101,
+                true,
+            ),
+            (
+                StartupFacts {
+                    settings_loaded: true,
+                    ..base
+                },
+                141..166,
+                status == StartupStatus::Detailed,
+            ),
+            (
+                StartupFacts {
+                    configured_sources: 8,
+                    ..base
+                },
+                167..194,
+                status == StartupStatus::Detailed,
+            ),
+        ];
+        for vehicle in [
+            VehicleStatus::Disabled,
+            VehicleStatus::Starting,
+            VehicleStatus::Retrying,
+            VehicleStatus::Raw,
+            VehicleStatus::Waiting,
+            VehicleStatus::Data,
+            VehicleStatus::Stale,
+            VehicleStatus::ResetRequired,
+            VehicleStatus::Maintenance,
+        ] {
+            cases.push((StartupFacts { vehicle, ..base }, 102..141, true));
+        }
+        for (facts, rows, visible) in cases {
+            let after = render(status, facts);
+            let range = rows.start * 640..rows.end * 640;
+            assert_eq!(before[range.clone()] != after[range.clone()], visible);
+            assert!(
+                before[..range.start] == after[..range.start],
+                "pixels before {rows:?} changed"
+            );
+            assert!(
+                before[range.end..] == after[range.end..],
+                "pixels after {rows:?} changed"
+            );
+        }
+    }
+}
+
+#[test]
+fn first_submission_owns_phase_start_and_stalls_use_hard_deadline() {
+    let profile = StartupProfile::DEFAULT;
+    let replacement = FrameToken {
+        buffer: BufferId::B,
+        sequence: 2,
+    };
+    let mut state = Startup::new(profile, 100);
+    state.submitted(TOKEN);
+    state.submitted(replacement);
+    state.completed(replacement, 200);
+    assert_eq!(state.elapsed(500), 0);
+    state.completed(TOKEN, 300);
+    assert_eq!(state.elapsed(500), 200);
+    state.advance(profile, 900, false, false);
+    assert_eq!(state.phase(), Phase::Splash);
+    state.submitted(replacement);
+    state.completed(TOKEN, 1000);
+    assert_eq!(state.elapsed(1500), 0);
+    state.advance(profile, 3899, false, false);
+    assert_eq!(state.phase(), Phase::Splash);
+    state.advance(profile, 3900, false, false);
+    assert_eq!(state.exit(), Some(Exit::Finished));
+    assert_eq!(state.ended_at(), Some(3900));
+    state.completed(replacement, 4000);
+    state.advance(profile, 0, true, true);
+    assert_eq!(state.exit(), Some(Exit::Finished));
+    assert_eq!(state.ended_at(), Some(3900));
 }

@@ -83,7 +83,7 @@ fn palette_changes_preserve_binary_and_json_roundtrips() {
 }
 
 #[test]
-fn maximum_v2_document_stays_inside_binary_and_json_file_limits() {
+fn maximum_palette_document_stays_inside_binary_and_json_file_limits() {
     let mut raw = default_config();
     raw.views.clear();
     raw.widgets.clear();

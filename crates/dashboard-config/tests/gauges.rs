@@ -2,7 +2,7 @@
 use dashboard_config::*;
 
 #[test]
-fn v1_json_and_binary_upgrade_to_the_same_v2_document() {
+fn v1_json_and_binary_upgrade_to_the_same_current_document() {
     let json = from_json_bytes(include_bytes!("fixtures/v1-default.json")).unwrap();
     let binary = decode(include_bytes!("fixtures/v1-default.eav")).unwrap();
     assert_eq!(json, binary);
@@ -11,7 +11,7 @@ fn v1_json_and_binary_upgrade_to_the_same_v2_document() {
     let bytes = encode(&binary, &mut buffer).unwrap();
     assert_eq!(bytes[4], VERSION as u8);
     assert_eq!(decode(bytes).unwrap(), binary);
-    for cut in 0..466 {
+    for cut in 0..include_bytes!("fixtures/v1-default.eav").len() {
         assert!(decode(&include_bytes!("fixtures/v1-default.eav")[..cut]).is_err());
     }
 }
