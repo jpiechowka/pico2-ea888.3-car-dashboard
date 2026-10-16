@@ -45,8 +45,7 @@ impl Relay {
                         writeln!(out, "{}", line.text)
                     };
                     if result.is_err() {
-                        let _ =
-                            failed.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_add(1)));
+                        let _ = failed.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_add(1)));
                     }
                 }
             });

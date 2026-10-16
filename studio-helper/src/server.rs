@@ -241,17 +241,16 @@ async fn start_check(
         return Err(Error::InvalidState);
     }
     let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
-    if let Some(selected) = &selected {
-        if !inner.devices.complete
+    if let Some(selected) = &selected
+        && (!inner.devices.complete
             || !inner.devices.devices.iter().any(|d| d == selected)
             || inner
                 .devices
                 .devices
                 .iter()
-                .any(|d| d.status != DeviceStatus::DescriptorOnly)
-        {
-            return Err(Error::InvalidState);
-        }
+                .any(|d| d.status != DeviceStatus::DescriptorOnly))
+    {
+        return Err(Error::InvalidState);
     }
     let inspection = selected.is_some();
     let operation = if device_scan {
@@ -550,16 +549,187 @@ async fn start_build(
             artifact_id,
             None,
         );
-        if transition_ok && finished.is_ok() {
-            if let Some(artifact) = admitted {
-                if inner.artifacts.len() == 2 {
-                    inner.artifacts.remove(0);
-                }
-                inner.artifacts.push(artifact);
+        if transition_ok
+            && finished.is_ok()
+            && let Some(artifact) = admitted
+        {
+            if inner.artifacts.len() == 2 {
+                inner.artifacts.remove(0);
             }
+            inner.artifacts.push(artifact);
         }
     }));
     Ok(result)
+}
+async fn start_flash(
+    state: Arc<State>,
+    request: FlashRequest,
+) -> Result<JobSummary, Error> {
+    let previous = {
+        let mut inner = state.inner.lock().unwrap();
+        if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+            return Err(Error::Busy);
+        }
+        inner.worker.take()
+    };
+    if let Some(previous) = previous {
+        previous.await.map_err(|_| Error::InvalidState)?;
+    }
+    let mut inner = state.inner.lock().unwrap();
+    if inner.stopping || crate::process::cleanup_failed() {
+        return Err(Error::InvalidState);
+    }
+    let artifact = inner
+        .artifacts
+        .iter()
+        .find(|a| a.summary.artifact_id == request.artifact_id)
+        .cloned()
+        .ok_or(Error::NotFoundOrUnavailable)?;
+    let device = inner
+        .devices
+        .devices
+        .iter()
+        .find(|d| d.device_id == request.device_id)
+        .cloned()
+        .ok_or(Error::NotFoundOrUnavailable)?;
+    let inspection = inner
+        .inspections
+        .get(&request.device_id)
+        .cloned()
+        .ok_or(Error::NotFoundOrUnavailable)?;
+    crate::flash::admit(&request, &state.session, &artifact, &device, &inspection)?;
+    let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
+    inner
+        .jobs
+        .start(id.clone(), OperationKind::Flash, request.retry_of.clone())?;
+    inner
+        .jobs
+        .bind_flash(&id, request.artifact_id.clone(), request.device_id.clone())?;
+    inner.jobs.transition(
+        &id,
+        StageId::Firmware(FirmwareStage::Prerequisites),
+        StageState::Running,
+        None,
+    )?;
+    let summary = inner.jobs.poll(&id, PollRequest { after: 0, limit: 1 })?.summary;
+    crate::process::reset_cancel();
+    let worker_state = state.clone();
+    inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let mut transition = |stage, status| {
+            crate::terminal::event(false, id.as_str(), &format!("{stage:?}: {status:?}"));
+            worker_state
+                .inner
+                .lock()
+                .unwrap()
+                .jobs
+                .transition(&id, StageId::Firmware(stage), status, None)
+                .map_err(|e| e.to_string())
+        };
+        let mut dropped_bytes = 0u64;
+        let mut dropped_chunks = 0u64;
+        let execution = crate::flash::run(
+            crate::flash::Operation {
+                repo: &worker_state.repo,
+                session: &worker_state.session,
+                job: &id,
+                request: &request,
+                artifact: &artifact,
+                device: &device,
+                inspection: &inspection,
+            },
+            &mut transition,
+            &mut |stage, stderr, text| {
+                if let Ok(mut inner) = worker_state.inner.try_lock() {
+                    let _ = inner.jobs.append(
+                        &id,
+                        LogInput {
+                            stage: StageId::Firmware(stage),
+                            source: if stderr { Source::Stderr } else { Source::Stdout },
+                            text: text.into(),
+                            progress: false,
+                        },
+                    );
+                } else {
+                    dropped_bytes = dropped_bytes.saturating_add(text.len() as u64);
+                    dropped_chunks = dropped_chunks.saturating_add(1);
+                }
+            },
+        );
+        let mut inner = worker_state.inner.lock().unwrap();
+        if crate::process::cleanup_failed() {
+            let _ = inner.jobs.note_cleanup_fatal(&id, true);
+            inner.stopping = true;
+            return;
+        }
+        let cancelled = inner
+            .jobs
+            .poll(&id, PollRequest { after: 0, limit: 1 })
+            .is_ok_and(|b| b.summary.cancel_requested);
+        let (cause, exit) = match execution {
+            Ok(exit) => {
+                (
+                    if cancelled {
+                        TerminalCause::Cancelled
+                    } else {
+                        TerminalCause::Succeeded
+                    },
+                    exit,
+                )
+            }
+            Err(failure) => {
+                let reason = failure.reason;
+                crate::terminal::event(true, id.as_str(), &reason);
+                let stage = inner
+                    .jobs
+                    .poll(&id, PollRequest { after: 0, limit: 1 })
+                    .ok()
+                    .and_then(|b| {
+                        b.summary
+                            .stages
+                            .iter()
+                            .find(|s| s.state == StageState::Running)
+                            .map(|s| s.stage)
+                    });
+                if let Some(stage) = stage {
+                    let _ = inner.jobs.append(
+                        &id,
+                        LogInput {
+                            stage,
+                            source: Source::Internal,
+                            text: reason.chars().take(512).collect(),
+                            progress: false,
+                        },
+                    );
+                }
+                (
+                    if cancelled && reason.starts_with("cancelled:") {
+                        TerminalCause::Cancelled
+                    } else if reason.starts_with("deadline:") {
+                        TerminalCause::Deadline
+                    } else {
+                        TerminalCause::Failed
+                    },
+                    failure.exit,
+                )
+            }
+        };
+        let _ = inner.jobs.finish(
+            &id,
+            cause,
+            OutputClosure {
+                workers_joined: true,
+                tree_empty: true,
+                output_incomplete: false,
+                discarded_bytes: dropped_bytes,
+                discarded_chunks: dropped_chunks,
+            },
+            None,
+            exit,
+        );
+        // Every completed attempt invalidates selection evidence; qualification is never sticky.
+        inner.inspections.remove(&request.device_id);
+    }));
+    Ok(summary)
 }
 async fn dispatch(
     state: Arc<State>,
@@ -633,6 +803,26 @@ async fn dispatch(
     }
     if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
         return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
+    }
+    if method == Method::POST && path == "/api/v1/flashes" {
+        if one(headers, "content-type") != Some("application/json") {
+            return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
+        }
+        if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > REQUEST_BYTES)) {
+            return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin);
+        }
+        let bytes = match bounded_body(request.into_body(), REQUEST_BYTES).await {
+            Ok(b) => b,
+            Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin),
+        };
+        let request = match decode::<FlashRequest>(&bytes) {
+            Ok(r) => r,
+            Err(e) => return store_error(e, origin),
+        };
+        return match start_flash(state.clone(), request).await {
+            Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
+            Err(e) => store_error(e, origin),
+        };
     }
     if method == Method::POST && path == "/api/v1/diagnostics" {
         if one(headers, "content-type") != Some("application/json") {
@@ -712,7 +902,7 @@ async fn dispatch(
         ("GET", "/api/v1/session") => {
             response(
                 StatusCode::OK,
-                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Checks, device discovery and validated artifact builds available; device flashing unavailable"}),
+                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Checks, builds and explicit Flash available; Flash requires a validated artifact, fresh device inspection and genuine Pico 2 acknowledgment"}),
                 origin,
             )
         }
@@ -730,6 +920,13 @@ async fn dispatch(
             match start_check(state.clone(), true, None).await {
                 Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
                 Err(e) => store_error(e, origin),
+            }
+        }
+        ("GET", "/api/v1/flash-attempts") => {
+            let repo = state.repo.clone();
+            match tokio::task::spawn_blocking(move || crate::flash_intent::history(&repo)).await {
+                Ok(Ok(records)) => response(StatusCode::OK, json!(records), origin),
+                _ => error(StatusCode::CONFLICT, "FlashHistoryUnavailable", origin),
             }
         }
         ("GET", "/api/v1/artifacts") => {
@@ -951,23 +1148,60 @@ async fn serve_async(state: Arc<State>) -> Result<(), String> {
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn flash_route_rejects_unowned_artifact_without_starting_work() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let body = serde_json::json!({"artifact_id":"a".repeat(64),"device_id":"b".repeat(32),"editor_revision":1,"project_sha256":"c".repeat(64),"config_sha256":"d".repeat(64),"expected_options":BuildOptions::default(),"retry_of":null,"board_acknowledgement":{"device_id":"b".repeat(32),"session_id":state.session,"information_sha256":"e".repeat(64),"board":"genuine_pico2"}});
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/flashes")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        assert_eq!(dispatch(state.clone(), request).await.status(), StatusCode::NOT_FOUND);
+        assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
+    }
+    #[tokio::test]
     async fn diagnostics_route_requires_authority_and_bounds_without_jobs() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let good = serde_json::json!({"version":1,"events":[{
             "severity":"Warn","category":"Storage","code":"storage.failed",
             "workspace":"Diagnostics","sequence":"1","client_elapsed_ms":"0",
-            "accepted_revision":"0"}]}).to_string();
+            "accepted_revision":"0"}]})
+        .to_string();
         for (capability, origin, body, expected) in [
             ("", ORIGINS[0], good.clone(), StatusCode::FORBIDDEN),
-            (state.capability.as_str(), "http://localhost:8081", good.clone(), StatusCode::FORBIDDEN),
-            (state.capability.as_str(), ORIGINS[0], "x".repeat(diagnostics::REQUEST_BYTES + 1), StatusCode::PAYLOAD_TOO_LARGE),
-            (state.capability.as_str(), ORIGINS[0], "{\"message\":\"secret\"}".into(), StatusCode::BAD_REQUEST),
+            (
+                state.capability.as_str(),
+                "http://localhost:8081",
+                good.clone(),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                state.capability.as_str(),
+                ORIGINS[0],
+                "x".repeat(diagnostics::REQUEST_BYTES + 1),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (
+                state.capability.as_str(),
+                ORIGINS[0],
+                "{\"message\":\"secret\"}".into(),
+                StatusCode::BAD_REQUEST,
+            ),
             (state.capability.as_str(), ORIGINS[0], good, StatusCode::OK),
         ] {
-            let request = Request::builder().method("POST").uri("/api/v1/diagnostics")
-                .header("host", AUTHORITY).header("origin", origin)
-                .header("x-studio-capability", capability).header("content-type", "application/json")
-                .body(Body::from(body)).unwrap();
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/v1/diagnostics")
+                .header("host", AUTHORITY)
+                .header("origin", origin)
+                .header("x-studio-capability", capability)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
             assert_eq!(dispatch(state.clone(), request).await.status(), expected);
         }
         assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());

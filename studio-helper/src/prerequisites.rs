@@ -278,7 +278,7 @@ pub fn check(repo: &Path) -> Value {
             &repo,
             "Run configurator/Studio.ps1 -Setup to install pinned Binaryen version_133",
         );
-        let picotool = repo.join("firmware/tools/picotool.exe");
+        let picotool = repo.join("target/configurator-tools/bin/picotool.exe");
         version(
             &mut rows,
             "picotool",
@@ -460,10 +460,10 @@ pub fn cli(args: impl IntoIterator<Item = OsString>) -> i32 {
                 row["id"].as_str().unwrap(),
                 row["evidence"].as_str().unwrap()
             );
-            if let Some(setup) = row["setup"].as_str().filter(|s| !s.is_empty()) {
-                if row["status"] != "passed" {
-                    println!("  Setup: {setup}");
-                }
+            if let Some(setup) = row["setup"].as_str().filter(|s| !s.is_empty())
+                && row["status"] != "passed"
+            {
+                println!("  Setup: {setup}");
             }
         }
         println!("Full native Build & Flash is not available in this helper slice.");

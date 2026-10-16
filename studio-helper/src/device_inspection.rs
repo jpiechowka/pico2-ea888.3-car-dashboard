@@ -215,7 +215,7 @@ pub(crate) fn inspect(
                 return Err("Unsupported serial syntax".into());
             }
             same_descriptor(repo, &session, &selected)?;
-            let tool = repo.join("firmware/tools/picotool.exe");
+            let tool = repo.join("target/configurator-tools/bin/picotool.exe");
             let _tool = crate::artifacts::converter(repo)?;
             let information = crate::process::run(
                 &tool,

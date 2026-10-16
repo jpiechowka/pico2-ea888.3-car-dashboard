@@ -1,0 +1,247 @@
+//! Append-only bounded flash observations. Recovery never resumes an operation.
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+
+use dashboard_helper_protocol::*;
+use serde_json::{Value, json};
+const MAX_RECORD: usize = 65536;
+pub(crate) struct Journal {
+    directory: PathBuf,
+    generation: u8,
+    record: Value,
+    _parents: Vec<File>,
+}
+fn root(repo: &Path) -> PathBuf { repo.join("target/studio-helper/flash-attempts") }
+impl Journal {
+    pub fn new(
+        repo: &Path,
+        job: &JobId,
+        session: &SessionId,
+        request: &FlashRequest,
+    ) -> Result<Self, String> {
+        let parent = root(repo);
+        // Verify each existing parent before and after creation; no external pathname input.
+        for path in [repo.join("target"), repo.join("target/studio-helper"), parent.clone()] {
+            if !path.exists() {
+                std::fs::create_dir(&path).map_err(|e| e.to_string())?;
+            }
+            crate::file_locks::ancestors(&[path.join("sentinel")])?;
+        }
+        let count = std::fs::read_dir(&parent).map_err(|e| e.to_string())?.take(17).count();
+        if count >= 16 {
+            return Err("Flash history full; retain and review prior attempts before cleanup".into());
+        }
+        let directory = parent.join(job.as_str());
+        std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
+        let parents = crate::file_locks::ancestors(&[directory.join("record")])?;
+        Ok(Self {
+            directory,
+            generation: 0,
+            record: json!({"schema_version":1,"session_id":session,"job_id":job,
+            "request":request,"running_firmware_observed":false,"hardware_qualified":false}),
+            _parents: parents,
+        })
+    }
+
+    pub fn bind_artifact(
+        &mut self,
+        artifact: &ArtifactSummary,
+        ranges: &[(u32, u32)],
+    ) {
+        self.record["artifact"] = serde_json::to_value(artifact).unwrap();
+        self.record["verification_ranges"] = json!(ranges);
+        self.record["verification_scope"] = json!("admitted_elf_payload_and_internal_gaps_at_verification_time");
+        self.record["capacity_bytes"] = json!(4194304);
+        self.record["capacity_provenance"] = json!("manufacturer4_mb_user_confirmed");
+    }
+
+    pub fn publish(
+        &mut self,
+        phase: &str,
+        outcome: WriteOutcome,
+        exit: Option<i32>,
+    ) -> Result<(), String> {
+        if self.generation >= 8 {
+            return Err("Flash journal generation bound".into());
+        }
+        self.record["phase"] = json!(phase);
+        self.record["write_outcome"] = json!(outcome);
+        self.record["generation"] = json!(self.generation);
+        self.record["raw_exit"] = json!(exit.map(|n| n as u32));
+        self.record["interpreted_exit"] = json!(exit);
+        let data = serde_json::to_vec(&self.record).map_err(|e| e.to_string())?;
+        if data.len() > MAX_RECORD {
+            return Err("Flash record byte bound".into());
+        }
+        let temporary = self.directory.join(format!("{}.pending", self.generation));
+        let published = self.directory.join(format!("{}.json", self.generation));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|e| e.to_string())?;
+        file.write_all(&data)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+
+            use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+            let from: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+            let to: Vec<u16> = published.as_os_str().encode_wide().chain(Some(0)).collect();
+            if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::rename(&temporary, &published).map_err(|e| e.to_string())?;
+        }
+        let observed = read(&published)?;
+        if observed != self.record {
+            return Err("Flash publication acknowledgment mismatch".into());
+        }
+        self.generation += 1;
+        Ok(())
+    }
+}
+fn read(path: &Path) -> Result<Value, String> {
+    let mut bytes = Vec::new();
+    crate::file_locks::read_file(path)?
+        .take((MAX_RECORD + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_RECORD {
+        return Err("Flash record bound".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "Invalid flash record".into())
+}
+pub(crate) fn history(repo: &Path) -> Result<FlashHistory, String> {
+    let parent = root(repo);
+    let mut result = Vec::new();
+    if parent.exists() {
+        let _parents = crate::file_locks::ancestors(&[parent.join("sentinel")])?;
+        for entry in std::fs::read_dir(&parent).map_err(|e| e.to_string())?.take(17) {
+            if result.len() == 16 {
+                return Err("Flash history bound".into());
+            }
+            let path = entry.map_err(|e| e.to_string())?.path();
+            let job = JobId::new(
+                path.file_name()
+                    .and_then(|p| p.to_str())
+                    .ok_or("Invalid attempt name")?,
+            )
+            .map_err(|_| "Invalid attempt name")?;
+            let _hold = crate::file_locks::ancestors(&[path.join("record")])?;
+            let mut latest = None;
+            for generation in 0..8 {
+                let record = path.join(format!("{generation}.json"));
+                if record.exists() {
+                    latest = Some(read(&record)?);
+                }
+            }
+            let mut summary = FlashAttemptSummary {
+                job_id: job.clone(),
+                original_session: None,
+                artifact_id: None,
+                device_id: None,
+                phase: FlashPhase::Unpublished,
+                write_outcome: WriteOutcome::NotStarted,
+                recovery_write_outcome: WriteOutcome::NotStarted,
+                exit: None,
+                historical_observation: true,
+                automatic_resume: false,
+                running_firmware_observed: false,
+                hardware_qualified: false,
+            };
+            if let Some(value) = latest {
+                if value["schema_version"] != 1 || value["job_id"] != job.as_str() {
+                    return Err("Invalid flash history identity".into());
+                }
+                let request: FlashRequest = decode(&serde_json::to_vec(&value["request"]).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+                summary.original_session =
+                    Some(serde_json::from_value(value["session_id"].clone()).map_err(|_| "Invalid history session")?);
+                summary.artifact_id = Some(request.artifact_id);
+                summary.device_id = Some(request.device_id);
+                summary.phase = serde_json::from_value(value["phase"].clone()).map_err(|_| "Invalid history phase")?;
+                summary.write_outcome =
+                    serde_json::from_value(value["write_outcome"].clone()).map_err(|_| "Invalid history outcome")?;
+                summary.recovery_write_outcome = if summary.write_outcome == WriteOutcome::Verified {
+                    WriteOutcome::Verified
+                } else {
+                    WriteOutcome::Unknown
+                };
+                if !value["raw_exit"].is_null() {
+                    summary.exit = Some(RawExit {
+                        windows_u32: serde_json::from_value(value["raw_exit"].clone())
+                            .map_err(|_| "Invalid raw exit")?,
+                        interpreted_i32: serde_json::from_value(value["interpreted_exit"].clone())
+                            .map_err(|_| "Invalid interpreted exit")?,
+                    });
+                }
+            }
+            summary.validate().map_err(|e| e.to_string())?;
+            result.push(summary);
+        }
+    }
+    let history = FlashHistory {
+        schema_version: 1,
+        attempts: BoundedVec::new(result).map_err(|e| e.to_string())?,
+    };
+    history.validate().map_err(|e| e.to_string())?;
+    Ok(history)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn publication_is_coherent_and_retains_verified_history() {
+        let repo = std::env::temp_dir().join(format!(
+            "studio-intent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo).unwrap();
+        let job = JobId::new("a".repeat(32)).unwrap();
+        let session = SessionId::new("b".repeat(32)).unwrap();
+        let device = DeviceId::new("c".repeat(32)).unwrap();
+        let hash = Sha256::new("d".repeat(64)).unwrap();
+        let request = FlashRequest {
+            artifact_id: ArtifactId::new("e".repeat(64)).unwrap(),
+            device_id: device.clone(),
+            editor_revision: 1,
+            project_sha256: hash.clone(),
+            config_sha256: hash.clone(),
+            expected_options: Default::default(),
+            retry_of: None,
+            board_acknowledgement: BoardAcknowledgement {
+                device_id: device,
+                session_id: session.clone(),
+                information_sha256: hash,
+                board: BoardContract::GenuinePico2,
+            },
+        };
+        let mut journal = Journal::new(&repo, &job, &session, &request).unwrap();
+        journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
+        assert_eq!(
+            history(&repo).unwrap().attempts[0].recovery_write_outcome,
+            WriteOutcome::Unknown
+        );
+        journal
+            .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+            .unwrap();
+        assert_eq!(
+            history(&repo).unwrap().attempts[0].recovery_write_outcome,
+            WriteOutcome::Verified
+        );
+        drop(journal);
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+}

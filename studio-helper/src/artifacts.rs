@@ -28,7 +28,8 @@ impl Artifact {
         if digest(&bytes(&mut held(&lease.elf)?, 32 * 1024 * 1024)?) != self.summary.elf_sha256.as_str()
             || digest(&self.uf2) != self.summary.uf2_sha256.as_str()
             || lease.converter.hash != self.summary.converter_sha256.as_str()
-            || lease.verification_ranges.is_empty() {
+            || lease.verification_ranges.is_empty()
+        {
             return Err("Retained artifact identity mismatch".into());
         }
         Ok(lease)
@@ -56,7 +57,7 @@ fn bytes(
 }
 pub(crate) fn converter(repo: &Path) -> Result<Converter, String> {
     let path = repo
-        .join("firmware/tools/picotool.exe")
+        .join("target/configurator-tools/bin/picotool.exe")
         .canonicalize()
         .map_err(|_| "Run Studio.ps1 -Setup to install picotool2.3.1")?;
     let parents = crate::file_locks::ancestors(std::slice::from_ref(&path))?;
@@ -187,11 +188,16 @@ pub(crate) fn admit(
         flash_ready: false,
     };
     summary.validate().map_err(|e| e.to_string())?;
-    let verification_ranges: Vec<(u32,u32)> = serde_json::from_value(report["program_image"]["verification_ranges"].clone())
-        .map_err(|_| "Missing qualified verification ranges")?;
-    if verification_ranges.is_empty() || verification_ranges.len() > 1024
-        || verification_ranges.iter().any(|(a,b)| *a < 0x10000000 || a >= b || *b > 0x101fe000)
-        || verification_ranges.windows(2).any(|p| p[0].1 >= p[1].0) {
+    let verification_ranges: Vec<(u32, u32)> =
+        serde_json::from_value(report["program_image"]["verification_ranges"].clone())
+            .map_err(|_| "Missing qualified verification ranges")?;
+    if verification_ranges.is_empty()
+        || verification_ranges.len() > 1024
+        || verification_ranges
+            .iter()
+            .any(|(a, b)| *a < 0x10000000 || a >= b || *b > 0x101FE000)
+        || verification_ranges.windows(2).any(|p| p[0].1 >= p[1].0)
+    {
         return Err("Invalid verification ranges".into());
     }
     holds.push(uf2_file);
@@ -199,7 +205,13 @@ pub(crate) fn admit(
     let artifact = Artifact {
         summary,
         uf2: uf2_bytes.into(),
-        lease: Some(Arc::new(ArtifactLease { frozen, elf, converter, verification_ranges, _holds: holds })),
+        lease: Some(Arc::new(ArtifactLease {
+            frozen,
+            elf,
+            converter,
+            verification_ranges,
+            _holds: holds,
+        })),
     };
     artifact.verify_lease()?;
     Ok(artifact)

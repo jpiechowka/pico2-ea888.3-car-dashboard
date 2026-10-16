@@ -8,8 +8,8 @@ pub mod prerequisites;
 mod process;
 pub mod server;
 
-mod terminal;
 pub mod relay;
+mod terminal;
 
 mod artifacts;
 
@@ -18,3 +18,7 @@ mod file_locks;
 mod device_inspection;
 
 pub mod flash_output;
+
+mod flash_intent;
+
+mod flash;

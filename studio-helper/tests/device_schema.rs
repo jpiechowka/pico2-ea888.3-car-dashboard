@@ -43,7 +43,21 @@ fn capacity_requires_explicit_provenance() {
 }
 
 #[test]
-fn incomplete_inspection_cannot_retain_trusted_information_digest(){
- let report=DeviceInspection{session_id:SessionId::new("1".repeat(32)).unwrap(),device_id:DeviceId::new("2".repeat(32)).unwrap(),descriptor_sha256:Sha256::new("3".repeat(64)).unwrap(),complete:false,facts:None,information_sha256:Some(Sha256::new("4".repeat(64)).unwrap()),reason:Text::new("incomplete").unwrap(),capacity:DeviceCapacity{state:DeviceCapacityState::Unverified,bytes:None,provenance:None},flash_ready:false};
- assert!(encode(&report).is_err());
+fn incomplete_inspection_cannot_retain_trusted_information_digest() {
+    let report = DeviceInspection {
+        session_id: SessionId::new("1".repeat(32)).unwrap(),
+        device_id: DeviceId::new("2".repeat(32)).unwrap(),
+        descriptor_sha256: Sha256::new("3".repeat(64)).unwrap(),
+        complete: false,
+        facts: None,
+        information_sha256: Some(Sha256::new("4".repeat(64)).unwrap()),
+        reason: Text::new("incomplete").unwrap(),
+        capacity: DeviceCapacity {
+            state: DeviceCapacityState::Unverified,
+            bytes: None,
+            provenance: None,
+        },
+        flash_ready: false,
+    };
+    assert!(encode(&report).is_err());
 }

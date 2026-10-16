@@ -206,18 +206,20 @@ pub(super) fn run_stream(
                 sink(true, line);
             }
             let status = child.try_wait().map_err(|e| e.to_string())?;
-            if let Some(status) = status {
-                if out.closed && err.closed && job.active().map_err(|e| e.to_string())? == 0 {
-                    return Ok(Output {
-                        code: status.code(),
-                        stdout: std::mem::take(&mut out.text),
-                        raw_stdout: std::mem::take(&mut out.raw),
-                        stderr: std::mem::take(&mut err.text),
-                        raw_stderr: std::mem::take(&mut err.raw),
-                    });
-                }
+            if let Some(status) = status
+                && out.closed
+                && err.closed
+                && job.active().map_err(|e| e.to_string())? == 0
+            {
+                return Ok(Output {
+                    code: status.code(),
+                    stdout: std::mem::take(&mut out.text),
+                    raw_stdout: std::mem::take(&mut out.raw),
+                    stderr: std::mem::take(&mut err.text),
+                    raw_stderr: std::mem::take(&mut err.raw),
+                });
             }
-            if super::cancelled() {
+            if super::cancelled() && !super::transfer_active() {
                 return Err("cancelled: probe check cancelled".into());
             }
             if start.elapsed() >= timeout {
