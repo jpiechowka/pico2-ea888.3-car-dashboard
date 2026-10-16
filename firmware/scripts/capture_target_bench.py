@@ -13,7 +13,26 @@ import tomllib
 import unicodedata
 import zipfile
 
-FIRMWARE = Path(__file__).resolve().parents[1]
+def external_tool_directory(path):
+    """Keep directory identity but avoid MSVC's long verbatim-path argument failure."""
+    resolved = Path(path).resolve(strict=True)
+    value = str(resolved)
+    if os.name != 'nt' or not value.startswith('\\\\?\\'):
+        return resolved
+    # Only ordinary drive/UNC spellings have equivalent external-tool paths.
+    tail = value[4:]
+    if tail.startswith('UNC\\'):
+        candidate = Path('\\\\' + tail[4:])
+    elif re.match(r'^[A-Za-z]:\\', tail):
+        candidate = Path(tail)
+    else:
+        raise ValueError('unsupported Windows tool directory namespace')
+    if not candidate.samefile(resolved):
+        raise ValueError('Windows tool directory identity changed')
+    return candidate
+
+
+FIRMWARE = external_tool_directory(Path(__file__).parent.parent)
 REPO = FIRMWARE.parent
 sys.path.insert(0, str(REPO / 'host' / 'scripts'))
 sys.path.insert(0, str(FIRMWARE / 'scripts'))

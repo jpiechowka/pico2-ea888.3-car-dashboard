@@ -13,6 +13,32 @@ import capture_target_bench as capture
 
 
 class CaptureTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows external-tool path boundary')
+    def test_extended_script_path_keeps_identity_without_exporting_prefix(self):
+        script = str(Path(capture.__file__).resolve())
+        extended = script if script.startswith('\\\\?\\') else '\\\\?\\' + script
+        command = [sys.executable, '-I', '-c',
+                   'import runpy,sys; print(runpy.run_path(sys.argv[1])["FIRMWARE"])', extended]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        directory = Path(result.stdout.strip())
+        self.assertFalse(str(directory).startswith('\\\\?\\'))
+        self.assertTrue(directory.samefile(Path(script).parents[1]))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows external-tool path boundary')
+    def test_tool_directory_rejects_changed_identity(self):
+        directory = str(Path(capture.__file__).resolve().parent)
+        extended = directory if directory.startswith('\\\\?\\') else '\\\\?\\' + directory
+        with patch.object(Path, 'samefile', return_value=False):
+            with self.assertRaisesRegex(ValueError, 'identity changed'):
+                capture.external_tool_directory(extended)
+
+    def test_tool_directory_requires_existing_path(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            self.assertTrue(capture.external_tool_directory(directory).samefile(directory))
+            with self.assertRaises(FileNotFoundError):
+                capture.external_tool_directory(directory / 'missing')
+
     def test_custom_environment_presence_is_rejected_even_when_empty(self):
         for key in ['DASHBOARD_CPU_HZ','DASHBOARD_SPI_HZ','DASHBOARD_VSEL_MV']:
             with self.assertRaises(ValueError):
