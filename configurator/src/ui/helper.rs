@@ -2,6 +2,7 @@
 use std::time::Duration;
 
 use dashboard_configurator::helper_client::{
+    BuildStorageView,
     Connection,
     DeviceSelection,
     JobFeed,
@@ -27,6 +28,7 @@ mod artifacts;
 mod devices;
 mod history;
 mod prerequisites;
+mod storage;
 
 const BASE: &str = "http://127.0.0.1:8765/api/v1";
 #[derive(Clone, Default)]
@@ -38,6 +40,7 @@ struct ViewState {
     devices: Option<DeviceScanReport>,
     artifacts: Vec<ArtifactSummary>,
     history: Option<dashboard_helper_protocol::FlashHistory>,
+    storage: Option<BuildStorageView>,
 }
 #[derive(Clone, Copy)]
 pub struct State {
@@ -57,6 +60,7 @@ pub struct State {
     device: RwSignal<DeviceSelection>,
     inspecting: StoredValue<bool>,
     removing: StoredValue<Option<dashboard_helper_protocol::AttemptId>>,
+    removing_build: StoredValue<Option<dashboard_helper_protocol::AttemptId>>,
 }
 impl State {
     pub fn new() -> Self {
@@ -80,6 +84,7 @@ impl State {
             device: RwSignal::new(DeviceSelection::default()),
             inspecting: StoredValue::new(false),
             removing: StoredValue::new(None),
+            removing_build: StoredValue::new(None),
         }
     }
 
@@ -98,6 +103,7 @@ impl State {
             let _ = self.download.try_set_value(None);
             let _ = self.flashing.try_set_value(None);
             let _ = self.removing.try_set_value(None);
+            let _ = self.removing_build.try_set_value(None);
         });
     }
 }
@@ -120,6 +126,8 @@ enum Action {
     Flash,
     History,
     Cleanup,
+    Storage,
+    CleanupBuild,
 }
 struct ReadGuard {
     abort: AbortController,
@@ -150,6 +158,8 @@ async fn request(
         Action::Flash => ("POST", "/flashes".into()),
         Action::History => ("GET", "/flash-attempts".into()),
         Action::Cleanup => ("POST", "/flash-attempts/cleanup".into()),
+        Action::Storage => ("GET", "/build-attempts".into()),
+        Action::CleanupBuild => ("POST", "/build-attempts/cleanup".into()),
         Action::Artifacts => ("GET", "/artifacts".into()),
         Action::Inspect | Action::Inspection => {
             let device = state
@@ -211,8 +221,13 @@ async fn request(
     init.set_cache(web_sys::RequestCache::NoStore);
     init.set_redirect(web_sys::RequestRedirect::Error);
     let payload = match action {
-        Action::Cleanup => {
-            let attempt = state.removing.get_value().ok_or("No history record selected")?;
+        Action::Cleanup | Action::CleanupBuild => {
+            let attempt = if matches!(action, Action::CleanupBuild) {
+                state.removing_build.get_value()
+            } else {
+                state.removing.get_value()
+            }
+            .ok_or("No local record selected")?;
             let command = dashboard_helper_protocol::CleanupRequest {
                 attempts: BoundedVec::new(vec![attempt]).map_err(|_| "Invalid cleanup selection")?,
             };
@@ -295,6 +310,7 @@ async fn request(
         } else {
             MAX_RESPONSE_BYTES
         },
+        matches!(action, Action::Storage),
     )
     .await
 }
@@ -302,6 +318,7 @@ async fn request(
 async fn fetch_bounded(
     request: &Request,
     max_bytes: usize,
+    accept_storage_conflict: bool,
 ) -> Result<Vec<u8>, &'static str> {
     let response = JsFuture::from(
         web_sys::window()
@@ -312,7 +329,7 @@ async fn fetch_bounded(
     .map_err(|_| "Helper unreachable or request timed out. Check the local terminal, then reconnect.")?
     .dyn_into::<Response>()
     .map_err(|_| "Invalid helper response")?;
-    if !response.ok() {
+    if !response.ok() && !(accept_storage_conflict && response.status() == 409) {
         return Err(match response.status() {
             403 => "Helper session expired or origin rejected. Reconnect from Studio on port 8080.",
             409 => "Another helper job is active. Reconnect to inspect its status.",
@@ -381,6 +398,7 @@ fn apply(
                     v.devices = None;
                     v.artifacts.clear();
                     v.history = None;
+                    v.storage = None;
                 });
             }
             state.connection.set_value(Some(conn));
@@ -406,7 +424,13 @@ fn apply(
                 Ok(Some(Action::Report))
             }
         }
-        Action::Check | Action::Scan | Action::Build | Action::Inspect | Action::Flash | Action::Cleanup => {
+        Action::Check
+        | Action::Scan
+        | Action::Build
+        | Action::Inspect
+        | Action::Flash
+        | Action::Cleanup
+        | Action::CleanupBuild => {
             let job = parse::<JobSummary>(bytes)?;
             let conn = state.connection.get_value().ok_or("Helper session lost")?;
             let mut result = Ok(());
@@ -417,6 +441,10 @@ fn apply(
             result?;
             if matches!(action, Action::Cleanup) {
                 state.removing.set_value(None);
+            }
+            if matches!(action, Action::CleanupBuild) {
+                state.removing_build.set_value(None);
+                state.view.update(|v| v.storage = None);
             }
             if matches!(action, Action::Flash) {
                 state.flashing.set_value(None);
@@ -540,6 +568,11 @@ fn apply(
         Action::History => {
             let history = parse::<dashboard_helper_protocol::FlashHistory>(bytes)?;
             state.view.update(|v| v.history = Some(history));
+            Ok(Some(Action::Storage))
+        }
+        Action::Storage => {
+            let storage = BuildStorageView::decode(bytes)?;
+            state.view.update(|v| v.storage = Some(storage));
             Ok(None)
         }
         Action::Inspection => {
@@ -651,6 +684,7 @@ fn send(
                 state.download.set_value(None);
                 state.flashing.set_value(None);
                 state.removing.set_value(None);
+                state.removing_build.set_value(None);
                 state.device.update(DeviceSelection::clear);
                 state.inspecting.set_value(false);
                 ui.event(Notice {
@@ -709,7 +743,7 @@ fn stage_label(stage: dashboard_helper_protocol::StageId) -> String {
     match stage {
         StageId::Probe(ProbeStage::Prerequisites) => "Installed tools".into(),
         StageId::Probe(ProbeStage::DeviceDetection) => "BOOTSEL device discovery".into(),
-        StageId::Cleanup(_) => "Remove selected local history".into(),
+        StageId::Cleanup(_) => "Remove selected local records".into(),
         StageId::Firmware(stage) => {
             match stage {
                 FirmwareStage::Prerequisites => "Required tools",
@@ -748,6 +782,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
             <devices::Panel ui/>
             <artifacts::Panel ui/>
             <history::Panel ui/>
+            <storage::Panel ui/>
             <details class="build-disclosure" open><summary>"Job logs"</summary><p>{move ||state.view.with(|v|format!("{} retained events · {} omitted by bounded history",v.feed.events.len(),v.feed.omitted))}</p><div class="helper-log" role="log" aria-live="off">{move ||state.view.with(|v|v.feed.events.iter().map(|e|view!{<div class=match e.level{dashboard_helper_protocol::Level::Error=>"error",dashboard_helper_protocol::Level::Warning=>"warning",_=>"info"}><span>{format!("{:>6} ms",e.elapsed_ms)}</span><code>{e.text.as_str().to_string()}</code></div>}).collect_view())}</div>
                 <button disabled=move ||state.view.with(|v|v.feed.events.is_empty()) on:click=move |_|{let text=state.view.with_untracked(|v|v.feed.events.iter().map(|e|format!("{} ms {:?} {}",e.elapsed_ms,e.level,e.text.as_str())).collect::<Vec<_>>().join("\n"));if io::download(ui,"studio-helper.log","text/plain;charset=utf-8",text.as_bytes()).is_err(){state.view.update(|v|v.message="Could not download job logs.".into());}}>"Download logs"</button>
             </details>
@@ -795,7 +830,12 @@ pub async fn relay_post(
         .headers()
         .set("Content-Type", "application/json")
         .map_err(|_| "Cannot set diagnostic content type")?;
-    let reply = fetch_bounded(&request, dashboard_helper_protocol::diagnostics::Response::MAX_BYTES).await?;
+    let reply = fetch_bounded(
+        &request,
+        dashboard_helper_protocol::diagnostics::Response::MAX_BYTES,
+        false,
+    )
+    .await?;
     if relay_epoch(ui) != Some(epoch) {
         return Err("Diagnostic connection changed");
     }

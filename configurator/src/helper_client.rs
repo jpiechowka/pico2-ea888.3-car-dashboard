@@ -20,6 +20,8 @@ use crate::editor::{Editor, EditorStamp};
 
 mod device;
 pub use device::DeviceSelection;
+mod storage;
+pub use storage::BuildStorageView;
 
 pub const MAX_RESPONSE_BYTES: usize = 262_144;
 pub const MAX_VISIBLE_EVENTS: usize = 512;
