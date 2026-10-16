@@ -354,6 +354,63 @@ class SourceArrayEffects(unittest.TestCase):
             _array_effects(self.objects,self.rows,self.parents,changed,self.owner,self.frame,self.guards,self.sequence)
 
 
+class ActualSourcePrivatePhases(unittest.TestCase):
+    def test_same_private_predecessor_derives_Source_array_and_remaining_aggregates_once(self):
+        from config_decoded_sources import _first_boot_source_phases
+        objects,rows,source,item=SourceLiteralBodies.fixture()
+        state=_first_boot_source_phases(objects,rows,source)
+        self.assertTrue(state.entries)
+        self.assertTrue(state.phases)
+        self.assertTrue(any(p.array['sequence'] is not None for p in state.phases))
+        self.assertTrue(any(p.remaining is not None and p.remaining['normal'] for p in state.phases))
+        self.assertTrue(all(p.entry.predecessor is state.widgets for p in state.phases))
+        self.assertTrue(all(p.entry is e for p,e in zip(state.phases,state.entries)))
+        self.assertIs(state.source_context,state.widgets.family_bridge.source_context)
+        self.assertEqual(state.current(),state)
+        self.assertFalse(state.complete_ordinary_group_issued)
+        self.assertEqual(state.ordinary_frontier_pending,5630)
+        # A detached checkpoint must retain both values and the actual shared
+        # package association, even when a replacement compares equal.
+        phase=next(p for p in state.phases if p.effects is not None)
+        slot=phase.effects['slots'][0];original=slot['source_package']
+        self.assertIs(original,phase.array['packages'][0])
+        slot['source_package']=dict(original)
+        try:
+            with self.assertRaisesRegex(AssertionError,'record changed'):state.current()
+        finally:slot['source_package']=original
+        old=phase.array['fixed_array_committed'];phase.array['fixed_array_committed']=True
+        try:
+            with self.assertRaisesRegex(AssertionError,'record changed'):state.current()
+        finally:phase.array['fixed_array_committed']=old
+
+
+class SourcePhaseSnapshot(unittest.TestCase):
+    def test_repeated_packages_are_independent_immutable_graph_nodes(self):
+        from config_decoded_sources import _phase_graph
+        package={'cursor':[1,2],'fields':{'selector':1}}
+        graph={'packages':(package,),'copies':tuple(package for _ in range(1000))}
+        frozen=_phase_graph(graph)
+        self.assertLess(len(frozen[1]),10)
+        package['fields']['selector']=2
+        self.assertNotEqual(_phase_graph(graph),frozen)
+        package['fields']['selector']=1
+        self.assertEqual(_phase_graph(graph),frozen)
+
+    def test_equal_value_replacement_loses_the_actual_alias(self):
+        from config_decoded_sources import _phase_graph
+        package={'cursor':1};shared={'source':package,'effect':package}
+        independent={'source':package,'effect':dict(package)}
+        self.assertEqual(shared,independent)
+        self.assertNotEqual(_phase_graph(shared),_phase_graph(independent))
+        self.assertNotEqual(_phase_graph({'tag':True}),_phase_graph({'tag':1}))
+
+    def test_cycles_and_unsupported_values_reject(self):
+        from config_decoded_sources import _phase_graph
+        cycle=[];cycle.append(cycle)
+        with self.assertRaisesRegex(AssertionError,'cyclic'):_phase_graph(cycle)
+        with self.assertRaisesRegex(AssertionError,'unsupported'):_phase_graph({'value':object()})
+
+
 class SourceRemainingAggregates(unittest.TestCase):
     @staticmethod
     def fixture(extent=160):

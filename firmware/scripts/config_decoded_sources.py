@@ -10,7 +10,8 @@ from config_source_contracts import GRAMMARS
 from config_source_children import _function,_outline
 from config_widget_children import _name
 from validation import require
-from dataclasses import replace
+from dataclasses import dataclass,fields,is_dataclass,replace
+from types import MappingProxyType
 from config_abstract import SequenceInterface,Span
 from config_regions import Storage,borrow,require_writes,require_disjoint
 from config_decode_effects import _object
@@ -233,7 +234,16 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
     frame=sequence.header.storage;phase=frame.phase;V=parents[0]['function']-4376
     require(parents==_parents(objects,rows,V,owner.start),'Sources suffix uses stale parent/source effects')
     children=source_children(objects,rows,parents);errors=[];steps=[]
-    inherited=tuple(protected)+tuple(_object(borrow(frame,cell,4,phase),'reserved Source pointer '+str(cell)) for cell,target,sites in _CARRIERS)
+    # The actual predecessor already retains these same cell borrows. Keep
+    # that original protection identity instead of inventing overlapping
+    # allocations for the same caller bytes; supplied adapters add the cells.
+    inherited=list(protected);carrier_guards=[]
+    for cell,target,sites in _CARRIERS:
+        original=next((v for v in inherited if v.space==frame.space and v.start==frame.start+cell and v.extent==4),None)
+        if original is None:
+            original=_object(borrow(frame,cell,4,phase),'reserved Source pointer '+str(cell));inherited.append(original)
+        carrier_guards.append(original)
+    inherited=tuple(inherited)
     guards=list(inherited)
     for g in inherited:
         for space in ('address',frame.space):
@@ -353,7 +363,149 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
             normals.append(dict(wire_tag=wire,emitted_tag=tag,Fuel=record,after=option['state'],
                 colors=dict(source=colors,partial_background_store=V+5618,complete_store=V+5628,
                     same_source_order=('foreground','background'))))
-    return dict(warning=warning,normal=tuple(normals),errors=tuple(errors),transitions=tuple(steps),
+    return dict(warning=warning,normal=tuple(normals),errors=tuple(errors),transitions=tuple(steps),carrier_guards=tuple(carrier_guards),
         before=sequence,complete_ordinary_group_issued=False,
         pending_owned_roles=('warning_presentation_local','Fuel_final_halfword'),
         requires_actual_Source_prefix_ordinary_control_and_reached_uses=True)
+
+
+@dataclass(frozen=True)
+class _SourcePhase:
+    entry:object
+    array:dict
+    effects:object
+    remaining:object
+
+
+@dataclass(frozen=True)
+class _SourcePhaseData:
+    """Snapshot only local records, without copying the predecessor bridge."""
+    entry:dict
+    array:dict
+    effects:object
+    remaining:object
+
+
+def _entry_data(entry,widgets):
+    require(entry.predecessor is widgets and any(entry.exit is v for v in widgets.exits),
+        'Sources private phase lost its actual predecessor/exit identity')
+    return dict(exit_index=next(i for i,v in enumerate(widgets.exits) if v is entry.exit),
+        sequence=entry.sequence,carriers=entry.carriers,protected=entry.protected,
+        old_array=entry.old_Source_array,call_site=entry.call_site,call_arguments=entry.call_arguments)
+
+
+def _phase_checkpoint(widgets,entries,parents,children,returns,phases,payload_sha256):
+    require(len(entries)==len(phases) and all(p.entry is e for p,e in zip(phases,entries)),
+        'Sources private phase changed its selected entry association')
+    data=tuple(_SourcePhaseData(_entry_data(p.entry,widgets),p.array,p.effects,p.remaining) for p in phases)
+    return _phase_graph(dict(parents=parents,children=children,returns=returns,phases=data,payload_sha256=payload_sha256))
+
+
+def _phase_graph(value):
+    """Independent immutable values and alias edges for one checked invocation.
+
+    Array/effect records intentionally retain the same Source package. A tree
+    copy expands that package at every transport occurrence. This snapshot
+    instead records every supported container once and its exact references;
+    it retains neither mutable input objects nor cached evaluated states.
+    Rebuilding it checks values, types and shared associations again.
+    """
+    nodes=[];memo={};active=set()
+    def visit(item):
+        kind=type(item)
+        if kind in (str,bytes,int,bool,type(None)):
+            return ('value',kind.__name__,item)
+        identity=id(item)
+        require(identity not in active,'cyclic Sources phase snapshot')
+        if identity in memo:return ('reference',memo[identity])
+        index=len(nodes);memo[identity]=index;nodes.append(None);active.add(identity)
+        if kind in (dict,MappingProxyType):
+            node=('mapping',tuple((visit(k),visit(v)) for k,v in item.items()))
+        elif kind in (tuple,list):
+            node=(kind.__name__,tuple(visit(v) for v in item))
+        elif is_dataclass(item) and not isinstance(item,type):
+            node=('dataclass',kind.__module__,kind.__qualname__,tuple((f.name,visit(getattr(item,f.name))) for f in fields(item)))
+        else:require(False,'unsupported Sources phase snapshot value')
+        active.remove(identity);nodes[index]=node
+        return ('reference',index)
+    root=visit(value)
+    return root,tuple(nodes)
+
+
+@dataclass(frozen=True)
+class _SourcePhasesState:
+    widgets:object
+    objects:object
+    rows:object
+    source_context:object
+    parents:tuple
+    children:dict
+    returns:tuple
+    entries:tuple
+    phases:tuple
+    checkpoint:object
+    payload_sha256:str
+    complete_ordinary_group_issued:bool=False
+    ordinary_frontier_pending:int=5630
+
+    def __post_init__(self):
+        require(self.complete_ordinary_group_issued is False and type(self.ordinary_frontier_pending) is int and
+            self.ordinary_frontier_pending==5630,'Sources private phase cannot mint ordinary completion')
+
+    def current(self):
+        from config_source_handoff import _source_entries
+        from config_structural import _readonly_hash
+        bridge=self.widgets.family_bridge.current()
+        require(self.objects is bridge.objects and self.rows is bridge.rows and self.source_context is bridge.source_context,
+            'Sources private phase uses another current input/source pair')
+        c=self.widgets.views.context;V=c.headers['visitor']['proof']['function']
+        require(self.parents==_parents(self.objects,self.rows,V,c.owner.start) and
+            self.children==source_children(self.objects,self.rows,self.parents),
+            'Sources private current child/body/effect family changed')
+        entries=_source_entries(self.objects,self.rows,self.widgets)
+        require(tuple(_entry_data(e,self.widgets) for e in entries)==tuple(_entry_data(e,self.widgets) for e in self.entries),
+            'Sources private current entry/source/commit association changed')
+        payload=c.headers['visitor']['sequence_state'].decoder.payload
+        require(_readonly_hash(self.objects,payload.start,payload.extent)==self.payload_sha256,
+            'Sources private consumed source bytes changed')
+        require(_phase_checkpoint(self.widgets,self.entries,self.parents,self.children,self.returns,self.phases,self.payload_sha256)==self.checkpoint,
+            'Sources private source/epoch/child/effect record changed')
+        return self
+
+
+def _first_boot_source_phases(objects,rows,source_context):
+    """Derive the actual private predecessor once; ordinary closure is pending.
+
+    This is deliberately not the public Sources boundary. No descriptor,
+    receipt, copied previous report or caller-provided state enters the chain.
+    """
+    from config_decoded_widgets import _first_boot_decoded_widgets_state
+    from config_source_handoff import _source_entries
+    from config_finite_returns import _closed_child_returns
+    from config_source_children import source_return_profiles
+    from config_widget_contracts import ROLES as WIDGET
+    from config_structural import _readonly_hash
+    _,widgets=_first_boot_decoded_widgets_state(objects,rows,source_context)
+    objects=widgets.family_bridge.objects;rows=widgets.family_bridge.rows
+    c=widgets.views.context;frame=c.headers['visitor_frame'];V=c.headers['visitor']['proof']['function']
+    parents=_parents(objects,rows,V,c.owner.start);children=source_children(objects,rows,parents)
+    returns=_closed_child_returns(rows,parents,children,frame.start,source_return_profiles(),('seq_f32',WIDGET['warning_colors']))
+    require(returns and min(v['lowest_SP'] for v in returns)==frame.start-120,
+        'Sources whole current child chain changes its physical/original-return bound')
+    entries=_source_entries(objects,rows,widgets);phases=[]
+    for entry in entries:
+        array=_source_array(objects,rows,parents,entry.sequence,entry.protected,_object(entry.old_Source_array,'actual old Source array'))
+        effects=None;remaining=None
+        if array['sequence'] is not None:
+            effects=_array_effects(objects,rows,parents,array,c.owner,frame,entry.protected,entry.sequence)
+            # Whole Source array is now a protection envelope only after its
+            # checked copy/last-store relation. Ordinary promotion is still
+            # pending the separate actual selected-control/access-use proof.
+            completed=_object(borrow(c.owner,32,176,frame.phase),'assigned Source array')
+            top=replace(entry.exit.sequence,decoder=array['sequence'].decoder)
+            remaining=_remaining_aggregates(objects,rows,parents,top,c.owner,entry.protected+(completed,))
+        phases.append(_SourcePhase(entry,array,effects,remaining))
+    payload=c.headers['visitor']['sequence_state'].decoder.payload
+    digest=_readonly_hash(objects,payload.start,payload.extent);phases=tuple(phases)
+    checkpoint=_phase_checkpoint(widgets,entries,parents,children,returns,phases,digest)
+    return _SourcePhasesState(widgets,objects,rows,widgets.family_bridge.source_context,parents,children,returns,entries,phases,checkpoint,digest)
