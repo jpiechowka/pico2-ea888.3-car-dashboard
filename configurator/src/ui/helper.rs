@@ -1,8 +1,8 @@
 //! Explicit loopback connection; bounded reads and one owned polling chain.
 use std::time::Duration;
 
-use dashboard_configurator::helper_client::{Connection, JobFeed, MAX_RESPONSE_BYTES};
-use dashboard_helper_protocol::{BoundedVec, DeviceScanReport, EventBatch, JobSummary, Wire};
+use dashboard_configurator::helper_client::{Connection, JobFeed, MAX_RESPONSE_BYTES, PreparedBuild};
+use dashboard_helper_protocol::{BoundedVec, DeviceScanReport, EventBatch, JobSummary, ProjectUploadResponse, Wire};
 use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{AbortController, ReadableStreamDefaultReader, Request, RequestInit, Response};
@@ -27,6 +27,10 @@ pub struct State {
     epoch: StoredValue<u64>,
     timer: StoredValue<Option<TimeoutHandle>>,
     abort: StoredValue<Option<AbortController>, LocalStorage>,
+    building: RwSignal<bool>,
+    options_revision: RwSignal<Option<u64>>,
+    prepared: StoredValue<Option<PreparedBuild>>,
+    uploaded: StoredValue<Option<ProjectUploadResponse>>,
 }
 impl State {
     pub fn new() -> Self {
@@ -41,6 +45,10 @@ impl State {
             epoch: StoredValue::new(0),
             timer: StoredValue::new(None),
             abort: StoredValue::new_local(None),
+            building: RwSignal::new(false),
+            options_revision: RwSignal::new(Some(0)),
+            prepared: StoredValue::new(None),
+            uploaded: StoredValue::new(None),
         }
     }
 
@@ -54,6 +62,8 @@ impl State {
             }
             let _ = self.epoch.try_update_value(|e| *e = e.saturating_add(1));
             let _ = self.connection.try_set_value(None);
+            let _ = self.prepared.try_set_value(None);
+            let _ = self.uploaded.try_set_value(None);
         });
     }
 }
@@ -67,6 +77,8 @@ enum Action {
     Cancel,
     Report,
     Devices,
+    Upload,
+    Build,
 }
 struct ReadGuard {
     abort: AbortController,
@@ -80,9 +92,10 @@ impl Drop for ReadGuard {
 }
 
 async fn request(
-    state: State,
+    ui: Ui,
     action: Action,
 ) -> Result<Vec<u8>, &'static str> {
+    let state = ui.helper;
     let connection = state.connection.get_value();
     let (method, path) = match action {
         Action::Connect => ("POST", "/connect".into()),
@@ -91,6 +104,8 @@ async fn request(
         Action::Scan => ("POST", "/devices/refresh".into()),
         Action::Report => ("GET", "/prerequisites".into()),
         Action::Devices => ("GET", "/devices".into()),
+        Action::Upload => ("POST", "/projects".into()),
+        Action::Build => ("POST", "/builds".into()),
         Action::Poll | Action::Cancel => {
             state.view.with_untracked(|v| -> Result<(&str, String), &'static str> {
                 let job = v.feed.summary.as_ref().ok_or("No helper job selected")?;
@@ -125,6 +140,41 @@ async fn request(
     init.set_credentials(web_sys::RequestCredentials::Omit);
     init.set_cache(web_sys::RequestCache::NoStore);
     init.set_redirect(web_sys::RequestRedirect::Error);
+    let payload = match action {
+        Action::Upload => {
+            Some((
+                "application/octet-stream",
+                state
+                    .prepared
+                    .with_value(|p| p.as_ref().map(|p| p.bytes().to_vec()))
+                    .ok_or("Build snapshot was cancelled")?,
+            ))
+        }
+        Action::Build => {
+            let uploaded = state.uploaded.get_value().ok_or("Build upload is missing")?;
+            let connection = connection.as_ref().ok_or("Helper session lost")?;
+            let revision = state
+                .options_revision
+                .get_untracked()
+                .ok_or("Build counter exhausted; reload Studio")?;
+            let command = state.prepared.with_value(|p| {
+                let prepared = p.as_ref().ok_or("Build snapshot was cancelled")?;
+                ui.editor.with_untracked(|editor| {
+                    ui.build.with_untracked(|selection| {
+                        prepared.authorize(&uploaded, connection, editor, selection, revision)
+                    })
+                })
+            })?;
+            Some((
+                "application/json",
+                serde_json::to_vec(&command).map_err(|_| "Cannot encode build request")?,
+            ))
+        }
+        _ => None,
+    };
+    if let Some((_, body)) = &payload {
+        init.set_body(&js_sys::Uint8Array::from(body.as_slice()));
+    }
     let request =
         Request::new_with_str_and_init(&format!("{BASE}{path}"), &init).map_err(|_| "Cannot create helper request")?;
     if matches!(action, Action::Connect) {
@@ -136,6 +186,12 @@ async fn request(
         )
     }
     .map_err(|_| "Cannot set helper request headers")?;
+    if let Some((content_type, _)) = payload {
+        request
+            .headers()
+            .set("Content-Type", content_type)
+            .map_err(|_| "Cannot set build content type")?;
+    }
     let response = JsFuture::from(
         web_sys::window()
             .ok_or("Browser window unavailable")?
@@ -196,10 +252,11 @@ fn parse<T: serde::de::DeserializeOwned + Wire>(bytes: &[u8]) -> Result<T, &'sta
     Ok(value)
 }
 fn apply(
-    state: State,
+    ui: Ui,
     action: Action,
     bytes: &[u8],
 ) -> Result<Option<Action>, &'static str> {
+    let state = ui.helper;
     match action {
         Action::Connect => {
             let conn = Connection::decode(bytes)?;
@@ -236,7 +293,7 @@ fn apply(
                 Ok(Some(Action::Report))
             }
         }
-        Action::Check | Action::Scan => {
+        Action::Check | Action::Scan | Action::Build => {
             let job = parse::<JobSummary>(bytes)?;
             let conn = state.connection.get_value().ok_or("Helper session lost")?;
             let mut result = Ok(());
@@ -245,7 +302,39 @@ fn apply(
                 v.message = "Local job running. Detailed status and logs follow below.".into();
             });
             result?;
+            if matches!(action, Action::Build) {
+                state.prepared.set_value(None);
+                state.uploaded.set_value(None);
+                state.building.set(false);
+            }
             Ok(Some(Action::Poll))
+        }
+        Action::Upload => {
+            let uploaded = parse::<ProjectUploadResponse>(bytes)?;
+            let connection = state.connection.get_value().ok_or("Helper session lost")?;
+            let revision = state
+                .options_revision
+                .get_untracked()
+                .ok_or("Build counter exhausted; reload Studio")?;
+            let accepted = state.prepared.with_value(|p| {
+                let prepared = p.as_ref().ok_or("Build snapshot was cancelled")?;
+                ui.editor.with_untracked(|editor| {
+                    ui.build.with_untracked(|selection| {
+                        prepared.authorize(&uploaded, &connection, editor, selection, revision)
+                    })
+                })
+            });
+            if let Err(message) = accepted {
+                state.view.update(|v| v.message = message.into());
+                state.prepared.set_value(None);
+                state.building.set(false);
+                return Ok(None);
+            }
+            state.uploaded.set_value(Some(uploaded));
+            state
+                .view
+                .update(|v| v.message = "Project uploaded and identities checked. Starting its frozen build.".into());
+            Ok(Some(Action::Build))
         }
         Action::Poll => {
             let batch = parse::<EventBatch>(bytes)?;
@@ -347,13 +436,13 @@ fn send(
     state.busy.set(true);
     let epoch = state.epoch.get_value();
     spawn_local(async move {
-        let response = request(state, action).await;
+        let response = request(ui, action).await;
         if state.epoch.try_get_value() != Some(epoch) {
             return;
         }
         state.busy.set(false);
         state.abort.set_value(None);
-        let outcome = response.and_then(|bytes| apply(state, action, &bytes));
+        let outcome = response.and_then(|bytes| apply(ui, action, &bytes));
         match outcome {
             Ok(next) => {
                 if state.cancel.get_untracked() && state.view.with_untracked(|v| v.feed.active()) {
@@ -369,6 +458,9 @@ fn send(
                     v.message = message.into();
                 });
                 state.cancel.set(false);
+                state.prepared.set_value(None);
+                state.uploaded.set_value(None);
+                state.building.set(false);
                 ui.event(Notice {
                     severity: dashboard_configurator::events::Severity::Warn,
                     ..Notice::info(Category::HostTools, "helper.request_failed", None, message)
@@ -376,6 +468,49 @@ fn send(
             }
         }
     });
+}
+
+pub fn options_changed(ui: Ui) {
+    ui.helper
+        .options_revision
+        .update(|value| *value = value.and_then(|v| v.checked_add(1)));
+}
+pub fn build_disabled(ui: Ui) -> bool {
+    let state = ui.helper;
+    state.busy.get()
+        || state.building.get()
+        || state.options_revision.get().is_none()
+        || !state.view.with(|v| v.connected)
+        || state.view.with(|v| v.feed.active())
+        || ui.editor.with(|e| e.action_readiness().block.is_some())
+        || ui.build.with(|s| s.normalized().is_err())
+}
+pub fn start_build(ui: Ui) {
+    if build_disabled(ui) {
+        return;
+    }
+    let state = ui.helper;
+    let Some(revision) = state.options_revision.get_untracked() else {
+        return;
+    };
+    let prepared = ui.editor.with_untracked(|editor| {
+        ui.build
+            .with_untracked(|selection| PreparedBuild::capture(editor, selection, revision))
+    });
+    match prepared {
+        Ok(prepared) => {
+            state.prepared.set_value(Some(prepared));
+            state.uploaded.set_value(None);
+            state.building.set(true);
+            state.view.update(|v| {
+                v.message = "Uploading the accepted project. Original artwork stays in Studio; only converted pixels \
+                             enter the build."
+                    .into()
+            });
+            send(ui, Action::Upload);
+        }
+        Err(message) => state.view.update(|v| v.message = message.into()),
+    }
 }
 fn stage_label(stage: dashboard_helper_protocol::StageId) -> String {
     use dashboard_helper_protocol::{ProbeStage, StageId};
@@ -391,9 +526,9 @@ pub fn Panel(ui: Ui) -> impl IntoView {
     view! {
         <section class="build-card helper-panel" aria-labelledby="helper-title"><div class="build-section-title"><span>"LOCAL"</span><h2 id="helper-title">"Computer & devices"</h2></div>
             <p>"Run the helper in a terminal, then connect here. Connecting only reads status; checks and scans run when you request them."</p><code class="helper-command">".\\configurator\\Studio.ps1 -Helper"</code>
-            <div class="helper-actions"><button class="primary" disabled=move ||state.busy.get() on:click=move |_|send(ui,Action::Connect)>{move ||if state.view.with(|v|v.connected){"Reconnect"}else{"Connect local helper"}}</button>
-                <button disabled=move ||state.busy.get()||!state.view.with(|v|v.connected)||state.view.with(|v|v.feed.active()) on:click=move |_|send(ui,Action::Check)>"Check prerequisites"</button>
-                <button disabled=move ||state.busy.get()||!state.view.with(|v|v.connected)||state.view.with(|v|v.feed.active()) on:click=move |_|send(ui,Action::Scan)>"Find BOOTSEL devices"</button>
+            <div class="helper-actions"><button class="primary" disabled=move ||state.busy.get()||state.building.get() on:click=move |_|send(ui,Action::Connect)>{move ||if state.view.with(|v|v.connected){"Reconnect"}else{"Connect local helper"}}</button>
+                <button disabled=move ||state.busy.get()||state.building.get()||!state.view.with(|v|v.connected)||state.view.with(|v|v.feed.active()) on:click=move |_|send(ui,Action::Check)>"Check prerequisites"</button>
+                <button disabled=move ||state.busy.get()||state.building.get()||!state.view.with(|v|v.connected)||state.view.with(|v|v.feed.active()) on:click=move |_|send(ui,Action::Scan)>"Find BOOTSEL devices"</button>
                 <button disabled=move ||!state.view.with(|v|v.connected&&v.feed.active())||state.cancel.get() on:click=move |_|{if state.busy.get_untracked(){state.cancel.set(true);}else{send(ui,Action::Cancel);}}>"Cancel job"</button></div>
             <p class="helper-status" role="status"><span class="chip">{move ||if state.busy.get(){"COMMUNICATING"}else if state.view.with(|v|v.connected){"CONNECTED"}else{"DISCONNECTED"}}</span>{move ||state.view.with(|v|v.message.clone())}</p>
             <small class="build-note">"Open Studio at localhost:8080 or 127.0.0.1:8080. The connection stays in memory. Reloading the page does not cancel a native job; reconnect to resume its status."</small>

@@ -1,11 +1,110 @@
 //! Bounded browser-side job history. Capabilities stay outside diagnostic state.
 use std::collections::VecDeque;
 
-use dashboard_helper_protocol::{Event, EventBatch, JobSummary, SessionId, Text, Wire};
+use dashboard_config_tools::project::{ExportMode, digest};
+use dashboard_helper_protocol::{
+    BuildOptions,
+    Event,
+    EventBatch,
+    JobSummary,
+    ProjectBuildRequest,
+    ProjectUploadResponse,
+    SessionId,
+    Text,
+    Wire,
+};
 use serde::Deserialize;
+
+use crate::build_flash::BuildSelection;
+use crate::editor::{Editor, EditorStamp};
 
 pub const MAX_RESPONSE_BYTES: usize = 262_144;
 pub const MAX_VISIBLE_EVENTS: usize = 512;
+
+/// Frozen accepted project; originals never cross the native build boundary.
+pub struct PreparedBuild {
+    stamp: EditorStamp,
+    revision: u64,
+    options_revision: u64,
+    options: BuildOptions,
+    bytes: Vec<u8>,
+    hashes: [String; 4],
+}
+impl PreparedBuild {
+    pub fn capture(
+        editor: &Editor,
+        selection: &BuildSelection,
+        options_revision: u64,
+    ) -> Result<Self, &'static str> {
+        let project = editor
+            .accepted_project()
+            .map_err(|_| "Finish or discard pending edits before building")?;
+        let options = selection
+            .normalized()
+            .map_err(|_| "Correct build options before building")?
+            .requested;
+        let bytes = project
+            .encode(ExportMode::ConvertedOnly)
+            .map_err(|_| "Could not package accepted project")?;
+        if bytes.len() > dashboard_helper_protocol::PROJECT_UPLOAD_BYTES {
+            return Err("Project exceeds the build upload bound");
+        }
+        let hash = |data: &[u8]| digest(data).iter().map(|b| format!("{b:02x}")).collect();
+        let hashes = [
+            hash(&bytes),
+            hash(project.dashboard_bytes()),
+            hash(&project.profile().encode().ok_or("Invalid startup profile")?),
+            hash(project.artwork().map_or(&[], |a| a.converted())),
+        ];
+        Ok(Self {
+            stamp: editor.stamp(),
+            revision: editor.revision().get(),
+            options_revision,
+            options,
+            bytes,
+            hashes,
+        })
+    }
+
+    pub fn bytes(&self) -> &[u8] { &self.bytes }
+
+    /// Recheck immediately before dispatch; a completed upload is not permission to build stale edits.
+    pub fn authorize(
+        &self,
+        reply: &ProjectUploadResponse,
+        connection: &Connection,
+        editor: &Editor,
+        selection: &BuildSelection,
+        options_revision: u64,
+    ) -> Result<ProjectBuildRequest, &'static str> {
+        if editor.stamp() != self.stamp
+            || editor.action_readiness().block.is_some()
+            || options_revision != self.options_revision
+            || selection.normalized().map(|n| n.requested).ok().as_ref() != Some(&self.options)
+        {
+            return Err(
+                "Project or build settings changed during upload. Click Build again for the current selection.",
+            );
+        }
+        if reply.session_id != *connection.session()
+            || [
+                reply.project_sha256.as_str(),
+                reply.config_sha256.as_str(),
+                reply.startup_profile_sha256.as_str(),
+                reply.startup_asset_sha256.as_str(),
+            ] != self.hashes.each_ref().map(String::as_str)
+        {
+            return Err("Helper upload identity does not match the accepted project");
+        }
+        Ok(ProjectBuildRequest {
+            editor_revision: self.revision,
+            project_id: reply.project_id.clone(),
+            project_sha256: reply.project_sha256.clone(),
+            options: self.options.clone(),
+            retry_of: None,
+        })
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

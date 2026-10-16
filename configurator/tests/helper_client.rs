@@ -1,5 +1,77 @@
+use dashboard_configurator::build_flash::BuildSelection;
+use dashboard_configurator::editor::Editor;
 use dashboard_configurator::helper_client::*;
 use dashboard_helper_protocol::*;
+
+fn receipt(prepared: &PreparedBuild) -> ProjectUploadResponse {
+    let project = dashboard_config_tools::project::Project::decode(prepared.bytes()).unwrap();
+    let hash = |bytes: &[u8]| {
+        Sha256::new(
+            dashboard_config_tools::project::digest(bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+        )
+        .unwrap()
+    };
+    ProjectUploadResponse {
+        session_id: connection().session().clone(),
+        project_id: ProjectId::new("1".repeat(32)).unwrap(),
+        project_sha256: hash(prepared.bytes()),
+        config_sha256: hash(project.dashboard_bytes()),
+        startup_profile_sha256: hash(&project.profile().encode().unwrap()),
+        startup_asset_sha256: hash(project.artwork().map_or(&[], |art| art.converted())),
+    }
+}
+
+#[test]
+fn build_upload_binds_editor_options_session_and_all_component_hashes() {
+    let mut editor = Editor::default();
+    let selection = BuildSelection::default();
+    let prepared = PreparedBuild::capture(&editor, &selection, 4).unwrap();
+    let reply = receipt(&prepared);
+    let request = prepared
+        .authorize(&reply, &connection(), &editor, &selection, 4)
+        .unwrap();
+    assert_eq!(request.options, selection.options);
+    assert_eq!(request.project_id, reply.project_id);
+    assert!(
+        prepared
+            .authorize(&reply, &connection(), &editor, &selection, 5)
+            .is_err()
+    );
+    let mut changed = selection.clone();
+    changed.options.full_frame = !changed.options.full_frame;
+    assert!(prepared.authorize(&reply, &connection(), &editor, &changed, 4).is_err());
+    for index in 0..5 {
+        let mut wrong = reply.clone();
+        match index {
+            0 => wrong.session_id = SessionId::new("f".repeat(32)).unwrap(),
+            1 => wrong.project_sha256 = Sha256::new("f".repeat(64)).unwrap(),
+            2 => wrong.config_sha256 = Sha256::new("f".repeat(64)).unwrap(),
+            3 => wrong.startup_profile_sha256 = Sha256::new("f".repeat(64)).unwrap(),
+            _ => wrong.startup_asset_sha256 = Sha256::new("f".repeat(64)).unwrap(),
+        }
+        assert!(
+            prepared
+                .authorize(&wrong, &connection(), &editor, &selection, 4)
+                .is_err()
+        );
+    }
+    let mut profile = editor.startup_profile();
+    profile.duration_ms += 1;
+    editor.set_startup_profile(profile).unwrap();
+    assert!(
+        prepared
+            .authorize(&reply, &connection(), &editor, &selection, 4)
+            .is_err()
+    );
+    assert!(
+        prepared
+            .authorize(&reply, &connection(), &Editor::default(), &selection, 4)
+            .is_err()
+    );
+}
 
 fn connection() -> Connection {
     Connection::decode(
