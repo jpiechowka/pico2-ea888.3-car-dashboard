@@ -143,3 +143,49 @@ fn bounded_channel_moves_the_lease_and_retains_delayed_completion() {
     assert!(completions.try_receive().is_err());
     assert_eq!(a.buffer()[0], 55);
 }
+
+#[test]
+fn queued_orientation_survives_new_selection_and_delayed_completion() {
+    use dashboard_config::Orientation;
+    use dashboard_host_validation::display::{FrameBuffer, damage::{DamagePlan, PanelHistory}, pipeline::FrameLease, telemetry::RenderTrace};
+    let mut a = Box::<FrameBuffer>::default();
+    let mut b = Box::<FrameBuffer>::default();
+    let [a, _b] = FrameLease::pair(&mut a, &mut b);
+    let mut lifecycle = FrameLifecycle::new();
+    let mut history = PanelHistory::new();
+    let token = lifecycle.begin(a.id()).unwrap();
+    let mut desired = Orientation::Portrait;
+    history.begin_render_in(token, desired).unwrap();
+    lifecycle.ready(token).unwrap();
+    lifecycle.queue(token).unwrap();
+    history.queue(token, None).unwrap();
+    let request = a.submit_plan_in(token, RenderTrace::instant(10), DamagePlan::full_in(desired.geometry()), desired);
+    desired = Orientation::LandscapeInverted;
+    assert_eq!(request.orientation(), Orientation::Portrait);
+    lifecycle.started(token).unwrap();
+    // Rendering and discarding a newer maintenance frame cannot change the old
+    // submitted orientation, completed history, or ownership.
+    let discarded = lifecycle.begin(BufferId::B).unwrap();
+    history.begin_render_in(discarded, desired).unwrap();
+    lifecycle.ready(discarded).unwrap();
+    lifecycle.discard(discarded).unwrap();
+    assert!(history.complete(discarded).is_err());
+    assert_eq!(history.panel_orientation(), None);
+    lifecycle.complete(request.token()).unwrap();
+    history.complete(request.token()).unwrap();
+    assert_eq!(history.panel_orientation(), Some(Orientation::Portrait));
+    assert_eq!(history.reference_for(desired), None);
+    assert_eq!(desired, Orientation::LandscapeInverted);
+}
+
+#[test]
+#[should_panic(expected = "frame orientation and plan geometry differ")]
+fn queued_request_rejects_geometry_mismatch() {
+    use dashboard_config::Orientation;
+    use dashboard_host_validation::display::{FrameBuffer, damage::DamagePlan, pipeline::{FrameLease, FrameToken}, telemetry::RenderTrace};
+    let mut a = Box::<FrameBuffer>::default();
+    let mut b = Box::<FrameBuffer>::default();
+    let [a, _b] = FrameLease::pair(&mut a, &mut b);
+    let token = FrameToken { buffer: a.id(), sequence: 1 };
+    a.submit_plan_in(token, RenderTrace::instant(10), DamagePlan::full(), Orientation::Portrait);
+}

@@ -1,6 +1,7 @@
 //! The same token checks run on the device and in the host fault-injection tests.
 use core::future::{Future, poll_fn};
 use core::pin::pin;
+use dashboard_config::Orientation;
 
 use super::FrameBuffer;
 use super::damage::DamagePlan;
@@ -196,6 +197,11 @@ impl<'a> FrameLease<'a> {
         trace: RenderTrace,
         plan: DamagePlan,
     ) -> FrameRequest<'a> {
+        self.submit_plan_in(token, trace, plan, Orientation::Landscape)
+    }
+
+    pub fn submit_plan_in(self, token: FrameToken, trace: RenderTrace, plan: DamagePlan, orientation: Orientation) -> FrameRequest<'a> {
+        assert_eq!(plan.geometry(), orientation.geometry(), "frame orientation and plan geometry differ");
         assert_eq!(self.id, token.buffer, "frame token belongs to another buffer");
         assert!(!plan.is_empty(), "empty plans must not be queued");
         trace.validate().expect("invalid render timing");
@@ -204,6 +210,7 @@ impl<'a> FrameLease<'a> {
             token,
             trace,
             plan,
+            orientation,
         }
     }
 }
@@ -215,10 +222,13 @@ pub struct FrameRequest<'a> {
     token: FrameToken,
     trace: RenderTrace,
     plan: DamagePlan,
+    orientation: Orientation,
 }
 
 impl<'a> FrameRequest<'a> {
     pub fn token(&self) -> FrameToken { self.token }
+
+    pub const fn orientation(&self) -> Orientation { self.orientation }
 
     pub fn trace(&self) -> RenderTrace { self.trace }
 
