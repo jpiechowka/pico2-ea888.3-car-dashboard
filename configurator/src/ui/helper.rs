@@ -192,10 +192,17 @@ async fn request(
             .set("Content-Type", content_type)
             .map_err(|_| "Cannot set build content type")?;
     }
+    fetch_bounded(&request, MAX_RESPONSE_BYTES).await
+}
+
+async fn fetch_bounded(
+    request: &Request,
+    max_bytes: usize,
+) -> Result<Vec<u8>, &'static str> {
     let response = JsFuture::from(
         web_sys::window()
             .ok_or("Browser window unavailable")?
-            .fetch_with_request(&request),
+            .fetch_with_request(request),
     )
     .await
     .map_err(|_| "Helper unreachable or request timed out. Check the local terminal, then reconnect.")?
@@ -232,7 +239,7 @@ async fn request(
                 .dyn_into::<js_sys::Uint8Array>()
                 .map_err(|_| "Invalid helper byte stream")?;
             let count = data.length() as usize;
-            if count > MAX_RESPONSE_BYTES.saturating_sub(bytes.len()) {
+            if count > max_bytes.saturating_sub(bytes.len()) {
                 return Err("Helper response exceeds the allowed size");
             }
             let at = bytes.len();
@@ -432,6 +439,7 @@ fn send(
             return;
         };
         state.epoch.set_value(next);
+        state.view.update(|v| v.connected = false);
     }
     state.busy.set(true);
     let epoch = state.epoch.get_value();
@@ -543,4 +551,50 @@ pub fn Panel(ui: Ui) -> impl IntoView {
             </details>
         </section>
     }
+}
+
+/// The relay owns its queue and cancellation lease; authority stays in this module.
+pub fn relay_epoch(ui: Ui) -> Option<u64> {
+    ui.helper
+        .view
+        .with(|v| v.connected)
+        .then(|| ui.helper.epoch.get_value())
+}
+pub async fn relay_post(
+    ui: Ui,
+    epoch: u64,
+    body: &[u8],
+    abort: &AbortController,
+) -> Result<Vec<u8>, &'static str> {
+    if body.len() > 16384 || relay_epoch(ui) != Some(epoch) {
+        return Err("Diagnostic connection changed");
+    }
+    let connection = ui
+        .helper
+        .connection
+        .get_value()
+        .ok_or("Diagnostic connection unavailable")?;
+    let init = RequestInit::new();
+    init.set_method("POST");
+    init.set_signal(Some(&abort.signal()));
+    init.set_mode(web_sys::RequestMode::Cors);
+    init.set_credentials(web_sys::RequestCredentials::Omit);
+    init.set_cache(web_sys::RequestCache::NoStore);
+    init.set_redirect(web_sys::RequestRedirect::Error);
+    init.set_body(&js_sys::Uint8Array::from(body));
+    let request = Request::new_with_str_and_init(&format!("{BASE}/diagnostics"), &init)
+        .map_err(|_| "Cannot create diagnostic request")?;
+    request
+        .headers()
+        .set("X-Studio-Capability", connection.capability())
+        .map_err(|_| "Cannot authenticate diagnostic request")?;
+    request
+        .headers()
+        .set("Content-Type", "application/json")
+        .map_err(|_| "Cannot set diagnostic content type")?;
+    let reply = fetch_bounded(&request, 16384).await?;
+    if relay_epoch(ui) != Some(epoch) {
+        return Err("Diagnostic connection changed");
+    }
+    Ok(reply)
 }
