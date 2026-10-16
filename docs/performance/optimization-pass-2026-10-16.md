@@ -266,3 +266,15 @@ No persistent buffer or allocation was added by the fill implementation; the
 two 153,600-byte framebuffers and existing stack reserves remain unchanged.
 Every image still passed its practical memory and linked-input checks. The
 instruction-by-instruction research proof was not run or claimed complete.
+
+The final release Studio bundle was also exercised in the browser with two
+retained admitted artifacts. Fifteen observed transitions covered matching
+identities, changed/restored compiler options and profiles, view/widget
+selection, accepted startup edits and undo, pending/invalid timing, and pending
+malformed JSON with discard. Invalid or unapplied edits blocked Build and Export;
+discard restored matching labels. Flash stayed disabled without device inspection
+and board confirmation. The original 1,824-byte project exported byte-for-byte
+unchanged afterward. No device scan or USB write occurred. These checks exercise
+UI integration; cache allocation reuse and fresh dispatch authority have separate
+automated oracles. Existing [workflow and widget screenshots](../configurator/gallery.md)
+remain representative because these optimizations preserve visible behavior.
