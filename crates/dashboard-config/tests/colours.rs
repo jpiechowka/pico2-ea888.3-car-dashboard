@@ -93,6 +93,7 @@ fn maximum_palette_document_stays_inside_binary_and_json_file_limits() {
             .push(View {
                 id: view,
                 name: "WWWWWWWWWWWWWW".try_into().unwrap(),
+                orientation: None,
             })
             .unwrap();
         for (i, channel) in Channel::ALL.into_iter().enumerate() {

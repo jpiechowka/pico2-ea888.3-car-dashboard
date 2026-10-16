@@ -1,7 +1,7 @@
 use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 pub const CATALOGUE_VERSION: u16 = 1;
 pub const MAX_VIEWS: usize = 8;
 pub const MAX_WIDGETS: usize = 64;
@@ -24,6 +24,7 @@ pub struct Config {
     pub history_seconds: [u16; 8],
     pub reduced_motion: bool,
     pub led: crate::LedSettings,
+    pub orientation: crate::Orientation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +32,19 @@ pub struct Config {
 pub struct View {
     pub id: u8,
     pub name: String<14>,
+    pub orientation: Option<crate::Orientation>,
+}
+
+impl Config {
+    pub fn view_orientation(
+        &self,
+        id: u8,
+    ) -> Option<crate::Orientation> {
+        self.views
+            .iter()
+            .find(|view| view.id == id)
+            .map(|view| view.orientation.unwrap_or(self.orientation))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -136,24 +150,35 @@ pub struct PixelRect {
 }
 
 impl Placement {
-    pub fn rect(self) -> Option<PixelRect> {
-        if self.column.checked_add(self.span.columns())? > 4 || self.row.checked_add(self.span.rows())? > 2 {
-            return None;
-        }
+    pub fn rect(self) -> Option<PixelRect> { self.rect_in(crate::Geometry::Landscape) }
+
+    pub fn rect_in(
+        self,
+        geometry: crate::Geometry,
+    ) -> Option<PixelRect> {
+        let x = geometry.column_edge(self.column)?;
+        let y = geometry.row_edge(self.row)?;
+        let right = geometry.column_edge(self.column.checked_add(self.span.columns())?)?;
+        let bottom = geometry.row_edge(self.row.checked_add(self.span.rows())?)?;
         Some(PixelRect {
-            x: u16::from(self.column) * 80,
-            y: 26 + u16::from(self.row) * 107,
-            width: u16::from(self.span.columns()) * 80,
-            height: u16::from(self.span.rows()) * 107,
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
         })
     }
 
-    pub fn occupied(self) -> Option<u8> {
-        self.rect()?;
+    pub fn occupied(self) -> Option<u8> { self.occupied_in(crate::Geometry::Landscape) }
+
+    pub fn occupied_in(
+        self,
+        geometry: crate::Geometry,
+    ) -> Option<u8> {
+        self.rect_in(geometry)?;
         let mut cells = 0;
         for row in self.row..self.row + self.span.rows() {
             for column in self.column..self.column + self.span.columns() {
-                cells |= 1 << (row * 4 + column);
+                cells |= 1 << (row * geometry.columns() + column);
             }
         }
         Some(cells)
@@ -360,6 +385,6 @@ pub enum Fuel {
 }
 
 // Host pointer widths are not a substitute for the target's actual layout.
-// Admitted by the traced v4 whole-artifact memory and stack gates.
+// v5 adds four bytes over v4 on ARM. Whole-image RAM/stack gates remain separate.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<Config>() <= 14_576);
+const _: () = assert!(core::mem::size_of::<Config>() <= 14_580);

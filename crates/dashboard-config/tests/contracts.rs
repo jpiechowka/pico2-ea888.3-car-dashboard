@@ -93,6 +93,7 @@ fn all_spans_empty_view_and_maximum_document_are_valid() {
             .push(View {
                 id: view,
                 name: "View".try_into().unwrap(),
+                orientation: None,
             })
             .unwrap();
         for (slot, widget) in template.iter().enumerate() {

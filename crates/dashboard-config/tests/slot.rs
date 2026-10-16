@@ -69,6 +69,7 @@ fn maximum() -> Config {
             .push(View {
                 id: view,
                 name: "Max view".try_into().unwrap(),
+                orientation: None,
             })
             .unwrap();
         for cell in 0..8 {
@@ -202,13 +203,13 @@ fn resealed_payload_errors_and_noncanonical_encodings_match_owned_decoder() {
     }
     // First source's definition enum follows the empty widgets sequence.
     let mut invalid_enum = payload.to_vec();
-    invalid_enum[8] = 127;
+    invalid_enum[9] = 127;
     failures.push(invalid_enum);
     let mut views = vec![VERSION as u8, 1, 1, 9];
     for id in 1..=9 {
-        views.extend_from_slice(&[id, 1, b'A']);
+        views.extend_from_slice(&[id, 1, b'A', 0]);
     }
-    views.extend_from_slice(&payload[7..]);
+    views.extend_from_slice(&payload[8..]);
     failures.push(views);
     let widget = default_config().widgets[0].clone();
     let widgets: Vec<Widget> = vec![widget; 65];
@@ -258,6 +259,7 @@ fn slot_always_rejects_legacy_envelopes_and_current_envelope_legacy_payloads() {
         include_bytes!("fixtures/v1-default.eav").as_slice(),
         include_bytes!("fixtures/v2-default.eav").as_slice(),
         include_bytes!("fixtures/v3-default.eav").as_slice(),
+        include_bytes!("fixtures/v4-default.eav").as_slice(),
     ] {
         let loaded = slot.load_at_boot(bytes);
         assert_eq!(loaded.fault, Some(ConfigError::Version));
@@ -310,7 +312,7 @@ fn late_advanced_decode_and_validation_failures_replace_all_slot_fields() {
         assert_same(&mut slot, &bytes);
     }
     let mut payload = good[HEADER_BYTES..].to_vec();
-    *payload.last_mut().unwrap() = 2;
+    *payload.last_mut().unwrap() = 255;
     let malformed = envelope(&payload);
     assert_eq!(decode(&malformed), Err(ConfigError::Payload));
     assert_same(&mut slot, &malformed);

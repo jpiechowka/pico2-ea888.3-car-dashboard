@@ -118,6 +118,7 @@ fn multi_config() -> ValidatedConfig {
         .push(dashboard_config::View {
             id: 9,
             name: "Second".try_into().unwrap(),
+            orientation: None,
         })
         .unwrap();
     dashboard_config::validate(c).unwrap()
@@ -140,6 +141,7 @@ fn matrix_config() -> ValidatedConfig {
         .push(dashboard_config::View {
             id: 12,
             name: "Third".try_into().unwrap(),
+            orientation: None,
         })
         .unwrap();
     dashboard_config::validate(c).unwrap()

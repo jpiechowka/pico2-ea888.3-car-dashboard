@@ -92,6 +92,7 @@ pub(crate) const fn empty_config() -> Config {
         history_seconds: [120; 8],
         reduced_motion: false,
         led: LedSettings::DEFAULT,
+        orientation: Orientation::Landscape,
         controls: ControlMap {
             hold_ms: 0,
             screens: [ScreenBindings {
@@ -116,6 +117,7 @@ pub(crate) fn fill_default_config(config: &mut Config) {
         .push(View {
             id: 1,
             name: "Overview".try_into().expect("bounded built-in view"),
+            orientation: None,
         })
         .is_err()
     {
@@ -177,4 +179,5 @@ pub(crate) fn fill_default_config(config: &mut Config) {
     config.history_seconds = [120; 8];
     config.reduced_motion = false;
     config.led = LedSettings::DEFAULT;
+    config.orientation = Orientation::Landscape;
 }

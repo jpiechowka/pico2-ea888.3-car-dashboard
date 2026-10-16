@@ -71,6 +71,6 @@ impl Default for ConfigSlot {
     fn default() -> Self { Self::new() }
 }
 
-// Admitted by the traced v4 whole-artifact memory and stack gates.
+// Config plus proof/fault metadata; whole-image RAM/stack checks run separately.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ConfigSlot>() <= 14_600);
+const _: () = assert!(core::mem::size_of::<ConfigSlot>() <= 14_604);

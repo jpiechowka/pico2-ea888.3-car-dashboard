@@ -1,7 +1,14 @@
 //! Frozen host-only v3 wire contract, including its action and rule vocabularies.
 use serde::{Deserialize, Serialize};
 
-use crate::legacy::{OldDisplayOptions, OldGauge, OldWarningPresentation, OldWarningSettings};
+use crate::legacy::{
+    LegacyView,
+    OldDisplayOptions,
+    OldGauge,
+    OldWarningPresentation,
+    OldWarningSettings,
+    upgrade_views,
+};
 use crate::*;
 
 #[derive(Serialize, Deserialize)]
@@ -10,7 +17,7 @@ pub(crate) struct LegacyConfigV3 {
     version: u16,
     catalogue_version: u16,
     boot_view: u8,
-    views: heapless::Vec<View, MAX_VIEWS>,
+    views: heapless::Vec<LegacyView, MAX_VIEWS>,
     widgets: heapless::Vec<LegacyWidgetV3, MAX_WIDGETS>,
     sources: [ChannelSource; 8],
     warnings: OldWarningPresentation,
@@ -57,7 +64,7 @@ impl LegacyConfigV3 {
             version: VERSION,
             catalogue_version: self.catalogue_version,
             boot_view: self.boot_view,
-            views: self.views,
+            views: upgrade_views(self.views),
             widgets,
             sources: self.sources,
             warnings: self.warnings.into(),
@@ -67,6 +74,7 @@ impl LegacyConfigV3 {
             history_seconds: [120; 8],
             reduced_motion: false,
             led: LedSettings::default(),
+            orientation: Orientation::Landscape,
         })
         .map_err(ConfigError::Validation)
     }

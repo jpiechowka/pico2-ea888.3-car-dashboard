@@ -48,6 +48,7 @@ fn accepted_same_batch_view_round_trip_resets_the_prepared_filter() {
         .push(View {
             id: 2,
             name: "Other".try_into().unwrap(),
+            orientation: None,
         })
         .unwrap();
     let mut widget = raw.widgets[0].clone();

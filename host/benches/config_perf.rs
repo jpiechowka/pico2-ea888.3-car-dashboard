@@ -13,6 +13,7 @@ pub fn maximum() -> Config {
             .push(View {
                 id: view,
                 name: "12345678901234".try_into().unwrap(),
+                orientation: None,
             })
             .unwrap();
         for (slot, template) in widgets.iter().enumerate() {

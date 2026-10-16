@@ -345,6 +345,7 @@ fn peak_only_expiry_and_reset_repair_both_buffers_and_raw_lookup_uses_global_rul
         .push(View {
             id: 2,
             name: "PEAK".try_into().unwrap(),
+            orientation: None,
         })
         .unwrap();
     let mut w = raw.widgets[0].clone();

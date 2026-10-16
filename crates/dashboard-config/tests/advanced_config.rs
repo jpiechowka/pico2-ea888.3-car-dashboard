@@ -2,9 +2,9 @@
 use dashboard_config::*;
 
 #[test]
-fn v4_complete_defaults_and_compact_output() {
+fn complete_defaults_and_compact_output() {
     let config = validate(default_config()).unwrap();
-    assert_eq!(VERSION, 4, "the complete advanced contract is version four");
+    assert_eq!(VERSION, 5, "orientation extends the advanced contract");
     let json = to_json(&config).unwrap();
     assert!(!json.contains('\n'));
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();

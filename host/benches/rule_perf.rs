@@ -19,6 +19,7 @@ fn maximum(
             .push(View {
                 id: view,
                 name: "View".try_into().unwrap(),
+                orientation: None,
             })
             .unwrap();
         for cell in 0..8 {

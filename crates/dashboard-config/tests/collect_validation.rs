@@ -22,6 +22,7 @@ fn independent_errors_survive_bad_geometry_references_and_duplicate_ids() {
         .push(View {
             id: 2,
             name: "SECOND".try_into().unwrap(),
+            orientation: None,
         })
         .unwrap();
     config.views.push(config.views[1].clone()).unwrap();
@@ -145,6 +146,7 @@ fn accepted_default_and_maximum_fixture_produce_no_issues() {
             .push(View {
                 id: view,
                 name: "MAX".try_into().unwrap(),
+                orientation: None,
             })
             .unwrap();
         for cell in 0..8 {

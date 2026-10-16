@@ -5,6 +5,7 @@ use dashboard_config::*;
 /// settings. Wider fixtures reduce cells but use full 24-byte labels/legends.
 fn bound_config(span: Span) -> Config {
     let mut c = default_config();
+    c.orientation = Orientation::LandscapeInverted;
     c.views.clear();
     c.widgets.clear();
     c.boot_view = 248;
@@ -39,6 +40,7 @@ fn bound_config(span: Span) -> Config {
             .push(View {
                 id: view,
                 name: "\\\\\\\\\\\\\\\\\\\\\\\\\\\\".try_into().unwrap(),
+                orientation: Some(Orientation::LandscapeInverted),
             })
             .unwrap();
         let cells = if span == Span::TwoByTwo { 2 } else { 8 };

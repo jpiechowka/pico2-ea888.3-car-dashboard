@@ -185,6 +185,7 @@ fn all64_rules_and_rule63_commands_do_not_alias_channels() {
             .push(View {
                 id: view,
                 name: "View".try_into().unwrap(),
+                orientation: None,
             })
             .unwrap();
         for cell in 0..8 {

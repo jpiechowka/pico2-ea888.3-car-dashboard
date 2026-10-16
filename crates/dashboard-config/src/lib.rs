@@ -18,7 +18,10 @@ mod fuel;
 mod legacy;
 #[cfg(feature = "json")]
 mod legacy_v3;
+#[cfg(feature = "json")]
+mod legacy_v4;
 mod model;
+mod orientation;
 pub mod startup;
 pub mod startup_asset;
 mod validate;
@@ -31,6 +34,7 @@ pub use controls::*;
 pub use defaults::{default_config, default_widget};
 pub use led::*;
 pub use model::*;
+pub use orientation::*;
 pub use validate::*;
 
 /// Startup owns this result before publishing an immutable configuration to
@@ -40,9 +44,9 @@ pub struct BootConfig {
     pub fault: Option<ConfigError>,
 }
 
-// Admitted by the traced v4 whole-artifact memory and stack gates.
+// Config storage plus proof/fault metadata; whole-image checks run separately.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<BootConfig>() <= 14_600);
+const _: () = assert!(core::mem::size_of::<BootConfig>() <= 14_604);
 
 #[inline(never)]
 pub fn load_at_boot(bytes: &[u8]) -> BootConfig {

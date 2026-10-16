@@ -137,7 +137,7 @@ impl ValidationLocation {
     pub const fn field(self) -> Field { self.field }
 }
 
-/// Formatting follows the actual v4 JSON arrays: widgets are a root list.
+/// Formatting follows the JSON arrays: widgets are a root list.
 /// No heap strings are retained or constructed by firmware validation.
 impl core::fmt::Display for ValidationLocation {
     fn fmt(
@@ -314,9 +314,9 @@ pub struct ValidatedConfig {
     cache_status: CacheIdentityStatus,
 }
 
-// Admitted by the traced v4 whole-artifact memory and stack gates.
+// Config storage plus runtime proof metadata; whole-image checks run separately.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 14_588);
+const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 14_592);
 
 impl PartialEq for ValidatedConfig {
     fn eq(
@@ -517,7 +517,11 @@ pub fn visit_validation(
         if view_index.is_none() {
             issue!(at(ErrorCode::Reference, Field::WidgetView));
         }
-        let cells = widget.placement.occupied();
+        let geometry = view_index
+            .map(|index| config.views[index].orientation.unwrap_or(config.orientation))
+            .unwrap_or(config.orientation)
+            .geometry();
+        let cells = widget.placement.occupied_in(geometry);
         if cells.is_none() {
             issue!(at(ErrorCode::Bounds, Field::Placement));
         }

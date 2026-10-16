@@ -401,6 +401,7 @@ fn both_buffers_match_full_redraw_for_spans_holes_views_overlays_and_options() {
         .push(View {
             id: 2,
             name: "12345678901234".try_into().unwrap(),
+            orientation: None,
         })
         .unwrap();
     for (id, channel, column, span) in [

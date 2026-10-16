@@ -1883,6 +1883,7 @@ impl Editor {
                     .push(View {
                         id,
                         name: bounded(&name)?,
+                        orientation: None,
                     })
                     .map_err(|_| EditorError::ViewCapacity)?;
                 selection = Selection { view: id, widget: None };
@@ -1910,6 +1911,7 @@ impl Editor {
             }
             Edit::DuplicateView { id, name } => {
                 let index = view_index(&config, id)?;
+                let orientation = config.views[index].orientation;
                 let new_id = fresh_view(&config)?;
                 let copies: Vec<_> = config
                     .widgets
@@ -1927,6 +1929,7 @@ impl Editor {
                         View {
                             id: new_id,
                             name: bounded(&name)?,
+                            orientation,
                         },
                     )
                     .map_err(|_| EditorError::ViewCapacity)?;

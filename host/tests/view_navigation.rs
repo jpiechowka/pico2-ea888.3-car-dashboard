@@ -15,6 +15,7 @@ fn config(
         .push(View {
             id: 9,
             name: "Second".try_into().unwrap(),
+            orientation: None,
         })
         .unwrap();
     cfg.warnings = WarningPresentation {
@@ -363,6 +364,7 @@ fn all64_warnings_are_reached_in_both_modes_and_feedback_restarts_cleanly() {
                 .push(View {
                     id: view,
                     name: "View".try_into().unwrap(),
+                    orientation: None,
                 })
                 .unwrap();
             for cell in 0..8 {

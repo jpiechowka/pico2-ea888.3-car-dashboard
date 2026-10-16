@@ -5,11 +5,32 @@ use crate::*;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct LegacyView {
+    id: u8,
+    name: heapless::String<14>,
+}
+
+pub(crate) fn upgrade_views(views: heapless::Vec<LegacyView, MAX_VIEWS>) -> heapless::Vec<View, MAX_VIEWS> {
+    // One output per input into the same bounded capacity.
+    views
+        .into_iter()
+        .map(|view| {
+            View {
+                id: view.id,
+                name: view.name,
+                orientation: None,
+            }
+        })
+        .collect()
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct LegacyConfig {
     version: u16,
     catalogue_version: u16,
     boot_view: u8,
-    views: heapless::Vec<View, MAX_VIEWS>,
+    views: heapless::Vec<LegacyView, MAX_VIEWS>,
     widgets: heapless::Vec<LegacyWidget, MAX_WIDGETS>,
     sources: [ChannelSource; 8],
     warnings: OldWarningPresentation,
@@ -52,7 +73,7 @@ impl LegacyConfig {
             version: VERSION,
             catalogue_version: self.catalogue_version,
             boot_view: self.boot_view,
-            views: self.views,
+            views: upgrade_views(self.views),
             widgets,
             sources: self.sources,
             warnings: self.warnings.into(),
@@ -62,6 +83,7 @@ impl LegacyConfig {
             history_seconds: [120; 8],
             reduced_motion: false,
             led: LedSettings::default(),
+            orientation: Orientation::Landscape,
         })
         .map_err(ConfigError::Validation)
     }
@@ -73,7 +95,7 @@ pub(crate) struct LegacyConfigV2 {
     version: u16,
     catalogue_version: u16,
     boot_view: u8,
-    views: heapless::Vec<View, MAX_VIEWS>,
+    views: heapless::Vec<LegacyView, MAX_VIEWS>,
     widgets: heapless::Vec<LegacyWidgetV2, MAX_WIDGETS>,
     sources: [ChannelSource; 8],
     warnings: OldWarningPresentation,
@@ -119,7 +141,7 @@ impl LegacyConfigV2 {
             version: VERSION,
             catalogue_version: self.catalogue_version,
             boot_view: self.boot_view,
-            views: self.views,
+            views: upgrade_views(self.views),
             widgets,
             sources: self.sources,
             warnings: self.warnings.into(),
@@ -129,6 +151,7 @@ impl LegacyConfigV2 {
             history_seconds: [120; 8],
             reduced_motion: false,
             led: LedSettings::default(),
+            orientation: Orientation::Landscape,
         })
         .map_err(ConfigError::Validation)
     }

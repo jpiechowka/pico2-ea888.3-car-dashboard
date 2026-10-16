@@ -34,12 +34,12 @@ fn minimal() -> Config {
 }
 
 #[test]
-fn crc_known_answers_and_independently_built_golden_v4() {
+fn crc_known_answers_and_independently_built_golden_v5() {
     assert_eq!(crc32(b"123456789"), 0xCBF43926);
     assert_eq!(crc32(b""), 0);
     // Constructed from schema field order with a standalone Python uvarint
     // encoder, struct.pack('<HH') and zlib.crc32, not the production serializer.
-    let hex = "4541563104009000f60a022f0401010101014100000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f001000110100030078787878787878780001e00f649003320280f003649003320100000000";
+    let hex = "45415631050092008ab083d3050101010101410000000000000200f403000000000200b817000000000200b817000000000200b817000000000200b817000000000200b817000000000200d00f000000000200f4030000d00f00ffff0380f003a00608070a06090b0100010b000e000d000c0100020c000f001000110100030078787878787878780001e00f649003320280f00364900332010000000000";
     let golden: Vec<u8> = hex
         .as_bytes()
         .as_chunks::<2>()
@@ -47,7 +47,7 @@ fn crc_known_answers_and_independently_built_golden_v4() {
         .iter()
         .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect();
-    assert_eq!(golden.len(), 156);
+    assert_eq!(golden.len(), 158);
     let expected = validate(minimal()).unwrap();
     assert_eq!(decode(&golden).unwrap(), expected);
     let mut out = [0; MAX_FILE_BYTES];
@@ -88,7 +88,7 @@ fn valid_checksum_does_not_bypass_payload_or_semantic_checks() {
     let mut trailing = body.to_vec();
     trailing.push(0);
     assert_eq!(decode(&envelope(&trailing)), Err(ConfigError::Payload));
-    for offset in [8, 9, 10, 11, 12, 13] {
+    for offset in [9, 10, 11, 12, 13, 14] {
         let mut invalid_enum = body.to_vec();
         invalid_enum[offset] = 127;
         assert_eq!(
@@ -107,9 +107,9 @@ fn valid_checksum_does_not_bypass_payload_or_semantic_checks() {
     }
     let mut too_many_views = vec![1, 1, 1, 9];
     for id in 1..=9 {
-        too_many_views.extend_from_slice(&[id, 1, b'A']);
+        too_many_views.extend_from_slice(&[id, 1, b'A', 0]);
     }
-    too_many_views.extend_from_slice(&body[7..]);
+    too_many_views.extend_from_slice(&body[8..]);
     assert_eq!(decode(&envelope(&too_many_views)), Err(ConfigError::Payload));
 
     let config = default_config();
