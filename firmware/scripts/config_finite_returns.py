@@ -7,6 +7,9 @@ This does not prove caller source effects, observer compatibility or ownership.
 High GPRs carry only incoming-value lineage or an unknown definition. They
 are never evaluated as scalar values. Architectural LR is tracked separately
 from the original saved return PC.
+Code-address tokens are normalized even instruction identities, not scalar LR
+bits. A real Thumb BL sets bit0 in LR; this model neither computes that bit
+nor proves architectural register equality or exceptional return behavior.
 """
 import re
 from config_regions import _control

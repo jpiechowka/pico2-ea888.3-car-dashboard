@@ -451,6 +451,47 @@ class ActualSourcePrivatePhases(unittest.TestCase):
         finally:phase.array['fixed_array_committed']=old
 
 
+class ActualSourceActiveControl(unittest.TestCase):
+    def test_actual_source_phases_close_guarded_ordinary_edges_without_an_owner(self):
+        from config_decoded_sources import _first_boot_source_phases
+        from config_source_control import _source_control
+        objects,rows,source,_=SourceLiteralBodies.fixture()
+        state=_first_boot_source_phases(objects,rows,source)
+        control=_source_control(state)
+        V=state.widgets.views.context.headers['visitor']['proof']['function']
+        self.assertIs(control.state,state)
+        self.assertEqual(len(control.source_guards),len(state.phases))
+        self.assertIn(V+5630,control.record['stopped_frontiers'])
+        self.assertNotIn(V+4376,control.record['stopped_frontiers'])
+        self.assertFalse(control.record['pending_contexts_confer_state'])
+        self.assertTrue(any(v['complete_Source_array'] for v in control.source_guards))
+        self.assertTrue(any(v['Controls_ready'] for v in control.source_guards))
+        for guarded,phase in zip(control.source_guards,state.phases):
+            relation=guarded['publication_lineage']
+            if not guarded['complete_Source_array']:
+                self.assertIsNone(relation);continue
+            self.assertEqual(relation['capture_order'],(7,0,1,2,3,4,5,6))
+            self.assertEqual(relation['payload_lineage'][-1]['slot']['complete_after'],V+4796)
+            for i,item in enumerate(relation['payload_lineage']):
+                self.assertIs(item['package'],phase.array['packages'][i])
+        self.assertTrue(all(v['guarded_Access_domain']==(0,5)
+            for phase in control.source_guards for v in phase['invocations'] if v['Access_table_entered']))
+        self.assertFalse(control.complete_ordinary_group_issued)
+        with self.assertRaisesRegex(AssertionError,'actual private phase'):
+            _source_control(state.structural)
+        original=control.record['successors'];control.record['successors']=()
+        try:
+            with self.assertRaisesRegex(AssertionError,'active source/control record changed'):
+                control.current()
+        finally:control.record['successors']=original
+        original=control.source_guards[0]['parsed_sources'];control.source_guards[0]['parsed_sources']=-1
+        try:
+            with self.assertRaisesRegex(AssertionError,'active source/control record changed'):
+                control.current()
+        finally:control.source_guards[0]['parsed_sources']=original
+        self.assertIs(control.current(),control)
+
+
 class SourcePhaseSnapshot(unittest.TestCase):
     def test_repeated_packages_are_independent_immutable_graph_nodes(self):
         from config_decoded_sources import _phase_graph
@@ -599,6 +640,151 @@ class SourceRemainingAggregates(unittest.TestCase):
         self.assertEqual(tuple((o,n) for v,o,n in assignment['possible_writes']),
             ((0,4),(29,1),(7,1),(28,1),(8,4),(12,4),(16,4),(20,4),(24,4),(4,1),(5,2)))
         self.assertFalse(result['complete_ordinary_group_issued'])
+
+
+class SourceParentChronology(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_decoded_sources import _array_effects
+        from config_source_parent_effects import _parent_envelopes
+        from config_source_control import _source_carrier_returns
+        from config_source_children import source_children,source_return_profiles
+        from config_finite_returns import _closed_child_returns
+        from config_regions import borrow
+        SourceArrayEffects.setUpClass();a=SourceArrayEffects
+        cls.args=(a.objects,a.rows,a.parents,a.array,
+            _array_effects(a.objects,a.rows,a.parents,a.array,a.owner,a.frame,a.guards,a.sequence),a.frame)
+        children=source_children(a.objects,a.rows,a.parents)
+        from config_widget_contracts import ROLES
+        returns=_closed_child_returns(a.rows,a.parents,children,a.frame.start,source_return_profiles(),('seq_f32',ROLES['warning_colors']))
+        transfer=_source_carrier_returns(a.rows,a.parents,children,returns,a.frame.start)
+        carriers=tuple((borrow(a.frame,cell,4,a.frame.phase),a.frame.start+target)
+            for cell,target in ((216,1001),(224,688),(228,576),(232,1420),(236,1380),(240,1400),(244,1440),(248,1360)))
+        cls.tail=(carriers,transfer,_parent_envelopes(a.objects,a.rows,a.parents,
+            replace(a.sequence,header=borrow(a.frame,288,8,a.frame.phase,True)),a.owner,a.guards))
+
+    def test_conditional_normal_parent_keeps_real_order_and_package_aliases(self):
+        from config_source_lineage import _publication_lineage
+        value=_publication_lineage(*self.args,*self.tail)
+        V=0x1001c654;path=value['normal_parent_path']
+        self.assertEqual(value['capture_order'],(7,0,1,2,3,4,5,6))
+        self.assertLess(path.index(V+5410),path.index(V+5414))
+        self.assertLess(path.index(V+5426),path.index(V+5430))
+        self.assertLess(path.index(V+5854),path.index(V+4410))
+        self.assertLess(path.index(V+4664),path.index(V+4670))
+        self.assertEqual(tuple(v['returned_tag_domain'] for v in value['source_calls']),((0,1),)*8)
+        for i,item in enumerate(value['payload_lineage']):
+            self.assertIs(item['package'],self.args[3]['packages'][i])
+            self.assertIs(item['slot']['source_package'],item['package'])
+        self.assertFalse(value['complete_ordinary_Source_prefix_issued'])
+        self.assertIs(value['copied_padding_is_initialized'],False)
+
+    def test_stale_transport_package_and_missing_child_transfer_reject(self):
+        from config_source_lineage import _publication_lineage
+        effects=dict(self.args[4]);chains=list(effects['transports'])
+        changed=list(chains[1]);changed[0]=dict(changed[0],source=chains[0][1]['destination'])
+        chains[1]=tuple(changed);effects['transports']=tuple(chains)
+        with self.assertRaisesRegex(AssertionError,'same-package source/destination'):
+            _publication_lineage(*self.args[:4],effects,self.args[5],*self.tail)
+        transfer=dict(self.tail[1],parent_calls=self.tail[1]['parent_calls'][1:])
+        with self.assertRaisesRegex(AssertionError,'actual child transfer'):
+            _publication_lineage(*self.args,self.tail[0],transfer,self.tail[2])
+        carriers=list(self.tail[0]);carriers[2]=(carriers[2][0],carriers[1][1])
+        with self.assertRaisesRegex(AssertionError,'inherited pointer producer'):
+            _publication_lineage(*self.args,tuple(carriers),*self.tail[1:])
+
+    def test_equal_package_copy_and_sentinel_only_domain_do_not_authorize_publication(self):
+        from config_source_lineage import _publication_lineage
+        array=self.args[3];effects=dict(self.args[4]);slots=list(effects['slots'])
+        slots[0]=dict(slots[0],source_package=dict(slots[0]['source_package']));effects['slots']=tuple(slots)
+        with self.assertRaisesRegex(AssertionError,'package/tag/copy association'):
+            _publication_lineage(*self.args[:4],effects,self.args[5],*self.tail)
+        normal=array['packages'][0]['source'];original=normal['tag_domain'];normal['tag_domain']=(0,1,3)
+        try:
+            with self.assertRaisesRegex(AssertionError,'package/tag/source epoch'):
+                _publication_lineage(*self.args,*self.tail)
+        finally:normal['tag_domain']=original
+
+
+class SourceAccessFamilies(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        from config_regions import Storage,borrow
+        from config_source_access import SourceAccessContext,SourceFamily,SITE_SHAPES,EXPECTED_SOURCE_ROLES,SOURCE_EPOCHS
+        objects,rows,_,_=SourceLiteralBodies.fixture();phase='decoded_sources_group'
+        visitor=Storage('stack:Reset:0x20070870','supplied Visitor',0x20070000,1608,8,phase,True)
+        loader=Storage(visitor.space,'supplied loader',visitor.start+1608,456,8,phase,True)
+        config=Storage('address','private unpublished ConfigSlot',0x2000031c,14604,4,phase,True)
+        child=Storage(visitor.space,'supplied ChannelSource',visitor.start-72,72,8,phase,True)
+        guards=(Storage(visitor.space,'loader saves',loader.start+352,104,4,phase,False),
+            Storage(visitor.space,'Visitor saves',visitor.start+1512,96,4,phase,False),
+            Storage('address','metadata/taken/padding',config.start+14576,28,4,phase,False))
+        families=[];caller=0x1001c654
+        for role in EXPECTED_SOURCE_ROLES:
+            source=role in EXPECTED_SOURCE_ROLES[:2];frame=child if source else visitor
+            protected=guards+((Storage(visitor.space,'Source saves',child.start+36,36,4,phase,False),) if source else ())
+            context=SourceAccessContext(loader,visitor,frame,borrow(config,0,14576,phase),protected)
+            parent=0x1001b500 if source else caller
+            sites=tuple((parent+off,raw,field,width,direction,label) for off,raw,field,width,direction,label in SITE_SHAPES[role])
+            epochs=tuple((caller+off,out,tag,8-i) for i,(off,out,tag) in enumerate(SOURCE_EPOCHS)) if source else ()
+            families.append(SourceFamily(role,'sizez',parent,caller,sites,context,epochs))
+        return objects,rows,tuple(families)
+
+    def test_four_conditional_families_keep_eight_paired_nonaffine_outputs(self):
+        from config_source_access import read_source_family,current_source_family
+        objects,rows,families=self.fixture()
+        self.assertEqual(len(families),4)
+        for family in families:
+            self.assertEqual(read_source_family(family.to_record()),family)
+            self.assertIs(current_source_family(objects,family),family)
+            self.assertIs(family.to_record()['physical_tag_is_completed_Source'],False)
+        local,output,warning,fuel=families
+        self.assertEqual(len(output.epochs),8)
+        self.assertEqual(tuple(a-output.context.visitor.start for i in range(8) for a,b in output.footprints(i)),
+            (1134,522,634,750,886,946,1006,1070))
+        self.assertEqual(local.footprints(7),((local.context.frame.start+25,local.context.frame.start+27),))
+        self.assertEqual(warning.footprints(0),((warning.context.visitor.start+1065,warning.context.visitor.start+1067),))
+        self.assertEqual(fuel.footprints(0),((fuel.context.config.start+5,fuel.context.config.start+7),))
+
+    def test_width_numeric_alias_epoch_order_and_saved_cells_cannot_be_substituted(self):
+        import copy
+        from config_source_access import read_source_family
+        _,_,families=self.fixture()
+        cases=[]
+        for value in (2.0,True,4):
+            record=copy.deepcopy(families[0].to_record());record['sites'][0]['width']=value;cases.append(record)
+        record=copy.deepcopy(families[1].to_record());record['epochs'].reverse();cases.append(record)
+        record=copy.deepcopy(families[0].to_record());record['context']['protected'].pop();cases.append(record)
+        record=copy.deepcopy(families[2].to_record());record['role']='source_route_local';cases.append(record)
+        record=copy.deepcopy(families[3].to_record());record['physical_tag_is_completed_Source']=True;cases.append(record)
+        for i,record in enumerate(cases):
+            with self.subTest(case=i),self.assertRaises(AssertionError):read_source_family(record)
+
+    def test_current_source_and_visitor_access_bytes_are_checked_separately(self):
+        from config_source_access import current_source_family
+        from test_config_stack import StartupConfigurationCopy
+        for index in (1,2,3):
+            objects,rows,families=self.fixture();family=families[index]
+            current_source_family(objects,family)
+            at=family.sites[0][0];raw=objects.read_only(at,4)
+            StartupConfigurationCopy.put(objects,at,bytes([raw[0]^1])+raw[1:])
+            with self.subTest(role=family.role),self.assertRaisesRegex(AssertionError,'operation bytes'):
+                current_source_family(objects,family)
+
+    def test_full_deeper_physical_activation_stays_disjoint_beside_adjacency(self):
+        _,_,families=self.fixture();original=families[0];c=original.context
+        end=c.config.start+14604
+        def moved(visitor_start):
+            delta=visitor_start-c.visitor.start
+            shift=lambda v:replace(v,start=v.start+delta) if v.space.startswith('stack:') else v
+            return replace(original,context=replace(c,loader=shift(c.loader),visitor=shift(c.visitor),
+                frame=shift(c.frame),protected=tuple(shift(v) for v in c.protected)))
+        adjacent=moved(end+120)
+        self.assertEqual(adjacent.context.visitor.start-120,end)
+        with self.assertRaisesRegex(AssertionError,'overlap|physical'):
+            moved(end+112)
+        with self.assertRaisesRegex(AssertionError,'interval|physical'):
+            moved(-8)
 
 
 if __name__=='__main__':unittest.main()

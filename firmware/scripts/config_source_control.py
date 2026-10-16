@@ -137,6 +137,140 @@ def _source_carrier_returns(rows,parents,children,returns,sp):
         architectural_LR_preserved=False,requires_actual_protected_save_slots_and_parent_lifetimes=True)
 
 
+@dataclass(frozen=True)
+class _SourceActiveControl:
+    state:object
+    source_guards:tuple
+    record:dict
+    checkpoint:object
+    complete_ordinary_group_issued:bool=False
+
+    def current(self):
+        from config_decoded_sources import _phase_graph
+        require(_phase_graph((self.source_guards,self.record))==self.checkpoint,
+            'Sources active source/control record changed')
+        self.state.current()
+        guards,record=_source_control_data(self.state)
+        require(_phase_graph((guards,record))==self.checkpoint,
+            'Sources active guarded successor/phase association changed')
+        return self
+
+
+def _phase_guards(state,phase):
+    """Paired source outcomes, not a body-list or completed-prefix approval."""
+    from config_abstract import Span
+    from config_source_effects import SOURCE_EPOCHS
+    require(any(phase is p and phase.entry is e for p,e in zip(state.phases,state.entries)),
+        'Sources guarded phase leaves its actual entry association')
+    frame=state.widgets.views.context.headers['visitor_frame']
+    V=state.widgets.views.context.headers['visitor']['proof']['function']
+    array=phase.array;current=phase.entry.sequence;calls=[];parsed=0
+    require(current.count==Span(8,8) and phase.entry.exit.sequence.count==Span(7,7) and
+        phase.parent_envelopes['stores']==80 and len(state.structural.carrier_returns['parent_calls'])==57,
+        'Sources guarded phase lacks actual count/protected-write/callee relations')
+    for index,invocation in enumerate(array['invocations']):
+        off,out,tag=SOURCE_EPOCHS[index];result=invocation['result']
+        require(invocation['index']==index and invocation['site']==V+off and invocation['before']==current and
+            current.count==Span(8-index,8-index),
+            'Sources guarded invocation changes its paired call/source/count')
+        proof=result['proof']
+        require(state.children[proof['function'],CHANNEL_SOURCE]==proof and
+            proof['guarded_access_index_domain']==(0,5) and result['returns'] and
+            result['last_output_store']==proof['function']+734,
+            'Sources guarded invocation loses its current table/output/return body')
+        access=tuple(v for v in result['transitions'] if v['field']=='access')
+        require(len(access)<=1 and all(v['domain']==(0,5) and v['guard']=='same parsed enum in domain' for v in access),
+            'Sources table argument is not the same successfully bounded Access selector')
+        entered=bool(access and access[0]['after'] is not None)
+        normal=result['normal']
+        calls.append(dict(index=index,site=V+off,before=current,
+            Access_table_entered=entered,guarded_Access_domain=(0,5),
+            Access_targets=proof['access_targets'] if entered else (),
+            error_alternatives=result['errors'],guarded_routes=result['guarded_routes'],
+            output_store_reached=normal is not None,after=None if normal is None else normal['after']))
+        if normal is None:
+            require(index==len(array['invocations'])-1 and len(array['packages'])==index and array['sequence'] is None,
+                'Sources failed invocation advances to another package')
+            current=None;break
+        package=array['packages'][index]
+        require(package['source'] is normal and normal['before']==current.decoder and
+            normal['count_after']==Span(7-index,7-index) and normal['return_site']==V+off+4 and
+            (normal['definition_domain'],normal['decoder_domain'],normal['evidence_domain'],normal['freshness_domain'])==
+                ((0,15),(0,11),(0,3),(0,65535)) and normal['tag_domain']==(0,1) and
+            package['sequence_before']==current and package['sequence_after'].decoder==normal['after'] and
+            (package['output'].storage,package['output'].offset,package['output'].extent)==(frame,out,22) and
+            package['captured_tag'].start==frame.start+tag,
+            'Sources normal arm changes its actual package/selector/output/return pairing')
+        current=package['sequence_after'];parsed+=1
+    require(current==array['sequence'] and (current is None or parsed==8 and current.count==Span(0,0)),
+        'Sources guarded array bypasses a current package')
+    complete=current is not None;publication=None
+    if not complete:
+        require(phase.effects is None and phase.remaining is None,
+            'Sources parse failure reaches Config publication or remaining fields')
+    else:
+        effects=phase.effects;suffix=phase.remaining
+        require(effects is not None and suffix is not None and len(effects['slots'])==8 and
+            all(slot['source_package'] is package and slot['index']==i for i,(slot,package) in
+                enumerate(zip(effects['slots'],array['packages']))) and
+            suffix['before'].decoder==current.decoder and suffix['before'].count==Span(7,7),
+            'Sources fixed-array last stores or remaining-field cursor are unpaired')
+        for normal in suffix['normal']:
+            require(normal['after'].count==Span(4,4) and
+                normal['after'].decoder.header==current.decoder.header and
+                normal['after'].decoder.payload==current.decoder.payload and
+                normal['Fuel']['complete_store']==V+5570 and normal['colors']['complete_store']==V+5628,
+                'Sources outgoing top4 precedes the paired Fuel/Colors last stores')
+        require(all(v['Fuel']['complete_store']==V+5570 and v['source_guard']==
+            (v['Fuel']['wire_tag'],v['Fuel']['emitted_tag'] if v['Fuel']['wire_tag']==2 else None)
+            for v in suffix['Fuel_assignments']),
+            'Sources retained Fuel assignment mixes its source/density arm')
+        from config_source_lineage import _publication_lineage
+        publication=_publication_lineage(state.objects,state.rows,state.parents,array,effects,frame,
+            phase.entry.carriers,state.structural.carrier_returns,phase.parent_envelopes)
+    return dict(entry_index=next(i for i,p in enumerate(state.phases) if p is phase),
+        invocations=tuple(calls),parsed_sources=parsed,
+        complete_Source_array=complete,Controls_ready=bool(complete and phase.remaining['normal']),
+        source_array_last_stores=() if not complete else tuple(v['complete_after'] for v in phase.effects['slots']),
+        publication_lineage=publication,
+        retained_Fuel_assignments=() if not complete else phase.remaining['Fuel_assignments'])
+
+
+def _source_control(state):
+    """Internally derived named ordinary relation, before reached-use closure.
+
+    Raw structure, descriptions and receipts cannot enter this interface.
+    Source/variant outcomes remain paired and errors stay stopped; stronger
+    ownership and exceptional resume are not consequences of this relation.
+    """
+    from config_decoded_sources import _SourcePhasesState
+    from config_decoded_sources import _phase_graph
+    require(type(state) is _SourcePhasesState,'Sources control lacks its actual private phase state')
+    state.current();guards,record=_source_control_data(state)
+    return _SourceActiveControl(state,guards,record,_phase_graph((guards,record)))
+
+
+def _source_control_data(state):
+    from config_decoded_widgets import _WidgetActiveControl
+    widgets=state.widgets;previous=widgets.control
+    require(state.entries and type(previous) is _WidgetActiveControl and
+        previous.state is widgets.views and previous.parents is widgets.parents and previous.children is widgets.children,
+        'Sources active control lacks its actual checked ordinary predecessor')
+    guards=tuple(_phase_guards(state,p) for p in state.phases)
+    # current() recomposes the predecessor profile through _source_entries.
+    # No arbitrary external exclusions or raw-context cuts are accepted.
+    extension=dict(excluded_taken=dict(previous.profile['excluded_taken']),
+        excluded_fallthrough=dict(previous.profile['excluded_fallthrough']))
+    successors,returns,dormant=_selected_successors(state.structural.selection,extension)
+    require(not dormant,'Sources active control retains an unproved outgoing route')
+    pending=_foreign_ingress(state.objects,state.rows,state.structural.selection)
+    record=dict(selected_instructions=len(state.structural.selection.selected),successors=successors,
+        nested_returns=state.structural.nested_returns,returns=returns,
+        stopped_frontiers=tuple(sorted(state.structural.selection.cuts)),outside_shared_contexts=pending,
+        pending_contexts_confer_state=False,full_visitor_return_pending=True)
+    return guards,record
+
+
 def _structural_data(value,widgets,parents,children):
     """Complete immutable-checkpoint input, excluding only checked identities."""
     require(type(value) is _SourceStructuralControl and value.selection.widgets is widgets and
