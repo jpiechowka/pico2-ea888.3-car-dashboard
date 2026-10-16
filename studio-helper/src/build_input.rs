@@ -352,7 +352,10 @@ impl UploadedProject {
     }
 }
 
-pub(crate) fn capture(frozen: &FrozenInput) -> Result<crate::process::Output, String> {
+pub(crate) fn capture(
+    frozen: &FrozenInput,
+    sink: &mut dyn FnMut(bool, &str),
+) -> Result<crate::process::Output, String> {
     frozen.verify()?;
     let python = std::env::split_paths(&std::env::var_os("PATH").ok_or("PATH unavailable")?)
         .map(|p| p.join("python.exe"))
@@ -383,10 +386,11 @@ pub(crate) fn capture(frozen: &FrozenInput) -> Result<crate::process::Output, St
             asset.to_str().ok_or("Non-UTF8 input path")?.into(),
         ]);
     }
-    let output = crate::process::run_capture(
+    let output = crate::process::run_capture_stream(
         &python,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
         &frozen.source,
+        sink,
     )?;
     frozen.verify()?;
     Ok(output)

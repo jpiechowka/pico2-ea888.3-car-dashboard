@@ -418,7 +418,9 @@ inputs, normalized options, source, converter, ELF and UF2 identities. All have
 artifacts do not qualify arbitrary boards, partition/security states, or A2/E10
 mass-storage fallback. No USB writes or flash route are enabled.
 
-Compilation currently includes the capture script's existing image gates;
-output is available after the bounded child completes. Terminal transition/error
+Compilation currently includes the capture script's existing image gates.
+Sanitized stdout/stderr is streamed into bounded job logs while the child runs;
+contended log ingress is dropped with explicit loss accounting, never blocking
+pipe draining or cancellation. Terminal transition/error
 diagnostics use a bounded best-effort queue and honor NO_COLOR/non-TTY output.
 They contain no capabilities or raw project data.

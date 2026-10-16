@@ -52,6 +52,14 @@ pub(crate) fn run_capture(
     args: &[&str],
     cwd: &Path,
 ) -> Result<Output, String> {
+    run_capture_stream(python, args, cwd, &mut |_, _| {})
+}
+pub(crate) fn run_capture_stream(
+    python: &Path,
+    args: &[&str],
+    cwd: &Path,
+    sink: &mut dyn FnMut(bool, &str),
+) -> Result<Output, String> {
     if cancelled() || cleanup_failed() {
         return Err("Capture unavailable after cancellation or cleanup failure".into());
     }
@@ -60,7 +68,7 @@ pub(crate) fn run_capture(
     }
     #[cfg(windows)]
     {
-        let result = windows::run(python, args, cwd, Duration::from_secs(1800), 8 * 1024 * 1024);
+        let result = windows::run_stream(python, args, cwd, Duration::from_secs(1800), 8 * 1024 * 1024, sink);
         if result.as_ref().is_err_and(|e| e.starts_with("cleanup fatal:")) {
             CLEANUP_FAILED.store(true, Ordering::SeqCst);
         }

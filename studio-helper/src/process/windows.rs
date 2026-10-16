@@ -136,7 +136,7 @@ impl Pipe {
                 .map_err(|e| e.to_string())?;
             self.bytes += n;
             if self.bytes > limit {
-                return Err("output_limit: probe exceeded 65536 bytes per stream".into());
+                return Err(format!("output_limit: process exceeded {limit} bytes per stream"));
             }
             self.raw.extend_from_slice(&buffer[..n]);
             self.frame
@@ -155,6 +155,16 @@ pub(super) fn run(
     cwd: &Path,
     timeout: Duration,
     limit: usize,
+) -> Result<Output, String> {
+    run_stream(path, args, cwd, timeout, limit, &mut |_, _| {})
+}
+pub(super) fn run_stream(
+    path: &Path,
+    args: &[&str],
+    cwd: &Path,
+    timeout: Duration,
+    limit: usize,
+    sink: &mut dyn FnMut(bool, &str),
 ) -> Result<Output, String> {
     let job = Job::new().map_err(|e| e.to_string())?;
     // The non-inheritable Job handle and array outlive attribute list and spawn.
@@ -185,8 +195,16 @@ pub(super) fn run(
     let start = Instant::now();
     let result = (|| {
         loop {
+            let out_start = out.text.len();
+            let err_start = err.text.len();
             out.drain(&mut stdout, limit)?;
             err.drain(&mut stderr, limit)?;
+            for line in out.text[out_start..].lines() {
+                sink(false, line);
+            }
+            for line in err.text[err_start..].lines() {
+                sink(true, line);
+            }
             let status = child.try_wait().map_err(|e| e.to_string())?;
             if let Some(status) = status {
                 if out.closed && err.closed && job.active().map_err(|e| e.to_string())? == 0 {
@@ -224,6 +242,44 @@ mod tests {
             .map(|p| p.join("python.exe"))
             .find(|p| p.is_file())
             .unwrap()
+    }
+    #[test]
+    fn sanitized_output_is_delivered_before_child_exit() {
+        let flag = std::env::temp_dir().join(format!(
+            "studio-stream-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut observed = false;
+        let output = run_stream(
+            &cmd(),
+            &[
+                "-I",
+                "-u",
+                "-c",
+                "import sys,time,pathlib; print('early'); time.sleep(0.2); \
+                 pathlib.Path(sys.argv[1]).write_text('done')",
+                flag.to_str().unwrap(),
+            ],
+            &std::env::current_dir().unwrap(),
+            Duration::from_secs(5),
+            65536,
+            &mut |stderr, text| {
+                if text == "early" {
+                    assert!(!stderr);
+                    assert!(!flag.exists());
+                    observed = true;
+                }
+            },
+        )
+        .unwrap();
+        assert!(observed);
+        assert_eq!(output.code, Some(0));
+        assert!(flag.exists());
+        std::fs::remove_file(flag).unwrap();
     }
     #[test]
     fn successful_and_failed_exit() {

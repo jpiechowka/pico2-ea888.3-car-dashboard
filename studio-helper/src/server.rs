@@ -403,22 +403,35 @@ async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Compilation);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            let output = crate::build_input::capture(&frozen)?;
-            for (source, text) in [(Source::Stdout, output.stdout), (Source::Stderr, output.stderr)] {
-                // Runner already sanitized/bounded these fragments. Limit retained job history in JobStore.
-                let mut inner = worker_state.inner.lock().unwrap();
-                for line in text.lines() {
+            let mut lost_bytes = 0u64;
+            let mut lost_chunks = 0u64;
+            let output = crate::build_input::capture(&frozen, &mut |stderr, text| {
+                if let Ok(mut inner) = worker_state.inner.try_lock() {
                     let _ = inner.jobs.append(
                         &id,
                         LogInput {
                             stage,
-                            source,
-                            text: line.chars().take(256).collect(),
+                            source: if stderr { Source::Stderr } else { Source::Stdout },
+                            text: text.into(),
                             progress: false,
                         },
                     );
+                } else {
+                    lost_bytes = lost_bytes.saturating_add(text.len() as u64);
+                    lost_chunks = lost_chunks.saturating_add(1);
                 }
+            });
+            if lost_chunks > 0 {
+                let _ = worker_state.inner.lock().unwrap().jobs.account_log_loss(
+                    &id,
+                    crate::jobs::ingress::LogLoss {
+                        bytes: lost_bytes,
+                        chunks: lost_chunks,
+                        counter_overflow: false,
+                    },
+                );
             }
+            let output = output?;
             if output.code != Some(0) {
                 return Err("Firmware capture failed; inspect bounded output".into());
             }

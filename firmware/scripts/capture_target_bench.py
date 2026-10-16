@@ -408,6 +408,7 @@ def main():
     command=['cargo','build','--locked','-p','dashboard-pico2','--release',
              '--target','thumbv8m.main-none-eabihf','--target-dir',str(destination/'build'),
              '--message-format=json','--features',','.join(options['features']),'--no-default-features']
+    print("Capture: compiling accepted frozen project",flush=True)
     build=run_build(command, environment, destination)
     verify_startup(build.stdout,destination/'build',destination,startup_record)
     elf=emitted_elf(build.stdout)
@@ -431,6 +432,7 @@ def main():
     source_context_bytes=source_context_path.read_bytes()
     source_context_record=dict(path='source-context.json',sha256=hashlib.sha256(source_context_bytes).hexdigest(),
                                binding=source_context.binding())
+    print("Capture: validating linked configuration, program image, memory and stack gates",flush=True)
     memory_evidence=run_memory_gate(frozen,destination,config_bytes,source_context,source_context_path)
     for flags in [[], ['-O']]:
         subprocess.run([sys.executable,*flags,'scripts/test_flash_lockout.py',str(frozen)],cwd=FIRMWARE,check=True)
@@ -477,6 +479,7 @@ def main():
                 memory_layout_json_sha256=memory_evidence['sha256'],
                 sha256=hashes,elf_sha256=hashlib.sha256(elf_bytes).hexdigest())
     (destination/'manifest.json').write_text(json.dumps(record,indent=2)+'\n',encoding='utf-8')
+    print('Capture: frozen software evidence complete',flush=True)
     print(destination)
     print('ELF SHA256 '+record['elf_sha256'])
 
