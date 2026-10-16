@@ -361,7 +361,7 @@ A root Cargo workspace owns `crates/dashboard-core`, `crates/dashboard-config`
 and `crates/dashboard-config-tools`. The configurator, firmware and host are
 independent workspaces with their own lockfiles and shared path dependencies,
 preserving separate feature resolution and target flags. All use the repository's
-nightly-2026-10-12 toolchain (four Cargo roots/lockfiles). Firmware
+nightly-2026-10-16 toolchain (five Cargo roots/lockfiles). Firmware
 forwards `simple-outline` explicitly; the editor uses that default for matching
 preview output. CI checks root formatting/native pure tests, core/config no_std
 Thumb and Wasm builds, production Trunk output, and the existing firmware/host
