@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use dashboard_configurator::helper_client::{
     Connection,
+    DeviceSelection,
     JobFeed,
     MAX_RESPONSE_BYTES,
     PreparedBuild,
@@ -23,6 +24,7 @@ use web_sys::{AbortController, ReadableStreamDefaultReader, Request, RequestInit
 
 use super::*;
 mod artifacts;
+mod devices;
 
 const BASE: &str = "http://127.0.0.1:8765/api/v1";
 #[derive(Clone, Default)]
@@ -48,6 +50,8 @@ pub struct State {
     prepared: StoredValue<Option<PreparedBuild>>,
     uploaded: StoredValue<Option<ProjectUploadResponse>>,
     download: StoredValue<Option<ArtifactSummary>>,
+    device: RwSignal<DeviceSelection>,
+    inspecting: StoredValue<bool>,
 }
 impl State {
     pub fn new() -> Self {
@@ -67,6 +71,8 @@ impl State {
             prepared: StoredValue::new(None),
             uploaded: StoredValue::new(None),
             download: StoredValue::new(None),
+            device: RwSignal::new(DeviceSelection::default()),
+            inspecting: StoredValue::new(false),
         }
     }
 
@@ -100,6 +106,8 @@ enum Action {
     Build,
     Artifacts,
     Download,
+    Inspect,
+    Inspection,
 }
 struct ReadGuard {
     abort: AbortController,
@@ -128,6 +136,17 @@ async fn request(
         Action::Upload => ("POST", "/projects".into()),
         Action::Build => ("POST", "/builds".into()),
         Action::Artifacts => ("GET", "/artifacts".into()),
+        Action::Inspect | Action::Inspection => {
+            let device = state
+                .device
+                .with_untracked(|d| d.selected().map(|d| d.device_id.clone()))
+                .ok_or("Select a device first")?;
+            if matches!(action, Action::Inspect) {
+                ("POST", format!("/devices/{}/inspect", device.as_str()))
+            } else {
+                ("GET", format!("/devices/{}/inspection", device.as_str()))
+            }
+        }
         Action::Download => {
             (
                 "GET",
@@ -345,7 +364,7 @@ fn apply(
                 Ok(Some(Action::Report))
             }
         }
-        Action::Check | Action::Scan | Action::Build => {
+        Action::Check | Action::Scan | Action::Build | Action::Inspect => {
             let job = parse::<JobSummary>(bytes)?;
             let conn = state.connection.get_value().ok_or("Helper session lost")?;
             let mut result = Ok(());
@@ -400,7 +419,11 @@ fn apply(
                         v.feed.summary.as_ref().and_then(|s| s.terminal_cause)
                     )
                 });
-                Ok(Some(Action::Report))
+                Ok(Some(if state.inspecting.get_value() {
+                    Action::Inspection
+                } else {
+                    Action::Report
+                }))
             } else {
                 Ok(Some(Action::Poll))
             }
@@ -451,6 +474,15 @@ fn apply(
             }
             state.view.update(|v| v.artifacts = artifacts.iter().cloned().collect());
             Ok(None)
+        }
+        Action::Inspection => {
+            let report = parse::<dashboard_helper_protocol::DeviceInspection>(bytes)?;
+            let connection = state.connection.get_value().ok_or("Helper session lost")?;
+            let mut result = Ok(());
+            state.device.update(|d| result = d.accept(&connection, report));
+            state.inspecting.set_value(false);
+            result?;
+            Ok(Some(Action::Report))
         }
         Action::Download => {
             let artifact = state
@@ -514,6 +546,12 @@ fn send(
         };
         state.epoch.set_value(next);
         state.view.update(|v| v.connected = false);
+        state.device.update(DeviceSelection::clear);
+        state.inspecting.set_value(false);
+    }
+    if matches!(action, Action::Scan) {
+        state.device.update(DeviceSelection::clear);
+        state.inspecting.set_value(false);
     }
     state.busy.set(true);
     let epoch = state.epoch.get_value();
@@ -544,6 +582,8 @@ fn send(
                 state.uploaded.set_value(None);
                 state.building.set(false);
                 state.download.set_value(None);
+                state.device.update(DeviceSelection::clear);
+                state.inspecting.set_value(false);
                 ui.event(Notice {
                     severity: dashboard_configurator::events::Severity::Warn,
                     ..Notice::info(Category::HostTools, "helper.request_failed", None, message)
@@ -620,7 +660,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                 let rows=report["checks"].as_array().cloned().unwrap_or_default();
                 view!{<details class="build-disclosure" open><summary>"Prerequisite results · installed tool versions"</summary><p>"These checks inspect tools and versions. Build/link capability and device programming are separate gates."</p><div class="helper-checks">{rows.into_iter().map(|r|view!{<div><strong>{r["id"].as_str().unwrap_or("check").to_string()}</strong><span>{r["status"].as_str().unwrap_or("unknown").to_string()}</span><p>{r["evidence"].as_str().unwrap_or("").to_string()}</p><small>{r["setup"].as_str().unwrap_or("").to_string()}</small></div>}).collect_view()}</div></details>}
             })}
-            {move ||state.view.with(|v|v.devices.clone()).map(|report|view!{<details class="build-disclosure" open><summary>{format!("BOOTSEL candidates · {}",report.devices.len())}</summary><p>{report.reason.as_str().to_string()}</p>{report.devices.iter().map(|d|view!{<div class="helper-device"><strong>{d.product.as_ref().map_or("RP2350 BOOTSEL",|p|p.as_str()).to_string()}</strong><span>{format!("{:04x}:{:04x} · {:?}",d.vid,d.pid,d.status)}</span><p>{d.reason.as_str().to_string()}</p><small>"Flash capacity unverified · not ready to flash"</small></div>}).collect_view()}</details>})}
+            <devices::Panel ui/>
             <artifacts::Panel ui/>
             <details class="build-disclosure" open><summary>"Job logs"</summary><p>{move ||state.view.with(|v|format!("{} retained events · {} omitted by bounded history",v.feed.events.len(),v.feed.omitted))}</p><div class="helper-log" role="log" aria-live="off">{move ||state.view.with(|v|v.feed.events.iter().map(|e|view!{<div class=match e.level{dashboard_helper_protocol::Level::Error=>"error",dashboard_helper_protocol::Level::Warning=>"warning",_=>"info"}><span>{format!("{:>6} ms",e.elapsed_ms)}</span><code>{e.text.as_str().to_string()}</code></div>}).collect_view())}</div>
                 <button disabled=move ||state.view.with(|v|v.feed.events.is_empty()) on:click=move |_|{let text=state.view.with_untracked(|v|v.feed.events.iter().map(|e|format!("{} ms {:?} {}",e.elapsed_ms,e.level,e.text.as_str())).collect::<Vec<_>>().join("\n"));if io::download(ui,"studio-helper.log","text/plain;charset=utf-8",text.as_bytes()).is_err(){state.view.update(|v|v.message="Could not download job logs.".into());}}>"Download logs"</button>
