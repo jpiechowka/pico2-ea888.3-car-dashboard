@@ -221,7 +221,8 @@ fn assert_action_result(
     let mut accepted = compatible;
     if compatible {
         match action {
-            None | AcknowledgeWarnings => accepted = false,
+            None => accepted = false,
+            AcknowledgeWarnings => {}
             NextScreen | PreviousScreen | Dashboard | Debug | Logs => {
                 expected.page = match action {
                     NextScreen => {
@@ -305,6 +306,10 @@ fn assert_action_result(
         flags,
         "flags {page:?}/{action:?}"
     );
+    assert_eq!(
+        effect.acknowledge_requested,
+        compatible && action == AcknowledgeWarnings
+    );
     assert_eq!(effect.ignored, u32::from(!accepted), "ignored {page:?}/{action:?}");
     let reset = accepted && action == ResetStatistics;
     assert_eq!(
@@ -340,6 +345,7 @@ fn all_compatible_actions_and_invalid_page_pairs() {
         ScrollOlder,
         ScrollNewer,
         LogsLive,
+        AcknowledgeWarnings,
     ];
     for page in Page::ALL {
         for action in actions {
@@ -768,6 +774,7 @@ fn encoder_custom_actions_respect_every_page_pair_and_count_saturated_clicks() {
         ScrollOlder,
         ScrollNewer,
         LogsLive,
+        AcknowledgeWarnings,
     ];
     for page in Page::ALL {
         for action in actions {

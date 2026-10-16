@@ -131,6 +131,7 @@ fn every_compatible_action_is_dispatched_for_tap_and_hold() {
         Action::ScrollOlder,
         Action::ScrollNewer,
         Action::LogsLive,
+        Action::AcknowledgeWarnings,
     ];
     for page in Page::ALL {
         for action in actions {
