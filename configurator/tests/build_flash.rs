@@ -139,6 +139,33 @@ fn recipe_captures_only_a_ready_accepted_configuration() {
     assert!(selection.prepare(&editor).is_ok());
 }
 
+#[test]
+fn recipe_carries_validated_startup_pixels_settings() {
+    use dashboard_config::startup::{StartupProfile, StartupTheme};
+    let profile = StartupProfile {
+        theme: StartupTheme::Turbo,
+        duration_ms: 10_000,
+        ..StartupProfile::default()
+    };
+    let recipe = BuildSelection::default()
+        .prepare(&Editor::default())
+        .unwrap()
+        .with_startup(profile)
+        .unwrap();
+    assert_eq!(recipe.startup_bytes(), &profile.encode().unwrap());
+    let invalid = StartupProfile {
+        duration_ms: 10_001,
+        ..profile
+    };
+    assert!(matches!(
+        BuildSelection::default()
+            .prepare(&Editor::default())
+            .unwrap()
+            .with_startup(invalid),
+        Err(BuildIssue::Startup)
+    ));
+}
+
 // Executes the exported recipe against a boundary fixture, without Cargo/USB.
 // The fixture records the real script's bytes/options; it does not emulate its logic.
 #[cfg(windows)]
@@ -211,6 +238,10 @@ $data | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot '../.
     assert_eq!(observed["FullFrame"], true);
     assert_eq!(observed["Expert"], true);
     assert_eq!(observed["Toolchain"], repository_toolchain().unwrap());
+    assert_eq!(
+        fs::read(dir.join("target/studio-exports/test-capture.easp")).unwrap(),
+        recipe.startup_bytes()
+    );
     assert_eq!(
         fs::read(dir.join("target/studio-exports/test-capture.eav")).unwrap(),
         recipe.config_bytes()

@@ -26,19 +26,27 @@ foreach ($relative in @('rust-toolchain.toml', 'firmware/rust-toolchain.toml')) 
 $exports = Join-Path $repo 'target/studio-exports'
 [IO.Directory]::CreateDirectory($exports) | Out-Null
 $configPath = Join-Path $exports ($Name + '.eav')
+$startupPath = Join-Path $exports ($Name + '.easp')
 $hex = '@@EAV@@'
 $bytes = [byte[]]::new($hex.Length / 2)
 for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
 # CreateNew preserves an earlier recipe's configuration on a repeated name.
 $file = [IO.File]::Open($configPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try { $file.Write($bytes, 0, $bytes.Length) } finally { $file.Dispose() }
+$startupHex = '@@STARTUP@@'
+$startupBytes = [byte[]]::new($startupHex.Length / 2)
+for ($i = 0; $i -lt $startupBytes.Length; $i++) { $startupBytes[$i] = [Convert]::ToByte($startupHex.Substring($i * 2, 2), 16) }
+$file = [IO.File]::Open($startupPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+try { $file.Write($startupBytes, 0, $startupBytes.Length) } finally { $file.Dispose() }
 $buildOptions = @{
     Name = $Name
     Config = $configPath
 @@OPTIONS@@}
 $previousToolchain = $env:RUSTUP_TOOLCHAIN
+$previousStartup = $env:DASHBOARD_STARTUP_PROFILE
 try {
     $env:RUSTUP_TOOLCHAIN = $expectedToolchain
+    $env:DASHBOARD_STARTUP_PROFILE = $startupPath
     Write-Host "[Studio] Toolchain: $expectedToolchain" -ForegroundColor Cyan
     Write-Host "[Studio] Configuration: $($bytes.Length) bytes; capture: $Name" -ForegroundColor Cyan
     Write-Host '[Studio] Compilation and validation can take time. This command does not flash.' -ForegroundColor Yellow
@@ -46,4 +54,5 @@ try {
     Write-Host '[Studio] Build wrapper completed. Review its capture results before device operations.' -ForegroundColor Green
 } finally {
     $env:RUSTUP_TOOLCHAIN = $previousToolchain
+    $env:DASHBOARD_STARTUP_PROFILE = $previousStartup
 }

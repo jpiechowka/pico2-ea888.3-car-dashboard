@@ -138,6 +138,9 @@ impl BuildSelection {
         Ok(BuildRecipe {
             normalized,
             eav,
+            startup: dashboard_config::startup::StartupProfile::default()
+                .encode()
+                .ok_or(BuildIssue::Startup)?,
             toolchain: repository_toolchain().ok_or(BuildIssue::Toolchain)?,
         })
     }
@@ -153,6 +156,7 @@ pub enum BuildIssue {
     Options,
     Editor(ActionBlock),
     Configuration,
+    Startup,
     Toolchain,
 }
 impl BuildIssue {
@@ -188,6 +192,7 @@ impl BuildIssue {
                 .into()
             }
             Self::Configuration => "The accepted configuration could not be exported.".into(),
+            Self::Startup => "The startup profile is invalid. Correct it before exporting a recipe.".into(),
             Self::Toolchain => "The repository toolchain declaration is not supported.".into(),
         }
     }
@@ -231,15 +236,30 @@ pub fn transfer_estimate(clock: &ResolvedClock) -> Option<TransferEstimate> {
 pub struct BuildRecipe {
     pub normalized: NormalizedBuildOptions,
     eav: Vec<u8>,
+    startup: [u8; 16],
     toolchain: &'static str,
 }
 impl BuildRecipe {
     pub fn config_bytes(&self) -> &[u8] { &self.eav }
 
+    pub fn startup_bytes(&self) -> &[u8; 16] { &self.startup }
+
+    pub fn with_startup(
+        mut self,
+        profile: dashboard_config::startup::StartupProfile,
+    ) -> Result<Self, BuildIssue> {
+        self.startup = profile.encode().ok_or(BuildIssue::Startup)?;
+        Ok(self)
+    }
+
     pub fn powershell(&self) -> String {
         let mut hex = String::with_capacity(self.eav.len() * 2);
         for byte in &self.eav {
             write!(hex, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        let mut startup_hex = String::with_capacity(32);
+        for byte in &self.startup {
+            write!(startup_hex, "{byte:02x}").expect("writing to String cannot fail");
         }
         let opts = &self.normalized.requested;
         let mut arguments = format!(
@@ -280,6 +300,7 @@ impl BuildRecipe {
         include_str!("build_flash/recipe.ps1.in")
             .replace("@@TOOLCHAIN@@", self.toolchain)
             .replace("@@EAV@@", &hex)
+            .replace("@@STARTUP@@", &startup_hex)
             .replace("@@OPTIONS@@", &arguments)
     }
 }

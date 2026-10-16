@@ -124,7 +124,9 @@ remain disabled until source-specific policies are qualified.
 
 ## Controls and startup
 
-Startup has no cosmetic delay. The header shows actual transport/sample state.
+Startup presentation is configurable: a brief status screen, then the selected
+animation. Acquisition continues throughout; the dashboard header shows the
+actual transport/sample state. See [startup settings](docs/configurator/startup.md).
 Valid saved preferences restore boost units and FPS mode; every boot starts at
 Full brightness. Defaults apply when no valid journal exists. Persistence failures are
 visible. See [startup status](docs/vehicle/startup-status.md) and

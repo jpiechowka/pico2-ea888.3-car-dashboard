@@ -295,10 +295,6 @@ pub fn RuleSummary(ui: Ui) -> impl IntoView {
     }
 }
 #[component]
-pub fn BuildFlashEmpty(ui: Ui) -> impl IntoView {
-    view! { <div class="settings-copy"><h1>"Build & Flash"</h1><p>"Native build and flashing tools will appear here when their integration is ready."</p><p>"Configure your onboard recovery and controls before exporting a configuration."</p><button on:click=move |_|open(ui,Workspace::Device,GroupId::Bindings)>"Open Device controls"</button></div> }
-}
-#[component]
 pub fn InspectionDetail(ui: Ui) -> impl IntoView {
     view! { <div id="studio-inspection-detail" tabindex="-1" hidden=move ||ui.inspection.with(Option::is_none)&&ui.error_inspection.with(Option::is_none) class="inspection-detail">
         <p>{move ||ui.inspection.get().map(|target|ui.editor.with(|e|match Registry::resolve(e,target){Ok(field)=>format!("Inspecting {} · {}{}{}",Registry::descriptor(target.key()).label,field.inspection.display_location(),if !field.inspection.id_lookup_unambiguous || e.has_pending_json(){" · read only candidate"}else{""},field.capability.reason().map(|r|format!(" · {r}")).unwrap_or_default()),Err(_)=>"Field changed; find the field again.".into()})).or_else(||ui.error_inspection.get().map(|target|ui.editor.with(|e|match e.inspect(target){Ok(location)=>format!("Read-only JSON location · {}",location.display_location()),Err(_)=>"Field changed; find the field again.".into()}))).unwrap_or_default()}</p>

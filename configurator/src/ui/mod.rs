@@ -1,4 +1,5 @@
 mod advanced;
+mod build_flash;
 mod command_palette;
 mod controls;
 mod ecu_reference;
@@ -47,6 +48,7 @@ pub struct Ui {
     mount_started: f64,
     cache_seen: RwSignal<dashboard_core::cache_diagnostics::CacheExhaustionSeen>,
     editor: RwSignal<Editor>,
+    build: RwSignal<dashboard_configurator::build_flash::BuildSelection>,
     resources: StoredValue<ResourceCache>,
     json: json_editor::State,
     notice: RwSignal<String>,
@@ -542,6 +544,7 @@ pub fn Studio() -> impl IntoView {
         cache_seen: RwSignal::new(dashboard_core::cache_diagnostics::CacheExhaustionSeen::new()),
         mount_started,
         editor: RwSignal::new(editor),
+        build: RwSignal::new(dashboard_configurator::build_flash::BuildSelection::default()),
         resources: StoredValue::new(ResourceCache::default()),
         json: json_editor::State::new(),
         events: RwSignal::new(EventStore::default()),
@@ -662,7 +665,7 @@ pub fn Studio() -> impl IntoView {
                     <Group ui group=GroupId::Measurements><resources::Resources ui/></Group>
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-ecu-reference" role="tabpanel" aria-labelledby="studio-tab-ecu-reference" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::EcuReference)><ecu_reference::ReferenceWorkspace ui/></section>
-                <section class="workspace-panel settings-panel" id="studio-panel-build-flash" role="tabpanel" aria-labelledby="studio-tab-build-flash" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::BuildFlash)><workspaces::BuildFlashEmpty ui/></section>
+                <section class="workspace-panel settings-panel" id="studio-panel-build-flash" role="tabpanel" aria-labelledby="studio-tab-build-flash" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::BuildFlash)><build_flash::BuildFlash ui/></section>
                 <section class="preview-dock" id="studio-preview-dock" aria-label="Persistent display preview">
                     <workspaces::InspectionDetail ui/>
                     <div class="preview-mode"><button id="studio-mode-appearance" class:active=move ||ui.dock.mode.get()==PreviewMode::Appearance on:click=move |_|{stage::cancel(ui);simulation::cancel(ui);ui.dock.mode.set(PreviewMode::Appearance);}>"Appearance"</button><button id="studio-mode-simulation" class:active=move ||ui.dock.mode.get()==PreviewMode::Simulation on:click=move |_|{stage::cancel(ui);simulation::cancel(ui);ui.dock.mode.set(PreviewMode::Simulation);workspaces::open(ui,Workspace::Diagnostics,GroupId::Simulation);}>"Simulation"</button></div>

@@ -24,6 +24,27 @@ Historical v1, v2 and v3 files are explicitly upgraded by the editor or build
 compiler; exported and embedded files use [current v4](configuration-format.md#current-v4-contract). The capture keeps both
 the original selected file and the canonical upgraded bytes.
 
+## Build & Flash workspace
+
+Choose Demo or Vehicle, one of the eight shared clock profiles, or exact custom
+CPU/SPI frequencies and a supported voltage setpoint. Expert mode is explicit
+and resets on reload. The workspace shows requested and resolved clocks, SPI
+divisors and neighboring rates, repository toolchain, compiler target and exact
+normalized options. Installed tools are reported separately by the native check.
+
+The transfer estimate covers a full 153,600-byte RGB565 payload only. It excludes
+rendering, synchronization, command overhead and panel scanout, so it is not
+physical FPS. A smaller SPI request can select a larger divisor and substantially
+slow transfers; equal SPI rates still leave different CPU rendering budgets.
+
+**Download build recipe** creates a PowerShell 7 script containing the current
+accepted dashboard, startup profile and build options. Invalid/pending edits or
+an active drag block export. Run the downloaded file with `-Repository` pointing
+to this checkout. It creates fresh `.eav`/`.easp` inputs under
+`target/studio-exports`, checks the pinned toolchain and invokes the build wrapper
+below. Existing capture names are never overwritten. The recipe builds and
+validates; it does not flash a device. Re-export after changing the toolchain.
+
 ## Reproducible PowerShell workflow
 
 ```powershell
