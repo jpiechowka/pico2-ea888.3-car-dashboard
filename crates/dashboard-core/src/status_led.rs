@@ -148,6 +148,10 @@ impl PresentedLed {
         self.visible == state
     }
 
+    /// An explicit synthetic source replacement retires delivery, not visible metadata.
+    /// Sequence high-water is preserved so the retired token cannot be resubmitted.
+    pub fn retire_pending(&mut self) { self.pending = None; }
+
     pub const fn warning(&self) -> PresentedWarning { self.visible.warning }
 
     pub const fn visible(&self) -> PresentedScene { self.visible }

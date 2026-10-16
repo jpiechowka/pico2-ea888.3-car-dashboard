@@ -135,7 +135,8 @@ impl ControlSimulator {
         self.scenario = scenario;
     }
 
-    /// Explicit full boot replay. Original artwork bytes never enter this session.
+    /// Replay boot presentation for the current configuration without restarting acquisition.
+    /// Original artwork bytes never enter this session.
     pub fn restart_project(
         &mut self,
         project: &dashboard_config_tools::project::Project,
@@ -145,16 +146,22 @@ impl ControlSimulator {
         }
         let config =
             dashboard_config::decode(project.dashboard_bytes()).map_err(|_| SimulationError::InvalidProject)?;
-        self.restart(config);
-        if self.source_key().is_none() {
-            return Err(SimulationError::Exhausted);
+        if &config != self.config() {
+            return Err(SimulationError::InvalidProject);
         }
-        self.simulation.startup = Some(crate::simulation::StartupReplay {
-            profile: project.profile(),
-            state: dashboard_core::startup::Startup::new(project.profile(), self.now_ms()),
-            artwork: project.artwork().map(|a| a.converted_arc()),
-        });
-        self.simulation.prepare(true);
+        let epoch = self
+            .source_epoch
+            .and_then(|e| e.checked_add(1))
+            .ok_or(SimulationError::Exhausted)?;
+        let owner = issue_source_owner().ok_or(SimulationError::Exhausted)?;
+        // Retire presentation callbacks without replacing acquisition, history or warning episodes.
+        self.source_epoch = Some(epoch);
+        self.source_owner = Some(owner);
+        self.completed_frame = None;
+        self.simulation.replay_startup(project);
+        self.gestures = ControlGestures::new();
+        self.gestures
+            .update_startup(&self.map, self.session().page(), self.held, self.now_ms());
         Ok(())
     }
 

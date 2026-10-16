@@ -179,3 +179,27 @@ fn naturally_finished_startup_suppresses_a_held_buttons_release() {
     sim.tap(ButtonId::A);
     assert!(sim.session().boost_psi());
 }
+
+#[test]
+fn replay_retires_delivery_but_preserves_acquisition_history_and_clock() {
+    let project = project(StartupProfile::default());
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let mut preview = Preview::new();
+    sim.advance_to(sim.now_ms() + 500, Some([2.5, 110., 95., 80., 30., 700., 13.8, 1.]));
+    present(&mut sim, &mut preview, 1);
+    let snapshot = sim.snapshot();
+    let clock = sim.now_ms();
+    let old_source = sim.source_key();
+    let visible = sim.completed_warning();
+    preview.render_simulation_submitted(&mut sim, token(2)).unwrap();
+    sim.restart_project(&project).unwrap();
+    assert_eq!(sim.snapshot(), snapshot);
+    assert_eq!(sim.now_ms(), clock);
+    assert_ne!(sim.source_key(), old_source);
+    assert_eq!(sim.completed_warning(), visible);
+    assert!(!sim.complete_frame(token(2)));
+    assert!(preview.pending_pixels(&sim, token(2)).is_none());
+    present(&mut sim, &mut preview, 3);
+    assert_eq!(sim.snapshot(), snapshot);
+    assert_eq!(sim.startup_phase(), Phase::Status);
+}

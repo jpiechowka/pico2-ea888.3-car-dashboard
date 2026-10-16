@@ -82,6 +82,24 @@ impl Simulation {
         self.prepare(false);
     }
 
+    pub(crate) fn replay_startup(
+        &mut self,
+        project: &dashboard_config_tools::project::Project,
+    ) {
+        self.session = ControlSession::new(self.configuration(), FpsMode::Off, false);
+        self.pager = WarningPager::new();
+        self.warning = None;
+        self.visible = (self.session.page(), self.session.view_id());
+        self.presentation_epoch = self.presentation_epoch.and_then(|n| n.checked_add(1));
+        self.presented.retire_pending();
+        self.startup = Some(StartupReplay {
+            profile: project.profile(),
+            state: dashboard_core::startup::Startup::new(project.profile(), self.now_ms),
+            artwork: project.artwork().map(|a| a.converted_arc()),
+        });
+        self.prepare(false);
+    }
+
     pub(crate) fn startup_active(&self) -> bool { self.startup.as_ref().is_some_and(|s| s.state.active()) }
 
     fn advance_startup(
