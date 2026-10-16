@@ -19,6 +19,7 @@ mod legacy;
 #[cfg(feature = "json")]
 mod legacy_v3;
 mod model;
+pub mod startup;
 mod validate;
 
 pub use advanced::*;

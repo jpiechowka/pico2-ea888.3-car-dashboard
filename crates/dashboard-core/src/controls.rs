@@ -70,6 +70,8 @@ pub struct ControlEvent {
 
 #[derive(Default, Debug)]
 pub struct ControlBatch {
+    /// Qualified startup gesture, including a button mapped to None.
+    pub startup_skip: bool,
     pub actions: heapless::Vec<ControlEvent, 4>,
     pub recovery: Option<Observation>,
     pub discarded: u32,
@@ -114,12 +116,43 @@ impl ControlGestures {
     /// Maintenance requires a fresh release before any held button can act.
     pub fn reset(&mut self) { *self = Self::new(); }
 
+    /// Retain debounce history while cancelling presses spanning startup exit.
+    pub fn suppress_held(&mut self) {
+        for state in &mut self.buttons {
+            if state.stable || state.candidate {
+                state.armed = false;
+                state.fired = true;
+            }
+        }
+    }
+
+    pub fn update_startup(
+        &mut self,
+        map: &ControlMap,
+        page: ControlPage,
+        pressed: [bool; 4],
+        now_ms: u64,
+    ) -> ControlBatch {
+        self.update_context(map, page, pressed, now_ms, true)
+    }
+
     pub fn update(
         &mut self,
         map: &ControlMap,
         page: ControlPage,
         pressed: [bool; 4],
         now_ms: u64,
+    ) -> ControlBatch {
+        self.update_context(map, page, pressed, now_ms, false)
+    }
+
+    fn update_context(
+        &mut self,
+        map: &ControlMap,
+        page: ControlPage,
+        pressed: [bool; 4],
+        now_ms: u64,
+        startup: bool,
     ) -> ControlBatch {
         let mut batch = ControlBatch::default();
         if self.last_ms.is_some_and(|last| now_ms < last) {
@@ -208,6 +241,10 @@ impl ControlGestures {
             };
             if recovery && hold {
                 batch.recovery = Some(observation);
+                continue;
+            }
+            if startup {
+                batch.startup_skip = true;
                 continue;
             }
             let action = if hold { binding.hold } else { binding.tap };

@@ -32,6 +32,18 @@ impl PresentedScene {
 
     pub const fn legacy(overlay: Option<Overlay>) -> Self { Self { overlay, ..Self::EMPTY } }
 
+    /// Startup may indicate current warnings but never presents their text.
+    pub const fn startup(
+        self,
+        warning_led: bool,
+    ) -> Self {
+        Self {
+            eligible: warning_led && self.eligible,
+            attention: warning_led && self.attention,
+            ..Self::EMPTY
+        }
+    }
+
     pub fn capture(
         config: &dashboard_config::ValidatedConfig,
         snapshot: &crate::acquisition::DashboardSnapshot,
