@@ -56,6 +56,7 @@ pub struct State {
     flashing: StoredValue<Option<ArtifactSummary>>,
     device: RwSignal<DeviceSelection>,
     inspecting: StoredValue<bool>,
+    removing: StoredValue<Option<dashboard_helper_protocol::AttemptId>>,
 }
 impl State {
     pub fn new() -> Self {
@@ -78,6 +79,7 @@ impl State {
             flashing: StoredValue::new(None),
             device: RwSignal::new(DeviceSelection::default()),
             inspecting: StoredValue::new(false),
+            removing: StoredValue::new(None),
         }
     }
 
@@ -95,6 +97,7 @@ impl State {
             let _ = self.uploaded.try_set_value(None);
             let _ = self.download.try_set_value(None);
             let _ = self.flashing.try_set_value(None);
+            let _ = self.removing.try_set_value(None);
         });
     }
 }
@@ -116,6 +119,7 @@ enum Action {
     Inspection,
     Flash,
     History,
+    Cleanup,
 }
 struct ReadGuard {
     abort: AbortController,
@@ -145,6 +149,7 @@ async fn request(
         Action::Build => ("POST", "/builds".into()),
         Action::Flash => ("POST", "/flashes".into()),
         Action::History => ("GET", "/flash-attempts".into()),
+        Action::Cleanup => ("POST", "/flash-attempts/cleanup".into()),
         Action::Artifacts => ("GET", "/artifacts".into()),
         Action::Inspect | Action::Inspection => {
             let device = state
@@ -206,6 +211,16 @@ async fn request(
     init.set_cache(web_sys::RequestCache::NoStore);
     init.set_redirect(web_sys::RequestRedirect::Error);
     let payload = match action {
+        Action::Cleanup => {
+            let attempt = state.removing.get_value().ok_or("No history record selected")?;
+            let command = dashboard_helper_protocol::CleanupRequest {
+                attempts: BoundedVec::new(vec![attempt]).map_err(|_| "Invalid cleanup selection")?,
+            };
+            Some((
+                "application/json",
+                dashboard_helper_protocol::encode(&command).map_err(|_| "Cannot encode cleanup request")?,
+            ))
+        }
         Action::Flash => {
             let artifact = state.flashing.get_value().ok_or("No firmware selected")?;
             let connection = connection.as_ref().ok_or("Helper session lost")?;
@@ -391,7 +406,7 @@ fn apply(
                 Ok(Some(Action::Report))
             }
         }
-        Action::Check | Action::Scan | Action::Build | Action::Inspect | Action::Flash => {
+        Action::Check | Action::Scan | Action::Build | Action::Inspect | Action::Flash | Action::Cleanup => {
             let job = parse::<JobSummary>(bytes)?;
             let conn = state.connection.get_value().ok_or("Helper session lost")?;
             let mut result = Ok(());
@@ -400,6 +415,9 @@ fn apply(
                 v.message = "Local job running. Detailed status and logs follow below.".into();
             });
             result?;
+            if matches!(action, Action::Cleanup) {
+                state.removing.set_value(None);
+            }
             if matches!(action, Action::Flash) {
                 state.flashing.set_value(None);
                 state.device.update(|d| {
@@ -632,6 +650,7 @@ fn send(
                 state.building.set(false);
                 state.download.set_value(None);
                 state.flashing.set_value(None);
+                state.removing.set_value(None);
                 state.device.update(DeviceSelection::clear);
                 state.inspecting.set_value(false);
                 ui.event(Notice {
@@ -690,6 +709,7 @@ fn stage_label(stage: dashboard_helper_protocol::StageId) -> String {
     match stage {
         StageId::Probe(ProbeStage::Prerequisites) => "Installed tools".into(),
         StageId::Probe(ProbeStage::DeviceDetection) => "BOOTSEL device discovery".into(),
+        StageId::Cleanup(_) => "Remove selected local history".into(),
         StageId::Firmware(stage) => {
             match stage {
                 FirmwareStage::Prerequisites => "Required tools",
