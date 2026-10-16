@@ -3,7 +3,7 @@
 Base: the complete published `embassy-rp 0.10.0` crate, upstream commit
 `84444a19eb57d978e3c09fcdc8e60cdd7278eb03`. Both original licenses are retained.
 `embassy-rp-provenance.json` records the download URL, archive SHA-256, all 73
-original file hashes and all seven patched/added file hashes. `.gitattributes`
+original file hashes and all ten patched/added file hashes. `.gitattributes`
 preserves these bytes across platforms. UART, multicore and flash have runtime corrections. PWM has only a period-comment
 correction (phase-correct factor2, ordinary factor1); UART ring operations and the fixed JEDEC transaction have
 additional shared helpers compiled by the host tests.
@@ -79,10 +79,9 @@ by the host model. At 115200 8N1 with the published 28/32 RX threshold, four byt
 times are about 347 us; a 1024-byte software ring cannot compensate for long IRQ
 masking. Measure that budget and error injection on the actual RP2350/adapter.
 
-Vendoring exposes the existing `cortex_m_rt::pre_init` deprecation warning in
-unchanged `src/lib.rs`; the crate registry normally caps dependency diagnostics.
-The unrelated `proc-macro-error2 2.0.1` future incompatibility remains documented
-in the dependency review. Neither warning is hidden by modifying upstream files.
+The original vendor checkpoint exposed the `cortex_m_rt::pre_init` deprecation
+and `proc-macro-error2 2.0.1` future incompatibility. The 16 October compatibility
+backports below resolve both without suppressing diagnostics.
 
 Historical UART-patch checkpoint before runtime integration: 150 host runtime
 tests and two compile-fail
@@ -151,3 +150,48 @@ changed. Five original files are modified and two helpers added; the provenance
 manifest retains the original PWM hash alongside its exact corrected hash.
 The PIM715 RGB adapter uses the existing constructor and independent compare
 configuration with owned slices5/6, inversion, TOP9999 and divider1.
+
+## PIO and startup compatibility backports (16 October 2026)
+
+The base remains the published 0.10.0 archive; this is not an unreviewed update
+of the complete HAL. Original hashes remain immutable. The prior UART,
+multicore, flash, flash-probe and PWM patch bytes are unchanged.
+
+- [Embassy commit 8c38d7e](https://github.com/embassy-rs/embassy/commit/8c38d7e55d00732a9d5cb0b5255bae80d1891781)
+  updates PIO to 0.4. Both local Cargo manifests now agree. Upstream's additional
+  IR NEC assembler-call conversion does not apply to published 0.10.0, which
+  has no such module. Existing PIO instruction helpers and programs compile
+  unchanged. The firmware lock selects pio/core/parser/proc 0.4.0 and removes
+  proc-macro-error2 and its attribute crate. [PIO PR 85](https://github.com/rp-rs/pio-rs/pull/85)
+  replaces that macro diagnostic dependency with Syn.
+- [Embassy commit c003af17](https://github.com/embassy-rs/embassy/commit/c003af1767be1b7602ecf2a3b155eb6ce543e06a)
+  supplies the exact assembly startup fragment. Rust must not execute before
+  RAM initialization. RP2350 releases SIO spinlock31, asserts then clears
+  PROC1 reset with readback waits, and sets ACTLR.EXTEXCLALL. RP2040 retains
+  its separate force-on/force-off sequence. The post-runtime core1 helper is
+  unchanged. The unused private `write_and_wait` helper is retained to avoid
+  unrelated changes.
+
+The constants were cross-checked against the locked rp-pac 7.0.0 register
+accessors: RP2350 SIO spinlock31 `0xd000017c`, PSM FRCE_OFF `0x40018004`,
+PROC1 bit24, and Cortex-M ICB ACTLR `0xe000e008` bit29. These are the same
+operations as the original Rust implementation, expressed without stack,
+initialized RAM, Rust calls or compiler-generated startup dependencies.
+
+Focused checks on nightly-2026-10-16: ARM check and one default release link
+passed without either previous warning. The stripped release reset begins at
+`0x10000140` and calls the hook at `0x10000198` before BSS/data setup. Direct
+inspection verified its complete 42-byte instruction body and three MMIO
+literals; body SHA-256 is
+`2e607823f0c33ea503d542e8961cbbe910238fc5a80886a4cd822b9e3598bc06`.
+The original archive and all vendor file hashes passed `check_vendor.py`.
+
+The frozen `config_startup.py` / `config_startup_contracts.py` machine-code
+grammars still describe the old Rust hook, including its saved stack words.
+They must be reconciled with this stackless assembly body during the final
+artifact audit; their current rejection is not permission to bypass them.
+
+This does not requalify flash machine-code gates, other profile/feature images,
+RP2040 linking, or physical reset/PIO timing. Those checks remain separate;
+no hardware was accessed. The single linked artifact is evidence for this
+startup backport, not approval to flash a new image.

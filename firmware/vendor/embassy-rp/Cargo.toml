@@ -317,7 +317,7 @@ optional = true
 version = "1.1.0"
 
 [dependencies.pio]
-version = "0.3"
+version = "0.4"
 
 [dependencies.rand-core-06]
 version = "0.6"

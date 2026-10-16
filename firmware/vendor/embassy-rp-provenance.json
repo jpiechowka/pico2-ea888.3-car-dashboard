@@ -86,6 +86,22 @@
     "src/multicore.rs": "9fb684e2bd7e17494d28b6b1c76175666346dd1dbded9a023322775bc83e8f42",
     "src/flash.rs": "376f4852e69faa8f45025cdba335a809c881bfa196c48cd17e8b970eb4e50566",
     "src/flash_probe.rs": "bdd09e823d46b84458794552a805c429f2fe12443172d61abf476075db1ac1c0",
-    "src/pwm.rs": "e4e60fa655e00b8be097520dfbb26504e9177e1fa6ff4648e0553b5b688758ff"
+    "src/pwm.rs": "e4e60fa655e00b8be097520dfbb26504e9177e1fa6ff4648e0553b5b688758ff",
+    "Cargo.toml": "b7d76043e2d22e326719e938f4ae145a3d6ce63d8925b27997759e029a18612e",
+    "Cargo.toml.orig": "1704f5ae8bd42b51ea6c77bc6cd426c74dff4f1afdaa999db1e22e924879dbe6",
+    "src/lib.rs": "8c069e5de3134708387926082eb79138072712cca88b248548ff4afb6f3136e3"
+  },
+  "compatibility_backports": {
+    "pio_0_4": {
+      "upstream_commit": "8c38d7e55d00732a9d5cb0b5255bae80d1891781",
+      "upstream_url": "https://github.com/embassy-rs/embassy/commit/8c38d7e55d00732a9d5cb0b5255bae80d1891781",
+      "scope": "PIO dependency; normalized and original manifests consistent. Upstream IR NEC call adaptation does not apply: that module is absent from published 0.10.0."
+    },
+    "assembly_pre_init": {
+      "upstream_commit": "c003af1767be1b7602ecf2a3b155eb6ce543e06a",
+      "upstream_url": "https://github.com/embassy-rs/embassy/commit/c003af1767be1b7602ecf2a3b155eb6ce543e06a",
+      "scope": "Exact assembly startup fragment for RP2040/RP235x; existing post-runtime core1 helper retained",
+      "fragment_sha256": "a9716d75a3a33bd0281e42ded3d7ea29fd0a7556b4d1043ccb7cf8cc53e43f29"
+    }
   }
 }

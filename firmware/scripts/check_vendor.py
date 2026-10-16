@@ -22,7 +22,8 @@ def check(archive=None):
     original = manifest["original_files_sha256"]
     patched = manifest["patched_files_sha256"]
     require(set(patched) == {"src/uart/buffered.rs", "src/uart/mod.rs", "src/uart/buffered_io.rs",
-                            "src/multicore.rs", "src/flash.rs", "src/flash_probe.rs", "src/pwm.rs"})
+                            "src/multicore.rs", "src/flash.rs", "src/flash_probe.rs", "src/pwm.rs",
+                            "Cargo.toml", "Cargo.toml.orig", "src/lib.rs"})
     expected = original | patched
     for name in expected:
         path = PurePosixPath(name)
@@ -44,7 +45,7 @@ def check(archive=None):
                 require(name not in restored, "duplicate archive entry")
                 restored[name] = digest(tar.extractfile(member).read())
         require(restored == original, "original file manifest does not match published archive")
-    print(f"Verified {len(original)} original files, 5 modified files and 2 added helpers; archive={'checked' if archive else 'not supplied'}")
+    print(f"Verified {len(original)} original files, {len(set(patched) & set(original))} modified files and {len(set(patched) - set(original))} added helpers; archive={'checked' if archive else 'not supplied'}")
 
 
 if __name__ == "__main__":
