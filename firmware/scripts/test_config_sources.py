@@ -1565,6 +1565,134 @@ class ActualDecodedSources(unittest.TestCase):
         self.assertLessEqual(len((json.dumps(result,sort_keys=True)+'\n').encode()),65536)
 
 
+class SourceStructuralReuse(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        from config_source_children import CHANNEL_SOURCE
+        from config_widget_children import _name
+        objects,rows,_,_=SourceLiteralBodies.fixture()
+        return objects,rows,_name(objects,CHANNEL_SOURCE)
+
+    def test_repeated_detached_coverage_keeps_complete_records_without_reauditing(self):
+        from unittest.mock import patch
+        import config_source_children as subject
+        from config_structural import _detached_inputs
+        objects,rows,name=self.fixture();expected=subject.source_coverage(objects,name,rows)
+        frozen,current=_detached_inputs(objects,rows)
+        with patch.object(subject,'source_body',wraps=subject.source_body) as body:
+            first=subject.source_coverage(frozen,name,current)
+            second=subject.source_coverage(rows=current,objects=frozen,name=name,outline_role=None)
+        self.assertEqual(first,expected);self.assertEqual(second,expected)
+        self.assertIsNot(first,second);self.assertIsNot(first['coverage'],second['coverage'])
+        first['coverage'].clear();first['ordinary_edges']=()
+        self.assertEqual(second,expected)
+        audited=sum(call.args[1]==name for call in body.call_args_list)
+        self.assertEqual(audited,1,'one exact immutable package must audit unchanged Source structure once')
+        self.assertEqual(subject.source_coverage(frozen,name,current),expected)
+        self.assertEqual(frozen._counts[('config_source_children','source_coverage')],(1,2))
+        with self.assertRaises(AssertionError):subject.source_coverage(frozen,'unreviewed name',current)
+        with self.assertRaises(AssertionError):subject.source_coverage(frozen,name,current,'@outline:unreviewed')
+        with self.assertRaisesRegex(AssertionError,'another immutable input'):
+            subject.source_coverage(frozen,name,dict(current))
+
+    def test_exact_Source_extension_preserves_the_original_seven_API_inventory(self):
+        from config_structural import _APIS
+        original={('config_helpers','helper_body'),('config_helpers','helper_coverage'),
+            ('config_logger','logger_body'),('config_refill_children','child_body'),
+            ('config_refill_children','child_coverage'),('config_utf8','utf8_body'),
+            ('config_widget_children','widget_body')}
+        self.assertEqual(len(original),7)
+        self.assertEqual(_APIS,original|{('config_source_children','source_coverage')})
+
+    def test_warmed_snapshot_is_independent_and_new_consumed_inputs_recheck(self):
+        from config_source_children import source_coverage
+        from config_structural import _detached_inputs
+        from test_config_stack import StartupConfigurationCopy
+        from llvm_stack import Instruction
+        for fault in ('raw','table','instruction','frame','alias','mapping','foreign_ingress'):
+            with self.subTest(fault=fault):
+                objects,rows,name=self.fixture();frozen,current=_detached_inputs(objects,rows)
+                expected=source_coverage(frozen,name,current);start=expected['function']
+                if fault=='raw':StartupConfigurationCopy.put(objects,start+10,b'\0\0')
+                elif fault=='table':StartupConfigurationCopy.put(objects,start+78,b'\x77')
+                elif fault=='instruction':rows[start]=replace(rows[start],mnemonic='nop')
+                elif fault=='frame':objects.sizes[start]+=8
+                elif fault=='alias':objects.elf.functions['forged Source alias']=objects.elf.functions[name]
+                elif fault=='mapping':objects.elf.mapping_symbols.append(('$d',start,objects.elf.functions[name][2]))
+                else:
+                    site=0x1001c654+4376;raw=StartupConfigurationCopy.branch_link(site,start+2)
+                    StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'bl',hex(start+2))
+                self.assertEqual(source_coverage(frozen,name,current),expected)
+                fresh,new_rows=_detached_inputs(objects,rows)
+                with self.assertRaises(AssertionError) as rejected:source_coverage(fresh,name,new_rows)
+                if fault=='foreign_ingress':self.assertIn('foreign direct ingress',str(rejected.exception))
+
+    def test_custom_provider_rechecks_consumed_non_site_bytes_after_warmup(self):
+        from config_source_children import source_coverage
+        from config_structural import _detached_inputs
+        from config_stack import DiagnosticObjects
+        objects,rows,name=self.fixture();start=objects.elf.functions[name][0]&~1
+        class CustomObjects(DiagnosticObjects):
+            reads=0;changed=False
+            def read_only(self,at,size):
+                self.reads+=1;raw=super().read_only(at,size)
+                if self.changed and at<=start+10<at+size:
+                    raw=raw[:start+10-at]+bytes([raw[start+10-at]^1])+raw[start+11-at:]
+                return raw
+        custom=CustomObjects(objects.elf,objects.sizes);same,current=_detached_inputs(custom,rows)
+        self.assertIs(same,custom);self.assertIs(current,rows)
+        expected=source_coverage(custom,name,rows);reads=custom.reads
+        self.assertEqual(source_coverage(custom,name,rows),expected);self.assertGreater(custom.reads,reads)
+        custom.changed=True
+        with self.assertRaises(AssertionError):source_coverage(custom,name,rows)
+
+    def test_warm_structure_keeps_fresh_dynamic_source_proof_guards_and_returns(self):
+        from unittest.mock import patch
+        import config_source_children as children,config_source_effects as effects
+        from config_source_effects import channel_source_interface
+        from config_source_children import source_coverage
+        from config_structural import _detached_inputs
+        from config_abstract import Span
+        from config_regions import Storage
+        from config_decoded_sources import _phase_graph
+        args=list(SourceAggregateInterface.fixture());objects,rows,proof,state,output,frame,guards=args
+        frozen,current=_detached_inputs(objects,rows)
+        name=next(n for n,e in frozen.elf.functions.items() if e[0]&~1==proof['function'])
+        self.assertEqual(source_coverage(frozen,name,current),proof)
+        for count,cursor in ((Span(8,8),state.decoder.cursor),(Span(0,0),state.decoder.cursor),
+            (Span(8,8),Span(state.decoder.payload.extent,state.decoder.payload.extent)),(Span(1,2),Span(1,4))):
+            selected=replace(state,count=count,decoder=replace(state.decoder,cursor=cursor))
+            old=args[:];old[3]=selected;new=old[:];new[:2]=frozen,current
+            first=channel_source_interface(*old);second=channel_source_interface(*new)
+            self.assertEqual(second,first)
+            # The old seven wrappers already share immutable helper tuples
+            # differently from raw providers. Isolate only this eighth API
+            # on an equivalent fresh detached package, preserving full alias
+            # comparison rather than comparing those pre-existing domains.
+            baseline,before_rows=_detached_inputs(objects,rows);prior=old[:];prior[:2]=baseline,before_rows
+            original=children.source_coverage.__wrapped__
+            with patch.object(children,'source_coverage',original),patch.object(effects,'source_coverage',original):
+                original(baseline,name,before_rows)
+                previous=channel_source_interface(*prior)
+            self.assertEqual(second,previous)
+            self.assertTrue(_phase_graph(second)==_phase_graph(previous),'old-seven and new-eight alias graphs differ')
+            for value in (first,previous,second):effects._source_error_origins(value)
+        new=args[:];new[:2]=frozen,current;new[2]=dict(proof,access_targets=proof['access_targets'][:-1])
+        with self.assertRaisesRegex(AssertionError,'stale current body'):channel_source_interface(*new)
+        new=args[:];new[:2]=frozen,current
+        new[-1]=guards+(Storage(frame.space,'protected active output',output.start+20,1,1,frame.phase,False),)
+        with self.assertRaisesRegex(AssertionError,'protected live storage'):channel_source_interface(*new)
+        new=args[:];new[:2]=frozen,current;new[4]=replace(output,offset=output.offset+4)
+        with self.assertRaisesRegex(AssertionError,'caller ABI'):channel_source_interface(*new)
+        from test_config_stack import StartupConfigurationCopy
+        from llvm_stack import Instruction
+        site=0x1001c654+4376;target=0x10028682;raw=StartupConfigurationCopy.branch_link(site,target)
+        StartupConfigurationCopy.put(objects,site,raw);rows[site]=Instruction(site,raw,'bl',hex(target))
+        fresh,new_rows=_detached_inputs(objects,rows);source_coverage(fresh,name,new_rows)
+        new=args[:];new[:2]=fresh,new_rows
+        with self.assertRaisesRegex(AssertionError,'actual caller'):channel_source_interface(*new)
+
+
 class SourceReturnBodySelection(unittest.TestCase):
     """Indexing-only checks; no body selection creates source authority."""
     @staticmethod

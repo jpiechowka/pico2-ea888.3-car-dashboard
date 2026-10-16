@@ -12,6 +12,7 @@ from config_owner_entry import _direct_target
 from config_finite import _complete_body
 from config_stack import canonical_symbol
 from validation import require
+from config_structural import _structural
 
 
 CHANNEL_SOURCE=ROLES['ChannelSource']
@@ -53,6 +54,7 @@ def source_body(objects,name,rows,outline_role=None,ancestry=()):
     return proof
 
 
+@_structural(2)
 def source_coverage(objects,name,rows,outline_role=None):
     proof=source_body(objects,name,rows,outline_role);start=proof['function'];contract=GRAMMARS[proof['shape']]
     calls={start+off:(operation,target,role,frame) for off,operation,target,role,frame in proof['ordinary_edges']}

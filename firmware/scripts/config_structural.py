@@ -20,6 +20,7 @@ _APIS=frozenset((
     ('config_logger','logger_body'),('config_refill_children','child_body'),
     ('config_refill_children','child_coverage'),('config_utf8','utf8_body'),
     ('config_widget_children','widget_body'),
+    ('config_source_children','source_coverage'),
 ))
 
 

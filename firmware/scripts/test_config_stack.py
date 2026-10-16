@@ -8409,7 +8409,7 @@ class WidgetStructuralInputs(unittest.TestCase):
                     self.assertEqual(helper_coverage(frozen,instance['name'],current,context,outline),expected)
 
     def test_all_seven_closed_structural_APIs_retain_current_private_group_records(self):
-        from config_structural import _detached_inputs,_APIS
+        from config_structural import _detached_inputs
         from config_decoded_widgets import _current_group,_children
         objects,rows,context,item=ActualDecodedWidgets.fixture()
         expected=_current_group(objects,rows,context)
@@ -8417,7 +8417,12 @@ class WidgetStructuralInputs(unittest.TestCase):
         actual=_current_group(frozen,current,context)
         self.assertEqual(actual,expected)
         self.assertEqual(_children(frozen,current,actual[1],actual[2]),actual[3])
-        self.assertEqual(set(frozen._counts),set(_APIS))
+        original={('config_helpers','helper_body'),('config_helpers','helper_coverage'),
+            ('config_logger','logger_body'),('config_refill_children','child_body'),
+            ('config_refill_children','child_coverage'),('config_utf8','utf8_body'),
+            ('config_widget_children','widget_body')}
+        self.assertEqual(len(original),7)
+        self.assertEqual(set(frozen._counts),original)
         self.assertTrue(all(misses>0 and hits>0 for misses,hits in frozen._counts.values()))
 
 
