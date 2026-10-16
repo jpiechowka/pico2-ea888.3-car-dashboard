@@ -18,8 +18,8 @@ struct Job {
     pending: VecDeque<LogInput>,
     setup: Option<SetupLedger>,
 }
-/// Single serialized state owner: all mutation requires exclusive access. Later adapters
-/// send control directly to this owner; the lossy queue is only for sanitized log chunks.
+/// Single serialized state owner: all mutation requires exclusive access. Native
+/// adapters send control directly; the lossy queue carries only sanitized logs.
 pub struct JobStore {
     session: SessionId,
     jobs: VecDeque<Job>,
@@ -640,11 +640,11 @@ impl Job {
     }
 
     fn elapsed(&mut self) -> u64 {
-        let value = u64::try_from(self.start.elapsed().as_millis()).ok();
-        match value {
-            Some(v) if v >= self.elapsed => self.elapsed = v,
-            _ => self.summary.anomalies.elapsed_anomaly = true,
-        }
+        self.elapsed = super::time::monotonic_elapsed(
+            self.elapsed,
+            super::time::checked_millis(self.start.elapsed().as_millis()),
+            &mut self.summary.anomalies.elapsed_anomaly,
+        );
         self.elapsed
     }
 
@@ -763,7 +763,8 @@ fn checked_count(
         u64::MAX
     })
 }
-/// Internal producer facts; never deserialized from HTTP. Later process owner must prove these.
+/// Internal producer facts; never deserialized from HTTP. The native owner proves
+/// process-tree and output closure before sealing an operation.
 pub struct OutputClosure {
     pub workers_joined: bool,
     pub tree_empty: bool,

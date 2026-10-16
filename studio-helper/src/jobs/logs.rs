@@ -56,27 +56,19 @@ impl StreamFramer {
         if patterns.len() > 3 {
             return Err(Error::Bounds);
         }
-        let mut secrets = Vec::new();
-        for s in patterns {
-            if s.len() != 64 || !s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
-                return Err(Error::Schema);
-            }
-            let mut pattern = [0; 64];
-            pattern.copy_from_slice(s.as_bytes());
-            if secrets.contains(&pattern) {
-                return Err(Error::Schema);
-            }
-            secrets.push(pattern);
-        }
-        Ok(Self {
-            secrets,
+        let mut frame = Self {
+            secrets: Vec::new(),
             utf8: Vec::with_capacity(4),
             escape: Escape::Text,
             lookbehind: String::with_capacity(68),
             line: String::with_capacity(256),
             last_cr: false,
             closed: false,
-        })
+        };
+        for secret in patterns {
+            frame.register_secret(secret)?;
+        }
+        Ok(frame)
     }
 
     pub fn retained_bytes(&self) -> usize { self.utf8.len() + self.lookbehind.len() + self.line.len() }

@@ -1,4 +1,5 @@
-//! Read-only probe supervisor. No browser-controlled executable or arguments.
+//! Owned native command supervisor for probes, capture and explicit Flash.
+//! Callers supply fixed executable/argument contracts, never browser command text.
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 static CANCEL: AtomicBool = AtomicBool::new(false);
