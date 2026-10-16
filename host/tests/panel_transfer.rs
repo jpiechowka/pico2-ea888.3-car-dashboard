@@ -314,3 +314,104 @@ fn same_orientation_retains_partial_damage_without_madctl() {
         vec![0x2A, 0x2B, 0x2C]
     );
 }
+
+#[test]
+fn next_orientation_command_waits_for_previous_payload_return() {
+    use std::cell::RefCell;
+
+    use dashboard_host_validation::display::pipeline::after_first_poll;
+    struct DelayedBus<'a> {
+        bus: ModelBus,
+        ready: &'a Cell<bool>,
+        events: &'a RefCell<Vec<&'static str>>,
+    }
+    impl PanelBus for DelayedBus<'_> {
+        type Error = ();
+
+        async fn command(
+            &mut self,
+            command: u8,
+            parameters: &[u8],
+        ) -> Result<(), ()> {
+            self.events
+                .borrow_mut()
+                .push(if command == 0x36 { "madctl" } else { "window" });
+            self.bus.command(command, parameters).await
+        }
+
+        async fn begin_pixels(&mut self) -> Result<(), ()> { self.bus.begin_pixels().await }
+
+        async fn pixels<F: FnOnce()>(
+            &mut self,
+            bytes: &[u8],
+            callback: Option<F>,
+        ) -> Result<(), ()> {
+            after_first_poll(
+                std::future::poll_fn(|_| {
+                    self.events.borrow_mut().push("payload_poll");
+                    if self.ready.get() {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
+                }),
+                || {
+                    if let Some(callback) = callback {
+                        callback();
+                    }
+                },
+            )
+            .await;
+            self.bus.pixels(bytes, None::<fn()>).await?;
+            self.events.borrow_mut().push("payload_return");
+            Ok(())
+        }
+
+        fn end_pixels(&mut self) { self.bus.end_pixels(); }
+    }
+    let ready = Cell::new(false);
+    let events = RefCell::new(Vec::new());
+    let starts = Cell::new(0);
+    let frame = Box::<FrameBuffer>::default();
+    let mut bus = DelayedBus {
+        bus: ModelBus::new(None),
+        ready: &ready,
+        events: &events,
+    };
+    let mut state = PanelState::initialized(Orientation::Landscape);
+    let sequence = async {
+        flush_oriented_plan(
+            &mut bus,
+            &mut state,
+            &frame,
+            &DamagePlan::full(),
+            Orientation::Landscape,
+            || starts.set(starts.get() + 1),
+        )
+        .await
+        .unwrap();
+        flush_oriented_plan(
+            &mut bus,
+            &mut state,
+            &frame,
+            &DamagePlan::full_in(Geometry::Portrait),
+            Orientation::Portrait,
+            || starts.set(starts.get() + 1),
+        )
+        .await
+        .unwrap();
+    };
+    let mut sequence = std::pin::pin!(sequence);
+    let mut cx = Context::from_waker(Waker::noop());
+    assert_eq!(sequence.as_mut().poll(&mut cx), Poll::Pending);
+    assert_eq!(starts.get(), 1);
+    assert!(!events.borrow().contains(&"madctl"));
+    ready.set(true);
+    assert_eq!(sequence.as_mut().poll(&mut cx), Poll::Ready(()));
+    assert_eq!(starts.get(), 2);
+    let events = events.borrow();
+    assert!(
+        events.iter().position(|event| *event == "payload_return").unwrap()
+            < events.iter().position(|event| *event == "madctl").unwrap()
+    );
+}

@@ -2,7 +2,8 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle, FrameRequest, FrameToken};
 use dashboard_pico2::display::telemetry::FrameTrace;
-use dashboard_pico2::display::transfer::flush_plan;
+use dashboard_pico2::display::transfer::{PanelState, flush_oriented_plan};
+use dashboard_pico2::view_config::Orientation;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, with_timeout};
@@ -107,6 +108,9 @@ pub async fn wait_completed(
 
 #[embassy_executor::task]
 pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
+    // init() has completed before this sole bus owner starts. Successful HAL
+    // writes include SPI idle, so no extra delay or DMA cancellation is needed.
+    let mut panel_state = PanelState::initialized(Orientation::Landscape);
     #[cfg(feature = "frame-trace")]
     let window = FRAME_WINDOW.take();
     loop {
@@ -126,13 +130,20 @@ pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
         let token = request.token();
         FLUSH_BUFFER_IDX.store(token.buffer.index(), Ordering::Relaxed);
         let mut started_us = None;
-        let result = flush_plan(flusher, request.pixels(), request.plan(), || {
-            started_us = Some(Instant::now().as_micros());
-            assert!(
-                FLUSH_STARTED.try_send(Started { token, armed: true }).is_ok(),
-                "unconsumed frame start"
-            );
-        })
+        let result = flush_oriented_plan(
+            flusher,
+            &mut panel_state,
+            request.pixels(),
+            request.plan(),
+            request.orientation(),
+            || {
+                started_us = Some(Instant::now().as_micros());
+                assert!(
+                    FLUSH_STARTED.try_send(Started { token, armed: true }).is_ok(),
+                    "unconsumed frame start"
+                );
+            },
+        )
         .await;
         if started_us.is_none() {
             assert!(

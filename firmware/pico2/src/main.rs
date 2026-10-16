@@ -314,6 +314,9 @@ async fn dashboard_task(
     let mut spare_frame = Some(spare_frame);
     let mut lifecycle = FrameLifecycle::new();
     let mut panel_history = PanelHistory::new();
+    // Each retained render buffer remembers its own orientation, including
+    // inverted modes that share geometry but still require a full repaint.
+    let mut rendered_orientations = [None; 2];
     spawner.spawn(crate::tasks::recovery::recovery_task(watchdog).unwrap());
 
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
@@ -649,10 +652,26 @@ async fn dashboard_task(
         let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
         let mut render_work = cpu_profiling::RenderWork::new(cpu_freq_hz);
 
+        // Resolve once. The queued request and completed history retain this
+        // value even when input selects another view during the old transfer.
+        let orientation = dashboard_pico2::startup::screen_orientation(
+            dashboard_configuration.config.config(),
+            startup_profile,
+            startup.phase(),
+            session.page(),
+            session.view_id(),
+        );
+        let geometry = orientation.geometry();
         let render_idx = render_frame.id().index();
+        if rendered_orientations[render_idx] != Some(orientation) {
+            dashboard_cache.invalidate(render_idx);
+            rendered_orientations[render_idx] = Some(orientation);
+        }
         let token = lifecycle.begin(render_frame.id()).expect("render buffer is not free");
-        panel_history.begin_render(token).expect("invalid render generation");
-        let mut display = St7789Renderer::new(render_frame.buffer());
+        panel_history
+            .begin_render_in(token, orientation)
+            .expect("invalid render generation");
+        let mut display = St7789Renderer::with_geometry(render_frame.buffer(), geometry);
 
         if startup.active() {
             presentation.reset();
@@ -661,15 +680,17 @@ async fn dashboard_task(
                 && startup_profile.theme == dashboard_pico2::startup::StartupTheme::Custom
             {
                 if let Some(asset) = startup_asset {
-                    let mut rows = asset
-                        .frame_at(
-                            startup.elapsed(now_ms),
-                            startup_profile.loop_animation,
-                            dashboard_configuration.config.config().reduced_motion,
-                        )
-                        .rows();
-                    let mut valid = true;
-                    for row in 0..240 {
+                    let frame = asset.frame_at(
+                        startup.elapsed(now_ms),
+                        startup_profile.loop_animation,
+                        dashboard_configuration.config.config().reduced_motion,
+                    );
+                    let mut rows = frame.rows();
+                    let mut valid = frame.geometry() == geometry;
+                    for row in 0..usize::from(geometry.height()) {
+                        if !valid {
+                            break;
+                        }
                         if rows
                             .next(display.row_bytes_mut(row).expect("bounded startup row"))
                             .is_err()
@@ -685,6 +706,7 @@ async fn dashboard_task(
                         startup.finish_at(dashboard_pico2::startup::Exit::Fault, Instant::now().as_millis());
                         log_fault!("Startup frame invalid");
                         gestures.suppress_held();
+                        lifecycle.ready(token).expect("invalid failed startup render");
                         lifecycle.discard(token).expect("invalid unsubmitted startup frame");
                         continue;
                     }
@@ -737,7 +759,7 @@ async fn dashboard_task(
                         backgrounds: [BLACK; 8], // Shared configured renderer owns warning colours.
                         overlay: visible_overlay,
                     };
-                    let redraw = dashboard_cache.prepare(render_idx, &scene);
+                    let redraw = dashboard_cache.prepare_in(render_idx, &scene, geometry);
                     redraw.begin(&mut display, &scene);
                     render_work.checkpoint().await;
                     for cell in 0..8 {
@@ -880,23 +902,23 @@ async fn dashboard_task(
             continue;
         }
         let reference = panel_history
-            .reference()
+            .reference_for(orientation)
             .filter(|reference| reference.buffer == next_frame.id());
         let mut plan = if cfg!(feature = "full-frame") || reference.is_none() {
-            DamagePlan::full()
+            DamagePlan::full_in(geometry)
         } else {
-            DamagePlan::between(next_frame.pixels(), render_frame.pixels())
+            DamagePlan::between_in(geometry, next_frame.pixels(), render_frame.pixels())
         };
         if plan.is_empty() && !led_presentation.equivalent(presented_scene) {
             // Identical pixels with a new episode still need completed ownership.
-            plan = DamagePlan::full();
+            plan = DamagePlan::full_in(geometry);
         }
         if startup.needs_first_frame()
             && (startup.phase() != dashboard_pico2::startup::Phase::Splash
                 || startup_profile.theme != dashboard_pico2::startup::StartupTheme::Custom
                 || startup_asset.is_some())
         {
-            plan = DamagePlan::full();
+            plan = DamagePlan::full_in(geometry);
         }
         let idle = plan.is_empty();
         if idle {
@@ -940,7 +962,7 @@ async fn dashboard_task(
                 .expect("partial update does not match panel generation");
             lifecycle.queue(token).expect("another frame is still in flight");
             crate::tasks::recovery::DISPLAY_PENDING.store(true, Ordering::Relaxed);
-            let request = render_frame.submit_plan(token, trace, plan);
+            let request = render_frame.submit_plan_in(token, trace, plan, orientation);
             assert!(
                 led_presentation.submit(token, presented_scene),
                 "pending indicator submission"

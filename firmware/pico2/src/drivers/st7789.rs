@@ -1,5 +1,6 @@
 use dashboard_pico2::display::pipeline::after_first_poll;
-use dashboard_pico2::display::transfer::PanelBus;
+use dashboard_pico2::display::transfer::{PanelBus, madctl};
+use dashboard_pico2::view_config::Orientation;
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
 use embassy_rp::spi::{Async, Error, Spi};
@@ -14,9 +15,6 @@ const RAMWR: u8 = 0x2C;
 const MADCTL: u8 = 0x36;
 const COLMOD: u8 = 0x3A;
 const RAMCTRL: u8 = 0xB0;
-
-const MADCTL_MX: u8 = 0x40;
-const MADCTL_MV: u8 = 0x20;
 
 pub struct St7789Flusher<'d> {
     spi: Spi<'d, SPI0, Async>,
@@ -45,7 +43,7 @@ impl<'d> St7789Flusher<'d> {
         // RGB565. MCU mode and MSB-first byte order are preserved (Pimoroni #1040).
         self.command(RAMCTRL, &[0x00, 0xC0]).await?;
 
-        self.command(MADCTL, &[MADCTL_MV | MADCTL_MX]).await?;
+        self.command(MADCTL, &[madctl(Orientation::Landscape)]).await?;
 
         self.command(INVON, &[]).await?;
         Timer::after_millis(10).await;
