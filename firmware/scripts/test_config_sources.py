@@ -791,6 +791,70 @@ SOURCE_OUTPUTS=(1128,516,628,744,880,940,1000,1064)
 
 
 class SourcePhaseSnapshot(unittest.TestCase):
+    def test_scalar_mapping_pairs_share_across_nonidentical_descriptions_only_locally(self):
+        from config_decoded_sources import _phase_graph
+        left={'tag':7,'child':[]};right={'tag':7,'child':[1]}
+        value=[left,right,left]
+        graph=_phase_graph(value)
+        a=graph[1][1];b=graph[1][3]
+        self.assertNotEqual(a,b);self.assertIsNot(a,b)
+        self.assertEqual(graph[1][0][1],(('reference',1),('reference',3),('reference',1)))
+        self.assertEqual(a[1][0],b[1][0])
+        self.assertIs(a[1][0],b[1][0],
+            'equal freshly visited scalar mapping pairs must share local storage across different descriptions')
+        self.assertIsNot(a[1][1],b[1][1],'reference-bearing pairs are not pooled')
+        again=_phase_graph(value)
+        self.assertEqual(again,graph);self.assertIsNot(again[1][1][1][0],a[1][0])
+        right['tag']=True
+        self.assertNotEqual(_phase_graph(value),graph)
+        right['tag']=7
+        self.assertEqual(_phase_graph(value),graph)
+        self.assertNotEqual(_phase_graph([left,dict(left),left]),graph)
+
+    def test_scalar_mapping_pool_preserves_exact_types_order_aliases_and_late_failures(self):
+        from types import MappingProxyType
+        from config_decoded_sources import _phase_graph
+        a={'v':True,'n':None,'s':'x','b':b'x','child':[]}
+        b={'v':1,'n':None,'s':b'x','b':'x','child':[1]}
+        graph=_phase_graph([a,MappingProxyType(b)])
+        left=graph[1][1][1];right=graph[1][3][1]
+        self.assertIsNot(left[0],right[0]);self.assertIs(left[1],right[1])
+        self.assertNotEqual(left[0],right[0]);self.assertNotEqual(left[2],right[2])
+        self.assertEqual(tuple(v[0][2] for v in left),('v','n','s','b','child'))
+        self.assertNotEqual(_phase_graph([dict(reversed(tuple(a.items()))),b]),graph)
+        self.assertNotEqual(_phase_graph([a,a]),graph)
+        a['child']=b['child']
+        self.assertNotEqual(_phase_graph([a,b]),graph)
+        a['child']=[]
+        self.assertEqual(_phase_graph([a,b]),graph)
+        cycle=[];cycle.append(cycle)
+        for tail,message in ((cycle,'cyclic'),(object(),'unsupported')):
+            with self.assertRaisesRegex(AssertionError,message):_phase_graph([a,b,tail])
+        self.assertEqual(_phase_graph([a,b]),graph)
+
+    def test_scalar_mapping_pool_saturates_without_rejecting_or_losing_existing_hits(self):
+        import sys
+        from config_decoded_sources import _phase_graph
+        tables=[];maximum=0
+        def observe(frame,event,arg):
+            nonlocal maximum
+            if frame.f_code.co_name=='mapping_pair' and frame.f_code.co_filename==_phase_graph.__code__.co_filename:
+                table=frame.f_locals['scalar_pairs'];maximum=max(maximum,len(table))
+                if not tables:tables.append(table)
+        left={str(i):i for i in range(8200)};right=dict(left)
+        left['child']=[];right['child']=[1]
+        old=sys.getprofile()
+        try:
+            sys.setprofile(observe);graph=_phase_graph([left,right])
+        finally:sys.setprofile(old)
+        a=graph[1][1][1];b=graph[1][3][1]
+        self.assertEqual(maximum,8192);self.assertTrue(tables);self.assertEqual(tables[0],{})
+        self.assertEqual(len(a),8201);self.assertEqual(len(b),8201)
+        self.assertIs(a[0],b[0]);self.assertIs(a[8191],b[8191])
+        self.assertEqual(a[8192],b[8192]);self.assertIsNot(a[8192],b[8192])
+        self.assertIsNot(a[-1],b[-1]);self.assertNotEqual(a[-1],b[-1])
+        self.assertEqual(a[8199],(('value','str','8199'),('value','int',8199)))
+
     def test_encoded_descriptions_share_storage_without_merging_input_indices_or_aliases(self):
         from config_decoded_sources import _phase_graph
         left=[1];right=[1];value=[left,right,left]
@@ -853,7 +917,10 @@ class SourcePhaseSnapshot(unittest.TestCase):
                 values=frame.f_locals;visitor=values['visit']
                 if not any(ref() is visitor for ref in visitors):
                     visitors.append(weakref.ref(visitor))
-                    tables.append(tuple(values[name] for name in ('nodes','memo','active','literals','descriptions')))
+                    pair_helper=values['mapping_pair']
+                    pair_cells=dict(zip(pair_helper.__code__.co_freevars,pair_helper.__closure__))
+                    tables.append(tuple(values[name] for name in ('nodes','memo','active','literals','descriptions'))+
+                        (pair_cells['scalar_pairs'].cell_contents,))
         enabled=gc.isenabled();old=sys.getprofile();gc.disable()
         try:
             sys.setprofile(observe)

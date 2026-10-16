@@ -456,7 +456,16 @@ def _phase_graph(value):
     identity is deliberately absent from this encoding: identical typed
     literal tokens share immutable storage only within this snapshot call.
     """
-    nodes=[];memo={};active=set();literals={};descriptions={}
+    nodes=[];memo={};active=set();literals={};descriptions={};scalar_pairs={}
+    def mapping_pair(key,value):
+        pair=(key,value)
+        # These are freshly authored typed scalar tokens, never input objects
+        # or reference edges. Saturation only declines new storage reuse.
+        if key[0]=='value' and value[0]=='value':
+            previous=scalar_pairs.get(pair)
+            if previous is not None:return previous
+            if len(scalar_pairs)<8192:scalar_pairs[pair]=pair
+        return pair
     def visit(item):
         kind=type(item)
         if kind in (str,bytes,int,bool,type(None)):
@@ -468,7 +477,7 @@ def _phase_graph(value):
         if identity in memo:return memo[identity]
         index=len(nodes);token=('reference',index);memo[identity]=token;nodes.append(None);active.add(identity)
         if kind in (dict,MappingProxyType):
-            node=('mapping',tuple((visit(k),visit(v)) for k,v in item.items()))
+            node=('mapping',tuple(mapping_pair(visit(k),visit(v)) for k,v in item.items()))
         elif kind in (tuple,list):
             node=(kind.__name__,tuple(visit(v) for v in item))
         elif is_dataclass(item) and not isinstance(item,type):
@@ -491,7 +500,7 @@ def _phase_graph(value):
         return root,tuple(nodes)
     finally:
         visit=None
-        nodes.clear();memo.clear();active.clear();literals.clear();descriptions.clear()
+        nodes.clear();memo.clear();active.clear();literals.clear();descriptions.clear();scalar_pairs.clear()
 
 
 @dataclass(frozen=True)
