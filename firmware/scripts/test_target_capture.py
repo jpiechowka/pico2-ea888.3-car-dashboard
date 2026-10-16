@@ -63,6 +63,15 @@ class CaptureTests(unittest.TestCase):
             self.assertNotIn('must not be logged',stream.getvalue());self.assertNotIn('after cap',stream.getvalue())
             self.assertTrue(all(len(line)<=2048 for line in stream.getvalue().splitlines()))
 
+    def test_diagnostic_sink_failure_joins_the_owned_child(self):
+        with tempfile.TemporaryDirectory() as folder:
+            record=json.dumps(dict(reason='compiler-message',message=dict(rendered='error: sink fixture')))
+            command=[sys.executable,'-c','import time; print('+repr(record)+',flush=True); time.sleep(30)']
+            with patch.object(capture.CargoDiagnostics,'emit',side_effect=OSError('fixture full disk')):
+                with self.assertRaisesRegex(OSError,'fixture full disk'):
+                    capture.run_build(command,os.environ.copy(),Path(folder))
+            self.assertIn('compiler-message',(Path(folder)/'cargo-messages.jsonl').read_text())
+
     def test_diagnostic_is_published_before_compiler_exit(self):
         with tempfile.TemporaryDirectory() as folder:
             destination=Path(folder);stream=io.StringIO()

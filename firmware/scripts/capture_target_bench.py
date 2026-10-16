@@ -104,15 +104,18 @@ def run_build(command, environment, destination):
     output=bytearray();pending=bytearray()
     try:
         with subprocess.Popen(command,cwd=FIRMWARE,env=environment,stdout=subprocess.PIPE) as child:
-            while chunk:=child.stdout.read1(4096):
-                if len(output)+len(chunk)>8*1024*1024:
-                    child.kill();child.wait()
-                    raise ValueError('Cargo JSON exceeds capture bound')
-                output.extend(chunk);pending.extend(chunk)
-                while (end:=pending.find(b'\n'))>=0:
-                    diagnostics.record(pending[:end]);del pending[:end+1]
-            if pending:diagnostics.record(pending)
-            status=child.wait()
+            try:
+                while chunk:=child.stdout.read1(4096):
+                    if len(output)+len(chunk)>8*1024*1024:
+                        raise ValueError('Cargo JSON exceeds capture bound')
+                    output.extend(chunk);pending.extend(chunk)
+                    while (end:=pending.find(b'\n'))>=0:
+                        diagnostics.record(pending[:end]);del pending[:end+1]
+                if pending:diagnostics.record(pending)
+                status=child.wait()
+            except BaseException:
+                child.kill();child.wait()
+                raise
     finally:
         diagnostics.file.close()
         (destination/'cargo-messages.jsonl').write_bytes(output)
