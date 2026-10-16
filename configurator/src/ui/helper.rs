@@ -25,6 +25,7 @@ use web_sys::{AbortController, ReadableStreamDefaultReader, Request, RequestInit
 use super::*;
 mod artifacts;
 mod devices;
+mod history;
 mod prerequisites;
 
 const BASE: &str = "http://127.0.0.1:8765/api/v1";
@@ -36,6 +37,7 @@ struct ViewState {
     report: Option<serde_json::Value>,
     devices: Option<DeviceScanReport>,
     artifacts: Vec<ArtifactSummary>,
+    history: Option<dashboard_helper_protocol::FlashHistory>,
 }
 #[derive(Clone, Copy)]
 pub struct State {
@@ -113,6 +115,7 @@ enum Action {
     Inspect,
     Inspection,
     Flash,
+    History,
 }
 struct ReadGuard {
     abort: AbortController,
@@ -141,6 +144,7 @@ async fn request(
         Action::Upload => ("POST", "/projects".into()),
         Action::Build => ("POST", "/builds".into()),
         Action::Flash => ("POST", "/flashes".into()),
+        Action::History => ("GET", "/flash-attempts".into()),
         Action::Artifacts => ("GET", "/artifacts".into()),
         Action::Inspect | Action::Inspection => {
             let device = state
@@ -361,6 +365,7 @@ fn apply(
                     v.report = None;
                     v.devices = None;
                     v.artifacts.clear();
+                    v.history = None;
                 });
             }
             state.connection.set_value(Some(conn));
@@ -512,6 +517,11 @@ fn apply(
                 }
             }
             state.view.update(|v| v.artifacts = artifacts.iter().cloned().collect());
+            Ok(Some(Action::History))
+        }
+        Action::History => {
+            let history = parse::<dashboard_helper_protocol::FlashHistory>(bytes)?;
+            state.view.update(|v| v.history = Some(history));
             Ok(None)
         }
         Action::Inspection => {
@@ -717,6 +727,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
             })}
             <devices::Panel ui/>
             <artifacts::Panel ui/>
+            <history::Panel ui/>
             <details class="build-disclosure" open><summary>"Job logs"</summary><p>{move ||state.view.with(|v|format!("{} retained events · {} omitted by bounded history",v.feed.events.len(),v.feed.omitted))}</p><div class="helper-log" role="log" aria-live="off">{move ||state.view.with(|v|v.feed.events.iter().map(|e|view!{<div class=match e.level{dashboard_helper_protocol::Level::Error=>"error",dashboard_helper_protocol::Level::Warning=>"warning",_=>"info"}><span>{format!("{:>6} ms",e.elapsed_ms)}</span><code>{e.text.as_str().to_string()}</code></div>}).collect_view())}</div>
                 <button disabled=move ||state.view.with(|v|v.feed.events.is_empty()) on:click=move |_|{let text=state.view.with_untracked(|v|v.feed.events.iter().map(|e|format!("{} ms {:?} {}",e.elapsed_ms,e.level,e.text.as_str())).collect::<Vec<_>>().join("\n"));if io::download(ui,"studio-helper.log","text/plain;charset=utf-8",text.as_bytes()).is_err(){state.view.update(|v|v.message="Could not download job logs.".into());}}>"Download logs"</button>
             </details>

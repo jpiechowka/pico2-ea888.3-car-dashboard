@@ -123,7 +123,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
     view! {
         <div class="build-studio">
             <div class="section-heading"><div><p class="eyebrow">"YOUR PICO 2"</p><h1>"Build & Flash"</h1></div><span class="chip">"LOCAL BUILD"</span></div>
-            <p class="build-intro">"Choose your firmware and clock profile, inspect the resolved settings, then build the accepted project locally or download its PowerShell recipe."</p>
+            <p class="build-intro">"Choose your firmware and clock profile, build the accepted project, then inspect a connected Pico 2 and flash the matching firmware. A downloadable PowerShell recipe is also available."</p>
             <helper::Panel ui/>
             <section class="build-card" aria-labelledby="build-profile-title"><div class="build-section-title"><span>"01"</span><h2 id="build-profile-title">"Firmware & profile"</h2></div>
                 <label class="build-field">"Firmware mode"<select prop:value=move ||ui.build.with(|s|match s.options.mode{Mode::Demo=>"demo",Mode::Vehicle=>"vehicle"}) on:change=move |e|{
@@ -170,7 +170,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
                 <p class="build-error" role="status" hidden=move ||issue(ui).is_none()>{move ||issue(ui).unwrap_or_default()}</p>
                 <ol class="build-steps"><li><strong>"Prepare tools once"</strong><code>".\\configurator\\Studio.ps1 -Setup"</code></li><li><strong>"Inspect installed prerequisites"</strong><code>".\\configurator\\Studio.ps1 -Check"</code></li><li><strong>"Run the downloaded recipe"</strong><code>".\\Build-StudioDashboard.ps1 -Repository 'D:\\path\\to\\repository'"</code></li></ol>
                 <p class="build-note">"Every run gets a new output name. Reusing a name is rejected to protect existing captures. A changed repository toolchain requires a newly exported recipe."</p>
-                <div class="build-connection"><span class="chip">"FLASHING UNAVAILABLE"</span><p>"This recipe builds only. The local helper builds frozen project inputs. Device programming becomes available only after independent artifact and device checks are implemented; build output alone is not flash authorization."</p></div>
+                <div class="build-connection"><span class="chip">"EXPLICIT FLASH"</span><p>"After a successful build, scan for BOOTSEL devices, inspect your Pico 2 and confirm its board type. Choose Flash on a firmware file matching the current accepted project and options. Transfer, payload verification and reboot are separate stages in the job log."</p><p>"The downloaded recipe builds only. The helper never resumes interrupted programming automatically. A completed reboot request does not prove that the dashboard has started; confirm that on the device."</p></div>
             </section>
         </div>
     }
