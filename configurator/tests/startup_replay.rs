@@ -225,3 +225,32 @@ fn editing_a_captured_startup_cancels_only_presentation() {
     assert!(!sim.complete_frame(token(2)));
     assert!(preview.pending_pixels(&sim, token(2)).is_none());
 }
+
+#[test]
+fn replay_uses_a_fresh_relative_clock_and_reports_visible_startup_phase() {
+    use dashboard_configurator::timing::Playback;
+    let project = project(StartupProfile::default());
+    let mut sim = ControlSimulator::new(validate(default_config()).unwrap());
+    let mut preview = Preview::new();
+    sim.advance_to(sim.now_ms() + 555, None);
+    let before = sim.now_ms();
+    sim.restart_project(&project).unwrap();
+    assert!(sim.summary().starts_with("Startup status"));
+    present(&mut sim, &mut preview, 1);
+    let mut clock = Playback::new(sim.now_ms());
+    clock.start(95191.);
+    sim.scenario_step(clock.sample(95241.)).unwrap();
+    assert_eq!(sim.now_ms(), before + 50);
+    assert_eq!(sim.startup_phase(), Phase::Status);
+    let old_source = sim.source_key();
+    sim.restart_project(&project).unwrap();
+    assert_ne!(sim.source_key(), old_source);
+    present(&mut sim, &mut preview, 2);
+    let mut clock = Playback::new(sim.now_ms());
+    clock.start(100000.);
+    sim.scenario_step(clock.sample(100600.)).unwrap();
+    assert!(sim.summary().starts_with("Startup splash"));
+    present(&mut sim, &mut preview, 3);
+    sim.scenario_step(clock.sample(103100.)).unwrap();
+    assert!(sim.summary().starts_with("Dashboard"));
+}

@@ -724,9 +724,14 @@ impl ControlSimulator {
 
     pub fn summary(&self) -> String {
         let s = self.display_session();
+        let screen = match self.startup_phase() {
+            dashboard_core::startup::Phase::Status => "Startup status",
+            dashboard_core::startup::Phase::Splash => "Startup splash",
+            dashboard_core::startup::Phase::Dashboard => s.page().label(),
+        };
         format!(
             "{} · view {} · {} · PWM {} · {} · {} · popup {:?} · logs {:?} · ignored {} · {} ms{}",
-            s.page().label(),
+            screen,
             s.view_id(),
             s.backlight().brightness().label(),
             s.backlight().compare(),

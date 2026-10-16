@@ -108,15 +108,18 @@ pub(super) fn install(ui: Ui) {
         cancel(ui);
     });
     let active = Memo::new(move |_| {
-        ui.dock.running.get()
+        let running = ui.dock.running.get()
             || ui.dock.held.with(|pressed| pressed.iter().any(|b| *b))
-            || ui.dock.release_until.get().is_some()
+            || ui.dock.release_until.get().is_some();
+        // Replay can cancel and resume in one event; the boolean alone would
+        // coalesce and leave the old, retired timer installed.
+        (running, ui.dock.sim.with(ControlSimulator::source_key))
     });
     Effect::new(move |_| {
-        if !active.get() {
+        let (active, source) = active.get();
+        if !active {
             return;
         }
-        let source = ui.dock.sim.with_untracked(ControlSimulator::source_key);
         let Some(token) = capture_callback(ui) else {
             ui.dock.notice.set("Simulation callback identity exhausted".into());
             return;
