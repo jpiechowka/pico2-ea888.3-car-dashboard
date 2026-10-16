@@ -41,6 +41,7 @@ class _SourceStructuralControl:
     selection:_SourceSelection
     raw_successors:tuple
     raw_returns:tuple
+    Source_returns:tuple
     nested_returns:tuple
     outside_shared_contexts:tuple
     unentered_outgoing:tuple
@@ -108,4 +109,17 @@ def _source_structural_control(objects,rows,widgets,parents,children):
         'Sources structure loses its current child save/return geometry')
     pending=_foreign_ingress(objects,rows,selection)
     return _SourceStructuralControl(selection,successors,returns,
-        widgets.structural.nested_returns+nested,pending,dormant)
+        nested,widgets.structural.nested_returns+nested,pending,dormant)
+
+
+def _structural_data(value,widgets,parents,children):
+    """Complete immutable-checkpoint input, excluding only checked identities."""
+    require(type(value) is _SourceStructuralControl and value.selection.widgets is widgets and
+        value.selection.context is widgets.views.context and value.selection.Source_parents is parents and
+        value.selection.Source_children is children and value.confers_active_state is False,
+        'Sources raw structure lost its same private context/parent/child association')
+    s=value.selection
+    return dict(selection=(s.proofs,s.selected,s.edges,tuple(sorted(s.cuts)),s.widget,s.children,s.child_contexts),
+        raw_successors=value.raw_successors,raw_returns=value.raw_returns,Source_returns=value.Source_returns,
+        nested_returns=value.nested_returns,outside_shared_contexts=value.outside_shared_contexts,
+        unentered_outgoing=value.unentered_outgoing,confers_active_state=value.confers_active_state)

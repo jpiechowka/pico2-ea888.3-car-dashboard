@@ -380,6 +380,7 @@ class _SourcePhase:
     array:dict
     effects:object
     remaining:object
+    parent_envelopes:dict
 
 
 @dataclass(frozen=True)
@@ -389,6 +390,7 @@ class _SourcePhaseData:
     array:dict
     effects:object
     remaining:object
+    parent_envelopes:dict
 
 
 def _entry_data(entry,widgets):
@@ -399,11 +401,13 @@ def _entry_data(entry,widgets):
         old_array=entry.old_Source_array,call_site=entry.call_site,call_arguments=entry.call_arguments)
 
 
-def _phase_checkpoint(widgets,entries,parents,children,returns,phases,payload_sha256):
+def _phase_checkpoint(widgets,entries,parents,children,returns,phases,payload_sha256,structural):
+    from config_source_control import _structural_data
     require(len(entries)==len(phases) and all(p.entry is e for p,e in zip(phases,entries)),
         'Sources private phase changed its selected entry association')
-    data=tuple(_SourcePhaseData(_entry_data(p.entry,widgets),p.array,p.effects,p.remaining) for p in phases)
-    return _phase_graph(dict(parents=parents,children=children,returns=returns,phases=data,payload_sha256=payload_sha256))
+    data=tuple(_SourcePhaseData(_entry_data(p.entry,widgets),p.array,p.effects,p.remaining,p.parent_envelopes) for p in phases)
+    return _phase_graph(dict(parents=parents,children=children,returns=returns,phases=data,payload_sha256=payload_sha256,
+        structural=_structural_data(structural,widgets,parents,children)))
 
 
 def _phase_graph(value):
@@ -446,6 +450,7 @@ class _SourcePhasesState:
     parents:tuple
     children:dict
     returns:tuple
+    structural:object
     entries:tuple
     phases:tuple
     checkpoint:object
@@ -467,13 +472,18 @@ class _SourcePhasesState:
         require(self.parents==_parents(self.objects,self.rows,V,c.owner.start) and
             self.children==source_children(self.objects,self.rows,self.parents),
             'Sources private current child/body/effect family changed')
+        from config_source_control import _source_structural_control,_structural_data
+        fresh=_source_structural_control(self.objects,self.rows,self.widgets,self.parents,self.children)
+        require(_structural_data(fresh,self.widgets,self.parents,self.children)==
+            _structural_data(self.structural,self.widgets,self.parents,self.children),
+            'Sources private current selected/foreign/computed/return structure changed')
         entries=_source_entries(self.objects,self.rows,self.widgets)
         require(tuple(_entry_data(e,self.widgets) for e in entries)==tuple(_entry_data(e,self.widgets) for e in self.entries),
             'Sources private current entry/source/commit association changed')
         payload=c.headers['visitor']['sequence_state'].decoder.payload
         require(_readonly_hash(self.objects,payload.start,payload.extent)==self.payload_sha256,
             'Sources private consumed source bytes changed')
-        require(_phase_checkpoint(self.widgets,self.entries,self.parents,self.children,self.returns,self.phases,self.payload_sha256)==self.checkpoint,
+        require(_phase_checkpoint(self.widgets,self.entries,self.parents,self.children,self.returns,self.phases,self.payload_sha256,self.structural)==self.checkpoint,
             'Sources private source/epoch/child/effect record changed')
         return self
 
@@ -486,19 +496,19 @@ def _first_boot_source_phases(objects,rows,source_context):
     """
     from config_decoded_widgets import _first_boot_decoded_widgets_state
     from config_source_handoff import _source_entries
-    from config_finite_returns import _closed_child_returns
-    from config_source_children import source_return_profiles
-    from config_widget_contracts import ROLES as WIDGET
+    from config_source_control import _source_structural_control
+    from config_source_parent_effects import _parent_envelopes
     from config_structural import _readonly_hash
     _,widgets=_first_boot_decoded_widgets_state(objects,rows,source_context)
     objects=widgets.family_bridge.objects;rows=widgets.family_bridge.rows
     c=widgets.views.context;frame=c.headers['visitor_frame'];V=c.headers['visitor']['proof']['function']
     parents=_parents(objects,rows,V,c.owner.start);children=source_children(objects,rows,parents)
-    returns=_closed_child_returns(rows,parents,children,frame.start,source_return_profiles(),('seq_f32',WIDGET['warning_colors']))
+    structural=_source_structural_control(objects,rows,widgets,parents,children);returns=structural.Source_returns
     require(returns and min(v['lowest_SP'] for v in returns)==frame.start-120,
         'Sources whole current child chain changes its physical/original-return bound')
     entries=_source_entries(objects,rows,widgets);phases=[]
     for entry in entries:
+        envelopes=_parent_envelopes(objects,rows,parents,entry.exit.sequence,c.owner,entry.protected)
         array=_source_array(objects,rows,parents,entry.sequence,entry.protected,_object(entry.old_Source_array,'actual old Source array'))
         effects=None;remaining=None
         if array['sequence'] is not None:
@@ -509,8 +519,8 @@ def _first_boot_source_phases(objects,rows,source_context):
             completed=_object(borrow(c.owner,32,176,frame.phase),'assigned Source array')
             top=replace(entry.exit.sequence,decoder=array['sequence'].decoder)
             remaining=_remaining_aggregates(objects,rows,parents,top,c.owner,entry.protected+(completed,))
-        phases.append(_SourcePhase(entry,array,effects,remaining))
+        phases.append(_SourcePhase(entry,array,effects,remaining,envelopes))
     payload=c.headers['visitor']['sequence_state'].decoder.payload
     digest=_readonly_hash(objects,payload.start,payload.extent);phases=tuple(phases)
-    checkpoint=_phase_checkpoint(widgets,entries,parents,children,returns,phases,digest)
-    return _SourcePhasesState(widgets,objects,rows,widgets.family_bridge.source_context,parents,children,returns,entries,phases,checkpoint,digest)
+    checkpoint=_phase_checkpoint(widgets,entries,parents,children,returns,phases,digest,structural)
+    return _SourcePhasesState(widgets,objects,rows,widgets.family_bridge.source_context,parents,children,returns,structural,entries,phases,checkpoint,digest)

@@ -365,6 +365,8 @@ class ActualSourcePrivatePhases(unittest.TestCase):
         self.assertTrue(any(p.remaining is not None and p.remaining['normal'] for p in state.phases))
         self.assertTrue(all(p.entry.predecessor is state.widgets for p in state.phases))
         self.assertTrue(all(p.entry is e for p,e in zip(state.phases,state.entries)))
+        self.assertTrue(all(p.parent_envelopes['stores']==80 for p in state.phases))
+        self.assertFalse(state.structural.confers_active_state)
         self.assertIs(state.source_context,state.widgets.family_bridge.source_context)
         self.assertEqual(state.current(),state)
         self.assertFalse(state.complete_ordinary_group_issued)
@@ -448,6 +450,38 @@ class SourceStructuralControl(unittest.TestCase):
             StartupConfigurationCopy.put(objects,at,raw);rows[at]=Instruction(at,raw,op,args)
             with self.subTest(offset=off),self.assertRaisesRegex(AssertionError,wanted):
                 self.consume(objects,rows,SameBLoaderBoundary.rebound(objects,source))
+
+
+class SourceParentEnvelopes(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        objects,rows,parents,sequence,owner,protected=SourceRemainingAggregates.fixture()
+        # This geometry-only adapter covers the whole Source parent, before
+        # array assignment. The suffix-only fixture's completed Source guard
+        # belongs to its later epoch and is not an ancestor of the whole group.
+        from validation import require
+        require((protected[-1].start,protected[-1].extent)==(owner.start+32,176),'supplied later Source guard differs')
+        return objects,rows,parents,sequence,owner,protected[:-1]
+
+    def test_all_current_parent_stores_have_owned_protected_footprints(self):
+        from config_source_parent_effects import _parent_envelopes
+        args=self.fixture()
+        objects,rows,parents,sequence,owner,protected=args
+        result=_parent_envelopes(objects,rows,parents,sequence,owner,protected)
+        self.assertEqual((result['stores'],result['local_stores'],result['Config_stores']),(80,53,27))
+        self.assertEqual(result['static_write_bytes'],707)
+        self.assertEqual(result['unaligned_parent_requirement'],(0x1001c654+5570,5,2))
+        self.assertFalse(result['confers_active_state'])
+        self.assertEqual(tuple(v[0] for v in result['pointer_epochs']),(5376,5382,5398,5408,5468,5480))
+
+    def test_parent_physical_alias_guard_is_retained(self):
+        from config_source_parent_effects import _parent_envelopes
+        from config_regions import Storage
+        objects,rows,parents,sequence,owner,protected=self.fixture()
+        frame=sequence.header.storage
+        guard=Storage('address','physical protected header byte',frame.start+1004,1,1,frame.phase,False)
+        with self.assertRaisesRegex(AssertionError,'overlap|intersects'):
+            _parent_envelopes(objects,rows,parents,sequence,owner,protected+(guard,))
 
 
 class SourceRemainingAggregates(unittest.TestCase):
