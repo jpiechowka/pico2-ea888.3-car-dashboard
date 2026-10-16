@@ -240,7 +240,7 @@ fn decoded_pixels(
     let mut row = [0; 640];
     let mut pixels = Vec::new();
     while rows.next(&mut row).unwrap() {
-        pixels.extend(row.chunks_exact(2).map(|p| u16::from_be_bytes([p[0], p[1]])));
+        pixels.extend(row.as_chunks::<2>().0.iter().map(|p| u16::from_be_bytes(*p)));
     }
     assert_eq!(pixels.len(), 320 * 240);
     pixels

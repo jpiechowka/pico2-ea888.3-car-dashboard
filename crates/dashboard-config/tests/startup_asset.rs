@@ -139,7 +139,7 @@ fn admission_must_finish_and_row_output_must_have_exact_capacity() {
     for expected_row in 1..=HEIGHT {
         assert!(rows.next(&mut output).unwrap());
         assert_eq!(rows.row(), expected_row);
-        assert!(output.chunks_exact(2).all(|pixel| pixel == [0xF8, 0]));
+        assert!(output.as_chunks::<2>().0.iter().all(|pixel| *pixel == [0xF8, 0]));
     }
     output.fill(0xA5);
     assert!(!rows.next(&mut output).unwrap());
@@ -153,7 +153,7 @@ fn mixed_literal_and_repeat_packets_preserve_every_pixel() {
     let mut expected = [0; WIDTH * 2];
     // A one-pixel literal, a 318-pixel repeat, then another one-pixel literal.
     expected[..2].copy_from_slice(&[0x07, 0xE0]);
-    for pixel in expected[2..638].chunks_exact_mut(2) {
+    for pixel in expected[2..638].as_chunks_mut::<2>().0 {
         pixel.copy_from_slice(&[0x12, 0x34]);
     }
     expected[638..].copy_from_slice(&[0, 0x1F]);
