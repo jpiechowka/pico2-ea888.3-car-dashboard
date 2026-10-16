@@ -224,10 +224,10 @@ jobs:
             extra_args: ""
           - profile: cpu132-spi66-1v10
             features: cpu132-spi66-1v10
-            extra_args: ""
+            extra_args: --expert
           - profile: cpu140-spi70-1v10
             features: cpu140-spi70-1v10
-            extra_args: ""
+            extra_args: --expert
           - profile: cpu150-spi15-1v10
             features: cpu150-spi15-1v10
             extra_args: ""

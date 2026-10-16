@@ -83,7 +83,7 @@ static DASHBOARD_STARTUP_ASSET: [u8; STARTUP_ASSET_LENGTH + 1] = {
     let source = include_bytes!(concat!(env!("OUT_DIR"), "/startup_asset.bin"));
     let mut bytes = [0; STARTUP_ASSET_LENGTH + 1];
     let mut index = 0;
-    while index < STARTUP_ASSET_LENGTH {
+    while index != STARTUP_ASSET_LENGTH {
         bytes[index] = source[index];
         index += 1;
     }

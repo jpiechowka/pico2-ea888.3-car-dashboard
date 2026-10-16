@@ -1,6 +1,7 @@
 use dashboard_build_profiles::{ClockSelection, CustomClock, ProfileId, Voltage, catalogue, resolve};
 use dashboard_configurator::build_flash::*;
 use dashboard_configurator::editor::{ActionBlock, Editor, PointerTarget};
+#[cfg(windows)]
 use dashboard_helper_protocol::{Mode, Optimization};
 
 #[test]
