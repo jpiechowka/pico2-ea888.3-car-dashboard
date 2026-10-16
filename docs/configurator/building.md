@@ -26,6 +26,19 @@ the original selected file and the canonical upgraded bytes.
 
 ## Build & Flash workspace
 
+The **Computer & devices** panel connects explicitly to the foreground helper
+started with `.\configurator\Studio.ps1 -Helper`. Serve Studio on
+`http://127.0.0.1:8080` or `http://localhost:8080`; other origins are rejected.
+The helper listens only on `127.0.0.1:8765`. Connection credentials stay in browser
+memory and are excluded from URLs, exported logs and saved projects.
+
+**Check prerequisites** and **Find BOOTSEL devices** start real native jobs with
+stage status, bounded timestamped logs, cancellation and log download. Reconnect
+after a page reload to resume a running job; reloading does not cancel it.
+Cancellation completes only after native cleanup. A descriptor scan cannot prove
+flash capacity, exact board identity or readiness to flash. No programming command
+is issued by connection, tool checks or descriptor discovery.
+
 Choose Demo or Vehicle, one of the eight shared clock profiles, or exact custom
 CPU/SPI frequencies and a supported voltage setpoint. Expert mode is explicit
 and resets on reload. The workspace shows requested and resolved clocks, SPI

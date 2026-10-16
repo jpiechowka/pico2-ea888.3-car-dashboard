@@ -31,6 +31,7 @@
 
 pub mod appearance_presets;
 pub mod build_flash;
+pub mod helper_client;
 pub mod cache_reporting;
 pub mod diagnostic;
 pub mod ecu_reference;

@@ -120,6 +120,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
         <div class="build-studio">
             <div class="section-heading"><div><p class="eyebrow">"YOUR PICO 2"</p><h1>"Build & Flash"</h1></div><span class="chip">"LOCAL BUILD"</span></div>
             <p class="build-intro">"Choose your firmware and clock profile, inspect the resolved settings, then download a build recipe containing this dashboard."</p>
+            <helper::Panel ui/>
             <section class="build-card" aria-labelledby="build-profile-title"><div class="build-section-title"><span>"01"</span><h2 id="build-profile-title">"Firmware & profile"</h2></div>
                 <label class="build-field">"Firmware mode"<select prop:value=move ||ui.build.with(|s|match s.options.mode{Mode::Demo=>"demo",Mode::Vehicle=>"vehicle"}) on:change=move |e|{
                     let v=match event_target_value(&e).as_str(){"demo"=>Some(Mode::Demo),"vehicle"=>Some(Mode::Vehicle),_=>None};if let Some(v)=v{ui.build.update(|s|s.options.mode=v);}
@@ -163,7 +164,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
                 <p class="build-error" role="status" hidden=move ||issue(ui).is_none()>{move ||issue(ui).unwrap_or_default()}</p>
                 <ol class="build-steps"><li><strong>"Prepare tools once"</strong><code>".\\configurator\\Studio.ps1 -Setup"</code></li><li><strong>"Inspect installed prerequisites"</strong><code>".\\configurator\\Studio.ps1 -Check"</code></li><li><strong>"Run the downloaded recipe"</strong><code>".\\Build-StudioDashboard.ps1 -Repository 'D:\\path\\to\\repository'"</code></li></ol>
                 <p class="build-note">"Every run gets a new output name. Reusing a name is rejected to protect existing captures. A changed repository toolchain requires a newly exported recipe."</p>
-                <div class="build-connection"><span class="chip">"FLASHING UNAVAILABLE"</span><p>"This recipe builds only. Native connection and verified flashing are being integrated; no device has been selected or written."</p></div>
+                <div class="build-connection"><span class="chip">"FLASHING UNAVAILABLE"</span><p>"This recipe builds only. The local helper can check tools and discover BOOTSEL descriptors; verified device flashing is still being integrated."</p></div>
             </section>
         </div>
     }

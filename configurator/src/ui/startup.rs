@@ -71,7 +71,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
     view! {
         <details class="workspace-group" id="studio-startup" open><summary>"Startup"</summary>
             <p class="hint">"A brief system check, your animation, then the dashboard. Acquisition keeps running throughout."</p>
-            <label>"Animation"<select aria-label="Startup animation" prop:value=move ||(state.profile.get().theme as u8).to_string() on:change=move |e|{if let Ok(n)=event_target_value(&e).parse::<usize>() && let Some(theme)=StartupTheme::ALL.get(n) {state.edit(|p|p.theme=*theme);}}>{StartupTheme::ALL.into_iter().enumerate().map(|(i,t)|view!{<option value=i.to_string()>{t.label()}</option>}).collect_view()}</select></label>
+            <label>"Animation"<select aria-label="Startup animation" prop:value=move ||(state.profile.get().theme as u8).to_string() on:change=move |e|{if let Ok(n)=event_target_value(&e).parse::<usize>() && let Some(theme)=StartupTheme::ALL.get(n) {state.edit(|p|p.theme = *theme);}}>{StartupTheme::ALL.into_iter().enumerate().map(|(i,t)|view!{<option value=i.to_string()>{t.label()}</option>}).collect_view()}</select></label>
             <label>"System check"<select aria-label="Startup system check" prop:value=move ||(state.profile.get().status as u8).to_string() on:change=move |e|{let value=match event_target_value(&e).as_str(){"0"=>StartupStatus::Off,"2"=>StartupStatus::Detailed,_=>StartupStatus::Brief};state.edit(|p|p.status=value);}>
                 <option value="0">"Off"</option><option value="1">"Brief"</option><option value="2">"Detailed"</option>
             </select></label>
@@ -110,7 +110,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
 pub fn Playback(ui: Ui) -> impl IntoView {
     view! {<div hidden=move ||ui.dock.mode.get()!=PreviewMode::Startup>
         <div class="preview-toolbar"><span>"STARTUP PREVIEW"</span><div>
-            <button on:click=move |_|{if !ui.playing.get_untracked() && ui.sample_ms.get_untracked()>=ui.startup.profile.get_untracked().total_duration(){ui.sample_ms.set(0);}ui.playing.update(|p|*p=!*p);}>{move ||if ui.playing.get(){"Pause"}else{"Play"}}</button>
+            <button on:click=move |_|{if !ui.playing.get_untracked() && ui.sample_ms.get_untracked()>=ui.startup.profile.get_untracked().total_duration(){ui.sample_ms.set(0);}ui.playing.update(|p|*p = !*p);}>{move ||if ui.playing.get(){"Pause"}else{"Play"}}</button>
             <button on:click=move |_|{ui.playing.set(false);ui.sample_ms.set(0);}>"Restart"</button>
         </div></div>
         <label>"Seek startup"<input type="range" min="0" max=move ||ui.startup.profile.get().total_duration().to_string() step="1" prop:value=move ||ui.sample_ms.get().min(ui.startup.profile.get().total_duration()).to_string() on:input=move |e|{ui.playing.set(false);if let Ok(t)=event_target_value(&e).parse(){ui.sample_ms.set(t);}}/></label>

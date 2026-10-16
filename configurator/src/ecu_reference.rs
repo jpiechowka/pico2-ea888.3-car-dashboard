@@ -64,24 +64,13 @@ pub struct Entry {
     pub references: &'static [&'static str],
     pub definition: Option<DefinitionId>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ReferenceState {
     query: String,
     pub truncated: bool,
     pub section: Option<Section>,
     pub status: Option<Status>,
     selected: usize,
-}
-impl Default for ReferenceState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            truncated: false,
-            section: None,
-            status: None,
-            selected: 0,
-        }
-    }
 }
 impl ReferenceState {
     pub fn query(&self) -> &str { &self.query }

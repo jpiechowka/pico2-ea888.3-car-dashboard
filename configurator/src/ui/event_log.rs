@@ -32,11 +32,19 @@ impl ConsoleSink for BrowserConsole {
         text: &str,
     ) {
         let value = wasm_bindgen::JsValue::from_str(text);
+        // Constant formatting prevents message '%' sequences becoming directives.
+        let format = wasm_bindgen::JsValue::from_str("%c%s");
+        let style = wasm_bindgen::JsValue::from_str(match severity {
+            Severity::Error => "color:#ff5975;font-weight:600",
+            Severity::Warn => "color:#e5aa45;font-weight:600",
+            Severity::Info => "color:#51b69d",
+            Severity::Debug | Severity::Trace => "color:#8b9dc3",
+        });
         match severity {
-            Severity::Error => web_sys::console::error_1(&value),
-            Severity::Warn => web_sys::console::warn_1(&value),
-            Severity::Debug | Severity::Trace => web_sys::console::debug_1(&value),
-            Severity::Info => web_sys::console::info_1(&value),
+            Severity::Error => web_sys::console::error_3(&format, &style, &value),
+            Severity::Warn => web_sys::console::warn_3(&format, &style, &value),
+            Severity::Debug | Severity::Trace => web_sys::console::debug_3(&format, &style, &value),
+            Severity::Info => web_sys::console::info_3(&format, &style, &value),
         }
     }
 }

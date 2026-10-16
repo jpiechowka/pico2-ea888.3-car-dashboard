@@ -5,6 +5,7 @@ mod controls;
 mod ecu_reference;
 mod event_log;
 mod fields;
+mod helper;
 mod inspector;
 mod io;
 mod json_editor;
@@ -49,6 +50,7 @@ pub struct Ui {
     cache_seen: RwSignal<dashboard_core::cache_diagnostics::CacheExhaustionSeen>,
     editor: RwSignal<Editor>,
     build: RwSignal<dashboard_configurator::build_flash::BuildSelection>,
+    helper: helper::State,
     resources: StoredValue<ResourceCache>,
     json: json_editor::State,
     notice: RwSignal<String>,
@@ -545,6 +547,7 @@ pub fn Studio() -> impl IntoView {
         mount_started,
         editor: RwSignal::new(editor),
         build: RwSignal::new(dashboard_configurator::build_flash::BuildSelection::default()),
+        helper: helper::State::new(),
         resources: StoredValue::new(ResourceCache::default()),
         json: json_editor::State::new(),
         events: RwSignal::new(EventStore::default()),
@@ -596,6 +599,7 @@ pub fn Studio() -> impl IntoView {
     ui.storage_read_outcome(StorageArea::Preferences, preference_storage);
     ui.storage_read_outcome(StorageArea::Presets, preset_storage);
     dock.install(ui);
+    ui.helper.install();
     stage::install_playback(ui);
     widget_menu::install(ui);
     metrics::install(ui);

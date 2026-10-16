@@ -220,7 +220,7 @@ pub struct TransferEstimate {
 }
 /// Ideal full RGB565 payload only. Uses the rational divider, not rounded Hz.
 pub fn transfer_estimate(clock: &ResolvedClock) -> Option<TransferEstimate> {
-    if clock.actual_cpu_hz == 0 || !(2..=254).contains(&clock.cpsdvsr) || clock.cpsdvsr % 2 != 0 {
+    if clock.actual_cpu_hz == 0 || !(2..=254).contains(&clock.cpsdvsr) || !clock.cpsdvsr.is_multiple_of(2) {
         return None;
     }
     let divisor = u32::from(clock.cpsdvsr) * (u32::from(clock.scr) + 1);
