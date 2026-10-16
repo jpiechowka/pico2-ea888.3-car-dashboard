@@ -1838,4 +1838,27 @@ class TailClosedProducerFallback(unittest.TestCase):
             _first_boot_decoded_visitor_return_state(custom,rows,source)
 
 
+class SourceTailClosedIntegration(unittest.TestCase):
+    def test_combined_raw_path_keeps_first_Tail_Source_current_and_complete_return_relations(self):
+        from unittest.mock import patch
+        import config_decoded_sources as sources
+        import config_decoded_tail as subject
+        objects,rows,source,_=TailLiteralBodies.fixture(128)
+        current=sources._SourcesState.current;checks=[]
+        def observed(state):
+            checks.append(state)
+            return current(state)
+        with patch.object(sources._SourcesState,'current',observed):
+            result,state=subject._first_boot_decoded_visitor_return_state(objects,rows,source)
+        self.assertEqual(len(checks),1);self.assertIs(checks[0],state.phases.predecessor)
+        self.assertTrue(state.exits);self.assertTrue(state.error_exits);self.assertTrue(state.access_bridge.uses)
+        self.assertTrue(all(u.entry is state.phases.entries[u.phase_index] for u in state.access_bridge.uses))
+        self.assertTrue(all(e.source_normal is state.phases.phases[e.phase_index].suffix['normal'] for e in state.exits))
+        self.assertEqual(len(state.error_exits),result['error_occurrences'])
+        self.assertTrue(result['Visitor_return']['original_saved_PC']);self.assertTrue(result['Visitor_return']['Visitor_local_borrows_retired'])
+        self.assertFalse(result['Visitor_return']['loader_successor_executed'])
+        self.assertTrue(all(e.return_SP==result['Visitor_return']['return_SP'] for e in state.error_exits))
+        self.assertFalse(result['unconditional_owner']);self.assertFalse(result['exceptional_resume_established'])
+
+
 if __name__=='__main__':unittest.main()

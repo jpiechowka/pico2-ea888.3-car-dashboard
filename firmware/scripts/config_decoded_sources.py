@@ -675,11 +675,36 @@ def _first_boot_decoded_sources_state(objects,instructions,source_context):
     from config_source_control import _source_control
     from config_source_uses import _source_access_bridge,_check_source_uses
     from config_platform import _bounded_record
+    from config_structural import _raw_composition_inputs,_fresh_composition_inputs
+    raw_inputs=_raw_composition_inputs(objects,instructions,source_context)
     state=_first_boot_source_phases(objects,instructions,source_context)
     control=None;bridge=None;uses=();exits=()
     if state.entries:
-        control=_source_control(state);bridge=_source_access_bridge(control)
-        uses=_check_source_uses(bridge);exits=_source_exits(state,control,bridge,uses)
+        # Preserve the first COMPLETE incoming validation after generation.
+        control=_source_control(state)
+        if raw_inputs and _fresh_composition_inputs(objects,instructions,source_context,
+            state.objects,state.rows,state.source_context):
+            from config_source_uses import (_family_data,_reached_data,_SourceAccessBridge,
+                _checked_bridge_graph,_check_member)
+            # The raw invocation owns this newly detached graph. The fixed
+            # callees create local records, with no inherited writes/callback
+            # escape. Only immediate upstream replays are absent; all local
+            # phase/control/use values, types and cross-member aliases remain.
+            require(_phase_graph((control.source_guards,control.record))==control.checkpoint,
+                'Sources active source/control record changed')
+            families,lineage=_family_data(control);uses=_reached_data(control,families)
+            bridge=_SourceAccessBridge(control,families,lineage,uses,
+                _phase_graph((families,lineage,uses,control.source_guards,control.record)))
+            require(_phase_checkpoint(state.widgets,state.entries,state.parents,state.children,state.returns,
+                state.phases,state.payload_sha256,state.structural,state.predecessor_description)==state.checkpoint,
+                'Sources private source/epoch/child/effect record changed')
+            require(_phase_graph((control.source_guards,control.record))==control.checkpoint,
+                'Sources active source/control record changed')
+            _checked_bridge_graph(bridge)
+            for index,use in enumerate(uses):_check_member(bridge,use,index)
+        else:
+            bridge=_source_access_bridge(control);uses=_check_source_uses(bridge)
+        exits=_source_exits(state,control,bridge,uses)
     else:
         # Raw structure still checked the current complete group and foreign
         # ingress. It cannot fabricate a candidate, Source-Q or active cut.

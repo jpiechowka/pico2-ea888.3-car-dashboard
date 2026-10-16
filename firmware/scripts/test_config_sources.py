@@ -1508,7 +1508,7 @@ class ActualDecodedSources(unittest.TestCase):
         def observe(record):
             if record.get('phase','').startswith('first_boot_decoded_sources'):projected.append(record)
             return bounded(record)
-        with patch('config_source_uses._check_source_uses',side_effect=AssertionError('fresh batch rejected')),\
+        with patch('config_source_uses._checked_bridge_graph',side_effect=AssertionError('fresh batch rejected')),\
              patch.object(subject,'_source_exits',side_effect=AssertionError('unexpected exit')) as exits,\
              patch.object(config_platform,'_bounded_record',side_effect=observe):
             with self.assertRaisesRegex(AssertionError,'fresh batch rejected'):
@@ -1935,6 +1935,188 @@ class SourcePolicyV7(unittest.TestCase):
             path.write_bytes(wire+b' ')
             with self.assertRaisesRegex(ValueError,'oversized'):
                 capture.read_memory_gate(path,'supplied.elf',eav,elf.fixture_source_context)
+
+
+class SourceClosedProducer(unittest.TestCase):
+    def test_actual_entered_raw_Source_keeps_first_full_check_without_immediate_replays(self):
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        objects,rows,source,_=ActualDecodedSources.fixture(72)
+        current=subject._SourcePhasesState.current;checks=[]
+        def observed(state):
+            checks.append(state)
+            return current(state)
+        with patch.object(subject._SourcePhasesState,'current',observed):
+            result,state=subject._first_boot_decoded_sources_state(objects,rows,source)
+        self.assertTrue(result['successes']);self.assertTrue(state.access_bridge.uses)
+        self.assertTrue(result['error_occurrences'])
+        self.assertTrue(all(value is state.phases for value in checks))
+        self.assertEqual(len(checks),1,'fresh owned Source composition must retain its first full check without immediate replays')
+
+
+class SourceClosedProducerRelations(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_decoded_sources import _first_boot_decoded_sources_state
+        cls.inputs=ActualDecodedSources.fixture(72)[:3]
+        cls.result,cls.state=_first_boot_decoded_sources_state(*cls.inputs)
+
+    def test_complete_raw_and_supplied_frozen_fallback_preserve_values_types_aliases_and_exits(self):
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        from config_structural import _detached_inputs
+        objects,rows,source=self.inputs;supplied,current=_detached_inputs(objects,rows)
+        checks=[];original=subject._SourcePhasesState.current
+        def observed(state):
+            checks.append(state)
+            return original(state)
+        with patch.object(subject._SourcePhasesState,'current',observed):
+            result,state=subject._first_boot_decoded_sources_state(supplied,current,source)
+        self.assertEqual(len(checks),3);self.assertTrue(all(v is state.phases for v in checks))
+        self.assertEqual(result,self.result)
+        for old,new in ((self.state.phases,state.phases),(self.state.control,state.control),
+            (self.state.access_bridge,state.access_bridge)):
+            self.assertEqual(old.checkpoint,new.checkpoint)
+        self.assertIsNot(state.phases.objects,self.state.phases.objects)
+        self.assertIsNot(state.phases.source_context,self.state.phases.source_context)
+        for value in (self.state,state):
+            self.assertTrue(value.exits);self.assertTrue(value.access_bridge.uses)
+            self.assertTrue(all(p.entry is value.phases.entries[i] for i,p in enumerate(value.phases.phases)))
+            self.assertTrue(all(u.source['source_phase'][0]==u.phase_index for u in value.access_bridge.uses))
+            self.assertTrue(all(e.source_normal is normal and e.sequence is normal['after']
+                for e in value.exits for normal in value.phases.phases[e.phase_index].remaining['normal']
+                if normal is e.source_normal))
+            self.assertTrue(all(any(e.source_normal is n for n in
+                value.phases.phases[e.phase_index].remaining['normal']) for e in value.exits))
+        self.assertEqual(sum(row[-3] for row in result['error_summary']),result['error_occurrences'])
+        self.assertIs(self.state.current(),self.state)
+
+    def test_local_phase_and_control_faults_after_reached_derivation_stop_before_consumption(self):
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        import config_source_uses as access
+        import config_platform
+        # Inject faults only at a private handoff of a genuinely constructed
+        # fixture. The existing first full _source_control check still runs.
+        state=self.state.phases;original=access._reached_data;bounded=config_platform._bounded_record
+        for fault,wanted in (('phase','Sources private source/epoch/child/effect record changed'),
+            ('control','Sources active source/control record changed')):
+            restore=[];projected=[]
+            def changed(control,families):
+                uses=original(control,families)
+                if fault=='phase':
+                    values=state.phases[0].parent_envelopes
+                    self.assertNotIn('private_handoff_fault',values)
+                    values['private_handoff_fault']=True
+                    restore.append(lambda:values.pop('private_handoff_fault'))
+                else:
+                    values=control.record;old=values['selected_instructions'];values['selected_instructions']=old+1
+                    restore.append(lambda:values.__setitem__('selected_instructions',old))
+                return uses
+            def observe(record):
+                if record.get('phase','').startswith('first_boot_decoded_sources'):projected.append(record)
+                return bounded(record)
+            try:
+                with self.subTest(fault=fault),patch.object(subject,'_first_boot_source_phases',return_value=state),\
+                     patch.object(access,'_reached_data',side_effect=changed),\
+                     patch.object(subject,'_source_exits') as exits,patch.object(access,'_check_member') as members,\
+                     patch.object(config_platform,'_bounded_record',side_effect=observe):
+                    with self.assertRaisesRegex(AssertionError,wanted):
+                        subject._first_boot_decoded_sources_state(*self.inputs)
+                    exits.assert_not_called();members.assert_not_called();self.assertFalse(projected)
+            finally:
+                for action in reversed(restore):action()
+
+    def test_whole_bridge_members_and_cross_use_alias_faults_reject_before_exit_then_restore(self):
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        import config_source_uses as access
+        checked=access._checked_bridge_graph;member=access._check_member;state=self.state.phases
+        def faults(bridge):
+            original=bridge.uses
+            for uses in (original[:-1],tuple(reversed(original)),original+(original[0],)):
+                object.__setattr__(bridge,'uses',uses)
+                try:
+                    with self.subTest(members=len(uses)),self.assertRaisesRegex(AssertionError,'bridge/use record changed'):
+                        checked(bridge)
+                    exits.assert_not_called();members.assert_not_called()
+                finally:object.__setattr__(bridge,'uses',original)
+            use=next(u for u in bridge.uses if u.role=='source_route_local')
+            # Unlike the invocation wrapper (unique to this use), this Route
+            # is ALSO retained by the actual guarded invocation. First prove
+            # the association, then break it with an equal independent copy.
+            old=use.source['Route']
+            guard=bridge.control.source_guards[use.phase_index]['invocations'][use.source_index]
+            self.assertTrue(any(old is v for v in guard['guarded_routes']))
+            use.source['Route']=dict(old)
+            try:
+                with self.assertRaisesRegex(AssertionError,'bridge/use record changed'):checked(bridge)
+                exits.assert_not_called();members.assert_not_called()
+            finally:use.source['Route']=old
+            use=next(u for u in bridge.uses if u.role=='source_route_output')
+            old=use.source['package']
+            lineage=bridge.control.source_guards[use.phase_index]['publication_lineage']
+            self.assertTrue(any(v['package'] is old for v in lineage['payload_lineage']))
+            use.source['package']=dict(old)
+            try:
+                with self.assertRaisesRegex(AssertionError,'bridge/use record changed'):checked(bridge)
+                exits.assert_not_called();members.assert_not_called()
+            finally:use.source['package']=old
+            # Equal derived use wrappers themselves are not caller tickets.
+            # The complete graph must still match before exact members pass.
+            clones=tuple(replace(v) for v in bridge.uses)
+            self.assertEqual(clones,bridge.uses)
+            with self.assertRaisesRegex(AssertionError,'not in its internally checked collection'):
+                member(bridge,clones[0],0)
+            return checked(bridge)
+        with patch.object(subject,'_first_boot_source_phases',return_value=state),\
+             patch.object(access,'_checked_bridge_graph',side_effect=faults),\
+             patch.object(subject,'_source_exits',wraps=subject._source_exits) as exits,\
+             patch.object(access,'_check_member',wraps=access._check_member) as members:
+            result,value=subject._first_boot_decoded_sources_state(*self.inputs)
+        self.assertTrue(result['successes']);self.assertEqual(result,self.result)
+        exits.assert_called_once();self.assertEqual(members.call_count,len(value.access_bridge.uses))
+        self.assertIs(value.current(),value)
+
+
+class SourceClosedProducerFallback(unittest.TestCase):
+    def test_custom_entered_error_reentry_and_non_site_byte_drift_keep_full_rechecks(self):
+        from unittest.mock import patch
+        import config_decoded_sources as subject
+        from config_stack import DiagnosticObjects
+        from config_structural import _raw_composition_inputs,_detached_inputs,_fresh_composition_inputs
+        objects,rows,source,_=ActualDecodedSources.fixture(5)
+        self.assertTrue(_raw_composition_inputs(objects,rows,source))
+        supplied,current=_detached_inputs(objects,rows)
+        self.assertFalse(_raw_composition_inputs(supplied,current,source))
+        self.assertFalse(_fresh_composition_inputs(objects,rows,source,supplied,current,source))
+        self.assertFalse(_raw_composition_inputs(objects,rows.items(),source))
+        changed_reads=[]
+        class Custom(DiagnosticObjects):
+            entered=False;changed=False;inner=None
+            def read_only(self,address,extent):
+                if not self.entered:
+                    self.entered=True;self.inner=subject._first_boot_decoded_sources_state(objects,rows,source)
+                raw=super().read_only(address,extent)
+                # The complete ChannelSource body is structurally consumed
+                # even on this first-call error. No family-site bytes change.
+                if self.changed and address<=0x1001b500+44<address+extent:
+                    changed_reads.append((address,extent))
+                    at=0x1001b500+44-address;raw=raw[:at]+bytes((raw[at]^1,))+raw[at+1:]
+                return raw
+        custom=Custom(objects.elf,objects.sizes);self.assertFalse(_raw_composition_inputs(custom,rows,source))
+        original=subject._SourcePhasesState.current;checks=[]
+        def observed(state):
+            if state.objects is custom:checks.append(state)
+            return original(state)
+        with patch.object(subject._SourcePhasesState,'current',observed):
+            result,state=subject._first_boot_decoded_sources_state(custom,rows,source)
+        self.assertEqual(len(checks),3);self.assertTrue(state.phases.entries);self.assertFalse(state.exits)
+        self.assertEqual(result,custom.inner[0]);self.assertIs(state.phases.objects,custom)
+        custom.changed=True
+        with self.assertRaisesRegex(AssertionError,'payload'):
+            subject._first_boot_decoded_sources_state(custom,rows,source)
+        self.assertTrue(changed_reads,'the actual selected non-site body read must be observed')
 
 
 if __name__=='__main__':unittest.main()

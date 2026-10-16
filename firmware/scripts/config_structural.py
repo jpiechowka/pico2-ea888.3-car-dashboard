@@ -90,6 +90,31 @@ def _detached_inputs(objects,rows):
     return frozen,frozen._rows
 
 
+def _raw_composition_inputs(objects,instructions,source_context):
+    """Select canonical raw inputs, never a supplied checked-state flag.
+
+    Actual fresh detachment is checked separately after the real producer
+    and its first full incoming validation. Custom/supplied providers keep
+    their independently validating retained path.
+    """
+    from config_build_source import SourceContext
+    return (type(objects) is DiagnosticObjects and set(vars(objects))=={'elf','sizes'} and
+        type(objects.elf) in (ElfImage,SimpleNamespace) and type(instructions) is dict and
+        type(source_context) is SourceContext and
+        set(vars(source_context))=={'elf_sha256','attempt','build_options','sources'})
+
+
+def _fresh_composition_inputs(objects,instructions,source_context,owned,rows,current_context):
+    """Compare only the original and actually derived input triples.
+
+    No private state, approval token or evaluated result enters this predicate.
+    Its caller owns the fixed nonescaping construction and all semantic checks.
+    """
+    return (type(owned) is _FrozenObjects and type(owned.elf) is _FrozenElf and
+        owned is not objects and not vars(owned) and rows is owned._rows and
+        rows is not instructions and current_context is not source_context)
+
+
 def _structural(rows_index):
     """Wrap only an explicitly listed structural API, preserving its signature."""
     def decorate(function):
