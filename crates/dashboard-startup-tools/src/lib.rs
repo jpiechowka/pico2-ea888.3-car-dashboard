@@ -47,6 +47,27 @@ pub struct Options {
     pub sheet: Option<Sheet>,
     pub gif_background: GifBackground,
 }
+impl Options {
+    /// Source-independent admission shared by import controls and conversion.
+    pub fn validate(&self) -> Result<(), ConvertError> {
+        if self.sample_fps == 0
+            || self.sample_fps > 20
+            || self.trim_end_ms <= self.trim_start_ms
+            || self.trim_end_ms - self.trim_start_ms > 10000
+            || self.trim_end_ms > MAX_SOURCE_MS
+        {
+            return Err(ConvertError::Options);
+        }
+        if self.kind == SourceKind::SpriteSheet
+            && self
+                .sheet
+                .is_none_or(|s| s.columns == 0 || s.rows == 0 || s.frame_ms == 0)
+        {
+            return Err(ConvertError::Options);
+        }
+        Ok(())
+    }
+}
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -113,14 +134,7 @@ pub fn convert(
     if source.len() > MAX_SOURCE_BYTES {
         return Err(ConvertError::SourceLimit);
     }
-    if options.sample_fps == 0
-        || options.sample_fps > 20
-        || options.trim_end_ms <= options.trim_start_ms
-        || options.trim_end_ms - options.trim_start_ms > 10000
-        || options.trim_end_ms > MAX_SOURCE_MS
-    {
-        return Err(ConvertError::Options);
-    }
+    options.validate()?;
     match options.kind {
         SourceKind::Gif => gif_source::convert(source, options),
         SourceKind::Png | SourceKind::SpriteSheet => png_source::convert(source, options),

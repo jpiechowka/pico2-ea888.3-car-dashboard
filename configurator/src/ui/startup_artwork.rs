@@ -1,6 +1,7 @@
 //! One replaceable, deadline-bounded Rust Worker. Acceptance belongs to Editor.
 use std::sync::Arc;
 
+use dashboard_configurator::artwork_draft::{Number, Numbers};
 use dashboard_startup_tools::{Converted, Fit, GifBackground, MAX_SOURCE_BYTES, Options, Sheet, SourceKind};
 use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
 use wasm_bindgen::closure::Closure;
@@ -372,12 +373,29 @@ fn start_retained(
 }
 
 #[component]
+fn NumericOption(
+    state: Importer,
+    numbers: RwSignal<Numbers>,
+    field: Number,
+) -> impl IntoView {
+    view! {<label>{field.label()}<input type="text" inputmode="numeric" maxlength="32" aria-label=field.label()
+    prop:value=move ||numbers.with(|n|n.text(field).to_owned()) on:input=move |event| {
+        state.cancel();
+        let input=event_target::<web_sys::HtmlInputElement>(&event);
+        let text=io::bounded_input(&input,32).unwrap_or_else(||"[input exceeds limit]".into());
+        numbers.update(|n|n.set(field,&text));
+    }/></label>}
+}
+
+#[component]
 pub fn Panel(
     ui: Ui,
     on_accept: Callback<ArtworkImport>,
     #[prop(optional)] retained: Option<Signal<Option<RetainedSource>>>,
 ) -> impl IntoView {
     let options = RwSignal::new(Options::default());
+    let numbers = RwSignal::new(Numbers::new(&Options::default()));
+    let admitted = Signal::derive(move || numbers.with(|n| n.options(&options.get())));
     let state = Importer {
         job: StoredValue::new_local(None),
         generation: RwSignal::new(0),
@@ -401,20 +419,15 @@ pub fn Panel(
         <div class="startup-grid startup-grid-three"><label>"Source format"<select prop:value=move ||match options.get().kind{SourceKind::Png=>"png",SourceKind::Gif=>"gif",SourceKind::SpriteSheet=>"sheet"} on:change=move |e|{state.cancel();options.update(|o|{o.kind=match event_target_value(&e).as_str(){"gif"=>SourceKind::Gif,"sheet"=>SourceKind::SpriteSheet,_=>SourceKind::Png};o.sheet=if o.kind==SourceKind::SpriteSheet{Some(Sheet{columns:1,rows:1,frame_ms:100})}else{None};});}><option value="png">"PNG still"</option><option value="gif">"Animated GIF"</option><option value="sheet">"PNG sprite sheet"</option></select></label>
         <label>"Fit"<select prop:value=move ||match options.get().fit{Fit::Contain=>"contain",Fit::Cover=>"cover",Fit::Stretch=>"stretch"} on:change=move |e|{state.cancel();options.update(|o|o.fit=match event_target_value(&e).as_str(){"cover"=>Fit::Cover,"stretch"=>Fit::Stretch,_=>Fit::Contain});}><option value="contain">"Contain"</option><option value="cover">"Crop to fill"</option><option value="stretch">"Stretch"</option></select></label>
         <label>"Matte"<input type="color" prop:value=move ||{let c=options.get().matte_rgb;format!("#{:02x}{:02x}{:02x}",c[0],c[1],c[2])} on:input=move |e|{state.cancel();let value=event_target_value(&e);if value.len()==7&&value.starts_with('#')&& let Ok(color)=u32::from_str_radix(&value[1..],16){options.update(|o|o.matte_rgb=[(color>>16)as u8,(color>>8)as u8,color as u8]);}}/></label>
-        </div><div class="startup-grid startup-grid-three"><label>"Output fps (1–20)"<input type="number" min="1" max="20" prop:value=move ||options.get().sample_fps.to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|o.sample_fps=value);}}/></label>
-        <label>"Clip start (ms)"<input type="number" min="0" max="59999" prop:value=move ||options.get().trim_start_ms.to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|o.trim_start_ms=value);}}/></label>
-        <label>"Clip end (ms)"<input type="number" min="1" max="60000" prop:value=move ||options.get().trim_end_ms.to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|o.trim_end_ms=value);}}/></label>
-        </div><p class="hint">"Select at most 10 seconds. Frames are sampled from the source timeline; very short final intervals merge into the preceding frame. GIF loop counts are informational; the startup Loop setting controls playback."</p>
-        <div class="startup-grid startup-grid-three" hidden=move ||options.get().kind!=SourceKind::SpriteSheet>
-            <label>"Sheet columns"<input type="number" min="1" max="300" prop:value=move ||options.get().sheet.map_or(1,|s|s.columns).to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|{if let Some(s)=&mut o.sheet{s.columns=value;}});}}/></label>
-            <label>"Sheet rows"<input type="number" min="1" max="300" prop:value=move ||options.get().sheet.map_or(1,|s|s.rows).to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|{if let Some(s)=&mut o.sheet{s.rows=value;}});}}/></label>
-            <label>"Sheet frame duration (ms)"<input type="number" min="1" max="60000" prop:value=move ||options.get().sheet.map_or(100,|s|s.frame_ms).to_string() on:change=move |e|{state.cancel();if let Ok(value)=event_target_value(&e).parse(){options.update(|o|{if let Some(s)=&mut o.sheet{s.frame_ms=value;}});}}/></label>
-        </div>
+        </div><div class="startup-grid startup-grid-three"><NumericOption state=state numbers=numbers field=Number::Fps/><NumericOption state=state numbers=numbers field=Number::Start/><NumericOption state=state numbers=numbers field=Number::End/></div>
+        <p class="hint">"Select at most 10 seconds. Frames are sampled from the source timeline; very short final intervals merge into the preceding frame. GIF loop counts are informational; the startup Loop setting controls playback."</p>
+        <div class="startup-grid startup-grid-three" hidden=move ||options.get().kind!=SourceKind::SpriteSheet><NumericOption state=state numbers=numbers field=Number::Columns/><NumericOption state=state numbers=numbers field=Number::Rows/><NumericOption state=state numbers=numbers field=Number::Frame/></div>
+        <p role="status" hidden=move ||admitted.get().is_ok()>"INVALID CONVERSION OPTIONS · correct the numbers before converting. Accepted artwork remains unchanged."</p>
         <label hidden=move ||options.get().kind!=SourceKind::Gif>"GIF disposal background"<select prop:value=move ||if options.get().gif_background==GifBackground::Logical{"logical"}else{"transparent"} on:change=move |e|{state.cancel();options.update(|o|o.gif_background=if event_target_value(&e)=="transparent"{GifBackground::Transparent}else{GifBackground::Logical});}><option value="logical">"GIF logical background"</option><option value="transparent">"Transparent compatibility"</option></select></label>
-        <div class="startup-actions"><button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){state.cancel();options.set(source.options);}}>"Restore original conversion settings"</button>
-        <button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){start_retained(ui,state,source,options.get_untracked(),on_accept);}}>"Convert retained original"</button></div>
+        <div class="startup-actions"><button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){state.cancel();numbers.set(Numbers::new(&source.options));options.set(source.options);}}>"Restore original conversion settings"</button>
+        <button disabled=move ||retained.and_then(|r|r.get()).is_none()||admitted.get().is_err() on:click=move |_|{if let (Some(source),Ok(options))=(retained.and_then(|r|r.get_untracked()),admitted.get_untracked()){start_retained(ui,state,source,options,on_accept);}}>"Convert retained original"</button></div>
         <p class="hint" hidden=move ||retained.and_then(|r|r.get()).is_some()>"No retained original is available. Reimport the source to change conversion options."</p>
-        <label>"Choose artwork"<input type="file" accept="image/png,image/gif,.png,.gif" on:change=move |e|{let input=event_target::<web_sys::HtmlInputElement>(&e);let file=input.files().and_then(|files|files.get(0));input.set_value("");if let Some(file)=file{start(ui,state,file,options.get_untracked(),on_accept);}}/></label>
+        <label>"Choose artwork"<input type="file" disabled=move ||admitted.get().is_err() accept="image/png,image/gif,.png,.gif" on:change=move |e|{let input=event_target::<web_sys::HtmlInputElement>(&e);let file=input.files().and_then(|files|files.get(0));input.set_value("");if let (Some(file),Ok(options))=(file,admitted.get_untracked()){start(ui,state,file,options,on_accept);}}/></label>
         <button disabled=move ||!state.busy.get() on:click=move |_|{state.cancel();state.message.set("Conversion cancelled; accepted artwork retained.".into());}>"Cancel conversion"</button>
         <p class="startup-status" role="status">{move ||state.message.get()}</p>
     </div></details>}
