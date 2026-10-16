@@ -204,3 +204,26 @@ mod flash_tests {
         TEST_CANCEL.set(false);
     }
 }
+
+thread_local! {static SCRATCH:std::cell::RefCell<Option<(std::path::PathBuf,std::time::Instant)>>=const{std::cell::RefCell::new(None)};}
+pub(crate) struct ScratchBudget;
+impl ScratchBudget {
+    pub(crate) fn new(path: &Path) -> Self {
+        SCRATCH.with_borrow_mut(|s| *s = Some((path.to_path_buf(), std::time::Instant::now())));
+        Self
+    }
+}
+impl Drop for ScratchBudget {
+    fn drop(&mut self) { SCRATCH.with_borrow_mut(|s| *s = None); }
+}
+pub(crate) fn check_scratch() -> Result<(), String> {
+    SCRATCH.with_borrow_mut(|s| {
+        if let Some((path, last)) = s
+            && last.elapsed() >= Duration::from_secs(1)
+        {
+            *last = std::time::Instant::now();
+            crate::build_storage::check_scratch(path)?;
+        }
+        Ok(())
+    })
+}

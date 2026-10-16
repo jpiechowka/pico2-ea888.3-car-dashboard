@@ -205,30 +205,20 @@ pub fn freeze(
     input: &AcceptedInput,
 ) -> Result<FrozenInput, String> {
     let repo = repo.canonicalize().map_err(|e| e.to_string())?;
+    let reservation = crate::build_storage::reserve(&repo)?;
+    freeze_at(&repo, input, &reservation.path)
+}
+pub(crate) fn freeze_at(
+    repo: &Path,
+    input: &AcceptedInput,
+    attempt: &Path,
+) -> Result<FrozenInput, String> {
+    let repo = repo.canonicalize().map_err(|e| e.to_string())?;
     let bytes = inventory(&repo)?;
     if inventory(&repo)? != bytes {
-        return Err("Repository sources changed during snapshot; retry explicitly".into());
+        return Err("Repository sources changed during snapshot".into());
     }
-    let mut random = [0; 16];
-    getrandom::fill(&mut random).map_err(|_| "OS entropy unavailable")?;
-    let id = random.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let mut parent = repo.clone();
-    for component in ["target", "studio-helper", "attempts"] {
-        parent.push(component);
-        if parent.exists() {
-            if !safe_metadata(&parent)?.is_dir() {
-                return Err("Attempt parent is not a directory".into());
-            }
-        } else {
-            fs::create_dir(&parent).map_err(|e| e.to_string())?;
-        }
-    }
-    // The canonical parent must remain inside this repository; never follow an external target junction.
-    if !parent.canonicalize().map_err(|e| e.to_string())?.starts_with(&repo) {
-        return Err("Attempt root escapes repository".into());
-    }
-    let attempt = parent.join(id);
-    fs::create_dir(&attempt).map_err(|e| e.to_string())?;
+    let attempt = attempt.to_path_buf();
     let source = attempt.join("source");
     fs::create_dir(&source).map_err(|e| e.to_string())?;
     let mut files = BTreeMap::new();

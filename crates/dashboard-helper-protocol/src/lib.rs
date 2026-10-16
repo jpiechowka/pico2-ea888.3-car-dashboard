@@ -15,3 +15,5 @@ pub mod diagnostics;
 
 pub mod flash_history;
 pub use flash_history::*;
+pub mod build_storage;
+pub use build_storage::*;

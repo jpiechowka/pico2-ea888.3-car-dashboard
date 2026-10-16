@@ -123,16 +123,23 @@ impl DeleteFile {
         }
     }
 
+    pub(crate) fn identity(&self) -> Result<String, String> { file_identity(&self.0) }
+
     pub(crate) fn len(&self) -> Result<u64, String> { self.0.metadata().map(|m| m.len()).map_err(|e| e.to_string()) }
 
-    pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> {
+    pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> { self.bytes_bounded(65536) }
+
+    pub(crate) fn bytes_bounded(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<u8>, String> {
         use std::io::Read;
         let mut bytes = Vec::new();
         (&self.0)
-            .take(65537)
+            .take((limit + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
-        if bytes.len() > 65536 {
+        if bytes.len() > limit {
             return Err("Flash record bound".into());
         }
         Ok(bytes)
@@ -166,5 +173,53 @@ impl DeleteFile {
         {
             Err("Native cleanup requires Windows".into())
         }
+    }
+}
+
+/// Stable volume/file identity from a held handle, not a pathname or modification time.
+pub(crate) fn file_identity(file: &File) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+
+        use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(format!(
+            "{:08x}{:08x}{:08x}",
+            info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = file;
+        Err("Storage ownership requires Windows".into())
+    }
+}
+pub(crate) fn directory_identity(path: &Path) -> Result<String, String> { file_identity(&directory_file(path)?) }
+pub(crate) fn directory_file(path: &Path) -> Result<File, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        reject_reparse(path)?;
+        let file = OpenOptions::new()
+            .access_mode(0x80)
+            .share_mode(3)
+            .custom_flags(0x02000000 | 0x00200000)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+        use std::os::windows::fs::MetadataExt;
+        let meta = file.metadata().map_err(|e| e.to_string())?;
+        if !meta.is_dir() || meta.file_attributes() & 0x400 != 0 {
+            return Err("Directory identity is not a regular directory".into());
+        }
+        Ok(file)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("Storage ownership requires Windows".into())
     }
 }

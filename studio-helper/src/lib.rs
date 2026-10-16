@@ -23,4 +23,5 @@ mod flash_intent;
 
 mod flash;
 
+mod build_storage;
 mod flash_cleanup;

@@ -440,6 +440,7 @@ async fn start_build(
                 .jobs
                 .transition(&id, stage, state, reason)
         };
+        let mut reservation = None;
         let execution = (|| -> Result<crate::artifacts::Artifact, String> {
             if !crate::host::host().0 {
                 return Err("Unsupported native host".into());
@@ -448,7 +449,13 @@ async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Snapshot);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            let frozen = Arc::new(crate::build_input::freeze(&worker_state.repo, &input)?);
+            reservation = Some(crate::build_storage::reserve(&worker_state.repo)?);
+            let frozen = Arc::new(crate::build_input::freeze_at(
+                &worker_state.repo,
+                &input,
+                &reservation.as_ref().unwrap().path,
+            )?);
+            let _budget = crate::process::ScratchBudget::new(frozen.attempt_root());
             if crate::process::cancelled() {
                 return Err("Build cancelled after snapshot".into());
             }
@@ -492,6 +499,24 @@ async fn start_build(
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
             crate::artifacts::admit(frozen, &input, worker_state.session.clone(), converter)
         })();
+        let execution = if crate::process::cancelled() {
+            drop(execution);
+            Err("Cancelled before artifact publication".into())
+        } else {
+            execution
+        };
+        let execution = if !crate::process::cleanup_failed() {
+            if let Some(mut reservation) = reservation {
+                match reservation.close(execution.is_ok(), execution.as_ref().err().map(String::as_str)) {
+                    Ok(()) => execution,
+                    Err(error) => Err(format!("Build storage quarantined: {error}")),
+                }
+            } else {
+                execution
+            }
+        } else {
+            execution
+        };
         let mut inner = worker_state.inner.lock().unwrap();
         if crate::process::cleanup_failed() {
             let _ = inner.jobs.note_cleanup_fatal(&id, true);
@@ -734,6 +759,7 @@ async fn start_flash(
 async fn start_cleanup(
     state: Arc<State>,
     request: CleanupRequest,
+    build: bool,
 ) -> Result<JobSummary, Error> {
     request.validate()?;
     let previous = {
@@ -760,16 +786,48 @@ async fn start_cleanup(
     inner.worker = Some(tokio::task::spawn_blocking(move || {
         let mut failure = None;
         let mut cancelled = false;
+        let protected = worker_state
+            .inner
+            .lock()
+            .unwrap()
+            .artifacts
+            .iter()
+            .filter_map(|a| a.lease.as_ref())
+            .filter_map(|a| a.frozen.attempt_root().file_name()?.to_str().map(str::to_owned))
+            .collect();
+        let prepared = if build {
+            crate::build_storage::prepare(&worker_state.repo, &request, &protected).map(Some)
+        } else {
+            Ok(None)
+        };
+        let mut prepared = match prepared {
+            Ok(p) => p.map(Vec::into_iter),
+            Err(error) => {
+                failure = Some(error);
+                None
+            }
+        };
         for attempt in request.attempts.iter() {
+            if failure.is_some() {
+                break;
+            }
             if crate::process::cancelled() {
                 cancelled = true;
                 break;
             }
-            let result = crate::flash_cleanup::remove(&worker_state.repo, attempt);
+            let result = if let Some(prepared) = prepared.as_mut() {
+                prepared
+                    .next()
+                    .ok_or_else(|| "Missing prepared attempt".to_string())
+                    .and_then(|p| p.remove())
+            } else {
+                crate::flash_cleanup::remove(&worker_state.repo, attempt)
+            };
             let text = match result {
                 Ok(()) => {
                     format!(
-                        "Removed local flash record {}. Device and artifacts unchanged.",
+                        "Removed local {} record {}. Device unchanged.",
+                        if build { "build storage" } else { "flash" },
                         attempt.as_str()
                     )
                 }
@@ -905,7 +963,13 @@ async fn dispatch(
     if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
         return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
     }
-    if method == Method::POST && path == "/api/v1/flash-attempts/cleanup" {
+    if method == Method::POST
+        && matches!(
+            path.as_str(),
+            "/api/v1/flash-attempts/cleanup" | "/api/v1/build-attempts/cleanup"
+        )
+    {
+        let build = path == "/api/v1/build-attempts/cleanup";
         if one(headers, "content-type") != Some("application/json") {
             return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
         }
@@ -920,7 +984,7 @@ async fn dispatch(
             Ok(r) => r,
             Err(e) => return store_error(e, origin),
         };
-        return match start_cleanup(state.clone(), request).await {
+        return match start_cleanup(state.clone(), request, build).await {
             Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
             Err(e) => store_error(e, origin),
         };
@@ -1041,6 +1105,30 @@ async fn dispatch(
             match start_check(state.clone(), true, None).await {
                 Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
                 Err(e) => store_error(e, origin),
+            }
+        }
+        ("GET", "/api/v1/build-attempts") => {
+            let state = state.clone();
+            match tokio::task::spawn_blocking(move || {
+                // Serialize bounded metadata reads with admission, and do not race
+                // index replacement or DELETE handles in the active worker.
+                let inner = state.inner.lock().unwrap();
+                if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+                    return Err("BuildStorageBusy");
+                }
+                let protected = inner
+                    .artifacts
+                    .iter()
+                    .filter_map(|a| a.lease.as_ref())
+                    .filter_map(|a| a.frozen.attempt_root().file_name()?.to_str().map(str::to_owned))
+                    .collect();
+                crate::build_storage::list(&state.repo, &protected).map_err(|_| "BuildStorageQuarantined")
+            })
+            .await
+            {
+                Ok(Ok(report)) => response(StatusCode::OK, json!(report), origin),
+                Ok(Err(reason)) => error(StatusCode::CONFLICT, reason, origin),
+                _ => error(StatusCode::CONFLICT, "BuildStorageUnavailable", origin),
             }
         }
         ("GET", "/api/v1/flash-attempts") => {
@@ -1294,6 +1382,42 @@ mod tests {
         let authorized = Request::builder()
             .method("POST")
             .uri("/api/v1/flash-attempts/cleanup")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("content-type", "application/json")
+            .header("x-studio-capability", &state.capability)
+            .body(Body::from(body))
+            .unwrap();
+        assert_eq!(dispatch(state.clone(), authorized).await.status(), StatusCode::CONFLICT);
+        assert!(state.inner.lock().unwrap().worker.is_none());
+    }
+
+    #[tokio::test]
+    async fn build_cleanup_requires_authority_and_a_closed_operation() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let body = serde_json::json!({"attempts":["1".repeat(32)]}).to_string();
+        let unauthenticated = Request::builder()
+            .method("POST")
+            .uri("/api/v1/build-attempts/cleanup")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("content-type", "application/json")
+            .body(Body::from(body.clone()))
+            .unwrap();
+        assert_eq!(
+            dispatch(state.clone(), unauthenticated).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .jobs
+            .start(JobId::new("2".repeat(32)).unwrap(), OperationKind::Build, None)
+            .unwrap();
+        let authorized = Request::builder()
+            .method("POST")
+            .uri("/api/v1/build-attempts/cleanup")
             .header("host", AUTHORITY)
             .header("origin", ORIGINS[0])
             .header("content-type", "application/json")

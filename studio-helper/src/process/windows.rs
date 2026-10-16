@@ -195,6 +195,7 @@ pub(super) fn run_stream(
     let start = Instant::now();
     let result = (|| {
         loop {
+            super::check_scratch()?;
             let out_start = out.text.len();
             let err_start = err.text.len();
             out.drain(&mut stdout, limit)?;
