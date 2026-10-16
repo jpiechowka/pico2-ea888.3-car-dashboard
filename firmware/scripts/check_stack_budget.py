@@ -77,7 +77,13 @@ def task_frames(functions, sizes, name):
 # LLVM 23 / nightly 2026-10-16 ARM release: exact identities, only crate
 # disambiguators normalized. No module-wide or generic unwrap exemption.
 REVIEWED_STARTUP_FRAMES = {
-    '_RNvMNtCs_16dashboard_config13startup_assetNtB2_5Asset5frame': 24,
+    # Exact observed helpers: header parsing is inlined in new; u32_at is a
+    # bounded leaf. Geometry assert adapter calls existing panic formatting.
+    '_RNvMs1_NtCs_16dashboard_config13startup_assetNtB5_9Validator3new': 16,
+    '_RNvNtCs_16dashboard_config13startup_asset6u32_at': 16,
+    '_RINvNtCs_4core9panicking13assert_failedNtNtCs_16dashboard_config11orientation8GeometryBM_ECs_14dashboard_core': 32,
+    # Oct17 portrait ELF: geometry-carrying frame return grows 24 -> 32 B.
+    '_RNvMNtCs_16dashboard_config13startup_assetNtB2_5Asset5frame': 32,
     '_RNvNtCs_16dashboard_config13startup_asset10crc_update': 32,
     '_RINvNtCs_4core6result13unwrap_failedNtNtNtB4_3str5error9Utf8ErrorECs_16dashboard_config': 16,
     '_RINvNtCs_4core6result13unwrap_failedNtNtCs_16dashboard_config8validate15ValidationErrorEBN_': 16,
@@ -137,6 +143,19 @@ def configuration_frames(functions, sizes):
     def outlined(*tokens):
         return select('dashboard_config', *tokens, optional=True)
 
+    # Oct17 v5 demo280 source/ELF review: Widget decoding is inlined into
+    # load_at_boot (1280 B observed), Secondary serialization into Widget's
+    # serializer (72 B). Only these wrappers may disappear; their required
+    # children and actual parent frames still contribute. A later outline is
+    # counted, with multiple distinct boundaries rejected. This is not a
+    # general exemption for missing helpers or an instruction-effects proof.
+    orientation = any('11orientation11Orientation' in n for n in functions)
+
+    def reviewed_inline(*tokens):
+        addresses = select('dashboard_config', *tokens, optional=True)
+        require(len(addresses) <= 1, 'ambiguous reviewed inline stack path: ' + str(tokens))
+        return addresses
+
     loader = select('dashboard_config', 'ConfigSlot', '12load_at_boot')
     # Shared generic helpers embed validate_ref in their callback type names.
     # Match the actual free-function entry rather than those child symbols.
@@ -160,7 +179,8 @@ def configuration_frames(functions, sizes):
     widget_children = [utf8, warning, widget_colors, dec('10GraphRange'), dec('5Gauge')]
     if v4:
         widget_children.append(branch(dec('15AdvancedDisplay'), utf8, dec('13PeakSelection')))
-    widget = branch(dec('6WidgetE'), *widget_children)
+    widget_parent = reviewed_inline('12next_element', '6WidgetE') if orientation else dec('6WidgetE')
+    widget = branch(widget_parent, *widget_children)
     source = branch(select('dashboard_config', '12next_elementNt', '13ChannelSource'), color)
     # LLVM outlines the v4 array in ConfigSeed::next instead of SeqAccess.
     # Both reviewed entry points are accepted; a missing/ambiguous one fails.
@@ -169,6 +189,8 @@ def configuration_frames(functions, sizes):
     controls = branch(select('dashboard_config', '15decode_in_place4next', '10ControlMap'),
                       branch(dec('14ScreenBindings'), dec('13ControlAction')))
     fields = [sources, controls]
+    if orientation:
+        fields.append(select('dashboard_config', '15decode_in_place4next', '11orientation11Orientation'))
     if v4:
         fields.extend([
             select('dashboard_config', '15decode_in_place4nextAtj8_'),
@@ -186,7 +208,8 @@ def configuration_frames(functions, sizes):
     header = outlined('16inspect_envelope') | outlined('9crc_parts')
     serial_widget_children = [ser('5ColorE'), ser('13WarningColors')]
     if v4:
-        serial_widget_children.extend([utf8, ser('7Readout'), ser('9Secondary'), ser('13PeakSelection')])
+        secondary = reviewed_inline('15serialize_field', '9Secondary') if orientation else ser('9Secondary')
+        serial_widget_children.extend([utf8, ser('7Readout'), secondary, ser('13PeakSelection')])
     serial_widget = branch(ser('6Widget'), *serial_widget_children)
     serial_fuel = branch(ser('4Fuel'), ser('serialize_fieldf'))
     serial_controls = branch(ser('10ControlMap'), ser('13ControlAction'))
@@ -195,6 +218,8 @@ def configuration_frames(functions, sizes):
     if v4:
         serial_children.extend([ser('serialize_fieldAtj8_'),
                                 branch(ser('11LedSettings'), ser('10LedPattern'), ser('serialize_fieldb'))])
+    if orientation:
+        serial_children.append(ser('11orientation11Orientation'))
     canonical = branch(canonical, *serial_children)
     guarded = any('19visit_invalid_roles' in n or '19visit_stoichiometry' in n
                   for n in functions if 'dashboard_config' in n)
@@ -213,7 +238,7 @@ def configuration_frames(functions, sizes):
                         outlined('8controls17validate_controls'),
                         outlined('8validate10text_valid'),
                         *[select('dashboard_config', token) for token in (
-        '9Placement8occupied', '5Gauge5valid',
+        '9Placement11occupied_in' if orientation else '9Placement8occupied', '5Gauge5valid',
         '5Color9contrasts', '7catalog10definition',
         '6AccessNt')])
     decoding = branch(outlined('19decode_current_into'), header, seed, canonical, validation)

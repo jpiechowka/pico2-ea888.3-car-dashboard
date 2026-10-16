@@ -1,4 +1,6 @@
 """Frame metadata and cumulative-budget regressions, including rejected fixes."""
+import json
+from pathlib import Path
 import struct
 import unittest
 from check_stack_budget import frames, budgets, task_frames, configuration_frames, REVIEWED_STARTUP_FRAMES
@@ -52,6 +54,48 @@ class StackBudget(unittest.TestCase):
         return ({n: (int(a, 16) | 1, 4, 0) for a, _, n in rows},
                 {int(a, 16): int(size) for a, size, _ in rows})
 
+    def orientation_fixture(self):
+        # Literal linked symbols/.stack_sizes from ELF SHA in this fixture.
+        record=json.loads((Path(__file__).parent/'fixtures/orientation-stack-demo280.json').read_text())
+        return ({r['name']:(r['address']|1,4,0) for r in record['functions']},
+                {r['address']:r['frame'] for r in record['functions']})
+
+    def test_orientation_capture_inlined_widget_and_exact_children(self):
+        functions,sizes=self.orientation_fixture()
+        self.assertEqual(configuration_frames(functions,sizes),2288)
+        self.assertFalse(any('12next_element' in n and '6WidgetE' in n for n in functions))
+        # Parent-frame growth is always included, without relaxing reserves.
+        loader=next(a&~1 for n,(a,_,_) in functions.items() if '12load_at_boot' in n)
+        sizes[loader]+=4096
+        self.assertEqual(configuration_frames(functions,sizes),6384)
+
+    def test_orientation_required_boundaries_fail_missing_ambiguous_or_metadata(self):
+        functions,sizes=self.orientation_fixture()
+        for tokens in [('12load_at_boot',),('15decode_in_place4next','11Orientation'),
+                       ('15serialize_field','11Orientation'),('9Placement11occupied_in',),
+                       ('12next_element','15AdvancedDisplay'),('12next_element','15WarningSettings')]:
+            name=next(n for n in functions if all(t in n for t in tokens))
+            address,length,section=functions[name]
+            for fault in ('missing','metadata','ambiguous'):
+                changed=dict(functions);frames=dict(sizes)
+                if fault=='missing':del changed[name]
+                elif fault=='metadata':del frames[address&~1]
+                else:
+                    changed[name+'.extra']=(0x30000001,length,section);frames[0x30000000]=4
+                with self.subTest(tokens=tokens,fault=fault),self.assertRaises(AssertionError):
+                    configuration_frames(changed,frames)
+        for token in ('12next_element_6WidgetE','15serialize_field_9Secondary'):
+            changed=dict(functions);frames=dict(sizes)
+            changed['dashboard_config_'+token]=(0x30000001,4,0);frames[0x30000000]=4096
+            self.assertGreater(configuration_frames(changed,frames),4096)
+            changed['dashboard_config_'+token+'.other']=(0x30000005,4,0);frames[0x30000004]=4
+            with self.assertRaisesRegex(AssertionError,'ambiguous'):
+                configuration_frames(changed,frames)
+        functions['dashboard_config_orientation_unreviewed_child']=(0x30000001,4,0)
+        sizes[0x30000000]=8
+        with self.assertRaisesRegex(AssertionError,'unreviewed config stack helpers'):
+            configuration_frames(functions,sizes)
+
     def test_exact_startup_helpers_count_and_reject_drift(self):
         functions, sizes = self.slot_fixture()
         baseline = configuration_frames(functions, sizes)
@@ -60,7 +104,7 @@ class StackBudget(unittest.TestCase):
             address = 0x11000000 + index * 1024
             functions[name] = (address | 1, 42, 0)
             sizes[address] = ceiling
-        self.assertEqual(configuration_frames(functions, sizes), baseline + 88)
+        self.assertEqual(configuration_frames(functions, sizes), baseline + 160)
         for name in list(functions):
             if 'CsReviewed_' not in name:
                 continue
