@@ -1723,7 +1723,7 @@ class SourceReturnBodySelection(unittest.TestCase):
             result=_closed_child_returns(rows,parents,children,0x20070000,profiles,('seq_f32',ROLES['warning_colors']),**context)
         finally:sys.setprofile(previous)
         self.assertTrue(result)
-        self.assertEqual(len(calls),1,'only the per-invocation eligibility check may scan the full immutable map')
+        self.assertEqual(len(calls),0,'the parent matcher already validated this exact immutable input map')
 
     def test_fast_and_fallback_complete_records_keep_values_aliases_and_fresh_activations(self):
         from config_finite_returns import _closed_child_returns

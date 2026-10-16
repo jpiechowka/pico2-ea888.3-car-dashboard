@@ -48,23 +48,17 @@ def _high_definitions(row,control):
 def _body_selector(rows,objects=None):
     """Fresh body dictionaries; only detached input permits address lookup.
 
-    Validate keys once here: direct _FrozenObjects construction alone does
-    not inherit the factory's integer-key/address invariant. Unsupported or
-    malformed providers retain the original eager items comprehension.
+    The invocation-local immutable address index validates actual keys once;
+    direct _FrozenObjects construction alone does not grant that invariant.
+    Unsupported/malformed providers retain the eager items comprehension.
     This selects records only; it caches no body or evaluated return state.
     """
-    from config_structural import _FrozenObjects
-    from llvm_stack import Instruction
-    indexed=type(objects) is _FrozenObjects
-    if indexed:
+    from config_structural import _FrozenObjects,_instruction_addresses,_instruction_items
+    if type(objects) is _FrozenObjects:
         require(rows is objects._rows,'finite child return input package differs')
-        indexed=all(type(at) is int and type(row) is Instruction and at==row.address for at,row in rows.items())
-    count=len(rows) if indexed else 0
+    indexed=_instruction_addresses(objects,rows) is not None
     def select(start,extent):
-        if indexed and type(start) is type(extent) is int and 0<=start<start+extent<=2**32 and extent<=count:
-            # Every byte address preserves odd/interior keys as well. The
-            # bound makes lookup work no larger than the original full scan.
-            return {at:rows[at] for at in range(start,start+extent) if at in rows}
+        if indexed:return dict(_instruction_items(objects,rows,start,extent))
         return {at:row for at,row in rows.items() if start<=at<start+extent}
     return select
 

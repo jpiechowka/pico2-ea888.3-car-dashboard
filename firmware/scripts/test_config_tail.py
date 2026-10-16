@@ -1591,4 +1591,110 @@ class TailPublicCurrentArtifacts(unittest.TestCase):
         self.assertFalse(result['Visitor_return']['loader_successor_executed'])
 
 
+class DetachedInstructionRows(unittest.TestCase):
+    def test_empty_and_custom_range_operands_keep_lazy_eager_fallback(self):
+        from config_structural import _detached_inputs,_instruction_items
+        from config_finite_returns import _body_selector
+        from llvm_stack import Instruction
+        objects,_,_,_=TailLiteralBodies.fixture();frozen,empty=_detached_inputs(objects,{})
+        self.assertEqual(_body_selector(empty,frozen)(None,1),{})
+        self.assertEqual(list(_instruction_items(frozen,empty,None,1)),[])
+        class Start(int):
+            additions=0
+            def __add__(self,other):
+                self.additions+=1;return int(self)+other
+        start=Start(10);row=Instruction(10,b'\x00\xbf','nop','')
+        raw={10:row,11:replace(row,address=11),12:replace(row,address=12)}
+        self.assertEqual(dict(_instruction_items(objects,raw,start,2)),{10:row,11:raw[11]})
+        self.assertEqual(start.additions,3)
+
+    def test_literal_and_return_selection_validate_exact_detached_map_once(self):
+        import sys
+        from config_structural import _detached_inputs
+        from config_tail_children import tail_body
+        from config_tail_contracts import ROLES
+        from config_widget_children import _name
+        from config_finite_returns import _body_selector
+        objects,rows,_,_=TailLiteralBodies.fixture();objects,rows=_detached_inputs(objects,rows)
+        name=_name(objects,ROLES['ControlAction']);scans=[]
+        def observe(frame,event,arg):
+            if event=='c_call' and getattr(arg,'__self__',None) is rows and getattr(arg,'__name__',None)=='items':
+                scans.append(frame.f_code.co_name)
+        previous=sys.getprofile();sys.setprofile(observe)
+        try:
+            first=tail_body(objects,name,rows);again=tail_body(objects,name,rows)
+            one=_body_selector(rows,objects)(first['function'],first['extent'])
+            two=_body_selector(rows,objects)(first['function'],first['extent'])
+        finally:sys.setprofile(previous)
+        self.assertEqual(first,again);self.assertEqual(one,two)
+        self.assertEqual(len(scans),1,'same immutable input must not rescan the whole map per body or activation')
+
+    def test_index_keeps_all_odd_keys_fresh_selections_and_foreign_package_association(self):
+        from config_structural import _detached_inputs,_instruction_items
+        from llvm_stack import Instruction
+        objects,_,_,_=TailLiteralBodies.fixture();start=0x1001bc64
+        raw={start+i:Instruction(start+i,b'\x00\xbf','nop','') for i in (8,5,2,1,0,7)}
+        frozen,rows=_detached_inputs(objects,raw)
+        first=list(_instruction_items(frozen,rows,start,6))
+        self.assertEqual(first,sorted((a,r) for a,r in rows.items() if start<=a<start+6))
+        self.assertEqual([a-start for a,r in first],[0,1,2,5])
+        first.clear();self.assertEqual(len(list(_instruction_items(frozen,rows,start,6))),4)
+        for begin,extent in ((start,2**50),(start,-1),(float(start),2),(start,True),(start,0),(start+6,1)):
+            with self.subTest(begin=begin,extent=extent):
+                self.assertEqual(dict(_instruction_items(frozen,rows,begin,extent)),
+                    {a:r for a,r in rows.items() if begin<=a<begin+extent})
+        raw[start+3]=Instruction(start+3,b'\x00\xbf','nop','')
+        current,new_rows=_detached_inputs(objects,raw)
+        object.__setattr__(current,'_instruction_index',frozen._instruction_index)
+        self.assertIn(start+3,dict(_instruction_items(current,new_rows,start,6)))
+        self.assertIs(current._instruction_index[0],new_rows)
+        self.assertIsInstance(current._instruction_index[1],tuple)
+        self.assertNotIn(start+3,dict(_instruction_items(frozen,rows,start,6)))
+
+    def test_custom_duplicates_and_malformed_private_construction_keep_eager_behavior(self):
+        from config_structural import _instruction_items,_FrozenObjects,_detached_inputs
+        from config_finite_returns import _body_selector
+        from llvm_stack import Instruction
+        objects,_,_,_=TailLiteralBodies.fixture();at=0x1001bc64
+        first=Instruction(at,b'\x00\xbf','nop','');last=replace(first,operands='last')
+        class ItemsOnly:
+            def items(self):return ((at,first),(at,last),(at+1,first))
+            def __getitem__(self,key):raise AssertionError('unsupported provider indexing')
+        custom=ItemsOnly()
+        self.assertEqual(list(_instruction_items(objects,custom,at,1)),[(at,first),(at,last)])
+        self.assertEqual(_body_selector(custom,objects)(at,1),{at:last})
+        frozen,_=_detached_inputs(objects,{at:first})
+        for values in ({at+1:first},{True:replace(first,address=1)}):
+            malformed=_FrozenObjects(frozen.elf,{},values)
+            self.assertEqual(list(_instruction_items(malformed,malformed._rows,0,2**32)),list(malformed._rows.items()))
+            self.assertIsNone(malformed._instruction_index)
+        malformed=_FrozenObjects(frozen.elf,{}, {str(at):first})
+        with self.assertRaises(TypeError):list(_instruction_items(malformed,malformed._rows,at,2))
+
+    def test_complete_conditional_graph_matches_eager_selection_and_warm_inputs_stay_current(self):
+        from unittest.mock import patch
+        from config_decoded_sources import _phase_graph
+        from config_tail_source import _controls_source
+        from config_tail_children import tail_body
+        from config_tail_contracts import ROLES
+        from config_widget_children import _name
+        from config_structural import _detached_inputs
+        from test_config_stack import StartupConfigurationCopy
+        objects,rows,parents,state,frame,guards=TailControlsSource.fixture()
+        with patch('config_structural._instruction_addresses',return_value=None):
+            _controls_source(objects,rows,parents,state,frame,guards)
+            old=_controls_source(objects,rows,parents,state,frame,guards)
+        new=_controls_source(objects,rows,parents,state,frame,guards)
+        self.assertEqual(_phase_graph(old),_phase_graph(new))
+        self.assertIsNot(old,new)
+        original,raw,_,_=TailLiteralBodies.fixture();frozen,current=_detached_inputs(original,raw)
+        name=_name(frozen,ROLES['ControlAction']);before=tail_body(frozen,name,current)
+        at=0x1001bc64+44;row=raw[at];changed=bytes((row.raw[0]^1,))+row.raw[1:]
+        StartupConfigurationCopy.put(original,at,changed);raw[at]=replace(row,raw=changed,operands='r0, #0x13')
+        self.assertEqual(tail_body(frozen,name,current),before)
+        fresh,next_rows=_detached_inputs(original,raw)
+        with self.assertRaisesRegex(AssertionError,'payload'):
+            tail_body(fresh,name,next_rows)
+
+
 if __name__=='__main__':unittest.main()

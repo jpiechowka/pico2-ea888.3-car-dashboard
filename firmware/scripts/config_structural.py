@@ -5,6 +5,7 @@ states, effect outcomes, frames, guards and completion never enter this store.
 Ordinary callers and unsupported input providers retain their existing checks.
 """
 from functools import wraps
+from bisect import bisect_left
 from types import MappingProxyType,SimpleNamespace
 import copy
 import hashlib
@@ -50,7 +51,7 @@ class _FrozenElf:
 
 class _FrozenObjects(DiagnosticObjects):
     # Properties keep the inherited __dict__ from replacing any consumed input.
-    __slots__=('_image','_sizes','_rows','_memo','_counts','_hashes','_typed_names')
+    __slots__=('_image','_sizes','_rows','_memo','_counts','_hashes','_typed_names','_instruction_index')
 
     def __init__(self,elf,sizes,rows):
         object.__setattr__(self,'_image',elf)
@@ -60,6 +61,7 @@ class _FrozenObjects(DiagnosticObjects):
         object.__setattr__(self,'_counts',{})
         object.__setattr__(self,'_hashes',{})
         object.__setattr__(self,'_typed_names',None)
+        object.__setattr__(self,'_instruction_index',None)
     @property
     def elf(self):return self._image
     @property
@@ -117,6 +119,33 @@ def _structural(rows_index):
             return result
         return checked
     return decorate
+
+
+def _instruction_addresses(objects,rows):
+    """Only exact immutable row inputs share an address index, never a proof.
+
+    Direct private construction does not grant the factory's key invariant.
+    Unsupported/malformed maps retain each caller's eager items behavior.
+    """
+    if type(objects) is not _FrozenObjects or rows is not objects._rows or type(rows) is not MappingProxyType:
+        return None
+    cached=objects._instruction_index
+    if type(cached) is tuple and len(cached)==2 and cached[0] is rows:return cached[1]
+    if not all(type(at) is int and type(row) is Instruction and at==row.address for at,row in rows.items()):
+        return None
+    addresses=tuple(sorted(rows))
+    object.__setattr__(objects,'_instruction_index',(rows,addresses))
+    return addresses
+
+
+def _instruction_items(objects,rows,start,extent):
+    """Fresh complete span selection, including odd/interior instruction keys."""
+    addresses=_instruction_addresses(objects,rows)
+    if addresses is not None and type(start) is type(extent) is int and 0<=start<start+extent<=2**32:
+        end=start+extent
+        selected=addresses[bisect_left(addresses,start):bisect_left(addresses,end)]
+        return ((at,rows[at]) for at in selected)
+    return ((at,row) for at,row in rows.items() if start<=at<start+extent)
 
 
 def _image_hash(objects):

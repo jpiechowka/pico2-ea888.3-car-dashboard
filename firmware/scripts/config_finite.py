@@ -4,6 +4,7 @@ import struct
 from config_stack import canonical_symbol,typed_function
 from llvm_stack import mapping_ranges
 from validation import require
+from config_structural import _instruction_items
 
 
 def _complete_body(objects,name,instructions,role,shape,contract,object_consumer,outline_consumer,ancestry=(),function_consumer=typed_function):
@@ -40,7 +41,7 @@ def _literal_body(objects,name,instructions,role,shape,contract,object_consumer,
         else:
             require(all(k=='t' for a,b,k in mapping) and sum(b-a for a,b,k in mapping)==extent,
                     'root window is not wholly mapped Thumb code')
-    raw=objects.read_only(start,extent);rows=sorted((r for a,r in instructions.items() if start<=a<start+extent),key=lambda r:r.address)
+    raw=objects.read_only(start,extent);rows=sorted((r for a,r in _instruction_items(objects,instructions,start,extent)),key=lambda r:r.address)
     require(len(rows)==len(contract['instructions']),'payload instruction inventory differs')
     code={a for lo,hi,k in mapping if k=='t' for a in range(lo,hi)};covered=set();producers={};edges=[];indirect=[];external_values={}
     for row,(offset,width,operation) in zip(rows,contract['instructions']):
