@@ -170,3 +170,44 @@ fn artwork_handles_follow_history_and_captured_save_without_original_arrays() {
     );
     assert_eq!(editor.stamp(), before);
 }
+
+#[test]
+fn actual_artwork_publication_scopes_feedback_and_stale_join_keeps_current_project() {
+    use dashboard_configurator::artwork_draft::ProjectFeedback;
+    let mut editor = Editor::default();
+    let art = backed_artwork("owned source");
+    let token = editor.begin_import().unwrap();
+    editor.complete_artwork_import(token, art.clone()).unwrap();
+    let feedback = ProjectFeedback::new(&editor, "Conversion accepted".into());
+    assert_eq!(feedback.text(&editor), "Conversion accepted");
+    assert_eq!(editor.startup_profile().theme, StartupTheme::Custom);
+    assert_eq!(editor.startup_artwork().unwrap().identity(), art.identity());
+    let pending = editor.begin_import().unwrap();
+    let replacement = Editor::default().accepted_project().unwrap();
+    editor.cancel_import(pending).unwrap();
+    let current = editor.begin_import().unwrap();
+    editor.complete_prepared_project_import(current, replacement).unwrap();
+    let before = editor
+        .export_project(dashboard_config_tools::project::ExportMode::ConvertedOnly)
+        .unwrap();
+    assert_eq!(feedback.text(&editor), "");
+    assert_eq!(
+        editor.complete_artwork_import(pending, art),
+        Err(EditorError::StaleToken)
+    );
+    assert_eq!(
+        editor
+            .export_project(dashboard_config_tools::project::ExportMode::ConvertedOnly)
+            .unwrap(),
+        before
+    );
+    assert_eq!(feedback.text(&editor), "");
+    editor.undo().unwrap();
+    assert_eq!(editor.startup_profile().theme, StartupTheme::Custom);
+    assert!(editor.startup_artwork().unwrap().has_original());
+    assert_eq!(
+        feedback.text(&editor),
+        "",
+        "history restoration cannot revive an old operation result"
+    );
+}

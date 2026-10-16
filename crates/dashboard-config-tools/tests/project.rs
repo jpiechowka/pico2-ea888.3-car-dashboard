@@ -165,6 +165,17 @@ fn immutable_original_handles_preserve_identity_without_retaining_source_bytes()
     let reattached = restored.artwork().unwrap().externalized(reference).unwrap();
     assert_eq!(reattached.identity(), art.identity());
     assert!(external.materialized(Arc::from(&b"wrong"[..])).is_err());
+    let mut same_length_wrong_source = source.to_vec();
+    *same_length_wrong_source.last_mut().unwrap() ^= 1;
+    assert!(matches!(
+        external.materialized(same_length_wrong_source.into()),
+        Err(ProjectError::Source)
+    ));
+    assert_eq!(
+        external.identity(),
+        art.identity(),
+        "failed materialization cannot mutate backing identity"
+    );
     let full = project
         .with_artwork(Arc::new(external.materialized(source).unwrap()))
         .unwrap();
