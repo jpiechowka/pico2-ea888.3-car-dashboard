@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 fn main() {
@@ -24,7 +24,7 @@ fn main() {
     features.sort();
     let selected = selection(&features, &CUSTOM_KEYS.map(std::env::var_os))
         .unwrap_or_else(|error| panic!("Cannot select dashboard clock: {error}"));
-    let (source, metadata) = generate(selected, &std::env::var("OPT_LEVEL").unwrap(), features)
+    let (source, metadata) = generate(selected, &std::env::var("OPT_LEVEL").unwrap(), features.clone())
         .unwrap_or_else(|error| panic!("Cannot generate dashboard clock: {error}"));
     let generated_out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     std::fs::write(generated_out.join("clock_profile.rs"), &source).expect("write generated clock constants");
@@ -61,13 +61,6 @@ fn main() {
         for key in ["PROFILE", "OPT_LEVEL", "DEBUG", "TARGET"] {
             println!("cargo:rustc-env=BENCH_{key}={}", std::env::var(key).unwrap());
         }
-        let mut features: Vec<_> = std::env::vars()
-            .filter_map(|(k, _)| {
-                k.strip_prefix("CARGO_FEATURE_")
-                    .map(|s| s.to_ascii_lowercase().replace('_', "-"))
-            })
-            .collect();
-        features.sort();
         println!("cargo:rustc-env=BENCH_FEATURES={}", features.join("+"));
         // The external capture manifest supplies exact source/ELF hashes.
         // A revision alone cannot identify a dirty or differently built image.
@@ -90,44 +83,20 @@ fn main() {
 }
 
 fn embed_startup() {
-    use std::io::Read;
-
     use dashboard_config::startup::StartupProfile;
-    println!("cargo:rerun-if-env-changed=DASHBOARD_STARTUP_PROFILE");
-    println!("cargo:rerun-if-env-changed=DASHBOARD_STARTUP_ASSET");
-    let profile = match std::env::var_os("DASHBOARD_STARTUP_PROFILE") {
-        None => StartupProfile::DEFAULT,
-        Some(path) => {
-            assert!(!path.is_empty(), "DASHBOARD_STARTUP_PROFILE cannot be empty");
-            let path = PathBuf::from(path).canonicalize().expect("startup profile path");
-            println!("cargo:rerun-if-changed={}", path.display());
-            let mut bytes = Vec::new();
-            File::open(path)
-                .expect("open startup profile")
-                .take(17)
-                .read_to_end(&mut bytes)
-                .expect("read startup profile");
-            StartupProfile::decode(&bytes).expect("invalid .easp startup profile")
-        }
-    };
+    let profile = startup_input("DASHBOARD_STARTUP_PROFILE", 16).map_or(StartupProfile::DEFAULT, |bytes| {
+        StartupProfile::decode(&bytes).expect("invalid .easp startup profile")
+    });
     let bytes = profile.encode().expect("validated startup profile");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-    let asset = match std::env::var_os("DASHBOARD_STARTUP_ASSET") {
-        None => Vec::new(),
-        Some(path) => {
-            assert!(!path.is_empty(), "DASHBOARD_STARTUP_ASSET cannot be empty");
-            let path = PathBuf::from(path).canonicalize().expect("startup asset path");
-            println!("cargo:rerun-if-changed={}", path.display());
-            let mut bytes = Vec::new();
-            File::open(path)
-                .expect("open startup asset")
-                .take(dashboard_config::startup_asset::MAX_ASSET_BYTES as u64 + 1)
-                .read_to_end(&mut bytes)
-                .expect("read startup asset");
-            dashboard_config::startup_asset::Asset::parse(&bytes).expect("invalid .easa startup asset");
-            bytes
-        }
-    };
+    let asset = startup_input(
+        "DASHBOARD_STARTUP_ASSET",
+        dashboard_config::startup_asset::MAX_ASSET_BYTES as u64,
+    )
+    .map_or_else(Vec::new, |bytes| {
+        dashboard_config::startup_asset::Asset::parse(&bytes).expect("invalid .easa startup asset");
+        bytes
+    });
     assert_eq!(
         profile.theme == dashboard_config::startup::StartupTheme::Custom,
         !asset.is_empty(),
@@ -143,4 +112,25 @@ fn embed_startup() {
         "cargo:rustc-env=DASHBOARD_STARTUP_SHA256={}",
         dashboard_config_tools::sha256_hex(&bytes)
     );
+}
+
+/// Retain one extra byte so the format validator rejects oversized input.
+fn startup_input(
+    variable: &str,
+    maximum: u64,
+) -> Option<Vec<u8>> {
+    println!("cargo:rerun-if-env-changed={variable}");
+    let path = std::env::var_os(variable)?;
+    assert!(!path.is_empty(), "{variable} cannot be empty");
+    let path = PathBuf::from(path)
+        .canonicalize()
+        .unwrap_or_else(|error| panic!("{variable} path: {error}"));
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut bytes = Vec::new();
+    File::open(path)
+        .unwrap_or_else(|error| panic!("open {variable}: {error}"))
+        .take(maximum + 1)
+        .read_to_end(&mut bytes)
+        .unwrap_or_else(|error| panic!("read {variable}: {error}"));
+    Some(bytes)
 }
