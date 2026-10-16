@@ -57,4 +57,6 @@ try {
 }
 Assert $failed 'capture failure must propagate its exact exit status'
 Assert ((Get-Location).Path -ceq $beforeLocation) 'capture failure changed caller location'
+# Expected native failures have been asserted; report the harness result to CI.
+$global:LASTEXITCODE = 0
 'Wrapper normalization, compatibility and rejection contracts passed; no capture process or device opened.'
