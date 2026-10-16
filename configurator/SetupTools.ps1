@@ -15,7 +15,7 @@ function Install-StudioReleaseTools {
     $toolRoot = Join-Path $Repository 'target/configurator-tools'
     $bin = Join-Path $toolRoot 'bin'
     $stage = Join-Path $toolRoot 'release-staging'
-    $picoBin = Join-Path $Repository 'firmware/tools'
+    $picoBin = $bin
     foreach ($directory in @($toolRoot, $bin, $stage, $picoBin)) {
         [IO.Directory]::CreateDirectory($directory) | Out-Null
     }

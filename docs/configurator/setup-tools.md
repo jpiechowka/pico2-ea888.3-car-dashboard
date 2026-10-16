@@ -6,7 +6,7 @@ pinned Rust toolchain/targets, Trunk and wasm-bindgen, then verifies and install
 | Tool | Official release | Installed executable |
 | --- | --- | --- |
 | Binaryen 133 | WebAssembly/binaryen `version_133`, `binaryen-version_133-x86_64-windows.tar.gz` | `target/configurator-tools/bin/wasm-opt.exe` |
-| picotool 2.3.1 | raspberrypi/pico-sdk-tools `v2.3.1-0`, `picotool-2.3.1-x64-win.zip` | `firmware/tools/picotool.exe` |
+| picotool 2.3.1 | raspberrypi/pico-sdk-tools `v2.3.1-0`, `picotool-2.3.1-x64-win.zip` | `target/configurator-tools/bin/picotool.exe` |
 
 Archive SHA256 values are pinned in `configurator/SetupTools.ps1`, checked before
 extraction or execution, and were verified against the official GitHub release
@@ -21,3 +21,11 @@ remaining checker results may require Python or Visual Studio Build Tools with
 C++ and Windows SDK; these system installers remain explicit manual actions.
 `configurator/Test-SetupTools.ps1` covers PowerShell parsing and cached-package
 hash/size rejection without downloading tools or accessing USB.
+
+The legacy tracked `firmware/tools/picotool.exe` remains unchanged at
+2.2.0-a4 (6,121,118 bytes; SHA256
+`c6f857b4d9ab2f70db52c09b4957da93ec41d865900f4a7d7ae30b49d0c945d0`).
+Setup and the native helper use the ignored tool directory instead. The official
+2.3.1 executable is 6,239,513 bytes, SHA256
+`7c1bf5b49b3b1c3b8094ca300c9aac45d15d205adbc54fcc6d6d209f6f69e60d`.
+Updating prerequisites does not rewrite the repository's tracked binaries.
