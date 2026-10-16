@@ -401,9 +401,24 @@ owned Job process supervisor, a 30-minute deadline, 8 MiB per output stream and
 offline Cargo resolution. It performs the existing full image checks when the
 user explicitly requests a build; implementation tests do not run that pipeline.
 
-Artifact admission and UF2 equality are not implemented yet. Even a successful
-capture therefore ends with a failed Validation stage and no ArtifactId. It
-cannot enable flashing. Compilation currently includes the capture script's
-existing image gates; output is available after the bounded child completes.
-Terminal transition/error diagnostics use a bounded best-effort queue and honor
-NO_COLOR and non-TTY output. They contain no capabilities or raw project data.
+After capture, Validation checks the final linked EAV/EASP/EASA arrays, full
+conditional image evidence and physical program/boot metadata. The exact
+picotool 2.3.1 converter runs with the fixed RP2350 secure ARM family/platform
+and no absolute block. A separate consumer verifies every UF2 block against the
+ELF physical payload map before publishing an ArtifactId. Frozen source/input
+files deny writes/deletes during the attempt; retained ancestor handles prevent
+path replacement. Capture files remain locked during conversion/validation.
+
+`GET /api/v1/artifacts` lists at most two admitted artifacts. Metadata is available
+at `/api/v1/artifacts/{id}`; authenticated `/api/v1/artifacts/{id}/uf2` downloads
+immutable retained bytes (maximum4177920 bytes). Older artifacts can be evicted;
+restart discards the cache. Every summary binds the complete project, startup
+inputs, normalized options, source, converter, ELF and UF2 identities. All have
+`hardware_qualified:false` and `flash_ready:false`. These conditional software
+artifacts do not qualify arbitrary boards, partition/security states, or A2/E10
+mass-storage fallback. No USB writes or flash route are enabled.
+
+Compilation currently includes the capture script's existing image gates;
+output is available after the bounded child completes. Terminal transition/error
+diagnostics use a bounded best-effort queue and honor NO_COLOR/non-TTY output.
+They contain no capabilities or raw project data.

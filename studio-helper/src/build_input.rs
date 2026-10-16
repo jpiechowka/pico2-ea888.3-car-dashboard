@@ -12,12 +12,12 @@ const MAX_SOURCE_FILES: usize = 10000;
 pub fn digest(bytes: &[u8]) -> String { Hasher::digest(bytes).iter().map(|b| format!("{b:02x}")).collect() }
 #[derive(Clone)]
 pub struct AcceptedInput {
-    profile: Vec<u8>,
-    asset: Vec<u8>,
-    project: Vec<u8>,
-    eav: Vec<u8>,
-    options: NormalizedBuildOptions,
-    revision: u64,
+    pub(crate) profile: Vec<u8>,
+    pub(crate) asset: Vec<u8>,
+    pub(crate) project: Vec<u8>,
+    pub(crate) eav: Vec<u8>,
+    pub(crate) options: NormalizedBuildOptions,
+    pub(crate) revision: u64,
     config_digest: String,
 }
 impl AcceptedInput {
@@ -55,6 +55,7 @@ impl AcceptedInput {
     }
 }
 pub struct FrozenInput {
+    _locks: Vec<std::fs::File>,
     attempt: PathBuf,
     source: PathBuf,
     files: BTreeMap<String, String>,
@@ -255,7 +256,17 @@ pub fn freeze(
         &attempt.join("input/admission.json"),
         &serde_json::to_vec_pretty(&admission).unwrap(),
     )?;
+    let paths = files
+        .keys()
+        .map(|name| source.join(name))
+        .chain(inputs.keys().map(|name| attempt.join(name)))
+        .collect::<Vec<_>>();
+    let mut locks = crate::file_locks::ancestors(&paths)?;
+    for path in paths {
+        locks.push(crate::file_locks::read_file(&path)?);
+    }
     let result = FrozenInput {
+        _locks: locks,
         attempt,
         source,
         files,

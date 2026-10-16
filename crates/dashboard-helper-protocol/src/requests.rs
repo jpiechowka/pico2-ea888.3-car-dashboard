@@ -153,3 +153,32 @@ impl Wire for ProjectBuildRequest {
         Ok(())
     }
 }
+
+pub const MAX_UF2_BYTES: usize = 8160 * 512;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactSummary {
+    pub artifact_id: ArtifactId,
+    pub session_id: SessionId,
+    pub editor_revision: u64,
+    pub project_sha256: Sha256,
+    pub config_sha256: Sha256,
+    pub startup_profile_sha256: Sha256,
+    pub startup_asset_sha256: Sha256,
+    pub source_sha256: Sha256,
+    pub elf_sha256: Sha256,
+    pub uf2_sha256: Sha256,
+    pub converter_sha256: Sha256,
+    pub options: NormalizedBuildOptions,
+    pub uf2_bytes: u32,
+    pub hardware_qualified: bool,
+    pub flash_ready: bool,
+}
+impl Wire for ArtifactSummary {
+    const MAX_BYTES: usize = 16384;
+    fn validate(&self)->Result<(),Error>{
+        self.options.validate()?;
+        if self.hardware_qualified||self.flash_ready||self.uf2_bytes==0||self.uf2_bytes as usize>MAX_UF2_BYTES||self.uf2_bytes%512!=0{return Err(Error::Schema)}
+        serialized_bound(self,Self::MAX_BYTES)
+    }
+}

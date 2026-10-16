@@ -18,6 +18,7 @@ struct Inner {
     cached: Value,
     devices: DeviceScanReport,
     project: Option<crate::build_input::UploadedProject>,
+    artifacts: Vec<crate::artifacts::Artifact>,
     worker: Option<tokio::task::JoinHandle<()>>,
     stopping: bool,
 }
@@ -44,6 +45,7 @@ impl State {
                 devices: crate::devices::empty(session, "Device scan not run"),
                 cached: json!({"schema_version":1,"ready":false,"checks":[],"reason":"Check not run"}),
                 project: None,
+                artifacts: Vec::new(),
                 worker: None,
                 stopping: false,
             }),
@@ -386,10 +388,11 @@ async fn start_build(
                 .jobs
                 .transition(&id, stage, state, reason)
         };
-        let execution = (|| -> Result<(), String> {
+        let execution = (|| -> Result<crate::artifacts::Artifact, String> {
             if !crate::host::host().0 {
                 return Err("Unsupported native host".into());
             }
+            let converter = crate::artifacts::converter(&worker_state.repo)?;
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Snapshot);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
@@ -422,11 +425,7 @@ async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Validation);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            Err(
-                "Capture completed. Native artifact admission and UF2 equality are not implemented; no flash-ready \
-                 artifact was issued"
-                    .into(),
-            )
+            crate::artifacts::admit(&frozen, &input, worker_state.session.clone(), converter)
         })();
         let mut inner = worker_state.inner.lock().unwrap();
         if crate::process::cleanup_failed() {
@@ -434,26 +433,47 @@ async fn start_build(
             inner.stopping = true;
             return;
         }
-        let cancelled = crate::process::cancelled();
-        let reason = execution.err().unwrap_or_else(|| "Artifact not admitted".into());
-        crate::terminal::event(true, id.as_str(), &reason);
-        let _ = inner.jobs.transition(
+        let cancelled = crate::process::cancelled()
+            || inner
+                .jobs
+                .poll(&id, PollRequest { after: 0, limit: 1 })
+                .is_ok_and(|b| b.summary.cancel_requested);
+        let mut admitted = None;
+        let mut artifact_id = None;
+        let (state, cause, reason) = match execution {
+            Ok(artifact) if !cancelled => {
+                artifact_id = Some(artifact.summary.artifact_id.clone());
+                admitted = Some(artifact);
+                (StageState::Succeeded, TerminalCause::Succeeded, None)
+            }
+            Ok(_) => {
+                (
+                    StageState::Cancelled,
+                    TerminalCause::Cancelled,
+                    Some(Text::new("Cancelled before artifact publication").unwrap()),
+                )
+            }
+            Err(reason) => {
+                crate::terminal::event(true, id.as_str(), &reason);
+                (
+                    if cancelled {
+                        StageState::Cancelled
+                    } else {
+                        StageState::Failed
+                    },
+                    if cancelled {
+                        TerminalCause::Cancelled
+                    } else {
+                        TerminalCause::Failed
+                    },
+                    Some(Text::new(reason.chars().take(120).collect::<String>()).unwrap()),
+                )
+            }
+        };
+        let transition_ok = inner.jobs.transition(&id, stage, state, reason).is_ok();
+        let finished = inner.jobs.finish(
             &id,
-            stage,
-            if cancelled {
-                StageState::Cancelled
-            } else {
-                StageState::Failed
-            },
-            Some(Text::new(reason.chars().take(120).collect::<String>()).unwrap()),
-        );
-        let _ = inner.jobs.finish(
-            &id,
-            if cancelled {
-                TerminalCause::Cancelled
-            } else {
-                TerminalCause::Failed
-            },
+            cause,
             OutputClosure {
                 workers_joined: true,
                 tree_empty: true,
@@ -461,9 +481,17 @@ async fn start_build(
                 discarded_bytes: 0,
                 discarded_chunks: 0,
             },
-            None,
+            artifact_id,
             None,
         );
+        if transition_ok && finished.is_ok() {
+            if let Some(artifact) = admitted {
+                if inner.artifacts.len() == 2 {
+                    inner.artifacts.remove(0);
+                }
+                inner.artifacts.push(artifact);
+            }
+        }
     }));
     Ok(result)
 }
@@ -499,8 +527,15 @@ async fn dispatch(
             })
         });
         let query_allowed = request.uri().query().is_none() || {
-            let parts:Vec<_>=path.split('/').collect();
-            requested==Some("GET") && parts.len()==6 && parts[1]=="api" && parts[2]=="v1" && parts[3]=="jobs" && parts[5]=="events" && JobId::new(parts[4]).is_ok() && poll_query(request.uri().query()).is_ok()
+            let parts: Vec<_> = path.split('/').collect();
+            requested == Some("GET")
+                && parts.len() == 6
+                && parts[1] == "api"
+                && parts[2] == "v1"
+                && parts[3] == "jobs"
+                && parts[5] == "events"
+                && JobId::new(parts[4]).is_ok()
+                && poll_query(request.uri().query()).is_ok()
         };
         if !matches!(requested, Some("GET" | "POST")) || !allowed_headers || !query_allowed {
             return error(StatusCode::FORBIDDEN, "Forbidden", origin);
@@ -594,7 +629,7 @@ async fn dispatch(
         ("GET", "/api/v1/session") => {
             response(
                 StatusCode::OK,
-                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Checks, device discovery and project capture available; artifact admission and flashing unavailable"}),
+                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Checks, device discovery and validated artifact builds available; device flashing unavailable"}),
                 origin,
             )
         }
@@ -614,6 +649,23 @@ async fn dispatch(
                 Err(e) => store_error(e, origin),
             }
         }
+        ("GET", "/api/v1/artifacts") => {
+            response(
+                StatusCode::OK,
+                serde_json::to_value(
+                    state
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .artifacts
+                        .iter()
+                        .map(|a| &a.summary)
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap(),
+                origin,
+            )
+        }
         ("GET", "/api/v1/jobs") => {
             response(
                 StatusCode::OK,
@@ -629,6 +681,46 @@ async fn dispatch(
         }
         _ => {
             let parts: Vec<_> = path.split('/').collect();
+            if method == Method::GET
+                && matches!(parts.len(), 5 | 6)
+                && parts[1] == "api"
+                && parts[2] == "v1"
+                && parts[3] == "artifacts"
+            {
+                let Ok(id) = ArtifactId::new(parts[4]) else {
+                    return store_error(Error::Schema, origin);
+                };
+                let artifact = state
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .artifacts
+                    .iter()
+                    .find(|a| a.summary.artifact_id == id)
+                    .cloned();
+                let Some(artifact) = artifact else {
+                    return store_error(Error::NotFoundOrUnavailable, origin);
+                };
+                if parts.len() == 5 {
+                    return response(StatusCode::OK, serde_json::to_value(artifact.summary).unwrap(), origin);
+                }
+                if parts[5] == "uf2" {
+                    let mut r = response(StatusCode::OK, json!(null), origin);
+                    r.headers_mut()
+                        .insert("content-type", HeaderValue::from_static("application/octet-stream"));
+                    r.headers_mut().insert(
+                        "content-disposition",
+                        HeaderValue::from_static("attachment; filename=dashboard.uf2"),
+                    );
+                    r.headers_mut().insert(
+                        "content-length",
+                        HeaderValue::from_str(&artifact.uf2.len().to_string()).unwrap(),
+                    );
+                    *r.body_mut() = Body::from(axum::body::Bytes::from_owner(artifact.uf2));
+                    return r;
+                }
+                return store_error(Error::NotFoundOrUnavailable, origin);
+            }
             if parts.len() != 6 || parts[1] != "api" || parts[2] != "v1" || parts[3] != "jobs" {
                 return error(StatusCode::NOT_FOUND, "NotFoundOrUnavailable", origin);
             }
@@ -847,20 +939,102 @@ mod tests {
     }
     #[tokio::test]
     async fn browser_poll_preflight_and_typed_build_route() {
-        let state=State::new(std::env::temp_dir().join("studio-no-build-repository")).unwrap();
-        for (query,status) in [("after=0&limit=128",StatusCode::NO_CONTENT),("after=0&limit=129",StatusCode::FORBIDDEN)] {
-            let request=Request::builder().uri(format!("/api/v1/jobs/{}/events?{query}","1".repeat(32))).method("OPTIONS").header("host",AUTHORITY).header("origin",ORIGINS[0]).header("access-control-request-method","GET").header("access-control-request-headers","x-studio-capability").body(Body::empty()).unwrap();
-            assert_eq!(dispatch(state.clone(),request).await.status(),status);
+        let state = State::new(std::env::temp_dir().join("studio-no-build-repository")).unwrap();
+        for (query, status) in [
+            ("after=0&limit=128", StatusCode::NO_CONTENT),
+            ("after=0&limit=129", StatusCode::FORBIDDEN),
+        ] {
+            let request = Request::builder()
+                .uri(format!("/api/v1/jobs/{}/events?{query}", "1".repeat(32)))
+                .method("OPTIONS")
+                .header("host", AUTHORITY)
+                .header("origin", ORIGINS[0])
+                .header("access-control-request-method", "GET")
+                .header("access-control-request-headers", "x-studio-capability")
+                .body(Body::empty())
+                .unwrap();
+            assert_eq!(dispatch(state.clone(), request).await.status(), status);
         }
-        let config=dashboard_config::validate(dashboard_config::default_config()).unwrap();
-        let bytes=dashboard_config_tools::project::Project::new(&config,Default::default(),None).unwrap().encode(dashboard_config_tools::project::ExportMode::ConvertedOnly).unwrap();
-        let upload=crate::build_input::UploadedProject::admit(state.session.clone(),bytes).unwrap();
-        let body=ProjectBuildRequest{editor_revision:1,project_id:upload.response.project_id.clone(),project_sha256:upload.response.project_sha256.clone(),options:BuildOptions::default(),retry_of:None};
-        state.inner.lock().unwrap().project=Some(upload);
-        let request=Request::builder().uri("/api/v1/builds").method("POST").header("host",AUTHORITY).header("origin",ORIGINS[0]).header("x-studio-capability",&state.capability).header("content-type","application/json").body(Body::from(encode(&body).unwrap())).unwrap();
-        assert_eq!(dispatch(state.clone(),request).await.status(),StatusCode::ACCEPTED);
-        let worker=state.inner.lock().unwrap().worker.take().unwrap();worker.await.unwrap();
+        let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+        let bytes = dashboard_config_tools::project::Project::new(&config, Default::default(), None)
+            .unwrap()
+            .encode(dashboard_config_tools::project::ExportMode::ConvertedOnly)
+            .unwrap();
+        let upload = crate::build_input::UploadedProject::admit(state.session.clone(), bytes).unwrap();
+        let body = ProjectBuildRequest {
+            editor_revision: 1,
+            project_id: upload.response.project_id.clone(),
+            project_sha256: upload.response.project_sha256.clone(),
+            options: BuildOptions::default(),
+            retry_of: None,
+        };
+        state.inner.lock().unwrap().project = Some(upload);
+        let request = Request::builder()
+            .uri("/api/v1/builds")
+            .method("POST")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .header("content-type", "application/json")
+            .body(Body::from(encode(&body).unwrap()))
+            .unwrap();
+        assert_eq!(dispatch(state.clone(), request).await.status(), StatusCode::ACCEPTED);
+        let worker = state.inner.lock().unwrap().worker.take().unwrap();
+        worker.await.unwrap();
         assert!(state.inner.lock().unwrap().jobs.summaries()[0].events_closed);
+    }
+    #[tokio::test]
+    async fn artifact_download_requires_capability_and_uses_retained_bytes() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let hash = Sha256::new("1".repeat(64)).unwrap();
+        let id = ArtifactId::new("2".repeat(64)).unwrap();
+        let metadata = ArtifactSummary {
+            artifact_id: id.clone(),
+            session_id: state.session.clone(),
+            editor_revision: 1,
+            project_sha256: hash.clone(),
+            config_sha256: hash.clone(),
+            startup_profile_sha256: hash.clone(),
+            startup_asset_sha256: hash.clone(),
+            source_sha256: hash.clone(),
+            elf_sha256: hash.clone(),
+            uf2_sha256: hash.clone(),
+            converter_sha256: hash,
+            options: normalize(&BuildOptions::default()).unwrap(),
+            uf2_bytes: 512,
+            hardware_qualified: false,
+            flash_ready: false,
+        };
+        state.inner.lock().unwrap().artifacts.push(crate::artifacts::Artifact {
+            summary: metadata,
+            uf2: vec![7; 512].into(),
+        });
+        for authorized in [false, true] {
+            let mut builder = Request::builder()
+                .uri(format!("/api/v1/artifacts/{}/uf2", id.as_str()))
+                .header("host", AUTHORITY)
+                .header("origin", ORIGINS[0]);
+            if authorized {
+                builder = builder.header("x-studio-capability", &state.capability);
+            }
+            let result = dispatch(state.clone(), builder.body(Body::empty()).unwrap()).await;
+            assert_eq!(
+                result.status(),
+                if authorized {
+                    StatusCode::OK
+                } else {
+                    StatusCode::FORBIDDEN
+                }
+            );
+            if authorized {
+                assert_eq!(result.headers()["content-length"], "512");
+                assert_eq!(result.headers()["cache-control"], "no-store");
+                assert_eq!(
+                    bounded_body(result.into_body(), MAX_UF2_BYTES).await.unwrap(),
+                    vec![7; 512]
+                );
+            }
+        }
     }
     #[tokio::test]
     async fn rejects_foreign_origin_and_missing_capability() {

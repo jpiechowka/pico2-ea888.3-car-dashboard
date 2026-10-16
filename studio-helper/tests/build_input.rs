@@ -88,12 +88,15 @@ fn snapshot_is_independent_and_detects_input_mutation() {
     let frozen = freeze(&repo, &AcceptedInput::from_request(&request()).unwrap()).unwrap();
     fs::write(repo.join("crates/example/lib.rs"), b"changed live source").unwrap();
     assert!(frozen.verify().is_ok());
-    fs::write(
-        frozen.attempt_root().join("input/dashboard.eav"),
-        b"changed frozen input",
-    )
-    .unwrap();
-    assert!(frozen.verify().is_err());
+    assert!(
+        fs::write(
+            frozen.attempt_root().join("input/dashboard.eav"),
+            b"changed frozen input"
+        )
+        .is_err()
+    );
+    assert!(frozen.verify().is_ok());
+    drop(frozen);
     // Fixture path was created above under the OS temporary directory.
     assert!(repo.starts_with(std::env::temp_dir()));
     fs::remove_dir_all(repo).unwrap();
