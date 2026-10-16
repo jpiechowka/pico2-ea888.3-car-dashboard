@@ -56,6 +56,8 @@ impl Startup {
 
     pub const fn active(&self) -> bool { !matches!(self.phase, Phase::Dashboard) }
 
+    pub const fn needs_first_frame(&self) -> bool { self.active() && self.visible.is_none() && self.first.is_none() }
+
     pub const fn exit(&self) -> Option<Exit> { self.exit }
 
     pub const fn ended_at(&self) -> Option<u64> { if self.active() { None } else { Some(self.last) } }

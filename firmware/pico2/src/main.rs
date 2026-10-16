@@ -321,6 +321,22 @@ async fn dashboard_task(
     )))
     .expect("build-validated startup profile");
     let mut startup = dashboard_pico2::startup::Startup::new(startup_profile, Instant::now().as_millis());
+    let mut startup_validation = if startup_profile.theme == dashboard_pico2::startup::StartupTheme::Custom {
+        dashboard_pico2::view_config::startup_asset::Validator::new(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/startup_asset.bin"
+        )))
+        .ok()
+    } else {
+        None
+    };
+    let mut startup_asset = None;
+    let startup_validation_started = Instant::now();
+    if startup_profile.theme == dashboard_pico2::startup::StartupTheme::Custom && startup_validation.is_none() {
+        startup.finish_at(dashboard_pico2::startup::Exit::Fault, Instant::now().as_millis());
+        log_fault!("Startup asset header invalid");
+    }
+
     log_info!("Buttons initialized");
 
     let mut input_tracker = dashboard_pico2::input_trace::InputTracker::new();
@@ -553,6 +569,32 @@ async fn dashboard_task(
         }
 
         let startup_before = startup.active();
+        if startup.active() && startup_validation.is_some() {
+            let slice_start = Instant::now();
+            while slice_start.elapsed().as_millis() < 3 {
+                let checked = startup_validation.as_mut().expect("active validator").step();
+                match checked {
+                    Ok(true) => {
+                        startup_asset = startup_validation.as_ref().and_then(|v| v.finish().ok());
+                        startup_validation = None;
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(_) => {
+                        startup_validation = None;
+                        startup.finish_at(dashboard_pico2::startup::Exit::Fault, Instant::now().as_millis());
+                        log_fault!("Startup asset corrupt");
+                        break;
+                    }
+                }
+                embassy_futures::yield_now().await;
+            }
+            if startup_validation.is_some() && startup_validation_started.elapsed().as_millis() >= 250 {
+                startup_validation = None;
+                startup.finish_at(dashboard_pico2::startup::Exit::Fault, Instant::now().as_millis());
+                log_fault!("Startup asset validation not ready");
+            }
+        }
         let startup_scene = if startup.active() {
             PresentedScene::capture(
                 &dashboard_configuration.config,
@@ -619,25 +661,61 @@ async fn dashboard_task(
         if startup.active() {
             presentation.reset();
             dashboard_cache.invalidate(render_idx);
-            dashboard_pico2::startup::draw(
-                &mut display,
-                startup.phase(),
-                startup_profile,
-                startup.elapsed(now_ms),
-                dashboard_configuration.config.config().reduced_motion,
-                dashboard_pico2::startup::StartupFacts {
-                    vehicle: vehicle_status,
-                    config_ok: dashboard_configuration.fault.is_none(),
-                    settings_loaded: has_saved_settings,
-                    configured_sources: dashboard_configuration
-                        .config
-                        .config()
-                        .sources
-                        .iter()
-                        .filter(|s| s.definition != dashboard_pico2::view_config::DefinitionId::Disabled)
-                        .count() as u8,
-                },
-            );
+            if startup.phase() == dashboard_pico2::startup::Phase::Splash
+                && startup_profile.theme == dashboard_pico2::startup::StartupTheme::Custom
+            {
+                if let Some(asset) = startup_asset {
+                    let mut rows = asset
+                        .frame_at(
+                            startup.elapsed(now_ms),
+                            startup_profile.loop_animation,
+                            dashboard_configuration.config.config().reduced_motion,
+                        )
+                        .rows();
+                    let mut valid = true;
+                    for row in 0..240 {
+                        if rows
+                            .next(display.row_bytes_mut(row).expect("bounded startup row"))
+                            .is_err()
+                        {
+                            valid = false;
+                            break;
+                        }
+                        if row % 8 == 7 {
+                            render_work.checkpoint().await;
+                        }
+                    }
+                    if !valid {
+                        startup.finish_at(dashboard_pico2::startup::Exit::Fault, Instant::now().as_millis());
+                        log_fault!("Startup frame invalid");
+                        gestures.suppress_held();
+                        lifecycle.discard(token).expect("invalid unsubmitted startup frame");
+                        continue;
+                    }
+                } else {
+                    display.clear(BLACK).ok();
+                }
+            } else {
+                dashboard_pico2::startup::draw(
+                    &mut display,
+                    startup.phase(),
+                    startup_profile,
+                    startup.elapsed(now_ms),
+                    dashboard_configuration.config.config().reduced_motion,
+                    dashboard_pico2::startup::StartupFacts {
+                        vehicle: vehicle_status,
+                        config_ok: dashboard_configuration.fault.is_none(),
+                        settings_loaded: has_saved_settings,
+                        configured_sources: dashboard_configuration
+                            .config
+                            .config()
+                            .sources
+                            .iter()
+                            .filter(|s| s.definition != dashboard_pico2::view_config::DefinitionId::Disabled)
+                            .count() as u8,
+                    },
+                );
+            }
             render_work.checkpoint().await;
         } else {
             match session.page() {
@@ -817,6 +895,13 @@ async fn dashboard_task(
             // Identical pixels with a new episode still need completed ownership.
             plan = DamagePlan::full();
         }
+        if startup.needs_first_frame()
+            && (startup.phase() != dashboard_pico2::startup::Phase::Splash
+                || startup_profile.theme != dashboard_pico2::startup::StartupTheme::Custom
+                || startup_asset.is_some())
+        {
+            plan = DamagePlan::full();
+        }
         let idle = plan.is_empty();
         if idle {
             input_tracker.no_damage();
@@ -864,7 +949,12 @@ async fn dashboard_task(
                 led_presentation.submit(token, presented_scene),
                 "pending indicator submission"
             );
-            startup.submitted(token);
+            if startup.phase() != dashboard_pico2::startup::Phase::Splash
+                || startup_profile.theme != dashboard_pico2::startup::StartupTheme::Custom
+                || startup_asset.is_some()
+            {
+                startup.submitted(token);
+            }
             session.backlight_mut().frame_submitted(token);
             input_tracker.submitted();
             assert!(FLUSH_REQUESTS.try_send(request).is_ok(), "unconsumed frame request");

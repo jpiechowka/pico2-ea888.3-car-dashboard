@@ -26,6 +26,7 @@ pub struct Asset<'a> {
 pub struct Frame<'a> {
     payload: &'a [u8],
     encoding: u8,
+    crc: u32,
 }
 fn u16_at(
     b: &[u8],
@@ -132,6 +133,7 @@ impl<'a> Asset<'a> {
         Some(Frame {
             payload: &self.bytes[offset..offset + len],
             encoding: e[16],
+            crc: u32_at(e, 12),
         })
     }
 
@@ -172,6 +174,7 @@ impl<'a> Frame<'a> {
             frame: self,
             offset: 0,
             row: 0,
+            crc: !0,
         }
     }
 }
@@ -180,6 +183,7 @@ pub struct Rows<'a> {
     frame: Frame<'a>,
     offset: usize,
     row: u16,
+    crc: u32,
 }
 impl Rows<'_> {
     pub fn row(&self) -> usize { usize::from(self.row) }
@@ -223,7 +227,7 @@ impl Rows<'_> {
                         .payload
                         .get(self.offset..self.offset + 2)
                         .ok_or(AssetError::Pixels)?;
-                    for slot in output[x * 2..(x + count) * 2].chunks_exact_mut(2) {
+                    for slot in output[x * 2..(x + count) * 2].as_chunks_mut::<2>().0 {
                         slot.copy_from_slice(pixel);
                     }
                     self.offset += 2;
@@ -239,9 +243,13 @@ impl Rows<'_> {
                 x += count;
             }
         }
+        self.crc = crc_update(self.crc, &self.frame.payload[start..self.offset]);
         self.row += 1;
         if self.row as usize == HEIGHT && self.offset != self.frame.payload.len() {
             return Err(AssetError::Pixels);
+        }
+        if self.row as usize == HEIGHT && !self.crc != self.frame.crc {
+            return Err(AssetError::Crc);
         }
         Ok(true)
     }

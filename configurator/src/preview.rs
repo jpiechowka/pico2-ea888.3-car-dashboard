@@ -68,6 +68,7 @@ pub struct PreviewOptions {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreviewError {
+    StartupAsset,
     UnknownView(u8),
     InvalidSample(Channel),
     TimeOverflow,
@@ -138,6 +139,18 @@ impl Preview {
         elapsed: u64,
         reduced_motion: bool,
     ) -> Result<&[u8], PreviewError> {
+        self.render_startup_asset(config, view, profile, elapsed, reduced_motion, None)
+    }
+
+    pub fn render_startup_asset(
+        &mut self,
+        config: &ValidatedConfig,
+        view: u8,
+        profile: dashboard_core::startup::StartupProfile,
+        elapsed: u64,
+        reduced_motion: bool,
+        asset: Option<&[u8]>,
+    ) -> Result<&[u8], PreviewError> {
         if self.pending.is_some() {
             return Err(PreviewError::PendingFrame);
         }
@@ -151,6 +164,25 @@ impl Preview {
                     ..PreviewOptions::default()
                 },
             );
+        }
+        if phase == dashboard_core::startup::Phase::Splash
+            && profile.theme == dashboard_core::startup::StartupTheme::Custom
+        {
+            let asset = asset
+                .and_then(|bytes| dashboard_config::startup_asset::Asset::parse(bytes).ok())
+                .ok_or(PreviewError::StartupAsset)?;
+            dashboard_core::startup::draw_custom(
+                asset,
+                time,
+                profile.loop_animation,
+                reduced_motion,
+                &mut self.framebuffer,
+            )
+            .map_err(|_| PreviewError::StartupAsset)?;
+            rgb565_to_rgba(&self.framebuffer[..], &mut self.rgba).expect("fixed buffer dimensions");
+            self.configuration = None;
+            self.presentation.reset();
+            return Ok(&self.rgba);
         }
         dashboard_core::startup::draw(
             &mut St7789Renderer::new(&mut self.framebuffer),

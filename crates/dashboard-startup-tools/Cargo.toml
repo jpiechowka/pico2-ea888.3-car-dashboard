@@ -1,0 +1,10 @@
+[package]
+name = "dashboard-startup-tools"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dashboard-config = { path = "../dashboard-config" }
+gif = "=0.14.2"
+png = "=0.18.1"
+serde = { version = "=1.0.229", features = ["derive"] }

@@ -15,6 +15,7 @@ mod resources;
 mod simulation;
 mod stage;
 mod startup;
+mod startup_artwork;
 mod widget_menu;
 mod workspaces;
 
