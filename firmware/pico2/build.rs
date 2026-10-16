@@ -3,7 +3,6 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 
 fn main() {
-    embed_startup();
     use dashboard_config_tools::clocks::{CUSTOM_KEYS, generate, selection};
     for key in CUSTOM_KEYS {
         println!("cargo:rerun-if-env-changed={key}");
@@ -41,6 +40,8 @@ fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let config = dashboard_config_tools::prepare(std::env::var_os("DASHBOARD_CONFIG").as_deref(), &manifest)
         .unwrap_or_else(|error| panic!("Cannot embed dashboard configuration: {error}"));
+    let configuration = dashboard_config::decode(config.bytes()).expect("prepared current configuration");
+    embed_startup(configuration.config().orientation);
     for path in [config.source(), config.canonical_source()].into_iter().flatten() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -82,7 +83,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-fn embed_startup() {
+fn embed_startup(default_orientation: dashboard_config::Orientation) {
     use dashboard_config::startup::StartupProfile;
     let profile = startup_input("DASHBOARD_STARTUP_PROFILE", 16).map_or(StartupProfile::DEFAULT, |bytes| {
         StartupProfile::decode(&bytes).expect("invalid .easp startup profile")
@@ -92,16 +93,15 @@ fn embed_startup() {
     let asset = startup_input(
         "DASHBOARD_STARTUP_ASSET",
         dashboard_config::startup_asset::MAX_ASSET_BYTES as u64,
-    )
-    .map_or_else(Vec::new, |bytes| {
-        dashboard_config::startup_asset::Asset::parse(&bytes).expect("invalid .easa startup asset");
-        bytes
-    });
-    assert_eq!(
-        profile.theme == dashboard_config::startup::StartupTheme::Custom,
-        !asset.is_empty(),
-        "Custom requires an asset; procedural themes must not embed unused artwork"
     );
+    let geometry = asset.as_deref().map(|bytes| {
+        dashboard_config::startup_asset::Asset::parse(bytes)
+            .expect("invalid .easa startup asset")
+            .geometry()
+    });
+    dashboard_config_tools::project::validate_startup_geometry(default_orientation, profile, geometry)
+        .expect("startup theme and artwork must match the effective Splash geometry");
+    let asset = asset.unwrap_or_default();
     std::fs::write(out.join("startup_asset.bin"), &asset).expect("write startup asset");
     println!(
         "cargo:rustc-env=DASHBOARD_STARTUP_ASSET_SHA256={}",

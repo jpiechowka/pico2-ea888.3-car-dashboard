@@ -514,13 +514,20 @@ fn check_project(
     profile: StartupProfile,
     artwork: Option<&Artwork>,
 ) -> Result<Geometry, ProjectError> {
+    validate_startup_geometry(config.config().orientation, profile, artwork.map(Artwork::geometry))
+}
+
+/// Shared admission for portable projects and direct Cargo startup inputs.
+pub fn validate_startup_geometry(
+    default: dashboard_config::Orientation,
+    profile: StartupProfile,
+    artwork: Option<Geometry>,
+) -> Result<Geometry, ProjectError> {
     if !profile.valid() || (profile.theme == StartupTheme::Custom) != artwork.is_some() {
         return Err(ProjectError::Profile);
     }
-    let geometry = profile
-        .effective_splash_orientation(config.config().orientation)
-        .geometry();
-    if artwork.is_some_and(|art| art.geometry() != geometry) {
+    let geometry = profile.effective_splash_orientation(default).geometry();
+    if artwork.is_some_and(|shape| shape != geometry) {
         return Err(ProjectError::Orientation);
     }
     Ok(geometry)

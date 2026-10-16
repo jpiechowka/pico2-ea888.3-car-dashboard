@@ -316,6 +316,92 @@ fn resealed_mixed_versions_mismatch_and_noncanonical_recipes_are_rejected() {
     }
 }
 
+mod firmware_build {
+    include!("../../../firmware/pico2/build.rs");
+    pub fn run() { main(); }
+}
+
+#[test]
+fn firmware_build_child() {
+    if std::env::var_os("EA888_TEST_STARTUP_BUILD").is_some() {
+        firmware_build::run();
+    }
+}
+
+#[test]
+fn direct_cargo_build_uses_prepared_default_and_explicit_splash_override() {
+    use dashboard_config::{Geometry, Orientation};
+    let root = std::env::temp_dir().join(format!("ea888-startup-admission-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let mut case = 0;
+    for default in Orientation::ALL {
+        let mut config = default_config();
+        config.orientation = default;
+        for (index, widget) in config.widgets.iter_mut().enumerate() {
+            widget.placement.column = index as u8 % default.geometry().columns();
+            widget.placement.row = index as u8 / default.geometry().columns();
+        }
+        let config = dashboard_config_tools::compile(&validate(config).unwrap()).unwrap();
+        for override_ in [None].into_iter().chain(Orientation::ALL.map(Some)) {
+            let effective = override_.unwrap_or(default).geometry();
+            let profile = StartupProfile {
+                theme: StartupTheme::Custom,
+                splash_orientation: override_,
+                ..Default::default()
+            };
+            for geometry in Geometry::ALL {
+                let dir = root.join(case.to_string());
+                case += 1;
+                std::fs::create_dir(&dir).unwrap();
+                std::fs::write(dir.join("config.eav"), &config).unwrap();
+                std::fs::write(dir.join("profile.easp"), profile.encode().unwrap()).unwrap();
+                let art = artwork_in(geometry);
+                std::fs::write(dir.join("asset.easa"), art.converted()).unwrap();
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                for (key, _) in std::env::vars_os() {
+                    if key
+                        .to_str()
+                        .is_some_and(|name| name.starts_with("CARGO_FEATURE_") || name.starts_with("DASHBOARD_"))
+                    {
+                        command.env_remove(key);
+                    }
+                }
+                let output = command
+                    .args(["--exact", "firmware_build_child", "--nocapture"])
+                    .env("EA888_TEST_STARTUP_BUILD", "1")
+                    .env("CARGO_MANIFEST_DIR", env!("CARGO_MANIFEST_DIR"))
+                    .env("OUT_DIR", &dir)
+                    .env("OPT_LEVEL", "3")
+                    .env("DASHBOARD_CONFIG", dir.join("config.eav"))
+                    .env("DASHBOARD_STARTUP_PROFILE", dir.join("profile.easp"))
+                    .env("DASHBOARD_STARTUP_ASSET", dir.join("asset.easa"))
+                    .output()
+                    .unwrap();
+                let trace = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(
+                    output.status.success(),
+                    geometry == effective,
+                    "{default:?}/{override_:?}/{geometry:?}: {trace}"
+                );
+                if geometry == effective {
+                    assert_eq!(std::fs::read(dir.join("startup_asset.bin")).unwrap(), art.converted());
+                    assert_eq!(std::fs::read(dir.join("dashboard.eav")).unwrap(), config);
+                } else {
+                    assert!(trace.contains("Orientation"), "unexpected failure: {trace}");
+                    assert!(!dir.join("startup_asset.bin").exists());
+                    assert!(!dir.join("startup_profile.bin").exists());
+                    assert!(!dir.join("dashboard.eav").exists());
+                }
+            }
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn source_sheet_timing_is_distinct_from_converted_frame_minimum() {
     let art = artwork();
