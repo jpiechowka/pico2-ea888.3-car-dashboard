@@ -206,3 +206,65 @@ to default after unsetting the selector. The file helper and CLI tests cover
 bounded reads, same-byte snapshot copying, fingerprints and failed-import output
 preservation. Host owner tests cover tighter freshness and dwell gaps, configured
 poll/retry intervals, transport epochs, maintenance, reset and unqualified fallback.
+## Native prerequisite checks and explicit setup
+
+Run from the repository root in PowerShell 7:
+
+```powershell
+.\configurator\Studio.ps1 -Check
+.\configurator\Studio.ps1 -Check -Json
+.\configurator\Studio.ps1 -Setup
+```
+
+`-Check` is read-only: it never compiles the checker, installs or downloads tools,
+starts a build, or enumerates USB. If the checker is absent it exits 4 with an
+explicit setup instruction. `-Setup` explicitly installs the repository's dated
+Rust nightly, ARM/Wasm targets and LLVM component, installs Trunk 0.21.14 and
+wasm-bindgen CLI 0.2.129 into `target/configurator-tools/bin`, compiles the checker
+into `target/studio-helper/debug`, and fetches the editor's locked dependencies.
+Setup may download and compile. It ends with Check; exit 4 means a listed manual
+prerequisite remains. Python, Visual Studio Build Tools/Windows SDK, Binaryen 133,
+and official USB-enabled picotool 2.3.1 are separate manual prerequisites. Put
+`wasm-opt.exe` in `target/configurator-tools/bin`; this slice still checks the
+legacy `firmware/tools/picotool.exe` location and does not replace its binary.
+
+Existing `Studio.ps1` (build) and `Studio.ps1 -Serve -Port 8080` remain the static
+editor workflow. They now use offline mode and fail with setup instructions
+instead of silently installing a compiler target or Trunk. Setup preserves the
+repository pin; it does not select a newer compiler. The launcher scopes and
+restores its PATH, NO_COLOR and Rust environment changes.
+
+The standalone command is:
+
+```powershell
+.\target\studio-helper\debug\studio-helper.exe check --repo "$PWD" --json
+```
+
+The JSON schema is version 1 with `selected_toolchain`, `checks`, `ready`, and
+`readiness_scope: installed_tool_versions_only`. Each check includes its stage,
+status, evidence, whether it is required, and an actionable setup instruction.
+Exit codes: 0 installed prerequisites pass; 2 invalid CLI usage; 4 missing,
+incompatible or failed requirements; 70 process cleanup failed (no more probes
+are started). Actual compiler/cargo versions and the selected sysroot's LLVM
+executable are reported. LLVM registered ARM/Thumb targets are checked; the exact
+Cortex-M33/FPU fixture remains the existing build validation adapter's check.
+MSVC registration and SDK libraries are detected, while actual host linking,
+Wasm pipeline validation and device access are explicitly `not_checked`.
+`ready` therefore does not admit firmware, prove USB access, or enable flashing.
+The helper's HTTP/build/flash adapters are not delivered by this command.
+
+Native checks require Windows 10/11 x64. Each fixed probe is assigned to a
+non-inheritable Windows Job Object at process creation, with no breakaway flag,
+a 15-second deadline and 64 KiB raw output limit per stream. Both pipes are
+polled and drained through the existing log sanitizer; errors terminate the
+owned tree, wait for zero active processes (up to five seconds), and reap the
+child. These bounds apply to the check probes, not the legacy interactive
+PowerShell Setup or static Trunk build/serve processes. The runner does not
+claim an explicit Windows HANDLE_LIST policy for std's inherited standard IO.
+No device operation is run by any check.
+
+Using an already built static editor needs no local compiler or connected Pico.
+PC CPU/RAM/disk minimums have not been qualified. Firmware validation is separate
+from browser editing and can be part of a firmware build: a previous workload
+sampled approximately 16.5 GB of private memory before optimization work. That
+observation is not a minimum RAM requirement or a browser memory measurement.

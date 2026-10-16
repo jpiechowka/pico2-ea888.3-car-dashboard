@@ -1,5 +1,1 @@
-//! Executable shell only. Native actions arrive in later reviewed tasks.
-fn main() {
-    eprintln!("Native Studio operations are not available in this build.");
-    std::process::exit(2);
-}
+fn main() { std::process::exit(studio_helper::prerequisites::cli(std::env::args_os().skip(1))); }

@@ -9,3 +9,5 @@ description = "Native Studio helper pure job and framing core"
 [dependencies]
 dashboard-helper-protocol = { path = "../crates/dashboard-helper-protocol" }
 serde_json = "=1.0.154"
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_SystemInformation", "Wdk_System_SystemServices"] }
