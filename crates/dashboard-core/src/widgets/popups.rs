@@ -155,14 +155,20 @@ pub fn draw_view_popup<D: DrawTarget<Color = Rgb565>>(
 ) {
     let size = display.bounding_box().size;
     let offset = Point::new(size.width as i32 / 2 - CENTER_X, size.height as i32 / 2 - CENTER_Y);
-    Rectangle::new(Point::new(CENTER_X + offset.x - 108, CENTER_Y + offset.y - 28), Size::new(216, 56))
-        .into_styled(WHITE_FILL)
-        .draw(display)
-        .ok();
-    Rectangle::new(Point::new(CENTER_X + offset.x - 105, CENTER_Y + offset.y - 25), Size::new(210, 50))
-        .into_styled(RED_FILL)
-        .draw(display)
-        .ok();
+    Rectangle::new(
+        Point::new(CENTER_X + offset.x - 108, CENTER_Y + offset.y - 28),
+        Size::new(216, 56),
+    )
+    .into_styled(WHITE_FILL)
+    .draw(display)
+    .ok();
+    Rectangle::new(
+        Point::new(CENTER_X + offset.x - 105, CENTER_Y + offset.y - 25),
+        Size::new(210, 50),
+    )
+    .into_styled(RED_FILL)
+    .draw(display)
+    .ok();
     Text::with_text_style(name, FPS_TEXT_POS + offset, TITLE_STYLE_WHITE, CENTERED)
         .draw(display)
         .ok();
@@ -181,16 +187,27 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     let background = PrimitiveStyle::with_fill(bg);
     let border = PrimitiveStyle::with_fill(fg);
     let text = MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_10X20, fg);
-    let outer = Rectangle::new(Point::new(CENTER_X + offset.x - 108, CENTER_Y + offset.y - 68), Size::new(216, 136));
+    let outer = Rectangle::new(
+        Point::new(CENTER_X + offset.x - 108, CENTER_Y + offset.y - 68),
+        Size::new(216, 136),
+    );
     let mut display = display.clipped(&outer);
     outer.into_styled(border).draw(&mut display).ok();
-    Rectangle::new(Point::new(CENTER_X + offset.x - 105, CENTER_Y + offset.y - 65), Size::new(210, 130))
-        .into_styled(background)
-        .draw(&mut display)
-        .ok();
-    Text::with_text_style("WARNING", Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 40), text, CENTERED)
-        .draw(&mut display)
-        .ok();
+    Rectangle::new(
+        Point::new(CENTER_X + offset.x - 105, CENTER_Y + offset.y - 65),
+        Size::new(210, 130),
+    )
+    .into_styled(background)
+    .draw(&mut display)
+    .ok();
+    Text::with_text_style(
+        "WARNING",
+        Point::new(CENTER_X + offset.x, CENTER_Y + offset.y - 40),
+        text,
+        CENTERED,
+    )
+    .draw(&mut display)
+    .ok();
     for (row, line) in page.lines().iter().enumerate() {
         Text::with_text_style(
             line.as_str(),
@@ -213,7 +230,12 @@ pub fn draw_warning_page<D: DrawTarget<Color = Rgb565>>(
     let mut page_text: heapless::String<8> = heapless::String::new();
     write!(page_text, "{}/{}", page.number, page.total).ok();
     let small = MonoTextStyle::new(crate::ui::LABEL_FONT, text.text_color.unwrap());
-    Text::with_text_style(&page_text, Point::new(CENTER_X + offset.x, CENTER_Y + offset.y + 59), small, CENTERED)
-        .draw(&mut display)
-        .ok();
+    Text::with_text_style(
+        &page_text,
+        Point::new(CENTER_X + offset.x, CENTER_Y + offset.y + 59),
+        small,
+        CENTERED,
+    )
+    .draw(&mut display)
+    .ok();
 }

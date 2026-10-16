@@ -258,7 +258,9 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
         return;
     }
     let (value_color, accent, track, ticks) = colors;
-    let Some((bounds, graphic, value, scale)) = regions(bounds) else { return; };
+    let Some((bounds, graphic, value, scale)) = regions(bounds) else {
+        return;
+    };
     let width = bounds.size.width;
     let height = bounds.size.height;
     let graphic_width = graphic.size.width;
@@ -266,7 +268,11 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
     let mut display = display.clipped(&bounds);
     draw_fitted_value(
         &mut display,
-        if crate::widgets::value_text::fit_value(text, value.size, 2).is_some() { text } else { "FIT!" },
+        if crate::widgets::value_text::fit_value(text, value.size, 2).is_some() {
+            text
+        } else {
+            "FIT!"
+        },
         value,
         scale,
         value_color,
@@ -622,15 +628,19 @@ mod tests {
 }
 
 /// Exact complete-value lane used by gauge rendering and fit diagnostics.
-pub fn value_lane(bounds: Rectangle) -> Option<Rectangle> {
-    regions(bounds).map(|(_, _, value, _)| value)
-}
+pub fn value_lane(bounds: Rectangle) -> Option<Rectangle> { regions(bounds).map(|(_, _, value, _)| value) }
 
 fn regions(bounds: Rectangle) -> Option<(Rectangle, Rectangle, Rectangle, u32)> {
-    if !(-320..=320).contains(&bounds.top_left.x) || !(-320..=320).contains(&bounds.top_left.y) { return None; }
+    if !(-320..=320).contains(&bounds.top_left.x) || !(-320..=320).contains(&bounds.top_left.y) {
+        return None;
+    }
     // The extra wide lane is the native portrait two-column widget. Arbitrary
     // oversized public inputs retain the historical bounded workload.
-    let width = if bounds.size.width == 236 { 236 } else { bounds.size.width.min(156) };
+    let width = if bounds.size.width == 236 {
+        236
+    } else {
+        bounds.size.width.min(156)
+    };
     let height = bounds.size.height.min(198);
     if width < 20 || height < 28 {
         return None;

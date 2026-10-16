@@ -387,7 +387,17 @@ fn draw_widget_palette<D: DrawTarget<Color = Rgb565>>(
         display.clear(background).ok();
     }
     if geometry == dashboard_config::Geometry::Portrait {
-        draw_portrait_widget(&mut display, scene, slot, layout, widget, palette, decorations, interior, indication);
+        draw_portrait_widget(
+            &mut display,
+            scene,
+            slot,
+            layout,
+            widget,
+            palette,
+            decorations,
+            interior,
+            indication,
+        );
         return;
     }
     let style = MonoTextStyle::new(LABEL_FONT, foreground(palette.label));
@@ -599,20 +609,42 @@ fn footer_style(
 }
 /// Derive shape from the actual drawing target before creating clipped lanes.
 pub fn target_geometry<D: Dimensions>(display: &D) -> dashboard_config::Geometry {
-    if display.bounding_box().size == Size::new(240, 320) { dashboard_config::Geometry::Portrait }
-    else { dashboard_config::Geometry::Landscape }
+    if display.bounding_box().size == Size::new(240, 320) {
+        dashboard_config::Geometry::Portrait
+    } else {
+        dashboard_config::Geometry::Landscape
+    }
 }
 
-fn draw_portrait_header<D: DrawTarget<Color = Rgb565>>(display: &mut D, scene: &DashboardScene<'_>, layout: &Layout<'_>) {
+fn draw_portrait_header<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    scene: &DashboardScene<'_>,
+    layout: &Layout<'_>,
+) {
     let area = Rectangle::new(Point::zero(), Size::new(240, 26));
     display.fill_solid(&area, RED).ok();
     let tiny = MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, WHITE);
-    let status = if scene.measurements.mode == DataMode::Demo { "DEMO" } else { scene.status.label() };
+    let status = if scene.measurements.mode == DataMode::Demo {
+        "DEMO"
+    } else {
+        scene.status.label()
+    };
     Text::new(status, Point::new(4, 7), tiny).draw(display).ok();
-    if layout.fault { Text::new("CONFIG!", Point::new(68, 7), tiny).draw(display).ok(); }
+    if layout.fault {
+        Text::new("CONFIG!", Point::new(68, 7), tiny).draw(display).ok();
+    }
     let fps = crate::render::format_fps(scene.fps_mode, scene.fps_instant, scene.fps_average);
-    Text::with_text_style(&fps, Point::new(235, 7), tiny, RIGHT_ALIGNED).draw(display).ok();
-    Text::with_text_style(layout.name(), Point::new(120, 22), MonoTextStyle::new(LABEL_FONT, WHITE), CENTERED).draw(display).ok();
+    Text::with_text_style(&fps, Point::new(235, 7), tiny, RIGHT_ALIGNED)
+        .draw(display)
+        .ok();
+    Text::with_text_style(
+        layout.name(),
+        Point::new(120, 22),
+        MonoTextStyle::new(LABEL_FONT, WHITE),
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
 }
 
 /// Measured portrait content budget. Each text index has an independent lane;
@@ -625,26 +657,59 @@ pub struct PortraitContentLayout {
     pub fits: bool,
 }
 
-pub fn portrait_content_layout(bounds: Rectangle, text: [&str; 6], warning_rows: u32, graph: bool, numeric: bool, legend_rows: u32, trend: bool) -> PortraitContentLayout {
-    let empty = Rectangle::new(bounds.top_left, Size::zero());
+pub fn portrait_content_layout(
+    bounds: Rectangle,
+    text: [&str; 6],
+    warning_rows: u32,
+    graph: bool,
+    numeric: bool,
+    legend_rows: u32,
+    trend: bool,
+) -> PortraitContentLayout {
+    let empty = Rectangle::new(Point::zero(), Size::zero());
+    let invalid = PortraitContentLayout {
+        text: [empty; 6],
+        graph: empty,
+        legend: empty,
+        fits: false,
+    };
+    if bounds.size.width > 320
+        || bounds.size.height > 320
+        || warning_rows > 2
+        || legend_rows > 4
+        || !(-320..=320).contains(&bounds.top_left.x)
+        || !(-320..=320).contains(&bounds.top_left.y)
+        || text.iter().any(|value| value.len() > 64)
+    {
+        return invalid;
+    }
     let mut lanes = [empty; 6];
     let mut row = 0u32;
     // Secondary/provenance and min/max share a row only after measuring the
     // complete strings. A failed split is promoted to two full-width rows.
     for pair in [[1usize, 5], [2, 2], [3, 4]] {
-        let a = pair[0]; let b = pair[1];
+        let a = pair[0];
+        let b = pair[1];
         let aw = text[a].len() as u32 * 4;
         let bw = if a == b { 0 } else { text[b].len() as u32 * 4 };
-        if aw == 0 && bw == 0 { continue; }
+        if aw == 0 && bw == 0 {
+            continue;
+        }
         if a != b && aw > 0 && bw > 0 && aw + bw + 4 <= bounds.size.width {
             let split = aw + (bounds.size.width - aw - bw) / 2;
             lanes[a] = Rectangle::new(Point::new(bounds.top_left.x, row as i32 * 7), Size::new(split, 7));
-            lanes[b] = Rectangle::new(Point::new(bounds.top_left.x + split as i32, row as i32 * 7), Size::new(bounds.size.width - split, 7));
+            lanes[b] = Rectangle::new(
+                Point::new(bounds.top_left.x + split as i32, row as i32 * 7),
+                Size::new(bounds.size.width - split, 7),
+            );
             row += 1;
         } else {
             for i in pair.into_iter().take(if a == b { 1 } else { 2 }) {
                 if !text[i].is_empty() {
-                    lanes[i] = Rectangle::new(Point::new(bounds.top_left.x, row as i32 * 7), Size::new(bounds.size.width, 7));
+                    lanes[i] = Rectangle::new(
+                        Point::new(bounds.top_left.x, row as i32 * 7),
+                        Size::new(bounds.size.width, 7),
+                    );
                     row += 1;
                 }
             }
@@ -660,72 +725,268 @@ pub fn portrait_content_layout(bounds: Rectangle, text: [&str; 6], warning_rows:
     if !fits_height {
         row = 0;
         for pair in [[1usize, 5], [2, 2], [3, 4]] {
-            let a = pair[0]; let b = pair[1];
-            if text[a].is_empty() && text[b].is_empty() { continue; }
+            let a = pair[0];
+            let b = pair[1];
+            if text[a].is_empty() && text[b].is_empty() {
+                continue;
+            }
             let split = a != b && !text[a].is_empty() && !text[b].is_empty();
             for (n, i) in pair.into_iter().take(if a == b { 1 } else { 2 }).enumerate() {
                 if !text[i].is_empty() {
-                    let width = if split { bounds.size.width / 2 } else { bounds.size.width };
-                    lanes[i] = Rectangle::new(Point::new(bounds.top_left.x + if split { n as i32 * width as i32 } else { 0 }, row as i32 * 7), Size::new(width, 7));
+                    let width = if split {
+                        bounds.size.width / 2
+                    } else {
+                        bounds.size.width
+                    };
+                    lanes[i] = Rectangle::new(
+                        Point::new(
+                            bounds.top_left.x + if split { n as i32 * width as i32 } else { 0 },
+                            row as i32 * 7,
+                        ),
+                        Size::new(width, 7),
+                    );
                 }
             }
             row += 1;
         }
     }
     let reserved = top + row * 7 + legend_rows * 7 + graph_height;
-    let height = bounds.size.height.saturating_sub(reserved).max(minimum);
-    lanes[0] = Rectangle::new(bounds.top_left + Point::new(0, top as i32), Size::new(bounds.size.width.saturating_sub(if trend { 12 } else { 0 }), height));
+    if reserved + minimum > bounds.size.height {
+        return invalid;
+    }
+    let height = bounds.size.height - reserved;
+    lanes[0] = Rectangle::new(
+        bounds.top_left + Point::new(0, top as i32),
+        Size::new(bounds.size.width.saturating_sub(if trend { 12 } else { 0 }), height),
+    );
     let details_top = bounds.top_left.y + (top + height + legend_rows * 7) as i32;
-    for lane in lanes.iter_mut().skip(1) { if lane.size.height > 0 { lane.top_left.y += details_top; } }
-    let legend = Rectangle::new(bounds.top_left + Point::new(0, (top + height) as i32), Size::new(bounds.size.width, legend_rows * 7));
-    let graph = Rectangle::new(Point::new(bounds.top_left.x, bounds.top_left.y + bounds.size.height as i32 - graph_height as i32), Size::new(bounds.size.width, graph_height));
-    let value_size = if numeric { lanes[0].size } else { crate::widgets::gauge::value_lane(lanes[0]).map_or(Size::zero(), |r| r.size) };
-    let fits = fits_height && crate::widgets::value_text::fit_value(text[0], value_size, 3).is_some()
+    for lane in lanes.iter_mut().skip(1) {
+        if lane.size.height > 0 {
+            lane.top_left.y += details_top;
+        }
+    }
+    let legend = Rectangle::new(
+        bounds.top_left + Point::new(0, (top + height) as i32),
+        Size::new(bounds.size.width, legend_rows * 7),
+    );
+    let graph = Rectangle::new(
+        Point::new(
+            bounds.top_left.x,
+            bounds.top_left.y + bounds.size.height as i32 - graph_height as i32,
+        ),
+        Size::new(bounds.size.width, graph_height),
+    );
+    let value_size = if numeric {
+        lanes[0].size
+    } else {
+        crate::widgets::gauge::value_lane(lanes[0]).map_or(Size::zero(), |r| r.size)
+    };
+    let fits = fits_height
+        && crate::widgets::value_text::fit_value(text[0], value_size, 3).is_some()
         && (1..6).all(|i| text[i].len() as u32 * 4 <= lanes[i].size.width);
-    PortraitContentLayout { text: lanes, graph, legend, fits }
+    PortraitContentLayout {
+        text: lanes,
+        graph,
+        legend,
+        fits,
+    }
 }
 
-pub(crate) fn compact_text<D: DrawTarget<Color = Rgb565>>(display: &mut D, text: &str, lane: Rectangle, color: Rgb565) {
-    if text.is_empty() || lane.size.height == 0 { return; }
-    let text = if text.len() as u32 * 4 <= lane.size.width { text } else { "FIT!" };
-    Text::with_text_style(text, Point::new(lane.center().x, lane.top_left.y + 5), MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, color), CENTERED).draw(display).ok();
+pub(crate) fn compact_text<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    text: &str,
+    lane: Rectangle,
+    color: Rgb565,
+) {
+    if text.is_empty() || lane.size.height == 0 {
+        return;
+    }
+    let text = if text.len() as u32 * 4 <= lane.size.width {
+        text
+    } else {
+        "FIT!"
+    };
+    Text::with_text_style(
+        text,
+        Point::new(lane.center().x, lane.top_left.y + 5),
+        MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, color),
+        CENTERED,
+    )
+    .draw(display)
+    .ok();
 }
 
-fn draw_portrait_widget<D: DrawTarget<Color = Rgb565>>(display: &mut D, scene: &DashboardScene<'_>, slot: usize, layout: &Layout<'_>, widget: &Widget, palette: WidgetColors, decorations: &dashboard_config::AdvancedDisplay, interior: Rectangle, indication: WidgetWarning) {
+#[allow(clippy::too_many_arguments)]
+fn draw_portrait_widget<D: DrawTarget<Color = Rgb565>>(
+    display: &mut D,
+    scene: &DashboardScene<'_>,
+    slot: usize,
+    layout: &Layout<'_>,
+    widget: &Widget,
+    palette: WidgetColors,
+    decorations: &dashboard_config::AdvancedDisplay,
+    interior: Rectangle,
+    indication: WidgetWarning,
+) {
     let valid = scene.quality(slot) == Quality::Valid;
     let state = scene.measurements.sensor(SensorId::from_channel(widget.channel));
-    let foreground = |color| panel_color(if indication.blink { palette.warning.foreground } else { color });
+    let foreground = |color| {
+        panel_color(if indication.blink {
+            palette.warning.foreground
+        } else {
+            color
+        })
+    };
     let mut text = scene.configured_text(slot).expect("validated visible widget");
-    if !valid { text[5].clear(); text[5].push_str(scene.quality(slot).label()).ok(); }
-    let warning_rows = if indication.marker == WarningMarker::None { 0 } else { 1 + u32::from(indication.unavailable) };
-    let references = u32::from(widget.capabilities().markers && decorations.reference_mode != dashboard_config::ReferenceMode::Off);
-    let bands = if widget.capabilities().band_labels { decorations.bands().len() as u32 } else { 0 };
-    let lanes = portrait_content_layout(interior, core::array::from_fn(|i| text[i].as_str()), warning_rows, valid && widget.shows_graph(), widget.gauge.kind.is_numeric(), references + bands, widget.shows_trend());
-    compact_text(display, &widget.label, Rectangle::new(interior.top_left, Size::new(interior.size.width, 7)), foreground(palette.label));
-    if warning_rows > 0 {
-        let lane = Rectangle::new(interior.top_left + Point::new(0, 7), Size::new(interior.size.width, warning_rows * 7));
-        display.fill_solid(&lane, panel_color(palette.warning.background)).ok();
-        compact_text(display, indication.marker.label(), lane, panel_color(palette.warning.foreground));
-        if indication.unavailable { compact_text(display, if scene.quality(slot) == Quality::Stale { "DATA STALE" } else { "UNAVAILABLE" }, Rectangle::new(lane.top_left + Point::new(0, 7), Size::new(lane.size.width, 7)), panel_color(palette.warning.foreground)); }
+    if !valid {
+        text[5].clear();
+        text[5].push_str(scene.quality(slot).label()).ok();
     }
-    let primary = if crate::widgets::value_text::fit_value(&text[0], lanes.text[0].size, 3).is_some() { text[0].as_str() } else { "FIT!" };
+    let warning_rows = if indication.marker == WarningMarker::None {
+        0
+    } else {
+        1 + u32::from(indication.unavailable)
+    };
+    let references =
+        u32::from(widget.capabilities().markers && decorations.reference_mode != dashboard_config::ReferenceMode::Off);
+    let bands = if widget.capabilities().band_labels {
+        decorations.bands().len() as u32
+    } else {
+        0
+    };
+    let lanes = portrait_content_layout(
+        interior,
+        core::array::from_fn(|i| text[i].as_str()),
+        warning_rows,
+        valid && widget.shows_graph(),
+        widget.gauge.kind.is_numeric(),
+        references + bands,
+        widget.shows_trend(),
+    );
+    compact_text(
+        display,
+        &widget.label,
+        Rectangle::new(interior.top_left, Size::new(interior.size.width, 7)),
+        foreground(palette.label),
+    );
+    if warning_rows > 0 {
+        let lane = Rectangle::new(
+            interior.top_left + Point::new(0, 7),
+            Size::new(interior.size.width, warning_rows * 7),
+        );
+        display.fill_solid(&lane, panel_color(palette.warning.background)).ok();
+        compact_text(
+            display,
+            indication.marker.label(),
+            lane,
+            panel_color(palette.warning.foreground),
+        );
+        if indication.unavailable {
+            compact_text(
+                display,
+                if scene.quality(slot) == Quality::Stale {
+                    "DATA STALE"
+                } else {
+                    "UNAVAILABLE"
+                },
+                Rectangle::new(lane.top_left + Point::new(0, 7), Size::new(lane.size.width, 7)),
+                panel_color(palette.warning.foreground),
+            );
+        }
+    }
+    let primary = if crate::widgets::value_text::fit_value(&text[0], lanes.text[0].size, 3).is_some() {
+        text[0].as_str()
+    } else {
+        "FIT!"
+    };
     if widget.gauge.kind.is_numeric() {
         draw_fitted_value(display, primary, lanes.text[0], 3, foreground(palette.value));
     } else {
-        crate::widgets::gauge::draw_decorated(display, widget.gauge.kind, lanes.text[0], scene.gauge_reading(slot).expect("validated gauge"), primary, false, crate::widgets::gauge::Paint {
-            colors: (foreground(palette.value), foreground(palette.gauge), panel_color(palette.track), foreground(palette.ticks)),
-            decorations: Some(crate::widgets::gauge::Decorations { settings: decorations, unit: Unit::resolve(widget.advanced.readout, scene.boost_psi), stoich: layout.configuration().stoich(), peak_color: foreground(palette.peak) }),
-        });
+        crate::widgets::gauge::draw_decorated(
+            display,
+            widget.gauge.kind,
+            lanes.text[0],
+            scene.gauge_reading(slot).expect("validated gauge"),
+            primary,
+            false,
+            crate::widgets::gauge::Paint {
+                colors: (
+                    foreground(palette.value),
+                    foreground(palette.gauge),
+                    panel_color(palette.track),
+                    foreground(palette.ticks),
+                ),
+                decorations: Some(crate::widgets::gauge::Decorations {
+                    settings: decorations,
+                    unit: Unit::resolve(widget.advanced.readout, scene.boost_psi),
+                    stoich: layout.configuration().stoich(),
+                    peak_color: foreground(palette.peak),
+                }),
+            },
+        );
     }
-    if valid && widget.shows_trend() && let Some(rising) = state.get_trend_at(scene.now_ms) { draw_trend_arrow(display, interior.top_left.x + interior.size.width as i32 - 6, lanes.text[0].top_left.y + 4, rising, foreground(palette.trend)); }
-    for i in 1..6 { compact_text(display, &text[i], lanes.text[i], foreground(match i { 2 => palette.average, 3 => palette.minimum, 4 => palette.maximum, _ => palette.secondary })); }
+    if valid
+        && widget.shows_trend()
+        && let Some(rising) = state.get_trend_at(scene.now_ms)
+    {
+        draw_trend_arrow(
+            display,
+            interior.top_left.x + interior.size.width as i32 - 6,
+            lanes.text[0].top_left.y + 4,
+            rising,
+            foreground(palette.trend),
+        );
+    }
+    for i in 1..6 {
+        compact_text(
+            display,
+            &text[i],
+            lanes.text[i],
+            foreground(match i {
+                2 => palette.average,
+                3 | 4 if valid && state.is_new_peak_at(scene.now_ms) => palette.peak,
+                3 => palette.minimum,
+                4 => palette.maximum,
+                _ => palette.secondary,
+            }),
+        );
+    }
     let mut legend = lanes.legend;
     legend.size.height = 7;
-    if references > 0 { compact_text(display, if decorations.reference_mode == dashboard_config::ReferenceMode::Zero { "REF ZERO" } else { "REF MANUAL" }, legend, foreground(palette.label)); legend.top_left.y += 7; }
-    if bands > 0 { for band in decorations.bands() { compact_text(display, band.label(), legend, panel_color(band.color)); legend.top_left.y += 7; } }
+    if references > 0 {
+        compact_text(
+            display,
+            if decorations.reference_mode == dashboard_config::ReferenceMode::Zero {
+                "REF ZERO"
+            } else {
+                "REF MANUAL"
+            },
+            legend,
+            foreground(palette.label),
+        );
+        legend.top_left.y += 7;
+    }
+    if bands > 0 {
+        for band in decorations.bands() {
+            compact_text(display, band.label(), legend, panel_color(band.color));
+            legend.top_left.y += 7;
+        }
+    }
     if lanes.graph.size.height > 0 {
         let history = state.history();
-        let bounds = match widget.display.graph_range { GraphRange::Auto => history.bounds(), GraphRange::Fixed { min, max } => Some((min, max)) };
-        draw_history_graph(display, lanes.graph.top_left.x, lanes.graph.top_left.y, lanes.graph.size.width, lanes.graph.size.height, history, bounds, |_| foreground(palette.graph));
+        let bounds = match widget.display.graph_range {
+            GraphRange::Auto => history.bounds(),
+            GraphRange::Fixed { min, max } => Some((min, max)),
+        };
+        draw_history_graph(
+            display,
+            lanes.graph.top_left.x,
+            lanes.graph.top_left.y,
+            lanes.graph.size.width,
+            lanes.graph.size.height,
+            history,
+            bounds,
+            |_| foreground(palette.graph),
+        );
     }
 }

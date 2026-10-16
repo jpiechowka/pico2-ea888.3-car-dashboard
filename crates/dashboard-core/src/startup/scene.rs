@@ -32,9 +32,15 @@ fn rect(
     h: u32,
     c: Rgb565,
 ) {
-    let _ = Rectangle::new(Point::new(px(d, x), py(d, y)), Size::new(if portrait(d) { w * 3 / 4 } else { w }, h))
-        .into_styled(PrimitiveStyle::with_fill(c))
-        .draw(d);
+    let _ = Rectangle::new(
+        Point::new(px(d, x), py(d, y)),
+        Size::new(
+            if portrait(d) { w * 3 / 4 } else { w },
+            if portrait(d) { (h * 3 / 4).max(1) } else { h },
+        ),
+    )
+    .into_styled(PrimitiveStyle::with_fill(c))
+    .draw(d);
 }
 fn line(
     d: &mut St7789Renderer<'_>,
@@ -54,7 +60,21 @@ fn disk(
     diameter: u32,
     c: Rgb565,
 ) {
-    let _ = Circle::new(Point::new(px(d, x), py(d, y)), if portrait(d) { diameter * 3 / 4 } else { diameter })
+    // Map the object center and diameter together. Independent top-left and
+    // diameter rounding would move concentric rings away from their hub.
+    let (position, diameter) = if portrait(d) {
+        let scaled = (diameter * 3 / 4).max(1);
+        (
+            Point::new(
+                px(d, x + diameter as i32 / 2) - scaled as i32 / 2,
+                py(d, y + diameter as i32 / 2) - scaled as i32 / 2,
+            ),
+            scaled,
+        )
+    } else {
+        (Point::new(x, y), diameter)
+    };
+    let _ = Circle::new(position, diameter)
         .into_styled(PrimitiveStyle::with_fill(c))
         .draw(d);
 }
@@ -65,9 +85,13 @@ fn tri(
     c: (i32, i32),
     color: Rgb565,
 ) {
-    let _ = Triangle::new(Point::new(px(d, a.0), py(d, a.1)), Point::new(px(d, b.0), py(d, b.1)), Point::new(px(d, c.0), py(d, c.1)))
-        .into_styled(PrimitiveStyle::with_fill(color))
-        .draw(d);
+    let _ = Triangle::new(
+        Point::new(px(d, a.0), py(d, a.1)),
+        Point::new(px(d, b.0), py(d, b.1)),
+        Point::new(px(d, c.0), py(d, c.1)),
+    )
+    .into_styled(PrimitiveStyle::with_fill(color))
+    .draw(d);
 }
 fn text(
     d: &mut St7789Renderer<'_>,
@@ -76,6 +100,19 @@ fn text(
     color: Rgb565,
     big: bool,
 ) {
+    if portrait(d) && value == "TAP TO SKIP  /  HOLD Y TO RECOVER" {
+        for (label, baseline) in [("TAP TO SKIP", 284), ("HOLD Y TO RECOVER", 298)] {
+            Text::with_alignment(
+                label,
+                Point::new(120, baseline),
+                MonoTextStyle::new(&FONT_6X10, color),
+                Alignment::Center,
+            )
+            .draw(d)
+            .ok();
+        }
+        return;
+    }
     let font = if big { &FONT_10X20 } else { &FONT_6X10 };
     let _ = Text::with_alignment(
         value,
@@ -285,5 +322,15 @@ pub fn draw(
 }
 
 fn portrait(d: &St7789Renderer<'_>) -> bool { d.geometry() == dashboard_config::Geometry::Portrait }
-fn px(d: &St7789Renderer<'_>, x: i32) -> i32 { if portrait(d) { x * 3 / 4 } else { x } }
-fn py(d: &St7789Renderer<'_>, y: i32) -> i32 { if portrait(d) { y + 30 } else { y } }
+fn px(
+    d: &St7789Renderer<'_>,
+    x: i32,
+) -> i32 {
+    if portrait(d) { x * 3 / 4 } else { x }
+}
+fn py(
+    d: &St7789Renderer<'_>,
+    y: i32,
+) -> i32 {
+    if portrait(d) { y * 3 / 4 + 60 } else { y }
+}

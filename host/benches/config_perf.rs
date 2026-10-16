@@ -121,10 +121,10 @@ pub fn benchmarks(c: &mut Criterion) {
                 black_box(slot.load_at_boot(black_box(&bytes)));
             });
         });
-        // Last field is the backlight_off bool. Reseal its invalid encoding so
+        // Last field is the orientation enum. Reseal an invalid variant so
         // fallback follows a complete bounded decode, rather than CRC rejection.
         let mut late = bytes.clone();
-        *late.last_mut().unwrap() = 2;
+        *late.last_mut().unwrap() = 0xFF;
         let crc = crc32(late[..8].iter().chain(late[HEADER_BYTES..].iter()).copied());
         late[8..12].copy_from_slice(&crc.to_le_bytes());
         assert_eq!(slot.load_at_boot(&late).config, validate(default_config()).unwrap());

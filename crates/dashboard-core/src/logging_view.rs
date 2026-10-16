@@ -70,7 +70,11 @@ impl LogPage {
         }
         if let Some(window) = &self.history {
             if let Some(record) = window.entries.get(row - 1) {
-                draw_entry(display, &record.entry, 44 + (row as i32 - 1) * if portrait(display) { 20 } else { 14 });
+                draw_entry(
+                    display,
+                    &record.entry,
+                    44 + (row as i32 - 1) * if portrait(display) { 20 } else { 14 },
+                );
             } else if row == 1 {
                 Text::new(
                     "No log entries",
@@ -113,9 +117,20 @@ impl LogPage {
                 self.counters.truncated
             );
         }
-        Text::new(&text, Point::new(4, if portrait(display) { 302 } else { 226 }), MonoTextStyle::new(if portrait(display) { &embedded_graphics::mono_font::ascii::FONT_4X6 } else { LABEL_FONT }, YELLOW))
-            .draw(display)
-            .ok();
+        Text::new(
+            &text,
+            Point::new(4, if portrait(display) { 302 } else { 226 }),
+            MonoTextStyle::new(
+                if portrait(display) {
+                    &embedded_graphics::mono_font::ascii::FONT_4X6
+                } else {
+                    LABEL_FONT
+                },
+                YELLOW,
+            ),
+        )
+        .draw(display)
+        .ok();
     }
 
     pub fn draw_full<D: DrawTarget<Color = Rgb565>>(
@@ -140,8 +155,11 @@ impl LogPage {
             dashboard_config::ControlPage::Logs,
             dashboard_config::ControlPage::Dashboard,
         );
-        if portrait(display) { crate::debug_view::draw_compact_row(display, 4, 288, 232, hint.as_str(), GREEN); }
-        else { crate::debug_view::draw_row(display, 4, 212, 316, hint.as_str(), GREEN); }
+        if portrait(display) {
+            crate::debug_view::draw_compact_row(display, 4, 288, 232, hint.as_str(), GREEN);
+        } else {
+            crate::debug_view::draw_row(display, 4, 212, 316, hint.as_str(), GREEN);
+        }
     }
 }
 fn draw_entry<D: DrawTarget<Color = Rgb565>>(
@@ -150,7 +168,11 @@ fn draw_entry<D: DrawTarget<Color = Rgb565>>(
     y: i32,
 ) {
     let compact = portrait(display);
-    let font = if compact { &embedded_graphics::mono_font::ascii::FONT_4X6 } else { LABEL_FONT };
+    let font = if compact {
+        &embedded_graphics::mono_font::ascii::FONT_4X6
+    } else {
+        LABEL_FONT
+    };
     let color = match entry.level {
         Level::Info => GREEN,
         Level::Fault => RED,
@@ -166,9 +188,15 @@ fn draw_entry<D: DrawTarget<Color = Rgb565>>(
     for character in entry.message.as_str().chars() {
         let _ = message.push(if character.is_control() { '?' } else { character });
     }
-    Text::new(&message, Point::new(if compact { 52 } else { 76 }, y), MonoTextStyle::new(font, WHITE))
-        .draw(display)
-        .ok();
+    Text::new(
+        &message,
+        Point::new(if compact { 52 } else { 76 }, y),
+        MonoTextStyle::new(font, WHITE),
+    )
+    .draw(display)
+    .ok();
 }
 
-fn portrait<D: Dimensions>(display: &D) -> bool { crate::configured_scene::target_geometry(display) == dashboard_config::Geometry::Portrait }
+fn portrait<D: Dimensions>(display: &D) -> bool {
+    crate::configured_scene::target_geometry(display) == dashboard_config::Geometry::Portrait
+}

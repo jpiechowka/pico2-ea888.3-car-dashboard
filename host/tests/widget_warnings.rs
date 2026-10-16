@@ -178,9 +178,13 @@ impl RasterCheck {
                         background,
                     )
                     .unwrap();
-                Text::new(marker, Point::new(x, y + baseline), MonoTextStyle::new(&FONT_4X6, foreground))
-                    .draw(&mut target)
-                    .unwrap();
+                Text::new(
+                    marker,
+                    Point::new(x, y + baseline),
+                    MonoTextStyle::new(&FONT_4X6, foreground),
+                )
+                .draw(&mut target)
+                .unwrap();
                 if stale {
                     let unavailable = if snapshot.quality(SensorId::Boost, now) == Quality::Stale {
                         "DATA STALE"
@@ -212,7 +216,11 @@ impl RasterCheck {
             }
             for (buffer, frame) in self.buffers.iter_mut().enumerate() {
                 let changed = frame.0 != full.0;
-                let redraw = self.cache.draw(&mut St7789Renderer::with_geometry(&mut frame.0, geometry), buffer, &scene);
+                let redraw = self.cache.draw(
+                    &mut St7789Renderer::with_geometry(&mut frame.0, geometry),
+                    buffer,
+                    &scene,
+                );
                 if changed {
                     assert_ne!(redraw.cells & 1, 0, "visible state missed buffer{buffer} at{now}");
                 }
@@ -228,7 +236,8 @@ impl RasterCheck {
             let mut raw = AlignedFrame::boxed();
             raw_scene.draw_full(&mut St7789Renderer::with_geometry(&mut raw.0, geometry));
             assert!(raw.0 == full.0);
-            if !portrait && !blink_on
+            if !portrait
+                && !blink_on
                 && !marker.is_empty()
                 && matches!(now, 3400 | 3901 | 4000 | 5100 | 5500 | 10700)
                 && let Some(directory) = std::env::var_os("WIDGET_WARNING_EVIDENCE")
@@ -258,67 +267,72 @@ impl RasterCheck {
 
 #[test]
 fn acknowledged_snoozed_and_stale_latch_badges_fit_every_style_span_and_both_buffers() {
-    for orientation in [dashboard_config::Orientation::Landscape, dashboard_config::Orientation::Portrait] {
-    for kind in GaugeKind::ALL {
-        for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
-            let mut raw = fixture(kind, span, true).config().clone();
-            raw.orientation = orientation;
-            if orientation == dashboard_config::Orientation::Portrait { raw.widgets[0].placement.row = if span == Span::TwoByTwo { 2 } else { 3 }; }
-            let c = validate(raw).unwrap();
-            let mut m = AcquisitionModel::demo_configured(&c);
-            let mut raster = RasterCheck::new();
-            let mut requests = WarningRequests::new();
-            sample(&mut m, 3., 0);
-            raster.check(&c, &m.snapshot(), 0, "", false, false);
-            sample(&mut m, 3., 100);
-            raster.check(&c, &m.snapshot(), 100, "LATCHED", false, false);
-            let mut controls = acknowledge(&c, &mut m, 100, &mut requests);
-            // Feedback has expired; continuously admitted fresh samples preserve the episode.
-            for now in (200..=3400).step_by(100) {
-                sample(&mut m, 3., now);
+    for orientation in [
+        dashboard_config::Orientation::Landscape,
+        dashboard_config::Orientation::Portrait,
+    ] {
+        for kind in GaugeKind::ALL {
+            for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
+                let mut raw = fixture(kind, span, true).config().clone();
+                raw.orientation = orientation;
+                if orientation == dashboard_config::Orientation::Portrait {
+                    raw.widgets[0].placement.row = if span == Span::TwoByTwo { 2 } else { 3 };
+                }
+                let c = validate(raw).unwrap();
+                let mut m = AcquisitionModel::demo_configured(&c);
+                let mut raster = RasterCheck::new();
+                let mut requests = WarningRequests::new();
+                sample(&mut m, 3., 0);
+                raster.check(&c, &m.snapshot(), 0, "", false, false);
+                sample(&mut m, 3., 100);
+                raster.check(&c, &m.snapshot(), 100, "LATCHED", false, false);
+                let mut controls = acknowledge(&c, &mut m, 100, &mut requests);
+                // Feedback has expired; continuously admitted fresh samples preserve the episode.
+                for now in (200..=3400).step_by(100) {
+                    sample(&mut m, 3., now);
+                }
+                let mut pager = WarningPager::new();
+                controls.expire_feedback(3400);
+                assert!(controls.overlay(&c).is_none());
+                assert!(pager.select(&c, &m.snapshot(), 1, 3400, true).is_none());
+                raster.check(&c, &m.snapshot(), 3400, "ACTIVE ACK SNOOZE", false, true);
+                m.tick(3901);
+                assert_eq!(m.snapshot().quality(SensorId::Boost, 3901), Quality::Stale);
+                raster.check(&c, &m.snapshot(), 3901, "LATCH ACK SNOOZE", true, true);
+                m.mark_fault(SensorId::Boost, Quality::TransportError, 4000);
+                assert_eq!(m.snapshot().value_at(SensorId::Boost, 4000), None);
+                assert_eq!(
+                    m.snapshot().rule_status_at(RuleIndex::new(0).unwrap(), 4000),
+                    Status::Unavailable
+                );
+                raster.check(&c, &m.snapshot(), 4000, "LATCH ACK SNOOZE", true, true);
+                m.tick(5100);
+                assert!(pager.select(&c, &m.snapshot(), 1, 5100, true).is_some());
+                raster.check(&c, &m.snapshot(), 5100, "LATCHED / ACK", true, true);
+                // A fresh activation retires prior acknowledgment; stale is never fresh Active.
+                sample(&mut m, 3., 5200);
+                raster.check(&c, &m.snapshot(), 5200, "LATCHED / ACK", false, true);
+                sample(&mut m, 3., 5300);
+                raster.check(&c, &m.snapshot(), 5300, "LATCHED", false, false);
+                sample(&mut m, 0., 5400);
+                sample(&mut m, 0., 5500);
+                raster.check(&c, &m.snapshot(), 5500, "CLEARED ACK DUE", false, true);
+                acknowledge(&c, &mut m, 5500, &mut requests);
+                raster.check(&c, &m.snapshot(), 5500, "", false, true);
+                // The other ordering: acknowledgment while active, expiry, qualified clear.
+                sample(&mut m, 3., 5600);
+                sample(&mut m, 3., 5700);
+                acknowledge(&c, &mut m, 5700, &mut requests);
+                for now in (5800..=10700).step_by(100) {
+                    sample(&mut m, 3., now);
+                }
+                raster.check(&c, &m.snapshot(), 10700, "ACTIVE / ACK", false, false);
+                sample(&mut m, 0., 10800);
+                sample(&mut m, 0., 10900);
+                raster.check(&c, &m.snapshot(), 10900, "", false, true);
             }
-            let mut pager = WarningPager::new();
-            controls.expire_feedback(3400);
-            assert!(controls.overlay(&c).is_none());
-            assert!(pager.select(&c, &m.snapshot(), 1, 3400, true).is_none());
-            raster.check(&c, &m.snapshot(), 3400, "ACTIVE ACK SNOOZE", false, true);
-            m.tick(3901);
-            assert_eq!(m.snapshot().quality(SensorId::Boost, 3901), Quality::Stale);
-            raster.check(&c, &m.snapshot(), 3901, "LATCH ACK SNOOZE", true, true);
-            m.mark_fault(SensorId::Boost, Quality::TransportError, 4000);
-            assert_eq!(m.snapshot().value_at(SensorId::Boost, 4000), None);
-            assert_eq!(
-                m.snapshot().rule_status_at(RuleIndex::new(0).unwrap(), 4000),
-                Status::Unavailable
-            );
-            raster.check(&c, &m.snapshot(), 4000, "LATCH ACK SNOOZE", true, true);
-            m.tick(5100);
-            assert!(pager.select(&c, &m.snapshot(), 1, 5100, true).is_some());
-            raster.check(&c, &m.snapshot(), 5100, "LATCHED / ACK", true, true);
-            // A fresh activation retires prior acknowledgment; stale is never fresh Active.
-            sample(&mut m, 3., 5200);
-            raster.check(&c, &m.snapshot(), 5200, "LATCHED / ACK", false, true);
-            sample(&mut m, 3., 5300);
-            raster.check(&c, &m.snapshot(), 5300, "LATCHED", false, false);
-            sample(&mut m, 0., 5400);
-            sample(&mut m, 0., 5500);
-            raster.check(&c, &m.snapshot(), 5500, "CLEARED ACK DUE", false, true);
-            acknowledge(&c, &mut m, 5500, &mut requests);
-            raster.check(&c, &m.snapshot(), 5500, "", false, true);
-            // The other ordering: acknowledgment while active, expiry, qualified clear.
-            sample(&mut m, 3., 5600);
-            sample(&mut m, 3., 5700);
-            acknowledge(&c, &mut m, 5700, &mut requests);
-            for now in (5800..=10700).step_by(100) {
-                sample(&mut m, 3., now);
-            }
-            raster.check(&c, &m.snapshot(), 10700, "ACTIVE / ACK", false, false);
-            sample(&mut m, 0., 10800);
-            sample(&mut m, 0., 10900);
-            raster.check(&c, &m.snapshot(), 10900, "", false, true);
         }
     }
-}
 }
 
 #[test]
