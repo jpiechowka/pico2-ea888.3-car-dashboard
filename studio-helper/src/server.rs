@@ -498,7 +498,11 @@ async fn dispatch(
                 )
             })
         });
-        if !matches!(requested, Some("GET" | "POST")) || !allowed_headers || request.uri().query().is_some() {
+        let query_allowed = request.uri().query().is_none() || {
+            let parts:Vec<_>=path.split('/').collect();
+            requested==Some("GET") && parts.len()==6 && parts[1]=="api" && parts[2]=="v1" && parts[3]=="jobs" && parts[5]=="events" && JobId::new(parts[4]).is_ok() && poll_query(request.uri().query()).is_ok()
+        };
+        if !matches!(requested, Some("GET" | "POST")) || !allowed_headers || !query_allowed {
             return error(StatusCode::FORBIDDEN, "Forbidden", origin);
         }
         let mut r = response(StatusCode::NO_CONTENT, json!(null), origin);
@@ -529,29 +533,29 @@ async fn dispatch(
     if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
         return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
     }
+    if method == Method::POST && path == "/api/v1/builds" {
+        if one(headers, "content-type") != Some("application/json") {
+            return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
+        }
+        if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > REQUEST_BYTES)) {
+            return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin);
+        }
+        let bytes = match bounded_body(request.into_body(), REQUEST_BYTES).await {
+            Ok(b) => b,
+            Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin),
+        };
+        let request = match decode::<ProjectBuildRequest>(&bytes) {
+            Ok(r) => r,
+            Err(e) => return store_error(e, origin),
+        };
+        return match start_build(state.clone(), request).await {
+            Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
+            Err(e) => store_error(e, origin),
+        };
+    }
     if method == Method::POST && path == "/api/v1/projects" {
         if one(headers, "content-type") != Some("application/octet-stream") {
             return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedBinaryProject", origin);
-        }
-        if method == Method::POST && path == "/api/v1/builds" {
-            if one(headers, "content-type") != Some("application/json") {
-                return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "ExpectedJson", origin);
-            }
-            if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > REQUEST_BYTES)) {
-                return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin);
-            }
-            let bytes = match bounded_body(request.into_body(), REQUEST_BYTES).await {
-                Ok(b) => b,
-                Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "RequestBound", origin),
-            };
-            let request = match decode::<ProjectBuildRequest>(&bytes) {
-                Ok(r) => r,
-                Err(e) => return store_error(e, origin),
-            };
-            return match start_build(state.clone(), request).await {
-                Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
-                Err(e) => store_error(e, origin),
-            };
         }
         if one(headers, "content-length").is_some_and(|v| v.parse::<usize>().map_or(true, |n| n > PROJECT_UPLOAD_BYTES))
         {
@@ -840,6 +844,23 @@ mod tests {
         let result = summary(&state, &job.job_id).unwrap();
         assert!(result.events_closed);
         assert!(result.artifact_id.is_none());
+    }
+    #[tokio::test]
+    async fn browser_poll_preflight_and_typed_build_route() {
+        let state=State::new(std::env::temp_dir().join("studio-no-build-repository")).unwrap();
+        for (query,status) in [("after=0&limit=128",StatusCode::NO_CONTENT),("after=0&limit=129",StatusCode::FORBIDDEN)] {
+            let request=Request::builder().uri(format!("/api/v1/jobs/{}/events?{query}","1".repeat(32))).method("OPTIONS").header("host",AUTHORITY).header("origin",ORIGINS[0]).header("access-control-request-method","GET").header("access-control-request-headers","x-studio-capability").body(Body::empty()).unwrap();
+            assert_eq!(dispatch(state.clone(),request).await.status(),status);
+        }
+        let config=dashboard_config::validate(dashboard_config::default_config()).unwrap();
+        let bytes=dashboard_config_tools::project::Project::new(&config,Default::default(),None).unwrap().encode(dashboard_config_tools::project::ExportMode::ConvertedOnly).unwrap();
+        let upload=crate::build_input::UploadedProject::admit(state.session.clone(),bytes).unwrap();
+        let body=ProjectBuildRequest{editor_revision:1,project_id:upload.response.project_id.clone(),project_sha256:upload.response.project_sha256.clone(),options:BuildOptions::default(),retry_of:None};
+        state.inner.lock().unwrap().project=Some(upload);
+        let request=Request::builder().uri("/api/v1/builds").method("POST").header("host",AUTHORITY).header("origin",ORIGINS[0]).header("x-studio-capability",&state.capability).header("content-type","application/json").body(Body::from(encode(&body).unwrap())).unwrap();
+        assert_eq!(dispatch(state.clone(),request).await.status(),StatusCode::ACCEPTED);
+        let worker=state.inner.lock().unwrap().worker.take().unwrap();worker.await.unwrap();
+        assert!(state.inner.lock().unwrap().jobs.summaries()[0].events_closed);
     }
     #[tokio::test]
     async fn rejects_foreign_origin_and_missing_capability() {

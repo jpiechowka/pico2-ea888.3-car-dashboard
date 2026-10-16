@@ -274,7 +274,7 @@ pub fn check(repo: &Path) -> Value {
             "wasm_opt",
             optimizer.is_file().then_some(optimizer),
             &["--version"],
-            "wasm-opt version 133",
+            "wasm-opt version 133 (version_133)",
             &repo,
             "Run configurator/Studio.ps1 -Setup to install pinned Binaryen version_133",
         );
