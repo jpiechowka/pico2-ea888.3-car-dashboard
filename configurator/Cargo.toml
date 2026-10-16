@@ -10,6 +10,7 @@ resolver = "2"
 [dependencies]
 dashboard-build-profiles = { path = "../crates/dashboard-build-profiles", features = ["serde"] }
 dashboard-helper-protocol = { path = "../crates/dashboard-helper-protocol" }
+dashboard-config-tools = { path = "../crates/dashboard-config-tools" }
 dashboard-config = { path = "../crates/dashboard-config", features = ["json"] }
 dashboard-core = { path = "../crates/dashboard-core", features = ["alloc"] }
 embassy-sync = "=0.8.0"
