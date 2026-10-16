@@ -21,6 +21,36 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    groups:
+      shared-rust-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/configurator"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    groups:
+      studio-rust-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/studio-helper"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    groups:
+      helper-rust-dependencies:
+        patterns:
+          - "*"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

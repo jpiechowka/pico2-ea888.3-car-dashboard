@@ -44,6 +44,9 @@ try {
     $env:RUSTUP_TOOLCHAIN = $toolchain
     $env:PATH = (Join-Path $toolRoot 'bin') + [IO.Path]::PathSeparator + $previousPath
     if ($Setup) {
+        if (-not (Get-Command rustup -CommandType Application -ErrorAction SilentlyContinue)) {
+            throw 'Rustup is missing. Install Rust for Windows x64 from https://rustup.rs, reopen PowerShell, then rerun configurator/Studio.ps1 -Setup. Install Visual Studio Build Tools with Desktop development with C++ and the Windows SDK when prompted.'
+        }
         Write-Host "Explicit setup: $toolchain, ARM/Wasm targets, LLVM tools, pinned editor CLIs and the prerequisite checker. Downloads may occur."
         & rustup toolchain install $toolchain --profile minimal --component llvm-tools-preview --component rustfmt --component clippy --target thumbv8m.main-none-eabihf --target wasm32-unknown-unknown
         if ($LASTEXITCODE -ne 0) { throw 'Pinned Rust setup failed. Install Rust from rustup.rs and MSVC Build Tools with Windows SDK if missing.' }
