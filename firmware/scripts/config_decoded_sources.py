@@ -121,7 +121,7 @@ _COMMIT=((4676,436,35,19),(4692,416,56,20),(4708,396,78,20),(4726,376,100,20),
     (4742,356,122,20),(4760,336,144,20),(4776,316,166,20),(4794,296,188,20))
 
 
-def _array_effects(objects,rows,parents,array,owner,frame,protected,sequence):
+def _array_effects(objects,rows,parents,array,owner,frame,protected,sequence,_descriptions=None):
     """Actual fixed-array transport and per-slot last-write envelopes.
 
     This proves the copy/preservation relation. An actual selected ordinary
@@ -130,6 +130,9 @@ def _array_effects(objects,rows,parents,array,owner,frame,protected,sequence):
     """
     from config_refill_children import opaque_copy_interface
     from config_decoded_widgets import _edge_at
+    from config_source_sharing import _CopyDescriptions
+    if _descriptions is None:_descriptions=_CopyDescriptions(objects,rows)
+    require(type(_descriptions) is _CopyDescriptions,'Sources copy description pool has another type')
     require(isinstance(owner,Storage) and owner.writable and owner.extent==14604 and owner.alignment>=4 and
         frame.extent==1608 and owner.phase==frame.phase and array['old_array'].start==owner.start+32 and
         array['sequence'] is not None and array['sequence'].count==Span(0,0) and len(array['packages'])==8,
@@ -170,6 +173,7 @@ def _array_effects(objects,rows,parents,array,owner,frame,protected,sequence):
                 target=bound['ordinary_edges'][0][2]
             else:require(edge[3]=='__aeabi_memcpy','Sources copy borrows another current child')
             effect=opaque_copy_interface(objects,rows,target,inp,out,size,frame,protect)
+            effect=_descriptions.checked(effect,objects,rows,target)
         else:
             writes=((out,0,16),(out,16,2),(out,18,1)) if size==19 else ((out,0,20),)
             expected_sites=(site,site+4,site+8) if site==5768 else ((site,site+8,site+6) if site==4422 else (site,site+6,site+16))
@@ -253,10 +257,25 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
     def base(active=None):
         return guards+(() if active==sequence.header else (_object(sequence.header,'stable physical top Q'),))
     def nested(proof,label):return Storage(frame.space,'Sources '+label,frame.start-proof['frame'],proof['frame'],8,phase,True)
+    def warning_transport(stage,kind):
+        # Exact current route anchors, including the packed intermediate r5.
+        # At56 only its low byte is consumed. Do not relabel this as a direct
+        # scalar14/170 edge or infer that the entire packed register is14.
+        require(stage in ('Warning scope','Warning mode','Warning page') and
+            kind in ('domain','none','error'),'unreviewed packed Warning error route')
+        if kind in ('domain','none'):prefix=(6446,6448)
+        elif stage=='Warning page':prefix=(5210,)
+        else:prefix=((4822 if stage=='Warning scope' else 4858),4862)
+        return dict(kind='packed_Warning_lowbyte',
+            path=tuple(V+off for off in prefix+(4866,4870,4872,4886,4888,4890,5024,5032,56)),
+            mask=0x020000ff,whole_r5_is_scalar_error=False)
     def error(stage,option,completed):
-        errors.append(dict(stage=stage,error=14 if option['kind']=='none' else option['error'],
+        record=dict(stage=stage,error=14 if option['kind']=='none' else option['error'],
             cursor=option['cursor'],completed_aggregates=completed,frontier=V+56,
-            partial_current_aggregate_not_promoted=True))
+            partial_current_aggregate_not_promoted=True)
+        if stage in ('Warning scope','Warning mode','Warning page'):
+            record['error_transport']=warning_transport(stage,'none' if option['kind']=='none' else 'error')
+        errors.append(record)
     def stable(result,state=None):
         fixed=(_object(borrow(sequence.decoder.header.storage,sequence.decoder.header.offset+4,4,phase),'stable D.end'),)
         if state is not None:fixed+=(_object(borrow(state.header.storage,state.header.offset,4,phase),'stable Q.D'),)
@@ -271,8 +290,11 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
         normal=[]
         for option in result['outcomes']:
             if option['kind']=='success':
-                normal.append(option['state']);errors.append(dict(stage=label+'.domain',error=14,cursor=option['cursor'],
-                    completed_aggregates=completed,frontier=V+170,source_guard='same parsed selector>'+str(maximum)))
+                normal.append(option['state']);record=dict(stage=label+'.domain',error=14,cursor=option['cursor'],
+                    completed_aggregates=completed,frontier=V+(56 if label.startswith('Warning ') else 170),
+                    source_guard='same parsed selector>'+str(maximum))
+                if label in ('Warning scope','Warning mode'):record['error_transport']=warning_transport(label,'domain')
+                errors.append(record)
             else:error(label,option,completed)
         after=normal[0] if normal else None
         steps.append(dict(field=label,site=V+site,before=decoder,after=after,domain=(0,maximum),child=result,
@@ -506,13 +528,14 @@ def _first_boot_source_phases(objects,rows,source_context):
     structural=_source_structural_control(objects,rows,widgets,parents,children);returns=structural.Source_returns
     require(returns and min(v['lowest_SP'] for v in returns)==frame.start-120,
         'Sources whole current child chain changes its physical/original-return bound')
-    entries=_source_entries(objects,rows,widgets);phases=[]
+    from config_source_sharing import _CopyDescriptions
+    entries=_source_entries(objects,rows,widgets);phases=[];descriptions=_CopyDescriptions(objects,rows)
     for entry in entries:
         envelopes=_parent_envelopes(objects,rows,parents,entry.exit.sequence,c.owner,entry.protected)
         array=_source_array(objects,rows,parents,entry.sequence,entry.protected,_object(entry.old_Source_array,'actual old Source array'))
         effects=None;remaining=None
         if array['sequence'] is not None:
-            effects=_array_effects(objects,rows,parents,array,c.owner,frame,entry.protected,entry.sequence)
+            effects=_array_effects(objects,rows,parents,array,c.owner,frame,entry.protected,entry.sequence,descriptions)
             # Whole Source array is now a protection envelope only after its
             # checked copy/last-store relation. Ordinary promotion is still
             # pending the separate actual selected-control/access-use proof.

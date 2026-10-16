@@ -492,6 +492,235 @@ class ActualSourceActiveControl(unittest.TestCase):
         self.assertIs(control.current(),control)
 
 
+class SourceCopyDescriptions(unittest.TestCase):
+    @staticmethod
+    def inputs():
+        from config_structural import _detached_inputs
+        objects,rows,_,_=SourceLiteralBodies.fixture()
+        return _detached_inputs(objects,rows)
+
+    @staticmethod
+    def effect():
+        # Explicit post-check descriptor representation fixture. It does not
+        # replace the actual API/body/provider checks in the adapter below.
+        child=dict(shape='copy',role='typed-copy',function=8,extent=12,frame=8,
+            objects=({'kind':'fixed','value':4},),callbacks=(),ordinary_edges=(),indirect_sites=(),
+            requires_parent_outline_abi=False,transfers=((0,'bx','lr'),),
+            requires_runtime_ownership_entry_and_guard_closure=True,
+            requires_typed_inputs_live_sink_and_default_options=True,
+            manual_frame_requires_complete_builtin=None,reference_only=False)
+        return dict(children=(child,),possible_writes=((1,2,3),))
+
+    def test_complete_children_share_without_effect_or_mutable_backing_aliases(self):
+        from config_source_sharing import _CopyDescriptions
+        objects,rows=self.inputs();pool=_CopyDescriptions(objects,rows)
+        original=self.effect();first=pool.checked(original,objects,rows,8)
+        second=pool.checked(self.effect(),objects,rows,8)
+        self.assertIs(first['children'],second['children']);self.assertIsNot(first,second)
+        self.assertEqual(first['possible_writes'],original['possible_writes'])
+        with self.assertRaises(TypeError):first['children'][0]['objects'][0]['value']=7
+        original['children'][0]['objects'][0]['value']=9
+        self.assertEqual(first['children'][0]['objects'][0]['value'],4)
+
+    def test_complete_context_types_fields_and_unsupported_fallback_do_not_merge(self):
+        from config_source_sharing import _CopyDescriptions
+        import copy
+        objects,rows=self.inputs();pool=_CopyDescriptions(objects,rows);first=pool.checked(self.effect(),objects,rows,8)
+        for key,value in (('role','other'),('function',10),('frame',16),('callbacks',((4,'other'),)),
+            ('requires_parent_outline_abi',0),('objects',({'kind':'fixed','value':True},)),
+            ('new_context',('ancestry',4))):
+            effect=self.effect();effect['children'][0][key]=value
+            self.assertIsNot(pool.checked(effect,objects,rows,8)['children'],first['children'])
+        other,other_rows=self.inputs()
+        with self.assertRaisesRegex(AssertionError,'input context'):pool.checked(self.effect(),other,other_rows,8)
+        self.assertIsNot(pool.checked(self.effect(),objects,rows,10)['children'],first['children'])
+        effect=self.effect();effect['children'][0]['transfers']=list(effect['children'][0]['transfers'])
+        self.assertIs(pool.checked(effect,objects,rows,8),effect)
+        custom=object();unshared=self.effect()
+        self.assertIs(_CopyDescriptions(custom,rows).checked(unshared,custom,rows,8),unshared)
+
+    def test_array_copies_keep_all_fresh_dynamic_checks_after_equal_descriptors(self):
+        from unittest.mock import patch
+        from config_source_sharing import _CopyDescriptions
+        from config_structural import _detached_inputs
+        from config_decoded_sources import _array_effects,_parents
+        from config_refill_children import opaque_copy_interface
+        from config_regions import Storage
+        SourceArrayEffects.setUpClass();a=SourceArrayEffects
+        objects,rows=_detached_inputs(a.objects,a.rows);parents=_parents(objects,rows,0x1001c654,a.owner.start)
+        pool=_CopyDescriptions(objects,rows)
+        with patch('config_refill_children.opaque_copy_interface',wraps=opaque_copy_interface) as checked:
+            one=_array_effects(objects,rows,parents,a.array,a.owner,a.frame,a.guards,a.sequence,pool)
+            two=_array_effects(objects,rows,parents,a.array,a.owner,a.frame,a.guards,a.sequence,pool)
+            self.assertEqual(checked.call_count,24)
+            self.assertIsNot(one['transports'][0][0]['effect'],two['transports'][0][0]['effect'])
+            self.assertIs(one['transports'][0][0]['effect']['children'],two['transports'][0][0]['effect']['children'])
+            deepest=Storage('address','changed protected child byte',a.frame.start-72,1,1,a.frame.phase,False)
+            with self.assertRaisesRegex(AssertionError,'overlap|intersects'):
+                _array_effects(objects,rows,parents,a.array,a.owner,a.frame,a.guards+(deepest,),a.sequence,pool)
+
+    def test_custom_reader_keeps_fresh_consumed_byte_checks_without_pool_reuse(self):
+        from config_source_sharing import _CopyDescriptions
+        from config_decoded_sources import _array_effects
+        SourceArrayEffects.setUpClass();a=SourceArrayEffects
+        class Provider:
+            def __init__(self):
+                self.elf=a.objects.elf;self.sizes=a.objects.sizes
+                self.calls=0;self.changed=False;self.changed_read=False;self.target=None
+            def read_only(self,start,extent):
+                self.calls+=1;raw=a.objects.read_only(start,extent)
+                if self.changed and start<=self.target<start+extent:
+                    self.changed_read=True;raw=bytearray(raw);raw[self.target-start]^=1;raw=bytes(raw)
+                return raw
+        provider=Provider();pool=_CopyDescriptions(provider,a.rows)
+        first=_array_effects(provider,a.rows,a.parents,a.array,a.owner,a.frame,a.guards,a.sequence,pool)
+        reads=provider.calls
+        second=_array_effects(provider,a.rows,a.parents,a.array,a.owner,a.frame,a.guards,a.sequence,pool)
+        self.assertGreater(provider.calls,reads);self.assertFalse(pool._values)
+        one=first['transports'][0][0]['effect']['children'];two=second['transports'][0][0]['effect']['children']
+        self.assertEqual(one,two);self.assertIsNot(one,two)
+        provider.target=one[1]['function'];provider.changed=True
+        with self.assertRaises(AssertionError):
+            _array_effects(provider,a.rows,a.parents,a.array,a.owner,a.frame,a.guards,a.sequence,pool)
+        self.assertTrue(provider.changed_read,'rejection must follow the changed consumed builtin bytes')
+
+
+class SourceUseGraph(unittest.TestCase):
+    def test_closed_batch_checks_shared_graph_once_and_all_exact_members(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import config_source_uses as subject
+        from config_decoded_sources import _phase_graph
+        package={'cursor':[1,2]}
+        uses=tuple(subject._SourceUse('graph-only fixture',0,i,None,None,None,(0,1),(),{'package':package},()) for i in range(1000))
+        family=SimpleNamespace(role='graph-only fixture',footprints=lambda index:((0,1),))
+        control=SimpleNamespace(source_guards=({'package':package},),record={})
+        graph=_phase_graph(((family.role,),(),uses,control.source_guards,control.record))
+        # The real source/current producer is intentionally supplied here;
+        # only collection/alias traversal and call counts are under test.
+        bridge=subject._SourceAccessBridge(control,(family,),(),uses,graph)
+        checked=[]
+        def current(value):
+            checked.append(value)
+            self.assertIs(value,bridge)
+            self.assertEqual(_phase_graph(((family.role,),(),value.uses,control.source_guards,control.record)),graph)
+            return value
+        with patch.object(subject._SourceAccessBridge,'current',current),\
+            patch.object(subject,'_check_member',wraps=subject._check_member) as member,\
+            patch.object(subject,'_member_graph',wraps=subject._member_graph) as projection:
+            # The family root is supplied: whole-current comparison checks
+            # all member values and aliases in this representation fixture.
+            self.assertIs(subject._check_source_uses(bridge),uses)
+            self.assertEqual(member.call_count,1000)
+            self.assertEqual(checked,[bridge])
+            self.assertEqual(projection.call_count,0,
+                'whole-current checked collection must not rebuild shared member projections')
+            package['cursor'].append(3)
+            with self.assertRaises(AssertionError):subject._check_source_uses(bridge)
+            self.assertEqual(checked,[bridge,bridge])
+            self.assertEqual(member.call_count,1000,'failed fresh whole-current check must consume no members')
+
+    def test_one_shared_snapshot_retains_values_and_cross_member_aliases(self):
+        from config_decoded_sources import _phase_graph
+        from config_source_uses import _SourceUse,_member_graph
+        package={'cursor':[1,2],'fields':{'selector':1}}
+        uses=tuple(_SourceUse('graph-only fixture',0,i,None,None,None,(0,1),(),
+            {'package':package,'same_package':package},()) for i in range(1000))
+        graph=_phase_graph(uses);root,nodes=graph;members=nodes[root[1]][1]
+        self.assertLess(len(nodes),2200)
+        self.assertEqual(_member_graph(graph,members[500]),_phase_graph(uses[500]))
+        different=replace(uses[500],source={'package':package,'same_package':dict(package)})
+        self.assertNotEqual(_member_graph(graph,members[500]),_phase_graph(different))
+        package['fields']['selector']=2
+        self.assertNotEqual(_member_graph(graph,members[500]),_phase_graph(uses[500]))
+
+    def test_projection_keeps_types_and_rejects_cyclic_or_unsupported_nodes(self):
+        from config_decoded_sources import _phase_graph
+        from config_source_uses import _member_graph
+        value={'tag':True};graph=_phase_graph(value)
+        self.assertEqual(_member_graph(graph,graph[0]),graph)
+        self.assertNotEqual(_member_graph(graph,graph[0]),_phase_graph({'tag':1}))
+        with self.assertRaisesRegex(AssertionError,'cyclic'):
+            _member_graph((('reference',0),(('tuple',(('reference',0),)),)),('reference',0))
+        with self.assertRaisesRegex(AssertionError,'unsupported'):
+            _member_graph((('reference',0),(('unreviewed',()),)),('reference',0))
+
+    def test_equal_copy_visible_only_outside_member_requires_whole_graph(self):
+        from types import SimpleNamespace
+        from config_decoded_sources import _phase_graph
+        from config_source_uses import _SourceUse,_member_graph,_checked_bridge_graph
+        package={'cursor':[1,2]}
+        uses=tuple(_SourceUse('graph-only fixture',0,i,None,None,None,(0,1),(),{'package':package},()) for i in range(2))
+        control=SimpleNamespace(source_guards=({'package':package},),record={})
+        bridge=SimpleNamespace(families=(),allocation_lineage=(),uses=uses,control=control)
+        bridge.checkpoint=_phase_graph((bridge.families,bridge.allocation_lineage,uses,control.source_guards,control.record))
+        _checked_bridge_graph(bridge)
+        before=_phase_graph(uses[0]);uses[0].source['package']=dict(package)
+        # The source has one local reference, so this alone is insufficient.
+        self.assertEqual(before,_phase_graph(uses[0]))
+        with self.assertRaisesRegex(AssertionError,'bridge/use record changed'):_checked_bridge_graph(bridge)
+        uses[0].source['package']=package;_checked_bridge_graph(bridge)
+
+
+class ActualSourceReachedUses(unittest.TestCase):
+    def test_actual_private_allocation_and_source_reach_join_all_four_families(self):
+        from config_decoded_sources import _first_boot_source_phases
+        from config_source_control import _source_control
+        from config_source_uses import _source_access_bridge,_check_source_use,_check_source_uses
+        objects,rows,source,_=SourceLiteralBodies.fixture()
+        state=_first_boot_source_phases(objects,rows,source)
+        print('Sources preparation phase graph:',len(state.phases),'phases;',len(state.checkpoint[1]),'nodes',flush=True)
+        copies=tuple(event['effect']['children'] for phase in state.phases if phase.effects is not None
+            for event in phase.effects['transports'][0])+tuple(slot['payload']['effect']['children']
+            for phase in state.phases if phase.effects is not None for slot in phase.effects['slots']
+            if 'children' in slot['payload']['effect'])
+        print('Sources actual post-check copy descriptions:',len(copies),'copy events;',
+            len({id(v) for v in copies}),'child tuples;',len({id(child) for v in copies for child in v}),'bodies',flush=True)
+        self.assertTrue(copies);self.assertEqual(len({id(v) for v in copies}),1)
+        self.assertEqual(len({id(child) for v in copies for child in v}),2)
+        control=_source_control(state)
+        print('Sources preparation control graph:',len(control.checkpoint[1]),'nodes',flush=True)
+        bridge=_source_access_bridge(control)
+        print('Sources internal graph-only measurement:',len(bridge.uses),'uses;',len(bridge.checkpoint[1]),'shared nodes',flush=True)
+        self.assertIs(bridge.control,control)
+        self.assertEqual(tuple(v.role for v in bridge.families),
+            ('source_route_local','source_route_output','warning_presentation_local','Fuel_final_halfword'))
+        self.assertTrue(bridge.uses)
+        self.assertEqual({v.role for v in bridge.uses},set(v.role for v in bridge.families))
+        frame=state.widgets.views.context.headers['visitor_frame']
+        for use in _check_source_uses(bridge):
+            self.assertFalse(use.completed_prefix_issued)
+            if use.role=='source_route_output':
+                phase=state.phases[use.phase_index]
+                self.assertIs(use.source['package'],phase.array['packages'][use.source_index])
+                self.assertEqual(use.footprint,(frame.start+SOURCE_OUTPUTS[use.source_index]+6,
+                    frame.start+SOURCE_OUTPUTS[use.source_index]+10))
+            elif use.role=='source_route_local':
+                self.assertEqual(use.footprint,(frame.start-47,frame.start-45))
+                self.assertEqual(use.source['Route']['packed_word'],'request | (response <<16)')
+            elif use.role=='Fuel_final_halfword':
+                self.assertEqual(use.source['assignment']['Fuel']['complete_store'],0x1001c654+5570)
+                self.assertIn(use.source['assignment']['source_guard'],((0,None),(1,None),(2,0),(2,1)))
+        with self.assertRaisesRegex(AssertionError,'actual private active control'):
+            _source_access_bridge(state.structural)
+        with self.assertRaisesRegex(AssertionError,'internally derived use'):
+            _check_source_use(bridge,replace(bridge.uses[0]))
+        output=next(u for u in bridge.uses if u.role=='source_route_output')
+        package=output.source['package'];output.source['package']=dict(package)
+        try:
+            with self.assertRaisesRegex(AssertionError,'bridge/use record changed'):
+                _check_source_use(bridge,output)
+        finally:output.source['package']=package
+        old=bridge.uses[0].source['source_phase'];bridge.uses[0].source['source_phase']='wrong epoch'
+        try:
+            with self.assertRaisesRegex(AssertionError,'use record changed'):
+                _check_source_use(bridge,bridge.uses[0])
+        finally:bridge.uses[0].source['source_phase']=old
+
+
+SOURCE_OUTPUTS=(1128,516,628,744,880,940,1000,1064)
+
+
 class SourcePhaseSnapshot(unittest.TestCase):
     def test_repeated_packages_are_independent_immutable_graph_nodes(self):
         from config_decoded_sources import _phase_graph
@@ -641,6 +870,23 @@ class SourceRemainingAggregates(unittest.TestCase):
             ((0,4),(29,1),(7,1),(28,1),(8,4),(12,4),(16,4),(20,4),(24,4),(4,1),(5,2)))
         self.assertFalse(result['complete_ordinary_group_issued'])
 
+    def test_warning_domain_errors_retain_the_actual_packed_intermediate_route(self):
+        from config_decoded_sources import _remaining_aggregates
+        result=_remaining_aggregates(*self.fixture());V=0x1001c654
+        for stage in ('Warning scope.domain','Warning mode.domain'):
+            errors=tuple(v for v in result['errors'] if v['stage']==stage)
+            self.assertTrue(errors)
+            for error in errors:
+                self.assertEqual(error['frontier'],V+56,'Warning domain failure must use its packed carrier before56')
+                self.assertEqual(error['error'],14)
+                self.assertEqual(error['error_transport'],dict(kind='packed_Warning_lowbyte',
+                    path=tuple(V+o for o in (6446,6448,4866,4870,4872,4886,4888,4890,5024,5032,56)),
+                    mask=0x020000ff,whole_r5_is_scalar_error=False))
+        page=tuple(v for v in result['errors'] if v['stage']=='Warning page')
+        self.assertTrue(page)
+        self.assertTrue(all(v['error_transport']['kind']=='packed_Warning_lowbyte' and
+            v['frontier']==V+56 and v['error_transport']['path'][0]==V+5210 for v in page))
+
 
 class SourceParentChronology(unittest.TestCase):
     @classmethod
@@ -704,6 +950,8 @@ class SourceParentChronology(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError,'package/tag/source epoch'):
                 _publication_lineage(*self.args,*self.tail)
         finally:normal['tag_domain']=original
+
+
 
 
 class SourceAccessFamilies(unittest.TestCase):
