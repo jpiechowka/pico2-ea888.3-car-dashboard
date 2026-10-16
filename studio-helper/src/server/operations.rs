@@ -235,6 +235,36 @@ pub(super) async fn start_build(
                 .transition(&id, stage, state, reason)
         };
         let mut reservation = None;
+        let mut diagnostics = Vec::new();
+        let mut lost_bytes = 0u64;
+        let mut lost_chunks = 0u64;
+        let mut log_output = |stage, stderr, text: &str| {
+            // Process framing already sanitized/redacted this text. Keep a bounded
+            // prefix independent of UI polling, including failures before tool exit.
+            let line = format!("{stage:?} {}: {text}\n", if stderr { "stderr" } else { "stdout" });
+            // Reserve half the evidence budget for post-compilation validation.
+            let limit = if stage == StageId::Firmware(FirmwareStage::Validation) {
+                256 * 1024usize
+            } else {
+                128 * 1024usize
+            };
+            let remaining = limit.saturating_sub(diagnostics.len());
+            diagnostics.extend_from_slice(&line.as_bytes()[..line.floor_char_boundary(line.len().min(remaining))]);
+            if let Ok(mut inner) = worker_state.inner.try_lock() {
+                let _ = inner.jobs.append(
+                    &id,
+                    LogInput {
+                        stage,
+                        source: if stderr { Source::Stderr } else { Source::Stdout },
+                        text: text.into(),
+                        progress: false,
+                    },
+                );
+            } else {
+                lost_bytes = lost_bytes.saturating_add(text.len() as u64);
+                lost_chunks = lost_chunks.saturating_add(1);
+            }
+        };
         let execution = (|| -> Result<crate::artifacts::Artifact, String> {
             if !crate::host::host().0 {
                 return Err("Unsupported native host".into());
@@ -256,34 +286,9 @@ pub(super) async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Compilation);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            let mut lost_bytes = 0u64;
-            let mut lost_chunks = 0u64;
             let output = crate::build_input::capture(&frozen, &mut |stderr, text| {
-                if let Ok(mut inner) = worker_state.inner.try_lock() {
-                    let _ = inner.jobs.append(
-                        &id,
-                        LogInput {
-                            stage,
-                            source: if stderr { Source::Stderr } else { Source::Stdout },
-                            text: text.into(),
-                            progress: false,
-                        },
-                    );
-                } else {
-                    lost_bytes = lost_bytes.saturating_add(text.len() as u64);
-                    lost_chunks = lost_chunks.saturating_add(1);
-                }
+                log_output(stage, stderr, text);
             });
-            if lost_chunks > 0 {
-                let _ = worker_state.inner.lock().unwrap().jobs.account_log_loss(
-                    &id,
-                    crate::jobs::ingress::LogLoss {
-                        bytes: lost_bytes,
-                        chunks: lost_chunks,
-                        counter_overflow: false,
-                    },
-                );
-            }
             let output = output?;
             if output.code != Some(0) {
                 return Err("Firmware capture failed; inspect bounded output".into());
@@ -291,8 +296,34 @@ pub(super) async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Validation);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            crate::artifacts::admit(frozen, &input, worker_state.session.clone(), converter)
+            crate::artifacts::admit(
+                frozen,
+                &input,
+                worker_state.session.clone(),
+                converter,
+                &mut |stderr, text| {
+                    log_output(stage, stderr, text);
+                },
+            )
         })();
+        if lost_chunks > 0 {
+            let _ = worker_state.inner.lock().unwrap().jobs.account_log_loss(
+                &id,
+                crate::jobs::ingress::LogLoss {
+                    bytes: lost_bytes,
+                    chunks: lost_chunks,
+                    counter_overflow: false,
+                },
+            );
+        }
+        let execution = if let Some(reservation) = reservation.as_ref() {
+            match reservation.write_diagnostics(&diagnostics) {
+                Ok(()) => execution,
+                Err(error) => Err(format!("Build diagnostics could not be retained: {error}")),
+            }
+        } else {
+            execution
+        };
         let execution = if crate::process::cancelled() {
             drop(execution);
             Err("Cancelled before artifact publication".into())

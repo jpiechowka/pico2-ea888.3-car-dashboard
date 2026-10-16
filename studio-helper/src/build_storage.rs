@@ -324,6 +324,24 @@ pub(crate) fn reserve(repo: &Path) -> Result<Reservation, String> {
     })
 }
 impl Reservation {
+    pub(crate) fn write_diagnostics(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        if bytes.len() > 256 * 1024 {
+            return Err("Build diagnostics exceed 256 KiB".into());
+        }
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.path.join("build-diagnostics.log"))
+            .map_err(|e| e.to_string())?;
+        output
+            .write_all(bytes)
+            .and_then(|_| output.sync_all())
+            .map_err(|e| e.to_string())
+    }
+
     fn retain_cargo_diagnostics(&self) -> Result<(), String> {
         // The fixed capture path belongs to this closed attempt, never a caller path.
         let source = self
@@ -364,6 +382,13 @@ impl Reservation {
         {
             return Err("Build storage root identity changed".into());
         }
+        let diagnostics = self.path.join("build-diagnostics.log");
+        if diagnostics.exists() {
+            let file = crate::file_locks::read_file(&diagnostics)?;
+            if file.metadata().map_err(|e| e.to_string())?.len() > 256 * 1024 {
+                return Err("Build diagnostics exceed 256 KiB; quarantined".into());
+            }
+        }
         if !artifact {
             self.retain_cargo_diagnostics()?;
         }
@@ -384,6 +409,7 @@ impl Reservation {
                         && !n.starts_with("input/")
                         && n != "source-manifest.json"
                         && n != "cargo-diagnostics.log"
+                        && n != "build-diagnostics.log"
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -684,7 +710,15 @@ mod tests {
             .join("source/firmware/target/bench-captures/native/cargo-diagnostics.log");
         std::fs::create_dir_all(diagnostics.parent().unwrap()).unwrap();
         std::fs::write(&diagnostics, b"error: fixture missing linker\n").unwrap();
+        assert!(r.write_diagnostics(&vec![b'x'; 256 * 1024 + 1]).is_err());
+        r.write_diagnostics(b"Validation stderr: actual validator failure\n")
+            .unwrap();
+        assert!(r.write_diagnostics(b"replacement").is_err());
         r.close(false, Some("fixture compiler failure")).unwrap();
+        assert_eq!(
+            std::fs::read(r.path.join("build-diagnostics.log")).unwrap(),
+            b"Validation stderr: actual validator failure\n"
+        );
         assert_eq!(
             std::fs::read(r.path.join("cargo-diagnostics.log")).unwrap(),
             b"error: fixture missing linker\n"

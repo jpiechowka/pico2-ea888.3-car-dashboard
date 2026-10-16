@@ -81,13 +81,6 @@ pub(crate) fn run(
 }
 
 /// Fixed capture command only. Build output is bounded independently of short probes.
-pub(crate) fn run_capture(
-    python: &Path,
-    args: &[&str],
-    cwd: &Path,
-) -> Result<Output, String> {
-    run_capture_stream(python, args, cwd, &mut |_, _| {})
-}
 pub(crate) fn run_capture_stream(
     python: &Path,
     args: &[&str],

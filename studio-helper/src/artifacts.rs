@@ -55,6 +55,21 @@ fn bytes(
     }
     Ok(result)
 }
+/// Validation stdout may be a machine report; stderr is always observable.
+fn run_validation_tool(
+    tool: &Path,
+    args: &[&str],
+    cwd: &Path,
+    machine_stdout: bool,
+    sink: &mut dyn FnMut(bool, &str),
+) -> Result<crate::process::Output, String> {
+    crate::process::run_capture_stream(tool, args, cwd, &mut |stderr, text| {
+        if stderr || !machine_stdout {
+            sink(stderr, text);
+        }
+    })
+}
+
 pub(crate) fn converter(repo: &Path) -> Result<Converter, String> {
     let path = repo
         .join("target/configurator-tools/bin/picotool.exe")
@@ -83,6 +98,7 @@ pub(crate) fn admit(
     input: &AcceptedInput,
     session: SessionId,
     converter: Converter,
+    sink: &mut dyn FnMut(bool, &str),
 ) -> Result<Artifact, String> {
     frozen.verify()?;
     let capture = frozen.source_root().join("firmware/target/bench-captures/native");
@@ -114,7 +130,8 @@ pub(crate) fn admit(
         "--platform",
         "rp2350",
     ];
-    let converted = crate::process::run_capture(&converter.path, &args, frozen.source_root())?;
+    sink(true, "Running pinned UF2 converter");
+    let converted = run_validation_tool(&converter.path, &args, frozen.source_root(), false, sink)?;
     if converted.code != Some(0) {
         return Err("Pinned UF2 conversion failed".into());
     }
@@ -136,7 +153,8 @@ pub(crate) fn admit(
         uf2.to_str().ok_or("Invalid UF2 path")?,
     ];
     // The script uses only its frozen sibling authorities, never current-checkout fallback.
-    let output = crate::process::run_capture(&python, &args, frozen.source_root())?;
+    sink(true, "Running frozen artifact validator");
+    let output = run_validation_tool(&python, &args, frozen.source_root(), true, sink)?;
     if output.code != Some(0) {
         return Err("Artifact validation failed; no artifact published".into());
     }
@@ -262,5 +280,38 @@ mod qualification_tests {
             invalid[key] = value;
             assert!(validate_qualification(&invalid).is_err(), "invalid {key}");
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod diagnostic_tests {
+    #[test]
+    fn failed_validator_streams_stderr_but_preserves_machine_stdout_privately() {
+        let cmd = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|p| p.join("python.exe"))
+            .find(|p| p.is_absolute() && p.is_file())
+            .unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        let mut observed = Vec::new();
+        let output = super::run_validation_tool(
+            &cmd,
+            &[
+                "-I",
+                "-c",
+                "import sys; print('machine-report'); print('validator-failure',file=sys.stderr); sys.exit(9)",
+            ],
+            &cwd,
+            true,
+            &mut |stderr, text| observed.push((stderr, text.to_owned())),
+        )
+        .unwrap();
+        assert_eq!(output.code, Some(9));
+        assert!(String::from_utf8_lossy(&output.raw_stdout).contains("machine-report"));
+        assert!(
+            observed
+                .iter()
+                .any(|(stderr, text)| *stderr && text.contains("validator-failure"))
+        );
+        assert!(!observed.iter().any(|(_, text)| text.contains("machine-report")));
     }
 }
