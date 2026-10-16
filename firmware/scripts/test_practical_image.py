@@ -64,6 +64,9 @@ class PracticalImage(unittest.TestCase):
         self.flash=self.enterContext(patch.object(image,'check_flash_lockout'))
 
     def test_current_envelope_admission_rejects_legacy_and_preserves_exact_bounds(self):
+        # Catch cross-language version drift before compiling a full ARM image.
+        shipped = (Path(__file__).resolve().parents[2] / 'configs/default.eav').read_bytes()
+        self.assertEqual(struct.unpack_from('<H', shipped, 4)[0], practical.CURRENT_EAV_VERSION)
         elf,eav,_=fixture()
         self.assertEqual(practical._configuration(elf,eav),eav)
         for version in (0,1,2,3,4,6,65535):
