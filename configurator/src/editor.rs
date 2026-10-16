@@ -528,6 +528,20 @@ impl Editor {
         self.accept_project(self.preview().clone(), self.accepted.selection, profile, Some(artwork))
     }
 
+    /// Finish an admitted artwork import before allowing snapshot actions again.
+    pub fn complete_artwork_import(
+        &mut self,
+        token: ImportToken,
+        artwork: Arc<Artwork>,
+    ) -> Result<Revision, EditorError> {
+        if !self.import_is_current(token) {
+            return Err(EditorError::StaleToken);
+        }
+        self.ensure_clean()?;
+        self.import = None;
+        self.set_artwork_if_current(self.stamp(), artwork)
+    }
+
     fn accept_project(
         &mut self,
         preview: ValidatedConfig,
@@ -575,6 +589,27 @@ impl Editor {
         self.ensure_clean()?;
         self.import = None;
         let project = Project::decode(bytes).map_err(EditorError::Project)?;
+        self.accept_imported_project(project)
+    }
+
+    /// Browser backing preparation finishes before this final token-checked commit.
+    pub fn complete_prepared_project_import(
+        &mut self,
+        token: ImportToken,
+        project: Project,
+    ) -> Result<Revision, EditorError> {
+        if !self.import_is_current(token) {
+            return Err(EditorError::StaleToken);
+        }
+        self.ensure_clean()?;
+        self.import = None;
+        self.accept_imported_project(project)
+    }
+
+    fn accept_imported_project(
+        &mut self,
+        project: Project,
+    ) -> Result<Revision, EditorError> {
         let preview = decode(project.dashboard_bytes()).map_err(EditorError::Codec)?;
         let selection = Selection {
             view: preview.config().boot_view,
@@ -1164,6 +1199,14 @@ impl Editor {
         bytes: &[u8],
         envelope: &str,
     ) -> Result<Self, EditorError> {
+        let project = Project::decode(bytes).map_err(EditorError::Project)?;
+        Self::from_prepared_project_saved(project, envelope)
+    }
+
+    pub fn from_prepared_project_saved(
+        project: Project,
+        envelope: &str,
+    ) -> Result<Self, EditorError> {
         if envelope.len() > MAX_SAVED_BYTES {
             return Err(EditorError::Codec(ConfigError::Length));
         }
@@ -1172,7 +1215,7 @@ impl Editor {
         if saved.editor_version != SAVED_STATE_VERSION {
             return Err(EditorError::SavedVersion);
         }
-        let project = Project::decode(bytes).map_err(EditorError::Project)?;
+
         let dashboard = from_json_bytes(saved.config.get().as_bytes()).map_err(EditorError::Codec)?;
         let expected =
             Project::new(&dashboard, saved.startup, project.artwork().cloned()).map_err(EditorError::Project)?;

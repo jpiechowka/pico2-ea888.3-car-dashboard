@@ -47,7 +47,12 @@ fn retained_source(ui: Ui) -> Option<startup_artwork::RetainedSource> {
         let art = e.startup_artwork()?;
         let r = art.recipe();
         Some(startup_artwork::RetainedSource {
-            source: art.original()?.clone(),
+            source: {
+                if !art.has_original() {
+                    return None;
+                }
+                art.clone()
+            },
             label: r.label.clone(),
             options: c::Options {
                 kind: match r.source_kind {
@@ -122,14 +127,49 @@ fn accept_artwork(
     };
     match p::Artwork::new(input.converted.asset.into(), recipe, Some(input.source)) {
         Ok(art) => {
-            if ui.run(|e| e.set_artwork_if_current(input.stamp, std::sync::Arc::new(art))) {
-                ui.startup
-                    .message
-                    .set("Custom artwork accepted with original source. Undo restores the previous project.".into());
-                show(ui);
-            }
+            wasm_bindgen_futures::spawn_local(async move {
+                let _lease = input.lease;
+                if ui.editor.try_with_untracked(|e| e.import_is_current(input.token)) != Some(true) {
+                    input.finished.run(false);
+                    return;
+                }
+                let prepared = originals::externalize(std::sync::Arc::new(art)).await;
+                if ui.editor.try_with_untracked(|e| e.import_is_current(input.token)) != Some(true) {
+                    input.finished.run(false);
+                    return;
+                }
+                match prepared {
+                    Ok(art) => {
+                        if ui.run(|e| e.complete_artwork_import(input.token, art)) {
+                            ui.startup.message.set(
+                                "Custom artwork accepted with original source. Undo restores the previous project."
+                                    .into(),
+                            );
+                            show(ui);
+                            input.finished.run(true);
+                        } else {
+                            input.finished.run(false);
+                        }
+                    }
+                    Err(_) => {
+                        ui.editor.update(|e| {
+                            let _ = e.cancel_import(input.token);
+                        });
+                        ui.startup.message.set(
+                            "Original artwork could not be stored. Current project retained; check browser storage \
+                             permissions and space."
+                                .into(),
+                        );
+                        input.finished.run(false);
+                    }
+                }
+            });
         }
         Err(_) => {
+            ui.editor.update(|e| {
+                let _ = e.cancel_import(input.token);
+            });
+            input.finished.run(false);
             ui.startup
                 .message
                 .set("Converted artwork did not pass project validation. Current project retained.".into())

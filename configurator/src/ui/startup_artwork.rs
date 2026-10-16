@@ -9,7 +9,7 @@ use super::*;
 
 #[derive(Clone)]
 pub struct RetainedSource {
-    pub source: Arc<[u8]>,
+    pub source: Arc<dashboard_config_tools::project::Artwork>,
     pub label: String,
     pub options: Options,
 }
@@ -21,7 +21,9 @@ pub struct ArtworkImport {
     pub converted: Converted,
     pub options: Options,
     pub label: String,
-    pub stamp: EditorStamp,
+    pub token: ImportToken,
+    pub lease: originals::Materialization,
+    pub finished: Callback<bool>,
 }
 struct Job {
     worker: web_sys::Worker,
@@ -44,6 +46,9 @@ struct Importer {
     busy: RwSignal<bool>,
     message: RwSignal<String>,
     stamp: RwSignal<Option<EditorStamp>>,
+    token: RwSignal<Option<ImportToken>>,
+    lease: StoredValue<Option<originals::Materialization>, LocalStorage>,
+    editor: RwSignal<Editor>,
 }
 impl Importer {
     fn cancel(self) {
@@ -52,7 +57,14 @@ impl Importer {
                 .message
                 .try_set("Conversion cancelled; accepted artwork retained.".into());
         }
-        let _ = self.generation.try_update(|n| *n = n.wrapping_add(1));
+        let _ = self.generation.try_update(|n| *n = n.saturating_add(1));
+        if let Some(Some(token)) = self.token.try_get_untracked() {
+            let _ = self.editor.try_update(|e| {
+                let _ = e.cancel_import(token);
+            });
+        }
+        let _ = self.token.try_set(None);
+        let _ = self.lease.try_update_value(|lease| *lease = None);
         let _ = self.job.try_update_value(|job| *job = None);
         let _ = self.busy.try_set(false);
     }
@@ -99,6 +111,25 @@ fn start(
         state.fail("Resolve the current draft before importing artwork.");
         return;
     }
+    if state.generation.get_untracked() == u64::MAX {
+        state.fail("Import generation exhausted. Reload Studio after exporting your work.");
+        return;
+    }
+    let lease = match originals::Materialization::acquire() {
+        Ok(v) => v,
+        Err(_) => {
+            state.fail("Another original-artwork operation is running.");
+            return;
+        }
+    };
+    let mut token = Err(EditorError::InvalidDraft);
+    ui.editor.update(|e| token = e.begin_import());
+    let Ok(token) = token else {
+        state.fail("Finish current edits before importing artwork.");
+        return;
+    };
+    state.token.set(Some(token));
+    state.lease.set_value(Some(lease));
     let generation = state.generation.get_untracked();
     let stamp = ui.editor.with_untracked(Editor::stamp);
     state.stamp.set(Some(stamp));
@@ -213,6 +244,30 @@ fn start(
                     .filter(|c| !c.is_control() && *c != '/' && *c != '\\')
                     .take(32)
                     .collect::<String>();
+                state.job.update_value(|job| *job = None);
+                state
+                    .message
+                    .set("Conversion validated; retaining original in browser storage…".into());
+                let finished = Callback::new(move |accepted| {
+                    if state.generation.try_get_untracked() != Some(generation) {
+                        return;
+                    }
+                    state.cancel();
+                    state.message.set(if accepted {
+                        format!(
+                            "Conversion accepted: {width}×{height}, {frames} source frames. {}{} sRGB assumed; pixels \
+                             composited over the selected matte.",
+                            if timing { "Timing resampled. " } else { "" },
+                            if zero > 0 {
+                                format!("{zero} zero delays treated as 100 ms. ")
+                            } else {
+                                String::new()
+                            }
+                        )
+                    } else {
+                        "Artwork admission failed; previous project retained.".into()
+                    });
+                });
                 on_accept.run(ArtworkImport {
                     source: Arc::from(source.to_vec()),
                     converted: Converted {
@@ -227,19 +282,17 @@ fn start(
                     },
                     options,
                     label,
-                    stamp,
+                    token,
+                    finished,
+                    lease: {
+                        let mut lease = None;
+                        state.lease.update_value(|v| lease = v.take());
+                        let Some(lease) = lease else {
+                            return;
+                        };
+                        lease
+                    },
                 });
-                state.cancel();
-                state.message.set(format!(
-                    "Conversion complete: {width}×{height}, {frames} source frames. {}{} sRGB assumed; pixels \
-                     composited over the selected matte.",
-                    if timing { "Timing resampled. " } else { "" },
-                    if zero > 0 {
-                        format!("{zero} zero delays treated as 100 ms. ")
-                    } else {
-                        String::new()
-                    }
-                ));
             });
         });
         let error = Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |_| {
@@ -286,6 +339,9 @@ pub fn Panel(
         busy: RwSignal::new(false),
         message: RwSignal::new(String::new()),
         stamp: RwSignal::new(None),
+        token: RwSignal::new(None),
+        lease: StoredValue::new_local(None),
+        editor: ui.editor,
     };
     on_cleanup(move || state.cancel());
     Effect::new(move |_| {
@@ -295,7 +351,7 @@ pub fn Panel(
         }
     });
     view! {<details class="workspace-group startup-artwork"><summary>"Custom artwork"</summary><div class="startup-body">
-        <div class="startup-source"><div><strong>{move ||retained.and_then(|r|r.get()).map_or("No original selected".into(), |s|s.label)}</strong><small>{move ||retained.and_then(|r|r.get()).map_or("Choose a PNG or GIF to create your animation".into(), |s|format!("Retained original · {:.1} KiB",s.source.len() as f64/1024.0))}</small></div><span class="startup-limit">"SOURCE ≤ 8 MiB"<br/>"DEVICE ≤ 512 KiB"</span></div>
+        <div class="startup-source"><div><strong>{move ||retained.and_then(|r|r.get()).map_or("No original selected".into(), |s|s.label)}</strong><small>{move ||retained.and_then(|r|r.get()).map_or("Choose a PNG or GIF to create your animation".into(), |s|format!("Retained original · {:.1} KiB",s.source.recipe().source_length as f64/1024.0))}</small></div><span class="startup-limit">"SOURCE ≤ 8 MiB"<br/>"DEVICE ≤ 512 KiB"</span></div>
         <p class="hint">"PNG, PNG sprite sheet or animated GIF. Original artwork is retained with the project; only converted pixels enter the device. Maximum 8 MiB input and 512 KiB animation."</p>
         <div class="startup-grid startup-grid-three"><label>"Source format"<select prop:value=move ||match options.get().kind{SourceKind::Png=>"png",SourceKind::Gif=>"gif",SourceKind::SpriteSheet=>"sheet"} on:change=move |e|{state.cancel();options.update(|o|{o.kind=match event_target_value(&e).as_str(){"gif"=>SourceKind::Gif,"sheet"=>SourceKind::SpriteSheet,_=>SourceKind::Png};o.sheet=if o.kind==SourceKind::SpriteSheet{Some(Sheet{columns:1,rows:1,frame_ms:100})}else{None};});}><option value="png">"PNG still"</option><option value="gif">"Animated GIF"</option><option value="sheet">"PNG sprite sheet"</option></select></label>
         <label>"Fit"<select prop:value=move ||match options.get().fit{Fit::Contain=>"contain",Fit::Cover=>"cover",Fit::Stretch=>"stretch"} on:change=move |e|{state.cancel();options.update(|o|o.fit=match event_target_value(&e).as_str(){"cover"=>Fit::Cover,"stretch"=>Fit::Stretch,_=>Fit::Contain});}><option value="contain">"Contain"</option><option value="cover">"Crop to fill"</option><option value="stretch">"Stretch"</option></select></label>
@@ -311,7 +367,7 @@ pub fn Panel(
         </div>
         <label hidden=move ||options.get().kind!=SourceKind::Gif>"GIF disposal background"<select prop:value=move ||if options.get().gif_background==GifBackground::Logical{"logical"}else{"transparent"} on:change=move |e|{state.cancel();options.update(|o|o.gif_background=if event_target_value(&e)=="transparent"{GifBackground::Transparent}else{GifBackground::Logical});}><option value="logical">"GIF logical background"</option><option value="transparent">"Transparent compatibility"</option></select></label>
         <div class="startup-actions"><button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){state.cancel();options.set(source.options);}}>"Restore original conversion settings"</button>
-        <button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){let parts=js_sys::Array::new();parts.push(&js_sys::Uint8Array::from(source.source.as_ref()));match web_sys::File::new_with_u8_array_sequence(&parts,&source.label){Ok(file)=>start(ui,state,file,options.get_untracked(),on_accept),Err(_)=>state.fail("Could not reopen retained original.")}}}>"Convert retained original"</button></div>
+        <button disabled=move ||retained.and_then(|r|r.get()).is_none() on:click=move |_|{if let Some(source)=retained.and_then(|r|r.get_untracked()){let captured_options=options.get_untracked();let stamp=ui.editor.with_untracked(Editor::stamp);wasm_bindgen_futures::spawn_local(async move{match originals::verified_blob(source.source).await{Ok(blob) if ui.editor.try_with_untracked(Editor::stamp)==Some(stamp)=>{let parts=js_sys::Array::new();parts.push(&blob);match web_sys::File::new_with_blob_sequence(&parts,&source.label){Ok(file)=>start(ui,state,file,captured_options,on_accept),Err(_)=>state.fail("Could not reopen retained original.")}},_=>state.fail("Original storage unavailable or project changed.")}});}}>"Convert retained original"</button></div>
         <p class="hint" hidden=move ||retained.and_then(|r|r.get()).is_some()>"No retained original is available. Reimport the source to change conversion options."</p>
         <label>"Choose artwork"<input type="file" accept="image/png,image/gif,.png,.gif" on:change=move |e|{let input=event_target::<web_sys::HtmlInputElement>(&e);let file=input.files().and_then(|files|files.get(0));input.set_value("");if let Some(file)=file{start(ui,state,file,options.get_untracked(),on_accept);}}/></label>
         <button disabled=move ||!state.busy.get() on:click=move |_|{state.cancel();state.message.set("Conversion cancelled; accepted artwork retained.".into());}>"Cancel conversion"</button>

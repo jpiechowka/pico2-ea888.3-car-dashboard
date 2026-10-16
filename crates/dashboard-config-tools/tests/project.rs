@@ -138,3 +138,48 @@ fn portable_recipe_cannot_exceed_converter_clip_duration() {
         Err(ProjectError::Recipe)
     ));
 }
+
+#[test]
+fn immutable_original_handles_preserve_identity_without_retaining_source_bytes() {
+    let art = artwork();
+    let source = art.original().unwrap().clone();
+    let reference = Arc::new(OriginalReference::new(digest(&source), source.len()).unwrap());
+    let external = Arc::new(art.externalized(reference.clone()).unwrap());
+    assert!(external.original().is_none());
+    assert!(external.has_original());
+    assert_eq!(external.identity(), art.identity());
+    assert!(Arc::ptr_eq(external.original_reference().unwrap(), &reference));
+    assert_eq!(reference.key().len(), 64);
+    let config = validate(default_config()).unwrap();
+    let profile = StartupProfile {
+        theme: StartupTheme::Custom,
+        ..StartupProfile::default()
+    };
+    let project = Project::new(&config, profile, Some(external.clone())).unwrap();
+    assert!(matches!(
+        project.encode(ExportMode::Complete),
+        Err(ProjectError::SourceUnavailable)
+    ));
+    let reduced = project.encode(ExportMode::ConvertedOnly).unwrap();
+    let restored = Project::decode(&reduced).unwrap();
+    let reattached = restored.artwork().unwrap().externalized(reference).unwrap();
+    assert_eq!(reattached.identity(), art.identity());
+    assert!(external.materialized(Arc::from(&b"wrong"[..])).is_err());
+    let full = project
+        .with_artwork(Arc::new(external.materialized(source).unwrap()))
+        .unwrap();
+    assert_eq!(
+        Project::decode(&full.encode(ExportMode::Complete).unwrap())
+            .unwrap()
+            .artwork()
+            .unwrap()
+            .identity(),
+        art.identity()
+    );
+    assert!(OriginalReference::new([0; 32], 0).is_err());
+    assert!(OriginalReference::new([0; 32], MAX_ORIGINAL_BYTES + 1).is_err());
+    assert!(
+        art.externalized(Arc::new(OriginalReference::new([0; 32], 1).unwrap()))
+            .is_err()
+    );
+}

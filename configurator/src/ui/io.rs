@@ -626,6 +626,18 @@ fn import_file(
         }
     };
     spawn_local(async move {
+        let _lease = match originals::Materialization::acquire() {
+            Ok(lease) => lease,
+            Err(_) => {
+                ui.editor.update(|e| {
+                    let _ = e.cancel_import(token);
+                });
+                ui.notice.set(
+                    "Another original-artwork operation is running. Try the import again when it finishes.".into(),
+                );
+                return;
+            }
+        };
         let outcome = JsFuture::from(file.array_buffer()).await;
         if !ui
             .editor
@@ -654,7 +666,38 @@ fn import_file(
                     ImportFormat::Json
                 };
                 let count = bytes.len();
-                if complete_import(ui, token, format, &bytes) {
+                let success = if matches!(format, ImportFormat::Project) {
+                    let prepared = async {
+                        let project =
+                            dashboard_config_tools::project::Project::decode(&bytes).map_err(|_| JsValue::NULL)?;
+                        originals::prepare(project).await
+                    }
+                    .await;
+                    match prepared {
+                        Ok(project) => {
+                            let before = ui.editor.with_untracked(Editor::accepted_config_key);
+                            let success = ui.run_quiet(|e| e.complete_prepared_project_import(token, project));
+                            if success {
+                                ui.accepted_field(before, "Imported complete project");
+                            }
+                            success
+                        }
+                        Err(_) => {
+                            ui.editor.update(|e| {
+                                let _ = e.cancel_import(token);
+                            });
+                            ui.notice.set(
+                                "Project import could not validate or retain its original artwork. Current project \
+                                 kept."
+                                    .into(),
+                            );
+                            false
+                        }
+                    }
+                } else {
+                    complete_import(ui, token, format, &bytes)
+                };
+                if success {
                     metrics::file_operation(ui, true, matches!(format, ImportFormat::Json), count, started);
                 }
             }

@@ -21,6 +21,7 @@ pub enum ProjectError {
     Asset,
     Recipe,
     Source,
+    SourceUnavailable,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportMode {
@@ -73,11 +74,40 @@ pub struct Recipe {
     pub sheet: Option<Sheet>,
     pub gif_background: GifBackground,
 }
+/// Immutable backing identity. Browser ownership/pins retain this Arc, not source bytes.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OriginalReference {
+    sha256: [u8; 32],
+    length: u32,
+}
+impl OriginalReference {
+    pub fn new(
+        sha256: [u8; 32],
+        length: usize,
+    ) -> Result<Self, ProjectError> {
+        if length == 0 || length > MAX_ORIGINAL_BYTES {
+            return Err(ProjectError::Source);
+        }
+        Ok(Self {
+            sha256,
+            length: length as u32,
+        })
+    }
+
+    pub fn sha256(&self) -> [u8; 32] { self.sha256 }
+
+    pub fn len(&self) -> usize { self.length as usize }
+
+    pub fn is_empty(&self) -> bool { false }
+
+    pub fn key(&self) -> String { self.sha256.iter().map(|b| format!("{b:02x}")).collect() }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artwork {
     converted: Arc<[u8]>,
     recipe: Recipe,
     original: Option<Arc<[u8]>>,
+    reference: Option<Arc<OriginalReference>>,
 }
 #[derive(Clone, Debug)]
 pub struct Project {
@@ -171,8 +201,40 @@ impl Artwork {
             converted,
             recipe,
             original,
+            reference: None,
         })
     }
+
+    /// The caller must have committed these exact bytes to immutable backing first.
+    pub fn externalized(
+        &self,
+        reference: Arc<OriginalReference>,
+    ) -> Result<Self, ProjectError> {
+        if reference.sha256() != self.recipe.source_sha256 || reference.len() != self.recipe.source_length as usize {
+            return Err(ProjectError::Source);
+        }
+        let mut recipe = self.recipe.clone();
+        recipe.original_included = true;
+        Ok(Self {
+            converted: self.converted.clone(),
+            recipe,
+            original: None,
+            reference: Some(reference),
+        })
+    }
+
+    pub fn materialized(
+        &self,
+        source: Arc<[u8]>,
+    ) -> Result<Self, ProjectError> {
+        let mut recipe = self.recipe.clone();
+        recipe.original_included = true;
+        Self::new(self.converted.clone(), recipe, Some(source))
+    }
+
+    pub fn original_reference(&self) -> Option<&Arc<OriginalReference>> { self.reference.as_ref() }
+
+    pub fn has_original(&self) -> bool { self.original.is_some() || self.reference.is_some() }
 
     pub fn identity(&self) -> [u8; 32] { digest(&serde_json::to_vec(&self.recipe).expect("typed recipe serializes")) }
 
@@ -208,6 +270,20 @@ impl Project {
         })
     }
 
+    pub fn with_artwork(
+        &self,
+        artwork: Arc<Artwork>,
+    ) -> Result<Self, ProjectError> {
+        if self.profile.theme as u8 != 5 {
+            return Err(ProjectError::Profile);
+        }
+        Ok(Self {
+            dashboard: self.dashboard.clone(),
+            profile: self.profile,
+            artwork: Some(artwork),
+        })
+    }
+
     pub fn profile(&self) -> StartupProfile { self.profile }
 
     pub fn artwork(&self) -> Option<&Arc<Artwork>> { self.artwork.as_ref() }
@@ -221,6 +297,9 @@ impl Project {
         let profile = self.profile.encode().ok_or(ProjectError::Profile)?;
         let mut recipe_bytes = Vec::new();
         let (converted, original) = if let Some(art) = &self.artwork {
+            if mode == ExportMode::Complete && art.reference.is_some() {
+                return Err(ProjectError::SourceUnavailable);
+            }
             let source = if mode == ExportMode::Complete {
                 art.original.as_deref().unwrap_or(&[])
             } else {

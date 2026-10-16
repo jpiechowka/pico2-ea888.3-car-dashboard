@@ -28,7 +28,7 @@ impl State {
         }
     }
 }
-async fn request(request: &web_sys::IdbRequest) -> Result<JsValue, JsValue> {
+pub(super) async fn request(request: &web_sys::IdbRequest) -> Result<JsValue, JsValue> {
     let mut success = None;
     let mut error = None;
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
@@ -60,12 +60,12 @@ async fn request(request: &web_sys::IdbRequest) -> Result<JsValue, JsValue> {
     drop(error);
     result
 }
-async fn database() -> Result<web_sys::IdbDatabase, JsValue> {
+pub(super) async fn database() -> Result<web_sys::IdbDatabase, JsValue> {
     let factory = web_sys::window()
         .ok_or(JsValue::NULL)?
         .indexed_db()?
         .ok_or(JsValue::NULL)?;
-    let open = factory.open_with_u32(DATABASE, 1)?;
+    let open = factory.open_with_u32(DATABASE, 2)?;
     let upgrade_request = open.clone();
     let upgrade_failed = Rc::new(Cell::new(false));
     let failed = upgrade_failed.clone();
@@ -73,7 +73,14 @@ async fn database() -> Result<web_sys::IdbDatabase, JsValue> {
         let result = upgrade_request
             .result()
             .and_then(|v| v.dyn_into::<web_sys::IdbDatabase>())
-            .and_then(|db| db.create_object_store(STORE).map(|_| ()));
+            .and_then(|db| {
+                for name in [STORE, "originals", "original-pins"] {
+                    if !db.object_store_names().contains(name) {
+                        db.create_object_store(name)?;
+                    }
+                }
+                Ok(())
+            });
         if result.is_err() {
             failed.set(true);
             if let Some(tx) = upgrade_request.transaction() {
@@ -134,14 +141,18 @@ pub fn restore(ui: Ui) {
             Ok(record) => {
                 match envelope(&record) {
                     Ok(Some(text)) => {
-                        let decoded = (|| {
+                        let decoded = async {
+                            let _lease = originals::Materialization::acquire().ok()?;
                             let value = js_sys::Reflect::get(&record, &"project".into()).ok()?;
                             let array = value.dyn_into::<js_sys::Uint8Array>().ok()?;
                             if array.length() as usize > MAX_PROJECT_BYTES {
                                 return None;
                             }
-                            Editor::from_project_saved(&array.to_vec(), &text).ok()
-                        })();
+                            let project = dashboard_config_tools::project::Project::decode(&array.to_vec()).ok()?;
+                            let project = originals::restore(project, &record).await.ok()?;
+                            Editor::from_prepared_project_saved(project, &text).ok()
+                        }
+                        .await;
                         ui.project_store.base.set(Some(text.clone()));
                         match decoded {
                             Some(editor)
@@ -291,15 +302,23 @@ pub fn save(
         let result = async {
             let bytes = snapshot
                 .project()
-                .encode(ExportMode::Complete)
+                .encode(ExportMode::ConvertedOnly)
                 .map_err(|_| JsValue::NULL)?;
             let record = js_sys::Object::new();
             js_sys::Reflect::set(&record, &"envelope".into(), &text.clone().into())?;
             js_sys::Reflect::set(&record, &"project".into(), &js_sys::Uint8Array::from(bytes.as_slice()))?;
-            let db = database().await?;
-            let result = write(&db, ui, token, base, replace, record.into()).await;
-            db.close();
-            result
+            if let Some(reference) = snapshot.project().artwork().and_then(|a| a.original_reference()) {
+                js_sys::Reflect::set(&record, &"original".into(), &reference.key().into())?;
+            }
+            originals::locked(async move {
+                // Keep this immutable capture pinned through the transaction completion.
+                let _snapshot = snapshot;
+                let db = database().await?;
+                let result = write(&db, ui, token, base, replace, record.into()).await;
+                db.close();
+                result
+            })
+            .await
         }
         .await;
         if ui.editor.try_with_untracked(Editor::stamp).is_none() {
@@ -354,41 +373,76 @@ pub fn export(
     ui: Ui,
     mode: ExportMode,
 ) {
-    let result = ui.editor.with_untracked(|e| e.export_project(mode));
-    match result {
-        Ok(bytes) => {
-            match io::download(
-                ui,
-                if mode == ExportMode::Complete {
-                    "dashboard.eavp"
-                } else {
-                    "dashboard-converted.eavp"
-                },
-                "application/octet-stream",
-                &bytes,
-            ) {
-                Ok(()) => {
-                    ui.event(Notice::info(
-                        Category::ImportExport,
-                        "project.exported",
-                        Some("Project"),
-                        format!("Project download started: {} bytes", bytes.len()),
-                    ));
-                    ui.notice.set(
-                        if mode == ExportMode::Complete {
-                            "Complete project download started; available original artwork is included."
-                        } else {
-                            "Smaller project download started. Current original artwork was retained in Studio."
-                        }
-                        .into(),
-                    );
-                }
-                Err(_) => {
-                    ui.notice
-                        .set("Project download could not start. Check browser download permissions.".into())
+    let project = match ui.editor.with_untracked(Editor::accepted_project) {
+        Ok(p) => p,
+        Err(e) => {
+            ui.notice.set(error_text(e));
+            return;
+        }
+    };
+    let lease = match originals::Materialization::acquire() {
+        Ok(lease) => lease,
+        Err(_) => {
+            ui.notice
+                .set("Another original-artwork operation is running. Try again when it finishes.".into());
+            return;
+        }
+    };
+    spawn_local(async move {
+        let _lease = lease;
+        let result = async {
+            let project = if mode == ExportMode::Complete {
+                originals::materialize(project).await?
+            } else {
+                project
+            };
+            project.encode(mode).map_err(|_| JsValue::NULL)
+        }
+        .await;
+        if ui.editor.try_with_untracked(Editor::stamp).is_none() {
+            return;
+        }
+        match result {
+            Ok(bytes) => {
+                match io::download(
+                    ui,
+                    if mode == ExportMode::Complete {
+                        "dashboard.eavp"
+                    } else {
+                        "dashboard-converted.eavp"
+                    },
+                    "application/octet-stream",
+                    &bytes,
+                ) {
+                    Ok(()) => {
+                        ui.event(Notice::info(
+                            Category::ImportExport,
+                            "project.exported",
+                            Some("Project"),
+                            format!("Project download started: {} bytes", bytes.len()),
+                        ));
+                        ui.notice.set(
+                            if mode == ExportMode::Complete {
+                                "Complete project download started; available original artwork is included."
+                            } else {
+                                "Smaller project download started. Current original artwork was retained in Studio."
+                            }
+                            .into(),
+                        );
+                    }
+                    Err(_) => {
+                        ui.notice
+                            .set("Project download could not start. Check browser download permissions.".into())
+                    }
                 }
             }
+            Err(_) => {
+                ui.notice.set(
+                    "Original artwork could not be loaded or verified. Complete export was not created; your current \
+                     project is unchanged."
+                        .into(),
+                )
+            }
         }
-        Err(error) => ui.notice.set(error_text(error)),
-    }
+    });
 }
