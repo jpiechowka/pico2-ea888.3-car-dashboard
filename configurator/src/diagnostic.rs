@@ -371,11 +371,17 @@ pub(crate) fn isolated_widget_in(
     geometry: Geometry,
 ) -> Option<ValidatedConfig> {
     let mut config = accepted.config().clone();
-    let view = config.views.iter_mut().find(|v| v.id == widget.view)?;
+    // Use accepted acquisition/style fallbacks without requiring the rejected
+    // candidate's view identity to exist in the accepted document.
+    let mut view = config.views.first()?.clone();
+    view.id = widget.view;
     view.orientation = Some(match geometry {
         Geometry::Landscape => Orientation::Landscape,
         Geometry::Portrait => Orientation::Portrait,
     });
+    config.views.clear();
+    config.views.push(view).ok()?;
+    config.boot_view = widget.view;
     config.widgets.clear();
     let mut safe = widget.clone();
     let geometry = config.view_orientation(widget.view)?.geometry();

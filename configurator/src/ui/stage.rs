@@ -32,7 +32,7 @@ fn start(
     event: web_sys::PointerEvent,
     target: PointerTarget,
 ) {
-    if event.button() != 0 || !event.is_primary() {
+    if !ui.canvas_current() || event.button() != 0 || !event.is_primary() {
         return;
     }
     // Primary is per pointer type. One mouse/touch/pen owns a drag at a time.
@@ -88,6 +88,7 @@ fn start(
     }
     let mut accepted = None;
     let selection_before = ui.editor.with_untracked(Editor::selection);
+    let pixels_before = ui.canvas_identity();
     // Selecting a widget is persistent even when its drag is cancelled or
     // commits the same placement. Replace any pending save at selection time.
     ui.run(|editor| {
@@ -96,6 +97,7 @@ fn start(
     });
     match accepted {
         Some(token) => {
+            ui.canvas_selection(pixels_before);
             if matches!(target, PointerTarget::Widget(_)) {
                 ui.inspection.set(None);
             }
@@ -187,7 +189,8 @@ pub fn drag_move(
     if event.pointer_id() != drag.token.pointer_id() {
         return;
     }
-    if ui.editor.with_untracked(Editor::active_pointer) != Some(drag.token)
+    if !ui.canvas_current()
+        || ui.editor.with_untracked(Editor::active_pointer) != Some(drag.token)
         || ui.pixel_geometry.get_untracked() != drag.geometry
     {
         cancel(ui);
@@ -252,12 +255,13 @@ pub fn drag_end(
 
 pub fn install_playback(ui: Ui) {
     Effect::new(move |_| {
+        let current = ui.canvas_current();
         let pointer = ui.editor.with(Editor::active_pointer);
         let geometry = ui.pixel_geometry.get();
         if ui
             .drag
             .get_untracked()
-            .is_some_and(|drag| Some(drag.token) != pointer || drag.geometry != geometry)
+            .is_some_and(|drag| !current || Some(drag.token) != pointer || drag.geometry != geometry)
         {
             cancel(ui);
         }
@@ -490,10 +494,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                                                     p.render_inspection(sim, Some(&candidate)).map(|_| ())
                                                 })
                                             } else {
-                                                let safe_view = inspection_view(e.preview().config(), view)
-                                                    .unwrap_or(e.preview().config().boot_view);
-                                                p.render_diagnostic(e.preview(), &candidate, safe_view, options)
-                                                    .map(|_| ())
+                                                p.render_diagnostic(e.preview(), &candidate, view, options).map(|_| ())
                                             }
                                         }
                                         Err(_) => Err(dashboard_configurator::preview::PreviewError::InspectionOnly),
@@ -521,8 +522,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                             .map(|_| ())
                         }
                         .map_err(RenderIssue::Preview)?;
-                        super::controls::write_timing_canvas(ui.canvas, p.rgba(), p.geometry())?;
-                        ui.pixel_geometry.set(p.geometry());
+                        ui.write_canvas(p.rgba(), p.geometry(), ui.dock.mode.get_untracked())?;
                         ui.pixel_fit_issues.set(p.fit_issues().to_vec());
                         Ok(())
                     })();
@@ -531,6 +531,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 result
             });
             if let Err(error) = result {
+                ui.published_canvas.update(|pixels| pixels.fail());
                 ui.render_issue(RenderLane::Appearance, Err(error));
                 ui.preview_error.set(Some(error.to_string()));
                 return;
@@ -588,6 +589,7 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                 ui.dock.callbacks.update_value(|callbacks| {
                     callbacks.finish_appearance(request);
                 });
+                ui.published_canvas.update(|pixels| pixels.fail());
                 ui.render_issue(RenderLane::Appearance, Err(RenderIssue::Generic));
             }
         }
@@ -602,8 +604,8 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
         <div class="display-stage" class:portrait=move ||ui.pixel_geometry.get()==Geometry::Portrait class:invalid-preview=move ||ui.invalid() ||ui.dock.invalid_pixels.get()><div class="display-rails" aria-hidden="true"><span>"A"</span><span>"B"</span></div>
             <div class="display-frame"><div class="screen">
                 <canvas id="studio-preview-canvas" node_ref=ui.canvas width="320" height="240" aria-label=move ||if let Some(label)=ui.editor.with(Editor::startup_draft_label){label}else if ui.json_pending(){json_editor::label(ui)}else if ui.invalid() ||ui.dock.invalid_pixels.get(){"INVALID SIMULATION / PREVIEW. Inspection pixels; retained timing pixels require explicit restoration."}else if ui.dock.displayed.get()==PreviewMode::Simulation{"Persistent all-screen synthetic timing simulation"}else{"Exact Pico dashboard appearance with synthetic values"}></canvas>
-                <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Last frame only. Change the test values or reload to retry."</p></div>
-                <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Views) ||ui.dock.mode.get()!=PreviewMode::Appearance ||ui.editor.with(|e|e.editing_config().view_orientation(e.selection().view).map(|o|o.geometry()))!=Some(ui.pixel_geometry.get())>
+                <div class="preview-error" hidden=move ||ui.preview_error.get().is_none() role="alert"><strong>"PREVIEW ERROR"</strong><p>{move ||ui.preview_error.get().unwrap_or_default()}</p><p>"Canvas unavailable or showing an earlier frame. Widget interaction is disabled until a current frame is published. Change test values or reload to retry."</p></div>
+                <div id="widget-grid" class="canvas-hits" tabindex="-1" aria-label="Widget placement grid" hidden=move ||!ui.canvas_current()>
                     <For each=move ||ui.editor.with(|e|e.editing_config().widgets.iter().filter(|w|w.view==e.selection().view).map(|w|w.id).collect::<Vec<_>>()) key=|id|*id children=move |id|view!{
                         <button id=format!("widget-{id}") class="widget-hit" disabled=move ||ui.layout_locked() class:selected=move ||ui.editor.with(|e|e.selection().widget==Some(id))
                             style=move ||ui.canvas_widget(id).map_or("display:none".into(),|w|style(ui.pixel_geometry.get(),w.placement))
@@ -612,8 +614,9 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                             aria-haspopup="menu" aria-expanded=move ||ui.menu.with(|menu|menu.as_ref().is_some_and(|m|m.actions.target()==id)).to_string()
                             on:contextmenu=move |e|{ui.inspection.set(None);widget_menu::open_pointer(ui,id,e)}
                             on:pointerdown=move |e|start(ui,e,PointerTarget::Widget(id))
-                            on:click=move |event|{if event.detail()==0 && ui.run(move |e|e.select(Selection{view:e.selection().view,widget:Some(id)})) {ui.inspection.set(None);}}
+                            on:click=move |event|{if ui.canvas_current() && event.detail()==0 && ui.run(move |e|e.select(Selection{view:e.selection().view,widget:Some(id)})) {ui.inspection.set(None);}}
                             on:keydown=move |e|{
+                                if !ui.canvas_current() {return;}
                                 if e.key()=="ContextMenu" || (e.key()=="F10" && e.shift_key()) { e.prevent_default(); e.stop_propagation(); ui.inspection.set(None); widget_menu::open_keyboard(ui,id); return; }
                                 if e.key()=="Delete"{e.prevent_default();ui.apply(Edit::DeleteWidget(id));return;}
                                 use dashboard_configurator::widget_actions::Direction;

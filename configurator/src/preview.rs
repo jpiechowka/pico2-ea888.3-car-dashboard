@@ -732,11 +732,16 @@ impl Preview {
         use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
         use embedded_graphics::text::Text;
 
+        // Accepted acquisition needs an accepted seed, but presentation follows
+        // the inspected candidate even when it introduced or renamed its view.
+        let view = crate::json_draft::inspection_view(&draft.config, view).unwrap_or(view);
+        let seed_view =
+            crate::json_draft::inspection_view(accepted.config(), view).unwrap_or(accepted.config().boot_view);
         options.warnings = false;
         if let Some(simulation) = live {
             self.render_projection(simulation, true, None)?;
         } else {
-            self.render(accepted, view, options)?;
+            self.render(accepted, seed_view, options)?;
         }
         let snapshot = self.snapshot.as_ref().expect("successful render has a snapshot");
         let now = self.rendered_at.expect("successful render has a timestamp");

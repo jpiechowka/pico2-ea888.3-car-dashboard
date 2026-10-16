@@ -6,12 +6,7 @@ use dashboard_configurator::workspace::*;
 use super::*;
 
 pub const PREFERENCES_KEY: &str = "ea888-studio-workspaces-v1";
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PreviewMode {
-    Startup,
-    Appearance,
-    Simulation,
-}
+pub use dashboard_configurator::canvas_frame::PreviewMode;
 #[derive(Clone, Copy)]
 pub struct PreviewDockState {
     pub sim: RwSignal<ControlSimulator, LocalStorage>,

@@ -373,10 +373,15 @@ fn raw_inspection_resolves_another_invalid_field_without_selecting_or_accepting_
 fn strict_current_parser_preserves_duplicate_unknown_version_and_size_checks() {
     let text = Editor::default().export_json().unwrap();
     assert_eq!(parse_current_json_candidate(text.as_bytes()).unwrap(), default_config());
+    let version_field = format!("\"version\":{VERSION}");
     for bad in [
-        text.replacen("\"version\":4", "\"version\":4,\"version\":4", 1),
-        text.replacen("\"version\":4", "\"version\":4,\"unknown\":0", 1),
-        text.replacen("\"version\":4", "\"version\":4,\"unknown\":0,\"unknown\":1", 1),
+        text.replacen(&version_field, &format!("{version_field},{version_field}"), 1),
+        text.replacen(&version_field, &format!("{version_field},\"unknown\":0"), 1),
+        text.replacen(
+            &version_field,
+            &format!("{version_field},\"unknown\":0,\"unknown\":1"),
+            1,
+        ),
         text.replacen("\"reference\":0.0", "\"reference\":0.0,\"reference\":0.0", 1),
         text.replacen("\"trigger_high\":0.0", "\"trigger_high\":0.0,\"trigger_high\":0.0", 1),
         text.replacen("\"trigger_high\":0.0", "\"trigger_high\":0.0,\"unknown\":0", 1),
@@ -388,8 +393,8 @@ fn strict_current_parser_preserves_duplicate_unknown_version_and_size_checks() {
             Err(ConfigError::Json { .. })
         ));
     }
-    for version in [1, 2, 3, 5] {
-        let bad = text.replacen("\"version\":4", &format!("\"version\":{version}"), 1);
+    for version in (0..VERSION).chain([VERSION + 1]) {
+        let bad = text.replacen(&version_field, &format!("\"version\":{version}"), 1);
         assert_eq!(parse_current_json_candidate(bad.as_bytes()), Err(ConfigError::Version));
     }
     let mut bands = default_config();

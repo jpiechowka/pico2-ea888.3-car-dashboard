@@ -81,6 +81,7 @@ pub struct Ui {
     render_ms: RwSignal<f64>,
     canvas: NodeRef<leptos::html::Canvas>,
     pixel_geometry: RwSignal<Geometry>,
+    published_canvas: RwSignal<dashboard_configurator::canvas_frame::PublishedCanvas>,
     pixel_fit_issues: RwSignal<Vec<u16>>,
     drag: RwSignal<Option<stage::Drag>>,
     capture: RwSignal<Option<(i32, web_sys::Element)>>,
@@ -102,6 +103,56 @@ pub struct Ui {
 fn now() -> f64 { web_sys::window().and_then(|w| w.performance()).map_or(0.0, |p| p.now()) }
 
 impl Ui {
+    fn canvas_identity(self) -> Option<dashboard_configurator::canvas_frame::CanvasFrame> {
+        self.editor.with(|editor| {
+            let geometry = editor
+                .editing_config()
+                .view_orientation(editor.selection().view)?
+                .geometry();
+            Some(dashboard_configurator::canvas_frame::CanvasFrame::capture(
+                editor,
+                self.dock.mode.get(),
+                geometry,
+            ))
+        })
+    }
+
+    fn canvas_current(self) -> bool {
+        self.workspace.with(|workspace| workspace.active() == Workspace::Views)
+            && self.editor.with(Editor::can_edit_layout)
+            && self
+                .canvas_identity()
+                .is_some_and(|identity| self.published_canvas.with(|pixels| pixels.permits(identity)))
+    }
+
+    fn canvas_selection(
+        self,
+        before: Option<dashboard_configurator::canvas_frame::CanvasFrame>,
+    ) {
+        if let Some((before, after)) = before.zip(self.canvas_identity()) {
+            self.published_canvas.update(|pixels| pixels.selected(before, after));
+        }
+    }
+
+    fn write_canvas(
+        self,
+        pixels: &[u8],
+        geometry: Geometry,
+        mode: PreviewMode,
+    ) -> Result<(), RenderIssue> {
+        let identity = self.editor.with_untracked(|editor| {
+            dashboard_configurator::canvas_frame::CanvasFrame::capture(editor, mode, geometry)
+        });
+        let result = controls::write_timing_canvas(self.canvas, pixels, geometry);
+        self.published_canvas.update(|published| {
+            let _ = published.publish(identity, result);
+        });
+        if result.is_ok() {
+            self.pixel_geometry.set(geometry);
+        }
+        result
+    }
+
     fn resource_report(self) -> Result<ResourceReport, EditorError> {
         self.editor.with(|editor| {
             let mut report = None;
@@ -580,6 +631,7 @@ pub fn Studio() -> impl IntoView {
         render_ms: RwSignal::new(0.0),
         canvas: NodeRef::new(),
         pixel_geometry: RwSignal::new(Geometry::Landscape),
+        published_canvas: RwSignal::new(Default::default()),
         pixel_fit_issues: RwSignal::new(Vec::new()),
         drag: RwSignal::new(None),
         capture: RwSignal::new(None),

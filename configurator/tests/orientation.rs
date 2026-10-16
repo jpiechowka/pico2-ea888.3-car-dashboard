@@ -345,3 +345,49 @@ fn ambiguous_repack_inputs_are_rejected_without_mutation() {
     );
     assert_eq!(next, retained);
 }
+
+#[test]
+fn renamed_invalid_candidate_keeps_its_portrait_view_and_widgets() {
+    use dashboard_configurator::diagnostic::Draft;
+    use dashboard_configurator::preview::{Preview, PreviewOptions};
+    use dashboard_configurator::simulator::ControlSimulator;
+    let mut accepted = Editor::default();
+    let mut config = accepted.preview().config().clone();
+    config.views[0].id = 99;
+    config.views[0].orientation = Some(Orientation::Portrait);
+    config.boot_view = 99;
+    config.widgets.truncate(1);
+    config.widgets[0].view = 99;
+    config.widgets[0].placement.row = 3;
+    config.widgets[0].gauge.min = config.widgets[0].gauge.max;
+    let text = serde_json::to_string(&config).unwrap();
+    let transaction = accepted.open_json().unwrap();
+    let parse = accepted.set_json_text(transaction, text.clone()).unwrap();
+    accepted.finish_json_parse(parse).unwrap();
+    assert!(accepted.export_binary().is_err());
+    let draft = Draft {
+        config,
+        raw: vec![],
+        error: EditorError::InvalidDraft,
+    };
+    let mut p = Preview::new();
+    // The preferred accepted selection has been renamed in the candidate.
+    p.render_diagnostic(accepted.preview(), &draft, 1, PreviewOptions::default())
+        .unwrap();
+    assert_eq!(p.geometry(), Geometry::Portrait);
+    assert!(
+        p.rgb565()[246 * 240 * 2..].iter().any(|&byte| byte != 0),
+        "candidate widget must remain inspectable"
+    );
+    p.render_diagnostic(accepted.preview(), &draft, 99, PreviewOptions::default())
+        .unwrap();
+    assert_eq!(p.geometry(), Geometry::Portrait);
+    let sim = ControlSimulator::new(accepted.preview().clone());
+    p.render_inspection(&sim, Some(&draft)).unwrap();
+    assert_eq!(p.geometry(), Geometry::Portrait);
+    assert!(p.rgb565()[246 * 240 * 2..].iter().any(|&byte| byte != 0));
+    assert!(validate(draft.config).is_err());
+    assert!(accepted.export_binary().is_err());
+    assert_eq!(accepted.json_draft().unwrap().text(), text);
+    assert_eq!(accepted.preview().config().boot_view, 1);
+}

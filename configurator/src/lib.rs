@@ -58,4 +58,5 @@ pub mod workspace;
 
 pub use dashboard_config as config;
 
+pub mod canvas_frame;
 pub mod diagnostic_relay;

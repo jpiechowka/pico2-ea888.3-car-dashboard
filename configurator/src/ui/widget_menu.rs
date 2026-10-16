@@ -36,6 +36,10 @@ fn open(
     id: u16,
     anchor: (f64, f64),
 ) {
+    if !ui.canvas_current() {
+        return;
+    }
+    let pixels_before = ui.canvas_identity();
     stage::cancel(ui);
     close(ui, false);
     let point = ui.canvas.get_untracked().and_then(|canvas| {
@@ -59,6 +63,7 @@ fn open(
         Ok(editor.revision())
     });
     if let Some(actions) = actions {
+        ui.canvas_selection(pixels_before);
         ui.menu.set(Some(Menu { actions, anchor }));
     }
 }
@@ -91,7 +96,7 @@ pub fn install(ui: Ui) {
             ui.menu
                 .with(|menu| menu.as_ref().is_none_or(|m| m.actions.is_current(editor)))
         });
-        if !current {
+        if !current || !ui.canvas_current() {
             close(ui, false);
         }
     });
@@ -135,7 +140,7 @@ fn move_widget(
     menu: &WidgetMenu,
     direction: Direction,
 ) {
-    if !ui.editor.with_untracked(|e| menu.can_move(e, direction)) {
+    if !ui.canvas_current() || !ui.editor.with_untracked(|e| menu.can_move(e, direction)) {
         return;
     }
     close(ui, false);
@@ -283,6 +288,7 @@ fn MenuContents(
             }).collect_view()}
             <div role="separator"></div>
             <button class="danger-text" role="menuitem" tabindex="-1" on:click=move |_|{
+                if !ui.canvas_current() {return;}
                 close(ui,false);
                 actions.with_value(|m|{ui.run(|e|m.delete(e));});
                 let next=ui.editor.with_untracked(|e|e.editing_config().widgets.iter().find(|w|w.view==e.selection().view).map(|w|w.id));
@@ -292,6 +298,7 @@ fn MenuContents(
                 <div role="separator"></div><div class="widget-menu-caption" role="presentation">"WIDGETS AT THIS POINT"</div>
                 {m.widgets().iter().map(|(id,label)|{let id=*id;let text=format!("Select {label} #{id}");view!{
                     <button role="menuitem" tabindex="-1" class:current=id==target on:click=move |_|{
+                        if !ui.canvas_current() {return;}
                         close(ui,false);
                         actions.with_value(|m|{let mut selection=m.clone();ui.run(|e|selection.select(e,id));});
                         focus_target(ui,Some(id));

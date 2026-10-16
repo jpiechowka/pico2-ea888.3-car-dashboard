@@ -234,8 +234,7 @@ pub(super) fn submit(
                 let geometry = p.geometry();
                 let fit_issues = p.fit_issues().to_vec();
                 result = consume_simulation_pixels(sim, p, token, |pixels| {
-                    super::controls::write_timing_canvas(ui.canvas, pixels, geometry).map(|()| {
-                        ui.pixel_geometry.set(geometry);
+                    ui.write_canvas(pixels, geometry, PreviewMode::Simulation).map(|()| {
                         ui.pixel_fit_issues.set(fit_issues.clone());
                     })
                 });
@@ -260,8 +259,7 @@ pub(super) fn submit(
                     let geometry = p.geometry();
                     let fit_issues = p.fit_issues().to_vec();
                     consume_simulation_pixels(sim, p, token, |pixels| {
-                        super::controls::write_timing_canvas(ui.canvas, pixels, geometry).map(|()| {
-                            ui.pixel_geometry.set(geometry);
+                        ui.write_canvas(pixels, geometry, PreviewMode::Simulation).map(|()| {
                             ui.pixel_fit_issues.set(fit_issues.clone());
                         })
                     })
@@ -328,8 +326,7 @@ pub(super) fn complete(ui: Ui) {
             let geometry = p.geometry();
             let fit_issues = p.fit_issues().to_vec();
             result = complete_simulation_pixels(sim, p, token, |pixels| {
-                super::controls::write_timing_canvas(ui.canvas, pixels, geometry).map(|()| {
-                    ui.pixel_geometry.set(geometry);
+                ui.write_canvas(pixels, geometry, PreviewMode::Simulation).map(|()| {
                     ui.pixel_fit_issues.set(fit_issues.clone());
                 })
             });
@@ -342,8 +339,7 @@ pub(super) fn complete(ui: Ui) {
                     .and_then(|()| {
                         let geometry = p.geometry();
                         let fit_issues = p.fit_issues().to_vec();
-                        super::controls::write_timing_canvas(ui.canvas, p.rgba(), geometry).map(|()| {
-                            ui.pixel_geometry.set(geometry);
+                        ui.write_canvas(p.rgba(), geometry, PreviewMode::Simulation).map(|()| {
                             ui.pixel_fit_issues.set(fit_issues.clone());
                         })
                     });
