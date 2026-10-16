@@ -191,8 +191,9 @@ impl<'a> DebugPage<'a> {
         &self,
         display: &mut D,
     ) {
+        let geometry = crate::configured_scene::target_geometry(display);
         display
-            .clipped(&Rectangle::new(Point::zero(), display.bounding_box().size))
+            .clipped(&Rectangle::new(Point::zero(), Size::new(u32::from(geometry.width()), u32::from(geometry.height()))))
             .clear(BLACK)
             .ok();
         for line in DebugLine::ALL {

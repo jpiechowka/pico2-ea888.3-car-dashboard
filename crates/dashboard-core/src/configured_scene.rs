@@ -679,7 +679,8 @@ pub fn portrait_content_layout(bounds: Rectangle, text: [&str; 6], warning_rows:
     for lane in lanes.iter_mut().skip(1) { if lane.size.height > 0 { lane.top_left.y += details_top; } }
     let legend = Rectangle::new(bounds.top_left + Point::new(0, (top + height) as i32), Size::new(bounds.size.width, legend_rows * 7));
     let graph = Rectangle::new(Point::new(bounds.top_left.x, bounds.top_left.y + bounds.size.height as i32 - graph_height as i32), Size::new(bounds.size.width, graph_height));
-    let fits = fits_height && crate::widgets::value_text::fit_value(text[0], lanes[0].size, 3).is_some()
+    let value_size = if numeric { lanes[0].size } else { crate::widgets::gauge::value_lane(lanes[0]).map_or(Size::zero(), |r| r.size) };
+    let fits = fits_height && crate::widgets::value_text::fit_value(text[0], value_size, 3).is_some()
         && (1..6).all(|i| text[i].len() as u32 * 4 <= lanes[i].size.width);
     PortraitContentLayout { text: lanes, graph, legend, fits }
 }

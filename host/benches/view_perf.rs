@@ -11,6 +11,7 @@ use dashboard_host_validation::view_config::*;
 use dashboard_host_validation::{AlignedFrame, colors};
 
 pub fn benchmarks(c: &mut Criterion) {
+    orientation(c);
     advanced(c);
     graph_retention(c);
     for kind in GaugeKind::ALL {
@@ -306,4 +307,41 @@ fn graph_retention(c: &mut Criterion) {
             },
         );
     }
+}
+
+fn orientation(c: &mut Criterion) {
+    use dashboard_config::{Geometry, Orientation};
+    let mut group = c.benchmark_group("orientation");
+    group.sample_size(20);
+    group.warm_up_time(std::time::Duration::from_secs(1));
+    group.measurement_time(std::time::Duration::from_secs(2));
+    for geometry in Geometry::ALL {
+        let mut raw = default_config();
+        raw.orientation = if geometry == Geometry::Portrait { Orientation::Portrait } else { Orientation::Landscape };
+        for (index, widget) in raw.widgets.iter_mut().enumerate() {
+            widget.placement.column = index as u8 % geometry.columns();
+            widget.placement.row = index as u8 / geometry.columns();
+            widget.display.graph = true;
+            widget.display.average = true;
+            widget.display.extrema = true;
+            widget.display.trend = true;
+        }
+        let config = validate(raw).unwrap();
+        let mut model = AcquisitionModel::demo_configured(&config);
+        for n in 0..60 { model.ingest_batch([1. + (n % 8) as f32 / 10., 90., 95., 80., 30., 700., 13.8, 1.], n * 2000); }
+        let snapshot = model.snapshot();
+        let scene = DashboardScene {
+            readings: None, layout: Layout::new(&config, 1, false), measurements: &snapshot,
+            now_ms: 118000, status: dashboard_host_validation::vehicle_status::VehicleStatus::Demo,
+            blink_on: false, boost_psi: false, fps_mode: FpsMode::Combined, fps_instant: 60., fps_average: 60.,
+            backgrounds: [colors::BLACK; 8], overlay: None,
+        };
+        let mut frame = AlignedFrame::boxed();
+        let mut cache = DashboardCache::new();
+        group.bench_function(format!("{geometry:?}/full"), |b| b.iter(|| { scene.draw_full(&mut St7789Renderer::with_geometry(&mut frame.0, geometry)); black_box(&frame.0); }));
+        cache.draw(&mut St7789Renderer::with_geometry(&mut frame.0, geometry), 0, &scene);
+        group.bench_function(format!("{geometry:?}/retained_idle"), |b| b.iter(|| { black_box(cache.draw(&mut St7789Renderer::with_geometry(&mut frame.0, geometry), 0, &scene)); }));
+        group.bench_function(format!("{geometry:?}/one_cell"), |b| b.iter(|| { scene.draw_cell(&mut St7789Renderer::with_geometry(&mut frame.0, geometry), 7); black_box(&frame.0); }));
+    }
+    group.finish();
 }

@@ -123,6 +123,10 @@ impl RasterCheck {
         stale: bool,
         steady: bool,
     ) {
+        let geometry = c.config().orientation.geometry();
+        let portrait = geometry == dashboard_config::Geometry::Portrait;
+        let line_height = if portrait { 7 } else { 8 };
+        let baseline = if portrait { 5 } else { 6 };
         let before = *snapshot;
         let readings = self.presentation.prepare(c, snapshot, 1, now, false);
         let mut previous = None;
@@ -142,7 +146,7 @@ impl RasterCheck {
                 overlay: None,
             };
             let mut full = AlignedFrame::boxed();
-            scene.draw_full(&mut St7789Renderer::new(&mut full.0));
+            scene.draw_full(&mut St7789Renderer::with_geometry(&mut full.0, geometry));
             if let Some(previous) = &previous {
                 if steady {
                     assert_eq!(&full.0[..], previous, "snoozed tile blinked at {now}");
@@ -153,27 +157,28 @@ impl RasterCheck {
             if !marker.is_empty() {
                 // Independent complete badge glyph oracle in its dedicated lane.
                 // FONT4X6 uses4px advance; every complete label fits the interior.
-                let rect = c.config().widgets[0].placement.rect().unwrap();
+                let rect = c.config().widgets[0].placement.rect_in(geometry).unwrap();
                 let width = rect.width as usize;
                 assert!(marker.len() * 4 <= width - 4);
                 let mut expected = AlignedFrame::boxed();
-                let mut target = St7789Renderer::new(&mut expected.0);
+                let mut target = St7789Renderer::with_geometry(&mut expected.0, geometry);
                 let palette = c.config().widgets[0].colors.warning;
                 let background: embedded_graphics::pixelcolor::Rgb565 =
                     embedded_graphics::pixelcolor::raw::RawU16::new(palette.background.0).into();
                 let foreground = embedded_graphics::pixelcolor::raw::RawU16::new(palette.foreground.0).into();
-                let y = rect.y as i32 + 15;
-                let x = rect.x as i32 + rect.width as i32 / 2 - (marker.len() as i32 * 4 - 1) / 2;
+                let y = rect.y as i32 + if portrait { 9 } else { 15 };
+                let center = rect.x as i32 + rect.width as i32 / 2 - i32::from(portrait);
+                let x = center - (marker.len() as i32 * 4 - 1) / 2;
                 target
                     .fill_solid(
                         &Rectangle::new(
                             Point::new(rect.x as i32 + 2, y),
-                            Size::new(rect.width as u32 - 4, if stale { 16 } else { 8 }),
+                            Size::new(rect.width as u32 - 4, if stale { line_height * 2 } else { line_height }),
                         ),
                         background,
                     )
                     .unwrap();
-                Text::new(marker, Point::new(x, y + 6), MonoTextStyle::new(&FONT_4X6, foreground))
+                Text::new(marker, Point::new(x, y + baseline), MonoTextStyle::new(&FONT_4X6, foreground))
                     .draw(&mut target)
                     .unwrap();
                 if stale {
@@ -185,16 +190,16 @@ impl RasterCheck {
                     Text::new(
                         unavailable,
                         Point::new(
-                            rect.x as i32 + rect.width as i32 / 2 - (unavailable.len() as i32 * 4 - 1) / 2,
-                            y + 14,
+                            center - (unavailable.len() as i32 * 4 - 1) / 2,
+                            y + baseline + line_height as i32,
                         ),
                         MonoTextStyle::new(&FONT_4X6, foreground),
                     )
                     .draw(&mut target)
                     .unwrap();
                 }
-                for row in y as usize..y as usize + if stale { 16 } else { 8 } {
-                    let start = (row * 320 + rect.x as usize + 2) * 2;
+                for row in y as usize..y as usize + (if stale { line_height * 2 } else { line_height }) as usize {
+                    let start = (row * usize::from(geometry.width()) + rect.x as usize + 2) * 2;
                     let end = start + (width - 4) * 2;
                     assert_eq!(
                         &full.0[start..end],
@@ -207,12 +212,12 @@ impl RasterCheck {
             }
             for (buffer, frame) in self.buffers.iter_mut().enumerate() {
                 let changed = frame.0 != full.0;
-                let redraw = self.cache.draw(&mut St7789Renderer::new(&mut frame.0), buffer, &scene);
+                let redraw = self.cache.draw(&mut St7789Renderer::with_geometry(&mut frame.0, geometry), buffer, &scene);
                 if changed {
                     assert_ne!(redraw.cells & 1, 0, "visible state missed buffer{buffer} at{now}");
                 }
                 assert!(frame.0 == full.0, "retained mismatch buffer{buffer} at{now}");
-                assert_eq!(self.cache.prepare(buffer, &scene).cells, 0);
+                assert_eq!(self.cache.prepare_in(buffer, &scene, geometry).cells, 0);
             }
             // Diagnostic/raw fallback must use the same query and palette as
             // the prepared path when smoothing is off, including unavailable.
@@ -221,9 +226,9 @@ impl RasterCheck {
                 ..scene
             };
             let mut raw = AlignedFrame::boxed();
-            raw_scene.draw_full(&mut St7789Renderer::new(&mut raw.0));
+            raw_scene.draw_full(&mut St7789Renderer::with_geometry(&mut raw.0, geometry));
             assert!(raw.0 == full.0);
-            if !blink_on
+            if !portrait && !blink_on
                 && !marker.is_empty()
                 && matches!(now, 3400 | 3901 | 4000 | 5100 | 5500 | 10700)
                 && let Some(directory) = std::env::var_os("WIDGET_WARNING_EVIDENCE")
@@ -253,9 +258,13 @@ impl RasterCheck {
 
 #[test]
 fn acknowledged_snoozed_and_stale_latch_badges_fit_every_style_span_and_both_buffers() {
+    for orientation in [dashboard_config::Orientation::Landscape, dashboard_config::Orientation::Portrait] {
     for kind in GaugeKind::ALL {
         for span in [Span::OneByOne, Span::TwoByOne, Span::TwoByTwo] {
-            let c = fixture(kind, span, true);
+            let mut raw = fixture(kind, span, true).config().clone();
+            raw.orientation = orientation;
+            if orientation == dashboard_config::Orientation::Portrait { raw.widgets[0].placement.row = if span == Span::TwoByTwo { 2 } else { 3 }; }
+            let c = validate(raw).unwrap();
             let mut m = AcquisitionModel::demo_configured(&c);
             let mut raster = RasterCheck::new();
             let mut requests = WarningRequests::new();
@@ -309,6 +318,7 @@ fn acknowledged_snoozed_and_stale_latch_badges_fit_every_style_span_and_both_buf
             raster.check(&c, &m.snapshot(), 10900, "", false, true);
         }
     }
+}
 }
 
 #[test]

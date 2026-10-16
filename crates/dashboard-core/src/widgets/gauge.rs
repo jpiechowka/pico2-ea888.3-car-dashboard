@@ -258,40 +258,17 @@ pub fn draw_decorated<D: DrawTarget<Color = Rgb565>>(
         return;
     }
     let (value_color, accent, track, ticks) = colors;
-    let width = bounds.size.width.min(320);
-    let height = bounds.size.height.min(198);
-    if width < 20 || height < 28 {
-        return;
-    }
-    let bounds = Rectangle::new(bounds.top_left, Size::new(width, height));
+    let Some((bounds, graphic, value, scale)) = regions(bounds) else { return; };
+    let width = bounds.size.width;
+    let height = bounds.size.height;
+    let graphic_width = graphic.size.width;
+    let graphic_height = graphic.size.height;
     let mut display = display.clipped(&bounds);
-    // Wide, short cells spend their extra width on the primary reading rather
-    // than squeezing a larger font into the compact graphic's vertical lane.
-    let wide = (width >= 120 || height < 60) && height < 100;
-    let number_height = if height >= 100 || wide { 36.min(height - 10) } else { 22 };
-    let graphic_height = if wide {
-        height - 10
-    } else {
-        height.saturating_sub(number_height + 10)
-    };
-    let graphic_width = if wide { width / 2 - 4 } else { width };
-    let graphic = Rectangle::new(bounds.top_left, Size::new(graphic_width, graphic_height));
-    let value = if wide {
-        Rectangle::new(
-            bounds.top_left + Point::new((width / 2) as i32, ((graphic_height - number_height) / 2) as i32),
-            Size::new(width - width / 2, number_height),
-        )
-    } else {
-        Rectangle::new(
-            bounds.top_left + Point::new(0, graphic_height as i32),
-            Size::new(width, number_height),
-        )
-    };
     draw_fitted_value(
         &mut display,
         if crate::widgets::value_text::fit_value(text, value.size, 2).is_some() { text } else { "FIT!" },
         value,
-        if height >= 100 || wide { 2 } else { 1 },
+        scale,
         value_color,
     );
     let decorations = decorations.filter(|_| !kind.is_numeric());
@@ -642,4 +619,44 @@ mod tests {
             assert!(super::endpoint(value, 36).len() * 4 <= 36);
         }
     }
+}
+
+/// Exact complete-value lane used by gauge rendering and fit diagnostics.
+pub fn value_lane(bounds: Rectangle) -> Option<Rectangle> {
+    regions(bounds).map(|(_, _, value, _)| value)
+}
+
+fn regions(bounds: Rectangle) -> Option<(Rectangle, Rectangle, Rectangle, u32)> {
+    if !(-320..=320).contains(&bounds.top_left.x) || !(-320..=320).contains(&bounds.top_left.y) { return None; }
+    // The extra wide lane is the native portrait two-column widget. Arbitrary
+    // oversized public inputs retain the historical bounded workload.
+    let width = if bounds.size.width == 236 { 236 } else { bounds.size.width.min(156) };
+    let height = bounds.size.height.min(198);
+    if width < 20 || height < 28 {
+        return None;
+    }
+    let bounds = Rectangle::new(bounds.top_left, Size::new(width, height));
+    // Wide, short cells spend their extra width on the primary reading rather
+    // than squeezing a larger font into the compact graphic's vertical lane.
+    let wide = (width >= 120 || (width == 116 && height < 60)) && height < 100;
+    let number_height = if height >= 100 || wide { 36.min(height - 10) } else { 22 };
+    let graphic_height = if wide {
+        height - 10
+    } else {
+        height.saturating_sub(number_height + 10)
+    };
+    let graphic_width = if wide { width / 2 - 4 } else { width };
+    let graphic = Rectangle::new(bounds.top_left, Size::new(graphic_width, graphic_height));
+    let value = if wide {
+        Rectangle::new(
+            bounds.top_left + Point::new((width / 2) as i32, ((graphic_height - number_height) / 2) as i32),
+            Size::new(width - width / 2, number_height),
+        )
+    } else {
+        Rectangle::new(
+            bounds.top_left + Point::new(0, graphic_height as i32),
+            Size::new(width, number_height),
+        )
+    };
+    Some((bounds, graphic, value, if height >= 100 || wide { 2 } else { 1 }))
 }

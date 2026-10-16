@@ -229,13 +229,24 @@ impl DashboardScene<'_> {
             let bottom = i32::from(geometry.row_edge(row + 1).unwrap());
             let bounds = embedded_graphics::primitives::Rectangle::new(Point::new((cell as i32 % 2) * 120 + 2, top + 2), Size::new(116, (bottom - top - 4) as u32));
             let mut target = display.clipped(&bounds);
-            target.clear(BLACK).ok();
-            let text = self.cell_key(cell).expect("visible fallback cell").text;
-            let lanes = configured_scene::portrait_content_layout(bounds, core::array::from_fn(|i| text[i].as_str()), 0, false, true, 0, false);
+            let key = self.cell_key(cell).expect("visible fallback cell");
+            target.clear(key.background).ok();
+            let mut text = key.text;
+            if key.quality != Quality::Valid {
+                text[0].push_str("--").ok();
+                text[5].push_str(key.quality.label()).ok();
+            }
+            let graph = cell != 0 && key.quality == Quality::Valid;
+            let lanes = configured_scene::portrait_content_layout(bounds, core::array::from_fn(|i| text[i].as_str()), 0, graph, true, 0, key.trend.is_some());
             let style = embedded_graphics::mono_font::MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_4X6, crate::ui::WHITE);
             embedded_graphics::text::Text::with_text_style(SensorId::ALL[sensor].label(), Point::new(bounds.center().x, top + 7), style, crate::ui::CENTERED).draw(&mut target).ok();
             crate::widgets::value_text::draw_fitted_value(&mut target, &text[0], lanes.text[0], 2, crate::ui::WHITE);
             for i in 1..6 { configured_scene::compact_text(&mut target, &text[i], lanes.text[i], crate::ui::WHITE); }
+            if let Some(rising) = key.trend { crate::widgets::primitives::draw_trend_arrow(&mut target, bounds.top_left.x + 110, lanes.text[0].top_left.y + 4, rising, crate::ui::WHITE); }
+            if graph {
+                let history = self.measurements.sensors[sensor].history();
+                crate::widgets::primitives::draw_history_graph(&mut target, lanes.graph.top_left.x, lanes.graph.top_left.y, lanes.graph.size.width, lanes.graph.size.height, history, history.bounds(), |_| crate::ui::WHITE);
+            }
             return;
         }
         let state = &self.measurements.sensors[sensor];
