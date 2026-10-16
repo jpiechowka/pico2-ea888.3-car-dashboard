@@ -29,6 +29,11 @@ def independent_uf2():
     return bytes(result)
 
 class ProgramImage(unittest.TestCase):
+    def test_verification_ranges_follow_pinned_exclusive_end_coalescing(self):
+        self.assertEqual(program_map(sparse())['verification_ranges'],[(B+0x120,B+0x321),(B+0x2050,B+0x2051)])
+        elf=SimpleNamespace(data=bytes(8194),segments=[(1,0,B,B,4096,4096,5,1),(1,4096,B+4096,B+4096,4096,4096,5,1),(1,8192,B+0x2100,B+0x2100,1,1,5,1),(1,8193,B+0x4000,B+0x4000,1,1,5,1)])
+        self.assertEqual(program_map(elf)['verification_ranges'],[(B,B+0x2101),(B+0x4000,B+0x4001)])
+
     def test_linked_startup_empty_and_nonempty_asset(self):
         for asset in [b'',b'converted asset']:
             profile=bytes(range(16));storage=asset+b'\0';data=profile+storage

@@ -25,10 +25,15 @@ def program_map(elf):
     pages={}
     sectors=set()
     erase=[]
+    verification=[]
     payload_hash=hashlib.sha256(b'StudioPhysicalPayloadV1\0')
     for address,data in fragments:
         require(address>=end,"overlapping physical program payload")
         end=address+len(data)
+        # Pinned picotool get_coalesced_ranges compares the exclusive end sector.
+        if verification and verification[-1][1]//4096 == address//4096:
+            verification[-1]=(verification[-1][0],end)
+        else:verification.append((address,end))
         payload_hash.update(struct.pack('<II',address,len(data)));payload_hash.update(data)
         lo=address&~4095;hi=(end+4095)&~4095
         require(FLASH_START<=lo<hi<=SETTINGS_START,"erase envelope outside program flash")
@@ -43,7 +48,7 @@ def program_map(elf):
             if page<last:pages.setdefault(page,bytearray(256))
     pages={address:bytes(data) for address,data in sorted(pages.items())}
     require(0<len(pages)<=8160,"program page bound")
-    return {'fragments':fragments,'erase_ranges':erase,'pages':pages,'payload_sha256':payload_hash.hexdigest()}
+    return {'fragments':fragments,'verification_ranges':verification,'erase_ranges':erase,'pages':pages,'payload_sha256':payload_hash.hexdigest()}
 
 
 def verify_uf2(data,mapping):
@@ -151,7 +156,7 @@ def linked_startup(elf,profile,asset):
 def inspect_program(elf):
     mapping=program_map(elf)
     metadata=boot_metadata(elf,mapping)
-    return mapping,{'schema_version':1,'scope':'program_ranges_and_boot_metadata_only','elf_sha256':hashlib.sha256(elf.data).hexdigest(),'payload_sha256':mapping['payload_sha256'],'payload_ranges':[(address,address+len(data)) for address,data in mapping['fragments']],'erase_ranges':mapping['erase_ranges'],'expected_uf2_pages':len(mapping['pages']),'boot_metadata':metadata}
+    return mapping,{'schema_version':1,'scope':'program_ranges_and_boot_metadata_only','elf_sha256':hashlib.sha256(elf.data).hexdigest(),'payload_sha256':mapping['payload_sha256'],'payload_ranges':[(address,address+len(data)) for address,data in mapping['fragments']],'verification_ranges':mapping['verification_ranges'],'erase_ranges':mapping['erase_ranges'],'expected_uf2_pages':len(mapping['pages']),'boot_metadata':metadata}
 
 
 def main():

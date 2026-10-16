@@ -16,3 +16,5 @@ mod artifacts;
 mod file_locks;
 
 mod device_inspection;
+
+pub mod flash_output;
