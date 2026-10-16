@@ -29,7 +29,7 @@ impl Wire for BuildRequest {
         Ok(())
     }
 }
-// Exact EAV codec and digest checks are required by the future build admission owner.
+// Native build admission additionally checks the exact EAV codec and digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BoardContract {

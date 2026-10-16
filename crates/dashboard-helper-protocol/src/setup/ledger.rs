@@ -5,7 +5,7 @@ pub struct SetupAssignment {
     pub step: SetupStepId,
     pub executor: SetupExecutor,
 }
-/// Private immutable finite ordering. Task4 alone constructs dependency-valid policies.
+/// Private immutable finite ordering. The Setup owner supplies dependency-valid policies.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetupPlan {
     entries: Vec<SetupAssignment>,

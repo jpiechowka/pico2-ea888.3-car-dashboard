@@ -409,7 +409,7 @@ pub fn check(repo: &Path) -> Value {
         row(&mut rows, id, "not_checked", message.into(), "", false);
     }
     let ready = rows.iter().all(|r| r["required"] != true || r["status"] == "passed");
-    json!({"schema_version":1,"operation":"prerequisite_check","ready":ready,"readiness_scope":"installed_tool_versions_only","native_build_flash_available":false,"repository":repo,"selected_toolchain":selected,"checks":rows})
+    json!({"schema_version":1,"operation":"prerequisite_check","ready":ready,"readiness_scope":"installed_tool_versions_only","native_build_flash_available":cfg!(windows),"native_build_flash_scope":"adapter_routes_only_not_image_admission","repository":repo,"selected_toolchain":selected,"checks":rows})
 }
 pub fn cli(args: impl IntoIterator<Item = OsString>) -> i32 {
     let args: Vec<_> = args.into_iter().collect();
@@ -466,7 +466,10 @@ pub fn cli(args: impl IntoIterator<Item = OsString>) -> i32 {
                 println!("  Setup: {setup}");
             }
         }
-        println!("Full native Build & Flash is not available in this helper slice.");
+        println!(
+            "This check covers installed tools only. Builds validate artifacts; Flash separately requires device \
+             inspection and board acknowledgement."
+        );
     }
     if crate::process::cleanup_failed() {
         70
