@@ -672,6 +672,11 @@ mod tests {
         let mut r = reserve(&repo).unwrap();
         std::fs::create_dir_all(r.path.join("source/nested")).unwrap();
         std::fs::write(r.path.join("source/nested/object"), b"compiler output").unwrap();
+        for name in ["f", "h", "n"] {
+            let scratch = r.path.join("b").join(name);
+            std::fs::create_dir_all(&scratch).unwrap();
+            std::fs::write(scratch.join("object"), b"short-path compiler output").unwrap();
+        }
         std::fs::create_dir(r.path.join("input")).unwrap();
         std::fs::write(r.path.join("input/project"), b"accepted").unwrap();
         let diagnostics = r
@@ -685,6 +690,7 @@ mod tests {
             b"error: fixture missing linker\n"
         );
         assert!(!r.path.join("source").exists());
+        assert!(!r.path.join("b").exists());
         assert!(r.path.join("input/project").exists());
         assert!(r.path.join("failure.json").exists());
         assert_eq!(list(&repo, &BTreeSet::new()).unwrap().attempts.len(), 1);

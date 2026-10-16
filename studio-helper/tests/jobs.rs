@@ -249,9 +249,6 @@ fn summaries_reject_forged_success_and_terminal_write_facts() {
     summary.terminal_cause = Some(TerminalCause::Succeeded);
     summary.events_closed = true;
     summary.final_next = Some(1);
-    for stage in summary.stages.clone().into_vec().iter_mut() {
-        stage.state = StageState::Skipped;
-    }
     let mut stages = summary.stages.clone().into_vec();
     for stage in &mut stages {
         stage.state = StageState::Skipped;

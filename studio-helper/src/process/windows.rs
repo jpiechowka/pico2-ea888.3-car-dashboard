@@ -264,8 +264,8 @@ mod tests {
                 "-I",
                 "-u",
                 "-c",
-                "import sys,time,pathlib; print('early'); time.sleep(0.2); \
-                 pathlib.Path(sys.argv[1]).write_text('done')",
+                "import sys,time,pathlib; print('early',flush=True)\nwhile not pathlib.Path(sys.argv[1]).exists(): \
+                 time.sleep(0.005)\nprint('acknowledged')",
                 flag.to_str().unwrap(),
             ],
             &std::env::current_dir().unwrap(),
@@ -275,6 +275,7 @@ mod tests {
                 if text == "early" {
                     assert!(!stderr);
                     assert!(!flag.exists());
+                    std::fs::write(&flag, b"observed").unwrap();
                     observed = true;
                 }
             },
@@ -283,6 +284,7 @@ mod tests {
         assert!(observed);
         assert_eq!(output.code, Some(0));
         assert!(flag.exists());
+        assert!(output.stdout.contains("acknowledged"));
         std::fs::remove_file(flag).unwrap();
     }
     #[test]
