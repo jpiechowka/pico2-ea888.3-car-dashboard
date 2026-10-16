@@ -116,6 +116,11 @@ sectors are outside the image; actual preservation is tested below.
 
 ## 3. Verify the Pico/display on the bench
 
+For orientation-enabled images, complete the [four-mode display matrix](../hardware/display-orientation.md#physical-acceptance-matrix)
+including different Boot info/Splash/view overrides, native stride, pending
+transfers and physical controls. Source checks and host models do not establish
+scanout, tearing, optical FPS or ECU operation.
+
 With `demo-stock-01`, require an explicit DEMO identity and changing synthetic
 values. There should be no old scripted 13-second welcome sequence. Record a
 video from power-on through the first usable frame.
@@ -226,7 +231,7 @@ At stock clocks capture GP17 CS, GP16 DC, GP18 SCK, GP19 MOSI and GP21 TE; measu
 GP20 PWM separately if the analyser lacks channels. Use bandwidth/sample rate
 suitable for 37.5 MHz SPI and 3.3 V inputs. Require approximately 1 kHz PWM and
 compare observed SPI frequency with the configured rate. Decode window commands
-and payloads: a full 320x240 RGB565 update contains 153600 pixel bytes, excluding
+and payloads: a full 320x240 or 240x320 RGB565 update contains 153600 pixel bytes, excluding
 commands. Partial updates must touch only their selected windows.
 
 Measure TE intervals physically, plus input-edge-to-visible-change with a

@@ -2,8 +2,8 @@
 
 Device → Startup configures the shared Rust startup scenes: AEZAKMI, SUTUTU,
 GOTTA GO FAST, HOW MUCH BOOST BRO and WHERE LAMBO. **Preview startup** uses the
-existing 320×240 Studio display, with play/pause, restart, seeking and a
-reduced-motion still. The preview labels its OBD status as synthetic; browser
+Studio display at the effective 320×240 or 240×320 geometry, with play/pause,
+restart, seeking and a reduced-motion still. The preview labels its OBD status as synthetic; browser
 timing is not physical display, LED or ECU qualification.
 
 **Replay full startup** runs the shared startup controller with simulated acquisition,
@@ -41,6 +41,10 @@ Boot-held buttons require stable release first; delayed startup events do not
 also invoke ordinary dashboard actions. Y recovery remains a two-second hold.
 Normal Dashboard encoder rotation and Full/Dim/Off clicks resume afterward.
 
+Boot info and Splash each have an independent orientation override, or inherit
+the device default. See [screen orientation](orientation.md) for mounting, native
+grids and custom-artwork repair. Debug and Logs always inherit the device default.
+
 ## Profile files and builds
 
 Startup settings now belong to the accepted Studio project and share Undo/Redo. Export a [complete `.eavp` project](projects.md) to keep dashboard, startup, converted pixels and original artwork together. The explicit smaller export omits only the original; dashboard-only `.eav` and JSON omit startup. A standalone `startup.easp` remains useful for profile-only transfer and does not contain custom pixels.
@@ -54,10 +58,14 @@ do not identify a changed startup profile. Helper upload and complete artifact
 identity binding use the converted-only accepted project; the helper verifies linked
 profile/asset bytes before admitting an artifact.
 
-EASP v1 is exactly 16 bytes: `EASP` magic at 0..4, version 1 at byte 4, theme
+EASP v2 is exactly 16 bytes: `EASP` magic at 0..4, version 2 at byte 4, theme
 0..5 (Custom) at byte 5, status Off/Brief/Detailed as 0..2 at byte 6, flags at byte 7
 (bit 0 loop, bit 1 warning LED, bit 2 attention interruption), little-endian
-u16 status/splash milliseconds at 8..10 and 10..12, and four zero reserved bytes.
+u16 status/splash milliseconds at 8..10 and 10..12, Boot info/Splash orientation
+overrides at bytes 12/13, and zero reserved bytes 14/15. Each override is 0 for
+inherit, 1 Landscape, 2 Portrait, 3 LandscapeInverted or 4 PortraitInverted. Legacy
+v1 profiles are accepted only with all four former reserved bytes zero and migrate
+to inherited orientations. New encodings always use v2.
 Unknown versions, flags, enums, reserved bytes and out-of-range durations fail
 validation. Reduced motion uses the dashboard's existing setting; the extra
 Studio checkbox is a preview-only override. The implemented format does not expose
@@ -83,7 +91,8 @@ Resource limits have not been increased.
 ## Custom artwork conversion
 
 Rust `dashboard-startup-tools` converts PNG, row-major PNG sprite sheets and
-animated GIF into EASA v1 RGB565 animations. Conversion controls select contain,
+animated GIF into EASA v2 RGB565 animations at the effective Splash geometry.
+Conversion controls select contain,
 crop-to-fill or stretch, an opaque matte, 1–20 fps sampling, and a clip up to ten
 seconds. PNG alpha is composited over the matte; sRGB is assumed. GIF frames are
 composited before disposal (keep, background or previous), with selectable logical
@@ -93,8 +102,8 @@ replace the startup Loop option. Unsupported controls and animated PNG fail.
 Sources are limited to 8 MiB, 4096 pixels per side, 1,048,576 canvas pixels,
 300 source frames, 32 million total decoded frame pixels and 60 seconds. Decoder
 buffers are explicitly limited; accounted conversion buffers fit within 32 MiB
-(this is not a measured browser process RSS claim). Output is 320×240, at most
-300 frames and 512 KiB, with at least 34 ms per output frame. Identical sampled
+(this is not a measured browser process RSS claim). Output is exactly 320×240 or
+240×320, at most 300 frames and 512 KiB, with at least 34 ms per output frame. Identical sampled
 frames coalesce; short final intervals merge. Incompressible animation can exceed
 the output limit and is rejected with advice to shorten or reduce sampling.
 
@@ -111,6 +120,7 @@ Both file import and retained-original conversion are blocked until corrected or
 the original recipe is restored. These are settings for a future conversion;
 accepted artwork and valid project export/build remain available.
 
+EASA v2 accepts only the two native geometries; legacy v1 remains 320×240.
 EASA validates header/table/payload bounds, reserved fields, frame times and CRC32.
 Frames use raw big-endian RGB565 or row-bounded RLE. Seeking uses the elapsed time;
 firmware decodes rows into the existing rendering buffer without a GIF decoder or
@@ -119,7 +129,9 @@ chunks, with a separate 250 ms readiness deadline. Invalid assets exit startup.
 Per-frame CRC is also checked during rendering before submission.
 
 Set `DASHBOARD_STARTUP_ASSET` to the EASA file when the EASP selects Custom.
-Custom without an asset and procedural profiles with an asset fail the build.
+Custom without an asset, procedural profiles with an asset, and assets whose
+geometry differs from the effective Splash orientation fail the build. The build
+resolves inheritance from the prepared dashboard configuration before embedding.
 The asset is embedded as `startup_asset.bin`, with digest
 `DASHBOARD_STARTUP_ASSET_SHA256`; the profile digest remains
 `DASHBOARD_STARTUP_SHA256`. Runtime assets do not contain original images.

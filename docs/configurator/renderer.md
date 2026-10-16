@@ -1,7 +1,9 @@
 # Configured rendering
 
-The device and host preview share `configured_scene`: four columns by two rows,
-80 by 107 pixels per cell below the 26-pixel header. Validated widgets occupy
+The device and host preview share `configured_scene`: landscape has four columns
+by two rows (80 by 107 pixels per cell), portrait two columns by four rows
+(120 pixels wide, row edges 26, 99, 173, 246, 320). Both use a 26-pixel header.
+Validated widgets occupy
 1x1, 2x1 or 2x2 cells. Holes remain black. Each widget owns its clipped rectangle
 and border. A layout indexes its visible widgets once; repainting never scans
 the full 64-widget document for each cell.
@@ -31,7 +33,8 @@ cargo run --locked --manifest-path host/Cargo.toml --example configured_preview 
 cargo run --locked --manifest-path host/Cargo.toml --example configured_preview -- dashboard.ppm my-dashboard.eav 1
 ```
 
-Current v4 behavior/resource evidence is in [the release record](advanced-v4-release.md).
+See [orientation](orientation.md) for native geometry and per-screen resolution.
+Historical v4 behavior/resource evidence is in [the release record](advanced-v4-release.md).
 
 ## Historical verification at the renderer stage
 

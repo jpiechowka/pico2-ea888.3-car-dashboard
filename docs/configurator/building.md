@@ -21,8 +21,8 @@ available in `configs/default.json` and `configs/default.eav`.
 The editor supports numeric/history, circular, needle, horizontal, vertical and
 segmented gauges, with independent RGB565 palettes. See [gauges and colours](gauges-and-colours.md)
 for layout capabilities, automatic scale expansion and colour validation.
-Historical v1, v2 and v3 files are explicitly upgraded by the editor or build
-compiler; exported and embedded files use [current v4](configuration-format.md#current-v4-contract). The capture keeps both
+Historical v1, v2, v3 and v4 files are explicitly upgraded by the editor or build
+compiler; exported and embedded files use [current v5](configuration-format.md#current-v5-contract). The capture keeps both
 the original selected file and the canonical upgraded bytes.
 
 ## Build & Flash workspace

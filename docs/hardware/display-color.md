@@ -7,6 +7,10 @@ copying the low green bit into them. MCU interface mode and MSB-first order
 remain selected. For example, RGB565 `0x0020` no longer introduces those red
 and blue low bits. Gamma tables are not changed.
 
+Orientation changes preserve these RAMCTRL and colour settings. See the
+[orientation contract and physical matrix](display-orientation.md) for rotation
+commands and per-mounting colour checks.
+
 Three source checks support this targeted correction:
 
 - [Sitronix ST7789V v1.2](https://files.seeedstudio.com/wiki/Grove-1.2inch-ips-display/ST7789V_SPEC_V1.2.pdf),

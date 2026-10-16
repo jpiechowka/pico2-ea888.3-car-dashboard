@@ -10,7 +10,16 @@ Tests cover all RGB565 channel byte orders, odd row boundaries and neighbours,
 reference, and unrepresentable rectangle rejection before embedded-graphics can
 panic. Existing UI pixel contracts remain in the suite. These are host checks.
 
-## Paired host measurements
+## Native geometry
+
+`St7789Renderer::with_geometry` binds the existing storage to 320 × 240 or
+240 × 320 logical pixels; `new` remains the landscape convenience constructor.
+Rows use that geometry's 640- or 480-byte stride. Both framebuffers remain exactly
+153600 bytes, with no third buffer or transpose. Rendering, custom artwork rows
+and damage plans must use the same geometry. [Orientation](../configurator/orientation.md)
+and the [hardware runbook](../hardware/display-orientation.md) describe the contract.
+
+## Historical paired host measurements
 
 Same machine, nightly and four existing Criterion fixtures, 30 samples each.
 Raw JSON is saved in `host/baselines/stage04_storage_before` and

@@ -96,12 +96,15 @@ the configured source session.
 
 The [gauge and colour guide](gauges-and-colours.md) describes fixed/expanding
 scales, per-style capabilities, RGB565 validation and the shared preview/device
-renderer. Historical v1/v2/v3 documents import through explicit migration; exports
-use the current v4 schema. See
+renderer. Historical v1/v2/v3/v4 documents import through explicit migration; exports
+use the current v5 schema. See
 [advanced controls](advanced-controls.md) for units, smoothing, history, bands,
 markers, priorities/latch/snooze and the RGB indicator panel.
 
-The grid has four columns and two rows. Up to eight named views and 64 total
+The grid has four columns and two rows in landscape, or two columns and four
+rows in portrait. [Screen orientation](orientation.md) explains device defaults,
+Boot info/Splash/view overrides, mounting flips and one-Undo repacking. Up to eight
+named views and 64 total
 widgets are supported. Overlaps, unsupported glyphs, inconsistent limits,
 nonfinite numbers and incompatible source fields are rejected. Invalid text
 remains visible for correction and blocks saving/export. The canvas automatically

@@ -1,8 +1,9 @@
 # Units, history and warning controls
 
-These Studio controls expose the current v4 configuration. Firmware and browser
+These Studio controls expose the advanced fields in the current v5 configuration. Firmware and browser
 share the advanced runtime; exports use the normal strict configuration codec.
-See [release evidence and remaining stages](advanced-v4-release.md).
+See [historical v4 release evidence](advanced-v4-release.md) and
+[current orientation controls](orientation.md).
 
 Select a widget and open **Units & current value**. Temperatures offer Celsius
 and Fahrenheit. Boost offers **Follow dashboard bar / PSI button** or fixed bar,

@@ -3,9 +3,15 @@
 The renderer owns two full framebuffers. Before queueing a new image, it waits
 for the previous completion and compares against that returned buffer while
 both leases are still owned by the UI. Only afterward may the old reference
-become the next render buffer. `PanelHistory` records each buffer's generation,
-the last completed panel generation and one pending transfer. A stale,
-modified or uncompleted reference cannot authorize a partial update.
+become the next render buffer. `PanelHistory` records each buffer's generation
+and orientation, the last completed panel frame and one pending transfer. A stale,
+modified, differently oriented or uncompleted reference cannot authorize a partial
+update. Damage plans bind their rectangles and row strides to native geometry.
+
+Every orientation change forces a full repaint and full transfer, including
+identical black pixels and 180° flips. Render invalidation also compares the queued
+panel target, so rapid landscape → portrait → landscape selection cannot reuse a
+stale retained image. Partial updates resume only from matching completed content.
 
 The planner compares exact RGB565 pixels in 16 by 16 tiles, unions adjacent
 tiles and merges equal vertical runs. It holds at most 16 rectangles. Exceeding
@@ -16,15 +22,17 @@ starts for half an image. The fixture failed before adding this guard.
 These thresholds are provisional; physical
 SPI command/DMA setup costs have not been measured.
 
-Unchanged images emit no commands. Their ready token is discarded, the last
-completed reference remains untouched, and the UI suspends for 16 ms. Input,
+Unchanged images at the same orientation emit no commands. Their ready token is
+discarded, the last completed reference remains untouched, and the UI suspends for 16 ms. Input,
 acquisition and render progress remain supervised while display progress is
 marked idle. A later queue generation starts a fresh display watchdog deadline,
 even when the idle-to-pending transition falls between supervisor observations.
 
 ## Shared transport and failure path
 
-The production `flush_plan` is also executed by the host panel model. Each
+The production `flush_oriented_plan` is also executed by the host panel model.
+It validates full replacement before changing MADCTL and then uses `flush_plan`
+for the pixel windows. Each request carries immutable orientation metadata. A
 region emits CASET, RASET and RAMWR with inclusive bounds. Full-width bands
 use one contiguous slice; narrower rectangles use the framebuffer stride for
 each row. CS stays low throughout each region's RGB565 payload. No additional
@@ -59,7 +67,13 @@ least 5 ms before subsequent commands; the existing 10 ms exceeds that.
 Its separate 120 ms restriction concerns entering sleep again. No claim of
 verified cold-start or panel electrical timing follows from this source check.
 
-## Host results and remaining work
+See the [orientation source checks and physical matrix](../hardware/display-orientation.md)
+for all four MADCTL values, native windows, payload ownership and scanout limits.
+Current orientation tests add both strides, forced full rotations, identical-black
+frames, delayed completions and command/payload fault boundaries. The measurements
+and test counts below remain the historical partial-update stage evidence.
+
+## Historical host results and remaining work
 
 Eight damage/generation tests cover corners, malformed/overflowing rectangles,
 RGB565 bytes, stationary scenes, 250 randomized updates, dense/budget fallback,
@@ -89,7 +103,7 @@ Each framebuffer now retains exact formatted text, colors, time-expiring peak
 and trend indicators, font/critical flags, canonical graph values and overlays.
 The cache uses the same text formatters as the widgets. Removing or replacing
 an opaque popup restores the full underlay; another page invalidates only the
-buffer it overwrites. Equal images still emit no SPI commands.
+buffer it overwrites. Equal images at the same orientation still emit no SPI commands.
 
 Four retained-scene tests exercise 240 scripted scenes, alternating and repeated
 buffer selection, unit/FPS changes, every popup, history/reset, page overwrites,

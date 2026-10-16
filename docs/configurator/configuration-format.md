@@ -3,13 +3,14 @@
 `dashboard-config` is a `no_std`, allocation-free device library. Its optional
 `json` feature provides the editable host/browser format; JSON is never linked
 into the device parser. The model, catalogue, validator and binary codec are
-shared by all consumers. See the current v4 contract below, [schema v2](schema-v2.md) for wire history, and
+shared by all consumers. See the current v5 contract below, [schema v2](schema-v2.md) for wire history, and
 [design](design.md) for the deployment and hardware limits.
 
 ## Bounds and validation
 
 - 1 to 8 named views, 64 widget instances total, at most 8 occupied cells per
-  view on the 4-column, 2-row grid. Supported spans are1x1,2x1,2x2.
+  view on its effective 4-column, 2-row landscape or 2-column, 4-row portrait
+  grid. Supported spans are1x1,2x1,2x2;2x1 remains horizontal.
 - Printable ASCII: view names14 bytes, one-column labels12, two-column labels24,
   warning messages20. No controls, newlines, blank-only strings or truncation.
 - Whole-document validation rejects overlapping/out-of-bounds geometry,
@@ -53,12 +54,12 @@ Host layouts must not be substituted for device layout. Static type size does
 not establish parser stack peak; the mandatory linked-image gate checks
 static/task/stack budgets separately. See [gauges and colours](gauges-and-colours.md)
 for that historical stage's resource measurements and corrected construction/boot
-paths; [release evidence](advanced-v4-release.md) gives the current v4 admission.
+paths; [release evidence](advanced-v4-release.md) records the historical v4 admission.
 
 ### Historical v1 baseline
 
 The following test and timing record describes the initial v1 implementation,
-before gauges and palettes. Current v4 verification is recorded in the release guide.
+before gauges and palettes. The later v4 verification is recorded in the release guide.
 Its Config/ValidatedConfig/Widget target sizes were 6,820/6,824/100 bytes.
 
 The initial verification has18 runtime tests plus2 compile-fail contracts with
@@ -118,9 +119,26 @@ The catalogue exposes pinned request mapping, numeric conversion and byte-order
 references together. These documentary sources do not establish support on the
 user's DNUC ECU or DQ381 transmission.
 
-## Current v4 contract
+## Current v5 contract
 
-Version4 is the complete advanced contract shared by ordinary editor save/export,
+Version5 adds `Config.orientation` and `View.orientation: Option<Orientation>` to
+the end of their respective wire structures. The four values are Landscape,
+Portrait, LandscapeInverted and PortraitInverted. View `null` means inherit the
+device default; current JSON requires the field explicitly. Placement validation
+uses each view's effective geometry. See [screen orientation](orientation.md).
+
+Host migration uses frozen v1–v4 structures and yields Landscape plus inherited
+views; it never reinterprets an old positional payload as the current type.
+Firmware and ConfigSlot accept only canonical v5 envelopes. EASP2 independently
+stores Boot info/Splash overrides; those settings are outside dashboard-only EAV
+and JSON. Complete EAVP2 projects carry all these contracts together.
+
+The 16 KiB EAV and 128 KiB JSON limits remain. The historical size/benchmark records
+below describe their named versions, not measurements of the orientation release.
+
+## Advanced fields introduced in v4
+
+Version4 introduced the complete advanced contract shared by ordinary editor save/export,
 JSON/EAV codecs, host migration, configured acquisition, rendering, warning
 acknowledgment and RGB policy. See [advanced controls](advanced-controls.md) for
 actual defaults and capabilities and [release evidence](advanced-v4-release.md)
@@ -172,15 +190,15 @@ default warningBlink red100% with400ms/50%; sync defaults true, background
 switches false. Both patterns store400ms/50% timing by default. LED colours
 have no contrast requirement; Off, black and zero brightness remain valid.
 
-Version4 standalone JSON is compact; field names, strictness and human colour
-strings are preserved. Frozen v1/v2/v3 import schemas retain their original
+Version4 standalone JSON was compact; field names, strictness and human colour
+strings are preserved. Frozen v1/v2/v3/v4 import schemas retain their original
 vocabularies and add current defaults during host migration. Firmware and
 ConfigSlot accept only current envelopes. Structurally unrepresentable input
 (fourth band, oversized label, unknown enum) reports Json with line/column;
 representable semantic errors report Field/ErrorCode. Contextual band edits
 report BandCount or BandLabel(index) without changing state on rejection.
 
-The synthetic64-widget capacity proof includes three stored bands per widget,
+The historical v4 synthetic64-widget capacity proof includes three stored bands per widget,
 maximum escaped labels, colour varints and timing values. It measures14007B
 EAV and94117B compact JSON. Independent structural/counting serializer bounds
 are14135B EAV and119797B saved JSON, below the16KiB/128KiB caps. Wider legend

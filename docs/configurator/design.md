@@ -2,6 +2,9 @@
 
 Design date: 12 October 2026. Base firmware: `e710216`.
 
+This record preserves the original landscape design. The later [orientation
+contract](orientation.md) adds native portrait and independent screen overrides.
+
 ## Confirmed requirements
 
 The user confirmed a **4-column, 2-row grid**, Rust application code compiled

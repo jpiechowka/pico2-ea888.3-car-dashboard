@@ -22,13 +22,13 @@ Origin-wide Web Locks serialize original admission, garbage collection and saved
 
 Full export and retained-source reconversion materialize one bounded original at a time per tab and verify its identity. Converted-only export needs no original read. A missing/corrupt source fails full export explicitly; it is never silently omitted. Browser quota, crash and cross-tab interleavings remain integration checks.
 
-## EAVP v1 format
+## EAVP v2 format
 
 The container is binary and uncompressed, with no file paths, links or archive extraction. All integers are little-endian. Integrity checks are not authentication or signatures.
 
-- 32-byte header: `EAVPROJ\0`, u16 version 1, u16 descriptor count 5, u32 exact total length, u32 table offset 32, eight zero reserved bytes, CRC32 of the first 28 bytes.
+- 32-byte header: `EAVPROJ\0`, u16 version 2, u16 descriptor count 5, u32 exact total length, u32 table offset 32, eight zero reserved bytes, CRC32 of the first 28 bytes.
 - Five 48-byte descriptors in fixed order: u16 section kind, u16 zero flags, u32 absolute offset, u32 length, u32 CRC32, 32-byte SHA256.
-- Section kinds: canonical dashboard EAV, EASP startup profile, optional EASA converted asset, optional canonical typed recipe JSON, optional original artwork.
+- Section kinds: canonical dashboard EAV5, EASP2 startup profile, optional EASA converted asset, optional canonical Recipe2 JSON, optional original artwork.
 - Present sections are tightly concatenated. Missing optional sections have zero offset/length/checksums. Duplicate/reordered sections, overlaps, gaps, trailing bytes and unknown flags are rejected.
 
 | Component | Bound |
@@ -36,12 +36,25 @@ The container is binary and uncompressed, with no file paths, links or archive e
 | Complete project | 9 MiB |
 | Project without original artwork | 576 KiB |
 | Canonical dashboard EAV | 16,384 bytes |
-| Shipped EASP v1 profile | Exactly 16 bytes |
+| Current EASP v2 profile | Exactly 16 bytes |
 | Converted EASA | 524,288 bytes, fully validated by the shared asset parser |
 | Typed conversion recipe | 4,096 bytes, unknown fields rejected |
 | Original source | 8,388,608 bytes |
 
-The profile uses the existing EASP16 implementation, rather than the earlier prospective 32-byte research design. Custom theme requires asset and recipe; procedural themes carry neither. Full original hash, length and PNG/GIF kind must agree with the recipe. Original decoding remains the converter's responsibility on import/reconversion; the package reader and native build helper do not decode PNG/GIF. Recipe serialization is canonical and includes converter version, source/output hashes, source presence, scaling/matte/timing/sprite-sheet options and a bounded label.
+The profile uses the existing EASP16 implementation, rather than the earlier prospective 32-byte research design. Custom theme requires asset and recipe; procedural themes carry neither. Full original hash, length and PNG/GIF kind must agree with the recipe. Original decoding remains the converter's responsibility on import/reconversion; the package reader and native build helper do not decode PNG/GIF. Recipe2 serialization is canonical and includes target geometry, converter version, source/output hashes, source presence, scaling/matte/timing/sprite-sheet options and a bounded label. Asset geometry must equal the effective Splash geometry, resolved from its override and the dashboard default.
+
+EAVP1 import uses frozen canonical EAV4, EASP1 and Recipe1 decoders before migration.
+The migrated project writes EAVP2 with EAV5/EASP2/Recipe2; existing EASA1 pixels,
+original bytes and their hashes remain unchanged, with `dashboard-startup-tools/1`
+attribution retained. EAVP2 admits that legacy landscape artwork. New conversions
+use EASA2 and converter/2. A legacy recipe cannot claim portrait or silently claim
+a newer producer. Mixed section versions, noncanonical recipes and geometry
+mismatches reject. See [orientation and compatibility](orientation.md).
+
+An orientation edit can retain mismatched artwork in a visibly invalid Studio
+state for repair, but cannot produce a valid project snapshot or build input.
+Reconversion uses the retained immutable original, or requires source reimport
+for converted-only projects. Flip-only changes need no reconversion.
 
 `dashboard-config-tools::project::Project` is the shared codec. `Editor::accepted_project()` returns an immutable snapshot only through existing readiness gates. Build preparation must capture its Editor stamp and recheck that stamp/readiness after asynchronous work before dispatch. Profile/artwork changes alter accepted project revision even when dashboard EAV is unchanged; a dashboard-only hash cannot prove a complete build current.
 
