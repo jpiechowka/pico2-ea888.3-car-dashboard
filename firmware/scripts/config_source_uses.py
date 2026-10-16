@@ -182,7 +182,8 @@ def _reached_data(control,families):
                 package['output'],protected,source,(start+724,start+730,start+734,site+4)))
         remaining=phase.remaining
         if remaining is None:continue
-        require(guard['publication_lineage'] is not None and guard['complete_Source_array'],
+        relation=guard['suffix_lineage']
+        require(guard['publication_lineage'] is not None and guard['complete_Source_array'] and relation is not None,
             'Sources suffix accesses precede actual array publication lineage')
         protected=_guards(state,phase);warning=remaining['warning']
         if warning is not None:
@@ -194,10 +195,18 @@ def _reached_data(control,families):
                 (steps[0]['domain'],steps[1]['domain'],warning['page_domain'])==((0,1),(0,1),(0,65535)) and
                 warning['scratch_read']==(frame.start+1065,frame.start+1067) and warning['complete_store']==V+5040,
                 'Sources Warning read loses its same scope/mode/page source epoch')
-            source=dict(source_phase=(phase_index,'WarningPresentation'),warning=warning,transitions=steps)
+            require(relation['warning'] is not None and
+                len(relation['warning']['children'])==len(steps) and
+                all(a is b for a,b in zip(relation['warning']['children'],steps)) and
+                relation['warning']['complete_store']==warning['complete_store'],
+                'Sources Warning use loses its checked same-parent argument/return relation')
+            source=dict(source_phase=(phase_index,'WarningPresentation'),warning=warning,transitions=steps,
+                actual_parent_relation=relation['warning'])
             uses.append(_make_use(families,'warning_presentation_local',phase_index,0,warning['before'],warning['after'],
                 borrow(frame,1064,3,frame.phase),protected,source,(V+5220,V+5224,V+5228,V+5040)))
         for assignment in remaining['Fuel_assignments']:
+            parent=tuple(v for v in relation['Fuel'] if v['assignment'] is assignment)
+            require(len(parent)==1,'Sources Fuel use loses its checked same-parent source/physical relation')
             fuel=assignment['Fuel'];wire=fuel['wire_tag'];emitted=fuel['emitted_tag']
             require(warning is not None and assignment['source_guard']==(wire,emitted if wire==2 else None) and
                 ((wire,emitted) in ((0,2),(1,3),(2,0),(2,1))) and fuel['complete_store']==V+5570 and
@@ -207,6 +216,7 @@ def _reached_data(control,families):
                 'Sources Fuel use loses its paired wire/density/late physical store')
             guards=protected+(_object(borrow(c.owner,208,4,frame.phase),'completed WarningPresentation'),)
             source=dict(source_phase=(phase_index,'Fuel',wire,emitted),assignment=assignment,
+                actual_parent_relation=parent[0],
                 inactive_payload_remains_opaque=True,later_Colors_success_required=False)
             uses.append(_make_use(families,'Fuel_final_halfword',phase_index,0,assignment['before'],assignment['after'],
                 borrow(c.owner,0,32,frame.phase,True),guards,source,(V+5534,V+5566,V+5568,V+5570)))

@@ -159,17 +159,37 @@ class _SourceActiveControl:
 def _phase_guards(state,phase):
     """Paired source outcomes, not a body-list or completed-prefix approval."""
     from config_abstract import Span
-    from config_source_effects import SOURCE_EPOCHS
+    from config_source_effects import SOURCE_EPOCHS,_source_error_origins
     require(any(phase is p and phase.entry is e for p,e in zip(state.phases,state.entries)),
         'Sources guarded phase leaves its actual entry association')
     frame=state.widgets.views.context.headers['visitor_frame']
     V=state.widgets.views.context.headers['visitor']['proof']['function']
     array=phase.array;current=phase.entry.sequence;calls=[];parsed=0
+    saved,value,producer=phase.entry.saved_top_count
+    require((saved.storage,saved.offset,saved.extent,value,producer)==
+        (frame,280,4,Span(7,7),V+4360) and phase.entry.exit.sequence.count==Span(7,7) and
+        any(v.space==frame.space and v.start==saved.start and v.extent==4 and not v.writable
+            for v in phase.entry.protected), 'Sources saved top count loses its actual initialized/protected epoch')
+    # _source_entries matched the same selected top8 predecessor and the
+    # complete 4348..4374 constructor. Its post-init guard is passed into
+    # every fresh child/copy/suffix and every authored parent write check.
+    # The following exact reaching loads use that preserved cell, rather
+    # than inferring its value from the independently changing V292 count.
+    expected={4796:('ldr','r0, [sp, #0x118]'),4798:('cmp','r0, #0x0'),
+        5044:('ldr','r0, [sp, #0x118]'),5046:('cmp','r0, #0x1'),
+        5052:('ldr','r0, [sp, #0x118]'),5054:('mov','r1, r4'),
+        5056:('subs','r0, #0x2'),5058:('str','r0, [sp, #0x124]')}
+    for off,pair in expected.items():
+        row=state.rows.get(V+off)
+        require(row is not None and (row.mnemonic,row.operands)==pair and
+            state.objects.read_only(V+off,len(row.raw))==row.raw,
+            'Sources saved top count changes its reaching load/update')
     require(current.count==Span(8,8) and phase.entry.exit.sequence.count==Span(7,7) and
         phase.parent_envelopes['stores']==80 and len(state.structural.carrier_returns['parent_calls'])==57,
         'Sources guarded phase lacks actual count/protected-write/callee relations')
     for index,invocation in enumerate(array['invocations']):
         off,out,tag=SOURCE_EPOCHS[index];result=invocation['result']
+        error_origins=_source_error_origins(result)
         require(invocation['index']==index and invocation['site']==V+off and invocation['before']==current and
             current.count==Span(8-index,8-index),
             'Sources guarded invocation changes its paired call/source/count')
@@ -187,6 +207,7 @@ def _phase_guards(state,phase):
             Access_table_entered=entered,guarded_Access_domain=(0,5),
             Access_targets=proof['access_targets'] if entered else (),
             error_alternatives=result['errors'],guarded_routes=result['guarded_routes'],
+            primitive_error_origins=error_origins,
             output_store_reached=normal is not None,after=None if normal is None else normal['after']))
         if normal is None:
             require(index==len(array['invocations'])-1 and len(array['packages'])==index and array['sequence'] is None,
@@ -204,7 +225,7 @@ def _phase_guards(state,phase):
         current=package['sequence_after'];parsed+=1
     require(current==array['sequence'] and (current is None or parsed==8 and current.count==Span(0,0)),
         'Sources guarded array bypasses a current package')
-    complete=current is not None;publication=None
+    complete=current is not None;publication=None;suffix_relation=None
     if not complete:
         require(phase.effects is None and phase.remaining is None,
             'Sources parse failure reaches Config publication or remaining fields')
@@ -225,14 +246,23 @@ def _phase_guards(state,phase):
             (v['Fuel']['wire_tag'],v['Fuel']['emitted_tag'] if v['Fuel']['wire_tag']==2 else None)
             for v in suffix['Fuel_assignments']),
             'Sources retained Fuel assignment mixes its source/density arm')
-        from config_source_lineage import _publication_lineage
+        from config_source_lineage import _publication_lineage,_suffix_lineage
         publication=_publication_lineage(state.objects,state.rows,state.parents,array,effects,frame,
             phase.entry.carriers,state.structural.carrier_returns,phase.parent_envelopes)
+        suffix_relation=_suffix_lineage(state.objects,state.rows,state.parents,suffix,frame,
+            state.widgets.views.context.owner,state.structural.carrier_returns,phase.parent_envelopes)
     return dict(entry_index=next(i for i,p in enumerate(state.phases) if p is phase),
         invocations=tuple(calls),parsed_sources=parsed,
         complete_Source_array=complete,Controls_ready=bool(complete and phase.remaining['normal']),
         source_array_last_stores=() if not complete else tuple(v['complete_after'] for v in phase.effects['slots']),
         publication_lineage=publication,
+        suffix_lineage=suffix_relation,
+        saved_top_count=dict(cell=saved,value=value,initialized_at=producer,
+            checked_read_sites=(V+4796,V+5044,V+5052),
+            reached_reads=(() if not complete else (V+4796,)+
+                ((V+5044,V+5052) if phase.remaining['warning'] is not None else ())),
+            later_top_count_store=() if not complete or phase.remaining['warning'] is None else (V+5058,5),
+            guard_rejections=((V+4800,0),(V+5048,1))),
         retained_Fuel_assignments=() if not complete else phase.remaining['Fuel_assignments'])
 
 

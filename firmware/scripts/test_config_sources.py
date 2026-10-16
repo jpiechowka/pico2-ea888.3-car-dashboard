@@ -30,6 +30,11 @@ class SourcePrivateHandoff(unittest.TestCase):
             self.assertEqual(dict(e.call_arguments),{'r0':frame.start+1128,'r1':frame.start+1500})
             self.assertEqual((e.old_Source_array.start,e.old_Source_array.extent,e.old_Source_array.writable),(B+32,176,False))
             self.assertTrue(any(v.space=='address' and (v.start,v.extent)==(B+244,200) for v in e.protected))
+            self.assertTrue(any(v.space==frame.space and (v.start,v.extent)==(frame.start+280,4)
+                for v in e.protected),'initialized saved top count must remain protected after4360')
+            saved,value,producer=e.saved_top_count
+            self.assertEqual((saved.start,saved.extent,value.lower,value.upper,producer),
+                (frame.start+280,4,7,7,e.call_site-16))
             self.assertEqual(tuple((v.start-frame.start,target-frame.start) for v,target in e.carriers),
                 ((216,1001),(224,688),(228,576),(232,1420),(236,1380),(240,1400),(244,1440),(248,1360)))
             if e.exit.committed:
@@ -315,6 +320,50 @@ class SourceAggregateInterface(unittest.TestCase):
         self.assertTrue(any(v['field']=='Route payload' for v in result['transitions']))
         self.assertTrue(any(v['stage']=='freshness_ms.freshness_ms' for v in result['errors']))
         self.assertFalse(result['completed_Source_issued'])
+
+    def test_failed_primitive_results_keep_exact_origin_and_short_arm_chain(self):
+        from config_source_effects import channel_source_interface
+        result=channel_source_interface(*self.fixture())
+        self.assertTrue(result['errors'])
+        self.assertTrue(all('origin' in error and 'child_outcome' in error for error in result['errors']))
+        from config_source_effects import _source_error_origins
+        _source_error_origins(result)
+        origins=result['primitive_invocations']
+        response=next(v for v in origins if v['site']==448)
+        request=response['predecessor']
+        self.assertEqual((request['site'],request['semantic_role']),(420,'seq_u16'))
+        self.assertIs(response['before'],response['predecessor_outcome']['state'])
+        self.assertTrue(any(response['predecessor_outcome'] is v for v in request['result']['outcomes']))
+        self.assertTrue(any(v['origin'] is response for v in result['errors']))
+        self.assertTrue(any(v['origin']['site']==582 for v in result['errors']))
+        self.assertTrue(any(v['origin']['site']==54 and v['child_outcome']['kind']=='success'
+            for v in result['errors'] if v['stage'].endswith('.invalid')))
+        error=next(v for v in result['errors'] if v['origin'] is response)
+        saved=error['child_outcome'];error['child_outcome']=dict(saved)
+        with self.assertRaisesRegex(AssertionError,'origin'):_source_error_origins(result)
+        error['child_outcome']=saved
+        saved_site=response['site'];response['site']=420
+        with self.assertRaisesRegex(AssertionError,'origin'):_source_error_origins(result)
+        response['site']=saved_site
+        saved_previous=response['predecessor'];response['predecessor']=next(v for v in origins if v['site']==134)
+        with self.assertRaisesRegex(AssertionError,'origin'):_source_error_origins(result)
+        response['predecessor']=saved_previous
+        for key,value in (('error',99),('cursor',replace(saved['cursor'],lower=0,upper=0)),
+            ('count_after',replace(error['count_after'],lower=0,upper=0))):
+            prior=error[key];error[key]=value
+            with self.assertRaisesRegex(AssertionError,'origin'):_source_error_origins(result)
+            error[key]=prior
+        _source_error_origins(result)
+        short=channel_source_interface(*self.fixture(extent=6))
+        _source_error_origins(short)
+        failed=tuple(arm for step in short['transitions'] for arm in step.get('all_alternatives',())
+            if arm['after'] is None and arm['children'])
+        self.assertTrue(failed)
+        self.assertTrue(all(any(origin['result'] is child for origin in short['primitive_invocations'])
+            for arm in failed for child in arm['children']))
+        none=channel_source_interface(*self.fixture(count=0))
+        self.assertEqual(none['primitive_invocations'],())
+        self.assertEqual(none['errors'],())
 
 
 class SourceArrayAdapter(unittest.TestCase):
@@ -722,6 +771,24 @@ SOURCE_OUTPUTS=(1128,516,628,744,880,940,1000,1064)
 
 
 class SourcePhaseSnapshot(unittest.TestCase):
+    def test_local_scalar_tokens_share_without_changing_literal_values_types_or_container_aliases(self):
+        from config_decoded_sources import _phase_graph
+        shared={'x':1,'y':True,'z':[1,False,None,'x',b'x']};value=[shared,shared]
+        expected=(('reference',0),(
+            ('list',(('reference',1),('reference',1))),
+            ('mapping',((('value','str','x'),('value','int',1)),
+                (('value','str','y'),('value','bool',True)),
+                (('value','str','z'),('reference',2)))),
+            ('list',(('value','int',1),('value','bool',False),('value','NoneType',None),
+                ('value','str','x'),('value','bytes',b'x')))))
+        result=_phase_graph(value);self.assertEqual(result,expected)
+        scalar=result[1][1][1][0][1];again=result[1][2][1][0]
+        self.assertIs(scalar,again,'same typed scalar token must share local immutable storage')
+        self.assertIsNot(scalar,result[1][1][1][1][1])
+        self.assertIsNot(scalar,_phase_graph(value)[1][1][1][0][1])
+        shared['z'].append('later mutation')
+        self.assertEqual(result,expected);self.assertNotEqual(_phase_graph(value),result)
+
     def test_repeated_packages_are_independent_immutable_graph_nodes(self):
         from config_decoded_sources import _phase_graph
         package={'cursor':[1,2],'fields':{'selector':1}}
@@ -818,8 +885,44 @@ class SourceParentEnvelopes(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'overlap|intersects'):
             _parent_envelopes(objects,rows,parents,sequence,owner,protected+(guard,))
 
+    def test_saved_count_footprint_survives_selected_writes_with_exact_adjacent_captures(self):
+        from config_source_parent_effects import _parent_envelopes
+        from config_regions import Storage
+        objects,rows,parents,sequence,owner,protected=self.fixture();frame=sequence.header.storage
+        saved=Storage(frame.space,'supplied initialized saved count',frame.start+280,4,4,frame.phase,False)
+        result=_parent_envelopes(objects,rows,parents,sequence,owner,protected+(saved,))
+        self.assertEqual(result['stores'],80)
+        for shift in (-1,1):
+            with self.assertRaisesRegex(AssertionError,'intersects'):
+                _parent_envelopes(objects,rows,parents,sequence,owner,protected+(replace(saved,start=saved.start+shift,alignment=1),))
+
 
 class SourceRemainingAggregates(unittest.TestCase):
+    def test_uncounted_temperature_and_failed_Colors_keep_their_paired_child_results(self):
+        from config_decoded_sources import _remaining_aggregates
+        from config_abstract import Span
+        result=_remaining_aggregates(*self.fixture());V=0x1001c654
+        temperature=tuple(v for v in result['transitions'] if v['field']=='Blend density temperature')
+        self.assertEqual(len(temperature),1,'same-source direct6266 result must remain available to the parent join')
+        extra=temperature[0]
+        self.assertEqual((extra['site'],extra['source_guard']),(V+6266,(2,1)))
+        self.assertEqual((extra['sequence_count_before'],extra['sequence_count_after']),(Span(4,4),Span(4,4)))
+        self.assertEqual(extra['after'],next(v['state'] for v in extra['child']['outcomes'] if v['kind']=='success'))
+        tail=tuple(v for v in result['transitions'] if v['field']=='Blend gasoline_stoich' and v['before'].decoder==extra['after'])
+        self.assertEqual(len(tail),1);self.assertEqual(tail[0]['before'].count,Span(4,4))
+        short=_remaining_aggregates(*self.fixture(extent=60))
+        self.assertFalse(short['normal']);self.assertTrue(short['Colors_invocations'])
+        for invocation,assigned in zip(short['Colors_invocations'],short['Fuel_assignments']):
+            self.assertIs(invocation['Fuel_assignment'],assigned)
+            self.assertEqual(invocation['before'].decoder,assigned['after'])
+            self.assertEqual(invocation['before'].count,Span(5,5))
+            self.assertTrue(invocation['child']['outcomes'])
+        errors=tuple(v for v in short['errors'] if v['stage']=='global WarningColors')
+        self.assertTrue(errors)
+        for error in errors:
+            self.assertTrue(any(error['source_invocation'] is v for v in short['Colors_invocations']))
+            self.assertTrue(any(error['child_outcome'] is v for v in error['source_invocation']['child']['outcomes']))
+
     @staticmethod
     def fixture(extent=160):
         from config_decoded_sources import _parents
@@ -952,6 +1055,111 @@ class SourceParentChronology(unittest.TestCase):
         finally:normal['tag_domain']=original
 
 
+
+
+class SourceSuffixChronology(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config_decoded_sources import _remaining_aggregates
+        from config_source_children import source_children,source_return_profiles
+        from config_source_control import _source_carrier_returns
+        from config_source_parent_effects import _parent_envelopes
+        from config_finite_returns import _closed_child_returns
+        from config_widget_contracts import ROLES
+        objects,rows,parents,sequence,owner,protected=SourceRemainingAggregates.fixture()
+        cls.suffix=_remaining_aggregates(objects,rows,parents,sequence,owner,protected)
+        children=source_children(objects,rows,parents);frame=sequence.header.storage
+        returns=_closed_child_returns(rows,parents,children,frame.start,source_return_profiles(),('seq_f32',ROLES['warning_colors']))
+        transfer=_source_carrier_returns(rows,parents,children,returns,frame.start)
+        envelopes=_parent_envelopes(objects,rows,parents,sequence,owner,protected[:-1])
+        cls.args=(objects,rows,parents,cls.suffix,frame,owner,transfer,envelopes)
+
+    def test_conditional_suffix_pairs_real_calls_guards_and_late_stores(self):
+        from config_source_lineage import _suffix_lineage
+        result=_suffix_lineage(*self.args);V=0x1001c654
+        self.assertEqual(result['warning']['scope_alternatives'],(0,1))
+        self.assertEqual(result['warning']['mode_alternatives'],(0,1))
+        self.assertEqual(result['warning']['complete_store'],V+5040)
+        self.assertEqual(tuple(v['source_guard'] for v in result['Fuel']),((0,None),(1,None),(2,0),(2,1)))
+        for arm,assignment in zip(result['Fuel'],self.suffix['Fuel_assignments']):
+            self.assertIs(arm['assignment'],assignment)
+            self.assertEqual(arm['physical_store_order'],tuple(V+o for o in (5532,5534,5542,5546,5550,5554,5558,5562,5566,5568,5570)))
+            self.assertEqual(arm['pending_after_tag'],((5,7),))
+        blend=result['Fuel'][-1]
+        self.assertEqual(blend['direct_density_count_decrement'],0)
+        self.assertEqual(blend['counted_tail'],(4,3,2,1,0))
+        self.assertEqual(result['Colors']['source_order'],('foreground','background'))
+        self.assertEqual(result['Colors']['store_order'],(V+5618,V+5628))
+        self.assertEqual(result['frontier'],V+5630)
+        self.assertFalse(result['confers_active_state'])
+        self.assertTrue('argument_transports' in result,'conditional suffix must retain its actual argument transports')
+        arguments=result['argument_transports']
+        self.assertEqual(tuple(v['site']-V for v in arguments['children']),
+            tuple(v['site']-V for v in self.suffix['transitions'])+(5578,)*len(self.suffix['Colors_invocations']))
+        self.assertEqual(arguments['page_flag_path'],tuple(V+off for off in (5194,5198,5200,5204,5206,5210)))
+        self.assertEqual(arguments['normal_inactive_predication'],(V+5022,V+5130))
+        self.assertEqual(arguments['low_FP_source'],(V+6406,V+5562,'s0'))
+
+    def test_suffix_rejects_unpaired_child_count_and_Fuel_color_association(self):
+        from config_source_lineage import _suffix_lineage
+        from config_abstract import Span
+        steps=list(self.suffix['transitions']);index=next(i for i,v in enumerate(steps) if v['field']=='Blend gasoline_stoich')
+        steps[index]=dict(steps[index],before=replace(steps[index]['before'],count=Span(5,5)))
+        changed=dict(self.suffix,transitions=tuple(steps))
+        with self.assertRaisesRegex(AssertionError,'counted Blend|paired child'):
+            _suffix_lineage(*self.args[:3],changed,*self.args[4:])
+        normal=list(self.suffix['normal']);normal[0]=dict(normal[0],Fuel=dict(normal[0]['Fuel']))
+        changed=dict(self.suffix,normal=tuple(normal))
+        with self.assertRaisesRegex(AssertionError,'same completed Fuel'):
+            _suffix_lineage(*self.args[:3],changed,*self.args[4:])
+        transfer=dict(self.args[-2],parent_calls=tuple(v for v in self.args[-2]['parent_calls'] if v[0]!=0x1001c654+5578))
+        with self.assertRaisesRegex(AssertionError,'actual child transfer'):
+            _suffix_lineage(*self.args[:-2],transfer,self.args[-1])
+        pairs=list(self.args[-2]['parent_calls']);position=next(i for i,v in enumerate(pairs) if v[0]==0x1001c654+5578)
+        site,target,role,mask=pairs[position];pairs[position]=(site,target+2,role,mask)
+        transfer=dict(self.args[-2],parent_calls=tuple(pairs))
+        with self.assertRaisesRegex(AssertionError,'actual child transfer'):
+            _suffix_lineage(*self.args[:-2],transfer,self.args[-1])
+
+    def test_short_colors_do_not_erase_prior_reached_Fuel_or_make_outgoing_state(self):
+        from config_decoded_sources import _remaining_aggregates
+        from config_source_lineage import _suffix_lineage
+        objects,rows,parents,sequence,owner,protected=SourceRemainingAggregates.fixture(extent=60)
+        suffix=_remaining_aggregates(objects,rows,parents,sequence,owner,protected)
+        result=_suffix_lineage(objects,rows,parents,suffix,sequence.header.storage,owner,*self.args[-2:])
+        self.assertTrue(result['Fuel']);self.assertFalse(suffix['normal'])
+        self.assertFalse(result['Colors']['normal']);self.assertFalse(result['outgoing_top4'])
+        self.assertTrue(all(v['completed_Fuel_store']==0x1001c654+5570 for v in result['Colors']['errors']))
+
+    def test_error_only_suffix_still_binds_exact_preceding_success_input(self):
+        from config_decoded_sources import _remaining_aggregates
+        from config_source_lineage import _suffix_lineage
+        objects,rows,parents,sequence,owner,protected=SourceRemainingAggregates.fixture(extent=57)
+        suffix=_remaining_aggregates(objects,rows,parents,sequence,owner,protected)
+        self.assertIsNone(suffix['warning'])
+        self.assertTrue(any(v['stage']=='Warning mode' for v in suffix['errors']))
+        _suffix_lineage(objects,rows,parents,suffix,sequence.header.storage,owner,*self.args[-2:])
+        steps=list(suffix['transitions']);i=next(i for i,v in enumerate(steps) if v['field']=='Warning mode')
+        steps[i]=dict(steps[i],before=replace(steps[i]['before']))
+        changed=dict(suffix,transitions=tuple(steps))
+        with self.assertRaisesRegex(AssertionError,'source chain'):
+            _suffix_lineage(objects,rows,parents,changed,sequence.header.storage,owner,*self.args[-2:])
+
+    def test_error_carrier_keeps_packed_Warning_frontier_and_completed_Fuel(self):
+        from config_source_lineage import _suffix_lineage
+        value=_suffix_lineage(*self.args);V=0x1001c654
+        self.assertEqual(len(value['error_carriers']),len(self.suffix['errors']))
+        packed=next(v for v in value['error_carriers'] if v['error']['stage']=='Warning scope.domain')
+        self.assertEqual(packed['carrier'],'packed_0x02000000_or_error_u8')
+        self.assertTrue(all(V+off in packed['path'] for off in (6446,6448,4866,4870,4872,4876,4880,4884,4886,4888,4890,5024,5028,5032)))
+        self.assertEqual(packed['stopped_before'],V+56);self.assertFalse(packed['whole_register_narrowed'])
+        self.assertTrue(all(v['prior_physical_stores']==(V+4794,V+5040,V+5570)
+            for v in value['error_carriers'] if v['error']['stage']=='global WarningColors'))
+        errors=list(self.suffix['errors']);i=next(i for i,v in enumerate(errors) if v['stage']=='Warning scope.domain')
+        errors[i]=dict(errors[i],frontier=0x1001c654+170)
+        changed=dict(self.suffix,errors=tuple(errors))
+        with self.assertRaisesRegex(AssertionError,'error carrier'):
+            _suffix_lineage(*self.args[:3],changed,*self.args[4:])
 
 
 class SourceAccessFamilies(unittest.TestCase):

@@ -259,8 +259,9 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
     def nested(proof,label):return Storage(frame.space,'Sources '+label,frame.start-proof['frame'],proof['frame'],8,phase,True)
     def warning_transport(stage,kind):
         # Exact current route anchors, including the packed intermediate r5.
-        # At56 only its low byte is consumed. Do not relabel this as a direct
-        # scalar14/170 edge or infer that the entire packed register is14.
+        # Frontier56 copies the complete packed r5 into r0. Its low byte is
+        # the conceptual error; narrowing by the later returned-error ABI
+        # is separate. Neither whole register is inferred to be scalar14.
         require(stage in ('Warning scope','Warning mode','Warning page') and
             kind in ('domain','none','error'),'unreviewed packed Warning error route')
         if kind in ('domain','none'):prefix=(6446,6448)
@@ -269,12 +270,14 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
         return dict(kind='packed_Warning_lowbyte',
             path=tuple(V+off for off in prefix+(4866,4870,4872,4886,4888,4890,5024,5032,56)),
             mask=0x020000ff,whole_r5_is_scalar_error=False)
-    def error(stage,option,completed):
+    def error(stage,option,completed,source_invocation=None):
         record=dict(stage=stage,error=14 if option['kind']=='none' else option['error'],
             cursor=option['cursor'],completed_aggregates=completed,frontier=V+56,
-            partial_current_aggregate_not_promoted=True)
+            partial_current_aggregate_not_promoted=True,child_outcome=option)
         if stage in ('Warning scope','Warning mode','Warning page'):
             record['error_transport']=warning_transport(stage,'none' if option['kind']=='none' else 'error')
+        if source_invocation is not None:
+            record.update(source_invocation=source_invocation,child_outcome=option)
         errors.append(record)
     def stable(result,state=None):
         fixed=(_object(borrow(sequence.decoder.header.storage,sequence.decoder.header.offset+4,4,phase),'stable D.end'),)
@@ -292,7 +295,7 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
             if option['kind']=='success':
                 normal.append(option['state']);record=dict(stage=label+'.domain',error=14,cursor=option['cursor'],
                     completed_aggregates=completed,frontier=V+(56 if label.startswith('Warning ') else 170),
-                    source_guard='same parsed selector>'+str(maximum))
+                    source_guard='same parsed selector>'+str(maximum),child_outcome=option)
                 if label in ('Warning scope','Warning mode'):record['error_transport']=warning_transport(label,'domain')
                 errors.append(record)
             else:error(label,option,completed)
@@ -350,9 +353,14 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
             proof=_at_child(parents,children,V+6266,'deserialize_seed_f32')
             extra=stable(decoder_interface(objects,rows,proof,blend,nested(proof,'density temperature'),base(),
                 output=borrow(frame,1064,8,phase,True),platform_policy=_input_policy(objects,blend)))
+            temperature=[]
             for option in extra['outcomes']:
-                if option['kind']=='success':density.append((1,option['state']))
+                if option['kind']=='success':temperature.append(option['state']);density.append((1,option['state']))
                 else:error('Blend density temperature',option,completed)
+            require(len(temperature)<=1,'Sources density temperature has an unpaired normal decoder')
+            steps.append(dict(field='Blend density temperature',site=V+6266,before=blend,
+                after=temperature[0] if temperature else None,child=extra,source_guard=(2,1),
+                sequence_count_before=Span(4,4),sequence_count_after=Span(4,4)))
             for tag,after in density:
                 q=SequenceInterface(borrow(frame,1000,8,phase,True),after,Span(4,4))
                 for field,site in (('gasoline_stoich',6288),('ethanol_stoich',6320),('gasoline_density',6352),('ethanol_density',6384)):
@@ -364,7 +372,7 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
                         ('percent','gasoline_stoich','ethanol_stoich','gasoline_density','ethanol_density'))
                     if tag:fields+=(('temperature','f32_bits',(0,0xffffffff)),)
                     fuel.append((2,tag,q.decoder,fields,tag))
-    normals=[];fuel_assignments=[]
+    normals=[];fuel_assignments=[];colors_invocations=[]
     for wire,tag,decoder,fields,density in fuel:
         writes=((0,4),(29,1),(7,1),(28,1),(8,4),(12,4),(16,4),(20,4),(24,4),(4,1),(5,2))
         possible=tuple((borrow(owner,0,32,phase,True),offset,size) for offset,size in writes)
@@ -381,16 +389,19 @@ def _remaining_aggregates(objects,rows,parents,sequence,owner,protected):
         edge=_edge_at(parents,V+5578)
         require(edge[3]==WIDGET['warning_colors'],'global WarningColors uses another current call')
         proof=children[edge[2],edge[3]]
-        colors=warning_colors_interface(objects,rows,proof,replace(sequence,decoder=decoder,count=Span(5,5)),
+        colors_before=replace(sequence,decoder=decoder,count=Span(5,5))
+        colors=warning_colors_interface(objects,rows,proof,colors_before,
             borrow(frame,1064,6,phase,True),nested(proof,'global WarningColors'),base(sequence.header))
         stable(colors,sequence)
+        invocation=dict(site=V+5578,before=colors_before,child=colors,Fuel_assignment=fuel_assignments[-1])
+        colors_invocations.append(invocation)
         for option in colors['outcomes']:
-            if option['kind']!='some':error('global WarningColors',option,completed+('Fuel',));continue
+            if option['kind']!='some':error('global WarningColors',option,completed+('Fuel',),invocation);continue
             assignment(((borrow(owner,14524,4,phase,True),2,2),(borrow(owner,14524,4,phase,True),0,2)))
             normals.append(dict(wire_tag=wire,emitted_tag=tag,Fuel=record,after=option['state'],
-                colors=dict(source=colors,partial_background_store=V+5618,complete_store=V+5628,
+                colors=dict(source=colors,invocation=invocation,partial_background_store=V+5618,complete_store=V+5628,
                     same_source_order=('foreground','background'))))
-    return dict(warning=warning,Fuel_assignments=tuple(fuel_assignments),normal=tuple(normals),errors=tuple(errors),transitions=tuple(steps),carrier_guards=tuple(carrier_guards),
+    return dict(warning=warning,Fuel_assignments=tuple(fuel_assignments),Colors_invocations=tuple(colors_invocations),normal=tuple(normals),errors=tuple(errors),transitions=tuple(steps),carrier_guards=tuple(carrier_guards),
         before=sequence,complete_ordinary_group_issued=False,
         pending_owned_roles=('warning_presentation_local','Fuel_final_halfword'),
         requires_actual_Source_prefix_ordinary_control_and_reached_uses=True)
@@ -420,6 +431,7 @@ def _entry_data(entry,widgets):
         'Sources private phase lost its actual predecessor/exit identity')
     return dict(exit_index=next(i for i,v in enumerate(widgets.exits) if v is entry.exit),
         sequence=entry.sequence,carriers=entry.carriers,protected=entry.protected,
+        saved_top_count=entry.saved_top_count,
         old_array=entry.old_Source_array,call_site=entry.call_site,call_arguments=entry.call_arguments)
 
 
@@ -439,13 +451,17 @@ def _phase_graph(value):
     copy expands that package at every transport occurrence. This snapshot
     instead records every supported container once and its exact references;
     it retains neither mutable input objects nor cached evaluated states.
-    Rebuilding it checks values, types and shared associations again.
+    Rebuilding it checks values, types and shared associations again. Scalar
+    identity is deliberately absent from this encoding: identical typed
+    literal tokens share immutable storage only within this snapshot call.
     """
-    nodes=[];memo={};active=set()
+    nodes=[];memo={};active=set();literals={}
     def visit(item):
         kind=type(item)
         if kind in (str,bytes,int,bool,type(None)):
-            return ('value',kind.__name__,item)
+            key=(kind,item)
+            if key not in literals:literals[key]=('value',kind.__name__,item)
+            return literals[key]
         identity=id(item)
         require(identity not in active,'cyclic Sources phase snapshot')
         if identity in memo:return ('reference',memo[identity])

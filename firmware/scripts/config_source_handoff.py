@@ -70,6 +70,7 @@ class _SourceEntry:
     old_Source_array:object
     call_site:int
     call_arguments:tuple
+    saved_top_count:tuple
     completed_Source_issued:bool=False
 
 
@@ -152,6 +153,15 @@ def _source_entries(objects,rows,state):
         initial=c.boundary['history']['preclaim']['startup']['entry']['initial']
         require((initial['address'],initial['extent'])==(c.owner.start,14604),
             'Sources predecessor changed its retained old-array allocation')
-        entries.append(_SourceEntry(state,exit,q,carriers,protected+previous+_source_carrier_cells(c),
-            borrow(c.owner,32,176,frame.phase),V+4376,(('r0',frame.start+1128),('r1',q.header.start))))
+        # Actual incoming top8, checked 4352 SUBS and 4360 STR above create
+        # this distinct saved7 cell. Top Q's later count updates use V292.
+        # Protect only after its initializing store, across every fresh
+        # Source/copy/suffix interface and the complete parent write envelope.
+        # The excluded zero-top path writes V280 at4408; its context never
+        # acquires this entry from the selected positive top8 successor.
+        saved_count=borrow(frame,280,4,frame.phase)
+        entries.append(_SourceEntry(state,exit,q,carriers,
+            protected+previous+_source_carrier_cells(c)+(_object(saved_count,'initialized saved top count'),),
+            borrow(c.owner,32,176,frame.phase),V+4376,(('r0',frame.start+1128),('r1',q.header.start)),
+            (saved_count,Span(7,7),V+4360)))
     return tuple(entries)
