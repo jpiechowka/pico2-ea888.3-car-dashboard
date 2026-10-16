@@ -2,7 +2,7 @@
 import struct,unittest
 from types import SimpleNamespace
 from elf_image import ElfImage
-from check_program_image import program_map,verify_uf2,boot_metadata,linked_configuration,FLASH_START as B
+from check_program_image import program_map,verify_uf2,boot_metadata,linked_configuration,linked_startup,FLASH_START as B
 
 def elf_fixture():
     data=bytearray(256)
@@ -29,6 +29,18 @@ def independent_uf2():
     return bytes(result)
 
 class ProgramImage(unittest.TestCase):
+    def test_linked_startup_empty_and_nonempty_asset(self):
+        for asset in [b'',b'converted asset']:
+            profile=bytes(range(16));storage=asset+b'\0';data=profile+storage
+            sections=[];symbols=[]
+            for index,name,obj,offset,size in [(1,'startup_profile','DASHBOARD_STARTUP_PROFILE',0,16),(2,'startup_asset','DASHBOARD_STARTUP_ASSET',16,len(storage))]:
+                sections.append((index,'.'+name,(0,1,2,B+offset,offset,size,0,0,4,0)))
+                symbols.extend([(obj,B+offset,size,0x11,index),('__'+name+'_start',B+offset,0,0x10,index),('__'+name+'_end',B+offset+size,0,0x10,index)])
+            elf=SimpleNamespace(data=data,section_entries=sections,symbol_entries=symbols,segments=[(1,0,B,B,len(data),len(data),5,1)])
+            result=linked_startup(elf,profile,asset)
+            self.assertEqual(result['asset']['bytes'],len(asset))
+            elf.data=data[:-1]+b'x'
+            with self.assertRaises(AssertionError):linked_startup(elf,profile,asset)
     def test_linked_configuration_object_identity(self):
         data=b'accepted eav';section=(0,1,2,B,0,len(data),0,0,4,0)
         obj=('DASHBOARD_EMBEDDED_CONFIG',B,len(data),0x11,1)

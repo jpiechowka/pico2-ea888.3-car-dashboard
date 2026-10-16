@@ -68,6 +68,28 @@ use crate::tasks::{
 };
 use crate::ui::BLACK;
 
+// These exact arrays are consumed at runtime and independently checked in the ELF.
+#[used]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".startup_profile")]
+static DASHBOARD_STARTUP_PROFILE: [u8; 16] = *include_bytes!(concat!(env!("OUT_DIR"), "/startup_profile.bin"));
+const STARTUP_ASSET_LENGTH: usize = include_bytes!(concat!(env!("OUT_DIR"), "/startup_asset.bin")).len();
+#[used]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".startup_asset")]
+static DASHBOARD_STARTUP_ASSET: [u8; STARTUP_ASSET_LENGTH + 1] = {
+    // A retained zero sentinel gives even an absent asset a concrete linked object.
+    // The runtime parser receives only the original asset bytes.
+    let source = include_bytes!(concat!(env!("OUT_DIR"), "/startup_asset.bin"));
+    let mut bytes = [0; STARTUP_ASSET_LENGTH + 1];
+    let mut index = 0;
+    while index < STARTUP_ASSET_LENGTH {
+        bytes[index] = source[index];
+        index += 1;
+    }
+    bytes
+};
+
 #[unsafe(link_section = ".bi_entries")]
 #[used]
 pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
@@ -315,18 +337,12 @@ async fn dashboard_task(
     let btn_y = Input::new(p.PIN_15, Pull::Up);
 
     let mut gestures = ControlGestures::new();
-    let startup_profile = dashboard_pico2::startup::StartupProfile::decode(include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/startup_profile.bin"
-    )))
-    .expect("build-validated startup profile");
+    let startup_profile = dashboard_pico2::startup::StartupProfile::decode(&DASHBOARD_STARTUP_PROFILE)
+        .expect("build-validated startup profile");
     let mut startup = dashboard_pico2::startup::Startup::new(startup_profile, Instant::now().as_millis());
     let mut startup_validation = if startup_profile.theme == dashboard_pico2::startup::StartupTheme::Custom {
-        dashboard_pico2::view_config::startup_asset::Validator::new(include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/startup_asset.bin"
-        )))
-        .ok()
+        dashboard_pico2::view_config::startup_asset::Validator::new(&DASHBOARD_STARTUP_ASSET[..STARTUP_ASSET_LENGTH])
+            .ok()
     } else {
         None
     };

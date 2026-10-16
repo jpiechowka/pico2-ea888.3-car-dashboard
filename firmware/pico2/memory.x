@@ -110,3 +110,19 @@ SECTIONS {
 } INSERT AFTER .rodata;
 ASSERT(__dashboard_config_end > __dashboard_config_start, "missing embedded dashboard configuration");
 ASSERT(__dashboard_config_end <= ORIGIN(FLASH) + LENGTH(FLASH), "dashboard configuration outside program flash");
+
+SECTIONS {
+    .startup_profile : ALIGN(4) {
+        __startup_profile_start = .;
+        KEEP(*(.startup_profile));
+        __startup_profile_end = .;
+    } > FLASH
+    .startup_asset : ALIGN(4) {
+        __startup_asset_start = .;
+        KEEP(*(.startup_asset));
+        __startup_asset_end = .;
+    } > FLASH
+} INSERT AFTER .dashboard_config;
+ASSERT(__startup_profile_end - __startup_profile_start == 16, "invalid linked startup profile size");
+ASSERT(__startup_asset_end > __startup_asset_start, "missing linked startup asset sentinel");
+ASSERT(__startup_asset_end <= ORIGIN(FLASH) + LENGTH(FLASH), "startup asset outside program flash");

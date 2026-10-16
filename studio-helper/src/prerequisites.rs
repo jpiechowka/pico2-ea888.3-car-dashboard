@@ -276,8 +276,7 @@ pub fn check(repo: &Path) -> Value {
             &["--version"],
             "wasm-opt version 133",
             &repo,
-            "Install official Binaryen version_133 wasm-opt.exe into target/configurator-tools/bin (no automatic \
-             download in Check)",
+            "Run configurator/Studio.ps1 -Setup to install pinned Binaryen version_133",
         );
         let picotool = repo.join("firmware/tools/picotool.exe");
         version(
@@ -287,7 +286,7 @@ pub fn check(repo: &Path) -> Value {
             &["version", "-s"],
             "2.3.1",
             &repo,
-            "Install official picotool 2.3.1 at firmware/tools/picotool.exe; this is the current legacy tool location",
+            "Run configurator/Studio.ps1 -Setup to install pinned official picotool 2.3.1",
         );
         if picotool.is_file() {
             match probe(&picotool, &["help", "load"], &repo) {
