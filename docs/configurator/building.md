@@ -268,3 +268,44 @@ PC CPU/RAM/disk minimums have not been qualified. Firmware validation is separat
 from browser editing and can be part of a firmware build: a previous workload
 sampled approximately 16.5 GB of private memory before optimization work. That
 observation is not a minimum RAM requirement or a browser memory measurement.
+
+### Connect the existing Studio to native prerequisite jobs
+
+In a separate PowerShell terminal, run `./configurator/Studio.ps1 -Helper` after
+explicit Setup, or run `studio-helper.exe serve --repo <absolute repository>`.
+The helper binds only `127.0.0.1:8765`. An occupied port fails without terminating
+any listener. Keep the static Studio at port 8080 and use its explicit Connect
+button. The helper does not host a second editor or start work on connect.
+
+Only `http://127.0.0.1:8080` and `http://localhost:8080` are trusted browser
+origins. They are a deliberate local trust boundary: a page served by another
+program at either origin has the same access. All requests require the exact
+helper Host and an approved Origin. `POST /api/v1/connect` additionally requires
+`X-Studio-Connect: 1` and an empty body; its no-store response contains one random
+in-memory session/capability pair. The browser retains the capability only in
+memory and sends `X-Studio-Capability` on later requests. No token is placed in a
+URL, log, file, cookie or process environment. A restart replaces it. CORS is
+limited to those two origins, GET/POST, and the three explicit request headers;
+there is no wildcard or credential grant.
+
+The helper exposes `GET /api/v1/session`, `GET /api/v1/prerequisites` (cached,
+never runs a check), `POST /api/v1/prerequisites/check`, `GET /api/v1/jobs`,
+`GET /api/v1/jobs/{id}/events?after=0&limit=128`, and
+`POST /api/v1/jobs/{id}/cancel`. POST bodies are empty. A check returns 202 with
+the shared `JobSummary`; event polling returns the shared `EventBatch`. Advance
+`after` to the last received record's `sequence`, not the batch's `next` value.
+Keep u64 values in Rust serde rather than parsing through JavaScript Number.
+Only one job runs at once; a concurrent request gets 409. Cancellation interrupts
+the current read-only probe, joins its owned processes, and then closes the job.
+The latest check report includes detailed prerequisites and setup actions; job
+logs contain the start marker and sanitized report records on completion.
+
+There are at most 32 HTTP connection tasks, each with 10-second header/body and
+30-second total connection deadlines, 16 KiB headers, 64 header fields, no HTTP
+upgrades and no keepalive. Probe workers remain owned independently of client
+disconnect. Ctrl+C stops accepts, cancels the check, and joins owned work.
+Build, setup, device and flash HTTP routes remain unavailable in this slice.
+
+Focused native HTTP regression command after building the helper:
+`python studio-helper/tests/test_server_http.py` (run from repository root).
+It starts and stops only its own temporary helper process; port 8765 must be free.

@@ -193,6 +193,9 @@ pub(super) fn run(
                     });
                 }
             }
+            if super::cancelled() {
+                return Err("cancelled: probe check cancelled".into());
+            }
             if start.elapsed() >= timeout {
                 return Err("deadline: probe exceeded its deadline".into());
             }

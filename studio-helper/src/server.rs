@@ -1,0 +1,562 @@
+//! Bounded loopback transport for explicit prerequisite jobs. No build/flash routes.
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use axum::Router;
+use axum::body::{Body, HttpBody};
+use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
+use dashboard_helper_protocol::*;
+use serde_json::{Value, json};
+
+use crate::jobs::logs::{LogInput, StreamFramer};
+use crate::jobs::{JobStore, OutputClosure};
+const AUTHORITY: &str = "127.0.0.1:8765";
+const ORIGINS: [&str; 2] = ["http://127.0.0.1:8080", "http://localhost:8080"];
+struct Inner {
+    jobs: JobStore,
+    cached: Value,
+    worker: Option<tokio::task::JoinHandle<()>>,
+    stopping: bool,
+}
+struct State {
+    repo: PathBuf,
+    session: SessionId,
+    capability: String,
+    inner: Mutex<Inner>,
+}
+fn random_hex<const N: usize>() -> Result<String, String> {
+    let mut b = [0u8; N];
+    getrandom::fill(&mut b).map_err(|_| "OS entropy unavailable")?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+}
+impl State {
+    fn new(repo: PathBuf) -> Result<Arc<Self>, String> {
+        let session = SessionId::new(random_hex::<16>()?).map_err(|_| "invalid session")?;
+        Ok(Arc::new(Self {
+            repo,
+            session: session.clone(),
+            capability: random_hex::<32>()?,
+            inner: Mutex::new(Inner {
+                jobs: JobStore::new(session),
+                cached: json!({"schema_version":1,"ready":false,"checks":[],"reason":"Check not run"}),
+                worker: None,
+                stopping: false,
+            }),
+        }))
+    }
+}
+fn one<'a>(
+    headers: &'a HeaderMap,
+    name: &str,
+) -> Option<&'a str> {
+    let mut values = headers.get_all(name).iter();
+    let first = values.next()?.to_str().ok()?;
+    if values.next().is_some() { None } else { Some(first) }
+}
+fn equal_capability(
+    actual: &str,
+    expected: &str,
+) -> bool {
+    actual.len() == 64
+        && actual.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && actual.bytes().zip(expected.bytes()).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
+}
+fn response(
+    status: StatusCode,
+    value: Value,
+    origin: Option<&str>,
+) -> Response<Body> {
+    let mut response = Response::builder()
+        .status(status)
+        .header("content-type", "application/json; charset=utf-8")
+        .header("cache-control", "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header("referrer-policy", "no-referrer")
+        .header("content-security-policy", "default-src 'none'; frame-ancestors 'none'")
+        .header("connection", "close")
+        .body(Body::from(value.to_string()))
+        .unwrap();
+    if let Some(origin) = origin {
+        response
+            .headers_mut()
+            .insert("access-control-allow-origin", HeaderValue::from_str(origin).unwrap());
+        response
+            .headers_mut()
+            .insert("vary", HeaderValue::from_static("Origin"));
+    }
+    response
+}
+fn error(
+    status: StatusCode,
+    code: &str,
+    origin: Option<&str>,
+) -> Response<Body> {
+    response(status, json!({"error":code}), origin)
+}
+fn store_error(
+    e: Error,
+    origin: Option<&str>,
+) -> Response<Body> {
+    let status = match e {
+        Error::Busy | Error::Closed | Error::InvalidState => StatusCode::CONFLICT,
+        Error::Expired => StatusCode::GONE,
+        Error::NotFoundOrUnavailable => StatusCode::NOT_FOUND,
+        _ => StatusCode::BAD_REQUEST,
+    };
+    error(status, &e.to_string(), origin)
+}
+fn poll_query(query: Option<&str>) -> Result<PollRequest, Error> {
+    let mut after = None;
+    let mut limit = None;
+    for pair in query.ok_or(Error::Schema)?.split('&') {
+        let (k, v) = pair.split_once('=').ok_or(Error::Schema)?;
+        if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(Error::Schema);
+        }
+        match k {
+            "after" if after.is_none() => after = Some(v.parse().map_err(|_| Error::Schema)?),
+            "limit" if limit.is_none() => limit = Some(v.parse().map_err(|_| Error::Schema)?),
+            _ => return Err(Error::Schema),
+        }
+    }
+    let p = PollRequest {
+        after: after.ok_or(Error::Schema)?,
+        limit: limit.ok_or(Error::Schema)?,
+    };
+    p.validate()?;
+    Ok(p)
+}
+async fn empty_body(mut body: Body) -> bool {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(frame) = std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await {
+            match frame {
+                Ok(f) if f.data_ref().is_some_and(|b| b.is_empty()) => {}
+                _ => return false,
+            }
+        }
+        true
+    })
+    .await
+    .unwrap_or(false)
+}
+fn summary(
+    state: &State,
+    id: &JobId,
+) -> Result<JobSummary, Error> {
+    state
+        .inner
+        .lock()
+        .unwrap()
+        .jobs
+        .poll(id, PollRequest { after: 0, limit: 1 })
+        .map(|b| b.summary)
+}
+fn log_report(
+    store: &mut JobStore,
+    id: &JobId,
+    report: &Value,
+) {
+    let stage = StageId::Probe(ProbeStage::Prerequisites);
+    for row in report["checks"].as_array().into_iter().flatten() {
+        let text = format!(
+            "[{}] {}: {}",
+            row["status"].as_str().unwrap_or("unknown"),
+            row["id"].as_str().unwrap_or("check"),
+            row["evidence"].as_str().unwrap_or("")
+        );
+        let mut framer = StreamFramer::new(&[]).unwrap();
+        for chunk in text.as_bytes().chunks(4096) {
+            let _ = framer.push(chunk, |text, progress| {
+                let _ = store.append(
+                    id,
+                    LogInput {
+                        stage,
+                        source: Source::Internal,
+                        text,
+                        progress,
+                    },
+                );
+            });
+        }
+        let _ = framer.finish(|text, progress| {
+            let _ = store.append(
+                id,
+                LogInput {
+                    stage,
+                    source: Source::Internal,
+                    text,
+                    progress,
+                },
+            );
+        });
+    }
+}
+async fn start_check(state: Arc<State>) -> Result<JobSummary, Error> {
+    let previous = {
+        let mut inner = state.inner.lock().unwrap();
+        if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+            return Err(Error::Busy);
+        }
+        inner.worker.take()
+    };
+    if let Some(previous) = previous {
+        previous.await.map_err(|_| Error::InvalidState)?;
+    }
+    let mut inner = state.inner.lock().unwrap();
+    if inner.stopping || crate::process::cleanup_failed() {
+        return Err(Error::InvalidState);
+    }
+    let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
+    let result = inner.jobs.start(id.clone(), OperationKind::PrerequisiteCheck, None)?;
+    let stage = StageId::Probe(ProbeStage::Prerequisites);
+    inner.jobs.transition(&id, stage, StageState::Running, None)?;
+    inner.jobs.append(
+        &id,
+        LogInput {
+            stage,
+            source: Source::Internal,
+            text: "Checking installed tools; no installation, build or USB access".into(),
+            progress: false,
+        },
+    )?;
+    crate::process::reset_cancel();
+    let worker_state = state.clone();
+    inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let report = crate::prerequisites::check(&worker_state.repo);
+        let mut inner = worker_state.inner.lock().unwrap();
+        log_report(&mut inner.jobs, &id, &report);
+        inner.cached = report.clone();
+        if crate::process::cleanup_failed() {
+            let _ = inner.jobs.note_cleanup_fatal(&id, true);
+            inner.stopping = true;
+            return;
+        }
+        let cancelled = inner
+            .jobs
+            .poll(&id, PollRequest { after: 0, limit: 1 })
+            .is_ok_and(|b| b.summary.cancel_requested);
+        let (state, cause, reason) = if cancelled {
+            (
+                StageState::Cancelled,
+                TerminalCause::Cancelled,
+                Some(Text::new("Check cancelled; owned probe processes joined").unwrap()),
+            )
+        } else if report["ready"] == true {
+            (StageState::Succeeded, TerminalCause::Succeeded, None)
+        } else {
+            (
+                StageState::Failed,
+                TerminalCause::Failed,
+                Some(Text::new("One or more installed prerequisites failed; inspect the cached report").unwrap()),
+            )
+        };
+        let _ = inner.jobs.transition(&id, stage, state, reason);
+        let _ = inner.jobs.finish(
+            &id,
+            cause,
+            OutputClosure {
+                workers_joined: true,
+                tree_empty: true,
+                output_incomplete: false,
+                discarded_bytes: 0,
+                discarded_chunks: 0,
+            },
+            None,
+            None,
+        );
+    }));
+    Ok(result)
+}
+async fn dispatch(
+    state: Arc<State>,
+    request: Request<Body>,
+) -> Response<Body> {
+    let headers = request.headers();
+    let origin = one(headers, "origin").filter(|o| ORIGINS.contains(o));
+    if one(headers, "host") != Some(AUTHORITY)
+        || origin.is_none()
+        || request.uri().scheme().is_some()
+        || request.uri().authority().is_some()
+        || request.uri().to_string().len() > 2048
+        || headers.contains_key("forwarded")
+        || headers.contains_key("x-forwarded-host")
+        || headers.contains_key("content-encoding")
+    {
+        return error(StatusCode::FORBIDDEN, "Forbidden", None);
+    }
+    let origin = origin.unwrap().to_owned();
+    let origin = Some(origin.as_str());
+    let path = request.uri().path().to_owned();
+    let method = request.method().clone();
+    if method == Method::OPTIONS {
+        let requested = one(headers, "access-control-request-method");
+        let allowed_headers = one(headers, "access-control-request-headers").is_some_and(|v| {
+            v.split(',').all(|h| {
+                matches!(
+                    h.trim().to_ascii_lowercase().as_str(),
+                    "x-studio-connect" | "x-studio-capability" | "content-type"
+                )
+            })
+        });
+        if !matches!(requested, Some("GET" | "POST")) || !allowed_headers || request.uri().query().is_some() {
+            return error(StatusCode::FORBIDDEN, "Forbidden", origin);
+        }
+        let mut r = response(StatusCode::NO_CONTENT, json!(null), origin);
+        *r.body_mut() = Body::empty();
+        r.headers_mut()
+            .insert("access-control-allow-methods", HeaderValue::from_static("GET, POST"));
+        r.headers_mut().insert(
+            "access-control-allow-headers",
+            HeaderValue::from_static("X-Studio-Connect, X-Studio-Capability, Content-Type"),
+        );
+        return r;
+    }
+    let connecting = path == "/api/v1/connect" && method == Method::POST;
+    if connecting {
+        if one(headers, "x-studio-connect") != Some("1") {
+            return error(StatusCode::FORBIDDEN, "Forbidden", origin);
+        }
+    } else if !one(headers, "x-studio-capability").is_some_and(|c| equal_capability(c, &state.capability)) {
+        return error(StatusCode::FORBIDDEN, "Forbidden", origin);
+    }
+    if method != Method::GET && method != Method::POST {
+        return error(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", origin);
+    }
+    let query = request.uri().query().map(str::to_owned);
+    if !path.ends_with("/events") && query.is_some() {
+        return error(StatusCode::BAD_REQUEST, "UnexpectedQuery", origin);
+    }
+    if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
+        return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
+    }
+    if one(headers, "content-length").is_some_and(|l| l != "0") {
+        return error(StatusCode::BAD_REQUEST, "ExpectedEmptyBody", origin);
+    }
+    if !empty_body(request.into_body()).await {
+        return error(StatusCode::BAD_REQUEST, "ExpectedEmptyBody", origin);
+    }
+    if connecting {
+        return response(
+            StatusCode::OK,
+            json!({"protocol_version":1,"session_id":state.session,"capability":state.capability}),
+            origin,
+        );
+    }
+    match (method.as_str(), path.as_str()) {
+        ("GET", "/api/v1/session") => {
+            response(
+                StatusCode::OK,
+                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Prerequisite jobs available; native build/flash adapters not yet available"}),
+                origin,
+            )
+        }
+        ("GET", "/api/v1/prerequisites") => {
+            response(StatusCode::OK, state.inner.lock().unwrap().cached.clone(), origin)
+        }
+        ("GET", "/api/v1/jobs") => {
+            response(
+                StatusCode::OK,
+                serde_json::to_value(state.inner.lock().unwrap().jobs.summaries()).unwrap(),
+                origin,
+            )
+        }
+        ("POST", "/api/v1/prerequisites/check") => {
+            match start_check(state.clone()).await {
+                Ok(job) => response(StatusCode::ACCEPTED, serde_json::to_value(job).unwrap(), origin),
+                Err(e) => store_error(e, origin),
+            }
+        }
+        _ => {
+            let parts: Vec<_> = path.split('/').collect();
+            if parts.len() != 6 || parts[1] != "api" || parts[2] != "v1" || parts[3] != "jobs" {
+                return error(StatusCode::NOT_FOUND, "NotFoundOrUnavailable", origin);
+            }
+            let id = match JobId::new(parts[4]) {
+                Ok(id) => id,
+                Err(e) => return store_error(e, origin),
+            };
+            match (method.as_str(), parts[5]) {
+                ("GET", "events") => {
+                    match poll_query(query.as_deref()).and_then(|p| state.inner.lock().unwrap().jobs.poll(&id, p)) {
+                        Ok(batch) => response(StatusCode::OK, serde_json::to_value(batch).unwrap(), origin),
+                        Err(e) => store_error(e, origin),
+                    }
+                }
+                ("POST", "cancel") => {
+                    let result = state.inner.lock().unwrap().jobs.cancel(&id);
+                    if let Err(e) = result {
+                        return store_error(e, origin);
+                    }
+                    crate::process::request_cancel();
+                    match summary(&state, &id) {
+                        Ok(job) => response(StatusCode::OK, serde_json::to_value(job).unwrap(), origin),
+                        Err(e) => store_error(e, origin),
+                    }
+                }
+                _ => error(StatusCode::NOT_FOUND, "NotFoundOrUnavailable", origin),
+            }
+        }
+    }
+}
+pub fn serve(repo: PathBuf) -> Result<(), String> {
+    let (supported, host) = crate::host::host();
+    if !supported {
+        return Err(format!("Unsupported native host: {host}"));
+    }
+    let repo = repo.canonicalize().map_err(|_| "Repository not found")?;
+    if !repo.join("studio-helper/Cargo.toml").is_file() {
+        return Err("Not a Studio repository".into());
+    }
+    let state = State::new(repo)?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?
+        .block_on(serve_async(state))
+}
+async fn serve_async(state: Arc<State>) -> Result<(), String> {
+    let listener = tokio::net::TcpListener::bind(AUTHORITY)
+        .await
+        .map_err(|e| format!("Could not bind {AUTHORITY}: {e}"))?;
+    eprintln!(
+        "Studio helper listening at http://{AUTHORITY}; use Studio's Connect button on port 8080. No operation starts \
+         on connect."
+    );
+    let router = Router::new().fallback({
+        let state = state.clone();
+        move |request: Request<Body>| dispatch(state.clone(), request)
+    });
+    let permits = Arc::new(tokio::sync::Semaphore::new(32));
+    let mut connections = tokio::task::JoinSet::new();
+    let mut listener_error = None;
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {},
+            _ = connections.join_next(), if !connections.is_empty() => {},
+            accepted = listener.accept() => {
+                let (socket, _) = match accepted {
+                    Ok(socket) => socket,
+                    Err(e) => { listener_error = Some(e.to_string()); break; }
+                };
+                let Ok(permit) = permits.clone().try_acquire_owned() else { drop(socket); continue; };
+                let service = hyper_util::service::TowerToHyperService::new(router.clone());
+                connections.spawn(async move {
+                    let _permit = permit;
+                    let mut http = hyper::server::conn::http1::Builder::new();
+                    http.timer(hyper_util::rt::TokioTimer::new())
+                        .header_read_timeout(Duration::from_secs(10))
+                        .max_headers(64).max_header_size(16384).max_buf_size(16384)
+                        .keep_alive(false).half_close(false);
+                    let connection = http.serve_connection(hyper_util::rt::TokioIo::new(socket), service);
+                    let _ = tokio::time::timeout(Duration::from_secs(30), connection).await;
+                });
+            }
+        }
+        if state.inner.lock().unwrap().stopping {
+            break;
+        }
+    }
+    drop(listener);
+    let worker = {
+        let mut inner = state.inner.lock().unwrap();
+        inner.stopping = true;
+        for job in inner.jobs.summaries() {
+            if !job.events_closed {
+                let _ = inner.jobs.cancel(&job.job_id);
+            }
+        }
+        crate::process::request_cancel();
+        inner.worker.take()
+    };
+    connections.abort_all();
+    while connections.join_next().await.is_some() {}
+    if let Some(worker) = worker {
+        worker.await.map_err(|_| "Check worker failed")?;
+    }
+    if crate::process::cleanup_failed() {
+        Err("cleanup fatal: probe cleanup failed".into())
+    } else if let Some(e) = listener_error {
+        Err(e)
+    } else {
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn rejects_foreign_origin_and_missing_capability() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let bad = Request::builder()
+            .uri("/api/v1/connect")
+            .method("POST")
+            .header("host", "127.0.0.1:8765")
+            .header("origin", "https://evil.example")
+            .header("x-studio-connect", "1")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(dispatch(state.clone(), bad).await.status(), StatusCode::FORBIDDEN);
+        let missing = Request::builder()
+            .uri("/api/v1/jobs")
+            .header("host", "127.0.0.1:8765")
+            .header("origin", ORIGINS[0])
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(dispatch(state, missing).await.status(), StatusCode::FORBIDDEN);
+    }
+    #[tokio::test]
+    async fn connect_is_explicit_and_does_not_start_jobs() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let connect = Request::builder()
+            .uri("/api/v1/connect")
+            .method("POST")
+            .header("host", "127.0.0.1:8765")
+            .header("origin", ORIGINS[1])
+            .header("x-studio-connect", "1")
+            .body(Body::empty())
+            .unwrap();
+        let response = dispatch(state.clone(), connect).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["access-control-allow-origin"], ORIGINS[1]);
+    }
+    #[tokio::test]
+    async fn duplicate_authority_query_and_restart_tokens_are_rejected() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let restarted = State::new(std::env::current_dir().unwrap()).unwrap();
+        assert_ne!(state.capability, restarted.capability);
+        for uri in ["/api/v1/jobs?token=secret", "http://127.0.0.1:8765/api/v1/jobs"] {
+            let r = Request::builder()
+                .uri(uri)
+                .header("host", AUTHORITY)
+                .header("origin", ORIGINS[0])
+                .header("x-studio-capability", &state.capability)
+                .body(Body::empty())
+                .unwrap();
+            assert!(!dispatch(state.clone(), r).await.status().is_success());
+        }
+        let r = Request::builder()
+            .uri("/api/v1/jobs")
+            .header("host", AUTHORITY)
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(dispatch(state.clone(), r).await.status(), StatusCode::FORBIDDEN);
+        let r = Request::builder()
+            .uri("/api/v1/jobs")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(dispatch(restarted, r).await.status(), StatusCode::FORBIDDEN);
+        assert!(poll_query(Some("after=9007199254740993&limit=128")).is_ok());
+        assert!(poll_query(Some("after=0&after=1&limit=128")).is_err());
+        assert!(poll_query(Some("after=0&limit=129")).is_err());
+    }
+}

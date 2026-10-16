@@ -1,6 +1,10 @@
 //! Read-only probe supervisor. No browser-controlled executable or arguments.
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+static CANCEL: AtomicBool = AtomicBool::new(false);
+pub(crate) fn request_cancel() { CANCEL.store(true, Ordering::SeqCst); }
+pub(crate) fn reset_cancel() { CANCEL.store(false, Ordering::SeqCst); }
+pub(crate) fn cancelled() -> bool { CANCEL.load(Ordering::SeqCst) }
 static CLEANUP_FAILED: AtomicBool = AtomicBool::new(false);
 pub(crate) fn cleanup_failed() -> bool { CLEANUP_FAILED.load(Ordering::SeqCst) }
 use std::time::Duration;
@@ -17,6 +21,9 @@ pub(crate) fn run(
     args: &[&str],
     cwd: &Path,
 ) -> Result<Output, String> {
+    if cancelled() {
+        return Err("cancelled: probe check cancelled".into());
+    }
     if cleanup_failed() {
         return Err("cleanup fatal: no further probes permitted".into());
     }

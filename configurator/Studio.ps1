@@ -1,6 +1,7 @@
 [CmdletBinding(DefaultParameterSetName='Build')]
 param(
     [Parameter(ParameterSetName='Serve')][switch]$Serve,
+    [Parameter(Mandatory,ParameterSetName='Helper')][switch]$Helper,
     [Parameter(Mandatory,ParameterSetName='Check')][switch]$Check,
     [Parameter(ParameterSetName='Check')][switch]$Json,
     [Parameter(Mandatory,ParameterSetName='Setup')][switch]$Setup,
@@ -16,6 +17,11 @@ $toolchainText = Get-Content -LiteralPath (Join-Path $repoRoot 'rust-toolchain.t
 if ($toolchainText -notmatch '(?m)^channel = "(nightly-\d{4}-\d{2}-\d{2})"\s*$') { throw 'Expected dated nightly in rust-toolchain.toml' }
 $toolchain = $Matches[1]
 if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Platform -ne 'Win32NT' -or [Environment]::OSVersion.Version.Major -lt 10 -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'Native Studio launcher requires Windows 10/11 x64. Static browser editing/export is independent.' }
+if ($Helper) {
+    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { throw 'Native helper is missing. Run .\configurator\Studio.ps1 -Setup explicitly first.' }
+    & $helper serve --repo $repoRoot
+    exit $LASTEXITCODE
+}
 if ($Check) {
     if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
         if ($Json) { '{"schema_version":1,"ready":false,"checks":[{"id":"native_helper","status":"missing","required":true,"evidence":"Run configurator/Studio.ps1 -Setup to compile the prerequisite checker"}]}' }
