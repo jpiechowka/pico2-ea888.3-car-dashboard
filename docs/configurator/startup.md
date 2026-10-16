@@ -70,10 +70,15 @@ explicit invalid build inputs still fail the build.
 
 Complete project packaging, original retention, converted-only export and shared project history are implemented. Artwork conversion/rendering and helper binding have their own focused integration checks; no browser or physical success is implied by the package codec.
 
-Focused state/render tests, existing controls/LED regressions and Wasm/ARM
-compile checks cover this slice. Whole-image RAM/stack/flash and performance
-gates, maximum configurations, browser matrices and physical qualification are
-deferred to the integration batch. Resource limits have not been increased.
+Shared state/render, bounded configuration/asset, controls/LED and failure/recovery
+tests run with Wasm/ARM checks in CI. The firmware profile matrix also runs
+practical whole-image checks for RAM, stack assumptions, flash and linked inputs.
+Actual Studio checks covered timing drafts, conversion, retained-original
+reconversion, project restore and repeated startup replay; see the
+[workflow gallery](gallery.md). These checks do not establish physical timing,
+device stack high-water or every browser failure interleaving. Hardware
+qualification remains in the [runbook](../validation/pico2-dnuc-runbook.md).
+Resource limits have not been increased.
 
 ## Custom artwork conversion
 

@@ -1,6 +1,6 @@
 # Fixed host workload coverage
 
-The current host suite contains 139 Criterion cases on the production pure Rust
+The current host suite contains 143 Criterion cases on the production pure Rust
 modules. The fixture sources are in `host/benches/dashboard_perf.rs`,
 `scene_replay/`, `coverage/`, `config_perf.rs`, `view_perf.rs` and `rule_perf.rs`.
 The first two helper directories are also compiled by host tests. The count is
@@ -26,6 +26,7 @@ RP2350 cycles, DMA overlap or physical FPS.
 | Transport | RX12, ISO-TP single/128-byte messages, client success, NRC rejection, malformed framing, first-response timeout and NRC78 followed by rejection; terminal cases reject late results |
 | Model to image | Eight-frame Demo acquisition and 17-step slow/bursty RX12/Session replays, each with paired full and retained paths; state, age, quality, peaks and pixels checked |
 | Ownership and observability | UART ring copy, session/vehicle service, input mailbox, diagnostic distributions, frame windows, bounded logging and settings/maintenance models |
+| Debug and Logs | Ordinary, unavailable and maximum-width Debug pages; Logs with the configured control hint, in addition to the existing log-page case |
 | Device kernels | Four bounded kernels also built for the opt-in target benchmark; host results use the same finite work and checksum, with no claimed host-to-device conversion |
 | Configuration (13 cases) | Default and advanced maximum validation, encode, owned decode, slot decode and late payload fallback; separate early bad-CRC and oversize rejection |
 | Configured views (34 cases) | Default/wide full and retained paths plus all six styles, prepared once per frame through production presentation, including default smoothing Off |
