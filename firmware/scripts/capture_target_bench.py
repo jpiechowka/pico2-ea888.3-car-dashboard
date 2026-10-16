@@ -361,7 +361,7 @@ def embedded_config(output, build_dir):
     return matches[0]
 
 
-def verify_selected_config(destination, environment, embedded, record, target_dir=None):
+def verify_selected_config(destination, environment, embedded, record, target_dir=None, *, reuse_host=False):
     """Compare to the canonical upgrade, retaining the original input identity."""
     if record['selection'] != 'explicit':
         return
@@ -369,7 +369,9 @@ def verify_selected_config(destination, environment, embedded, record, target_di
     if hashlib.sha256(original).hexdigest() != record['sha256']:
         raise ValueError('frozen selected configuration changed')
     normalized = destination / 'normalized.eav'
-    command = ['cargo', 'run', '--locked', '--release', '-p', 'dashboard-config-tools',
+    # Native attempts already built this exact host CLI in their private target.
+    profile_flags = ['--offline'] if reuse_host else ['--release']
+    command = ['cargo', 'run', '--locked', *profile_flags, '-p', 'dashboard-config-tools',
                '--target-dir', str(target_dir if target_dir is not None else destination / 'config-compiler'), '--', 'compile',
                str(destination / 'selected.eav'), str(normalized)]
     subprocess.run(command, cwd=REPO, env=environment, check=True)
@@ -505,7 +507,9 @@ def main():
     elf=emitted_elf(build.stdout)
     clock_evidence = generated_clock(build.stdout, build_dir, firmware_package(build.stdout), options)
     config_bytes = embedded_config(build.stdout, build_dir)
-    verify_selected_config(destination, environment, config_bytes, config_record, normalize_dir)
+    verify_selected_config(destination, host_environment if args.native_scratch else environment,
+                           config_bytes, config_record, host_dir if args.native_scratch else normalize_dir,
+                           reuse_host=args.native_scratch)
     (destination/'dashboard.eav').write_bytes(config_bytes)
     config_record['embedded_sha256'] = hashlib.sha256(config_bytes).hexdigest()
     if not elf.is_relative_to(build_dir.resolve()):

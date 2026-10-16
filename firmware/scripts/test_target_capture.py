@@ -278,6 +278,39 @@ pub const LEGACY_ROUNDING: bool = false;
                     capture.verify_selected_config(root, {}, upgraded, record)
             capture.verify_selected_config(root, {}, upgraded, dict(selection='default'))
 
+    def test_native_canonicalizer_reuses_host_build_and_preserves_failure_checks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            original, canonical = b'old input', b'canonical output'
+            (root/'selected.eav').write_bytes(original)
+            environment = {'RUSTC': 'selected-host-compiler'}
+            target = root/'b/h'
+            def record():
+                return dict(selection='explicit', sha256=capture.hashlib.sha256(original).hexdigest())
+            def child(command, **kwargs):
+                self.assertNotIn('--release', command)
+                self.assertIn('--offline', command)
+                self.assertEqual(Path(command[command.index('--target-dir')+1]), target)
+                self.assertIs(kwargs['env'], environment)
+                self.assertEqual(kwargs['cwd'], capture.REPO)
+                self.assertTrue(kwargs['check'])
+                (root/'normalized.eav').write_bytes(canonical)
+            with patch.object(capture.subprocess, 'run', side_effect=child):
+                evidence = record()
+                capture.verify_selected_config(root, environment, canonical, evidence, target, reuse_host=True)
+                self.assertEqual(evidence['normalized_sha256'], capture.hashlib.sha256(canonical).hexdigest())
+                with self.assertRaises(ValueError):
+                    capture.verify_selected_config(root, environment, b'wrong linked bytes', record(), target, reuse_host=True)
+            evidence = record()
+            with patch.object(capture.subprocess, 'run', side_effect=subprocess.CalledProcessError(7, ['cargo'])):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    capture.verify_selected_config(root, environment, canonical, evidence, target, reuse_host=True)
+            self.assertNotIn('normalized_sha256', evidence)
+            # Legacy CLI retains its existing release canonicalizer.
+            with patch.object(capture.subprocess, 'run') as run:
+                capture.verify_selected_config(root, environment, canonical, record())
+                self.assertIn('--release', run.call_args.args[0])
+
     def test_archive_contains_portable_crates_and_workspace_inputs(self):
         before = capture.inputs()
         keys = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
@@ -460,20 +493,20 @@ class CaptureMemoryQualification(unittest.TestCase):
                             raw=source['utf8'].encode();source['length']=len(raw);source['sha256']=capture.hashlib.sha256(raw).hexdigest()
                             path.write_text(json.dumps(changed))
                     return dict(source=b'clock source',metadata=b'clock metadata')
-                options=dict(benchmark=True,features=['demo'],optimization='3',custom_clock=None)
+                options=dict(benchmark=True,features=['demo'],optimization='3',custom_clock=dict(cpu_hz='150000000',spi_hz='62500000',vsel_mv='1100'))
                 with ExitStack() as patches:
-                    for context in (patch.object(capture,'FIRMWARE',firmware),patch.object(capture,'build_directories',return_value=(emitted.parent,None,None)),patch.object(capture,'ElfImage',return_value=elf),
+                    for context in (patch.object(capture,'FIRMWARE',firmware),patch.object(capture,'build_directories',return_value=(emitted.parent,firmware/'host',firmware/'normalizer')),patch.object(capture,'ElfImage',return_value=elf),
                         patch.object(capture,'check_clock_environment'),patch.object(capture,'compiler',return_value=('rustc','pinned')),
                         patch.object(capture,'configuration',return_value={}),patch.object(capture,'inputs',side_effect=snapshot),
                         patch.object(capture,'linked_configuration',return_value={'test_only_linked_config':True}),
                         patch.object(capture,'inspect_program',side_effect=AssertionError('program rejected') if drift=='program_gate' else None,return_value=({}, {'test_only_program_gate':True})),
                         patch.object(capture,'fixed_json_tool',return_value=(['tool'],options)),
                         patch.object(capture,'selected_config',return_value=('default',None)),
-                        patch.object(capture,'freeze_config',return_value=({},{})),patch.object(capture,'verify_selected_config'),
+                        patch.object(capture,'freeze_config',return_value=({},{})),patch.object(capture,'verify_selected_config',side_effect=lambda dest,env,embedded,rec,target,**kw: (self.assertEqual(env,{'RUSTC':'rustc'}),self.assertEqual(target,firmware/'host'),self.assertEqual(kw,{'reuse_host':True}))),
                         patch.object(capture,'run_build',side_effect=build),patch.object(capture,'emitted_elf',return_value=emitted),
                         patch.object(capture,'generated_clock',side_effect=clock),patch.object(capture,'firmware_package',return_value='id'),
                         patch.object(capture,'embedded_config',side_effect=lambda output,path: eav if path==emitted.parent else self.fail('embedded config used old build path')),patch.object(capture.subprocess,'run',side_effect=child),
-                        patch.object(sys,'argv',['capture','fixture','--image-gate','experimental-full']),patch.dict(os.environ,{},clear=True)):
+                        patch.object(sys,'argv',['capture','fixture','--native-scratch','--image-gate','experimental-full']),patch.dict(os.environ,{},clear=True)):
                         patches.enter_context(context)
                     if drift:
                         with self.assertRaises((AssertionError,ValueError)):capture.main()
