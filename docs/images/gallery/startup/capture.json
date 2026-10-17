@@ -1,0 +1,135 @@
+{
+  "pillow": "12.3.0",
+  "sample_ms": 50,
+  "cycle_ms": 2000,
+  "still_ms": 1200,
+  "lossless_rgb_verified": true,
+  "source_hash_line_endings": "LF",
+  "source_sha256": {
+    "crates/dashboard-core/src/startup/scene.rs": "661fac5271228b52ca0818702f3b1fe71c165e99df749fa3441caacd8b3e2346",
+    "crates/dashboard-config/src/startup.rs": "57a8488fe45fd862c93cb802d034b472959eaa5bc09c2db6ae177e089234965c",
+    "host/examples/startup_gallery.rs": "908545d520d6c5aeb8268958e76fdf14239cbbc379048a5c453d5f1a566465ac"
+  },
+  "captures": [
+    {
+      "theme": "aezakmi",
+      "geometry": "Landscape",
+      "png_sha256": "92fe5cdd2f112496787128fc80f92cd27469379412565757dae00764a2524f63",
+      "gif_sha256": "b09b716cd5f1e75f5eb7544f15271eff231d01e2f76d0ae6ed1d57a447f64634"
+    },
+    {
+      "theme": "aezakmi",
+      "geometry": "Portrait",
+      "png_sha256": "44581311326f0da2883d59e7c1654982c907b8d7be568ef732468c0ca8d58123",
+      "gif_sha256": "62a1f5b218cc7b58252cbc39036a3274362a8956256b7ef0378449c12585b068"
+    },
+    {
+      "theme": "boost-bro",
+      "geometry": "Landscape",
+      "png_sha256": "2a313a32bd3cda63fbce1e0e588ba50514a3b5be4566aefd5a922bbc1f5e5e34",
+      "gif_sha256": "1ee4897eea3880e066d473741a65903a0f420f97a335fde58bfbe5cc2db7f355"
+    },
+    {
+      "theme": "boost-bro",
+      "geometry": "Portrait",
+      "png_sha256": "6c50b5057ee413c094a770b9c92a60d722535e148f0ed3f73282b4b0f8a1d011",
+      "gif_sha256": "336c91edfc9ca700783cea799768d2df2c6dae7a9a3ec57e18820259a88bebb6"
+    },
+    {
+      "theme": "boost-padawan",
+      "geometry": "Landscape",
+      "png_sha256": "ac9a4b81fdd794244704ef7e6d2e44fc15790c9c61c049448b0e21176e52729c",
+      "gif_sha256": "76c9c2ed807949131effc38a32d7fbd152ede464621936b6ad2cbe270f10b9fc"
+    },
+    {
+      "theme": "boost-padawan",
+      "geometry": "Portrait",
+      "png_sha256": "4725f23a89682a8b4f0449c1977a4963f07cf5e025be0dada2b2b174969b41f2",
+      "gif_sha256": "69d8cc95c185b8c24a1f484925e80e2716d1888699afb0693b2b9e7172f31b9e"
+    },
+    {
+      "theme": "machine-spirit",
+      "geometry": "Landscape",
+      "png_sha256": "d6dbcc9e437ef5b94afcee7a1058b812020c05927de17c7a0044933b93ab8dc0",
+      "gif_sha256": "a6929de73bd33ae30ed099b289d3154a13906c614a88cb7acc2267b7a9659b8f"
+    },
+    {
+      "theme": "machine-spirit",
+      "geometry": "Portrait",
+      "png_sha256": "c2d56897e14585e9049182049bb77abcfafbe257a9722d6654f523ef6de35a2d",
+      "gif_sha256": "045749eb9a96882ef283fd261542cfea51c8b352644fefa09f4da874803ba297"
+    },
+    {
+      "theme": "red-goes-fasta",
+      "geometry": "Landscape",
+      "png_sha256": "ba6a8c6f3de99737e1351d166acf2ce214fa7e87d09c5af7208dc46d0b5dac56",
+      "gif_sha256": "e4d51247e3bbc866e95366870d31aae666c928a286e5117d8edfec615770f4a1"
+    },
+    {
+      "theme": "red-goes-fasta",
+      "geometry": "Portrait",
+      "png_sha256": "ed1ae83263415bf57e745c8119d79f4a82b3e04fc495a06222bf2015c4aa81c5",
+      "gif_sha256": "c99b766ab7df5b2809374957a2be3f08eb214eb5d8e159f351f000be3f6215c0"
+    },
+    {
+      "theme": "ritual-diagnostics",
+      "geometry": "Landscape",
+      "png_sha256": "3158471879e9cebb1b50b9d953dbd84cac826ff4f402597105afdfbc581730fa",
+      "gif_sha256": "15086d0076ce3834a184c6396667f5d90ac0d4ce92c77d72b165ad2555e91d4f"
+    },
+    {
+      "theme": "ritual-diagnostics",
+      "geometry": "Portrait",
+      "png_sha256": "3489377a9a9d259dd329c286511ec52d661cdbd7666e311a3d3882eb20489344",
+      "gif_sha256": "578d3d2620946d23f4872efbb54fba1a4ae7739737a55d61379a7bf048445cfe"
+    },
+    {
+      "theme": "sanic",
+      "geometry": "Landscape",
+      "png_sha256": "344acd4947ca9f4c9d9edc0eb569d5a6342bb7d93dde0422de130e85f23fbcb5",
+      "gif_sha256": "37c23622e34ebbc35f892ec4ce28ac7a39f90a5ddfb2f5a19964b2713bd8ac97"
+    },
+    {
+      "theme": "sanic",
+      "geometry": "Portrait",
+      "png_sha256": "ec3ada2ed69ba455866fb721ff74644f9821f9cb7da5e941bc36a1a628247c45",
+      "gif_sha256": "a0c0a50c6e0c8d54dc2cfa0469391932450b4794a4dcf7d5af3c9669b9805e66"
+    },
+    {
+      "theme": "turbo",
+      "geometry": "Landscape",
+      "png_sha256": "1a3ce7de1608f3c17e973ba142955d9846d01840cbabc4f6e733167e07418e93",
+      "gif_sha256": "2e2fdfa956cd2f564b747383f19489cf95ded4d55bbc4300c937fee22d62b886"
+    },
+    {
+      "theme": "turbo",
+      "geometry": "Portrait",
+      "png_sha256": "079d01b7aa2fcc9108bc644c755204847ce82943b64cd68b5fbf0e028ae41516",
+      "gif_sha256": "a41518346498b8e445810ffd3d3335099646fd75889a8045a3e4785b82a9c8d9"
+    },
+    {
+      "theme": "turbo-brainlet",
+      "geometry": "Landscape",
+      "png_sha256": "4b9366566e4d7a82b4edac2d18e745113b928287ebcc479dfe3f5c945eb891ce",
+      "gif_sha256": "61def35157c841cca5c1f2602e981d71c66e5210c835af655078929a414ef442"
+    },
+    {
+      "theme": "turbo-brainlet",
+      "geometry": "Portrait",
+      "png_sha256": "1035393654e04c8f4663d5545ebf1d8b89db4ccf7d7688c73d2b3730e64a8af2",
+      "gif_sha256": "dbecaca3e0bbe0932842dc4b8bd425c974df3b8a2f064dad4e6d365245210e65"
+    },
+    {
+      "theme": "where-lambo",
+      "geometry": "Landscape",
+      "png_sha256": "eec1c464841eb5e7370da006878fa8951c93e731b098843c7dec64220e34e239",
+      "gif_sha256": "184d8e500e65167fe8682e5f860e87a99e05bc02a89d07350658a9dd1fc60ce8"
+    },
+    {
+      "theme": "where-lambo",
+      "geometry": "Portrait",
+      "png_sha256": "e260b447675d16bdd0a986055e5c44caf5e75e3390c7a59feacabd3cc84d8ee9",
+      "gif_sha256": "9281c4c083515863cb0c73071e68d2bd3711bd60575302182ff772aaf6254bb6"
+    }
+  ]
+}

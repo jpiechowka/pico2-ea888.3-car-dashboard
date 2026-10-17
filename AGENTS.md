@@ -201,7 +201,8 @@ use `cargo build` for compilation without device operations.
 - Startup defaults to brief Status -> Splash -> Dashboard; acquisition continues.
   The default splash finishes despite warnings while the warning LED can signal
   attention; faults/recovery exit it. Keep this configurable and explain it in UI
-  copy and README. Preserve five shared themes, 0-10 second duration, loop/still
+  copy and README. Preserve all ten shared procedural themes (including the original five),
+  0-10 second duration, loop/still
   modes and converted custom artwork. Pico decodes bounded assets, not source GIFs.
 
 Contracts: [orientation](docs/configurator/orientation.md),

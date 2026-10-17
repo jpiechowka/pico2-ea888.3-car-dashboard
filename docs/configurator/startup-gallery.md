@@ -1,53 +1,61 @@
 # Startup theme gallery
 
-These five 320×240 previews are exact frames from the shared Rust startup renderer. Each shows **1,200 ms into the splash animation**, with looping enabled and reduced motion disabled. They are synthetic scene samples, not photographs of the Pico display or measurements of animation performance.
+All ten procedural themes use a white background and the shared Rust renderer.
+The animations below show native **320×240** landscape pixels. Each repeats a
+**two-second cycle**, sampled at **50 ms** intervals. Every theme also has a native
+**240×320** portrait animation and PNG stills at **1,200 ms**.
 
-| Theme | Native-resolution frame | Caption |
+| Theme | Landscape animation | Scene and other captures |
 | --- | --- | --- |
-| AEZAKMI | [![AEZAKMI banner and animated wanted stars](../images/gallery/startup/aezakmi.png)](../images/gallery/startup/aezakmi.png) | Cheat-code banner with animated stars. |
-| Turbo | [![SUTUTU turbine and pulse bars](../images/gallery/startup/turbo.png)](../images/gallery/startup/turbo.png) | Spinning turbine and pulsing bars. SUTUTU is visual text; this does not imply audio output. |
-| Sanic | [![GOTTA GO FAST character and speed lines](../images/gallery/startup/sanic.png)](../images/gallery/startup/sanic.png) | Running character with moving speed lines. |
-| How much boost, bro? | [![HOW MUCH BOOST BRO banner and boost bars](../images/gallery/startup/boost-bro.png)](../images/gallery/startup/boost-bro.png) | Animated text panel and synthetic boost bars, not live pressure readings. |
-| Where Lambo? | [![WHERE LAMBO car above the road](../images/gallery/startup/where-lambo.png)](../images/gallery/startup/where-lambo.png) | Bouncing car and animated road details. |
+| AEZAKMI | [![AEZAKMI lettering, racing stripe and five animated wanted stars](../images/gallery/startup/aezakmi.gif)](../images/gallery/startup/aezakmi.gif) | Cheat-code lettering, red/black stripe and filling gold stars. [Portrait animation](../images/gallery/startup/aezakmi-portrait.gif) · [Landscape still](../images/gallery/startup/aezakmi.png) · [Portrait still](../images/gallery/startup/aezakmi-portrait.png) |
+| SUTUTU | [![Illustrated turbo compressor with rotating blades](../images/gallery/startup/turbo.gif)](../images/gallery/startup/turbo.gif) | Shaded compressor housing, rotating blades and air marks. SUTUTU is visual text; there is no implied audio. [Portrait animation](../images/gallery/startup/turbo-portrait.gif) · [Landscape still](../images/gallery/startup/turbo.png) · [Portrait still](../images/gallery/startup/turbo-portrait.png) |
+| GOTTA GO FAST | [![Sanic running with oversized red shoes](../images/gallery/startup/sanic.gif)](../images/gallery/startup/sanic.gif) | Blue caricature, crooked eyes, moving legs and speed lines. [Portrait animation](../images/gallery/startup/sanic-portrait.gif) · [Landscape still](../images/gallery/startup/sanic.png) · [Portrait still](../images/gallery/startup/sanic-portrait.png) |
+| HOW MUCH BOOST BRO | [![Large BOOST lettering above a moving pressure dial](../images/gallery/startup/boost-bro.gif)](../images/gallery/startup/boost-bro.gif) | Large lettering and an unnumbered animated dial; its needle is artwork, not a pressure reading. [Portrait animation](../images/gallery/startup/boost-bro-portrait.gif) · [Landscape still](../images/gallery/startup/boost-bro.png) · [Portrait still](../images/gallery/startup/boost-bro-portrait.png) |
+| WHERE LAMBO | [![Battered hatchback with a mismatched door](../images/gallery/startup/where-lambo.gif)](../images/gallery/startup/where-lambo.gif) | Bouncing hatchback, dented panels, rusty exhaust and a budget spent on the turbo. [Portrait animation](../images/gallery/startup/where-lambo-portrait.gif) · [Landscape still](../images/gallery/startup/where-lambo.png) · [Portrait still](../images/gallery/startup/where-lambo-portrait.png) |
+| BLESS THIS MACHINE SPIRIT | [![Swinging skull-decorated incense censer](../images/gallery/startup/machine-spirit.gif)](../images/gallery/startup/machine-spirit.gif) | Mechanicus-inspired chains, swinging gold censer and drifting incense. [Portrait animation](../images/gallery/startup/machine-spirit-portrait.gif) · [Landscape still](../images/gallery/startup/machine-spirit.png) · [Portrait still](../images/gallery/startup/machine-spirit-portrait.png) |
+| ERROR 404: APPLY INCENSE | [![Robed machine priest beside a diagnostic terminal and incense burner](../images/gallery/startup/ritual-diagnostics.gif)](../images/gallery/startup/ritual-diagnostics.gif) | Red-robed priest, optical implant, NO START / PRAY? terminal and blinking lamps. [Portrait animation](../images/gallery/startup/ritual-diagnostics-portrait.gif) · [Landscape still](../images/gallery/startup/ritual-diagnostics.png) · [Portrait still](../images/gallery/startup/ritual-diagnostics-portrait.png) |
+| RED GOES FASTA | [![Green tusked driver in a riveted red hot rod](../images/gallery/startup/red-goes-fasta.gif)](../images/gallery/startup/red-goes-fasta.gif) | Ork-inspired driver, exposed engine, exhaust flames and bouncing red hot rod. [Portrait animation](../images/gallery/startup/red-goes-fasta-portrait.gif) · [Landscape still](../images/gallery/startup/red-goes-fasta.png) · [Portrait still](../images/gallery/startup/red-goes-fasta-portrait.png) |
+| MORE BOOST, YOU NEED | [![Long-eared green mentor levitating a turbo compressor](../images/gallery/startup/boost-padawan.gif)](../images/gallery/startup/boost-padawan.gif) | Yoda-inspired mechanic with robe, cane and hovering turbo: YOU NEED, YOUNG PADAWAN. [Portrait animation](../images/gallery/startup/boost-padawan-portrait.gif) · [Landscape still](../images/gallery/startup/boost-padawan.png) · [Portrait still](../images/gallery/startup/boost-padawan-portrait.png) |
+| OOGA BOOGA: SMOL SNAIL | [![Uneven grinning face beside a tiny animated turbo snail](../images/gallery/startup/turbo-brainlet.gif)](../images/gallery/startup/turbo-brainlet.gif) | Low forehead, uneven eyes, grin and drool beside a little turbine snail: SMOL SNAIL GO WOOSH. [Portrait animation](../images/gallery/startup/turbo-brainlet-portrait.gif) · [Landscape still](../images/gallery/startup/turbo-brainlet.png) · [Portrait still](../images/gallery/startup/turbo-brainlet-portrait.png) |
 
-See the [startup guide](startup.md) for timing, loops, preview, custom artwork and recovery controls. The native themes are procedural Rust animations. These static PNG exports do not imply that firmware decodes GIF files. The on-screen recovery hint is shared renderer content; this exporter does not simulate button handling.
+These are synthetic native-renderer captures, not photographs or measurements of
+the Pico display. GIF playback depends on the viewer and does not measure target
+FPS, scanout or input response. Firmware draws these procedural scenes directly;
+the GIF files are documentation exports. The [startup guide](startup.md) explains
+profile timing, reduced motion, custom artwork and recovery. The exporter draws
+the recovery hint but does not simulate button handling.
 
-## Regenerate the exact frames
+## Reproduce the captures
 
-Source: [`startup_frames.rs`](../../crates/dashboard-core/examples/startup_frames.rs), using `dashboard_core::startup::draw` and `St7789Renderer`. Captured against source commit `2b920839375478da75ae6b64738c9a8114121833`, with the repository-pinned nightly Rust toolchain and default `simple-outline` feature. No renderer modifications are needed.
+From the repository root, using the pinned Rust toolchain and Python with
+Pillow **12.3.0 or newer**:
 
-Run from the repository root:
-
-```sh
-cargo run -p dashboard-core --locked --example startup_frames -- target/startup-gallery
+```text
+cargo run --locked --release --manifest-path host/Cargo.toml --example startup_gallery -- target/startup-gallery --animation
+python host/scripts/export_startup_gallery.py target/startup-gallery docs/images/gallery/startup
 ```
 
-The example emits big-endian RGB565 frames for all five themes at 0, 350, 1,200 and 1,999 ms. The gallery selects sample index `2` for every theme. Its profile is `StartupProfile::DEFAULT` with only the theme changed: 600 ms Brief status, 2,500 ms splash and looping enabled. It draws `Phase::Splash` directly, so the chosen 1,200 ms is animation elapsed time, not boot time including the status screen. Facts are Demo, configuration valid, settings not loaded and zero configured sources.
+The [native exporter](../../host/examples/startup_gallery.rs) calls
+`dashboard_core::startup::draw` with `St7789Renderer` for both geometries. It writes
+PPM stills at 0, 350, 1,200 and 1,999 ms, plus 40 animation samples at 0 through
+1,950 ms. Each profile uses the default timings and loop setting with its theme
+changed; reduced motion is disabled. It draws `Phase::Splash` directly, so sample
+times are splash elapsed time, excluding the preceding status screen. Its status
+facts are Demo, configuration valid, saved preferences loaded and eight configured
+sources; they are synthetic inputs.
 
-Convert the selected raw frames using Python and Pillow (captured with Pillow **12.3.0**):
+The [packaging script](../../host/scripts/export_startup_gallery.py) writes one PNG
+and one looping GIF per theme and geometry. It uses the renderer's exact RGB565
+channel expansion through `Color::rgb888()`, with no resizing or interpolation.
+The GIF palette retains every source colour and packaging fails if more than 256
+colours would require quantization. It decodes each exported PNG and GIF to check
+exact RGB pixels, all 40 samples and the complete 2,000 ms timeline. Identical
+successive GIF samples may be combined into one longer frame.
 
-```python
-from pathlib import Path
-from PIL import Image
-
-source = Path('target/startup-gallery')
-destination = Path('docs/images/gallery/startup')
-destination.mkdir(parents=True, exist_ok=True)
-names = ['aezakmi', 'turbo', 'sanic', 'boost-bro', 'where-lambo']
-for index, name in enumerate(names):
-    raw = (source / f'{index}-2.rgb565').read_bytes()
-    assert len(raw) == 320 * 240 * 2
-    rgb = bytearray()
-    for offset in range(0, len(raw), 2):
-        pixel = int.from_bytes(raw[offset:offset + 2], 'big')
-        r, g, b = (pixel >> 11) & 31, (pixel >> 5) & 63, pixel & 31
-        rgb.extend(((r << 3) | (r >> 2),
-                    (g << 2) | (g >> 4),
-                    (b << 3) | (b >> 2)))
-    image = Image.frombytes('RGB', (320, 240), bytes(rgb))
-    output = destination / f'{name}.png'
-    image.save(output, optimize=True, compress_level=9)
-    assert Image.open(output).tobytes() == bytes(rgb)
-```
-
-The conversion uses the same channel-bit expansion as `dashboard_config::Color::rgb888`. It changes only the file representation: no resizing, interpolation, palette reduction, added labels or decorative UI. All five output images were visually inspected and their decoded RGB bytes checked against the converted raw frames.
+The committed [capture manifest](../images/gallery/startup/capture.json) records
+Pillow version, sampling/timing, renderer/profile/exporter source SHA256 values
+(normalized to LF line endings),
+and SHA256 values for all 20 PNGs and 20 GIFs. It identifies these captures without
+relying on a historical source commit. Regenerate captures and the manifest
+together after drawing changes. The exporter's separate `timings.csv` contains
+host timing samples only; it does not establish RP2350 cost or physical FPS.

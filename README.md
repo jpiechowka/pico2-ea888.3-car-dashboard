@@ -1,4 +1,4 @@
-# Pico 2 EA888.3 dashboard
+# 2019 SEAT Leon Cupra DNUC dashboard for Pico 2
 
 Rust firmware for a Raspberry Pi Pico 2, Pimoroni PIM715 display and
 Adafruit 5880 I2C encoder, intended for a 2019 Seat Leon Cupra DNUC.
@@ -247,6 +247,12 @@ feature conflicts, UART ownership, nonblocking logging, vendor hashes, linked
 RAM/flash boundaries and corrupted artifact rejection. Host checks and target
 builds do not execute the hardware.
 
+The [software failure-validation report](docs/validation/software-failure-validation.md)
+records actual browser storage/worker/canvas/transport faults, deterministic
+format and state tests, native recovery, ten-theme visual checks and final image
+limits. CI runs the browser suite in an isolated profile and keeps strict nightly
+Clippy. The instruction-level proof remains separate unfinished research.
+
 The [overhaul acceptance record](docs/validation/overhaul-2026-10-11.md) maps
 the implemented stages and review corrections to local test/build evidence and
 the remaining hardware gates. The [fixed workload matrix](docs/performance/benchmark-coverage.md)
@@ -335,21 +341,33 @@ remain disabled until source-specific policies are qualified.
 ## Controls and startup
 
 Studio **Device → Startup** configures Status → Splash → Dashboard. Defaults are
-Brief status for 600 ms, then AEZAKMI for 2500 ms. Five shared Rust animations
-include AEZAKMI, turbo/SUTUTU, Sanic/GOTTA GO FAST, HOW MUCH BOOST BRO and WHERE
-LAMBO. PNG, sprite-sheet and GIF imports convert to bounded RGB565 pixels; the
+Brief status for 600 ms, then AEZAKMI for 2500 ms. Ten shared Rust animations
+combine clean white backgrounds, large lettering and car/nerd jokes: the original
+five, three Warhammer-inspired scenes, a turbo-levitating green mentor and an
+OOGA BOOGA face with a tiny turbo-snail.
+PNG, sprite-sheet and GIF imports convert to bounded RGB565 pixels; the
 firmware does not decode the source image. Retain the original to change its
 crop, matte or sampling later.
 
 | AEZAKMI | Turbo / SUTUTU | Sanic |
 |---|---|---|
-| ![AEZAKMI shared-renderer sample](docs/images/gallery/startup/aezakmi.png) | ![Turbo shared-renderer sample](docs/images/gallery/startup/turbo.png) | ![Sanic shared-renderer sample](docs/images/gallery/startup/sanic.png) |
+| ![AEZAKMI animated lettering and wanted stars](docs/images/gallery/startup/aezakmi.gif) | ![Spinning turbo and air marks](docs/images/gallery/startup/turbo.gif) | ![Sanic running in oversized red shoes](docs/images/gallery/startup/sanic.gif) |
 
-| How much boost, bro? | Where Lambo? |
+| How much boost, bro? | Where Lambo? | Bless this machine spirit |
+|---|---|---|
+| ![Boost lettering and animated pressure dial](docs/images/gallery/startup/boost-bro.gif) | ![Battered hatchback with a mismatched door](docs/images/gallery/startup/where-lambo.gif) | ![Swinging skull censer with drifting incense](docs/images/gallery/startup/machine-spirit.gif) |
+
+| Error 404: Apply incense | Red goes fasta | More boost, you need |
+|---|---|---|
+| ![Machine priest blessing a reluctant diagnostic terminal](docs/images/gallery/startup/ritual-diagnostics.gif) | ![Green driver in a riveted red hot rod](docs/images/gallery/startup/red-goes-fasta.gif) | ![Green mentor levitating a turbo for a young padawan](docs/images/gallery/startup/boost-padawan.gif) |
+
+| OOGA BOOGA: Smol snail | The same theme in portrait |
 |---|---|
-| ![Boost banner shared-renderer sample](docs/images/gallery/startup/boost-bro.png) | ![Shitbox car shared-renderer sample](docs/images/gallery/startup/where-lambo.png) |
+| ![Grinning brainlet beside a spinning turbo-snail: SMOL SNAIL GO WOOSH](docs/images/gallery/startup/turbo-brainlet.gif) | ![Portrait brainlet and turbo-snail animation](docs/images/gallery/startup/turbo-brainlet-portrait.gif) |
 
-*Synthetic frames at 1,200 ms into each animation. [Native frames and reproduction](docs/configurator/startup-gallery.md).*
+*Actual shared-renderer animations, captured at 20 samples per second. Pico draws
+these scenes directly in Rust; these GIFs are documentation exports. Playback is
+not measured device FPS. [Portrait animations, static images and reproduction](docs/configurator/startup-gallery.md).*
 
 Status and splash have independent durations: splash **0** skips only splash;
 **Loop off** holds its final frame for the remaining duration. Reduced motion

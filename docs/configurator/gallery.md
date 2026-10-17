@@ -48,6 +48,16 @@ this origin and is not a portable backup. See [project storage](projects.md).
 
 Status and splash have separate timing. Splash zero leaves the independent status setting unchanged; Loop off holds the final frame. Retained originals support reconversion; only converted pixels enter firmware. Timing drafts require Apply/Discard, while malformed conversion options block conversion without replacing accepted artwork.
 
+The [native animation gallery](startup-gallery.md) shows all ten procedural
+themes in landscape and portrait, with matching stills and a source-hash manifest.
+These shared-renderer exports are separate from the browser workflow captures below.
+
+[![Studio: brainlet turbo-snail selected with a live shared-renderer preview](../images/gallery/workflows/startup-brainlet.jpg)](../images/gallery/workflows/startup-brainlet.jpg)
+
+The theme selector includes OOGA BOOGA: SMOL SNAIL. Selecting a theme updates the
+shared preview and creates an undoable project change. Seek and reduced-motion
+preview let you inspect the art independently of the startup deadline.
+
 ### Map controls and preserve recovery
 
 [![Studio: map controls and preserve recovery](../images/gallery/workflows/controls.jpg)](../images/gallery/workflows/controls.jpg)
@@ -136,7 +146,19 @@ separate; [benchmark scope](../performance/benchmark-coverage.md) remains explic
 
 ## Capture record
 
-Workflow images were captured from the actual local Studio release built at
+The following record describes the browser workflow images. Native startup
+animations have their own current [capture manifest](../images/gallery/startup/capture.json)
+and [reproduction steps](startup-gallery.md#reproduce-the-captures).
+
+Startup and portrait-startup were refreshed on 17 October 2026, together with the
+new brainlet workflow capture, using the normal ten-theme production build in an
+isolated browser origin. The 1600×1100 desktop viewport shows accepted settings
+and a paused 1800 ms startup seek (600 ms status, then 1200 ms splash). The
+[workflow capture manifest](../images/gallery/workflows/startup-capture.json)
+records the production Wasm and screenshot hashes. The user's existing Studio
+project was not used for these captures.
+
+Other workflow images were captured from the actual local Studio release built at
 `6b051b1` on 16 October 2026. The invalid-overlap capture uses the preceding
 `4d692f8` release; its placement behavior is unchanged. The native build shown
 used `d9c493d`, completed its practical checks, and produced a hash-verified UF2

@@ -1,7 +1,10 @@
 # Startup
 
-Device → Startup configures the shared Rust startup scenes: AEZAKMI, SUTUTU,
-GOTTA GO FAST, HOW MUCH BOOST BRO and WHERE LAMBO. **Preview startup** uses the
+Device → Startup offers ten shared Rust procedural scenes: the original AEZAKMI,
+SUTUTU, GOTTA GO FAST, HOW MUCH BOOST BRO and WHERE LAMBO, plus BLESS THIS MACHINE
+SPIRIT, ERROR 404: APPLY INCENSE, RED GOES FASTA, MORE BOOST, YOU NEED and
+OOGA BOOGA: SMOL SNAIL.
+See all ten in the [animated native gallery](startup-gallery.md). **Preview startup** uses the
 Studio display at the effective 320×240 or 240×320 geometry, with play/pause,
 restart, seeking and a reduced-motion still. The preview labels its OBD status as synthetic; browser
 timing is not physical display, LED or ECU qualification.
@@ -59,13 +62,32 @@ identity binding use the converted-only accepted project; the helper verifies li
 profile/asset bytes before admitting an artifact.
 
 EASP v2 is exactly 16 bytes: `EASP` magic at 0..4, version 2 at byte 4, theme
-0..5 (Custom) at byte 5, status Off/Brief/Detailed as 0..2 at byte 6, flags at byte 7
+0..10 at byte 5, status Off/Brief/Detailed as 0..2 at byte 6, flags at byte 7
 (bit 0 loop, bit 1 warning LED, bit 2 attention interruption), little-endian
 u16 status/splash milliseconds at 8..10 and 10..12, Boot info/Splash orientation
 overrides at bytes 12/13, and zero reserved bytes 14/15. Each override is 0 for
 inherit, 1 Landscape, 2 Portrait, 3 LandscapeInverted or 4 PortraitInverted. Legacy
-v1 profiles are accepted only with all four former reserved bytes zero and migrate
-to inherited orientations. New encodings always use v2.
+v1 profiles retain their frozen theme vocabulary 0..5, are accepted only with all
+four former reserved bytes zero, and migrate to inherited orientations. New
+encodings always use v2. The stable theme tags are independent of picker order:
+
+| Tag | Theme |
+| --- | --- |
+| 0 | AEZAKMI |
+| 1 | SUTUTU |
+| 2 | GOTTA GO FAST |
+| 3 | HOW MUCH BOOST BRO |
+| 4 | WHERE LAMBO |
+| 5 | Custom artwork |
+| 6 | BLESS THIS MACHINE SPIRIT |
+| 7 | ERROR 404: APPLY INCENSE |
+| 8 | RED GOES FASTA |
+| 9 | MORE BOOST, YOU NEED |
+| 10 | OOGA BOOGA: SMOL SNAIL |
+
+Tags 6–10 extend EASP v2 without changing its layout. Older readers reject tags
+they do not recognize; v1 always rejects tags above 5. Custom retains tag 5.
+
 Unknown versions, flags, enums, reserved bytes and out-of-range durations fail
 validation. Reduced motion uses the dashboard's existing setting; the extra
 Studio checkbox is a preview-only override. The implemented format does not expose
