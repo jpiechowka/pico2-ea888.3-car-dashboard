@@ -166,7 +166,8 @@ class PracticalImage(unittest.TestCase):
             image.main(['fixture.elf','--source-context',str(source),'--result-json',str(output)])
             self.assertEqual(json.loads(output.read_bytes())['gate'],'practical_image')
             experimental=Path(folder)/'full.json'
-            with self.assertRaisesRegex(AssertionError,'no retained stack policy'):
+            # The real stack child returns practical bounds, never a proof receipt.
+            with self.assertRaisesRegex(AssertionError,'experimental instruction proof is unavailable.*complete producer'):
                 image.main(['fixture.elf','--gate','experimental-full','--source-context',str(source),'--result-json',str(experimental)])
             self.assertFalse(experimental.exists())
 

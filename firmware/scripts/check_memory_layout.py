@@ -12,7 +12,7 @@ from elf_image import ElfImage
 from validation import require
 from config_build_source import inspect_source_context,load_source_context
 from check_flash_lockout import check as check_flash_lockout
-from check_stack_budget import check as check_stack_budget
+from check_stack_budget import FrameAdmission,check as check_stack_budget
 from config_platform import current_image_policy,read_stack_result,_bounded_record
 
 MIN_CORE0_HEADROOM = 65536
@@ -46,6 +46,10 @@ def geometry(elf):
 def _qualified_image(stack,elf,static_ram,headroom,expected_eav=None,source_context=None):
     require(source_context is not None,"schema2 image requires explicit source context")
     inspect_source_context(source_context,elf)
+    require(not isinstance(stack,FrameAdmission),
+            'experimental instruction proof is unavailable: the complete producer is unfinished; '
+            'named practical stack bounds are not an execution proof. '
+            'Use --gate practical for production image checks; see docs/performance/memory-layout.md')
     require(isinstance(stack,dict) and isinstance(stack.get('policies'),list) and len(stack['policies'])==1,
             'full image gate has no retained stack policy')
     policy=current_image_policy(stack['policies'][0],elf,expected_eav)

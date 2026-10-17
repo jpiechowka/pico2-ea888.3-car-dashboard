@@ -65,6 +65,15 @@ fail-closed. Select `--image-gate experimental-full` during capture, or
 unfinished, so current actual captures in that mode fail without publishing a
 successful result. There is no automatic downgrade to practical checks.
 
+The experimental CLI reports the unfinished producer explicitly when its child
+returns practical named-frame bounds. Those bounds cannot become an execution
+proof by changing the result schema. The retained Source/Tail composition stops
+at the original configuration Visitor return for its historical SizeZ family; loader
+finalization, validation, diagnostics and complete resource composition remain
+open. Its authored v4 machine/layout contracts also require a separately reviewed
+port for current v5 images. A successful historical component replay would close
+that component only, not the full current-image gate.
+
 Both gates require the explicit source context. Neither discovers a sidecar or
 uses current checkout source as a fallback. Each source member is limited to
 65536 UTF-8 bytes and the context to262144 bytes; memory results remain bounded
