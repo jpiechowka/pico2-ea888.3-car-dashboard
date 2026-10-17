@@ -73,6 +73,11 @@ fn profile_wire_values_and_flags_match_independent_bytes() {
         StartupTheme::BoostBro,
         StartupTheme::WhereLambo,
         StartupTheme::Custom,
+        StartupTheme::MachineSpirit,
+        StartupTheme::RitualDiagnostics,
+        StartupTheme::RedGoesFasta,
+        StartupTheme::BoostPadawan,
+        StartupTheme::TurboBrainlet,
     ]
     .into_iter()
     .enumerate()
@@ -135,7 +140,7 @@ fn profile_rejects_unknown_fields_lengths_and_out_of_range_durations() {
         (0, b'X'),
         (4, 0),
         (4, 3),
-        (5, 6),
+        (5, 11),
         (5, 255),
         (6, 3),
         (6, 255),
@@ -169,4 +174,74 @@ fn profile_rejects_unknown_fields_lengths_and_out_of_range_durations() {
         assert_eq!(profile.encode().is_some(), accepted);
         assert_eq!(StartupProfile::decode(&bytes), accepted.then_some(profile));
     }
+}
+
+#[test]
+fn additive_themes_preserve_custom_and_reject_new_tags_in_legacy_v1() {
+    let custom_v1 = *b"EASP\x01\x05\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00";
+    let custom = StartupProfile::decode(&custom_v1).unwrap();
+    assert_eq!(custom.theme, StartupTheme::Custom);
+    assert_eq!(custom.encode().unwrap()[5], 5);
+    for tag in 6..=10 {
+        let mut bytes = custom_v1;
+        bytes[4] = 2;
+        bytes[5] = tag;
+        let profile = StartupProfile::decode(&bytes).expect("new v2 theme");
+        assert_ne!(profile.theme, StartupTheme::Custom);
+        assert_eq!(profile.encode(), Some(bytes));
+        bytes[4] = 1;
+        assert_eq!(StartupProfile::decode(&bytes), None, "v1 vocabulary is frozen");
+    }
+}
+
+#[test]
+fn every_wire_tag_is_explicit_and_picker_order_never_aliases_custom() {
+    let expected = [
+        StartupTheme::Aezakmi,
+        StartupTheme::Turbo,
+        StartupTheme::Sanic,
+        StartupTheme::BoostBro,
+        StartupTheme::WhereLambo,
+        StartupTheme::Custom,
+        StartupTheme::MachineSpirit,
+        StartupTheme::RitualDiagnostics,
+        StartupTheme::RedGoesFasta,
+        StartupTheme::BoostPadawan,
+        StartupTheme::TurboBrainlet,
+    ];
+    for tag in 0..=u8::MAX {
+        assert_eq!(
+            StartupTheme::from_wire_tag(tag),
+            expected.get(usize::from(tag)).copied()
+        );
+        for version in [1, 2] {
+            let mut bytes = *b"EASP\x02\x00\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00";
+            bytes[4] = version;
+            bytes[5] = tag;
+            assert_eq!(
+                StartupProfile::decode(&bytes).is_some(),
+                tag <= if version == 1 { 5 } else { 10 }
+            );
+        }
+    }
+    let tags: Vec<_> = StartupTheme::ALL.into_iter().map(StartupTheme::wire_tag).collect();
+    assert_eq!(tags, [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]);
+}
+
+#[test]
+fn padawan_tag_nine_is_additive_and_legacy_rejects_it() {
+    let mut bytes = *b"EASP\x02\x09\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00";
+    let profile = StartupProfile::decode(&bytes).expect("v2 tag9");
+    assert_eq!(profile.encode(), Some(bytes));
+    bytes[4] = 1;
+    assert_eq!(StartupProfile::decode(&bytes), None);
+}
+
+#[test]
+fn brainlet_tag_ten_is_additive_and_legacy_rejects_it() {
+    let mut bytes = *b"EASP\x02\x0a\x01\x03\x58\x02\xc4\x09\x00\x00\x00\x00";
+    let profile = StartupProfile::decode(&bytes).expect("v2 tag10");
+    assert_eq!(profile.encode(), Some(bytes));
+    bytes[4] = 1;
+    assert_eq!(StartupProfile::decode(&bytes), None);
 }

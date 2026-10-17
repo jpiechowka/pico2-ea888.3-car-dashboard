@@ -12,15 +12,59 @@ pub enum StartupTheme {
     BoostBro,
     WhereLambo,
     Custom,
+    MachineSpirit,
+    RitualDiagnostics,
+    RedGoesFasta,
+    BoostPadawan,
+    TurboBrainlet,
 }
 impl StartupTheme {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 10] = [
         Self::Aezakmi,
         Self::Turbo,
         Self::Sanic,
         Self::BoostBro,
         Self::WhereLambo,
+        Self::MachineSpirit,
+        Self::RitualDiagnostics,
+        Self::RedGoesFasta,
+        Self::BoostPadawan,
+        Self::TurboBrainlet,
     ];
+
+    /// Stable EASP identity, independent of the procedural picker order.
+    pub const fn wire_tag(self) -> u8 {
+        match self {
+            Self::Aezakmi => 0,
+            Self::Turbo => 1,
+            Self::Sanic => 2,
+            Self::BoostBro => 3,
+            Self::WhereLambo => 4,
+            Self::Custom => 5,
+            Self::MachineSpirit => 6,
+            Self::RitualDiagnostics => 7,
+            Self::RedGoesFasta => 8,
+            Self::BoostPadawan => 9,
+            Self::TurboBrainlet => 10,
+        }
+    }
+
+    pub const fn from_wire_tag(tag: u8) -> Option<Self> {
+        Some(match tag {
+            0 => Self::Aezakmi,
+            1 => Self::Turbo,
+            2 => Self::Sanic,
+            3 => Self::BoostBro,
+            4 => Self::WhereLambo,
+            5 => Self::Custom,
+            6 => Self::MachineSpirit,
+            7 => Self::RitualDiagnostics,
+            8 => Self::RedGoesFasta,
+            9 => Self::BoostPadawan,
+            10 => Self::TurboBrainlet,
+            _ => return None,
+        })
+    }
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -30,6 +74,11 @@ impl StartupTheme {
             Self::BoostBro => "HOW MUCH BOOST BRO",
             Self::WhereLambo => "WHERE LAMBO",
             Self::Custom => "Custom artwork",
+            Self::MachineSpirit => "BLESS THIS MACHINE SPIRIT",
+            Self::RitualDiagnostics => "ERROR 404: APPLY INCENSE",
+            Self::RedGoesFasta => "RED GOES FASTA",
+            Self::BoostPadawan => "MORE BOOST, YOU NEED",
+            Self::TurboBrainlet => "OOGA BOOGA: SMOL SNAIL",
         }
     }
 }
@@ -95,7 +144,8 @@ impl StartupProfile {
         self.splash_orientation.unwrap_or(default)
     }
 
-    /// Fixed 16-byte v2 profile. The last two bytes remain reserved and zero.
+    /// Fixed 16-byte v2 profile. Tags 6..10 extend v2; old readers reject them.
+    /// Legacy v1 keeps its frozen theme vocabulary 0..5. The last two bytes remain reserved and zero.
     pub fn encode(self) -> Option<[u8; 16]> {
         if !self.valid() {
             return None;
@@ -103,7 +153,7 @@ impl StartupProfile {
         let mut bytes = [0; 16];
         bytes[..4].copy_from_slice(b"EASP");
         bytes[4] = 2;
-        bytes[5] = self.theme as u8;
+        bytes[5] = self.theme.wire_tag();
         bytes[6] = self.status as u8;
         bytes[7] = u8::from(self.loop_animation)
             | (u8::from(self.warning_led) << 1)
@@ -121,16 +171,12 @@ impl StartupProfile {
             || !matches!(bytes[4], 1 | 2)
             || bytes[7] & !7 != 0
             || bytes[14..].iter().any(|b| *b != 0)
-            || (bytes[4] == 1 && bytes[12..14] != [0, 0])
+            || (bytes[4] == 1 && (bytes[12..14] != [0, 0] || bytes[5] > 5))
         {
             return None;
         }
         let profile = Self {
-            theme: if bytes[5] == 5 {
-                StartupTheme::Custom
-            } else {
-                *StartupTheme::ALL.get(usize::from(bytes[5]))?
-            },
+            theme: StartupTheme::from_wire_tag(bytes[5])?,
             status: match bytes[6] {
                 0 => StartupStatus::Off,
                 1 => StartupStatus::Brief,

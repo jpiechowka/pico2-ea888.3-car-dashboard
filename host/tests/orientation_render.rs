@@ -515,14 +515,14 @@ fn portrait_turbo_ring_is_concentric_with_blades_and_hub() {
         },
     );
     let pixel = |x: usize, y: usize| u16::from_be_bytes([frame.0[(y * 240 + x) * 2], frame.0[(y * 240 + x) * 2 + 1]]);
-    // Original object center (160,125) maps to (120,153), with an82px
-    // outer diameter. Ring cardinal points share the blade/hub center.
-    let cyan = (3u16 << 11) | (53 << 5) | 28;
-    assert_eq!(pixel(120, 112), cyan);
-    assert_eq!(pixel(79, 153), cyan);
-    assert_eq!(pixel(120, 193), cyan);
+    // Designed compressor center (160,123) maps to (120,152). The 114px
+    // housing maps to 85px with the same center as the inlet and gold hub.
+    let ink = (1u16 << 11) | (3 << 5) | 5;
+    for (x, y) in [(120, 110), (78, 152), (162, 152), (120, 194)] {
+        assert_eq!(pixel(x, y), ink, "housing cardinal point ({x},{y})");
+    }
     let gold = (31u16 << 11) | (43 << 5) | 5;
-    assert_eq!(pixel(120, 153), gold);
+    assert_eq!(pixel(120, 152), gold);
 }
 
 #[test]
