@@ -985,19 +985,9 @@ fn turbo_brainlet(
     line(d, (133, 147), (132, 157 + drip), 2, CYAN);
     line(d, (132, 157 + drip), (134, 164 + drip), 2, CYAN);
     line(d, (139, 148), (140, 158 + drip), 2, CYAN);
-    // A little snail whose shell is a spinning compressor, with a tangential
-    // outlet and eyestalks. Its motion is bounded by the common scene clock.
+    // "Smol snail" is the turbo itself: spinning compressor and tangential outlet.
+    // Its motion is bounded by the common scene clock.
     let bob = wave(t, 400, 2);
-    line(d, (208, 180 + bob), (268, 180 + bob), 6, INK);
-    line(d, (211, 178 + bob), (266, 178 + bob), 4, GOLD);
-    disk(d, 254, 164 + bob, 17, INK);
-    disk(d, 257, 167 + bob, 11, GOLD);
-    line(d, (260, 168 + bob), (259, 156 + bob), 2, INK);
-    line(d, (266, 168 + bob), (273, 158 + bob), 2, INK);
-    disk(d, 256, 152 + bob, 6, INK);
-    disk(d, 271, 155 + bob, 6, INK);
-    disk(d, 257, 153 + bob, 2, PAPER);
-    disk(d, 272, 156 + bob, 2, PAPER);
     rect(d, 242, 130 + bob, 20, 11, INK);
     rect(d, 245, 133 + bob, 14, 5, STEEL);
     disk(d, 205, 126 + bob, 48, INK);

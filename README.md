@@ -344,7 +344,7 @@ Studio **Device → Startup** configures Status → Splash → Dashboard. Defaul
 Brief status for 600 ms, then AEZAKMI for 2500 ms. Ten shared Rust animations
 combine clean white backgrounds, large lettering and car/nerd jokes: the original
 five, three Warhammer-inspired scenes, a turbo-levitating green mentor and an
-OOGA BOOGA face with a tiny turbo-snail.
+OOGA BOOGA face beside a tiny spinning turbo: SMOL SNAIL GO WOOSH.
 PNG, sprite-sheet and GIF imports convert to bounded RGB565 pixels; the
 firmware does not decode the source image. Retain the original to change its
 crop, matte or sampling later.
@@ -363,7 +363,7 @@ crop, matte or sampling later.
 
 | OOGA BOOGA: Smol snail | The same theme in portrait |
 |---|---|
-| ![Grinning brainlet beside a spinning turbo-snail: SMOL SNAIL GO WOOSH](docs/images/gallery/startup/turbo-brainlet.gif) | ![Portrait brainlet and turbo-snail animation](docs/images/gallery/startup/turbo-brainlet-portrait.gif) |
+| ![Grinning brainlet beside a spinning turbo: SMOL SNAIL GO WOOSH](docs/images/gallery/startup/turbo-brainlet.gif) | ![Portrait brainlet and spinning turbo animation](docs/images/gallery/startup/turbo-brainlet-portrait.gif) |
 
 *Actual shared-renderer animations, captured at 20 samples per second. Pico draws
 these scenes directly in Rust; these GIFs are documentation exports. Playback is

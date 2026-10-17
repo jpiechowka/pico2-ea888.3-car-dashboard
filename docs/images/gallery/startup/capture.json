@@ -6,7 +6,7 @@
   "lossless_rgb_verified": true,
   "source_hash_line_endings": "LF",
   "source_sha256": {
-    "crates/dashboard-core/src/startup/scene.rs": "661fac5271228b52ca0818702f3b1fe71c165e99df749fa3441caacd8b3e2346",
+    "crates/dashboard-core/src/startup/scene.rs": "9c11907073c492f1ed35fcfc8e1274cfe199c156dc998d6c4fac170fe3ce5c46",
     "crates/dashboard-config/src/startup.rs": "57a8488fe45fd862c93cb802d034b472959eaa5bc09c2db6ae177e089234965c",
     "host/examples/startup_gallery.rs": "908545d520d6c5aeb8268958e76fdf14239cbbc379048a5c453d5f1a566465ac"
   },
@@ -110,14 +110,14 @@
     {
       "theme": "turbo-brainlet",
       "geometry": "Landscape",
-      "png_sha256": "4b9366566e4d7a82b4edac2d18e745113b928287ebcc479dfe3f5c945eb891ce",
-      "gif_sha256": "61def35157c841cca5c1f2602e981d71c66e5210c835af655078929a414ef442"
+      "png_sha256": "3032bc135d69156c5797002b12fd7a2a9c8550ca2b74e591da1a888ab20123ff",
+      "gif_sha256": "851e9575f865c5f81a16ac514a489dbdc9d1a8b7d188e16356c5cde5e3bfc8de"
     },
     {
       "theme": "turbo-brainlet",
       "geometry": "Portrait",
-      "png_sha256": "1035393654e04c8f4663d5545ebf1d8b89db4ccf7d7688c73d2b3730e64a8af2",
-      "gif_sha256": "dbecaca3e0bbe0932842dc4b8bd425c974df3b8a2f064dad4e6d365245210e65"
+      "png_sha256": "8e8b18801d5f8c1c268476e251e8df8789dfd47d00b6d71f7d580e17d119ff5b",
+      "gif_sha256": "c8f35bc9766488d698b014ca2169a8034bbb00ce6ca0e53570538e4fc0502240"
     },
     {
       "theme": "where-lambo",

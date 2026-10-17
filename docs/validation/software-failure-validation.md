@@ -134,7 +134,9 @@ looping GIFs, plus reproducible capture commands and source/artifact hashes. GIF
 packaging verifies exact RGB pixels and all forty 50 ms samples, allowing merged
 identical frames without changing the two-second timeline. Actual Studio
 [workflow captures](../configurator/gallery.md#capture-record) were refreshed in
-an isolated origin, including portrait and the brainlet turbo-snail.
+an isolated origin, including portrait and the brainlet theme. The follow-up
+art revision removes the snail body and leaves the spinning turbo; its gallery
+exports retain exact-pixel and timeline verification.
 
 The richer illustration adds drawing work. A redundant full-buffer clear found
 during review was removed. The exporter records 30 samples of 100 frames per

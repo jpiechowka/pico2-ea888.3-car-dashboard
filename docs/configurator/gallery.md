@@ -52,7 +52,7 @@ The [native animation gallery](startup-gallery.md) shows all ten procedural
 themes in landscape and portrait, with matching stills and a source-hash manifest.
 These shared-renderer exports are separate from the browser workflow captures below.
 
-[![Studio: brainlet turbo-snail selected with a live shared-renderer preview](../images/gallery/workflows/startup-brainlet.jpg)](../images/gallery/workflows/startup-brainlet.jpg)
+[![Studio: brainlet and spinning turbo selected with a live shared-renderer preview](../images/gallery/workflows/startup-brainlet.jpg)](../images/gallery/workflows/startup-brainlet.jpg)
 
 The theme selector includes OOGA BOOGA: SMOL SNAIL. Selecting a theme updates the
 shared preview and creates an undoable project change. Seek and reduced-motion
@@ -157,6 +157,11 @@ and a paused 1800 ms startup seek (600 ms status, then 1200 ms splash). The
 [workflow capture manifest](../images/gallery/workflows/startup-capture.json)
 records the production Wasm and screenshot hashes. The user's existing Studio
 project was not used for these captures.
+
+The brainlet workflow image was refreshed again for the turbo-only artwork
+revision, using a full-page capture at the browser's 1280×720 viewport. Its
+per-image manifest override records the new production Wasm identity; the other
+workflow images retain their original capture context.
 
 Other workflow images were captured from the actual local Studio release built at
 `6b051b1` on 16 October 2026. The invalid-overlap capture uses the preceding

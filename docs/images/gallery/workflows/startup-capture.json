@@ -11,7 +11,20 @@
   "production_main_wasm_sha256": "edc1cbea5eba9c69a8c134bb14837ea570c1fd403f9cc7ea578be3d7684202a2",
   "images": {
     "gallery/workflows/startup.jpg": "574d1d0452c9ed43dd23db0f2d4ed1579651fe0afd2673ed0c870698c2123dc6",
-    "gallery/workflows/startup-brainlet.jpg": "7022f79b3feba9f28a4accd604a556c2b7157bf13d191888d238a3d73c5a5312",
+    "gallery/workflows/startup-brainlet.jpg": "cf65a3099b997ce8cabc25a32c2ee59bb651723bf01c4a5636d52d28b5e8e997",
     "orientation/portrait-startup.jpg": "eeb132a484c6f4e93f2d450946214caa9e68e55ed01d74db9a5ba293a3632080"
+  },
+  "capture_overrides": {
+    "gallery/workflows/startup-brainlet.jpg": {
+      "date": "2026-10-17",
+      "viewport_css_pixels": [
+        1280,
+        720
+      ],
+      "full_page": true,
+      "startup_seek_ms": 1800,
+      "production_main_wasm_sha256": "dad335901359ac5fa5ef12320b9c26e89cd909e82028ac38d74489d7a0a1952b",
+      "note": "Turbo-only artwork revision; other workflow images retain the capture context above."
+    }
   }
 }
