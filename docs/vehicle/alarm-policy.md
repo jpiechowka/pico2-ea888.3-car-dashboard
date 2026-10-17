@@ -30,7 +30,7 @@ Runtime Demo generates canonical lambda without assuming fuel-dependent AFR.
 
 ## Rendering
 
-Current v4 warnings support High/Low and direct Inside/Outside window hysteresis,
+Current warnings support High/Low and direct Inside/Outside window hysteresis,
 priority paging, latch and snooze. Acknowledgment and qualified clear are distinct:
 an active acknowledged condition remains indicated, and unavailable data never
 clears a remembered episode. Raw warning eligibility does not provide a fresh

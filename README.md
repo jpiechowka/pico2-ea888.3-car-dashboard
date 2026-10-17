@@ -1,6 +1,6 @@
 # Pico 2 EA888.3 dashboard
 
-Rust firmware for a Raspberry Pi Pico 2, Pimoroni PIM715 320x240 display and
+Rust firmware for a Raspberry Pi Pico 2, Pimoroni PIM715 display and
 Adafruit 5880 I2C encoder, intended for a 2019 Seat Leon Cupra DNUC.
 **Exact ECU support, electrical installation and physical display FPS are
 unverified.** The default build shows unavailable vehicle channels. Demo data
@@ -10,7 +10,7 @@ adapter bring-up and sends no diagnostic CAN requests.
 Browse the offline **ECU Reference** workspace while configuring views: searchable source/scaling evidence, family limitations and unresolved definitions, with the shared preview retained. [Studio usage](docs/configurator/ecu-reference.md) · [Technical ECU library](docs/vehicle/ecu-reference/README.md).
 
 [Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
-[Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
+[Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
 [Architecture](#architecture) · [Validation](#firmware-build-and-validation)
 
 [![Studio Views workspace with the shared dashboard preview](docs/images/gallery/workflows/editor.jpg)](docs/configurator/gallery.md#edit-and-repair)
@@ -27,7 +27,7 @@ Launch the Rust/Wasm editor from the repository root:
 ./configurator/Studio.ps1 -Serve
 ```
 
-Open `http://127.0.0.1:8080`. Drag widgets onto a 4×2 grid, configure up to eight
+Open `http://127.0.0.1:8080`. Drag widgets onto a landscape 4×2 or portrait 2×4 grid, configure up to eight
 named views, and export a complete `.eavp` project. Dashboard-only JSON and compact
 `.eav` exports remain available. The preview
 uses the firmware renderer. See the [View Studio guide](docs/configurator/studio.md)
@@ -87,6 +87,44 @@ See [projects and storage](docs/configurator/projects.md),
 [editor state](docs/configurator/editor-state.md) and the
 [editing screenshots](docs/configurator/gallery.md#edit-and-repair).
 
+### Landscape and portrait
+
+**Device → Default screen orientation** chooses 320×240 landscape or 240×320
+portrait, with an optional 180° mounting flip. Boot info, Splash and each named
+view can override it; Debug and Logs follow the device default. Each screen is
+rendered at its native dimensions, including warnings and feedback popups.
+
+- Inspect the proposed layout, then **Apply orientation**. Eight cells remain
+  available; widget settings and sizes are preserved. One **Undo** restores the
+  complete change. A 2×1 widget stays horizontal in both shapes.
+- Custom artwork targets the effective Splash shape. Changing shape retains the
+  artwork and original, visibly blocks export/build when they mismatch, and offers
+  **Reconvert original with recorded fit and timing**. A mounting flip needs no
+  reconversion. Converted-only projects need the original reimported to reconvert.
+- Physical A/B/X/Y identities and encoder direction stay the same. Brightness
+  remains Full / Dim / Off; protected Y hold still returns to Dashboard at Full.
+- Both orientations reuse the same two RGB565 framebuffers. An orientation change
+  sends a full frame; subsequent matching frames can use partial updates.
+
+[Orientation workflow and format migration](docs/configurator/orientation.md) ·
+[Physical mounting and display checks](docs/hardware/display-orientation.md).
+Browser previews and host tests do not establish panel scanout, tearing or physical FPS.
+
+[![Portrait 2 by 4 dashboard with shared graph and widget rendering](docs/images/orientation/portrait-editor.jpg)](docs/configurator/orientation.md)
+
+*The portrait editor keeps eight cells, native pixel rendering and the same widget
+settings. Orientation changes preview their placement before one undoable Apply.*
+
+[![Independent landscape Boot info and portrait turbo Splash in Studio](docs/images/orientation/portrait-startup.jpg)](docs/configurator/orientation.md#custom-splash-artwork)
+
+*Boot info and Splash can use different shapes. The preview uses the shared Rust
+scenes, with synthetic status; physical controls keep their assignments.*
+
+[![Portrait Logs in the all-screen simulator](docs/images/orientation/portrait-logs.jpg)](docs/configurator/orientation.md#rendering-and-hardware-boundaries)
+
+*Debug and Logs inherit the device orientation. The simulator exercises screen
+changes, recovery and completion-bound LED/backlight state without a Pico.*
+
 ## Widget gallery
 
 These are native shared-renderer crops with synthetic inputs, not live readings
@@ -103,8 +141,9 @@ fixture are described in the [gallery](docs/configurator/gallery.md#shared-rende
 
 ### Six styles, three sizes
 
-The 4×2 grid supports 1×1 (80×107), 2×1 (160×107) and 2×2 (160×214)
-widgets below the 26-pixel header. All examples use the same synthetic boost
+The landscape 4×2 grid supports 1×1 (80×107), 2×1 (160×107) and 2×2 (160×214)
+widgets below the 26-pixel header. Portrait uses two 120-pixel columns and four
+rows alternating 73/74 pixels, with the same three spans. The landscape examples use the same synthetic boost
 sample. Numeric companions work at every size; gauge companions need 2×1 or 2×2.
 
 | Style | 1×1 | 2×1 | 2×2 |
@@ -244,6 +283,12 @@ The pass preserves all gauges, animations, controls and validation gates.
 - **Pico 2 targeting:** every firmware route selects the RP2350's Cortex-M33
   with `-C target-cpu=cortex-m33` and the hard-float ARM target. The two RGB565
   framebuffers, DMA ownership and stack reserves remain unchanged.
+- **Native orientation:** both shapes render directly into the existing buffers,
+  with no transpose or additional framebuffer. A
+  [matched landscape comparison](docs/performance/orientation-landscape-2026-10-17.md)
+  found no repeatable regression in three selected workloads; desktop noise
+  prevents a precise speedup claim. Rotation forces one complete transfer before
+  partial updates resume.
 
 Host benchmarks do not establish physical FPS or target CPU-cycle gains.
 For target measurements, use the [bounded on-device kernels](docs/performance/target-benchmarks.md)

@@ -26,7 +26,7 @@ An invalid candidate remains inspectable. Repair overlapping placement or discar
 
 [![Studio: reach covered widgets](../images/gallery/workflows/widget-actions.jpg)](../images/gallery/workflows/widget-actions.jpg)
 
-The widget menu exposes move/delete actions and selection alternatives when a widget is covered. Resize and placement still obey the 4×2 grid.
+The widget menu exposes move/delete actions and selection alternatives when a widget is covered. Resize and placement obey the effective 4×2 landscape or 2×4 portrait grid.
 
 ### Review JSON before applying
 

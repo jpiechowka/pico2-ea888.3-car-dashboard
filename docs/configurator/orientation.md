@@ -96,3 +96,23 @@ delayed completions and injected failures. Browser previews are synthetic. Neith
 establishes physical mounting, scanout, tearing, FPS, button/LED electrical behavior
 or ECU compatibility. Use the [display orientation runbook](../hardware/display-orientation.md)
 with the [device validation runbook](../validation/pico2-dnuc-runbook.md) for those checks.
+
+The [orientation verification record](../validation/orientation-2026-10-17.md)
+summarizes the software checks, linked ARM memory result and benchmark limits.
+
+## Studio examples
+
+![Portrait dashboard with inherited orientation and eight cells](../images/orientation/portrait-editor.jpg)
+
+The view inherits the device's 2×4 portrait grid. Widget controls and the canvas
+use that geometry together; history curves retain a separate duration label.
+
+![Independent landscape Boot info and portrait Splash](../images/orientation/portrait-startup.jpg)
+
+The preview follows the current startup phase, so Boot info may be landscape
+before a portrait Splash. The timeline is elapsed-time based.
+
+![Portrait Logs with the diagnostic event workspace](../images/orientation/portrait-logs.jpg)
+
+Logs and Debug follow the device default and retain their physical controls.
+These are synthetic browser screenshots, not photographs of a running Pico.
