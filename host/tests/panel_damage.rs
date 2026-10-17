@@ -321,7 +321,7 @@ fn render_transition_follows_pending_orientation_before_old_completion() {
 #[test]
 fn oriented_regions_fit_the_vehicle_trace_storage_budget() {
     // Plans are copied into the producer/consumer futures and channel slots.
-    // Six-byte rectangles leave the 64 KiB core0 reserve intact with tracing.
+    // Six-byte rectangles meet the 64 KiB core0 headroom requirement with tracing.
     assert_eq!(core::mem::size_of::<Region>(), 6);
 }
 
