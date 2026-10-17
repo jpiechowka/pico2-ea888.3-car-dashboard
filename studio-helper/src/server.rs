@@ -942,3 +942,88 @@ mod tests {
         assert!(poll_query(Some("after=0&limit=129")).is_err());
     }
 }
+
+#[cfg(test)]
+mod upload_failure_tests {
+    use super::*;
+    struct InterruptedBody(bool);
+    impl hyper::body::Body for InterruptedBody {
+        type Data = axum::body::Bytes;
+        type Error = std::io::Error;
+
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+            if !self.0 {
+                self.0 = true;
+                std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(axum::body::Bytes::from_static(
+                    b"EAVPROJ\0",
+                )))))
+            } else {
+                std::task::Poll::Ready(Some(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "injected upload disconnect",
+                ))))
+            }
+        }
+    }
+    fn upload(
+        state: &State,
+        body: Body,
+    ) -> Request<Body> {
+        Request::builder()
+            .uri("/api/v1/projects")
+            .method("POST")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .header("content-type", "application/octet-stream")
+            .body(body)
+            .unwrap()
+    }
+    #[tokio::test]
+    async fn interrupted_body_keeps_previous_upload_and_allows_explicit_retry() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+        let bytes = dashboard_config_tools::project::Project::new(&config, Default::default(), None)
+            .unwrap()
+            .encode(dashboard_config_tools::project::ExportMode::ConvertedOnly)
+            .unwrap();
+        assert_eq!(
+            dispatch(state.clone(), upload(&state, Body::from(bytes.clone())))
+                .await
+                .status(),
+            StatusCode::CREATED
+        );
+        let before = state.inner.lock().unwrap().project.as_ref().unwrap().response.clone();
+        assert_eq!(
+            dispatch(state.clone(), upload(&state, Body::new(InterruptedBody(false))))
+                .await
+                .status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        let after = state.inner.lock().unwrap().project.as_ref().unwrap().response.clone();
+        assert_eq!(after.project_id, before.project_id);
+        assert_eq!(after.project_sha256, before.project_sha256);
+        assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
+        assert_eq!(
+            dispatch(state.clone(), upload(&state, Body::from(bytes)))
+                .await
+                .status(),
+            StatusCode::CREATED
+        );
+        assert_ne!(
+            state
+                .inner
+                .lock()
+                .unwrap()
+                .project
+                .as_ref()
+                .unwrap()
+                .response
+                .project_id,
+            before.project_id
+        );
+    }
+}

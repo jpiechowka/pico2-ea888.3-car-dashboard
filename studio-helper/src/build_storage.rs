@@ -666,9 +666,11 @@ pub(crate) fn prepare(
 mod tests {
     use super::*;
     fn fixture() -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "studio-storage-{}-{}",
+            "studio-storage-{}-{}-{}",
             std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -837,5 +839,43 @@ mod tests {
         assert!(reserve(&repo).is_err());
         assert!(repo.join("target/studio-helper/attempts/legacy").exists());
         cleanup_fixture(repo);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod publication_failure_tests {
+    use super::*;
+    #[test]
+    fn interrupted_metadata_publication_preserves_committed_file_and_quarantines_storage() {
+        let repo = std::env::temp_dir().join(format!(
+            "studio-publication-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&repo).unwrap();
+        let mut reservation = reserve(&repo).unwrap();
+        reservation.close(false, None).unwrap();
+        let committed = std::fs::read(&reservation.index).unwrap();
+        let pending = reservation.index.with_extension("pending");
+        std::fs::write(&pending, b"{\"schema\":").unwrap();
+        assert!(publish(&reservation.index, &json!({"schema":1,"state":"artifact"})).is_err());
+        assert_eq!(std::fs::read(&reservation.index).unwrap(), committed);
+        assert_eq!(std::fs::read(&pending).unwrap(), b"{\"schema\":");
+        assert!(list(&repo, &BTreeSet::new()).is_err());
+        assert!(reserve(&repo).is_err());
+        assert!(reservation.path.exists());
+        drop(reservation);
+        assert!(repo.starts_with(std::env::temp_dir()));
+        assert!(
+            repo.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("studio-publication-")
+        );
+        std::fs::remove_dir_all(repo).unwrap();
     }
 }

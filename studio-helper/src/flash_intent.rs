@@ -257,3 +257,131 @@ mod tests {
         std::fs::remove_dir_all(repo).unwrap();
     }
 }
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    fn fixture() -> (PathBuf, Journal) {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let repo = std::env::temp_dir().join(format!(
+            "studio-journal-recovery-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&repo).unwrap();
+        let job = JobId::new("a".repeat(32)).unwrap();
+        let session = SessionId::new("b".repeat(32)).unwrap();
+        let device = DeviceId::new("c".repeat(32)).unwrap();
+        let hash = Sha256::new("d".repeat(64)).unwrap();
+        let request = FlashRequest {
+            artifact_id: ArtifactId::new("e".repeat(64)).unwrap(),
+            device_id: device.clone(),
+            editor_revision: 1,
+            project_sha256: hash.clone(),
+            config_sha256: hash.clone(),
+            expected_options: Default::default(),
+            retry_of: None,
+            board_acknowledgement: BoardAcknowledgement {
+                device_id: device,
+                session_id: session.clone(),
+                information_sha256: hash,
+                board: BoardContract::GenuinePico2,
+            },
+        };
+        let journal = Journal::new(&repo, &job, &session, &request).unwrap();
+        (repo, journal)
+    }
+    fn cleanup(repo: PathBuf) {
+        assert!(repo.starts_with(std::env::temp_dir()));
+        assert!(
+            repo.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("studio-journal-recovery-")
+        );
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+    #[test]
+    fn pending_generation_never_upgrades_recovered_write_outcome() {
+        let (repo, mut journal) = fixture();
+        journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
+        let published = std::fs::read(journal.directory.join("0.json")).unwrap();
+        let mut verified = journal.record.clone();
+        verified["phase"] = json!("verification_confirmed");
+        verified["write_outcome"] = json!(WriteOutcome::Verified);
+        verified["generation"] = json!(1);
+        verified["raw_exit"] = json!(0);
+        verified["interpreted_exit"] = json!(0);
+        let complete = serde_json::to_vec(&verified).unwrap();
+        // Simulate a torn subsequent write, then a complete but unrenamed write.
+        for pending in [b"{\"phase\":".as_slice(), complete.as_slice()] {
+            std::fs::write(journal.directory.join("1.pending"), pending).unwrap();
+            let recovered = history(&repo).unwrap();
+            assert_eq!(recovered.attempts[0].recovery_write_outcome, WriteOutcome::Unknown);
+            assert!(!recovered.attempts[0].automatic_resume);
+            assert!(!recovered.attempts[0].running_firmware_observed);
+            assert!(!recovered.attempts[0].hardware_qualified);
+            assert!(
+                journal
+                    .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+                    .is_err()
+            );
+            assert_eq!(journal.generation, 1);
+            assert_eq!(std::fs::read(journal.directory.join("0.json")).unwrap(), published);
+            assert!(!journal.directory.join("1.json").exists());
+        }
+        drop(journal);
+        assert_eq!(
+            history(&repo).unwrap().attempts[0].recovery_write_outcome,
+            WriteOutcome::Unknown
+        );
+        // Prove the completed candidate is admissible once actually published.
+        // Otherwise malformed pending data could hide an accidental early read.
+        std::fs::rename(
+            root(&repo).join("a".repeat(32)).join("1.pending"),
+            root(&repo).join("a".repeat(32)).join("1.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            history(&repo).unwrap().attempts[0].recovery_write_outcome,
+            WriteOutcome::Verified
+        );
+        cleanup(repo);
+    }
+    #[test]
+    fn corrupt_published_generation_fails_history_instead_of_falling_back_to_verified() {
+        let (repo, mut journal) = fixture();
+        journal
+            .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+            .unwrap();
+        std::fs::write(journal.directory.join("1.json"), b"{").unwrap();
+        assert!(history(&repo).is_err());
+        std::fs::write(journal.directory.join("1.json"), vec![b' '; MAX_RECORD + 1]).unwrap();
+        assert!(history(&repo).is_err());
+        drop(journal);
+        cleanup(repo);
+    }
+    #[test]
+    fn failed_rename_preserves_last_record_and_never_acknowledges_generation() {
+        let (repo, mut journal) = fixture();
+        journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
+        let first = std::fs::read(journal.directory.join("0.json")).unwrap();
+        std::fs::create_dir(journal.directory.join("1.json")).unwrap();
+        assert!(
+            journal
+                .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+                .is_err()
+        );
+        assert_eq!(journal.generation, 1);
+        assert_eq!(std::fs::read(journal.directory.join("0.json")).unwrap(), first);
+        assert!(journal.directory.join("1.pending").is_file());
+        assert!(history(&repo).is_err());
+        drop(journal);
+        cleanup(repo);
+    }
+}
