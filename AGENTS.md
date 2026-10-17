@@ -131,6 +131,17 @@ use `cargo build` for compilation without device operations.
 
 ## Hardware, concurrency and memory
 
+- The selected vehicle connection is isolated Longan with the retained Pololu.
+  Prefer ready-made modules and modest soldering; no custom PCB by default.
+  The covered switch cuts the vehicle-side 5 V branch to Longan and isolated
+  power. Unplug OBD for long parking or physical CAN disconnection. Allow restart
+  on supply dips, retain smoothing capacitors, and do not add crank backup or a
+  CAN-disconnect chain without a new requirement. Use the approved compact
+  layout, approximately ≤1 m OBD and ≤20 cm encoder leads, with short local
+  power/UART runs. Prefer identifiable capacitor parts with source-checked
+  impedance/ripple ratings; preserve intentional damping. See the
+  [module build](hardware/module-build.md) for open component/measurement gates.
+
 - Before hardware-control changes, cross-check **manufacturer specifications,
   board/controller references, and the actual locked dependency source**. Use
   current official online documentation and relevant upstream issues. Read Embassy

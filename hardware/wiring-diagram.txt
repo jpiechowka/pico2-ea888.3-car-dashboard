@@ -1,7 +1,12 @@
 PICO 2 W / LEON CUPRA DNUC: PROPOSED ISOLATED NET AND PIN REFERENCE
 Reviewed: 2026-10-17. Architecture only, not assembly-ready wiring.
 Detailed protection values and electrical/vehicle acceptance remain open.
-See protection-plan.md, transport-options.md and ../docs/hardware/pico2w-board-audit.md.
+See protection-plan.md, module-build.md, transport-options.md and
+../docs/hardware/pico2w-board-audit.md. Mostly ready-made modules are selected;
+no custom PCB, backup battery or automatic CAN-disconnect chain is selected.
+Compact arrangement approved: modules near display, approximately <=1 m OBD
+lead and <=20 cm encoder lead. Keep local 5 V/UART short; verify heat/clearance
+and signal integrity. Capacitor parts/offers and placement: capacitors.md.
 
 IDENTIFIED PARTS
 ===============
@@ -20,11 +25,12 @@ No direct VEHICLE_GND-to-DASHBOARD_GND connection across the barrier.
 Mounts, shields, switch LED and test instruments must preserve that separation.
 
 OBD 16 -> connector-adjacent fuse -> coordinated automotive protection
-       -> Pololu VIN -> independent 5 V fault containment -> protected 5 V
+       -> Pololu VIN -> 5 V rail (independent OVP decision still open)
+       -> Adafruit covered switch -> switched vehicle-side 5 V
 
-Protected 5 V -> Longan branch (V1.4 supply/logic admission still required)
-Protected 5 V -> regulated isolated DC/DC -> secondary protection
-             -> reverse-blocking external power path -> Pico VSYS pin 39
+Switched 5 V -> Longan branch (V1.4 supply/logic admission still required)
+Switched 5 V -> regulated isolated DC/DC -> source-blocking external diode
+            -> Pico VSYS pin 39 (secondary rail limits still require checks)
 USB VBUS pin 40 -> existing onboard diode -> Pico VSYS pin 39
 
 OBD 4 chassis ground and OBD 5 signal ground remain distinct named inputs.
@@ -35,7 +41,12 @@ This reference intentionally does not invent a final ground-tie location.
 The Adafruit 3218 is specified for 12 V maximum, recommended 1-2 A despite
 its 20 A case marking. Use protected low-voltage switching/control, not raw
 vehicle battery. Its LED and return stay in the same selected power domain.
-The enable/load-switch circuit, inrush and parking current are still to design.
+Approved location: regulated vehicle-side 5 V, before Longan/converter split.
+Verify contact current/inrush; LED may be dimmer. Pololu stays enabled at its
+documented 2-3 mA no-load draw, plus any input-protection consumption. Unplug OBD
+for long parking or physical CAN disconnection. Keep switch off while starting
+the engine, then switch on. Clean restart on supply dips is acceptable; retain
+smoothing capacitors without a battery/supercapacitor ride-through system.
 Pololu EN is pulled to VIN through 100 kohm: never connect it directly to GPIO.
 
 A dashboard cutoff does not cut USB power. A separate Bluetooth dongle also
@@ -47,6 +58,13 @@ Never connect OBD16 to Longan VCC. Never directly join Pololu output to Pico
 VSYS while assuming the switch blocks USB backfeed. Use the designed isolated
 power path, or keep all vehicle-side power/signals disconnected during USB work.
 The old 3 A fuse / SS34 / SMAJ14A / 500 mA PTC list is NOT an approved circuit.
+
+Bulk candidates, pending inrush/damping and converter checks:
+  Protected Pololu input: Panasonic FR 100 uF / 63 V EEUFR1J101L.
+  Isolated output: Panasonic FR 220 uF / 50 V EEUFR1H221.
+Each connects across its own supply and return with correct polarity, never
+across isolation grounds. Keep fitted local ceramic bypass/storage. Do not put
+bulk caps on CAN/I2C signals or treat the capacitor rating as a rail clamp.
 
 CAN AND UART (PROPOSED)
 ======================
@@ -119,7 +137,7 @@ switches views. Protected two-second Y hold restores Dashboard at Full.
 The backlight is approximately 1 kHz from the resolved clock; check its actual
 waveform, pulse width, load/brightness and profile stability on the display.
 
-Before vehicle use: verify fuse/wire/TVS/FET coordination, 5 V fault containment,
+Before vehicle use: verify fuse/wire/transient coordination, resolve rail OVP,
 isolation, USB power ordering, switch behavior, regulated rail maxima, current,
 inrush, temperature, UART logic margins, termination and CAN power-off loading.
 Measure each retained module rather than using the old partial current totals.

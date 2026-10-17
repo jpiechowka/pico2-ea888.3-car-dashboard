@@ -1,13 +1,14 @@
 # Transport options: isolated Longan and BLE OBD
 
 Research reviewed 2026-10-17. The owned board is **Raspberry Pi Pico 2 W**.
-The approved design baseline reuses the Longan CAN kit with isolated UART and
-isolated dashboard power. OBDLink CX is a possible BLE prototype; it has not been
-selected or purchased. Neither route establishes exact DNUC ECU support.
+The owner selected the Longan CAN kit with isolated UART and isolated dashboard
+power after this comparison. The [module-based build](module-build.md) uses
+mostly ready-made parts. OBDLink CX remains an unselected BLE alternative.
+Neither route establishes exact DNUC ECU support.
 
 ## Recommendation and tradeoffs
 
-Continue the isolated Longan design. It reuses the owned adapter and avoids adding
+The selected isolated Longan design reuses the owned adapter and avoids adding
 radio pairing and reconnect behavior to the firmware. Consider a separate CX bench
 prototype if removing the UART cable is worth the additional integration work.
 This comparison does not authorize purchases or vehicle communication.

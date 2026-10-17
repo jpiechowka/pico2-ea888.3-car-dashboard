@@ -11,6 +11,8 @@ reuse of these parts and selected isolated dashboard power plus UART.
 | [Pin and connection reference](wiring-diagram.txt)
 | [W board/code audit](../docs/hardware/pico2w-board-audit.md)
 | [Wired versus Bluetooth](transport-options.md)
+| [Selected module-based build](module-build.md)
+| [Capacitor parts and Allegro offers](capacitors.md)
 | [Vehicle/bench runbook](../docs/validation/pico2-dnuc-runbook.md)
 
 ## 1. Retained parts and evidence status
@@ -114,14 +116,19 @@ no-load consumption is 2–3 mA; disabling EN reduces it but does not make it ze
 [Pololu 3782](https://www.pololu.com/product/3782).
 
 Independent output protection must account for a failed buck passing its input
-to the nominal 5 V rail. A protector must survive that fault voltage. Normal
-5.2 V output leaves only 0.3 V below Pico's 5.5 V VSYS ceiling for threshold
-errors and transient overshoot. A “5 V TVS” alone is not a precision 5.5 V clamp.
+to the nominal 5 V rail. A protector must survive that fault voltage. In the
+selected isolated topology, Pololu's tolerance applies to Longan and the isolated
+converter input. Pico's 5.5 V VSYS ceiling instead constrains the converter's
+secondary output, including tolerance, ripple, load steps and the source diode.
+A “5 V TVS” alone is not a precision 5.5 V clamp. Isolation does not by itself
+guarantee a regulated output under an internal fault.
 
-USB feeds Pico VSYS through its onboard diode. An external supply needs its own
-reverse-blocking/ORing path; otherwise USB can power the regulator/Longan side
-with the vehicle switch off. USB can still intentionally power Pico when the
-vehicle branch is off. Signal and ground paths need independent treatment.
+USB feeds Pico VSYS through its onboard diode. The isolated converter's output
+needs its own reverse-blocking/ORing path to prevent USB backfeeding its secondary.
+That alone does not imply current crosses an intact isolation barrier. The old
+direct shared-ground supply could instead backfeed regulator/Longan. USB can
+still intentionally power Pico when the vehicle branch is off. Signal and ground
+paths need independent treatment.
 [Pico 2 W datasheet, §§3.4–3.5](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf).
 
 ## 3. Architecture choice
@@ -131,26 +138,27 @@ directions. Retain Pololu and Longan on the vehicle side. This reduces
 vehicle-to-USB ground fault paths. It does not make the Longan immune to faults
 or prevent all unwanted CAN traffic.
 
-The owner also requested a [Bluetooth comparison](transport-options.md) before
-finalizing the BOM. The owned Pico 2 W already has wireless hardware. A documented
-BLE adapter is a possible prototype, requiring new firmware and independent
-adapter power/cutoff analysis; it is not an implemented replacement for Longan.
+After the [Bluetooth comparison](transport-options.md), the owner confirmed
+isolated Longan and chose **mostly ready-made modules with some soldering**.
+The [practical shortlist](module-build.md) supersedes any suggestion that a
+custom carrier is required. BLE remains an unselected alternative.
 
 | Option | Protection and behavior | Tradeoff |
 | --- | --- | --- |
-| **Isolated dashboard, selected** | Fused automotive input protection, Pololu, independent rail protection, regulated isolated DC/DC and two UART isolation channels; separate vehicle/dashboard grounds | More parts, board area, heat and EMI work; every cable/mount must preserve the barrier |
+| **Isolated dashboard, selected** | Fused input, Pololu, regulated isolated DC/DC and two UART isolation channels; separate grounds; independent rail-fault protection decision remains open | More parts, board area, heat and EMI work; every cable/mount must preserve the barrier |
 | Protected shared ground | Same input/output protections; external power ORing and power-off-safe UART interface | Smaller and more efficient; USB/computer and vehicle remain electrically linked |
 | Surge ride-through addition | Either design with a dimensioned surge stopper/energy reserve | More complex thermal/SOA and capacitor work; only useful if uninterrupted operation is required |
 
-Prefer safe shutdown and clean restart during abnormal supply conditions.
-Cold-crank ride-through is a separate availability choice. Ordinary decoupling
-capacitors cannot sustain a dashboard through a seconds-long interruption.
+Clean restart during supply dips is approved. Intended use is switch off, start
+engine, then switch on. Keep capacitors for ripple/load-step smoothing; no
+battery, supercapacitor or dedicated crank ride-through circuit is selected.
+Input protection and Pololu remain connected while the branch switch is off.
 
-In the isolated option, the switch and its LED must belong to one domain. A
-vehicle-side low-voltage enable interface can shut down the power branch while
-preserving the barrier. A simpler protected-5 V load switch leaves regulator
-standby consumption. The final choice must include parking-current and startup
-behavior; no low-voltage source may depend on the very rail it must first enable.
+The approved covered switch cuts the regulated vehicle-side 5 V branch before
+Longan and the isolated converter. Its LED return stays in that same domain.
+Pololu remains enabled; unplug OBD for long parking or physical CAN isolation.
+USB can independently keep the dashboard powered. See the
+[cutoff state table](module-build.md#what-the-approved-cutoff-does).
 
 Vehicle-side TVS returns, CAN reference and power return need deliberate routing.
 Keep OBD pin 4 (chassis ground) and pin 5 (signal ground) distinct until the return
@@ -187,6 +195,11 @@ different fault envelope from one on regulated 5 V. Include `I = C × dV/dt`,
 stored energy `½CV²`, mixed-capacitor resonance and switch bounce. Keep power
 storage capacitors off CAN-H/CAN-L and I2C signal lines.
 
+The [exact-part shortlist](capacitors.md) now includes Panasonic FR 100 µF / 63 V
+and a lower-impedance 220 µF / 50 V option, with manufacturer ratings, Allegro
+offers and conditional locations. These do not yet define a coordinated input
+filter or replace the listed electrical checks.
+
 ## 5. BOM planning register
 
 Retained modules are listed above. These are **design blocks to select**, not
@@ -195,12 +208,12 @@ approved substitutions or purchase quantities:
 | Block | Candidate direction | Selection gate |
 | --- | --- | --- |
 | OBD harness and fuse | Keyed connector, short twisted CAN pair, strain relief, inline fuse close to pin 16 | Actual pin continuity, wire/contact gauge, fuse time-current and breaking capacity |
-| Automotive front end | LM74800-Q1 with back-to-back FETs and coordinated TVS, or LTC4368-based disconnect | Defined surge/reverse/jump-start envelope, hot FET SOA, clamp and threshold tolerances |
+| Automotive front end | Coordinated fuse/TVS/damping or a documented assembled protection board; custom controller circuits are research alternatives | Defined surge/reverse/jump-start envelope, clamp energy and any switch/FET limits |
 | 5 V fault containment | High-input-voltage-tolerant disconnect/current protection | Buck input-to-output short; trip minimum above normal maximum and fault peak below every load limit |
 | Isolated supply, selected architecture | Regulated 5-to-5 V converter sized after load measurement | No-load/full-load voltage, thermal derating, startup capacitive load, isolation working voltage and EMI |
-| UART interface | Opposite-direction default-high isolator, or power-off-safe translator for shared ground | Actual Longan logic supply, threshold margins, brownout and every supply order |
+| UART interface | Assembled opposite-direction isolator; MIKROE-6518 is a conditional candidate | Actual Longan logic supply, threshold margins, brownout and every supply order |
 | CAN protection | Revision-matched low-capacitance protection; optional supervised disconnect | Both-polarity clamp/fault energy and complete bus-loading qualification |
-| Switch interface | Protected low-voltage enable/control with LED on same domain | No raw battery on switch, defined off-state current and no self-start dependency |
+| Switch interface | Approved covered switch on regulated vehicle-side 5 V before both loads | Contact/inrush limit, same-domain LED, idle draw and USB exception |
 | Capacitor network | Effective ceramics plus bulk/damping selected per node | ESR/ESL, bias, ripple, temperature/lifetime, inrush and regulator stability |
 | Enclosure/interconnect | Insulated mounting, rated crimps/connectors, test points and service disconnect | Abrasion, vibration, accidental shorts, barrier clearance and heat |
 
@@ -250,9 +263,10 @@ the resolved clock. [Control/electrical contract](../docs/hardware/backlight-con
    Pololu and switch are recorded. Resolve Longan LDO/MCU, jumper circuit and
    unpowered cable continuity. Resolve actual V1.4 supply
    limits without extrapolating from V1.3.
-2. **Finish operating-behavior choices.** Isolation is approved. Decide shutdown
-   versus crank ride-through; low-voltage switch behavior/parking draw; enclosure,
-   cable lengths and assembly method. Keep both owned modules.
+2. **Apply the approved operating choices.** Isolated Longan, ready-made modules,
+   5 V branch cutoff, restart on dips and compact layout are selected. Use
+   approximately ≤1 m OBD and ≤20 cm encoder leads; size the enclosure from the
+   selected modules and thermal/clearance checks. Retain smoothing caps.
 3. **Produce the detailed schematic and purchasing BOM.** Assign net names and
    connector views; calculate power/thermal/inrush budgets, fuse/wire coordination,
    TVS/FET stress, rail OVP tolerance and capacitor damping. Independently review
@@ -278,8 +292,12 @@ parts do not turn the whole stack into an automotive-qualified module.
 - Longan V1.4 matching circuit, LDO/MCU and measured rails/termination: open;
   revision, MCP2515/SIT transceiver, Pico 2 W and Pololu/switch identified.
 - Isolated power plus UART: approved; detailed component design remains pending.
-- Wired versus BLE: comparison requested and documented, final route pending.
-- Switch shutdown/parking-current behavior, crank continuity, enclosure/assembly
-  constraints and cable lengths: ask after the architecture choice.
+- Wired versus BLE: isolated Longan selected after comparison; BLE not selected.
+- Assembly: mostly ready-made modules and some soldering; no custom PCB default.
+- Covered switch: regulated 5 V branch cutoff selected; unplug OBD for long
+  parking. Restart on dips accepted, smoothing caps retained, no crank backup.
+- Compact layout approved: modules near display, approximately ≤1 m OBD and
+  ≤20 cm encoder leads. Exact enclosure fit, cooling and signal integrity remain
+  physical checks.
 - Exact protection parts/values and purchase-ready BOM: depend on those decisions
   and the electrical worksheets above.

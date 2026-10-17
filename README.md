@@ -279,6 +279,14 @@ directions from the vehicle. These are **architecture diagrams**, not a finished
 soldering schematic: component values, fault limits and bench measurements are
 still being resolved. [Audit, BOM planning register and build order](hardware/protection-plan.md).
 
+The selected build uses **mostly ready-made modules with some soldering**.
+The [practical module shortlist](hardware/module-build.md) covers isolated power,
+UART isolation, capacitor smoothing and the remaining component checks. No custom
+PCB, backup battery or automatic CAN-disconnect chain is selected.
+The approved compact layout groups the modules near the display: approximately
+**≤1 m to OBD** and **≤20 cm to the encoder**, with short local 5 V/UART wiring.
+Enclosure temperature, clearances and signal integrity still need bench checks.
+
 The owner's board is confirmed as **Pico 2 W**. Its header pins work with the
 existing display/encoder/UART assignments; internal GP23/24/25/29 serve wireless.
 The current firmware does not initialize the radio.
@@ -293,13 +301,13 @@ flowchart TD
     OBD["OBD pin 16: vehicle supply"] --> F["Fuse close to connector"]
     F --> INPUT["Coordinated transient / reverse / overvoltage protection"]
     INPUT --> REG["Retained Pololu D36V28F5"]
-    REG --> PROTECT["Independent 5 V fault protection"]
-    PROTECT --> LONGAN["Longan branch: vehicle ground"]
-    PROTECT --> ISO["Regulated isolated DC/DC"]
-    ISO --> SEC["Secondary rail protection + reverse-blocking power path"]
+    REG --> PROTECT["5 V rail: independent OVP choice open"]
+    PROTECT --> SWITCH["Covered switch: vehicle-side 5 V cutoff"]
+    SWITCH --> LONGAN["Longan branch: vehicle ground"]
+    SWITCH --> ISO["Regulated isolated DC/DC"]
+    ISO --> SEC["Source-blocking diode + rail-limit checks"]
     SEC --> PICO["Pico VSYS: dashboard ground"]
     USB["USB VBUS through Pico onboard diode"] --> PICO
-    SWITCH["Covered switch: protected low-voltage control"] -. "interface to be designed" .-> INPUT
     classDef vehicle fill:#241b24,stroke:#df5964,color:#fff
     classDef barrier fill:#15363e,stroke:#62c4ce,color:#fff
     classDef dashboard fill:#202b39,stroke:#8397b6,color:#fff
@@ -311,8 +319,18 @@ flowchart TD
 The isolated converter and UART barrier need **separate vehicle and dashboard
 grounds**, including through USB, mounting hardware and the switch LED. USB can
 still power the Pico when the vehicle branch is off. The covered switch's 12 V
-maximum means its old raw-battery placement is being replaced by low-voltage
-control. Final shutdown/standby behavior is an open design choice.
+maximum rules out its old raw-battery placement. It now belongs on the regulated
+5 V branch feeding Longan and the isolated converter; its LED may be dimmer.
+The intended sequence is **switch off → start engine → switch on**. A clean
+restart after a supply dip is acceptable; local and bulk capacitors provide
+smoothing, without a dedicated crank ride-through circuit.
+
+Pololu remains connected with the switch off and draws a specified 2–3 mA at
+no load, before any additional input-protection consumption. **Unplug OBD for
+long parking or physical CAN disconnection.** Opening the switch removes the
+incoming branch power; capacitor discharge takes time. Independent rail-fault
+protection is still an open choice: the diagram does not claim that a fuse or
+source diode contains a failed regulator's overvoltage.
 
 ### CAN, UART and controls
 
@@ -346,9 +364,20 @@ boundary; it does not guarantee that a faulty adapter cannot disturb CAN.
 The firmware's unqualified, no-diagnostic-polling mode is not electrical
 listen-only certification. [Revision evidence and remaining gates](hardware/protection-plan.md#2-corrections-that-affect-the-design).
 
-Local ceramics, intermediate storage and bulk capacitors will be sized together
-with fuse, clamp, damping and inrush limits. Lowest ESR everywhere can worsen
-cable-induced ringing. The old fuse/TVS/PTC list is provisional.
+### Capacitor choices and sourcing
+
+The [capacitor shortlist with Allegro links](hardware/capacitors.md) recommends
+Panasonic FR **100 µF / 63 V** for protected-input bulk and **220 µF / 50 V** for
+isolated 5 V bulk, subject to the module and inrush checks. Their specified
+100 kHz / 20°C impedances are 68 mΩ and 30 mΩ respectively. The 220 µF part
+improves on the smaller 16 V candidate's 130 mΩ without adding capacitance.
+Local ceramics and intermediate storage already fitted to the boards stay in
+the design. Exact codes, dimensions, ripple/endurance ratings and listing
+inconsistencies are recorded in the shortlist.
+
+Lowest ESR everywhere can worsen cable-induced ringing. Capacitors provide
+smoothing; fuse, clamp, damping and inrush limits still need coordination. The
+old fuse/TVS/PTC list remains provisional.
 [Capacitor design and acceptance plan](hardware/protection-plan.md#4-capacitors-local-bypass-local-storage-and-bulk).
 
 ## Performance optimizations
