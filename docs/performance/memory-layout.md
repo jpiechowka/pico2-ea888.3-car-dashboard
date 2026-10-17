@@ -74,6 +74,59 @@ open. Its authored v4 machine/layout contracts also require a separately reviewe
 port for current v5 images. A successful historical component replay would close
 that component only, not the full current-image gate.
 
+### Experimental validator allocation repair (2026-10-17)
+
+The raw Tail handoff now compares plain model records without constructing a
+second complete snapshot solely for equality. It still walks the whole graph,
+checks values, types, container aliases and cycles, and retains all six Source/Tail
+checkpoints. Custom getters, metadata, metaclasses and mapping proxies use the
+unchanged snapshot writer, preserving callback and error order. Retained-state
+revalidation and supplied-input paths keep their original checks.
+
+A matched Windows/Python 3.15.0 pair used the same historical machine fixture with
+a synthetic 128-byte payload extent, current analyzer inputs and default garbage
+collection. The baseline was `a3de82a`; the repair was `9d512c1`. This is a host
+component measurement, not the complete historical ELF replay or a firmware
+performance measurement.
+
+| Measure | Before | After |
+| --- | ---: | ---: |
+| Producer wall time | 103.559 s | 104.938 s |
+| Producer CPU time | 77.500 s | 89.766 s |
+| Maximum sampled process private memory | 1,352,937,472 B | 1,245,863,936 B |
+| Complete snapshot constructions | 137 | 136 |
+| Retained checkpoint node slots | 5,119,725 | 5,119,725 |
+
+This pair traded more CPU work for fewer allocations: one temporary 974,371-slot
+graph disappeared and the sampled private-memory maximum fell 7.91%. Ten-second
+sampling can miss peaks; single-run timing varies with host load. No speedup or
+full-image memory bound is claimed. The public result remained byte-identical
+(40,946 bytes); a separate run reconstructed all six complete retained checkpoints
+and matched their values and alias encodings with the unchanged writer.
+
+Run the focused regressions from `firmware/scripts`:
+
+```text
+python -B -m unittest test_config_sources.SourcePhaseSnapshot test_phase_comparison
+python -B -O -m unittest test_config_sources.SourcePhaseSnapshot test_phase_comparison
+```
+
+CI runs both modes. These checks cover alias/type distinctions, malformed
+baselines, late traversal failures, observable callbacks, cleanup and a bounded
+allocation regression. The larger `test_config_tail.TailClosedProducerRelations`
+tests exercise handoff mutation rejection and supplied-input equivalence; those
+expensive component tests remain separate from normal production image checks.
+
+The corrected historical fixture preflight accepts missing stack metadata only
+for an already reviewed complete builtin body with the exact role, extent and
+frame. It rejects changed bodies, conflicting frames and missing ordinary-function
+metadata. The deferred actual-image replay previously sampled about 16.5 GB of
+private memory; the small-fixture reduction above does not establish that it fits
+less memory. That replay and the unfinished current-image producer are separate
+remaining work, and neither is a prerequisite for Build & Flash.
+
+### Scope of image admission
+
 Both gates require the explicit source context. Neither discovers a sidecar or
 uses current checkout source as a fallback. Each source member is limited to
 65536 UTF-8 bytes and the context to262144 bytes; memory results remain bounded

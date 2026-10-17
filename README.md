@@ -191,6 +191,8 @@ and explicit flashing. The [practical image checks](docs/performance/memory-layo
 bind source/configuration identities, ELF/UF2 contents, memory limits and
 conservative stack bounds. The unfinished instruction-level proof is a separate
 research check. Neither establishes physical hardware behavior.
+The [validator allocation repair](docs/performance/memory-layout.md#experimental-validator-allocation-repair-2026-10-17)
+records its measured memory/CPU tradeoff and the remaining proof work.
 
 Hold BOOTSEL while connecting the isolated board, scan,
 inspect the intended device and confirm it is a genuine Pico 2. Its 4 MB capacity
