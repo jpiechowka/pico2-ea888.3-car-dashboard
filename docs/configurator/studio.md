@@ -173,7 +173,7 @@ Returning from Debug/Logs restores the selected view in RAM. Reboot uses the
 configured boot view. Default encoder click cycles Full / 50% Dim / delayed
 Off; accepted per-screen mappings select the actual actions. Protected Y hold
 always recovers Dashboard and Full brightness. **Build & Flash** can build the
-complete accepted project and explicitly program an inspected Pico 2 through the
+complete accepted project and explicitly program an inspected Pico 2 W through the
 local helper. Exporting, downloading a recipe or running the wrapper above never
 flashes a device.
 

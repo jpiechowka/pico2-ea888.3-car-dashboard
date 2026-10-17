@@ -426,7 +426,7 @@ inputs, normalized options, source, converter, ELF and UF2 identities. All have
 `hardware_qualified:false` and `flash_ready:false`. These conditional software
 artifacts do not qualify arbitrary boards, partition/security states, or A2/E10
 mass-storage fallback. Explicit Flash admission requires a matching artifact,
-fresh device inspection and the user's genuine-Pico-2 confirmation; artifact
+fresh device inspection and the user's genuine-Pico-2-W confirmation; artifact
 metadata alone grants no write authority.
 
 Compilation uses [practical image checks](../performance/memory-layout.md#practical-image-checks-and-experimental-proof): exact ELF/config/startup identities, memory limits, conservative stack bounds and reviewed flash contracts, followed by strict ELF-to-UF2 comparison. The separate complete instruction-level proof remains experimental and unfinished. Practical admission makes no hardware qualification claim.
@@ -464,7 +464,7 @@ prevent a device spoofing descriptors. Every inspection still has
 
 ### Explicit Flash and recovery
 
-**Flash selected Pico 2** submits the accepted artifact, inspected device and
+**Flash selected Pico 2 W** submits the accepted artifact, inspected device and
 session-bound confirmation to `POST /api/v1/flashes`. The native worker repeats
 identity and policy checks before fixed picotool commands. Transfer,
 verification and reboot request are separate stages with bounded logs.

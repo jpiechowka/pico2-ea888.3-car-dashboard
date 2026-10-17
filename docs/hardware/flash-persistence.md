@@ -46,9 +46,9 @@ negative artifact fixtures.
 
 ## Reserved layout
 
-Keep the repository's conservative 2 MiB flash contract. Official Pico 2 has
-4 MiB W25Q32RV ([board datasheet](https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf),
-[SDK board header](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/boards/include/boards/pico2.h)).
+Keep the repository's conservative 2 MiB flash contract. Official Pico 2 W has
+4 MiB W25Q32RV ([board datasheet](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf),
+[SDK board header](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/boards/include/boards/pico2_w.h)).
 Program FLASH ends at `0x101fe000` (2040 KiB). Settings sectors occupy physical
 offsets `0x1fe000` and `0x1ff000`, ending at `0x200000`. They have no initialized
 ELF sections. The ELF gate checks every flash PT_LOAD physical file range,

@@ -1,169 +1,140 @@
-PICO 2 EA888 DASHBOARD: PROPOSED WIRING AND INSPECTION NET LIST
-Revision: 2026-10-11. No assembled board, Longan revision, ECU, or vehicle
-connection was inspected for this revision of the document.
+PICO 2 W / LEON CUPRA DNUC: PROPOSED ISOLATED NET AND PIN REFERENCE
+Reviewed: 2026-10-17. Architecture only, not assembly-ready wiring.
+Detailed protection values and electrical/vehicle acceptance remain open.
+See protection-plan.md, transport-options.md and ../docs/hardware/pico2w-board-audit.md.
 
-Parts named by the existing project: Raspberry Pi Pico 2, Pimoroni PIM715
-Display Pack 2.8, Adafruit 5880 I2C encoder, Longan 1030002 OBD-II Serial
-CAN Bus Dev Kit, Adafruit 3218 latching switch, and Pololu 3782 D36V28F5
-5 V regulator. Check markings on the actual assembled parts before wiring.
+IDENTIFIED PARTS
+===============
+Owner photos: Raspberry Pi Pico 2 W mounted on PIM715 Display Pack 2.8;
+Longan Serial CAN Bus V1.4 Aug 2020 (kit bag Seeed 114991438), MCP2515,
+16.000 MHz crystal, SIT65HVD230 transceiver; Pololu 3782 D36V28F5;
+Adafruit 3218 covered switch. Existing encoder: Adafruit 5880.
+Longan MCU/LDO markings and V1.4 circuit remain unresolved. Older TI
+SN65HVD230/MCP2551 schematics do not establish this board's rail or pin limits.
 
-POWER NETS
-===========
+POWER DOMAINS (OWNER-SELECTED WIRED BASELINE)
+==========================================
+VEHICLE domain: OBD-side protection, Pololu, Longan, isolator input supply.
+DASHBOARD domain: isolated supply secondary, Pico, PIM715, encoder, USB.
+No direct VEHICLE_GND-to-DASHBOARD_GND connection across the barrier.
+Mounts, shields, switch LED and test instruments must preserve that separation.
 
-OBD-II pin 16 (+vehicle supply)
-  -> suitably rated fuse and verified automotive input protection
-  -> latching switch
-  -> Pololu VIN.
+OBD 16 -> connector-adjacent fuse -> coordinated automotive protection
+       -> Pololu VIN -> independent 5 V fault containment -> protected 5 V
 
-OBD-II pins 4/5, Pololu GND, Pico GND, Longan GND
-  -> common ground, with layout and conductor ratings checked in hardware.
+Protected 5 V -> Longan branch (V1.4 supply/logic admission still required)
+Protected 5 V -> regulated isolated DC/DC -> secondary protection
+             -> reverse-blocking external power path -> Pico VSYS pin 39
+USB VBUS pin 40 -> existing onboard diode -> Pico VSYS pin 39
 
-Pololu VOUT (regulated 5 V, switched domain)
-  -> 5 V distribution and the specified PTC protection
-  -> Pico 2 VSYS and Longan Serial CAN module VCC on versions requiring 5 V.
+OBD 4 chassis ground and OBD 5 signal ground remain distinct named inputs.
+Finalize their vehicle-side return topology before assembly. Do not route load
+or surge current through a signal-reference wire. Neither joins Pico/USB ground.
+This reference intentionally does not invent a final ground-tie location.
 
-This direct-VSYS net is for vehicle power with USB DISCONNECTED. Before
-USB programming, disconnect the regulator/Longan 5 V distribution from
-Pico VSYS and isolate the adapter UART connection as required to prevent
-an unpowered adapter being driven through its signal pins.
+The Adafruit 3218 is specified for 12 V maximum, recommended 1-2 A despite
+its 20 A case marking. Use protected low-voltage switching/control, not raw
+vehicle battery. Its LED and return stay in the same selected power domain.
+The enable/load-switch circuit, inrush and parking current are still to design.
+Pololu EN is pulled to VIN through 100 kohm: never connect it directly to GPIO.
 
-USB VBUS feeds VSYS through the Pico's on-board D1 diode. With the net above
-still connected, USB can power Longan and drive the disabled regulator's
-output even when the vehicle switch is off. Switch-off isolation therefore
-does not hold in that configuration. Pico 2 datasheet section 5.5 specifies
-an additional external Schottky diode or its P-channel MOSFET alternative
-for two-source power ORing. Keep Longan on the switched side of any such
-isolation; verify reverse-current blocking and UART power sequencing on
-the actual circuit before permitting simultaneous USB and vehicle power.
-No dual-source circuit has been specified or validated for this assembly.
+A dashboard cutoff does not cut USB power. A separate Bluetooth dongle also
+stays powered at OBD16 unless its own feed is disconnected. Capacitor energy
+means actual shutdown time must be measured. A supply switch does not clear
+an actual CAN short. 3V3_EN and RUN are not complete system power disconnects.
 
-The Longan 1030002 kit contains a Serial CAN module and an OBD connector.
-Its module VCC is not a 12 V VIN input. Do not connect OBD-II pin 16 or the
-switched vehicle supply directly to module VCC. Route its supply from the
-switched regulated rail so the adapter turns off with the dashboard. Longan
-documents 5 V VCC for V1.0-V1.2. V1.3 supports 5 V or 3.3 V VCC; a 3.3 V
-option also requires a checked Pico 3.3 V rail budget and physical revision
-identification. The actual kit PCB revision is presently unknown.
+Never connect OBD16 to Longan VCC. Never directly join Pololu output to Pico
+VSYS while assuming the switch blocks USB backfeed. Use the designed isolated
+power path, or keep all vehicle-side power/signals disconnected during USB work.
+The old 3 A fuse / SS34 / SMAJ14A / 500 mA PTC list is NOT an approved circuit.
 
-Leave the Pololu EN pin disconnected from Pico GPIO. Pololu pulls EN to VIN
-through 100 kohm; a direct connection can expose an unpowered/reset Pico
-pin to vehicle supply. An optional MCU shutdown needs a separate, rated
-transistor/open-drain interface and a defined latch/wake circuit. Cutting
-regulator power also cuts the MCU's ability to hold EN low. No such circuit
-is specified or validated here.
-
-The previously proposed 3 A blade fuse, SS34 series diode, SMAJ14A TVS,
-500 mA PTC, and 100 uF/100 nF decoupling are provisional components, not a
-validated automotive surge or wiring protection design. Check fuse against
-wire gauge and fault energy, TVS/clamp behavior, polarity, regulator input
-range, PTC trip/hold behavior, and actual supply transients before fitting.
-
-CAN AND UART NETS
-=================
-
-OBD-II pin 6 -> Longan CAN-H; pin 14 -> Longan CAN-L. Verify the connector
-cable and module labels by continuity before connection. The module is a
-UART-to-raw-CAN bridge, not an ELM327 interface. The optional longan-rx12
-profile instantiates UART0 on GP0/GP1. Its adapter/vehicle contract remains
-unqualified: no diagnostic CAN requests are enabled. Wiring is untested.
-
-Longan UART TX -> appropriate logic-level interface -> Pico GP1 (UART0 RX).
-Pico GP0 (UART0 TX) -> appropriate logic-level interface -> Longan UART RX.
-Share ground. Use a translator appropriate for push-pull UART signals where
-translation is needed; do not assume a bidirectional I2C level shifter is
-qualified for the chosen baud rate.
-
-Longan version / VCC / UART condition:
-  V1.0:       5 V VCC, 5 V IO; translate Longan TX before Pico RX.
-  V1.1/V1.2: 5 V VCC; 3.3 V IO needs the documented solder-pad option.
-  V1.3:       5 V or 3.3 V VCC; documented 3.3 V IO option.
-
-Measure TX idle/high and low levels at the chosen VCC and setting before
-connecting either UART line. Pico GPIO is 3.3 V logic. Longan documents
-9600 baud by default and up to 115200. The implemented optional profile
-requires an externally preprovisioned, verified 115200 8N1 adapter. Firmware
-does not scan baud rates, negotiate a change, or write adapter EEPROM.
-
-The old 1030002 kit page describes a 120 ohm CAN resistor connected by
-default; the current 1030001 module page describes soldering a pad to add
-termination. Inspect and measure the actual PCB. A diagnostic tap on an
-already terminated vehicle bus normally must not add a third 120 ohm end
-resistor. Confirm CAN-H/CAN-L idle and bus resistance with the vehicle and
-adapter unpowered as appropriate for the installation procedure.
-
-PICO 2 / PIM715 PIN MAP
+CAN AND UART (PROPOSED)
 ======================
+OBD 6  CAN-H -> matched CAN protection -> Longan CAN-H
+OBD 14 CAN-L -> matched CAN protection -> Longan CAN-L
+Longan TX -> vehicle-to-dashboard isolator -> Pico GP1 UART0 RX (pin 2)
+Pico GP0 UART0 TX (pin 1) -> dashboard-to-vehicle isolator -> Longan RX
 
-The table is for the non-wireless Pico 2 with PIM715 Display Pack 2.8.
-"Header spare" means present on the Pico 2's 40-pin headers and not used
-by this firmware or an active named pack function with the optional PIM715
-SP/CE expansion unpopulated. Access and shared connector traces in an
-assembled stack still need inspection. PIM715 RGB traces can be cut, but
-are assumed intact here. The optional te-trace profile enables TEON 35h/00h
-and records software-observed rising edges on GP21. Physical timing remains
-unverified; TE is not a panel-presence or watchdog-health assertion.
+Use two opposite-direction channels with qualified idle-high, power-off and
+brownout behavior. Vehicle-side supply/thresholds must match actual V1.4 rails;
+dashboard side is 3.3 V. Do not bridge the isolated grounds or use an unqualified
+I2C level shifter for push-pull UART. Isolator output idle does not guarantee
+CAN recessive state or protect against a faulty adapter/transceiver.
 
-GPIO       Allocation or physical condition                  Category
----------- ------------------------------------------------- ----------------
-GP0-GP1    Optional UART0 to Longan serial bridge           Optional, header
-GP2-GP3    No named connection                               Header spare
-GP4-GP5    PIM715 Qw/ST I2C0 to Adafruit 5880 encoder       Pack connection
-GP6-GP11   No named PIM715 2.8 function or firmware use     Header spare
-GP12-GP15  PIM715 buttons A, B, X, Y                        Pack connection
-GP16       PIM715 LCD data/command                          Pack connection
-GP17       PIM715 LCD chip select                           Pack connection
-GP18       PIM715 LCD SPI0 clock                            Pack connection
-GP19       PIM715 LCD SPI0 transmit                         Pack connection
-GP20       PIM715 AP2502 backlight enable PWM               Pack connection
-GP21       PIM715 LCD tearing-effect output                 Optional TE input
-GP22       No named connection                               Header spare
-GP23       On-board SMPS power-save control                 Not on header
-GP24       On-board VBUS sense                               Not on header
-GP25       On-board user LED                                 Not on header
-GP26-GP28  PIM715 2.8 RGB LED (active low, traces intact)   Pack connection
-GP29       On-board VSYS/3 sense                             Not on header
+SIT65HVD230: 3.0-3.6 V transceiver supply, +/-18 V DC bus absolute maximum;
+manufacturer lists no dominant timeout. Select protection from SIT evidence,
+not TI part similarity or a generic "24 V CAN TVS" description. These limits
+do not prove the assembled module survives automotive transients.
 
-The old GP6/GP7/GP8 RGB assignment belongs to other Display Pack variants.
-GP21 is not free: it carries LCD TE. GP23-GP25 are not general 40-pin-header
-GPIOs on Pico 2. Candidate SPI1 pins GP8/GP9/GP10/GP11 and interrupt GP22
-have no RGB conflict on PIM715 2.8, but using an alternative SPI CAN board
-would require a separate electrical and firmware design, including physical
-clearance and trace inspection. The currently named Longan device uses UART.
+Inspect P1 and measure CAN-H-to-CAN-L resistance on the DISCONNECTED, UNPOWERED
+module. Published Longan pages disagree about default termination. Do not add
+a third 120 ohm terminator to an already terminated vehicle bus. Never measure
+resistance on an energized circuit; use moulded connector numbers and continuity
+to resolve mating/solder-side views rather than assuming cable colours.
 
-BACKLIGHT TIMING
-================
+The optional longan-rx12 firmware expects externally provisioned 115200 8N1.
+It neither scans baud nor provisions module EEPROM. It is an unqualified raw
+CAN bridge path with no enabled diagnostic polling, not an ELM327 parser and
+not a hardware listen-only guarantee (CAN ACK/error activity can still occur).
 
-The PIM715 schematic names AP2502 for backlight control. Its datasheet
-permits PWM to 150 kHz and specifies EN-high pulse time of at least 1 us.
-Firmware now derives a 1 kHz output from the configured system clock using
-TOP=9999 and dividers 15/25/28/29/30 for the 150/250/280/290/300 MHz
-profiles. Off drives compare=0. The old 45%-100% visible-duty mapping is
-retained until a scope and photometric/visual check establish useful lower
-duty settings. The clock and rate calculations are host tested; the actual
-GP20 waveform, dimming range and flicker remain unmeasured.
+PICO 2 W / PIM715 EXPOSED HEADER PINS
+===================================
+Function                      GPIO             Physical pin
+----------------------------- ---------------- ---------------------
+Optional UART0 TX / RX         0 / 1            1 / 2
+Encoder Qw/ST SDA / SCL        4 / 5            6 / 7
+Buttons A / B / X / Y          12 /13 /14 /15   16 /17 /19 /20
+LCD DC / CS                   16 /17           21 /22
+LCD SPI0 SCK / TX              18 /19           24 /25
+Backlight PWM                 20               26
+LCD TE                        21               27
+External RGB R / G / B         26 /27 /28       31 /32 /34
+Pico RUN / LCD reset           RUN              30
+3V3 OUT / 3V3 EN               supply/enable    36 /37
+VSYS / USB VBUS                supply           39 /40
+Ground                        GND              3,8,13,18,23,28,38
+Analog ground                 AGND             33
 
-POWER BUDGET AND PRE-CONNECTION RECORD
-======================================
+GP2/3/6/22 have no named pack/application use. GP7-11 reach the SP/CE expansion
+and are only spare while it is unused. RGB traces are assumed intact. GP21 is
+not spare; optional TE observations do not prove panel presence or scanout.
+Qw/ST powers encoder VIN at 3.3 V; use its ground only in DASHBOARD domain.
+400 kHz I2C, module 10 kohm pull-ups plus HAL weak pull-ups require real cable
+capacitance/rise-time and ESD checks. Do not feed the Qw/ST signals with 5 V.
 
-The old 90 mA vehicle and 150 mA 5 V totals excluded Longan module current
-and were estimates. Measure Pico/display, encoder, Longan, switch LED, and
-regulator input currents in each operating mode, including overclock,
-backlight off/full, startup, and adapter active. Recheck regulator thermal
-margin and protection components from measured totals.
+W INTERNAL RESOURCES (NOT GENERAL HEADER PINS)
+=============================================
+GP23 = wireless power-on; GP24 = wireless data/IRQ; GP25 = wireless CS.
+GP29/ADC3 = wireless clock and shared VSYS/3 sensing. Future ADC access must
+coordinate with the radio and documented chip-select state.
+WL_GPIO0 = onboard green LED; WL_GPIO1 = SMPS mode; WL_GPIO2 = VBUS sense.
+The application uses none of these internal pins and initializes no radio.
+PIM715's GP26-28 RGB is a separate LED. RP2350 core voltage is not WL_GPIO1.
 
-Record the actual Longan PCB revision and UART VCC/IO setting; PIM715 and
-Pico 2 revisions; CAN termination state; wiring continuity; 5 V and 3.3 V
-rails; UART high/low levels; EN-to-Pico isolation; and GP20 frequency and
-minimum high pulse at stock and each selected overclock. Device behavior,
-ECU support, and physical frame rate are still unverified.
+CONTROLS AND ACCEPTANCE
+======================
+Boot brightness Full. Dashboard encoder click cycles Full / Dim (50% duty) /
+Off; Off waits for its two-second popup and completed clear frame. Rotation
+switches views. Protected two-second Y hold restores Dashboard at Full.
+The backlight is approximately 1 kHz from the resolved clock; check its actual
+waveform, pulse width, load/brightness and profile stability on the display.
+
+Before vehicle use: verify fuse/wire/TVS/FET coordination, 5 V fault containment,
+isolation, USB power ordering, switch behavior, regulated rail maxima, current,
+inrush, temperature, UART logic margins, termination and CAN power-off loading.
+Measure each retained module rather than using the old partial current totals.
+Keep stock as default; the owner's working 280-70/1.30 V is an unqualified
+overclock, and 290-72 failed on that device. Wireless operation adds a future
+power/thermal/resource qualification task, not an automatic feature here.
 
 PRIMARY REFERENCES
 ==================
-
-Longan 1030002 kit:       https://docs.longan-labs.cc/1030002/
-Longan 1030001 module:    https://docs.longan-labs.cc/1030001/
-PIM715 product/schematic: https://shop.pimoroni.com/products/pico-display-pack-2-8
-Pico 2 datasheet:         https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf
-Pico 2 header pinout:     https://datasheets.raspberrypi.com/pico/Pico-2-Pinout.pdf
-AP2502 data sheet:        https://www.mouser.com/datasheet/3/175/1/AP2502.pdf
-Pololu 3782:             https://www.pololu.com/product/3782
+Pico 2 W: https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf
+Pinout:   https://datasheets.raspberrypi.com/picow/pico-2-w-pinout.pdf
+Circuit:  https://datasheets.raspberrypi.com/picow/pico-2-w-schematic.pdf
+PIM715:   https://shop.pimoroni.com/products/pico-display-pack-2-8
+Longan:   https://docs.longan-labs.cc/1030001/
+SIT:      https://en.sitcores.com/show-38-154-1.html
+Pololu:   https://www.pololu.com/product/3782
+Switch:   https://www.adafruit.com/product/3218
+Encoder:  https://learn.adafruit.com/adafruit-i2c-qt-rotary-encoder/pinouts

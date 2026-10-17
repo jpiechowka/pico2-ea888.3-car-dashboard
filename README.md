@@ -1,6 +1,6 @@
-# 2019 SEAT Leon Cupra DNUC dashboard for Pico 2
+# 2019 SEAT Leon Cupra DNUC dashboard for Pico 2 W
 
-Rust firmware for a Raspberry Pi Pico 2, Pimoroni PIM715 display and
+Rust firmware for a Raspberry Pi Pico 2 W, Pimoroni PIM715 display and
 Adafruit 5880 I2C encoder, intended for a 2019 Seat Leon Cupra DNUC.
 **Exact ECU support, electrical installation and physical display FPS are
 unverified.** The default build shows unavailable vehicle channels. Demo data
@@ -11,6 +11,7 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 
 [Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
 [Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
+[Hardware & wiring](#hardware-protection-and-wiring-for-the-dnuc-cupra) ·
 [Architecture](#architecture) · [Validation](#firmware-build-and-validation)
 
 [![Studio Views workspace with the shared dashboard preview](docs/images/gallery/workflows/editor.jpg)](docs/configurator/gallery.md#edit-and-repair)
@@ -195,7 +196,7 @@ The [validator allocation repair](docs/performance/memory-layout.md#experimental
 records its measured memory/CPU tradeoff and the remaining proof work.
 
 Hold BOOTSEL while connecting the isolated board, scan,
-inspect the intended device and confirm it is a genuine Pico 2. Its 4 MB capacity
+inspect the intended device and confirm it is a genuine Pico 2 W. Its 4 MB capacity
 is manufacturer specified and user confirmed, not measured by picotool.
 The job shows **transfer → verification → reboot request** separately. A reboot
 request does not establish that firmware is running correctly. Interrupted jobs
@@ -258,7 +259,7 @@ the implemented stages and review corrections to local test/build evidence and
 the remaining hardware gates. The [fixed workload matrix](docs/performance/benchmark-coverage.md)
 states exactly what each group of host benchmarks measures.
 
-For hands-on testing, follow the [Pico 2 and DNUC validation runbook](docs/validation/pico2-dnuc-runbook.md)
+For hands-on testing, follow the [Pico 2 W and DNUC validation runbook](docs/validation/pico2-dnuc-runbook.md)
 for isolated bench flashing, controls, RTT/timing capture, Longan qualification
 and parked vehicle evidence collection.
 
@@ -268,6 +269,87 @@ can backfeed the adapter/regulator from USB. With the assembly isolated and
 BOOTSEL active, `cargo run --locked -p dashboard-pico2 --release` uses the bundled
 `firmware/tools/picotool.exe` runner to load and execute the image. No hardware
 was flashed during this software verification pass.
+
+## Hardware protection and wiring for the DNUC Cupra
+
+The hardware plan retains the owner's **Longan Serial CAN Bus V1.4**,
+**Pololu #3782 D36V28F5**, **Adafruit 3218 covered switch**, Pico 2 W/PIM715 and
+5880 encoder. The selected architecture isolates dashboard power and both UART
+directions from the vehicle. These are **architecture diagrams**, not a finished
+soldering schematic: component values, fault limits and bench measurements are
+still being resolved. [Audit, BOM planning register and build order](hardware/protection-plan.md).
+
+The owner's board is confirmed as **Pico 2 W**. Its header pins work with the
+existing display/encoder/UART assignments; internal GP23/24/25/29 serve wireless.
+The current firmware does not initialize the radio.
+[Board and source audit](docs/hardware/pico2w-board-audit.md) ·
+[Isolated Longan versus Bluetooth OBD comparison](hardware/transport-options.md).
+Stable `pico2` package/path/command names remain compatible.
+
+### Power domains
+
+```mermaid
+flowchart TD
+    OBD["OBD pin 16: vehicle supply"] --> F["Fuse close to connector"]
+    F --> INPUT["Coordinated transient / reverse / overvoltage protection"]
+    INPUT --> REG["Retained Pololu D36V28F5"]
+    REG --> PROTECT["Independent 5 V fault protection"]
+    PROTECT --> LONGAN["Longan branch: vehicle ground"]
+    PROTECT --> ISO["Regulated isolated DC/DC"]
+    ISO --> SEC["Secondary rail protection + reverse-blocking power path"]
+    SEC --> PICO["Pico VSYS: dashboard ground"]
+    USB["USB VBUS through Pico onboard diode"] --> PICO
+    SWITCH["Covered switch: protected low-voltage control"] -. "interface to be designed" .-> INPUT
+    classDef vehicle fill:#241b24,stroke:#df5964,color:#fff
+    classDef barrier fill:#15363e,stroke:#62c4ce,color:#fff
+    classDef dashboard fill:#202b39,stroke:#8397b6,color:#fff
+    class OBD,F,INPUT,REG,PROTECT,LONGAN,SWITCH vehicle
+    class ISO barrier
+    class SEC,PICO,USB dashboard
+```
+
+The isolated converter and UART barrier need **separate vehicle and dashboard
+grounds**, including through USB, mounting hardware and the switch LED. USB can
+still power the Pico when the vehicle branch is off. The covered switch's 12 V
+maximum means its old raw-battery placement is being replaced by low-voltage
+control. Final shutdown/standby behavior is an open design choice.
+
+### CAN, UART and controls
+
+```mermaid
+flowchart TD
+    CAN["OBD 6 CAN-H / 14 CAN-L"] <--> LINE["Revision-matched CAN protection"]
+    LINE <--> MODULE["Retained Longan V1.4: vehicle side"]
+    MODULE <--> BARRIER["Two UART isolation channels"]
+    BARRIER <--> UART["Pico GP0 TX / GP1 RX: dashboard side"]
+    UART --- DISPLAY["PIM715: existing display, buttons and RGB"]
+    DISPLAY --- ENCODER["3.3 V Qw/ST: GP4 SDA / GP5 SCL to encoder"]
+    classDef vehicle fill:#241b24,stroke:#df5964,color:#fff
+    classDef barrier fill:#15363e,stroke:#62c4ce,color:#fff
+    classDef dashboard fill:#202b39,stroke:#8397b6,color:#fff
+    class CAN,LINE,MODULE vehicle
+    class BARRIER barrier
+    class UART,DISPLAY,ENCODER dashboard
+```
+
+UART paths cross TX to RX. No extra CAN termination is assumed. OBD pin 4
+(chassis ground) and pin 5 (signal ground) remain separately identified in the
+return design. The pin labels above describe electrical nets, not connector-face
+orientation. Use the [pin/reference document](hardware/wiring-diagram.txt) and
+verify the actual harness by continuity.
+
+The audit found that Longan's generic MCP2551 description conflicts with its
+V1.3 schematic's SN65HVD230. The owner's **V1.4 photograph shows SIT65HVD230**;
+TI limits cannot be transferred to it. The LDO/MCU and rail measurements remain
+open. Isolation protects the dashboard/USB
+boundary; it does not guarantee that a faulty adapter cannot disturb CAN.
+The firmware's unqualified, no-diagnostic-polling mode is not electrical
+listen-only certification. [Revision evidence and remaining gates](hardware/protection-plan.md#2-corrections-that-affect-the-design).
+
+Local ceramics, intermediate storage and bulk capacitors will be sized together
+with fuse, clamp, damping and inrush limits. Lowest ESR everywhere can worsen
+cable-induced ringing. The old fuse/TVS/PTC list is provisional.
+[Capacitor design and acceptance plan](hardware/protection-plan.md#4-capacitors-local-bypass-local-storage-and-bulk).
 
 ## Performance optimizations
 
@@ -288,7 +370,7 @@ The pass preserves all gauges, animations, controls and validation gates.
   duplicate compilation. One matched admitted build pair took 69.7 s before and
   45.8 s after. Firmware optimization settings remain unchanged; timings vary by
   PC and cache state.
-- **Pico 2 targeting:** every firmware route selects the RP2350's Cortex-M33
+- **Pico 2 W targeting:** every firmware route selects the RP2350's Cortex-M33
   with `-C target-cpu=cortex-m33` and the hard-float ARM target. The two RGB565
   framebuffers, DMA ownership and stack reserves remain unchanged.
 - **Native orientation:** both shapes render directly into the existing buffers,

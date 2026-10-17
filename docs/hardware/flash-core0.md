@@ -18,7 +18,7 @@ Reviewed 11 October 2026 with nightly-2026-10-10. No hardware execution.
    ROM functions before the RAM inner. The PAC pad indices are 0..5; IO_QSPI
    mux indices are 2..7, because entries 0/1 are USB. Cortex barriers inline.
 
-The [Pico 2 board specification](https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf)
+The [Pico 2 W board specification](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf)
 identifies W25Q32RV. Its manufacturer JEDEC tuple is EF/40/16 (4 MiB); this tuple
 alone does not identify a chip revision. The project still reserves space
 within its conservative 2 MiB layout. The 12 clock divider requests at most

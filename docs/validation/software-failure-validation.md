@@ -195,6 +195,6 @@ This is compiled exclusion evidence, not an attributed before/after size saving.
 
 ECU support, CAN wiring, voltage/clock margins, display scanout/tearing/FPS,
 physical controls and LEDs, stack high-water, flash power-cut behavior and USB
-interruption remain in the [Pico 2/DNUC runbook](pico2-dnuc-runbook.md). The
+interruption remain in the [Pico 2 W/DNUC runbook](pico2-dnuc-runbook.md). The
 instruction-level proof remains separate unfinished research. No hardware was
 enumerated, flashed or sent diagnostic requests during this pass.

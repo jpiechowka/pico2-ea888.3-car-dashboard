@@ -23,7 +23,7 @@
    both retained buffers, invalid/repair/discard lifecycles, and the production
    demo generator at the preview boundary. Firmware and browser already share
    `dashboard_core::demo::values`; the raster export example now uses it too.
-6. Verify native tests with both outline modes, Rust/Wasm builds, a Pico 2
+6. Verify native tests with both outline modes, Rust/Wasm builds, a Pico 2 W
    280/70 build and memory gate, actual browser interactions, and repeated
    focused benchmarks. Review the complete change before pushing master.
 
@@ -38,7 +38,7 @@ of this change.
 - [ProFont 0.7.0](https://docs.rs/profont/0.7.0/profont/)
 - [MonoTextStyle source](https://docs.rs/embedded-graphics/0.8.2/src/embedded_graphics/mono_font/mono_text_style.rs.html)
 - [Pimoroni display dimensions](https://shop.pimoroni.com/products/pico-display-pack-2-0)
-- [Pico 2 datasheet](https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf)
+- [Pico 2 W datasheet](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf)
 
 The locked source was inspected: measurement counts characters and spacing;
 alphabetic placement subtracts the font baseline; foreground glyph rendering

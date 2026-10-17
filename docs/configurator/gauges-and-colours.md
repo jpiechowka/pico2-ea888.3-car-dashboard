@@ -55,8 +55,8 @@ resetting on a rewind, source change or synthetic value-mode change.
 - The [PIM715 specification](https://shop.pimoroni.com/products/pico-display-pack-2-8)
   identifies a 320×240 ST7789V IPS panel. The 26-pixel header leaves 80×107,
   160×107 and 160×214 widget rectangles in the landscape 4×2 layout. Native portrait uses the [2×4 layout](orientation.md).
-- [Pico 2 specifications](https://www.raspberrypi.com/products/raspberry-pi-pico-2/)
-  and the [board datasheet](https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf)
+- [Pico 2 W specifications](https://www.raspberrypi.com/products/raspberry-pi-pico-2-w/)
+  and the [board datasheet](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf)
   establish 520 KiB physical SRAM. Our linker admission policy uses the main
   512 KiB region and reserves the other banks separately. Measure linked RAM
   and stack effects; a file-size cap alone is not a RAM proof.

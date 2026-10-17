@@ -1,4 +1,4 @@
-# Pico 2 and 2019 DNUC Cupra validation
+# Pico 2 W and 2019 DNUC Cupra validation
 
 Use this procedure with the merged overhaul and keep one evidence directory per
 image and power-on run. **The current firmware does not enable live vehicle
@@ -10,7 +10,8 @@ No device or vehicle test below has been performed by the software checks.
 
 ## 1. Prepare and inspect, with the car disconnected
 
-Equipment: Pico 2 (non-wireless), PIM715 Display Pack 2.8, optional Adafruit 5880
+Equipment: Pico 2 W (wireless hardware; current firmware leaves it uninitialized),
+PIM715 Display Pack 2.8, optional Adafruit 5880
 encoder, data-capable USB cable, multimeter, current-limited bench supply, and
 the actual Longan module. For timing/recovery evidence also use a 3.3 V SWD
 probe, suitable scope/logic analyser and a CAN interface that retains timestamps,
@@ -25,10 +26,10 @@ IDs, DLC and frame flags. Visual checks alone cannot close the timing gates.
 3. Verify no short between each supply and ground. Keep Pololu EN disconnected
    from Pico GPIO: its pull-up is to VIN. OBD pin 16 must never feed Pico GPIO,
    Pico VSYS or the Longan module VCC directly.
-4. Inspect the Longan revision before powering it: V1.0 needs UART translation;
-   V1.1/V1.2 require the documented 3.3 V IO option while retaining 5 V VCC;
-   V1.3 supports the documented 3.3 V option. Measure IO levels before connecting
-   GP0/GP1. A 5 V supply rating does not establish 3.3 V UART compatibility.
+4. The owner's Longan is V1.4 with a photographed SIT65HVD230 transceiver.
+   Its regulator, rail and UART levels remain unmeasured; published V1.0–V1.3
+   mappings do not establish this assembly's limits. Measure IO levels before
+   connecting GP0/GP1. A 5 V supply label does not establish UART compatibility.
 5. Start with Pico/display/encoder on USB, with the vehicle power circuit and
    adapter isolated. Separately verify the regulator's unloaded and loaded 5 V
    output on the bench before adding it. Log 5 V, 3.3 V, current and temperatures.
@@ -37,9 +38,13 @@ IDs, DLC and frame flags. Visual checks alone cannot close the timing gates.
    37.5 MHz SPI. All overclock features require a separate repeat of the tests.
 
 These power and IO rules were rechecked against the
-[Pico 2 datasheet, sections 5.4-5.5](https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf),
+[Pico 2 W datasheet, sections 3.4–3.5](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf),
 [Longan revision table](https://docs.longan-labs.cc/1030001/) and
 [Pololu connections](https://www.pololu.com/product/3782).
+The [W board/pin audit](../hardware/pico2w-board-audit.md) and
+[protection proposal](../../hardware/protection-plan.md) distinguish the reviewed
+wiring from remaining electrical acceptance. An external branch switch does not
+cut USB power or a separately powered Bluetooth dongle.
 
 ## 2. Build, check and freeze the image
 

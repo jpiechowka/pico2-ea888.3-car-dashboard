@@ -114,7 +114,7 @@ Connect the local helper, check prerequisites, choose options and build an immut
 Compare requested and actual CPU/peripheral/SPI frequencies and divisors, toolchain and build options. Experimental choices need explicit admission. Payload throughput estimates and compilation do not qualify electrical margins or panel FPS.
 
 Device transfer, verification and reboot request are separate operations. Genuine
-Pico 2 confirmation and device identity must be current before a write. Interrupted
+Pico 2 W confirmation and device identity must be current before a write. Interrupted
 operations never resume a write automatically. See [build instructions](building.md),
 [flash contract](flashing-design.md) and the [hardware runbook](../validation/pico2-dnuc-runbook.md).
 
@@ -163,9 +163,16 @@ revision, using a full-page capture at the browser's 1280×720 viewport. Its
 per-image manifest override records the new production Wasm identity; the other
 workflow images retain their original capture context.
 
-Other workflow images were captured from the actual local Studio release built at
-`6b051b1` on 16 October 2026. The invalid-overlap capture uses the preceding
-`4d692f8` release; its placement behavior is unchanged. The native build shown
-used `d9c493d`, completed its practical checks, and produced a hash-verified UF2
-download. No device scan, transfer or reboot was performed. The images preserve
-actual UI states, including the explicit unverified hardware labels.
+Build & Flash was refreshed on 17 October 2026 for the Pico 2 W correction,
+using the production application code committed as `7e06f28`. It shows a connected
+protocol-2 helper after 15 successful installed-tool checks, with no device scan
+or admitted firmware in that session. Detailed local tool paths and logs are
+collapsed. The [capture manifest](../images/gallery/workflows/build-flash-capture.json)
+records the production Wasm and screenshot hashes. No USB access, transfer or
+reboot occurred during this capture.
+
+The remaining workflow images were captured from the actual local Studio release
+built at `6b051b1` on 16 October 2026. The invalid-overlap capture uses the preceding
+`4d692f8` release; its placement behavior is unchanged. These dated captures
+predate the Pico 2 W identity correction and retain their original pixels. They
+preserve actual UI states, including the explicit unverified hardware labels.

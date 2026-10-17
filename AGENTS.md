@@ -49,9 +49,13 @@ contracts and dated evidence belong in the linked documentation.
 
 ## Architecture and shared code
 
-The only supported board is **Raspberry Pi Pico 2 / RP2350 Cortex-M33**, with the
+The only supported board is **Raspberry Pi Pico 2 W / RP2350 Cortex-M33**, with the
 Pimoroni PIM715 display and Adafruit 5880 encoder. Vehicle research targets the
 2019 Seat Leon Cupra DNUC. Exact ECU support remains a separate qualification task.
+The owner confirmed the W board by photograph. Its radio is not initialized by
+the current firmware; wireless OBD remains a proposed transport. Keep the existing
+`pico2` package, path and command identifiers compatible. Use the W schematic and
+[board audit](docs/hardware/pico2w-board-audit.md), not non-W internal-pin mappings.
 
 | Location | Responsibility |
 | --- | --- |
@@ -132,6 +136,10 @@ use `cargo build` for compilation without device operations.
   current official online documentation and relevant upstream issues. Read Embassy
   implementations rather than inferring semantics from API names. Record sources
   and distinguish documented guarantees, assumptions and physical observations.
+- Reserve GP23/24/25/29 for the W wireless interface and shared VSYS sensing.
+  Onboard LED, SMPS mode and VBUS sense are WL_GPIO0/1/2, respectively. The PIM715
+  RGB LED remains GP26/27/28. Future radio/ADC work must serialize shared pin access
+  and audit PIO/DMA/IRQ, flash-maintenance, memory and power ownership together.
 - Trace both cores, IRQ ownership, locks, DMA, cancellation, timeouts, recovery
   and flash/XIP maintenance end-to-end. Preserve bounded lock duration, producer
   acknowledgments, coherent sample publication and exclusive peripheral ownership.
@@ -158,7 +166,7 @@ use `cargo build` for compilation without device operations.
   universal 4:1 ratio. Synchronize the shared catalogue, Cargo features/aliases,
   scripts, UI and docs when changing profiles.
 - Flash only with current authorization and a selected, checked image/device.
-  Retain explicit genuine-Pico-2 confirmation: capacity is user-confirmed, not
+  Retain explicit genuine-Pico-2-W confirmation: capacity is user-confirmed, not
   measured by picotool. Show toolchain/options and separate stage status/logs for
   build, checks, transfer, verification and reboot. Never automatically resume an
   interrupted write. Follow [flashing](docs/configurator/flashing-design.md) and

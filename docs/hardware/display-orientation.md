@@ -1,7 +1,7 @@
 # Display orientation: source contract and physical checks
 
 This guide separates the implemented command/ownership contract from measurements
-still required on the Pico 2 and PIM715 Display Pack 2.8. The [Studio guide](../configurator/orientation.md)
+still required on the Pico 2 W and PIM715 Display Pack 2.8. The [Studio guide](../configurator/orientation.md)
 describes default/override selection, native grids and custom artwork conversion.
 No physical acceptance result is implied by the source checks below.
 

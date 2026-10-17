@@ -1,6 +1,6 @@
 # Orientation verification, 17 October 2026
 
-This feature adds native landscape and portrait rendering to the existing Pico 2
+This feature adds native landscape and portrait rendering to the existing Pico 2 W
 application and Rust Studio. It does not qualify the physical display or ECU.
 See the [workflow](../configurator/orientation.md) and
 [hardware acceptance matrix](../hardware/display-orientation.md).

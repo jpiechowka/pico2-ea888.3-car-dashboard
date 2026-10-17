@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-17",
+  "browser": "Codex in-app browser",
+  "viewport_css_pixels": [
+    1280,
+    720
+  ],
+  "full_page": true,
+  "application_code_commit": "7e06f28b9a833197a7c684225c0b1ed847bcd9ac",
+  "production_main_wasm_sha256": "4243e73dfcdff8e2ef30dcf6a48abc8cf012c263053881bbc3d4398c6ef26ec1",
+  "helper_protocol": 2,
+  "prerequisite_checks_passed": 15,
+  "device_scan_performed": false,
+  "flash_performed": false,
+  "preview_data": "synthetic",
+  "images": {
+    "gallery/workflows/build-flash.jpg": "560984e68818b8169435dab63652ba413d7f2026ea1b785404fe6e0c68b286cc"
+  }
+}
