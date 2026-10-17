@@ -319,10 +319,10 @@ fn render_transition_follows_pending_orientation_before_old_completion() {
 }
 
 #[test]
-fn oriented_regions_retain_the_pre_orientation_storage_budget() {
+fn oriented_regions_fit_the_vehicle_trace_storage_budget() {
     // Plans are copied into the producer/consumer futures and channel slots.
-    // Two extra bytes per region cost 32 bytes in every sixteen-region plan.
-    assert_eq!(core::mem::size_of::<Region>(), 8);
+    // Six-byte rectangles leave the 64 KiB core0 reserve intact with tracing.
+    assert_eq!(core::mem::size_of::<Region>(), 6);
 }
 
 #[test]
@@ -357,5 +357,38 @@ fn every_region_origin_preserves_orientation_stride_and_inclusive_addresses() {
         for x in [geometry.width(), 0x8000, u16::MAX] {
             assert!(Region::new_in(geometry, x, 0, 1, 1).is_none());
         }
+    }
+}
+
+#[test]
+fn merged_native_height_and_rejected_extents_never_narrow_before_validation() {
+    use dashboard_config::Geometry;
+    for geometry in [Geometry::Landscape, Geometry::Portrait] {
+        for (x, y, width, height) in [
+            (0, 0, 0, 1),
+            (0, 0, 1, 0),
+            (0, 0, 256, 256),
+            (0, 0, u16::MAX, 1),
+            (0, 0, 1, u16::MAX),
+            (0, u16::MAX, 1, 1),
+        ] {
+            assert!(Region::new_in(geometry, x, y, width, height).is_none());
+        }
+        let previous = Box::<FrameBuffer>::default();
+        let mut current = Box::<FrameBuffer>::default();
+        for y in 0..usize::from(geometry.height()) {
+            current[y * usize::from(geometry.width()) * 2] = 0xAB;
+        }
+        // A vertically merged narrow stripe exceeds the DMA-start budget.
+        // In portrait its height crosses 255; truncation would miss the tail.
+        let plan = DamagePlan::between_in(geometry, &previous, &current);
+        assert!(plan.is_full());
+        assert_eq!(
+            plan.regions()[0].rows().map(u16::from_be_bytes),
+            [0, geometry.height() - 1]
+        );
+        let mut panel = previous;
+        apply(&mut panel, &current, &plan);
+        assert!(panel == current);
     }
 }

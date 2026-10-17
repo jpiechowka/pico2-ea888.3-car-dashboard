@@ -15,36 +15,93 @@ const MAX_PAYLOAD_STARTS: usize = 128;
 /// A nonempty panel rectangle. Coordinates and extents cannot leave the panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Region {
-    // Both native widths are below 512. Keep the geometry in an unused
-    // coordinate bit so each retained sixteen-region plan stays compact.
-    x_and_geometry: u16,
-    y: u16,
-    width: u16,
-    height: u16,
+    // Native panels have one 320-pixel axis and one 240-pixel axis. Store
+    // the short axis in bytes and tag the unused high bit of the long origin.
+    // This preserves all rectangles in six bytes, including full-width bands.
+    long_origin_and_geometry: u16,
+    long_extent: u16,
+    short_origin: u8,
+    short_extent: u8,
 }
 
 const PORTRAIT_BIT: u16 = 1 << 15;
-const _: () = assert!(core::mem::size_of::<Region>() == 8);
-const _: () = assert!(Geometry::Landscape.width() < PORTRAIT_BIT && Geometry::Portrait.width() < PORTRAIT_BIT);
+const _: () = assert!(core::mem::size_of::<Region>() == 6);
+const _: () = assert!(Geometry::Landscape.width() == 320 && Geometry::Landscape.height() == 240);
+const _: () = assert!(Geometry::Portrait.width() == 240 && Geometry::Portrait.height() == 320);
 
 impl Region {
-    const fn encode_x(
+    // Only checked panel coordinates, native full bounds and bounded tile runs
+    // reach this encoder. Public input is validated before any narrowing.
+    const fn encode(
         geometry: Geometry,
         x: u16,
-    ) -> u16 {
-        x | match geometry {
-            Geometry::Landscape => 0,
-            Geometry::Portrait => PORTRAIT_BIT,
+        y: u16,
+        width: u16,
+        height: u16,
+    ) -> Self {
+        match geometry {
+            Geometry::Landscape => {
+                Self {
+                    long_origin_and_geometry: x,
+                    long_extent: width,
+                    short_origin: y as u8,
+                    short_extent: height as u8,
+                }
+            }
+            Geometry::Portrait => {
+                Self {
+                    long_origin_and_geometry: y | PORTRAIT_BIT,
+                    long_extent: height,
+                    short_origin: x as u8,
+                    short_extent: width as u8,
+                }
+            }
         }
     }
 
-    const fn x(self) -> u16 { self.x_and_geometry & !PORTRAIT_BIT }
-
     const fn geometry(self) -> Geometry {
-        if self.x_and_geometry & PORTRAIT_BIT == 0 {
+        if self.long_origin_and_geometry & PORTRAIT_BIT == 0 {
             Geometry::Landscape
         } else {
             Geometry::Portrait
+        }
+    }
+
+    const fn long_origin(self) -> u16 { self.long_origin_and_geometry & !PORTRAIT_BIT }
+
+    fn x(self) -> u16 {
+        match self.geometry() {
+            Geometry::Landscape => self.long_origin(),
+            Geometry::Portrait => u16::from(self.short_origin),
+        }
+    }
+
+    fn y(self) -> u16 {
+        match self.geometry() {
+            Geometry::Landscape => u16::from(self.short_origin),
+            Geometry::Portrait => self.long_origin(),
+        }
+    }
+
+    fn width(self) -> u16 {
+        match self.geometry() {
+            Geometry::Landscape => self.long_extent,
+            Geometry::Portrait => u16::from(self.short_extent),
+        }
+    }
+
+    fn height(self) -> u16 {
+        match self.geometry() {
+            Geometry::Landscape => u16::from(self.short_extent),
+            Geometry::Portrait => self.long_extent,
+        }
+    }
+
+    // Called only for an adjacent tile band inside this region's native panel.
+    fn extend_height(&mut self) {
+        match self.geometry() {
+            Geometry::Landscape => self.short_extent += TILE as u8,
+            Geometry::Portrait => self.long_extent += TILE as u16,
         }
     }
 
@@ -71,43 +128,33 @@ impl Region {
         {
             return None;
         }
-        Some(Self {
-            x_and_geometry: Self::encode_x(geometry, x),
-            y,
-            width,
-            height,
-        })
+        Some(Self::encode(geometry, x, y, width, height))
     }
 
     pub const fn full() -> Self { Self::full_in(Geometry::Landscape) }
 
     pub const fn full_in(geometry: Geometry) -> Self {
-        Self {
-            x_and_geometry: Self::encode_x(geometry, 0),
-            y: 0,
-            width: geometry.width(),
-            height: geometry.height(),
-        }
+        Self::encode(geometry, 0, 0, geometry.width(), geometry.height())
     }
 
-    pub fn columns(self) -> [[u8; 2]; 2] { [self.x().to_be_bytes(), (self.x() + self.width - 1).to_be_bytes()] }
+    pub fn columns(self) -> [[u8; 2]; 2] { [self.x().to_be_bytes(), (self.x() + self.width() - 1).to_be_bytes()] }
 
-    pub fn rows(self) -> [[u8; 2]; 2] { [self.y.to_be_bytes(), (self.y + self.height - 1).to_be_bytes()] }
+    pub fn rows(self) -> [[u8; 2]; 2] { [self.y().to_be_bytes(), (self.y() + self.height() - 1).to_be_bytes()] }
 
-    pub fn bytes(self) -> usize { usize::from(self.width) * usize::from(self.height) * 2 }
+    pub fn bytes(self) -> usize { usize::from(self.width()) * usize::from(self.height()) * 2 }
 
     /// Full-width bands are contiguous. Every narrower row has its own stride.
     /// This iterator is used by both the hardware writer and the panel model.
     pub fn payload_ranges(self) -> impl Iterator<Item = Range<usize>> {
         let stride = usize::from(self.geometry().width());
-        let full_width = usize::from(self.width) == stride;
-        let count = if full_width { 1 } else { usize::from(self.height) };
+        let full_width = usize::from(self.width()) == stride;
+        let count = if full_width { 1 } else { usize::from(self.height()) };
         (0..count).map(move |row| {
-            let start = ((usize::from(self.y) + row) * stride + usize::from(self.x())) * 2;
+            let start = ((usize::from(self.y()) + row) * stride + usize::from(self.x())) * 2;
             let bytes = if full_width {
                 self.bytes()
             } else {
-                usize::from(self.width) * 2
+                usize::from(self.width()) * 2
             };
             start..start + bytes
         })
@@ -169,17 +216,12 @@ impl DamagePlan {
                 if let Some(region) = plan
                     .regions
                     .iter_mut()
-                    .find(|r| r.x() == start as u16 && r.width == width && r.y + r.height == y as u16)
+                    .find(|r| r.x() == start as u16 && r.width() == width && r.y() + r.height() == y as u16)
                 {
-                    region.height += TILE as u16;
+                    region.extend_height();
                 } else if plan
                     .regions
-                    .push(Region {
-                        x_and_geometry: Region::encode_x(geometry, start as u16),
-                        y: y as u16,
-                        width,
-                        height: TILE as u16,
-                    })
+                    .push(Region::encode(geometry, start as u16, y as u16, width, TILE as u16))
                     .is_err()
                 {
                     return Self::full_in(geometry);
