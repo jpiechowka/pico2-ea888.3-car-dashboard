@@ -2,7 +2,7 @@
 name = "dashboard-pico2"
 version = "0.1.0"
 edition = "2024"
-description = "OBD-II dashboard firmware for Raspberry Pi Pico 2 (RP2350)"
+description = "OBD-II dashboard firmware for Raspberry Pi Pico 2 W (RP2350)"
 
 [lib]
 name = "dashboard_pico2"

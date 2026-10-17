@@ -10,7 +10,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
         {move ||state.view.with(|v|v.devices.clone()).map(|report|view! {
             <details class="build-disclosure" open><summary>{format!("BOOTSEL candidates · {}",report.devices.len())}</summary>
                 <p>{report.reason.as_str().to_string()}</p>
-                <p>"Hold BOOTSEL while connecting your Pico 2, then choose Find BOOTSEL devices. Inspection reads chip and security information. It does not write firmware or establish the flash capacity."</p>
+                <p>"Hold BOOTSEL while connecting your Pico 2 W, then choose Find BOOTSEL devices. Inspection reads chip and security information. It does not write firmware or establish the flash capacity."</p>
                 {report.devices.iter().map(|device| {
                     let selected=device.clone();
                     let unsupported=device.status!=DeviceStatus::DescriptorOnly;
@@ -39,7 +39,7 @@ pub fn Panel(ui: Ui) -> impl IntoView {
                     prop:checked=move ||state.device.with(|d|d.acknowledgement().is_some()) on:change=move |event| {
                         let mut result=Ok(());state.device.update(|d|result=d.acknowledge(event_target_checked(&event)));
                         if let Err(message)=result {state.view.update(|v|v.message=message.into());}
-                    }/><span>"I confirm this selected device is a genuine Raspberry Pi Pico 2 with manufacturer-specified 4 MB flash."</span></label>
+                    }/><span>"I confirm this selected device is a genuine Raspberry Pi Pico 2 W with manufacturer-specified 4 MB flash."</span></label>
                 <small class="build-note">"This is your confirmation, not a measurement. Scanning, reconnecting or inspecting again clears it. Firmware keeps the existing 2 MiB layout and settings protection."</small>
             </section>
         })}

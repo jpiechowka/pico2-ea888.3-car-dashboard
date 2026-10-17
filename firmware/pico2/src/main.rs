@@ -191,6 +191,8 @@ async fn dashboard_task(
     log_info!("OBD-II Dashboard starting");
 
     let p = {
+        // Pico 2 W: GP23/24/25/29 belong to wireless/VSYS, not LED/VBUS/SMPS.
+        // No radio or ADC owner is started; PIM715 RGB uses GP26/27/28 below.
         let mut config = embassy_rp::config::Config::default();
         config.clocks = dashboard_pico2::clock_profile::clock_config();
         log_info!(

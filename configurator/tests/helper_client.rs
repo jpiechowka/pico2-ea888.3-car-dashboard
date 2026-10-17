@@ -122,7 +122,7 @@ fn artifact_identity_and_download_are_independently_checked() {
 fn connection() -> Connection {
     Connection::decode(
         format!(
-            r#"{{"protocol_version":1,"session_id":"{}","capability":"{}"}}"#,
+            r#"{{"protocol_version":2,"session_id":"{}","capability":"{}"}}"#,
             "a".repeat(32),
             "b".repeat(64)
         )
@@ -216,10 +216,10 @@ fn connection_rejects_wrong_version_oversize_unknown_fields_and_non_hex_capabili
     assert!(Connection::decode(b"{}").is_err());
     assert!(Connection::decode(&vec![b' '; 1025]).is_err());
     for (version, cap, extra) in [
-        (2, "b".repeat(64), ""),
-        (1, "X".repeat(64), ""),
-        (1, "b".repeat(63), ""),
-        (1, "b".repeat(64), ",\"extra\":true"),
+        (1, "b".repeat(64), ""),
+        (2, "X".repeat(64), ""),
+        (2, "b".repeat(63), ""),
+        (2, "b".repeat(64), ",\"extra\":true"),
     ] {
         let input = format!(
             r#"{{"protocol_version":{version},"session_id":"{}","capability":"{cap}"{extra}}}"#,
@@ -228,6 +228,18 @@ fn connection_rejects_wrong_version_oversize_unknown_fields_and_non_hex_capabili
         assert!(Connection::decode(input.as_bytes()).is_err());
     }
     assert_eq!(connection().capability().len(), 64);
+}
+
+#[test]
+fn connection_requires_the_pico2w_consent_protocol() {
+    for (version, accepted) in [(0, false), (1, false), (2, true), (3, false), (u16::MAX, false)] {
+        let input = format!(
+            r#"{{"protocol_version":{version},"session_id":"{}","capability":"{}"}}"#,
+            "a".repeat(32),
+            "b".repeat(64)
+        );
+        assert_eq!(Connection::decode(input.as_bytes()).is_ok(), accepted);
+    }
 }
 #[test]
 fn job_feed_retains_bounded_events_tracks_gaps_and_rejects_replays() {

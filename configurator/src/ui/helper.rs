@@ -687,9 +687,9 @@ fn stage_label(stage: dashboard_helper_protocol::StageId) -> String {
             match stage {
                 FirmwareStage::Prerequisites => "Required tools",
                 FirmwareStage::Snapshot => "Freeze project & source",
-                FirmwareStage::Compilation => "Compile Pico 2 firmware",
+                FirmwareStage::Compilation => "Compile Pico 2 W firmware",
                 FirmwareStage::Validation => "Validate firmware image",
-                FirmwareStage::DeviceSelection => "Recheck selected Pico 2",
+                FirmwareStage::DeviceSelection => "Recheck selected Pico 2 W",
                 FirmwareStage::Transfer => "Write firmware",
                 FirmwareStage::Verification => "Verify written bytes",
                 FirmwareStage::Reboot => "Request ARM reboot",

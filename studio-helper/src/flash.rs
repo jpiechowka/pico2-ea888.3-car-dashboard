@@ -294,7 +294,7 @@ mod tests {
                 device_id,
                 session_id: session.clone(),
                 information_sha256: hash,
-                board: BoardContract::GenuinePico2,
+                board: BoardContract::GenuinePico2W,
             },
         };
         assert!(admit(&request, &session, &artifact, &device, &inspection).is_ok());

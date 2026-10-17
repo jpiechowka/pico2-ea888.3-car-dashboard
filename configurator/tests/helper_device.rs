@@ -3,7 +3,7 @@ use dashboard_helper_protocol::*;
 fn connection() -> Connection {
     Connection::decode(
         format!(
-            r#"{{"protocol_version":1,"session_id":"{}","capability":"{}"}}"#,
+            r#"{{"protocol_version":2,"session_id":"{}","capability":"{}"}}"#,
             "a".repeat(32),
             "b".repeat(64)
         )
@@ -64,7 +64,7 @@ fn confirmation_requires_current_complete_inspection_and_explicit_choice() {
     assert!(state.acknowledgement().is_none());
     state.acknowledge(true).unwrap();
     let ack = state.acknowledgement().unwrap();
-    assert_eq!(ack.board, BoardContract::GenuinePico2);
+    assert_eq!(ack.board, BoardContract::GenuinePico2W);
     assert_eq!(ack.session_id, *c.session());
     assert_eq!(ack.information_sha256.as_str(), "e".repeat(64));
     state.acknowledge(false).unwrap();

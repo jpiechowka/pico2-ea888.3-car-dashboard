@@ -2,7 +2,7 @@ MEMORY {
     /*
      * The RP2350 has either external or internal flash.
      *
-     * Keep the existing 2 MiB contract (Pico 2 has 4 MiB), reserving the
+     * Keep the existing 2 MiB contract (Pico 2 W has 4 MiB), reserving the
      * final two 4 KiB sectors for settings. They have no ELF load contents.
      */
     FLASH : ORIGIN = 0x10000000, LENGTH = 2040K

@@ -119,6 +119,72 @@ fn read(path: &Path) -> Result<Value, String> {
     }
     serde_json::from_slice(&bytes).map_err(|_| "Invalid flash record".into())
 }
+// Historical consent is evidence only. Never deserialize it into a live FlashRequest.
+struct HistoricalRequest {
+    artifact_id: ArtifactId,
+    device_id: DeviceId,
+    session_id: SessionId,
+}
+fn historical_request(value: &Value) -> Result<HistoricalRequest, String> {
+    fn fields(
+        value: &Value,
+        names: &[&str],
+    ) -> Result<(), String> {
+        let object = value.as_object().ok_or("Invalid historical request object")?;
+        if object.len() != names.len() || names.iter().any(|name| !object.contains_key(*name)) {
+            return Err("Invalid historical request fields".into());
+        }
+        Ok(())
+    }
+    fields(
+        value,
+        &[
+            "artifact_id",
+            "device_id",
+            "editor_revision",
+            "project_sha256",
+            "config_sha256",
+            "expected_options",
+            "retry_of",
+            "board_acknowledgement",
+        ],
+    )?;
+    let acknowledgement = &value["board_acknowledgement"];
+    fields(
+        acknowledgement,
+        &["device_id", "session_id", "information_sha256", "board"],
+    )?;
+    if !matches!(
+        acknowledgement["board"].as_str(),
+        Some("genuine_pico2" | "genuine_pico2_w")
+    ) {
+        return Err("Invalid historical board".into());
+    }
+    macro_rules! field {
+        ($object:expr, $name:literal, $ty:ty) => {
+            serde_json::from_value::<$ty>($object[$name].clone()).map_err(|_| concat!("Invalid historical ", $name))?
+        };
+    }
+    let artifact_id = field!(value, "artifact_id", ArtifactId);
+    let device_id = field!(value, "device_id", DeviceId);
+    let acknowledged_device = field!(acknowledgement, "device_id", DeviceId);
+    let session_id = field!(acknowledgement, "session_id", SessionId);
+    let _ = field!(value, "editor_revision", u64);
+    let _ = field!(value, "project_sha256", Sha256);
+    let _ = field!(value, "config_sha256", Sha256);
+    let _ = field!(value, "retry_of", Option<JobId>);
+    let _ = field!(acknowledgement, "information_sha256", Sha256);
+    let options = field!(value, "expected_options", BuildOptions);
+    normalize(&options).map_err(|e| e.to_string())?;
+    if acknowledged_device != device_id {
+        return Err("Invalid historical device acknowledgement".into());
+    }
+    Ok(HistoricalRequest {
+        artifact_id,
+        device_id,
+        session_id,
+    })
+}
 pub(crate) fn history(repo: &Path) -> Result<FlashHistory, String> {
     let parent = root(repo);
     let mut result = Vec::new();
@@ -161,10 +227,13 @@ pub(crate) fn history(repo: &Path) -> Result<FlashHistory, String> {
                 if value["schema_version"] != 1 || value["job_id"] != job.as_str() {
                     return Err("Invalid flash history identity".into());
                 }
-                let request: FlashRequest = decode(&serde_json::to_vec(&value["request"]).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?;
-                summary.original_session =
-                    Some(serde_json::from_value(value["session_id"].clone()).map_err(|_| "Invalid history session")?);
+                let request = historical_request(&value["request"])?;
+                let session: SessionId =
+                    serde_json::from_value(value["session_id"].clone()).map_err(|_| "Invalid history session")?;
+                if session != request.session_id {
+                    return Err("Invalid historical session acknowledgement".into());
+                }
+                summary.original_session = Some(session);
                 summary.artifact_id = Some(request.artifact_id);
                 summary.device_id = Some(request.device_id);
                 summary.phase = serde_json::from_value(value["phase"].clone()).map_err(|_| "Invalid history phase")?;
@@ -225,7 +294,7 @@ mod tests {
                 device_id: device,
                 session_id: session.clone(),
                 information_sha256: hash,
-                board: BoardContract::GenuinePico2,
+                board: BoardContract::GenuinePico2W,
             },
         };
         let mut journal = Journal::new(&repo, &job, &session, &request).unwrap();
@@ -261,6 +330,8 @@ mod tests {
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+    // Frozen historical wire shape; never regenerate using the current Journal/FlashRequest.
+    const LEGACY_JOURNAL: &str = include_str!("../tests/fixtures/flash-journal-v1-pico2.json");
     fn fixture() -> (PathBuf, Journal) {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let repo = std::env::temp_dir().join(format!(
@@ -289,7 +360,7 @@ mod recovery_tests {
                 device_id: device,
                 session_id: session.clone(),
                 information_sha256: hash,
-                board: BoardContract::GenuinePico2,
+                board: BoardContract::GenuinePico2W,
             },
         };
         let journal = Journal::new(&repo, &job, &session, &request).unwrap();
@@ -305,6 +376,65 @@ mod recovery_tests {
                 .starts_with("studio-journal-recovery-")
         );
         std::fs::remove_dir_all(repo).unwrap();
+    }
+    #[test]
+    fn legacy_and_current_journals_remain_read_only_history() {
+        let (repo, mut journal) = fixture();
+        journal
+            .publish("verification_confirmed", WriteOutcome::Verified, Some(0))
+            .unwrap();
+        let legacy: Value = serde_json::from_str(LEGACY_JOURNAL).unwrap();
+        let legacy_job = "f".repeat(32);
+        let directory = root(&repo).join(&legacy_job);
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("0.json"), LEGACY_JOURNAL).unwrap();
+        assert!(decode::<FlashRequest>(&serde_json::to_vec(&legacy["request"]).unwrap()).is_err());
+        let recovered = history(&repo).unwrap();
+        assert_eq!(recovered.attempts.len(), 2);
+        for attempt in recovered.attempts.iter() {
+            assert!(!attempt.automatic_resume);
+            assert!(!attempt.hardware_qualified);
+            assert!(!attempt.running_firmware_observed);
+            assert!(attempt.historical_observation);
+            assert_eq!(attempt.device_id.as_ref().unwrap().as_str(), "c".repeat(32));
+            let expected = if attempt.job_id.as_str() == legacy_job {
+                WriteOutcome::Unknown
+            } else {
+                WriteOutcome::Verified
+            };
+            assert_eq!(attempt.recovery_write_outcome, expected);
+        }
+        drop(journal);
+        cleanup(repo);
+    }
+    #[test]
+    fn legacy_history_rejects_malformed_requests_and_unknown_versions() {
+        let (repo, mut journal) = fixture();
+        journal.publish("intent_armed", WriteOutcome::Unknown, None).unwrap();
+        let path = journal.directory.join("0.json");
+        let mut legacy: Value = serde_json::from_str(LEGACY_JOURNAL).unwrap();
+        legacy["job_id"] = json!("a".repeat(32));
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert!(history(&repo).is_ok());
+        for change in 0..10 {
+            let mut bad = legacy.clone();
+            match change {
+                0 => bad["schema_version"] = json!(2),
+                1 => bad["request"]["board_acknowledgement"]["device_id"] = json!("e".repeat(32)),
+                2 => bad["request"]["board_acknowledgement"]["board"] = json!("unknown"),
+                3 => bad["request"]["extra"] = json!(true),
+                4 => bad["request"]["expected_options"] = json!({}),
+                5 => bad["request"]["project_sha256"] = json!("invalid"),
+                6 => bad["request"]["board_acknowledgement"]["extra"] = json!(true),
+                7 => bad["request"]["editor_revision"] = json!(-1),
+                8 => bad["request"]["board_acknowledgement"]["session_id"] = json!("f".repeat(32)),
+                _ => bad["request"]["retry_of"] = json!("invalid"),
+            }
+            std::fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert!(history(&repo).is_err(), "case {change}");
+        }
+        drop(journal);
+        cleanup(repo);
     }
     #[test]
     fn pending_generation_never_upgrades_recovered_write_outcome() {

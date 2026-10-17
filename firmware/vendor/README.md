@@ -135,7 +135,7 @@ earlier unsafe SizeZ artifact remains rejected. Full artifact gates and physical
 flash qualification remain separate. Original archive hashes and upstream
 revision are retained.
 
-This is the application's single-CS, normal QSPI, 3.3 V Pico 2 contract. The
+This is the application's single-CS, normal QSPI, 3.3 V Pico 2 W contract. The
 caller must reject CS1/PSRAM/custom mappings, quiesce its owners, provide SRAM
 program data and retain a running watchdog. HAL pause/resume/DMA/ROM waits still
 have no software-returning timeout. Debug persistence is disabled until its

@@ -71,7 +71,7 @@ impl DeviceSelection {
                     .information_sha256
                     .clone()
                     .ok_or("Device inspection is incomplete")?,
-                board: BoardContract::GenuinePico2,
+                board: BoardContract::GenuinePico2W,
             });
         }
         Ok(())

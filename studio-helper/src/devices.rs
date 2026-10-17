@@ -111,7 +111,7 @@ fn enumerate() -> Result<DeviceScanReport, String> {
             serial: text(d.serial_number()),
             product: text(d.product_string()),
             status: DeviceStatus::DescriptorOnly,
-            reason: Text::new("BOOTSEL VID/PID observed; descriptor identity only, not confirmed Pico 2 hardware")
+            reason: Text::new("BOOTSEL VID/PID observed; descriptor identity only, not confirmed Pico 2 W hardware")
                 .unwrap(),
             capacity: DeviceCapacity {
                 state: DeviceCapacityState::Unverified,

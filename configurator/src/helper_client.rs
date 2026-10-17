@@ -8,6 +8,7 @@ use dashboard_helper_protocol::{
     Event,
     EventBatch,
     JobSummary,
+    PROTOCOL_VERSION,
     ProjectBuildRequest,
     ProjectUploadResponse,
     SessionId,
@@ -54,7 +55,7 @@ impl PreparedBuild {
         }
         let acknowledgement = device
             .acknowledgement()
-            .ok_or("Inspect and explicitly confirm the selected Pico 2 first")?;
+            .ok_or("Inspect and explicitly confirm the selected Pico 2 W first")?;
         if acknowledgement.session_id != *connection.session() {
             return Err("Device inspection belongs to another helper session");
         }
@@ -197,8 +198,10 @@ impl Connection {
         }
         let reply: ConnectReply = serde_json::from_slice(bytes).map_err(|_| "Invalid helper connection response")?;
         let capability = reply.capability.as_str();
-        if reply.protocol_version != 1
-            || capability.len() != 64
+        if reply.protocol_version != PROTOCOL_VERSION {
+            return Err("Helper protocol mismatch; restart the updated helper and refresh Studio");
+        }
+        if capability.len() != 64
             || !capability
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))

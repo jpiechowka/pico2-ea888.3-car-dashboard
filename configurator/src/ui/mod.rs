@@ -685,7 +685,7 @@ pub fn Studio() -> impl IntoView {
             on:lostpointercapture=move |e| {stage::cancel_event(ui,e);simulation::cancel(ui);}
             on:keydown=move |e| { if e.key() == "Escape" { stage::cancel(ui); widget_menu::close(ui, true); } }>
             <header class="masthead">
-                <a class="brand" href="./" aria-label="EA888 View Studio"><b>"EA"<span>"888"</span></b><div>"VIEW STUDIO"<small>"PICO 2 / DNUC"</small></div></a>
+                <a class="brand" href="./" aria-label="EA888 View Studio"><b>"EA"<span>"888"</span></b><div>"VIEW STUDIO"<small>"PICO 2 W / DNUC"</small></div></a>
                 <div class="device-spec"><span class="dot"></span>{move ||format!("{} × {}",ui.pixel_geometry.get().width(),ui.pixel_geometry.get().height())}<span>{move ||format!("{} × {} GRID",ui.pixel_geometry.get().columns(),ui.pixel_geometry.get().rows())}</span></div>
                 <div class="header-actions">
                     <command_palette::CommandPalette ui/>

@@ -122,8 +122,8 @@ fn ClockFacts(clock: ResolvedClock) -> impl IntoView {
 pub fn BuildFlash(ui: Ui) -> impl IntoView {
     view! {
         <div class="build-studio">
-            <div class="section-heading"><div><p class="eyebrow">"YOUR PICO 2"</p><h1>"Build & Flash"</h1></div><span class="chip">"LOCAL BUILD"</span></div>
-            <p class="build-intro">"Choose your firmware and clock profile, build the accepted project, then inspect a connected Pico 2 and flash the matching firmware. A downloadable PowerShell recipe is also available."</p>
+            <div class="section-heading"><div><p class="eyebrow">"YOUR PICO 2 W"</p><h1>"Build & Flash"</h1></div><span class="chip">"LOCAL BUILD"</span></div>
+            <p class="build-intro">"Choose your firmware and clock profile, build the accepted project, then inspect a connected Pico 2 W and flash the matching firmware. A downloadable PowerShell recipe is also available."</p>
             <helper::Panel ui/>
             <section class="build-card" aria-labelledby="build-profile-title"><div class="build-section-title"><span>"01"</span><h2 id="build-profile-title">"Firmware & profile"</h2></div>
                 <label class="build-field">"Firmware mode"<select prop:value=move ||ui.build.with(|s|match s.options.mode{Mode::Demo=>"demo",Mode::Vehicle=>"vehicle"}) on:change=move |e|{
@@ -149,7 +149,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
                 {move ||ui.build.with(|s|s.normalized().ok().map(|n|view!{<ClockFacts clock=n.clock/>}))}<p hidden=move ||ui.build.with(|s|s.normalized().is_ok())>"Resolve the profile above to inspect its clock and transfer details."</p>
             </section>
             <section class="build-card" aria-labelledby="build-options-title"><div class="build-section-title"><span>"03"</span><h2 id="build-options-title">"Compiler & options"</h2></div>
-                <dl class="build-toolchain"><dt>"Repository toolchain"</dt><dd><code>{repository_toolchain().unwrap_or("Unknown")}</code><small>"Expected by this Studio build. Run the local check to detect installed tools."</small></dd><dt>"Target"</dt><dd><code>"thumbv8m.main-none-eabihf"</code><small>"Pico 2 / RP2350 · Cortex-M33 · hardware float"</small></dd></dl>
+                <dl class="build-toolchain"><dt>"Repository toolchain"</dt><dd><code>{repository_toolchain().unwrap_or("Unknown")}</code><small>"Expected by this Studio build. Run the local check to detect installed tools."</small></dd><dt>"Target"</dt><dd><code>"thumbv8m.main-none-eabihf"</code><small>"Pico 2 W / RP2350 · Cortex-M33 · hardware float"</small></dd></dl>
                 <label class="build-field">"Optimization"<select prop:value=move ||ui.build.with(|s|s.options.optimization.cargo_value()) on:change=move |e|{
                     let v=match event_target_value(&e).as_str(){"3"=>Some(Optimization::Speed3),"2"=>Some(Optimization::Speed2),"s"=>Some(Optimization::SizeS),"z"=>Some(Optimization::SizeZ),_=>None};if let Some(v)=v{edit(ui,|s|s.options.optimization=v);}
                 }><option value="3">"3 · favor speed (default)"</option><option value="2">"2 · balanced optimization"</option><option value="s">"s · favor size"</option><option value="z">"z · minimize size"</option></select><small>"Compare performance with the same final firmware workload."</small></label>
@@ -170,7 +170,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
                 <p class="build-error" role="status" hidden=move ||issue(ui).is_none()>{move ||issue(ui).unwrap_or_default()}</p>
                 <ol class="build-steps"><li><strong>"Prepare tools once"</strong><code>".\\configurator\\Studio.ps1 -Setup"</code></li><li><strong>"Inspect installed prerequisites"</strong><code>".\\configurator\\Studio.ps1 -Check"</code></li><li><strong>"Run the downloaded recipe"</strong><code>".\\Build-StudioDashboard.ps1 -Repository 'D:\\path\\to\\repository'"</code></li></ol>
                 <p class="build-note">"Every run gets a new output name. Reusing a name is rejected to protect existing captures. A changed repository toolchain requires a newly exported recipe."</p>
-                <div class="build-connection"><span class="chip">"EXPLICIT FLASH"</span><p>"After a successful build, scan for BOOTSEL devices, inspect your Pico 2 and confirm its board type. Choose Flash on a firmware file matching the current accepted project and options. Transfer, payload verification and reboot are separate stages in the job log."</p><p>"The downloaded recipe builds only. The helper never resumes interrupted programming automatically. A completed reboot request does not prove that the dashboard has started; confirm that on the device."</p></div>
+                <div class="build-connection"><span class="chip">"EXPLICIT FLASH"</span><p>"After a successful build, scan for BOOTSEL devices, inspect your Pico 2 W and confirm its board type. Choose Flash on a firmware file matching the current accepted project and options. Transfer, payload verification and reboot are separate stages in the job log."</p><p>"The downloaded recipe builds only. The helper never resumes interrupted programming automatically. A completed reboot request does not prove that the dashboard has started; confirm that on the device."</p></div>
             </section>
         </div>
     }

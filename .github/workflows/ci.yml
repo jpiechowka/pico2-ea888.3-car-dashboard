@@ -214,7 +214,7 @@ jobs:
         working-directory: host
 
   clippy-pico2:
-    name: Clippy (Pico 2)
+    name: Clippy (Pico 2 W)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -254,7 +254,7 @@ jobs:
         working-directory: firmware
 
   build-pico2:
-    name: Build Pico 2 (${{ matrix.profile }})
+    name: Build Pico 2 W (${{ matrix.profile }})
     runs-on: ubuntu-latest
     env:
       CAPTURE_NAME: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.profile }}

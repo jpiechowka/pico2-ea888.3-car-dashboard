@@ -2,6 +2,22 @@
 
 This is the design and acceptance contract for the Build & Flash workspace. The native helper and Studio workflow are implemented; final browser/image qualification and physical validation are tracked separately. The current entry points are documented in [setup](setup-tools.md) and the [README](../../README.md#build--flash-from-studio). A successful host check does not establish hardware operation.
 
+## Board identity and helper compatibility
+
+The supported board is **Raspberry Pi Pico 2 W**. USB descriptors and chip
+inspection do not distinguish it reliably from every other RP2350 board or
+measure flash capacity. The owner must confirm this model and its manufacturer
+specified 4 MB flash for the selected inspection. The conservative 2 MiB firmware
+layout and runtime JEDEC checks remain in force.
+
+Helper protocol **2** uses `genuine_pico2_w` board consent. Protocol 1 and its
+`genuine_pico2` consent are rejected; refresh Studio and restart the updated helper
+after upgrading. No saved confirmation is migrated. The `/api/v1/` route namespace,
+project/configuration formats and `pico2` Cargo/script identifiers stay compatible.
+Existing flash journals remain readable through a separate historical decoder;
+legacy records cannot create current consent or resume an operation.
+This identity correction does not add a Bluetooth transport.
+
 ## Workflow
 
 The Build & Flash workspace sits alongside Views, Device, Data & warnings and Diagnostics, with a link from Device settings. The build uses the accepted configuration only; invalid or unapplied JSON edits block a new build or flash and remain visible in the diagnostic preview. The user chooses Demo or Vehicle, a named clock profile or Custom, and supported build options. A read-only details panel shows the actual rustup toolchain, `rustc -Vv`, Cargo version, target, features, optimization/outline/trace options, configuration hash, and exact executable arguments and relevant environment overrides.

@@ -136,10 +136,17 @@ fn layouts_and_board_confirmation_are_closed() {
             device_id: id,
             session_id: SessionId::new("2".repeat(32)).unwrap(),
             information_sha256: Sha256::new("c".repeat(64)).unwrap(),
-            board: BoardContract::GenuinePico2,
+            board: BoardContract::GenuinePico2W,
         },
     };
     assert!(encode(&r).is_ok());
+    let mut wire = serde_json::to_value(&r).unwrap();
+    for unsupported in ["genuine_pico2", "genuine_pico", "genuine_pico2w", "", "unknown"] {
+        wire["board_acknowledgement"]["board"] = unsupported.into();
+        assert!(decode::<FlashRequest>(&serde_json::to_vec(&wire).unwrap()).is_err());
+    }
+    wire["board_acknowledgement"]["board"] = "genuine_pico2_w".into();
+    assert!(decode::<FlashRequest>(&serde_json::to_vec(&wire).unwrap()).is_ok());
     r.board_acknowledgement.device_id = DeviceId::new("3".repeat(32)).unwrap();
     assert!(encode(&r).is_err());
 }
@@ -222,7 +229,7 @@ fn actual_maximum_event_envelopes_include_setup_step_and_escape_budget() {
 #[test]
 fn session_cap_and_normalized_tampering_are_enforced() {
     let response = SessionResponse {
-        protocol_version: 1,
+        protocol_version: PROTOCOL_VERSION,
         session_id: SessionId::new("f".repeat(32)).unwrap(),
         ready: false,
         reason: Some(Text::new("\0".repeat(512)).unwrap()),
@@ -233,4 +240,15 @@ fn session_cap_and_normalized_tampering_are_enforced() {
     let mut n = normalize(&BuildOptions::default()).unwrap();
     n.clock.spi_neighbors.below_or_equal = None;
     assert!(encode(&n).is_err());
+}
+
+#[test]
+fn non_wireless_helper_sessions_cannot_supply_current_board_consent() {
+    for (version, accepted) in [(0, false), (1, false), (2, true), (3, false), (u16::MAX, false)] {
+        let wire = format!(
+            r#"{{"protocol_version":{version},"session_id":"{}","ready":false,"reason":null}}"#,
+            "a".repeat(32)
+        );
+        assert_eq!(decode::<SessionResponse>(wire.as_bytes()).is_ok(), accepted);
+    }
 }

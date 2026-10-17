@@ -237,7 +237,7 @@ async fn dispatch(
     if connecting {
         return response(
             StatusCode::OK,
-            json!({"protocol_version":1,"session_id":state.session,"capability":state.capability}),
+            json!({"protocol_version":PROTOCOL_VERSION,"session_id":state.session,"capability":state.capability}),
             origin,
         );
     }
@@ -245,7 +245,7 @@ async fn dispatch(
         ("GET", "/api/v1/session") => {
             response(
                 StatusCode::OK,
-                json!({"protocol_version":1,"session_id":state.session,"ready":false,"reason":"Checks, builds and explicit Flash available; Flash requires a validated artifact, fresh device inspection and genuine Pico 2 acknowledgment"}),
+                json!({"protocol_version":PROTOCOL_VERSION,"session_id":state.session,"ready":false,"reason":"Checks, builds and explicit Flash available; Flash requires a validated artifact, fresh device inspection and genuine Pico 2 W acknowledgment"}),
                 origin,
             )
         }
@@ -587,20 +587,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flash_route_rejects_unowned_artifact_without_starting_work() {
+    async fn flash_route_requires_w_consent_before_artifact_lookup_or_work() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
-        let body = serde_json::json!({"artifact_id":"a".repeat(64),"device_id":"b".repeat(32),"editor_revision":1,"project_sha256":"c".repeat(64),"config_sha256":"d".repeat(64),"expected_options":BuildOptions::default(),"retry_of":null,"board_acknowledgement":{"device_id":"b".repeat(32),"session_id":state.session,"information_sha256":"e".repeat(64),"board":"genuine_pico2"}});
-        let request = Request::builder()
-            .method("POST")
-            .uri("/api/v1/flashes")
-            .header("host", AUTHORITY)
-            .header("origin", ORIGINS[0])
-            .header("x-studio-capability", &state.capability)
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string()))
-            .unwrap();
-        assert_eq!(dispatch(state.clone(), request).await.status(), StatusCode::NOT_FOUND);
-        assert!(state.inner.lock().unwrap().jobs.summaries().is_empty());
+        let mut body = serde_json::json!({"artifact_id":"a".repeat(64),"device_id":"b".repeat(32),"editor_revision":1,"project_sha256":"c".repeat(64),"config_sha256":"d".repeat(64),"expected_options":BuildOptions::default(),"retry_of":null,"board_acknowledgement":{"device_id":"b".repeat(32),"session_id":state.session,"information_sha256":"e".repeat(64),"board":"genuine_pico2_w"}});
+        for (board, expected) in [
+            ("genuine_pico2", StatusCode::BAD_REQUEST),
+            ("unknown", StatusCode::BAD_REQUEST),
+            ("genuine_pico2_w", StatusCode::NOT_FOUND),
+        ] {
+            body["board_acknowledgement"]["board"] = serde_json::json!(board);
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/v1/flashes")
+                .header("host", AUTHORITY)
+                .header("origin", ORIGINS[0])
+                .header("x-studio-capability", &state.capability)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            assert_eq!(dispatch(state.clone(), request).await.status(), expected);
+            let inner = state.inner.lock().unwrap();
+            assert!(inner.jobs.summaries().is_empty());
+            assert!(inner.worker.is_none());
+        }
     }
     #[tokio::test]
     async fn diagnostics_route_requires_authority_and_bounds_without_jobs() {

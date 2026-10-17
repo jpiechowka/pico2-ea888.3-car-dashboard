@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "session_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "job_id": "ffffffffffffffffffffffffffffffff",
+  "request": {
+    "artifact_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "device_id": "cccccccccccccccccccccccccccccccc",
+    "editor_revision": 1,
+    "project_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "config_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "expected_options": {
+      "mode": "demo",
+      "clock": { "named": "stock" },
+      "optimization": "speed3",
+      "simple_outline": true,
+      "serial_display": false,
+      "full_frame": false,
+      "frame_trace": true,
+      "te_trace": true,
+      "expert": false
+    },
+    "retry_of": null,
+    "board_acknowledgement": {
+      "device_id": "cccccccccccccccccccccccccccccccc",
+      "session_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "information_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "board": "genuine_pico2"
+    }
+  },
+  "running_firmware_observed": false,
+  "hardware_qualified": false,
+  "phase": "intent_armed",
+  "write_outcome": "unknown",
+  "generation": 0,
+  "raw_exit": null,
+  "interpreted_exit": null
+}

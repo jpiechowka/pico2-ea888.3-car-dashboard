@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::*;
+/// Version 2 requires explicit Pico 2 W consent; version 1's board consent is incompatible.
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const REQUEST_BYTES: usize = 65536;
 pub const EAV_HEX_BYTES: usize = dashboard_config::MAX_FILE_BYTES * 2;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,7 +35,7 @@ impl Wire for BuildRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BoardContract {
-    GenuinePico2,
+    GenuinePico2W,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,7 +115,7 @@ impl Wire for SessionResponse {
     const MAX_BYTES: usize = 65536;
 
     fn validate(&self) -> Result<(), Error> {
-        if self.protocol_version != 1 || (self.ready && self.reason.is_some()) {
+        if self.protocol_version != PROTOCOL_VERSION || (self.ready && self.reason.is_some()) {
             Err(Error::Schema)
         } else {
             serialized_bound(self, Self::MAX_BYTES)
