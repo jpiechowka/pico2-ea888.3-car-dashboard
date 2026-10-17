@@ -115,6 +115,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s studio-helper/tests -p 'test_*.py'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s configurator/scripts -p 'test_browser_process.py'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   configurator:
     name: Configurator state and WebAssembly
@@ -143,6 +145,23 @@ jobs:
         run: |
           cargo install trunk --version 0.21.14 --locked
           trunk build --release --locked
+      - name: Strict browser harness Clippy
+        run: cargo clippy --locked --target wasm32-unknown-unknown --features browser-tests -- -D warnings
+      - name: Browser process cleanup contracts
+        run: python3 -m unittest discover -s scripts -p 'test_browser_process.py'
+      - name: Browser storage, worker, transport and rendering failures
+        timeout-minutes: 15
+        env:
+          NO_COLOR: 'true'
+        run: |
+          trunk build --release --locked --features browser-tests --dist target/browser-tests
+          browser="$(command -v google-chrome || command -v chromium || true)"
+          if [ -z "$browser" ]; then
+            echo "::error::Chrome or Chromium is required for the browser failure suite"
+            exit 1
+          fi
+          "$browser" --version
+          python3 scripts/browser_failure_tests.py --browser "$browser" --dist target/browser-tests --timeout 90
 
   host:
     name: Host contracts and benchmark smoke

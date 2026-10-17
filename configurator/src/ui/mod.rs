@@ -649,6 +649,8 @@ pub fn Studio() -> impl IntoView {
         trace: RwSignal::new(metrics::Trace::default()),
         observer: RwSignal::new(None),
     };
+    #[cfg(feature = "browser-tests")]
+    browser_tests::launch(ui);
     project_io::restore(ui);
     ui.event(Notice::info(
         Category::Editor,
@@ -805,3 +807,5 @@ fn Views(ui: Ui) -> impl IntoView {
         }/>
     }
 }
+#[cfg(feature = "browser-tests")]
+mod browser_tests;

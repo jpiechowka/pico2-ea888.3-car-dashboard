@@ -358,3 +358,103 @@ pub fn export(
         }
     });
 }
+
+#[cfg(feature = "browser-tests")]
+pub(super) async fn browser_cases(ui: Ui) -> Result<(), JsValue> {
+    use super::browser_tests::until;
+    let db = database().await?;
+    let record = js_sys::Object::new();
+    js_sys::Reflect::set(&record, &"envelope".into(), &"external-writer".into())?;
+    let tx = db.transaction_with_str_and_mode(STORE, web_sys::IdbTransactionMode::Readwrite)?;
+    tx.object_store(STORE)?.put_with_key(&record, &CURRENT.into())?;
+    settled(&tx).await?;
+    let snapshot = Editor::default().begin_save().unwrap();
+    let outcome = write(&db, ui, snapshot.token(), None, false, record.clone().into()).await?;
+    if outcome != WriteOutcome::Stale {
+        return Err("foreign token wrote project".into());
+    }
+    let mut snapshot = None;
+    ui.editor.update(|e| snapshot = Some(e.begin_save().unwrap()));
+    let snapshot = snapshot.unwrap();
+    let outcome = write(&db, ui, snapshot.token(), None, false, record.into()).await?;
+    if outcome != WriteOutcome::Conflict {
+        return Err("concurrent stored writer was overwritten".into());
+    }
+    let tx = db.transaction_with_str(STORE)?;
+    let stored = request(&tx.object_store(STORE)?.get(&CURRENT.into())?).await?;
+    if envelope(&stored)?.as_deref() != Some("external-writer") {
+        return Err("conflict changed stored bytes".into());
+    }
+    // Inject the browser quota exception at the native store.put boundary.
+    let constructor = js_sys::Reflect::get(&web_sys::window().unwrap(), &"IDBObjectStore".into())?;
+    let prototype = js_sys::Reflect::get(&constructor, &"prototype".into())?;
+    let old_put = js_sys::Reflect::get(&prototype, &"put".into())?;
+    let fail = Closure::<dyn FnMut(JsValue, JsValue) -> Result<JsValue, JsValue>>::new(|_, _| {
+        Err(
+            web_sys::DomException::new_with_message_and_name("injected quota", "QuotaExceededError")
+                .unwrap()
+                .into(),
+        )
+    });
+    js_sys::Reflect::set(&prototype, &"put".into(), fail.as_ref())?;
+    let failed = write(
+        &db,
+        ui,
+        snapshot.token(),
+        Some("external-writer".into()),
+        false,
+        js_sys::Object::new().into(),
+    )
+    .await;
+    js_sys::Reflect::set(&prototype, &"put".into(), &old_put)?;
+    if failed? != WriteOutcome::Failed {
+        return Err("quota failure reported saved".into());
+    }
+    let tx = db.transaction_with_str(STORE)?;
+    let stored = request(&tx.object_store(STORE)?.get(&CURRENT.into())?).await?;
+    if envelope(&stored)?.as_deref() != Some("external-writer") {
+        return Err("quota failure replaced committed bytes".into());
+    }
+    // The public restore rejects corrupt complete-project records atomically.
+    let before = ui.editor.with_untracked(Editor::accepted_config_key);
+    restore(ui);
+    until(|| !ui.project_store.busy.get_untracked()).await;
+    if ui.editor.with_untracked(Editor::accepted_config_key) != before || !ui.conflict.get_untracked() {
+        return Err("invalid restore replaced accepted editor or hid conflict".into());
+    }
+    let tx = db.transaction_with_str_and_mode(STORE, web_sys::IdbTransactionMode::Readwrite)?;
+    tx.object_store(STORE)?.delete(&CURRENT.into())?;
+    settled(&tx).await?;
+    // A valid restore finishing after a user edit must keep that newer edit.
+    let mut saved = None;
+    ui.editor.update(|e| saved = Some(e.begin_save().unwrap()));
+    let saved = saved.unwrap();
+    let valid = js_sys::Object::new();
+    js_sys::Reflect::set(&valid, &"envelope".into(), &saved.json().into())?;
+    let bytes = saved.project().encode(ExportMode::ConvertedOnly).unwrap();
+    js_sys::Reflect::set(&valid, &"project".into(), &js_sys::Uint8Array::from(bytes.as_slice()))?;
+    let tx = db.transaction_with_str_and_mode(STORE, web_sys::IdbTransactionMode::Readwrite)?;
+    tx.object_store(STORE)?.put_with_key(&valid, &CURRENT.into())?;
+    settled(&tx).await?;
+    restore(ui);
+    ui.editor.update(|e| {
+        e.set_raw(
+            e.field_token(),
+            RawField::ViewName(e.selection().view),
+            "Newer edit".into(),
+        )
+        .unwrap();
+    });
+    let newer = ui.editor.with_untracked(Editor::accepted_config_key);
+    until(|| !ui.project_store.busy.get_untracked()).await;
+    if ui.editor.with_untracked(Editor::accepted_config_key) != newer || !ui.conflict.get_untracked() {
+        return Err("late restore replaced current edits".into());
+    }
+    let tx = db.transaction_with_str_and_mode(STORE, web_sys::IdbTransactionMode::Readwrite)?;
+    tx.object_store(STORE)?.delete(&CURRENT.into())?;
+    settled(&tx).await?;
+    db.close();
+    ui.conflict.set(false);
+    ui.project_store.base.set(None);
+    Ok(())
+}

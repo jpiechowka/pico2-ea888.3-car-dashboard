@@ -255,6 +255,10 @@ async fn maintain(
     if let Some((k, blob)) = incoming {
         blobs.put_with_key(&blob, &k.into())?;
     }
+    #[cfg(feature = "browser-tests")]
+    if ABORT_MAINTENANCE.with(std::cell::Cell::get) {
+        tx.abort()?;
+    }
     settled(&tx).await
 }
 pub async fn externalize(art: Arc<Artwork>) -> Result<Arc<Artwork>, JsValue> {
@@ -373,4 +377,82 @@ pub async fn materialize(project: Project) -> Result<Project, JsValue> {
             art.materialized(Arc::from(bytes.to_vec())).map_err(|_| JsValue::NULL)?,
         ))
         .map_err(|_| JsValue::NULL)
+}
+
+#[cfg(feature = "browser-tests")]
+thread_local! { static ABORT_MAINTENANCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(feature = "browser-tests")]
+pub(super) async fn browser_cases() -> Result<(), JsValue> {
+    // A second same-origin document holds the lock while production waits.
+    let document = web_sys::window().unwrap().document().unwrap();
+    let frame = document.create_element("iframe")?;
+    document.body().unwrap().append_child(&frame)?;
+    let other = get(&frame, "contentWindow")?;
+    let manager = get(&get(&other, "navigator")?, "locks")?;
+    let mut release = None;
+    let held = js_sys::Promise::new(&mut |resolve, _| release = Some(resolve));
+    let mut acquired = None;
+    let ready = js_sys::Promise::new(&mut |resolve, _| acquired = Some(resolve));
+    let acquired = acquired.unwrap();
+    let callback = Closure::once_into_js(move |_: JsValue| -> js_sys::Promise {
+        let _ = acquired.call0(&JsValue::NULL);
+        held
+    });
+    // Native request returns the iframe realm's Promise; instanceof in our realm is false.
+    let holding = method(&manager, "request")?
+        .call2(&manager, &LOCK.into(), &callback)?
+        .unchecked_into::<js_sys::Promise>();
+    JsFuture::from(ready).await?;
+    let entered = Rc::new(std::cell::Cell::new(false));
+    let observed = entered.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        locked(async move {
+            observed.set(true);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    });
+    for _ in 0..5 {
+        super::browser_tests::tick().await;
+    }
+    if entered.get() {
+        return Err("origin lock failed to serialize second document".into());
+    }
+    release.unwrap().call0(&JsValue::NULL)?;
+    JsFuture::from(holding).await?;
+    super::browser_tests::until(|| entered.get()).await;
+    frame.remove();
+    // Production origin lock and lifetime lock, real IDB pins and GC.
+    locked(async {
+        let db = database().await?;
+        let id = owner().await?;
+        let live = register(Arc::new(OriginalReference::new([0x12; 32], 3).unwrap()));
+        let dead = "34".repeat(32);
+        let parts = js_sys::Array::new();
+        parts.push(&js_sys::Uint8Array::from(&[1u8, 2, 3][..]));
+        let blob = web_sys::Blob::new_with_u8_array_sequence(&parts)?;
+        maintain(&db, &id, Some((live.key(), blob.clone()))).await?;
+        maintain(&db, &id, Some((dead.clone(), blob))).await?;
+        maintain(&db, &id, None).await?;
+        if read(&db, BLOBS, &live.key()).await?.is_undefined() || !read(&db, BLOBS, &dead).await?.is_undefined() {
+            return Err("GC lost live original or retained unpinned original".into());
+        }
+        let old = live.key();
+        drop(live);
+        ABORT_MAINTENANCE.with(|flag| flag.set(true));
+        let aborted = maintain(&db, &id, None).await;
+        ABORT_MAINTENANCE.with(|flag| flag.set(false));
+        if aborted.is_ok() || read(&db, BLOBS, &old).await?.is_undefined() {
+            return Err("aborted GC deleted retained bytes".into());
+        }
+        maintain(&db, &id, None).await?;
+        if !read(&db, BLOBS, &old).await?.is_undefined() {
+            return Err("released original was not collected".into());
+        }
+        db.close();
+        Ok(())
+    })
+    .await
 }

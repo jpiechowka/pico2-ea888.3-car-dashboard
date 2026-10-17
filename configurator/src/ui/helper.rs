@@ -774,3 +774,25 @@ pub async fn relay_post(
     }
     Ok(reply)
 }
+
+#[cfg(feature = "browser-tests")]
+pub(super) async fn browser_cases() -> Result<(), wasm_bindgen::JsValue> {
+    let abort = web_sys::AbortController::new()?;
+    let init = transport::request_init("GET", &abort);
+    let origin = web_sys::window().unwrap().location().origin()?;
+    let request = web_sys::Request::new_with_str_and_init(&format!("{origin}/__disconnect"), &init)?;
+    let result = transport::fetch_bounded(&request, 1024, false).await;
+    if result.is_ok() {
+        return Err("disconnected helper reported success".into());
+    }
+    let partial = web_sys::Request::new_with_str_and_init(&format!("{origin}/__partial"), &init)?;
+    if transport::fetch_bounded(&partial, 1024, false).await != Err("Helper response was interrupted") {
+        return Err("truncated helper response was accepted or misclassified".into());
+    }
+    abort.abort();
+    let result = transport::fetch_bounded(&request, 1024, false).await;
+    if result.is_ok() {
+        return Err("aborted helper request reported success".into());
+    }
+    Ok(())
+}

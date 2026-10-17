@@ -157,7 +157,7 @@ fn start(
         if state.stale(ui, generation, stamp) {
             return;
         }
-        let worker = match web_sys::Worker::new("./startup-worker_loader.js") {
+        let worker = match web_sys::Worker::new(worker_url()) {
             Ok(worker) => worker,
             Err(_) => {
                 state.fail("Artwork worker unavailable.");
@@ -447,4 +447,132 @@ pub fn Panel(
         <button disabled=move ||!state.busy.get() on:click=move |_|{state.cancel();state.message.set("Conversion cancelled; accepted artwork retained.".into());}>"Cancel conversion"</button>
         <p class="startup-status" role="status">{move ||state.message.get()}</p>
     </div></details>}
+}
+
+fn worker_url() -> &'static str {
+    #[cfg(feature = "browser-tests")]
+    if SILENT_WORKER.with(std::cell::Cell::get) {
+        return "/__silent_worker";
+    }
+    "./startup-worker_loader.js"
+}
+#[cfg(feature = "browser-tests")]
+thread_local! { static SILENT_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(feature = "browser-tests")]
+pub(super) async fn browser_cases(ui: Ui) -> Result<(), wasm_bindgen::JsValue> {
+    use super::browser_tests::{tick, until};
+    let state = Importer {
+        job: StoredValue::new_local(None),
+        generation: RwSignal::new(0),
+        busy: RwSignal::new(false),
+        message: startup::ProjectMessage::new(ui.editor, String::new()),
+        stamp: RwSignal::new(None),
+        token: RwSignal::new(None),
+        lease: StoredValue::new_local(None),
+        editor: ui.editor,
+    };
+    // Fixed 1x1 red RGBA PNG, standard chunks/CRC, no source decoder double.
+    let source: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21,
+        196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 0, 5, 0, 1, 255, 137, 153, 61, 29,
+        0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    let converted = dashboard_startup_tools::convert(source, &Options::default()).unwrap();
+    let valid_reply = js_sys::Object::new();
+    js_sys::Reflect::set(
+        &valid_reply,
+        &"asset".into(),
+        &js_sys::Uint8Array::from(converted.asset.as_slice()).buffer(),
+    )?;
+    let summary = serde_json::to_string(&(
+        converted.source_width,
+        converted.source_height,
+        converted.source_frames,
+        converted.source_duration_ms,
+        converted.zero_delay_frames,
+        converted.timing_changed,
+        converted.trim_end_ms,
+    ))
+    .unwrap();
+    js_sys::Reflect::set(&valid_reply, &"summary".into(), &summary.into())?;
+    let valid_init = web_sys::MessageEventInit::new();
+    valid_init.set_data(&valid_reply);
+    let parts = js_sys::Array::new();
+    parts.push(&js_sys::Uint8Array::from(source));
+    let file = web_sys::File::new_with_u8_array_sequence(&parts, "red-pixel.png")?;
+    let accepted_callbacks = RwSignal::new(0usize);
+    let observed = accepted_callbacks;
+    let callback = Callback::new(move |input: ArtworkImport| {
+        observed.update(|count| *count += 1);
+        input.finished.run(false);
+    });
+    SILENT_WORKER.with(|value| value.set(true));
+    start(ui, state, file.clone(), Options::default(), callback);
+    until(|| state.job.with_value(|job| job.is_some())).await;
+    let worker = state.job.with_value(|job| job.as_ref().unwrap().worker.clone());
+    let init = web_sys::MessageEventInit::new();
+    init.set_data(&"malformed".into());
+    worker.dispatch_event(&web_sys::MessageEvent::new_with_event_init_dict("message", &init)?.into())?;
+    tick().await;
+    if state.busy.get_untracked() || state.job.with_value(|job| job.is_some()) {
+        return Err("malformed worker reply did not clean up job".into());
+    }
+    start(ui, state, file.clone(), Options::default(), callback);
+    until(|| state.job.with_value(|job| job.is_some())).await;
+    let worker = state.job.with_value(|job| job.as_ref().unwrap().worker.clone());
+    // Positive control: a complete current response reaches the real acceptance callback.
+    worker.dispatch_event(&web_sys::MessageEvent::new_with_event_init_dict("message", &valid_init)?.into())?;
+    until(|| accepted_callbacks.get_untracked() == 1).await;
+    start(ui, state, file.clone(), Options::default(), callback);
+    until(|| state.job.with_value(|job| job.is_some())).await;
+    let worker = state.job.with_value(|job| job.as_ref().unwrap().worker.clone());
+    state.cancel();
+    worker.dispatch_event(&web_sys::MessageEvent::new_with_event_init_dict("message", &valid_init)?.into())?;
+    if state.busy.get_untracked() {
+        return Err("late cancelled message reactivated job".into());
+    }
+    start(ui, state, file.clone(), Options::default(), callback);
+    until(|| state.job.with_value(|job| job.is_some())).await;
+    let worker = state.job.with_value(|job| job.as_ref().unwrap().worker.clone());
+    ui.editor.update(|e| {
+        e.set_raw(
+            e.field_token(),
+            RawField::ViewName(e.selection().view),
+            "Worker race".into(),
+        )
+        .unwrap();
+    });
+    let accepted = ui.editor.with_untracked(Editor::accepted_config_key);
+    worker.dispatch_event(&web_sys::MessageEvent::new_with_event_init_dict("message", &valid_init)?.into())?;
+    tick().await;
+    if accepted_callbacks.get_untracked() != 1
+        || !state.message.get().contains("Project changed")
+        || state.busy.get_untracked()
+        || ui.editor.with_untracked(Editor::accepted_config_key) != accepted
+    {
+        return Err("stale worker completion replaced newer editor".into());
+    }
+    let deadline_started = now();
+    start(ui, state, file, Options::default(), callback);
+    // Exercise the actual production ten-second timeout, without time compression.
+    for _ in 0..1500 {
+        if !state.busy.get_untracked() {
+            break;
+        }
+        tick().await;
+    }
+    SILENT_WORKER.with(|value| value.set(false));
+    if accepted_callbacks.get_untracked() != 1
+        || now() - deadline_started < 9900.0
+        || !state.message.get().contains("deadline")
+        || state.busy.get_untracked()
+        || state.job.with_value(|job| job.is_some())
+        || ui.editor.with_untracked(Editor::accepted_config_key) != accepted
+    {
+        return Err("timeout leaked job or replaced accepted project".into());
+    }
+    let lease = originals::Materialization::acquire()?;
+    drop(lease);
+    Ok(())
 }
