@@ -503,6 +503,102 @@ def _phase_graph(value):
         nodes.clear();memo.clear();active.clear();literals.clear();descriptions.clear();scalar_pairs.clear()
 
 
+def _phase_plain_fields(kind):
+    """Recognize only ordinary, directly stored dataclass fields without callbacks."""
+    from dataclasses import Field,_FIELD
+    from types import GetSetDescriptorType
+    if type(kind) is not type:return None
+    ancestry=type.__getattribute__(kind,'__mro__')
+    if len(ancestry)!=2 or ancestry[1] is not object:return None
+    namespace=type.__getattribute__(kind,'__dict__')
+    if any(type(name) is not str for name in namespace):return None
+    if '__getattribute__' in namespace or '__getattr__' in namespace:return None
+    descriptor=namespace.get('__dict__')
+    if type(descriptor) is not GetSetDescriptorType or descriptor.__name__!='__dict__' or (
+        descriptor.__objclass__ is not kind and descriptor.__objclass__ is not object):return None
+    if type(namespace.get('__module__')) is not str or type(type.__getattribute__(kind,'__qualname__')) is not str:return None
+    declared=namespace.get('__dataclass_fields__')
+    if type(declared) is not dict or any(type(name) is not str for name in declared):return None
+    names=[]
+    for field in declared.values():
+        if type(field) is not Field:return None
+        if field._field_type is not _FIELD:continue
+        name=field.name
+        if type(name) is not str or name in ('__class__','__dict__','__dataclass_fields__'):return None
+        # Defaults may be ordinary literals; any descriptor or other class
+        # value keeps the writer path, even if an instance happens to shadow it.
+        if name in namespace:
+            default=type(namespace[name])
+            if not (default is str or default is bytes or default is int or default is bool or default is type(None)):return None
+        names.append(name)
+    return tuple(names)
+
+
+def _phase_matches(value,baseline):
+    """Compare without retaining another encoded graph for plain local records.
+
+    A callback-free preflight selects the optimization before any getter runs.
+    Unknown shapes use the unchanged writer once. In particular, a mapping
+    proxy may wrap a user Mapping, and dataclass metadata/getters/metaclasses
+    can make both traversal and interning observable. They are not speculated.
+    This is a local comparison, never a cached validation or successor token.
+    """
+    seen=set();classes={};memo={};active=set();matched=True
+    def plain(item):
+        kind=type(item)
+        if kind is str or kind is bytes or kind is int or kind is bool or kind is type(None):return True
+        identity=id(item)
+        if identity in seen:return True
+        seen.add(identity)
+        if kind is dict:return all(plain(k) and plain(v) for k,v in item.items())
+        if kind is list or kind is tuple:return all(plain(v) for v in item)
+        # Check the metaclass before dictionary lookup or type comparison:
+        # custom type equality/hash is itself observable in the writer.
+        if type(kind) is not type:return False
+        if kind not in classes:classes[kind]=_phase_plain_fields(kind)
+        names=classes[kind]
+        if names is None:return False
+        stored=object.__getattribute__(item,'__dict__')
+        if type(stored) is not dict or any(type(name) is not str for name in stored):return False
+        if '__dataclass_fields__' in stored:return False
+        return all(name in stored and plain(stored[name]) for name in names)
+    def plain_encoded(item):
+        kind=type(item)
+        if kind is tuple:return all(plain_encoded(v) for v in item)
+        return kind is str or kind is bytes or kind is int or kind is bool or kind is type(None)
+    def visit(item):
+        nonlocal matched
+        kind=type(item)
+        if kind in (str,bytes,int,bool,type(None)):return ('value',kind.__name__,item)
+        identity=id(item)
+        require(identity not in active,'cyclic Sources phase snapshot')
+        if identity in memo:return memo[identity]
+        index=len(memo);token=('reference',index);memo[identity]=token;active.add(identity)
+        if kind is dict:node=('mapping',tuple((visit(k),visit(v)) for k,v in item.items()))
+        elif kind in (tuple,list):node=(kind.__name__,tuple(visit(v) for v in item))
+        else:node=('dataclass',kind.__module__,kind.__qualname__,tuple((name,visit(getattr(item,name))) for name in classes[kind]))
+        active.remove(identity)
+        # Preflight proved both sides callback-free. Completion order can now
+        # differ from node-table equality order, but traversal never stops early.
+        if index>=len(baseline[1]) or node!=baseline[1][index]:matched=False
+        return token
+    try:
+        try:
+            eligible=plain(value) and type(baseline) is tuple and len(baseline)==2 and type(baseline[1]) is tuple and plain_encoded(baseline)
+        except RecursionError:
+            # A deeper preflight call stack must not introduce a new failure.
+            eligible=False
+        seen.clear()
+        if not eligible:
+            classes.clear()
+            return _phase_graph(value)==baseline
+        root=visit(value)
+        return root==baseline[0] and matched and len(memo)==len(baseline[1])
+    finally:
+        plain=None;plain_encoded=None;visit=None
+        seen.clear();classes.clear();memo.clear();active.clear()
+
+
 @dataclass(frozen=True)
 class _SourcePhasesState:
     widgets:object

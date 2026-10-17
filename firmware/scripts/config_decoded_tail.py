@@ -161,14 +161,18 @@ def _entry_data(entry,predecessor):
         Controls_sequence=entry.Controls_sequence,completed_ordinary_group_issued=entry.completed_ordinary_group_issued)
 
 
-def _phase_checkpoint(predecessor,entries,parents,children,phases,predecessor_description,payload_sha256):
-    from config_decoded_sources import _phase_graph
+def _phase_data(predecessor,entries,parents,children,phases,predecessor_description,payload_sha256):
     require(len(entries)==len(phases) and all(p.entry is e and not p.completed_ordinary_group_issued for p,e in zip(phases,entries)),
         'Tail private phase changed its selected entry association')
     data=tuple(dict(entry=_entry_data(p.entry,predecessor),controls=p.controls,control_effects=p.control_effects,
         suffix=p.suffix,suffix_effects=p.suffix_effects,parent_envelopes=p.parent_envelopes) for p in phases)
-    return _phase_graph(dict(parents=parents,children=children,phases=data,
-        predecessor_description=predecessor_description,payload_sha256=payload_sha256))
+    return dict(parents=parents,children=children,phases=data,
+        predecessor_description=predecessor_description,payload_sha256=payload_sha256)
+
+
+def _phase_checkpoint(predecessor,entries,parents,children,phases,predecessor_description,payload_sha256):
+    from config_decoded_sources import _phase_graph
+    return _phase_graph(_phase_data(predecessor,entries,parents,children,phases,predecessor_description,payload_sha256))
 
 
 @dataclass(frozen=True)
@@ -711,7 +715,7 @@ def _first_boot_decoded_visitor_return_state(objects,instructions,source_context
     """
     from config_tail_uses import _tail_access_group
     from config_tail_control import _tail_structural,_structural_data
-    from config_decoded_sources import _phase_graph
+    from config_decoded_sources import _phase_graph,_phase_matches
     from config_structural import _fresh_composition_inputs
     raw_inputs=_raw_composition_inputs(objects,instructions,source_context)
     state=_first_boot_tail_phases(objects,instructions,source_context)
@@ -724,8 +728,8 @@ def _first_boot_decoded_visitor_return_state(objects,instructions,source_context
             # callees create new records/replacement models, with no callback
             # or escape of that predecessor. Retain the COMPLETE local phase
             # comparison; only its immediate second upstream replay is absent.
-            require(_phase_checkpoint(state.predecessor,state.entries,state.parents,state.children,state.phases,
-                state.predecessor_description,state.payload_sha256)==state.checkpoint,
+            require(_phase_matches(_phase_data(state.predecessor,state.entries,state.parents,state.children,state.phases,
+                state.predecessor_description,state.payload_sha256),state.checkpoint),
                 'Tail private source/epoch/child/effect record changed')
             from config_tail_control import _tail_control_data,_control_checkpoint,_TailActiveControl
             from config_tail_uses import _family_data,_reached_data,_snapshot,_TailAccessBridge,_check_member
