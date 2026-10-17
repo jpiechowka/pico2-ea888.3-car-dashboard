@@ -1,5 +1,6 @@
 PICO 2 W / LEON CUPRA DNUC: PROPOSED ISOLATED NET AND PIN REFERENCE
-Reviewed: 2026-10-17. Architecture only, not assembly-ready wiring.
+Baseline reviewed: 2026-10-17; Longan identification updated: 2026-10-18.
+Architecture only, not assembly-ready wiring.
 Detailed protection values and electrical/vehicle acceptance remain open.
 See protection-plan.md, module-build.md, transport-options.md and
 ../docs/hardware/pico2w-board-audit.md. Mostly ready-made modules are selected;
@@ -12,9 +13,13 @@ IDENTIFIED PARTS
 ===============
 Owner photos: Raspberry Pi Pico 2 W mounted on PIM715 Display Pack 2.8;
 Longan Serial CAN Bus V1.4 Aug 2020 (kit bag Seeed 114991438), MCP2515,
-16.000 MHz crystal, SIT65HVD230 transceiver; Pololu 3782 D36V28F5;
+ATmega168PA MCU, 16.000 MHz crystal, SIT65HVD230 transceiver;
+regulator marked 662K (consistent with nominal 3.3 V XC6206 family);
+Pololu 3782 D36V28F5;
 Adafruit 3218 covered switch. Existing encoder: Adafruit 5880.
-Longan MCU/LDO markings and V1.4 circuit remain unresolved. Older TI
+Exact LDO variant, V1.4 circuit, measured rail and termination remain unresolved.
+See longan-v1.4-identification.md. The 5V power label is not a UART voltage;
+the 16 MHz CAN crystal does not establish the MCU clock. Older TI
 SN65HVD230/MCP2551 schematics do not establish this board's rail or pin limits.
 
 POWER DOMAINS (OWNER-SELECTED WIRED BASELINE)

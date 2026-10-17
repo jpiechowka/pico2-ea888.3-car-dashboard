@@ -1,6 +1,7 @@
 # Isolated Longan build using ready-made modules
 
-Design checkpoint: 2026-10-17. The owner selected **isolated Longan**, mostly
+Design checkpoint: 2026-10-17; Longan identification updated 2026-10-18.
+The owner selected **isolated Longan**, mostly
 ready-made parts with some soldering, and the existing covered switch on the
 vehicle-side **5 V branch**. A custom PCB is not the default. This document
 turns the [hardware audit](protection-plan.md) into a practical shortlist;
@@ -33,7 +34,7 @@ still to close; they are not claims that a particular module provides it.
 | Item | Quantity | Candidate or retained part | Status / remaining check |
 | --- | --- | --- | --- |
 | Dashboard and controls | 1 set | Owned Pico 2 W, PIM715, Adafruit 5880 | Retain; measure peak demand with Full brightness and the intended profile |
-| CAN adapter | 1 | Owned Longan Serial CAN Bus V1.4 | Retain; identify MCU/LDO, actual logic rail and termination |
+| CAN adapter | 1 | Owned Longan Serial CAN Bus V1.4 | ATmega168PA and `662K` regulator marking identified; actual rail/load margin and termination remain open |
 | Vehicle buck regulator | 1 | Owned Pololu 3782 D36V28F5 | Retain; check startup/load voltage and enclosure temperature |
 | Covered cutoff | 1 | Owned Adafruit 3218 | Selected on vehicle-side 5 V; check total branch current, inrush and LED visibility |
 | Isolated power | 1 | **XP Power ITX0505SA**; alternative **Traco TMR 6-0511** | Regulated through-hole modules; conditional on power/thermal checks below |
@@ -109,9 +110,12 @@ The following names are **IC nets**, not instructions to trust connector labels:
 TB1 carries vehicle-side power/ground; TB2 carries INA/OUTB. Configure the local
 GPIO jumpers by continuity to the above nets. The full Click board's VCC selector
 must select 3.3 V on the Pico side. Do not derive the Longan-side setting from its
-`5V` power-connector label. Identify the actual MCU, its rail and input limits,
-then establish a safe accessible supply connection and load budget. This may
-need a small soldered wire, but its location is not yet identified.
+`5V` power-connector label. The new photos identify **ATmega168PA** and a `662K`
+regulator marking consistent with nominal 3.3 V. The
+[photo/source audit](longan-v1.4-identification.md#uart-electrical-and-software-contract)
+records the MCU and isolator's different thresholds. Measure the actual rail,
+qualify both directions and establish an accessible supply point/load budget.
+This may need a small soldered wire, but its location is not yet qualified.
 
 ## What the approved cutoff does
 
@@ -194,7 +198,8 @@ remaining gaps before calling the BOM ready for vehicle assembly.
 1. Lay out the selected modules together near the display. Use the approved
    approximately ≤1 m OBD and ≤20 cm encoder leads, then verify enclosure fit,
    isolation clearance and heat removal. Restart on dips is approved.
-2. Identify the Longan MCU/LDO and measure its rail and unpowered termination;
+2. Use the identified MCU/regulator evidence to verify Longan's actual circuit,
+   rail and unpowered termination;
    measure dashboard startup/Full-brightness current using an isolated bench supply.
 3. Choose the power module, fuse/wire, input protection and any independent OVP
    from those results. Record capacitor additions per node, including effective

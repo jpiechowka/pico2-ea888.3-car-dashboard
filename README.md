@@ -357,10 +357,13 @@ orientation. Use the [pin/reference document](hardware/wiring-diagram.txt) and
 verify the actual harness by continuity.
 
 The audit found that Longan's generic MCP2551 description conflicts with its
-V1.3 schematic's SN65HVD230. The owner's **V1.4 photograph shows SIT65HVD230**;
-TI limits cannot be transferred to it. The LDO/MCU and rail measurements remain
-open. Isolation protects the dashboard/USB
-boundary; it does not guarantee that a faulty adapter cannot disturb CAN.
+V1.3 schematic's SN65HVD230. The owner's **V1.4 photos identify ATmega168PA,
+MCP2515 and SIT65HVD230**; TI transceiver limits cannot be transferred to it.
+The regulator's **`662K` marking points to nominal 3.3 V**, unlike the older
+drawing's 3.0 V part. Actual rails, UART margins and termination still need
+measurement. [Owned-board identification and bench checklist](hardware/longan-v1.4-identification.md).
+Isolation protects the dashboard/USB boundary; it does not guarantee that a
+faulty adapter cannot disturb CAN.
 The firmware's unqualified, no-diagnostic-polling mode is not electrical
 listen-only certification. [Revision evidence and remaining gates](hardware/protection-plan.md#2-corrections-that-affect-the-design).
 

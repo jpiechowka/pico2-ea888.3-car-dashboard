@@ -1,7 +1,8 @@
 # Leon Cupra DNUC: hardware protection audit and proposed build plan
 
-Reviewed 2026-10-17 against manufacturer documentation, all four published
+Baseline reviewed 2026-10-17 against manufacturer documentation, all four published
 Longan schematics, the Pico/PIM715 drawings and the resolved firmware source.
+Longan photo, MCU/regulator and UART evidence updated 2026-10-18.
 This is a **design proposal, not an assembly-ready schematic or purchasing BOM**.
 Owner photographs identify the Longan revision and the Pololu/switch models;
 no electrical or vehicle measurements have been performed. The owner requires
@@ -13,6 +14,7 @@ reuse of these parts and selected isolated dashboard power plus UART.
 | [Wired versus Bluetooth](transport-options.md)
 | [Selected module-based build](module-build.md)
 | [Capacitor parts and Allegro offers](capacitors.md)
+| [Owned Longan V1.4 identification](longan-v1.4-identification.md)
 | [Vehicle/bench runbook](../docs/validation/pico2-dnuc-runbook.md)
 
 ## 1. Retained parts and evidence status
@@ -23,13 +25,15 @@ reuse of these parts and selected isolated dashboard power plus UART.
 | Pimoroni PIM715 Display Pack 2.8 | Retain | Check intact RGB traces and unpopulated SP/CE connector |
 | Adafruit 5880 encoder | Retain | Confirm assembly, cable length and address; use the display's 3.3 V Qw/ST supply |
 | Adafruit 3218 covered illuminated switch | Retain; packaging identified | Identify terminals; relocate to protected low-voltage switching/control |
-| Longan Serial CAN Bus **V1.4, Aug 2020**, kit bag Seeed **114991438** | Retain; MCP2515 and **SIT65HVD230** photographed | Identify LDO/MCU and revision-matched circuit; measure termination/logic levels |
+| Longan Serial CAN Bus **V1.4, Aug 2020**, kit bag Seeed **114991438** | Retain; **ATmega168PA**, MCP2515, **SIT65HVD230**, regulator marked `662K` | Reconcile actual circuit; measure internal rail/logic and termination; verify regulator identity/load margin |
 | Pololu **3782 D36V28F5** | Retain; label and both board faces photographed | Measure load, rail tolerance and thermal margin |
 
-The owner's photographs identify these boards and the Longan transceiver;
+The owner's photographs identify these boards and the Longan MCU/transceiver;
 raw photos remain outside the repository. Encoder identity follows the existing
-project. Photos do not establish rail voltage, continuity, termination, flash
-capacity or the unreadable Longan MCU/regulator markings.
+project. The regulator's `662K` marking supports a nominal 3.3 V XC6206-family
+identification, with exact variant unconfirmed. Photos do not establish actual
+rail voltage, continuity, termination or flash capacity. See the
+[source reconciliation and remaining bench checks](longan-v1.4-identification.md).
 
 ## 2. Corrections that affect the design
 
@@ -59,9 +63,9 @@ voltage or 12 V input tolerance. A matching V1.4 schematic remains unavailable.
 | V1.3 | 5 V or 3.3 V supply; lower-voltage logic supported | SN65HVD230; XC6206P302MR regulator; UART connects directly to the module MCU |
 
 The V1.3 drawing's regulator denotes 3.0 V ±2%, while the transceiver requires
-at least 3.0 V. That leaves no guaranteed lower-rail margin. Resolve the actual
-regulator marking and rail under load/temperature before accepting that design;
-this is a **published-drawing concern, not a diagnosed defect in the owner's kit**.
+at least 3.0 V. That leaves no guaranteed lower-rail margin. The owner's V1.4
+marking instead points to 3.3 V; actual rail/load/temperature checks remain open.
+This is a **published-drawing concern, not a diagnosed defect in the owner's kit**.
 Sources: [V1.3 schematic](https://github.com/Longan-Labs/Eagle_File_Serial_CAN_Bus/blob/29fcdaf1df0e249a6bfcde49f8d229e4743c611b/V1.3/Serial_CAN_Bus_V1.3.sch),
 [Torex XC6206, pp. 2–4](https://product.torexsemi.com/system/files/series/xc6206.pdf),
 [TI SN65HVD230, pp. 5–6](https://www.ti.com/lit/ds/symlink/sn65hvd230.pdf).
@@ -259,10 +263,10 @@ the resolved clock. [Control/electrical contract](../docs/hardware/backlight-con
 
 ## 7. Proposed implementation order and acceptance
 
-1. **Finish identifying the owned hardware.** Pico 2 W, V1.4 Longan/SIT65HVD230,
-   Pololu and switch are recorded. Resolve Longan LDO/MCU, jumper circuit and
-   unpowered cable continuity. Resolve actual V1.4 supply
-   limits without extrapolating from V1.3.
+1. **Finish the owned-board electrical identification.** Pico 2 W, Longan V1.4
+   MCU/controller/transceiver and regulator marking, Pololu and switch are recorded.
+   Confirm actual regulator/MCU rail, load margin, jumper circuit and unpowered
+   cable continuity. Resolve V1.4 limits without extrapolating from V1.3.
 2. **Apply the approved operating choices.** Isolated Longan, ready-made modules,
    5 V branch cutoff, restart on dips and compact layout are selected. Use
    approximately ≤1 m OBD and ≤20 cm encoder leads; size the enclosure from the
@@ -289,8 +293,9 @@ parts do not turn the whole stack into an automotive-qualified module.
 
 ## Open decisions
 
-- Longan V1.4 matching circuit, LDO/MCU and measured rails/termination: open;
-  revision, MCP2515/SIT transceiver, Pico 2 W and Pololu/switch identified.
+- Longan V1.4 MCU/controller/transceiver and regulator marking: recorded in the
+  [photo/source audit](longan-v1.4-identification.md). Matching circuit, exact LDO
+  variant, measured rails/termination and UART/load margin remain open.
 - Isolated power plus UART: approved; detailed component design remains pending.
 - Wired versus BLE: isolated Longan selected after comparison; BLE not selected.
 - Assembly: mostly ready-made modules and some soldering; no custom PCB default.
