@@ -317,3 +317,45 @@ fn render_transition_follows_pending_orientation_before_old_completion() {
     history.complete(b).unwrap();
     assert_eq!(history.target_orientation(), Some(Orientation::Portrait));
 }
+
+#[test]
+fn oriented_regions_retain_the_pre_orientation_storage_budget() {
+    // Plans are copied into the producer/consumer futures and channel slots.
+    // Two extra bytes per region cost 32 bytes in every sixteen-region plan.
+    assert_eq!(core::mem::size_of::<Region>(), 8);
+}
+
+#[test]
+fn every_region_origin_preserves_orientation_stride_and_inclusive_addresses() {
+    use dashboard_config::Geometry;
+    for geometry in [Geometry::Landscape, Geometry::Portrait] {
+        for y in 0..geometry.height() {
+            for x in 0..geometry.width() {
+                for (width, height) in [(1, 1), (geometry.width() - x, geometry.height() - y)] {
+                    let region = Region::new_in(geometry, x, y, width, height).unwrap();
+                    assert_eq!(region.columns().map(u16::from_be_bytes), [x, x + width - 1]);
+                    assert_eq!(region.rows().map(u16::from_be_bytes), [y, y + height - 1]);
+                    let ranges: Vec<_> = region.payload_ranges().collect();
+                    let start = (usize::from(y) * usize::from(geometry.width()) + usize::from(x)) * 2;
+                    assert_eq!(ranges[0].start, start);
+                    assert_eq!(ranges.iter().map(|range| range.len()).sum::<usize>(), region.bytes());
+                    if width == geometry.width() {
+                        assert_eq!(ranges, vec![start..start + region.bytes()]);
+                    } else {
+                        assert_eq!(ranges.len(), usize::from(height));
+                        for (row, range) in ranges.iter().enumerate() {
+                            assert_eq!(
+                                *range,
+                                start + row * usize::from(geometry.width()) * 2
+                                    ..start + row * usize::from(geometry.width()) * 2 + usize::from(width) * 2
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for x in [geometry.width(), 0x8000, u16::MAX] {
+            assert!(Region::new_in(geometry, x, 0, 1, 1).is_none());
+        }
+    }
+}
