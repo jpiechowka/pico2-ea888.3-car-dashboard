@@ -288,7 +288,9 @@ The pass preserves all gauges, animations, controls and validation gates.
   [matched landscape comparison](docs/performance/orientation-landscape-2026-10-17.md)
   found no repeatable regression in three selected workloads; desktop noise
   prevents a precise speedup claim. Rotation forces one complete transfer before
-  partial updates resume.
+  partial updates resume. Compact six-byte damage rectangles recovered 264 bytes
+  in the [traced firmware images](docs/validation/orientation-2026-10-17.md#traced-vehicle-image-regression),
+  preserving the existing headroom checks and region capacity.
 
 Host benchmarks do not establish physical FPS or target CPU-cycle gains.
 For target measurements, use the [bounded on-device kernels](docs/performance/target-benchmarks.md)

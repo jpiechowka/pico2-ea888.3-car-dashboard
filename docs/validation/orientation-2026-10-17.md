@@ -47,35 +47,62 @@ history remained available. The expected mismatch produced a contextual
 `StartupAsset` error while retaining the last completed preview. Pure publication-state tests
 cover failed canvas writes; real browser `putImageData` failure injection was not
 performed. Browser simulation is synthetic and cannot establish device timing.
+The final browser workflow replay used Studio source `7094b15`; the subsequent
+display change only compacts internal transfer rectangles, covered by the panel
+model, boundary regressions and linked images below.
 
 ## Linked ARM image
 
 A genuine `capture_target_bench.py --firmware --image-gate practical` run passed
-at source **c8c5f62**, with device Portrait, eight 1×1 widgets, landscape Boot info
-and custom portrait Splash artwork. It used pinned `nightly-2026-10-16`, explicit
+at source **2d6b2cc** (integrated as `3a7a42b`), with device Portrait, eight 1×1
+widgets, landscape Boot info and custom portrait Splash artwork. It used pinned
+`nightly-2026-10-16`, explicit
 `cortex-m33`, hard-float ARM, release optimization 3, fat LTO and
 `demo,cpu280-spi70-1v30,simple-outline`. The selected overclock is an expert build
 configuration, not evidence of safe voltage or stable hardware.
 
 | Result | Bytes |
 | --- | ---: |
-| Allocated static RAM | 401520 |
-| Core0 headroom | 122768 |
+| Allocated static RAM | 401256 |
+| Core0 headroom | 123032 |
 | Conservative boot stack bound | 3344 |
 | Core1 construction / runtime bounds | 18816 / 15712 |
-| Dashboard stack bound | 26736 |
+| Dashboard stack bound | 26728 |
 | Core0 reserve | 8192 |
 | Core1 stack capacity / reserve | 32768 / 4096 |
 
 The capture checked selected/linked config, profile and artwork bytes, clock
 identity, flash layout, boot metadata, named stack paths and malformed flash
 artifacts under ordinary and optimized Python. All 390 captured source hashes
-were reverified. Immutable local artifacts are retained under
-`target/ori-final/source/firmware/target/bench-captures/native`:
+were independently compared with the integrated Git source, without mismatches.
+Immutable local artifacts are retained under
+`target/ori-compact/source/firmware/target/bench-captures/native`:
 
-- Manifest SHA256: `50e02a5d3a4dd95f6fd14f9e2c86fa06e35c45b8e33255386113f50d5bb34889`
-- ELF SHA256: `78954a0f36c492f61de8519e45d58ec1e005d80f06a7fdcb3af7dcd170fcc624`
-- Memory receipt SHA256: `98a82cf4583c347e87379ff0abcaa4d07cd2152787ca9bb393bf9b6934a0e72b`
+- Manifest SHA256: `647e1e52325e957feece753c8aa26d3fd0a19446b7163326593f2b5e4c99058e`
+- ELF SHA256: `a32bf8066a67d0989b94be8b01b35cca7dba94fef12ccc2e2d20f5f2e3cc23e0`
+- Memory receipt SHA256: `0a7d17f5420ba910367ad80ee461cefddc8335b3f1fd7a1582ac531d9b7b6e36`
+
+### Traced vehicle image regression
+
+CI exposed a real static-memory regression in the Longan and target-benchmark
+variants with frame/TE tracing. Adding geometry grew each damage rectangle from
+8 to 10 bytes; sixteen-entry plans are retained in four futures/channel locations.
+Both variants had 65344 bytes of headroom, below the unchanged 65536-byte minimum.
+
+The repair stores the native 320-pixel axis in 16-bit fields and the 240-pixel axis
+in 8-bit fields, with geometry in an unused origin bit. Validation precedes every
+narrowing cast. Six-byte rectangles preserve all coordinates, extents, sixteen
+regions and both framebuffers. All-origin address/stride tests, malformed inputs,
+vertical merging through row 319, panel reconstruction and transfer-failure tests
+cover this representation.
+
+Both traced variants now pass genuine practical image captures with 458680 bytes
+of static RAM and 65608 bytes of headroom: 264 bytes recovered, 72 above the minimum.
+Their conservative boot/construction/runtime/dashboard stack bounds are
+3328/28008/17312/29216 bytes. Stack reserves and all memory gates are unchanged.
+The narrow margin is enforced on every supported CI image; it is not a physical
+stack measurement. Earlier failed captures and the intermediate eight-byte attempt
+are retained as local evidence.
 
 These are practical static checks with source-reviewed call paths and fixed child
 allowances. They are not a complete machine-code stack or exception/reentry
