@@ -875,8 +875,17 @@ impl Editor {
 
     pub fn has_pending_json(&self) -> bool { self.json.as_ref().is_some_and(|draft| draft.pending) }
 
-    pub fn action_readiness(&self) -> ActionReadiness {
-        let block = self.snapshot_state_block().or_else(|| {
+    pub fn action_readiness(&self) -> ActionReadiness { self.readiness(true) }
+
+    /// History can repair retained artwork with a different splash geometry.
+    /// UI commands still wait for pending drafts, gestures and imports.
+    pub fn history_readiness(&self) -> ActionReadiness { self.readiness(false) }
+
+    fn readiness(
+        &self,
+        require_artwork_match: bool,
+    ) -> ActionReadiness {
+        let block = self.state_block(require_artwork_match).or_else(|| {
             (self.revision.0 == u64::MAX || self.request == u64::MAX).then_some(ActionBlock::IdentityExhausted)
         });
         ActionReadiness {
@@ -887,12 +896,17 @@ impl Editor {
 
     /// Data/lifecycle admission shared by new snapshots and already-issued
     /// writes. Exhausted issuance cannot invalidate an existing save token.
-    fn snapshot_state_block(&self) -> Option<ActionBlock> {
+    fn snapshot_state_block(&self) -> Option<ActionBlock> { self.state_block(true) }
+
+    fn state_block(
+        &self,
+        require_artwork_match: bool,
+    ) -> Option<ActionBlock> {
         if self.has_pending_json() {
             Some(ActionBlock::JsonPending)
         } else if self.has_startup_draft() {
             Some(ActionBlock::StartupPending)
-        } else if self.has_invalid_draft() || self.artwork_geometry_mismatch() {
+        } else if self.has_invalid_draft() || (require_artwork_match && self.artwork_geometry_mismatch()) {
             Some(ActionBlock::InvalidDraft)
         } else if self.pointer.is_some() {
             Some(ActionBlock::PointerActive)
@@ -2662,6 +2676,29 @@ mod transaction_tests {
             Err(EditorError::CounterExhausted)
         );
         assert!(!editor.has_pending_json());
+    }
+
+    #[test]
+    fn history_commands_keep_revision_and_request_exhaustion_blocked() {
+        use crate::workspace::Command;
+        for request_exhausted in [false, true] {
+            let mut editor = Editor::default();
+            editor.apply(Edit::SetReducedMotion(true)).unwrap();
+            editor.apply(Edit::SetReducedMotion(false)).unwrap();
+            editor.undo().unwrap();
+            if request_exhausted {
+                editor.request = u64::MAX;
+            } else {
+                editor.revision = Revision(u64::MAX);
+            }
+            assert_eq!(editor.history_readiness().block, Some(ActionBlock::IdentityExhausted));
+            for command in [Command::Undo, Command::Redo] {
+                assert_eq!(
+                    command.availability(&editor, editor.stamp()),
+                    Some("Editor identity exhausted; no new action can be accepted")
+                );
+            }
+        }
     }
 
     #[test]

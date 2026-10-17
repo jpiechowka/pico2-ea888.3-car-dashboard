@@ -315,6 +315,14 @@ pub(super) fn availability(
     ui.editor
         .with(|editor| command.availability_with_appearance(editor, stamp, Some(offer)))
 }
+pub(super) fn execute_current(
+    ui: Ui,
+    command: Command,
+) -> bool {
+    let stamp = ui.editor.with_untracked(Editor::stamp);
+    execute(ui, command, stamp, offer(ui, stamp))
+}
+
 pub(super) fn execute(
     ui: Ui,
     command: Command,

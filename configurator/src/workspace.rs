@@ -139,7 +139,12 @@ impl Command {
             Self::OpenJson => return None,
             _ => {}
         }
-        if let Some(block) = editor.action_readiness().block {
+        let readiness = if matches!(self, Self::Undo | Self::Redo) {
+            editor.history_readiness()
+        } else {
+            editor.action_readiness()
+        };
+        if let Some(block) = readiness.block {
             return Some(match block {
                 ActionBlock::InvalidDraft => "Repair or discard invalid edits first",
                 ActionBlock::JsonPending => "Apply or Discard pending JSON first",

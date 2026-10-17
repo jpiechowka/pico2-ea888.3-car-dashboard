@@ -293,3 +293,98 @@ fn matching_reconversion_is_atomic_and_undo_keeps_the_retained_original() {
     assert!(!e.artwork_geometry_mismatch());
     assert!(e.accepted_project().is_ok());
 }
+
+#[test]
+fn history_commands_repair_retained_artwork_mismatch_without_admitting_exports() {
+    use dashboard_config::{Geometry, Orientation};
+    use dashboard_config_tools::project::ExportMode;
+    use dashboard_configurator::workspace::{Command, ExportFormat, WorkspaceState, dispatch};
+
+    let mut editor = Editor::default();
+    let mut workspace = WorkspaceState::default();
+    let mut profile = editor.startup_profile();
+    profile.splash_orientation = Some(Orientation::Portrait);
+    editor.set_startup_profile(profile).unwrap();
+    let portrait = backed_artwork_in("original", Geometry::Portrait);
+    editor.set_artwork_if_current(editor.stamp(), portrait.clone()).unwrap();
+    profile = editor.startup_profile();
+    profile.splash_orientation = Some(Orientation::Landscape);
+    editor.set_startup_profile(profile).unwrap();
+    let landscape = backed_artwork_in("original", Geometry::Landscape);
+    let import = editor.begin_import().unwrap();
+    editor.complete_artwork_import(import, landscape.clone()).unwrap();
+    let converted = editor.export_project(ExportMode::ConvertedOnly).unwrap();
+    let stamp = editor.stamp();
+    dispatch(&mut editor, &mut workspace, Command::Undo, stamp).unwrap();
+    assert!(editor.artwork_geometry_mismatch());
+    assert_eq!(editor.startup_artwork().unwrap().identity(), portrait.identity());
+    for command in [Command::Undo, Command::Redo] {
+        assert_eq!(command.availability(&editor, editor.stamp()), None);
+    }
+    assert_eq!(editor.history_readiness().block, None);
+    assert!(editor.export_project(ExportMode::ConvertedOnly).is_err());
+    assert!(editor.export_binary().is_err());
+    assert!(
+        Command::Export(ExportFormat::Eav)
+            .availability(&editor, editor.stamp())
+            .is_some()
+    );
+    // Mismatch is the only exception: all draft and lifecycle blockers remain.
+    let blocked = |editor: &mut Editor, workspace: &mut WorkspaceState, block| {
+        assert_eq!(editor.history_readiness().block, Some(block));
+        let before = (
+            editor.stamp(),
+            editor.history_len(),
+            editor.startup_artwork().unwrap().identity(),
+        );
+        for command in [Command::Undo, Command::Redo] {
+            let stamp = editor.stamp();
+            assert!(command.availability(editor, stamp).is_some());
+            assert!(dispatch(editor, workspace, command, stamp).is_err());
+        }
+        assert_eq!(
+            (
+                editor.stamp(),
+                editor.history_len(),
+                editor.startup_artwork().unwrap().identity()
+            ),
+            before
+        );
+    };
+    editor
+        .set_raw(editor.field_token(), RawField::ControlHoldMilliseconds, "bad".into())
+        .unwrap();
+    blocked(&mut editor, &mut workspace, ActionBlock::InvalidDraft);
+    assert_eq!(editor.raw_fields()[0].text, "bad");
+    editor.discard_raw().unwrap();
+    let json = editor.open_json().unwrap();
+    editor.set_json_text(json, "{".into()).unwrap();
+    blocked(&mut editor, &mut workspace, ActionBlock::JsonPending);
+    assert_eq!(editor.json_draft().unwrap().text(), "{");
+    editor.discard_json().unwrap();
+    editor
+        .set_startup_number(editor.stamp(), StartupNumber::StatusMilliseconds, "bad")
+        .unwrap();
+    blocked(&mut editor, &mut workspace, ActionBlock::StartupPending);
+    editor.discard_startup_timing(editor.stamp()).unwrap();
+    let import = editor.begin_import().unwrap();
+    blocked(&mut editor, &mut workspace, ActionBlock::ImportPending);
+    assert!(editor.import_is_current(import));
+    editor.cancel_import(import).unwrap();
+    let pointer = editor.begin_pointer(7, PointerTarget::Widget(1)).unwrap();
+    blocked(&mut editor, &mut workspace, ActionBlock::PointerActive);
+    assert_eq!(editor.active_pointer(), Some(pointer));
+    editor.cancel_pointer(pointer).unwrap();
+    assert_eq!(editor.history_readiness().block, None);
+    let stamp = editor.stamp();
+    dispatch(&mut editor, &mut workspace, Command::Redo, stamp).unwrap();
+    assert_eq!(editor.export_project(ExportMode::ConvertedOnly).unwrap(), converted);
+    let stamp = editor.stamp();
+    dispatch(&mut editor, &mut workspace, Command::Undo, stamp).unwrap();
+    let stamp = editor.stamp();
+    dispatch(&mut editor, &mut workspace, Command::Undo, stamp).unwrap();
+    assert!(!editor.artwork_geometry_mismatch());
+    assert_eq!(editor.startup_profile().splash_orientation, Some(Orientation::Portrait));
+    assert_eq!(editor.startup_artwork().unwrap().identity(), portrait.identity());
+    assert!(editor.accepted_project().is_ok());
+}

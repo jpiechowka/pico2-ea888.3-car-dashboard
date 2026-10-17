@@ -41,7 +41,7 @@ use dashboard_configurator::event_adapters::{
 use dashboard_configurator::events::{Category, EventStore};
 use dashboard_configurator::field_registry::{FieldId, FieldKey, FieldTarget, Registry, TargetOwner};
 use dashboard_configurator::resources::{ResourceCache, ResourceReport};
-use dashboard_configurator::workspace::{GroupId, Workspace, WorkspaceState};
+use dashboard_configurator::workspace::{Command, GroupId, Workspace, WorkspaceState};
 use fields::{Choice, ColorField, TextField, Toggle, choices, error_text};
 use inspector::{FuelSettings, Inspector, SourceSettings, WarningSettingsPanel};
 use leptos::leptos_dom::helpers::{event_target_checked, event_target_value};
@@ -687,8 +687,8 @@ pub fn Studio() -> impl IntoView {
                 <div class="device-spec"><span class="dot"></span>{move ||format!("{} × {}",ui.pixel_geometry.get().width(),ui.pixel_geometry.get().height())}<span>{move ||format!("{} × {} GRID",ui.pixel_geometry.get().columns(),ui.pixel_geometry.get().rows())}</span></div>
                 <div class="header-actions">
                     <command_palette::CommandPalette ui/>
-                    <button title="Undo accepted edit" disabled=move || ui.snapshot_blocked() || ui.editor.with(|e| e.history_len().0 == 0) on:click=move |_| { ui.run(Editor::undo); }>"↶ Undo"</button>
-                    <button title="Redo accepted edit" disabled=move || ui.snapshot_blocked() || ui.editor.with(|e| e.history_len().1 == 0) on:click=move |_| { ui.run(Editor::redo); }>"↷ Redo"</button>
+                    <button title="Undo accepted edit" disabled=move || ui.editor.with(|e| Command::Undo.availability(e, e.stamp()).is_some()) on:click=move |_| { command_palette::execute_current(ui, Command::Undo); }>"↶ Undo"</button>
+                    <button title="Redo accepted edit" disabled=move || ui.editor.with(|e| Command::Redo.availability(e, e.stamp()).is_some()) on:click=move |_| { command_palette::execute_current(ui, Command::Redo); }>"↷ Redo"</button>
                     <button class="primary" disabled=move || ui.snapshot_blocked() on:click=move |_| project_io::export(ui,dashboard_config_tools::project::ExportMode::Complete)>"Export project"<span>"↗"</span></button>
                 </div>
             </header>
