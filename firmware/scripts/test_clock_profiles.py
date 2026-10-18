@@ -14,7 +14,8 @@ class ClockProfiles(unittest.TestCase):
         aliases=tomllib.loads((REPO/'firmware/.cargo/config.toml').read_text())['alias']
         manifest=tomllib.loads((REPO/'firmware/pico2/Cargo.toml').read_text())
         expected={a for row in rows for a in row['profile']['aliases'] if a.startswith('pico2')}
-        self.assertEqual(set(aliases),expected)
+        ble_aliases = {'pico2-ble', 'pico2-ble-run', 'pico2-ble-280-70-1v30', 'pico2-ble-280-70-1v30-run'}
+        self.assertEqual(set(aliases),expected | ble_aliases)
         self.assertEqual(len(expected),20)
         for row in rows:
             p=row['profile']
@@ -26,6 +27,15 @@ class ClockProfiles(unittest.TestCase):
                 self.assertEqual(tokens[0],'run' if alias.endswith('-run') else 'build')
                 self.assertEqual(tokens[1:4],['-p','dashboard-pico2','--release'])
                 self.assertEqual(set(tokens[-1].split(',')),{'simple-outline',p['feature']})
+        for alias in ble_aliases:
+            tokens = aliases[alias].split()
+            clock = 'cpu280-spi70-1v30' if '280' in alias else 'cpu150-spi62-1v10'
+            self.assertEqual(tokens[0], 'run' if alias.endswith('-run') else 'build')
+            self.assertEqual(tokens[1:4], ['-p', 'dashboard-pico2', '--release'])
+            self.assertEqual(set(tokens[-1].split(',')), {'simple-outline', 'ble-obd', clock})
+        config = tomllib.loads((REPO/'firmware/.cargo/config.toml').read_text())
+        self.assertEqual(config['build']['target'], 'thumbv8m.main-none-eabihf')
+        self.assertIn('target-cpu=cortex-m33', config['target']['thumbv8m.main-none-eabihf']['rustflags'])
 
     def test_clock_adapter_preserves_peripheral_and_voltage_initialization(self):
         source=(REPO/'firmware/pico2/src/clock_profile.rs').read_text()

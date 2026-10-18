@@ -21,8 +21,8 @@ available in `configs/default.json` and `configs/default.eav`.
 The editor supports numeric/history, circular, needle, horizontal, vertical and
 segmented gauges, with independent RGB565 palettes. See [gauges and colours](gauges-and-colours.md)
 for layout capabilities, automatic scale expansion and colour validation.
-Historical v1, v2, v3 and v4 files are explicitly upgraded by the editor or build
-compiler; exported and embedded files use [current v5](configuration-format.md#current-v5-contract). The capture keeps both
+Historical dashboard files are explicitly upgraded by the editor or build
+compiler; exported and embedded files use the [current bounded schema](configuration-format.md). The capture keeps both
 the original selected file and the canonical upgraded bytes.
 
 ## Build & Flash workspace
@@ -40,7 +40,7 @@ Cancellation completes only after native cleanup. A descriptor scan cannot prove
 flash capacity, exact board identity or readiness to flash. No programming command
 is issued by connection, tool checks or descriptor discovery.
 
-Choose Demo or Vehicle, one of the eight shared clock profiles, or exact custom
+Choose Demo or Vehicle (BLE), one of the eight shared clock profiles, or exact custom
 CPU/SPI frequencies and a supported voltage setpoint. Expert mode is explicit
 and resets on reload. The workspace shows requested and resolved clocks, SPI
 divisors and neighboring rates, repository toolchain, compiler target and exact
@@ -98,7 +98,12 @@ conflict with an explicitly supplied Profile. For example:
 `-TeTrace $false` really omit their features. `-FullFrame`, `-SerialDisplay` and
 `-FullOutline` select the existing display paths. Commands explicitly suppress
 Cargo defaults and pass the complete shared effective feature set.
-`-Mode Vehicle` selects the existing **unqualified** adapter path. The script builds and verifies files;
+`-Mode Vehicle` selects `ble-obd`, the **unqualified** BLE adapter prototype.
+The accepted configuration controls whether BLE is enabled and identifies its
+explicit adapter profile and peer. Real adapter mode may initialize and identify
+the adapter but sends no ECU requests. A separately selected synthetic test peer
+remains diagnostic test traffic and never supplies vehicle measurements.
+The script builds and verifies files;
 it does not flash or reboot a device. The older scripts under ignored `target`
 directories remain frozen records of earlier builds.
 
@@ -110,10 +115,29 @@ The original `capture_target_bench.py --features ...` route remains available;
 experimental/custom selections there require the explicit local `--expert`
 switch. `target-bench` is a separate finite capture mode, outside ordinary
 BuildOptions. Ambient custom-clock and compiler/profile overrides are rejected.
-Raw requests omitting both demo and longan-rx12 retain the old unavailable
+Raw requests omitting demo, ble-obd and longan-rx12 retain the old unavailable
 acquisition path, recorded as `legacy_unavailable_backend=true`; the capture
 never silently adds vehicle transport. Typed Vehicle requests always include
-longan-rx12 and cannot use that compatibility adapter.
+ble-obd and cannot use that compatibility adapter. An explicit raw
+`--features longan-rx12` request preserves the legacy UART backend and records
+`legacy_longan_backend=true` in the version2 capture-options envelope. Selecting
+more than one of Demo, BLE or Longan is rejected. `Mode::Vehicle` and the helper
+API identifiers are retained; its normalized feature string is now `ble-obd`.
+Restart the helper and reload Studio together after updating the checkout.
+
+From `firmware/`, `cargo pico2-ble` builds an explicit stock BLE image and
+`cargo pico2-ble-280-70-1v30` builds the owner's reported 280/70 profile. Their
+`-run` counterparts invoke the existing flashing runner and require separate
+device/image authorization. Every route retains `thumbv8m.main-none-eabihf` and
+`-C target-cpu=cortex-m33`. Existing aliases and the no-backend compilation route
+remain available.
+
+Both standalone capture and the native helper hash the complete `firmware/vendor`
+subtree, including CYW43 and Trouble sources, radio firmware binaries, nested
+non-source include files and provenance manifests. The native helper freezes
+those bytes under its existing size/type bounds and holds them against mutation
+through compilation and verification. Changing a firmware blob is therefore a
+source-identity change, even when the Rust application text is identical.
 
 280/70 is the user's observed working overclock on this device. It is outside
 the manufacturer's stock operating specification. Do not use 290/72.5 on this

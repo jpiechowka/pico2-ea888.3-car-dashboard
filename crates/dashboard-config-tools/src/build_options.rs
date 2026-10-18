@@ -166,6 +166,7 @@ pub struct CaptureOptions {
     pub benchmark: bool,
     pub legacy_stock: bool,
     pub legacy_unavailable_backend: bool,
+    pub legacy_longan_backend: bool,
     pub voltage_mv: u32,
 }
 fn capture(
@@ -173,13 +174,18 @@ fn capture(
     benchmark: bool,
     legacy_stock: bool,
     legacy_unavailable_backend: bool,
+    legacy_longan_backend: bool,
 ) -> CaptureOptions {
     let mut features: Vec<String> = normalized.feature_names().into_iter().map(str::to_owned).collect();
     if legacy_stock {
         features.retain(|f| f != "cpu150-spi62-1v10");
     }
     if legacy_unavailable_backend {
-        features.retain(|f| f != "longan-rx12");
+        features.retain(|f| f != "ble-obd");
+    }
+    if legacy_longan_backend {
+        features.retain(|f| f != "ble-obd");
+        features.push("longan-rx12".into());
     }
     if benchmark {
         features.push("target-bench".into());
@@ -198,7 +204,7 @@ fn capture(
     let optimization = normalized.requested.optimization.cargo_value().to_owned();
     let voltage_mv = crate::clocks::voltage_mv(normalized.clock.voltage);
     CaptureOptions {
-        schema_version: 1,
+        schema_version: 2,
         normalized,
         features,
         no_default_features: true,
@@ -207,6 +213,7 @@ fn capture(
         benchmark,
         legacy_stock,
         legacy_unavailable_backend,
+        legacy_longan_backend,
         voltage_mv,
     }
 }
@@ -230,7 +237,7 @@ pub fn capture_options(args: &[OsString]) -> Result<CaptureOptions, String> {
         }
         let normalized = decode::<NormalizedBuildOptions>(json.as_bytes())
             .map_err(|e| format!("invalid normalized options: {e:?}"))?;
-        return Ok(capture(normalized, false, false, false));
+        return Ok(capture(normalized, false, false, false, false));
     }
     let raw = values
         .get("--features")
@@ -256,9 +263,10 @@ pub fn capture_options(args: &[OsString]) -> Result<CaptureOptions, String> {
     }
     let legacy_stock = selected.is_none() && custom.is_none();
     let demo = features.remove("demo");
-    let vehicle = features.remove("longan-rx12");
-    if demo && vehicle {
-        return Err("Select either demo or longan-rx12".into());
+    let vehicle = features.remove("ble-obd");
+    let legacy_longan = features.remove("longan-rx12");
+    if u8::from(demo) + u8::from(vehicle) + u8::from(legacy_longan) > 1 {
+        return Err("Select exactly one acquisition backend: demo, ble-obd or longan-rx12".into());
     }
     let no_default = boolean(&values, "--no-default-features", false)?;
     let requested = BuildOptions {
@@ -279,7 +287,8 @@ pub fn capture_options(args: &[OsString]) -> Result<CaptureOptions, String> {
         normalize(&requested).map_err(|e| format!("invalid build options: {e:?}"))?,
         benchmark,
         legacy_stock,
-        !demo && !vehicle,
+        !demo && !vehicle && !legacy_longan,
+        legacy_longan,
     ))
 }
 pub fn normalized_json(options: &NormalizedBuildOptions) -> Result<Vec<u8>, String> {

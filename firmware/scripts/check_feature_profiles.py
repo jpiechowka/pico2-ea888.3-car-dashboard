@@ -25,17 +25,18 @@ if __name__ == "__main__":
     require(len(data)<=65537,'catalogue export exceeds bound')
     CLOCKS = [row['profile']['feature'] for row in json.loads(data)['profiles']]
     require(len(CLOCKS)==8 and len(set(CLOCKS))==8,'invalid catalogue inventory')
-    control = compile_features("longan-rx12,frame-trace,te-trace")
+    control = compile_features("ble-obd,frame-trace,te-trace")
     if control.returncode:
         raise SystemExit(control.stdout + control.stderr)
     for feature in CLOCKS:
-        result = compile_features(feature+',longan-rx12,frame-trace,te-trace')
+        result = compile_features(feature+',ble-obd,frame-trace,te-trace')
         require(result.returncode==0,result.stdout+result.stderr)
         print('Positive profile:',feature)
     result = compile_features('demo', ['50000000','25000000','1100'])
     require(result.returncode==0,result.stdout+result.stderr)
     cases = [(a + "," + b, "Only one clock profile feature can be enabled") for a, b in combinations(CLOCKS, 2)]
-    cases.append(("demo,longan-rx12", "Select either demo or longan-rx12"))
+    for backends in ('demo,ble-obd', 'demo,longan-rx12', 'ble-obd,longan-rx12', 'demo,ble-obd,longan-rx12'):
+        cases.append((backends, "Select exactly one acquisition backend: demo, ble-obd or longan-rx12"))
     for features, diagnostic in cases:
         result = compile_features(features)
         require(result.returncode and diagnostic in result.stderr, result.stdout + result.stderr)
@@ -44,4 +45,4 @@ if __name__ == "__main__":
         result=compile_features(feature,['50000000','25000000','1100'])
         require(result.returncode and 'named profile cannot be combined with custom clock' in result.stderr,result.stdout+result.stderr)
         print('Rejected named/custom:',feature)
-    print("Default, eight profile and custom controls; all28 pairs, mode conflict and eight named/custom rejections verified")
+    print("BLE, eight profile and custom controls; all28 clock pairs, four backend conflicts and eight named/custom rejections verified")

@@ -176,7 +176,7 @@ fn inventory(root: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
     for relative in [
         "crates",
         "firmware/pico2",
-        "firmware/vendor/embassy-rp",
+        "firmware/vendor",
         "firmware/scripts",
         "host/scripts",
     ] {
@@ -423,6 +423,11 @@ mod tests {
             "crates/example/lib.rs",
             "firmware/pico2/src/main.rs",
             "firmware/vendor/embassy-rp/src/lib.rs",
+            "firmware/vendor/cyw43/src/lib.rs",
+            "firmware/vendor/trouble-host/Cargo.toml",
+            "firmware/vendor/cyw43-firmware/nested/radio.bin",
+            "firmware/vendor/cyw43-provenance.json",
+            "firmware/vendor/trouble-host-provenance.json",
             "firmware/scripts/capture.py",
             "host/scripts/environment.py",
         ] {
@@ -437,6 +442,16 @@ mod tests {
             &reservation.path,
         )
         .unwrap();
+        for name in [
+            "firmware/vendor/cyw43/src/lib.rs",
+            "firmware/vendor/trouble-host/Cargo.toml",
+            "firmware/vendor/cyw43-firmware/nested/radio.bin",
+            "firmware/vendor/cyw43-provenance.json",
+            "firmware/vendor/trouble-host-provenance.json",
+        ] {
+            assert_eq!(frozen.files.get(name), Some(&digest(b"source")), "{name}");
+            assert!(fs::write(frozen.source_root().join(name), b"mutated vendor input").is_err());
+        }
         fs::write(repo.join("crates/example/lib.rs"), b"changed live source").unwrap();
         assert!(frozen.verify().is_ok());
         assert!(

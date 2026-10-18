@@ -16,7 +16,7 @@ fn normalized_defaults_and_false_features_are_exact() {
     options.simple_outline = false;
     assert_eq!(
         normalize(&options).unwrap().feature_names(),
-        ["cpu150-spi62-1v10", "longan-rx12"]
+        ["ble-obd", "cpu150-spi62-1v10"]
     );
 }
 

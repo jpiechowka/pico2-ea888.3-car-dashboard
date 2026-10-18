@@ -183,10 +183,10 @@ jobs:
         working-directory: firmware
       - name: Target artifact capture contracts
         run: |
+          cargo fetch --locked --manifest-path ../Cargo.toml
           python3 scripts/test_target_capture.py
           python3 scripts/test_practical_image.py
           python3 -O scripts/test_practical_image.py
-          cargo fetch --locked --manifest-path ../Cargo.toml
           python3 scripts/test_clock_profiles.py
           python3 scripts/test_stack_budget.py
           python3 -O scripts/test_stack_budget.py
@@ -239,13 +239,16 @@ jobs:
           python3 scripts/check_logging_policy.py
         working-directory: firmware
       - name: Vehicle transport Clippy
+        run: cargo clippy --locked -p dashboard-pico2 --features ble-obd -- -D warnings
+        working-directory: firmware
+      - name: Legacy Longan transport Clippy
         run: cargo clippy --locked -p dashboard-pico2 --features longan-rx12 -- -D warnings
         working-directory: firmware
       - name: Demo Clippy
         run: cargo clippy --locked -p dashboard-pico2 --features demo,frame-trace,te-trace -- -D warnings
         working-directory: firmware
       - name: Target benchmark Clippy
-        run: cargo clippy --locked -p dashboard-pico2 --features target-bench,longan-rx12,frame-trace,te-trace -- -D warnings
+        run: cargo clippy --locked -p dashboard-pico2 --features target-bench,ble-obd,frame-trace,te-trace -- -D warnings
         working-directory: firmware
       - name: Mutually exclusive profile guards
         run: |
@@ -292,11 +295,17 @@ jobs:
           - profile: longan-rx12
             features: longan-rx12,frame-trace,te-trace
             extra_args: ""
+          - profile: ble-obd
+            features: ble-obd,frame-trace,te-trace
+            extra_args: ""
+          - profile: ble-280-70
+            features: ble-obd,cpu280-spi70-1v30,frame-trace,te-trace
+            extra_args: --expert
           - profile: full-outline
             features: demo,frame-trace,te-trace
             extra_args: --no-default-features
           - profile: target-bench
-            features: target-bench,longan-rx12,frame-trace,te-trace
+            features: target-bench,ble-obd,frame-trace,te-trace
             extra_args: ""
     steps:
       - uses: actions/checkout@v7.0.1

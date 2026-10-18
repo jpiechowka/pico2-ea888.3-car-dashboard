@@ -61,7 +61,7 @@ macro_rules! features {
         fn from_feature(s:&str)->Result<Feature,Error> {match s {$($s=>Ok(Feature::$v),)+ _=>Err(Error::Schema)}}
     }
 }
-features! { Stock=>"cpu150-spi62-1v10", Cpu132=>"cpu132-spi66-1v10", Cpu140=>"cpu140-spi70-1v10", Timing150=>"cpu150-spi15-1v10", Cpu250=>"cpu250-spi62-1v10", Cpu280=>"cpu280-spi70-1v30", Legacy290=>"cpu290-spi72-1v30", Cpu300=>"cpu300-spi75-1v30", Demo=>"demo", Vehicle=>"longan-rx12", SimpleOutline=>"simple-outline", SerialDisplay=>"serial-display", FullFrame=>"full-frame", FrameTrace=>"frame-trace", TeTrace=>"te-trace" }
+features! { Stock=>"cpu150-spi62-1v10", Cpu132=>"cpu132-spi66-1v10", Cpu140=>"cpu140-spi70-1v10", Timing150=>"cpu150-spi15-1v10", Cpu250=>"cpu250-spi62-1v10", Cpu280=>"cpu280-spi70-1v30", Legacy290=>"cpu290-spi72-1v30", Cpu300=>"cpu300-spi75-1v30", Demo=>"demo", Vehicle=>"ble-obd", SimpleOutline=>"simple-outline", SerialDisplay=>"serial-display", FullFrame=>"full-frame", FrameTrace=>"frame-trace", TeTrace=>"te-trace" }
 impl NormalizedBuildOptions {
     pub fn feature_names(&self) -> Vec<&'static str> { self.features.iter().map(|f| f.as_str()).collect() }
 }

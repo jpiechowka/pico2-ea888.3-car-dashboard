@@ -55,7 +55,7 @@ fn build_options_defaults_and_false_features_are_exact() {
     ]);
     assert_eq!(
         data["features"],
-        serde_json::json!(["cpu150-spi15-1v10", "full-frame", "longan-rx12", "serial-display"])
+        serde_json::json!(["ble-obd", "cpu150-spi15-1v10", "full-frame", "serial-display"])
     );
     assert_eq!(data["requested"]["optimization"], "size_s");
 }
@@ -155,7 +155,7 @@ fn capture_adapter_keeps_benchmark_separate_and_requires_expert() {
     let data = json(&[
         "capture-options",
         "--features",
-        "target-bench,longan-rx12,frame-trace,te-trace",
+        "target-bench,ble-obd,frame-trace,te-trace",
         "--no-default-features",
         "false",
     ]);
@@ -209,7 +209,7 @@ fn legacy_unavailable_capture_never_enables_vehicle_transport() {
                 !result["features"]
                     .as_array()
                     .unwrap()
-                    .contains(&serde_json::json!("longan-rx12"))
+                    .contains(&serde_json::json!("ble-obd"))
             );
             assert!(
                 !result["features"]
@@ -219,7 +219,7 @@ fn legacy_unavailable_capture_never_enables_vehicle_transport() {
             );
         }
     }
-    for features in ["demo", "longan-rx12"] {
+    for features in ["demo", "ble-obd", "longan-rx12"] {
         assert_eq!(
             json(&["capture-options", "--features", features])["legacy_unavailable_backend"],
             false
@@ -232,7 +232,7 @@ fn legacy_unavailable_capture_never_enables_vehicle_transport() {
         result["features"]
             .as_array()
             .unwrap()
-            .contains(&serde_json::json!("longan-rx12"))
+            .contains(&serde_json::json!("ble-obd"))
     );
 }
 
@@ -291,6 +291,40 @@ fn capture_rejects_tampered_and_oversized_normalized_evidence() {
     let padded = format!("{}{}", json(&["build-options"]), " ".repeat(4096));
     assert!(
         !invoke(&["capture-options", "--normalized-json", &padded])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn explicit_legacy_transport_is_preserved_and_backend_conflicts_rejected() {
+    let data = json(&["capture-options", "--features", "longan-rx12"]);
+    assert_eq!(data["schema_version"], 2);
+    assert_eq!(data["legacy_longan_backend"], true);
+    assert_eq!(data["legacy_unavailable_backend"], false);
+    assert_eq!(data["features"], serde_json::json!(["longan-rx12", "simple-outline"]));
+    for features in ["", "demo", "ble-obd"] {
+        assert_eq!(
+            json(&["capture-options", "--features", features])["legacy_longan_backend"],
+            false
+        );
+    }
+    for features in [
+        "demo,ble-obd",
+        "demo,longan-rx12",
+        "ble-obd,longan-rx12",
+        "demo,ble-obd,longan-rx12",
+    ] {
+        let output = invoke(&["capture-options", "--features", features]);
+        assert!(!output.status.success(), "{features}");
+        assert!(output.stdout.is_empty());
+    }
+    let mut stale = json(&["build-options", "--mode", "vehicle"]);
+    let features = stale["features"].as_array_mut().unwrap();
+    let index = features.iter().position(|f| f == "ble-obd").unwrap();
+    features[index] = serde_json::json!("longan-rx12");
+    assert!(
+        !invoke(&["capture-options", "--normalized-json", &stale.to_string()])
             .status
             .success()
     );

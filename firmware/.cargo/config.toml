@@ -20,6 +20,12 @@ pico2-run = "run -p dashboard-pico2 --release"
 pico2-fast = "build -p dashboard-pico2 --release --features simple-outline"
 pico2-fast-run = "run -p dashboard-pico2 --release --features simple-outline"
 
+# Explicit BLE Vehicle builds. Run aliases invoke the flashing runner.
+pico2-ble = "build -p dashboard-pico2 --release --features simple-outline,ble-obd,cpu150-spi62-1v10"
+pico2-ble-run = "run -p dashboard-pico2 --release --features simple-outline,ble-obd,cpu150-spi62-1v10"
+pico2-ble-280-70-1v30 = "build -p dashboard-pico2 --release --features simple-outline,ble-obd,cpu280-spi70-1v30"
+pico2-ble-280-70-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,ble-obd,cpu280-spi70-1v30"
+
 # Explicit stock and timing candidates; panel timing remains unqualified.
 pico2-150-62-1v10 = "build -p dashboard-pico2 --release --features simple-outline,cpu150-spi62-1v10"
 pico2-150-62-1v10-run = "run -p dashboard-pico2 --release --features simple-outline,cpu150-spi62-1v10"

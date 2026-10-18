@@ -13,6 +13,18 @@ import capture_target_bench as capture
 
 
 class CaptureTests(unittest.TestCase):
+    def test_rust_capture_options_consumer_accepts_ble_and_explicit_legacy_envelopes(self):
+        for feature, legacy in [('ble-obd', False), ('longan-rx12', True), ('', False)]:
+            _, options = capture.fixed_json_tool(['--features', feature], os.environ.copy())
+            self.assertEqual(options['schema_version'], 2)
+            self.assertEqual(options['legacy_longan_backend'], legacy)
+            self.assertEqual(options['legacy_unavailable_backend'], feature == '')
+            if feature:
+                self.assertIn(feature, options['features'])
+            else:
+                self.assertNotIn('ble-obd', options['features'])
+                self.assertNotIn('longan-rx12', options['features'])
+
     def test_native_scratch_is_fixed_empty_and_path_bounded(self):
         with tempfile.TemporaryDirectory() as folder:
             attempt=Path(folder).resolve();repo=attempt/'source';firmware=repo/'firmware'
@@ -334,6 +346,32 @@ pub const LEGACY_ROUNDING: bool = false;
             self.assertEqual(data[key], (capture.REPO / key).read_bytes())
         for name in ('memory.x', 'rp235x_riscv.x', 'build.rs'):
             self.assertIn('firmware/pico2/' + name, data)
+
+    def test_archive_includes_complete_radio_vendor_trees_and_binary_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            names = ('Cargo.toml', 'firmware/pico2/Cargo.toml',
+                     'firmware/vendor/embassy-rp/Cargo.toml',
+                     'firmware/vendor/cyw43/src/lib.rs',
+                     'firmware/vendor/trouble-host/Cargo.toml',
+                     'firmware/vendor/cyw43-firmware/nested/radio.bin',
+                     'firmware/vendor/cyw43-provenance.json',
+                     'firmware/vendor/trouble-host-provenance.json',
+                     'firmware/scripts/capture.py', 'host/scripts/benchmark_environment.py')
+            for name in names:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'original')
+            with patch.object(capture, 'REPO', root), patch.object(capture, 'FIRMWARE', root/'firmware'), \
+                    patch.object(capture, '__file__', str(root/'firmware/scripts/capture.py')), \
+                    patch.object(capture, 'shared_inputs', return_value={root/'Cargo.toml'}):
+                before = capture.inputs()
+                for name in names:
+                    self.assertEqual(before.get(name), b'original', name)
+                binary = 'firmware/vendor/cyw43-firmware/nested/radio.bin'
+                (root/binary).write_bytes(b'changed radio')
+                self.assertNotEqual(before, capture.inputs())
+                self.assertEqual(capture.inputs()[binary], b'changed radio')
 
     def test_source_inventory_notices_root_compile_input_changes(self):
         original = Path.read_bytes

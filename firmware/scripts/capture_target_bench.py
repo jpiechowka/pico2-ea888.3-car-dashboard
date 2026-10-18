@@ -162,8 +162,8 @@ def fixed_json_tool(arguments, environment, target_dir=None):
         raise ValueError('capture options producer failed or exceeded output bound')
     value = json.loads(retained.decode('utf-8'))
     expected = {'schema_version','normalized','features','no_default_features','optimization',
-                'custom_clock','benchmark','legacy_stock','legacy_unavailable_backend','voltage_mv'}
-    if (not isinstance(value, dict) or set(value) != expected or value['schema_version'] != 1
+                'custom_clock','benchmark','legacy_stock','legacy_unavailable_backend','legacy_longan_backend','voltage_mv'}
+    if (not isinstance(value, dict) or set(value) != expected or value['schema_version'] != 2
             or value['no_default_features'] is not True
             or not isinstance(value['features'], list) or len(value['features']) > 16
             or any(not isinstance(f, str) or not re.fullmatch('[a-z0-9-]+', f) for f in value['features'])
@@ -267,12 +267,17 @@ def configuration():
 
 def inputs():
     paths = shared_inputs(REPO)
-    for crate in [FIRMWARE/'pico2', FIRMWARE/'vendor/embassy-rp']:
+    for crate in [FIRMWARE/'pico2']:
         paths.update(p for p in (crate/'src').rglob('*') if p.is_file())
         # Root files are also compile inputs (include_str!, linker templates,
         # manifests and build scripts). Keep the complete crate root.
         paths.update(p for p in crate.iterdir() if p.is_file())
-    for directory in [FIRMWARE, FIRMWARE/'pico2', FIRMWARE/'vendor/embassy-rp']:
+    # Radio firmware blobs and include_bytes! inputs may live outside src/.
+    # Hash the complete reviewed vendor trees and their provenance manifests.
+    vendor = FIRMWARE/'vendor'
+    paths.update(p for p in vendor.rglob('*') if p.is_file()
+                 and not any(part in ('target', '.git', '__pycache__') for part in p.relative_to(vendor).parts))
+    for directory in [FIRMWARE, FIRMWARE/'pico2']:
         for name in ['Cargo.toml','Cargo.lock','build.rs','rust-toolchain.toml','.cargo/config.toml']:
             path=directory/name
             if path.is_file(): paths.add(path)
@@ -474,7 +479,7 @@ def main():
     if args.options_json is not None:
         options_arguments = ['--normalized-json', args.options_json]
     else:
-        options_arguments = ['--features', args.features if args.features is not None else 'target-bench,longan-rx12,frame-trace,te-trace',
+        options_arguments = ['--features', args.features if args.features is not None else 'target-bench,ble-obd,frame-trace,te-trace',
                              '--no-default-features', str(args.no_default_features).lower(), '--expert', str(args.expert).lower()]
         for key, value in [('--optimization',args.optimization),('--cpu-hz',args.cpu_hz),('--spi-hz',args.spi_hz),('--vsel-mv',args.vsel_mv)]:
             if value is not None: options_arguments.extend([key, value])
