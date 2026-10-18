@@ -24,6 +24,10 @@ pub enum ErrorCode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
+    BlePeer,
+    BleConnectTimeout,
+    BleResponseTimeout,
+    BlePollGap,
     Controls(ControlError),
     Version,
     CatalogueVersion,
@@ -158,6 +162,10 @@ impl core::fmt::Display for ValidationLocation {
             write!(f, "/{group}/{}", channel.index())?;
         }
         let path = match self.field {
+            BlePeer => "ble/peer/address",
+            BleConnectTimeout => "ble/connect_timeout_ms",
+            BleResponseTimeout => "ble/response_timeout_ms",
+            BlePollGap => "ble/poll_gap_ms",
             Version => "version",
             CatalogueVersion => "catalogue_version",
             Views => "views",
@@ -316,7 +324,7 @@ pub struct ValidatedConfig {
 
 // Config storage plus runtime proof metadata; whole-image checks run separately.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 14_592);
+const _: () = assert!(core::mem::size_of::<ValidatedConfig>() <= 14_608);
 
 impl PartialEq for ValidatedConfig {
     fn eq(
@@ -427,6 +435,33 @@ pub fn visit_validation(
     }
     if config.catalogue_version != CATALOGUE_VERSION {
         issue!(error(ErrorCode::Version, Field::CatalogueVersion));
+    }
+    if !config.ble.peer.valid(config.ble.enabled) {
+        issue!(error(ErrorCode::Bounds, Field::BlePeer));
+    }
+    for (value, min, max, field) in [
+        (
+            config.ble.connect_timeout_ms,
+            BLE_CONNECT_TIMEOUT_MIN_MS,
+            BLE_CONNECT_TIMEOUT_MAX_MS,
+            Field::BleConnectTimeout,
+        ),
+        (
+            config.ble.response_timeout_ms,
+            BLE_RESPONSE_TIMEOUT_MIN_MS,
+            BLE_RESPONSE_TIMEOUT_MAX_MS,
+            Field::BleResponseTimeout,
+        ),
+        (
+            config.ble.poll_gap_ms,
+            BLE_POLL_GAP_MIN_MS,
+            BLE_POLL_GAP_MAX_MS,
+            Field::BlePollGap,
+        ),
+    ] {
+        if !(min..=max).contains(&value) {
+            issue!(error(ErrorCode::Bounds, field));
+        }
     }
     crate::controls::visit_controls(&config.controls, |cause| {
         let code = match cause {

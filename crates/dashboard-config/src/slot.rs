@@ -73,4 +73,4 @@ impl Default for ConfigSlot {
 
 // Config plus proof/fault metadata; whole-image RAM/stack checks run separately.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ConfigSlot>() <= 14_604);
+const _: () = assert!(core::mem::size_of::<ConfigSlot>() <= 14_620);

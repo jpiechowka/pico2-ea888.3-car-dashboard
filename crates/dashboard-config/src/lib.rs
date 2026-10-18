@@ -4,10 +4,14 @@
 extern crate alloc;
 
 mod advanced;
+mod ble;
+pub use ble::*;
 mod appearance;
 mod cache_identity;
 mod catalog;
 mod led;
+#[cfg(feature = "json")]
+mod legacy_v5;
 pub use cache_identity::{CacheIdentityStatus, ConfigCacheIdentity};
 mod codec;
 pub mod controls;
@@ -46,7 +50,7 @@ pub struct BootConfig {
 
 // Config storage plus proof/fault metadata; whole-image checks run separately.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<BootConfig>() <= 14_604);
+const _: () = assert!(core::mem::size_of::<BootConfig>() <= 14_620);
 
 #[inline(never)]
 pub fn load_at_boot(bytes: &[u8]) -> BootConfig {

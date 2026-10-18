@@ -488,3 +488,37 @@ fn immutable_original_handles_preserve_identity_without_retaining_source_bytes()
             .is_err()
     );
 }
+
+#[test]
+fn eavp2_v5_dashboard_migrates_while_retaining_artwork() {
+    let project = Project::new(
+        &validate(default_config()).unwrap(),
+        StartupProfile {
+            theme: StartupTheme::Custom,
+            ..Default::default()
+        },
+        Some(artwork()),
+    )
+    .unwrap();
+    let mut parts = sections(&project.encode(ExportMode::Complete).unwrap());
+    parts[0] = include_bytes!("../../dashboard-config/tests/fixtures/v5-default.eav").to_vec();
+    let migrated = Project::decode(&container(2, &parts)).unwrap();
+    assert_eq!(
+        dashboard_config::decode(migrated.dashboard_bytes())
+            .unwrap()
+            .config()
+            .ble,
+        dashboard_config::BleSettings::DEFAULT
+    );
+    assert_eq!(migrated.artwork().unwrap().converted(), parts[2]);
+    assert_eq!(migrated.artwork().unwrap().original().unwrap().as_ref(), parts[4]);
+    assert_eq!(migrated.profile(), project.profile());
+    let current = migrated.encode(ExportMode::Complete).unwrap();
+    assert_eq!(
+        Project::decode(&current).unwrap().encode(ExportMode::Complete).unwrap(),
+        current
+    );
+    // Canonical historical decoder must still reject trailing bytes, even resealed.
+    parts[0].push(0);
+    assert!(Project::decode(&container(2, &parts)).is_err());
+}

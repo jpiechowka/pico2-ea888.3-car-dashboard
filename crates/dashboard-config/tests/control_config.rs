@@ -187,7 +187,14 @@ fn v2_import_preserves_custom_widget_values_and_colours() {
     let c = from_json_bytes(&serde_json::to_vec(&v).unwrap()).unwrap();
     assert_eq!(c.config().controls, ControlMap::default());
     let mut upgraded: serde_json::Value = serde_json::from_str(&to_json(&c).unwrap()).unwrap();
-    for key in ["controls", "history_seconds", "reduced_motion", "led", "orientation"] {
+    for key in [
+        "controls",
+        "history_seconds",
+        "reduced_motion",
+        "led",
+        "orientation",
+        "ble",
+    ] {
         upgraded.as_object_mut().unwrap().remove(key);
     }
     for view in upgraded["views"].as_array_mut().unwrap() {

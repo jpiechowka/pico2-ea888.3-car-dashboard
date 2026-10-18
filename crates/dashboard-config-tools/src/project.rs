@@ -474,9 +474,13 @@ impl Project {
         let canonical = crate::compile(&dashboard).map_err(|_| ProjectError::Dashboard)?;
         // The old project writer emitted canonical EAVv4 and EASPv1 only.
         // decode() already checks the frozen EAV payload before upgrading it.
-        if u16le(sections[0], 4) != if version == 1 { 4 } else { dashboard_config::VERSION }
-            || (version == PROJECT_VERSION && canonical != sections[0])
-        {
+        let schema = u16le(sections[0], 4);
+        let allowed_schema = if version == 1 {
+            schema == 4
+        } else {
+            schema == 5 || schema == dashboard_config::VERSION
+        };
+        if !allowed_schema || (schema == dashboard_config::VERSION && canonical != sections[0]) {
             return Err(ProjectError::Dashboard);
         }
         let profile = StartupProfile::decode(sections[1]).ok_or(ProjectError::Profile)?;

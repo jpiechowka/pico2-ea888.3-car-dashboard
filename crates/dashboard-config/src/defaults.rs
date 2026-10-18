@@ -93,6 +93,7 @@ pub(crate) const fn empty_config() -> Config {
         reduced_motion: false,
         led: LedSettings::DEFAULT,
         orientation: Orientation::Landscape,
+        ble: BleSettings::DEFAULT,
         controls: ControlMap {
             hold_ms: 0,
             screens: [ScreenBindings {
@@ -108,6 +109,7 @@ pub(crate) const fn empty_config() -> Config {
 }
 
 pub(crate) fn fill_default_config(config: &mut Config) {
+    config.ble = BleSettings::DEFAULT;
     config.version = VERSION;
     config.catalogue_version = CATALOGUE_VERSION;
     config.boot_view = 1;

@@ -84,6 +84,7 @@ impl LegacyConfig {
             reduced_motion: false,
             led: LedSettings::default(),
             orientation: Orientation::Landscape,
+            ble: BleSettings::DEFAULT,
         })
         .map_err(ConfigError::Validation)
     }
@@ -152,6 +153,7 @@ impl LegacyConfigV2 {
             reduced_motion: false,
             led: LedSettings::default(),
             orientation: Orientation::Landscape,
+            ble: BleSettings::DEFAULT,
         })
         .map_err(ConfigError::Validation)
     }

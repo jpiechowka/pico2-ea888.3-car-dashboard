@@ -46,7 +46,7 @@ pub(crate) fn inspect_envelope(
         return Err(ConfigError::Header);
     }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != VERSION && !(allow_legacy && matches!(version, 1..=4)) {
+    if version != VERSION && !(allow_legacy && matches!(version, 1..=5)) {
         return Err(ConfigError::Version);
     }
     let len = usize::from(u16::from_le_bytes([bytes[6], bytes[7]]));
@@ -65,7 +65,16 @@ fn decode_payload(
     payload: &[u8],
 ) -> Result<ValidatedConfig, ConfigError> {
     #[cfg(feature = "json")]
-    if matches!(_version, 1..=4) {
+    if matches!(_version, 1..=5) {
+        if _version == 5 {
+            let (config, rest) = postcard::take_from_bytes::<crate::legacy_v5::LegacyConfigV5>(payload)
+                .map_err(|_| ConfigError::Payload)?;
+            if !rest.is_empty() {
+                return Err(ConfigError::Payload);
+            }
+            compare_canonical(&config, payload)?;
+            return config.upgrade();
+        }
         if _version == 4 {
             let (config, rest) = postcard::take_from_bytes::<crate::legacy_v4::LegacyConfigV4>(payload)
                 .map_err(|_| ConfigError::Payload)?;
@@ -246,6 +255,7 @@ pub fn from_json_bytes(bytes: &[u8]) -> Result<ValidatedConfig, ConfigError> {
         2 => read_json(bytes, crate::legacy::LegacyConfigV2::upgrade),
         3 => read_json(bytes, crate::legacy_v3::LegacyConfigV3::upgrade),
         4 => read_json(bytes, crate::legacy_v4::LegacyConfigV4::upgrade),
+        5 => read_json(bytes, crate::legacy_v5::LegacyConfigV5::upgrade),
         VERSION => read_json(bytes, |config| validate(config).map_err(ConfigError::Validation)),
         _ => Err(ConfigError::Version),
     }

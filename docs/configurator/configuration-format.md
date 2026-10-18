@@ -3,7 +3,7 @@
 `dashboard-config` is a `no_std`, allocation-free device library. Its optional
 `json` feature provides the editable host/browser format; JSON is never linked
 into the device parser. The model, catalogue, validator and binary codec are
-shared by all consumers. See the current v5 contract below, [schema v2](schema-v2.md) for wire history, and
+shared by all consumers. See the current v6 contract below, [schema v2](schema-v2.md) for wire history, and
 [design](design.md) for the deployment and hardware limits.
 
 ## Bounds and validation
@@ -203,3 +203,30 @@ maximum escaped labels, colour varints and timing values. It measures14007B
 EAV and94117B compact JSON. Independent structural/counting serializer bounds
 are14135B EAV and119797B saved JSON, below the16KiB/128KiB caps. Wider legend
 fixtures verify24-byte labels; total text capacity follows occupied grid cells.
+
+## Current v6 BLE selection
+
+Schema v6 appends a required `ble` object after orientation. Its bounded Rust
+storage is exactly 16 bytes; the current default binary grows from 1159 to
+1174 bytes. Existing widget, orientation and startup data are preserved.
+Host migration uses frozen v1-v5 shapes; all migrated documents start with BLE
+disabled. Current JSON requires the entire BLE object. Pico ConfigSlot accepts
+only v6 and resets every field, including BLE, on failed admission.
+
+`enabled` defaults false, `profile` defaults `VlinkerMcPlus`, `peer` contains
+six display-order address bytes plus `Public` or `RandomStatic`, and
+`auto_reconnect` defaults true. The disabled placeholder is the all-zero peer.
+An enabled radio requires an explicit nonzero, nonbroadcast peer; random static
+addresses require top bits 11 and a random part containing both zero and one.
+Rotating private addresses are unsupported. No PIN or bond keys are stored.
+
+Connect timeout is 5000-30000 ms (default 10000), response timeout 250-5000 ms
+(default 1500), and minimum command gap 10-200 ms (default 20). All values remain
+validated while disabled. These settings do not qualify a sensor, ECU or route.
+MC+ and CX initialize/identify the adapter only; CX requires encryption and
+volatile bonds require pairing again after reboot. `TestPeer` is explicitly
+synthetic and uses a separate GATT service with no vehicle request admission.
+
+Config, ValidatedConfig and BootConfig/ConfigSlot compile-time target bounds
+increase by exactly 16 bytes to 14596, 14608 and 14620 respectively. Linked-image
+headroom and stack gates are unchanged and remain a separate verification step.

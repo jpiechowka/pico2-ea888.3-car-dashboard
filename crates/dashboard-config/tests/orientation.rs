@@ -1,8 +1,8 @@
 #[cfg(feature = "json")]
 #[test]
 fn current_json_accepts_a_complete_portrait_grid() {
-    let mut value: serde_json::Value = serde_json::from_str(include_str!("fixtures/v4-default.json")).unwrap();
-    value["version"] = 5.into();
+    let mut value: serde_json::Value = serde_json::from_str(include_str!("../../../configs/default.json")).unwrap();
+    value["version"] = VERSION.into();
     value["orientation"] = "Portrait".into();
     value["views"][0]["orientation"] = serde_json::Value::Null;
     for (cell, widget) in value["widgets"].as_array_mut().unwrap().iter_mut().enumerate() {

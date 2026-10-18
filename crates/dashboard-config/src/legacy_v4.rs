@@ -42,6 +42,7 @@ impl LegacyConfigV4 {
             reduced_motion: self.reduced_motion,
             led: self.led,
             orientation: Orientation::Landscape,
+            ble: BleSettings::DEFAULT,
         })
         .map_err(ConfigError::Validation)
     }

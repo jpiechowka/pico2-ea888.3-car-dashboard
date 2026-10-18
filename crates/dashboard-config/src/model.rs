@@ -1,7 +1,7 @@
 use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 pub const CATALOGUE_VERSION: u16 = 1;
 pub const MAX_VIEWS: usize = 8;
 pub const MAX_WIDGETS: usize = 64;
@@ -25,6 +25,7 @@ pub struct Config {
     pub reduced_motion: bool,
     pub led: crate::LedSettings,
     pub orientation: crate::Orientation,
+    pub ble: crate::BleSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,6 +387,6 @@ pub enum Fuel {
 }
 
 // Host pointer widths are not a substitute for the target's actual layout.
-// v5 adds four bytes over v4 on ARM. Whole-image RAM/stack gates remain separate.
+// v6 adds the 16-byte BLE selection. Whole-image RAM/stack gates remain separate.
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<Config>() <= 14_580);
+const _: () = assert!(core::mem::size_of::<Config>() <= 14_596);
