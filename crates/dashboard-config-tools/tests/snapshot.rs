@@ -110,8 +110,8 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
             .output()
             .unwrap()
     };
-    assert!(run(&["default", "editable.json"]).status.success());
-    assert!(run(&["compile", "editable.json", "runtime.eav"]).status.success());
+    cli_success(run(&["default", "editable.json"]), "default JSON");
+    cli_success(run(&["compile", "editable.json", "runtime.eav"]), "compile JSON");
     for (name, fixture) in [
         (
             "v1.json",
@@ -124,6 +124,22 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
         (
             "v3.json",
             include_bytes!("../../dashboard-config/tests/fixtures/v3-default.json").as_slice(),
+        ),
+        (
+            "v4.json",
+            include_bytes!("../../dashboard-config/tests/fixtures/v4-default.json").as_slice(),
+        ),
+        (
+            "v5.json",
+            include_bytes!("../../dashboard-config/tests/fixtures/v5-default.json").as_slice(),
+        ),
+        (
+            "v4.eav",
+            include_bytes!("../../dashboard-config/tests/fixtures/v4-default.eav").as_slice(),
+        ),
+        (
+            "v5.eav",
+            include_bytes!("../../dashboard-config/tests/fixtures/v5-default.eav").as_slice(),
         ),
         (
             "v3.eav",
@@ -139,6 +155,7 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
         ),
     ] {
         std::fs::write(temp.0.join(name), fixture).unwrap();
+        cli_success(run(&["inspect", name]), name);
         let output = run(&["compile", name, "migrated.eav"]);
         assert!(
             output.status.success(),
@@ -146,7 +163,7 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
             output.status,
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(run(&["inspect", "migrated.eav"]).status.success());
+        cli_success(run(&["inspect", "migrated.eav"]), name);
         assert_eq!(
             decode(&std::fs::read(temp.0.join("migrated.eav")).unwrap())
                 .unwrap()
@@ -156,12 +173,12 @@ fn cli_roundtrip_rejects_bad_input_without_replacing_output() {
     }
     let bytes = std::fs::read(temp.0.join("runtime.eav")).unwrap();
     assert_eq!(decode(&bytes).unwrap().config(), &default_config());
-    assert!(run(&["inspect", "runtime.eav"]).status.success());
+    cli_success(run(&["inspect", "runtime.eav"]), "inspect current binary");
     std::fs::write(temp.0.join("editable.json"), b"{\"unknown\":1}").unwrap();
-    assert!(!run(&["compile", "editable.json", "runtime.eav"]).status.success());
+    cli_failure(run(&["compile", "editable.json", "runtime.eav"]));
     assert_eq!(std::fs::read(temp.0.join("runtime.eav")).unwrap(), bytes);
-    assert!(!run(&["compile", "missing.json", "runtime.eav"]).status.success());
-    assert!(!run(&["unexpected"]).status.success());
+    cli_failure(run(&["compile", "missing.json", "runtime.eav"]));
+    cli_failure(run(&["unexpected"]));
 }
 
 #[test]
@@ -204,4 +221,91 @@ fn byte_encoding_is_lowercase_zero_padded_and_roundtrips_every_byte() {
         .collect::<Vec<_>>();
     assert_eq!(decoded, bytes);
     assert_eq!(hex_bytes(&[]), "");
+}
+
+fn cli_success(
+    output: std::process::Output,
+    operation: &str,
+) -> std::process::Output {
+    assert!(
+        output.status.success(),
+        "{operation}: {:?}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+fn cli_failure(output: std::process::Output) {
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected ordinary CLI rejection: {:?}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.stderr.is_empty(), "CLI rejection lacked diagnostics");
+}
+
+#[test]
+fn cli_inspects_maximum_capacity_and_rejects_invalid_input_without_aborting() {
+    let temp = Temp::new();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_dashboard-config"))
+            .current_dir(&temp.0)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let mut config = default_config();
+    let template = config.widgets.clone();
+    for view in 2..=MAX_VIEWS as u8 {
+        config
+            .views
+            .push(View {
+                id: view,
+                name: "Maximum".try_into().unwrap(),
+                orientation: None,
+            })
+            .unwrap();
+        for widget in &template {
+            let mut widget = widget.clone();
+            widget.view = view;
+            widget.id = config.widgets.len() as u16 + 1;
+            config.widgets.push(widget).unwrap();
+        }
+    }
+    assert_eq!(config.widgets.len(), MAX_WIDGETS);
+    config.ble.enabled = true;
+    config.ble.profile = BleProfile::ObdLinkCx;
+    config.ble.peer = BlePeer {
+        address: [0xC1, 2, 3, 4, 5, 6],
+        kind: BleAddressKind::RandomStatic,
+    };
+    config.ble.response_timeout_ms = BLE_RESPONSE_TIMEOUT_MAX_MS;
+    let validated = validate(config.clone()).unwrap();
+    std::fs::write(temp.0.join("maximum.json"), to_json(&validated).unwrap()).unwrap();
+    cli_success(run(&["compile", "maximum.json", "maximum.eav"]), "compile maximum");
+    let expected = std::fs::read(temp.0.join("maximum.eav")).unwrap();
+    assert_eq!(decode(&expected).unwrap().config(), &config);
+    for input in ["maximum.json", "maximum.eav"] {
+        let output = cli_success(run(&["inspect", input]), input);
+        let text = String::from_utf8(output.stdout).unwrap();
+        let (summary, json) = text.split_once('\n').unwrap();
+        assert!(summary.starts_with("8 views; 64 widgets;"), "{summary}");
+        assert_eq!(from_json_bytes(json.as_bytes()).unwrap().config(), &config);
+    }
+    config.ble.peer.address = [0; 6];
+    std::fs::write(temp.0.join("invalid.json"), serde_json::to_vec(&config).unwrap()).unwrap();
+    let mut corrupt = expected.clone();
+    *corrupt.last_mut().unwrap() ^= 1;
+    for (name, bytes) in [("invalid.eav", corrupt), ("oversize.eav", vec![0; MAX_FILE_BYTES + 1])] {
+        std::fs::write(temp.0.join(name), bytes).unwrap();
+        cli_failure(run(&["inspect", name]));
+        cli_failure(run(&["compile", name, "maximum.eav"]));
+        assert_eq!(std::fs::read(temp.0.join("maximum.eav")).unwrap(), expected);
+    }
+    cli_failure(run(&["inspect", "invalid.json"]));
+    cli_failure(run(&["compile", "invalid.json", "maximum.eav"]));
+    assert_eq!(std::fs::read(temp.0.join("maximum.eav")).unwrap(), expected);
 }

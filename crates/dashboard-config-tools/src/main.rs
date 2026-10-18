@@ -63,8 +63,22 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+// The unoptimized CLI decode/migration path exceeds Windows' 1 MiB main stack.
+// Only this host CLI worker gets a fixed 2 MiB reserve; firmware limits stay separate.
+const CLI_STACK_BYTES: usize = 2 * 1024 * 1024;
+
 fn main() {
-    if let Err(error) = run() {
+    let result = std::thread::Builder::new()
+        .name("dashboard-config-cli".into())
+        .stack_size(CLI_STACK_BYTES)
+        .spawn(run)
+        .map_err(|error| format!("cannot start configuration worker: {error}"))
+        .and_then(|worker| {
+            worker
+                .join()
+                .unwrap_or_else(|_| Err("configuration worker panicked".into()))
+        });
+    if let Err(error) = result {
         eprintln!("{error}");
         std::process::exit(1);
     }
