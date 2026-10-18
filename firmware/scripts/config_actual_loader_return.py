@@ -238,7 +238,7 @@ def _closure(rows, context, state, continuation, returned):
     """
     proofs = continuation["proofs"]
     issuer = continuation["issuer"]
-    I = issuer["window"]
+    issuer_window = issuer["window"]
     F = proofs["fallback"]["function"]
     U = continuation["default_error"]
     Z = issuer["failure_suffix"]
@@ -250,12 +250,12 @@ def _closure(rows, context, state, continuation, returned):
         and issuer["frame"] == 456
         and issuer["helper_calls"] == ()
         and issuer["local_write_ranges"] == ()
-        and publication == I + 56,
+        and publication == issuer_window + 56,
         "actual continuation borrows another issuer ABI/effect family",
     )
     bodies = (
         (F, F + 62),
-        (I, I + 56),
+        (issuer_window, issuer_window + 56),
         (publication, publication + 26),
         (restore, restore + 8),
         (U["window"], U["window"] + U["extent"]),
@@ -319,7 +319,7 @@ def _closure(rows, context, state, continuation, returned):
             )
             pending.extend(((U["window"], sp, "Err0/1"), (following, sp, "Ok2")))
             continue
-        if at == I + 8:
+        if at == issuer_window + 8:
             require(
                 lane in ("Ok2", "retry") and family == "b" and conditional,
                 "issuer increment loses current old-value lane",
@@ -328,27 +328,27 @@ def _closure(rows, context, state, continuation, returned):
                 ((_destination(row), sp, "exhausted"), (following, sp, "increment_nonoverflow"))
             )
             continue
-        if at == I + 18:
+        if at == issuer_window + 18:
             require(
                 lane == "increment_nonoverflow",
                 "issuer reload comparison loses expected-old transport",
             )
             pending.extend(((_destination(row), sp, "retry"), (following, sp, "exclusive_equal")))
             continue
-        if at == I + 24:
+        if at == issuer_window + 24:
             require(
                 lane == "exclusive_equal", "issuer store lacks the matching exclusive comparison"
             )
             pending.extend(((_destination(row), sp, "retry"), (following, sp, "issued")))
             continue
-        if at == I + 30:
+        if at == issuer_window + 30:
             require(
                 lane in ("retry", "issued"),
                 "issuer retry guard lacks source store-status provenance",
             )
             pending.append((_destination(row) if lane == "retry" else following, sp, lane))
             continue
-        if at == I + 50:
+        if at == issuer_window + 50:
             require(
                 lane == "issued", "issuer zero guard was not reached by successful exclusive store"
             )

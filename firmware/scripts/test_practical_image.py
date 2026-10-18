@@ -7,13 +7,17 @@ map/boot block/EAV linkage, source contract, named frames and budgets run.
 from contextlib import redirect_stdout
 from copy import deepcopy
 from dataclasses import replace
-import io, json, struct, tempfile, unittest, zlib
+import io
+import json
+import struct
+import tempfile
+import unittest
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import practical_image as practical
 import check_memory_layout as image
-from check_stack_budget import frames, FrameAdmission
 from config_build_source import make_source_context, SOURCE_PATHS, write_source_context
 import test_stack_budget
 
@@ -58,18 +62,21 @@ def fixture(version=6, radio=False):
             size >>= 7
         metadata.append(size)
     data.extend(metadata)
-    section = lambda kind, flags, address, offset, size: (
-        0,
-        kind,
-        flags,
-        address,
-        offset,
-        size,
-        0,
-        0,
-        4,
-        0,
-    )
+
+    def section(kind, flags, address, offset, size):
+        return (
+            0,
+            kind,
+            flags,
+            address,
+            offset,
+            size,
+            0,
+            0,
+            4,
+            0,
+        )
+
     entries = [
         (1, ".start_block", section(1, 2, B + 256, 256, 20)),
         (2, ".dashboard_config", section(1, 2, B + 512, 512, len(eav))),

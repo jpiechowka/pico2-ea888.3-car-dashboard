@@ -383,7 +383,7 @@ def reviewed_eav_policy(objects, payload, context, *, contradictory_effects, own
         and payload.extent == payload.storage.extent - 12,
         "platform input lacks its recognized complete readonly EAV payload",
     )
-    raw = objects.read_only(payload.start, payload.extent)
+    _raw = objects.read_only(payload.start, payload.extent)
     return PlatformPolicy(
         payload.start,
         payload.start + payload.extent,

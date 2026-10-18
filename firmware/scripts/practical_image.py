@@ -60,7 +60,10 @@ def check(elf, expected_eav=None, source_context=None):
     stack = stack_check(elf, headroom, source_context=context)
     require(type(stack) is FrameAdmission, "missing conservative frame admission")
     check_boundaries(elf)
-    sha = lambda raw: hashlib.sha256(raw).hexdigest()
+
+    def sha(raw):
+        return hashlib.sha256(raw).hexdigest()
+
     result = dict(
         schema=3,
         gate="practical_image",

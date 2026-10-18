@@ -1,6 +1,9 @@
 """Focused startup capture identity tests; no firmware compile or USB access."""
 
-import importlib.util, json, tempfile, unittest
+import importlib.util
+import json
+import tempfile
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]

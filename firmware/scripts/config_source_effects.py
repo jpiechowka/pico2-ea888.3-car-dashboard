@@ -8,7 +8,6 @@ cursor. Current parent argument/owned-access use is still required separately.
 from dataclasses import replace
 from config_abstract import (
     Span,
-    DecoderInterface,
     SequenceInterface,
     decoder_interface,
     sequence_interface,

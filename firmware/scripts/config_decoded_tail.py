@@ -10,6 +10,7 @@ from config_abstract import SequenceInterface, Span
 from config_decode_effects import _object
 from config_headers import VISITOR
 from config_regions import Storage, borrow, require_disjoint
+from config_structural import _raw_composition_inputs
 from config_tail_children import tail_coverage
 from config_tail_parent_contracts import GRAMMARS
 from config_widget_children import _name
@@ -1540,9 +1541,6 @@ class _TailState:
             "Tail outgoing error changes its exact origin/carrier/original-return association",
         )
         return self
-
-
-from config_structural import _raw_composition_inputs
 
 
 def _first_boot_decoded_visitor_return_state(objects, instructions, source_context):

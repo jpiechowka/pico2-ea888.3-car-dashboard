@@ -8,7 +8,6 @@ class TailLiteralBodies(unittest.TestCase):
     @staticmethod
     def fixture(extent=None, delta=0):
         import json
-        import struct
         from pathlib import Path
         from test_config_sources import ActualDecodedSources
         from test_config_stack import StartupConfigurationCopy, SameBLoaderBoundary
@@ -1489,7 +1488,7 @@ class TailRestoreContexts(unittest.TestCase):
 
         at = 0x10071000 + 54
         target = 0x10071000 + 66
-        old = rows[at]
+        _old = rows[at]
         raw = struct.pack("<H", 0xD200 | (((target - (at + 4)) // 2) & 255))
         StartupConfigurationCopy.put(objects, at, raw)
         rows[at] = Instruction(at, raw, "bhs", hex(target))
@@ -1501,7 +1500,6 @@ class TailParentLineage(unittest.TestCase):
     @staticmethod
     def fixture(extent=64):
         from config_tail_source import (
-            _controls_source,
             _controls_effects,
             _history_led_source,
             _suffix_effects,
@@ -1860,7 +1858,10 @@ class TailPublicErrorProjection(unittest.TestCase):
             entries=(),
         )
         raw = N(selection=N(selected={}), outside_shared_contexts=(), foreign_restore_contexts=())
-        size = lambda value: len((json.dumps(value, sort_keys=True) + "\n").encode())
+
+        def size(value):
+            return len((json.dumps(value, sort_keys=True) + "\n").encode())
+
         baseline = _tail_description(state, None, (), (), raw)
         prior["external_qualifications"]["padding"] = "x" * (65536 - size(baseline))
         self.assertEqual(size(_tail_description(state, None, (), (), raw)), 65536)
@@ -2008,7 +2009,7 @@ class UnenteredDecodedVisitorReturn(unittest.TestCase):
 class TailPrivateNormalReturn(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from config_decoded_tail import _tail_exits, _first_boot_tail_phases
+        from config_decoded_tail import _first_boot_tail_phases
         from config_tail_uses import _tail_access_group
 
         objects, rows, source, _ = TailLiteralBodies.fixture(128)
@@ -2459,11 +2460,14 @@ class DetachedTypedNames(unittest.TestCase):
 
         original, rows, _, _ = TailLiteralBodies.fixture()
         frozen, detached = _detached_inputs(original, rows)
-        reference = lambda objects, role, address=None: [
-            n
-            for n, e in objects.elf.functions.items()
-            if canonical_symbol(n) == role and (address is None or e[0] & ~1 == address)
-        ]
+
+        def reference(objects, role, address=None):
+            return [
+                n
+                for n, e in objects.elf.functions.items()
+                if canonical_symbol(n) == role and (address is None or e[0] & ~1 == address)
+            ]
+
         for role in ROLES.values():
             names = reference(frozen, role)
             if len(names) != 1:

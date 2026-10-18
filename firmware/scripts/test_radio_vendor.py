@@ -28,7 +28,10 @@ class Provenance(unittest.TestCase):
             root = Path(folder)
             (root / "src").mkdir()
             (root / "src/lib.rs").write_bytes(b"patched\n")
-            digest = lambda data: hashlib.sha256(data).hexdigest()
+
+            def digest(data):
+                return hashlib.sha256(data).hexdigest()
+
             original = {"src/lib.rs": digest(b"original\n")}
             patched = {"src/lib.rs": digest(b"patched\n")}
             verify_tree(root, original, patched)

@@ -8,7 +8,8 @@ it is never a machine nonreturn or a reusable ownership capability.
 """
 
 from dataclasses import dataclass
-import re, struct
+import re
+import struct
 from config_regions import _control
 from config_stack import transfer_family
 from config_refill_contracts import CATALOG_DISPATCH

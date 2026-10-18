@@ -3,7 +3,7 @@
 from pathlib import Path
 
 
-def shared_inputs(repo):
+def shared_inputs(repo: str | Path) -> set[Path]:
     repo = Path(repo)
     paths = set()
     for name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"):

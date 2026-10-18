@@ -1372,7 +1372,7 @@ def _suffix_argument_relations(rows, V, suffix, frame, calls, paths):
         p = pieces[0]["instructions"] if wire in (0, 1) else pieces[2]["instructions"]
         carriers.append(("r4", 5538, 5574, preserves("r4", p, 5538)))
         assignment = alternative["assignment"]
-        selected = ()
+        _selected = ()
         # Bind each active stored FP/bit carrier to its exact checked child
         # outcome. Unit/ratio inactive FP words keep their opaque status.
         names = (

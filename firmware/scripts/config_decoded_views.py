@@ -20,7 +20,6 @@ from config_loader_boundary import _physical
 from config_owner_entry import _direct_target
 from config_refill_children import opaque_copy_interface
 from config_regions import Storage, borrow, require_writes, require_disjoint, _control
-from config_stack import canonical_symbol
 from config_utf8 import UTF8Slice, from_utf8_interface, utf8_body, UTF8
 from config_views_contracts import GRAMMARS, ROLES, SHARED_PENDING, PENDING_VARINT_TRANSPORT
 from validation import require
@@ -476,7 +475,7 @@ def _stage_effects(
 def _phase_outcomes(objects, rows, context, parents, children):
     V = parents[0]["function"] - 82
     frame = context.headers["visitor_frame"]
-    B = context.owner.start
+    _B = context.owner.start
     top = context.headers["visitor"]["sequence_state"].header
     errors = []
     successes = []
@@ -873,7 +872,7 @@ def _control_selection(objects, rows, context, parents, children):
     root = context.headers["root"]["proof"]
     visitor = context.headers["visitor"]["proof"]
     V = visitor["function"]
-    R = root["function"]
+    _R = root["function"]
     widget = tuple(
         (p["function"] - V, p["shape"])
         for p in parents

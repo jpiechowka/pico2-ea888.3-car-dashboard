@@ -1,6 +1,9 @@
 """Focused artifact consumer failures; no compiler/converter/hardware calls."""
 
-import importlib.util, json, tempfile, unittest
+import importlib.util
+import json
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 

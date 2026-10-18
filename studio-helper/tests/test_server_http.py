@@ -1,4 +1,11 @@
-import json, subprocess, time, urllib.request, urllib.error, socket, sys, threading, queue
+import json
+import subprocess
+import time
+import urllib.request
+import urllib.error
+import sys
+import threading
+import queue
 from pathlib import Path
 
 
@@ -77,7 +84,7 @@ def main():
         if "--devices" in sys.argv:
             status, device_job = req("/api/v1/devices/refresh", "POST", headers)
             assert status == 202
-            device_batch = poll(device_job)
+            _device_batch = poll(device_job)
             status, devices = req("/api/v1/devices", headers=headers)
             assert (
                 status == 200 and devices["schema_version"] == 1 and len(devices["devices"]) <= 16

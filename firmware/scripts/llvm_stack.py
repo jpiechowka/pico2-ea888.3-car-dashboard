@@ -277,8 +277,8 @@ def _run(argv, limit, timeout=60):
             child.kill()
         try:
             child.wait(timeout=max(0.001, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            raise AssertionError("LLVM direct child cleanup deadline exceeded")
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError("LLVM direct child cleanup deadline exceeded") from error
         finally:
             for pipe in streams:
                 pipe.close()

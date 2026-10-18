@@ -2,11 +2,18 @@
 
 from pathlib import Path
 import struct
+from typing import TypeAlias, cast
 from validation import require
 
 
+# Wire tuples preserve the ELF32 field order used by existing admission checks.
+Section: TypeAlias = tuple[int, int, int, int, int, int, int, int, int, int]
+Segment: TypeAlias = tuple[int, int, int, int, int, int, int, int]
+Symbol: TypeAlias = tuple[str, int, int, int, int]
+
+
 class ElfImage:
-    def __init__(self, path):
+    def __init__(self, path: str | Path | bytes | bytearray) -> None:
         if isinstance(path, (bytes, bytearray)):
             require(len(path) <= 32 * 1024 * 1024, "ELF byte bound")
             data = bytes(path)
@@ -24,7 +31,7 @@ class ElfImage:
         )
         require(struct.unpack_from("<H", data, 40)[0] == 52, "unexpected ELF header size")
 
-        def extent(offset, count, size):
+        def extent(offset: int, count: int, size: int) -> None:
             require(
                 0 <= offset <= len(data) and count <= (len(data) - offset) // size,
                 "truncated ELF extent",
@@ -36,14 +43,15 @@ class ElfImage:
         require(count <= 4096, "ELF section bound")
         extent(shoff, count, 40)
         self.sections = [
-            struct.unpack_from("<10I", data, shoff + i * entsize) for i in range(count)
+            cast(Section, struct.unpack_from("<10I", data, shoff + i * entsize))
+            for i in range(count)
         ]
 
-        def table(section):
+        def table(section: Section) -> bytes:
             require(section[4] + section[5] <= len(data), "truncated ELF table")
             return data[section[4] : section[4] + section[5]]
 
-        def string(blob, offset):
+        def string(blob: bytes, offset: int) -> str:
             require(0 <= offset < len(blob), "ELF string offset")
             end = blob.find(b"\0", offset, min(len(blob), offset + 4097))
             require(end >= 0, "ELF string terminator or name bound")
@@ -59,14 +67,14 @@ class ElfImage:
             for index, section in enumerate(self.sections)
         ]
         self.named = {name: section for _, name, section in self.section_entries}
-        self.symbols = {}
+        self.symbols: dict[str, int] = {}
         # Typed consumers bind every candidate, including conflicting same-name
         # entries. Keep the existing value lookup/function interfaces intact.
-        self.symbol_entries = []
-        self.functions = {}
+        self.symbol_entries: list[Symbol] = []
+        self.functions: dict[str, tuple[int, int, int]] = {}
         # Mapping symbols deliberately repeat their short names. A dictionary
         # loses code/data transitions needed by the pinned decoder adapter.
-        self.mapping_symbols = []
+        self.mapping_symbols: list[tuple[str, int, int]] = []
         symbol_count = 0
         name_bytes = 0
         for section in self.sections:
@@ -105,7 +113,8 @@ class ElfImage:
         require(phcount <= 1024, "ELF program-header bound")
         extent(phoff, phcount, 32)
         self.segments = [
-            struct.unpack_from("<8I", data, phoff + i * phentsize) for i in range(phcount)
+            cast(Segment, struct.unpack_from("<8I", data, phoff + i * phentsize))
+            for i in range(phcount)
         ]
 
         for kind, offset, virtual, physical, filesz, memsz, flags, alignment in self.segments:
@@ -123,7 +132,7 @@ class ElfImage:
                 if alignment > 1:
                     require(offset % alignment == virtual % alignment, "ELF load congruence")
 
-    def function_bytes(self, name):
+    def function_bytes(self, name: str) -> bytes:
         value, size, index = self.functions[name]
         section = self.sections[index]
         address = value & ~1
@@ -135,6 +144,6 @@ class ElfImage:
         require(len(result) == size)
         return result
 
-    def section_bytes(self, name):
+    def section_bytes(self, name: str) -> bytes:
         section = self.named[name]
         return self.data[section[4] : section[4] + section[5]]

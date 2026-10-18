@@ -1,0 +1,3 @@
+# Quality tools only; runtime scripts continue to use the standard library.
+ruff==0.17.1
+mypy==2.4.0

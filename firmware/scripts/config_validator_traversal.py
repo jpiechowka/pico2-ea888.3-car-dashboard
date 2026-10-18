@@ -627,7 +627,7 @@ def _phase_relations(
     q = context.frame
     owner = context.config.storage
     B = owner.start
-    phase = q.phase
+    _phase = q.phase
     require(
         inputs["initialized_counts"] == dict(views=1, widgets=8, sources=8)
         and inputs["fuel_variant"] == "EquivalentGasoline"

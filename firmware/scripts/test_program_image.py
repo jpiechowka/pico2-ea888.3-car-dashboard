@@ -1,6 +1,7 @@
 """Independent small ELF and UF2 fixtures; no compilation or image analysis."""
 
-import struct, unittest
+import struct
+import unittest
 from types import SimpleNamespace
 from elf_image import ElfImage
 from check_program_image import (

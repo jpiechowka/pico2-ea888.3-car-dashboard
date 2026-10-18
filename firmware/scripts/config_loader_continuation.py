@@ -12,7 +12,6 @@ from config_default import _ingress
 from config_default_sources import source_terminal
 from config_entry import entry_object
 from config_finite import _literal_body
-from config_headers import ROOT
 from config_regions import (
     Storage,
     Region,

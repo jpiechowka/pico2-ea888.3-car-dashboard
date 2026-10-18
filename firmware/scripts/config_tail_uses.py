@@ -94,7 +94,7 @@ def _family_data(control):
         contexts = []
         for epoch in ("settings",) if role == "normal_config_words" else ("normal", "warning"):
             phase = "decoded_led_" + epoch
-            l = replace(prior.loader, phase=phase)
+            led_loader = replace(prior.loader, phase=phase)
             v = replace(prior.visitor, phase=phase)
             cfg = replace(prior.config.storage, phase=phase)
             guards = tuple(replace(g, phase=phase) for g in prior.protected)
@@ -113,7 +113,9 @@ def _family_data(control):
                 else borrow(v, 1064, 10, phase, role == "result_words")
             )
             contexts.append(
-                LedContext("sizez", epoch, l, f, borrow(cfg, 0, 14576, phase), owner, guards)
+                LedContext(
+                    "sizez", epoch, led_loader, f, borrow(cfg, 0, 14576, phase), owner, guards
+                )
             )
         parent = led[0]["function"] if role == "result_words" else V
         sites = tuple((parent + off, *rest) for off, *rest in LED_SITES[role, "sizez"])

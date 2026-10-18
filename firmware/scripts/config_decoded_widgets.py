@@ -1838,7 +1838,7 @@ def _widget_control_profile(value, context, parents, children):
         "Widget control extension is not its actual private phase state",
     )
     V = context.headers["visitor"]["proof"]["function"]
-    frame = context.headers["visitor_frame"]
+    _frame = context.headers["visitor_frame"]
     require(
         tuple((p["function"] - V, p["shape"]) for p in value.parents)
         == (
@@ -2613,7 +2613,7 @@ def _first_boot_decoded_widgets_state(objects, rows, source_context):
     frame = context.headers["visitor_frame"]
     phase = frame.phase
     V = context.headers["visitor"]["proof"]["function"]
-    top = context.headers["visitor"]["sequence_state"].header
+    _top = context.headers["visitor"]["sequence_state"].header
     returns = _child_returns(rows, state, parents, children)
     from config_decoded_views import _widget_structural_control
 

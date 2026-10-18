@@ -10,7 +10,7 @@ from dataclasses import replace
 from config_finite import _literal_body
 from config_helpers import _helper_function
 from config_refill_children import _readonly
-from config_regions import Storage, View, Argument, require_disjoint
+from config_regions import Storage, View, require_disjoint
 from config_roots import root_location
 from config_stack import canonical_symbol, _typed_function_extent
 from config_validator_child_contracts import NORMAL_CHILDREN, NORMAL_ROLES

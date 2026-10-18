@@ -36,14 +36,15 @@ def external_tool_path(path):
 
 FIRMWARE = external_tool_path(Path(__file__).parent.parent)
 REPO = FIRMWARE.parent
+# These shared script imports follow the two explicit repository search paths.
 sys.path.insert(0, str(REPO / "host" / "scripts"))
 sys.path.insert(0, str(FIRMWARE / "scripts"))
-from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler
-from source_inventory import shared_inputs
-from elf_image import ElfImage
-from check_program_image import inspect_program, linked_configuration, linked_startup
-from check_memory_layout import read_selected_image_result
-from config_build_source import (
+from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler  # noqa: E402
+from source_inventory import shared_inputs  # noqa: E402
+from elf_image import ElfImage  # noqa: E402
+from check_program_image import inspect_program, linked_configuration, linked_startup  # noqa: E402
+from check_memory_layout import read_selected_image_result  # noqa: E402
+from config_build_source import (  # noqa: E402
     make_source_context,
     write_source_context,
     load_source_context,

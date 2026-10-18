@@ -293,7 +293,8 @@ def inspect_program(elf):
 
 
 def main():
-    import argparse, json
+    import argparse
+    import json
     from elf_image import ElfImage
 
     parser = argparse.ArgumentParser(description=__doc__)

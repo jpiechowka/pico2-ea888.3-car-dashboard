@@ -1313,7 +1313,7 @@ class LoggerBodies(unittest.TestCase):
 
         for fault in ("size", "binding", "duplicate", "elsewhere", "section", "alias"):
             objects, records, item = self.fixture("sizez")
-            instance = next(v for v in item["instances"] if v["role"] == "_defmt_timestamp")
+            _instance = next(v for v in item["instances"] if v["role"] == "_defmt_timestamp")
             ordinal = next(
                 i for i, v in enumerate(objects.elf.symbol_entries) if v[0] == "_defmt_timestamp"
             )
@@ -2314,7 +2314,8 @@ class OrdinaryIndexEffects(unittest.TestCase):
 
 class OrdinaryDecodeEffects(unittest.TestCase):
     def fixture(self, semantic, raw, cursor=0):
-        import config_decode_effects, config_helpers
+        import config_decode_effects
+        import config_helpers
         from config_regions import Storage, borrow
 
         objects, records, item = OrdinaryHelperBodies.fixture(self)
@@ -2504,7 +2505,8 @@ class OrdinaryDecodeEffects(unittest.TestCase):
                 config_decode_effects.decode_effect(*args, output=output)
 
     def test_f32_keeps_all_bits_and_policy_with_unaligned_input_and_partial_errors(self):
-        import config_decode_effects, config_platform
+        import config_decode_effects
+        import config_platform
         from config_regions import Storage, borrow
 
         for residue in range(4):
@@ -2583,7 +2585,8 @@ class OrdinarySequenceEffects(unittest.TestCase):
         return args
 
     def run_effect(self, semantic, raw, count, cursor=0):
-        import config_decode_effects, config_platform
+        import config_decode_effects
+        import config_platform
         from config_regions import Storage, borrow
 
         args = self.fixture(semantic, raw, count, cursor)
@@ -2734,7 +2737,8 @@ class OrdinarySequenceEffects(unittest.TestCase):
                 config_decode_effects.decode_effect(*args)
 
     def test_f32_external_Q_D_and_RO8_cannot_borrow_pushed_scratch_even_on_none(self):
-        import config_decode_effects, config_platform
+        import config_decode_effects
+        import config_platform
         from config_regions import Storage, borrow
 
         for fault in ("Q", "D", "RO8"):
@@ -2886,7 +2890,7 @@ class OrdinaryCompareEffects(unittest.TestCase):
 
 class OrdinarySerializeEffects(unittest.TestCase):
     def fixture(self, semantic, raw, kind, bits, value):
-        import config_helpers, config_compare_effects
+        import config_helpers
         from config_regions import Argument, Storage
 
         objects, records, unused, state, source, unused_frame, protected = (
@@ -2992,7 +2996,9 @@ class OrdinarySerializeEffects(unittest.TestCase):
             config_serialize_effects.serialize_effect(*args)
 
     def test_string_prefix_success_remains_consumed_when_body_mismatches(self):
-        import config_serialize_effects, config_helpers, config_compare_effects
+        import config_serialize_effects
+        import config_helpers
+        import config_compare_effects
         from config_regions import Storage, borrow
 
         objects, records, unused, state, source, unused_frame, protected = (
@@ -3353,7 +3359,8 @@ class OrdinaryScalarFields(unittest.TestCase):
                 config_headers.root_u16_fields(objects, root, records, frame, ())
 
     def test_named_destination_not_arbitrary_writable_memory_or_aliased_stack(self):
-        import config_headers, config_entry
+        import config_headers
+        import config_entry
 
         for fault in ("identity", "taken", "extent"):
             objects, records, root, visitor, frame, child = self.fixture()
@@ -3375,7 +3382,8 @@ class OrdinaryScalarFields(unittest.TestCase):
                 config_headers.root_u16_fields(objects, root, records, frame, ())
 
     def test_each_decode_error_stops_before_store_or_next_field_without_publishing(self):
-        import config_headers, zlib
+        import config_headers
+        import zlib
 
         for prefix, fields, count in ((b"\x80\x80\x80", 0, 12), (b"\x04\x80\x80\x80", 1, 11)):
             objects, records, root, visitor, frame, child = self.fixture()
@@ -3502,7 +3510,8 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
             self.assertEqual(result["conservative_activation_frames"], frames)
 
     def test_f32_union_preserves_policy_on_none_error_and_success_without_alignment4(self):
-        import config_abstract, config_platform
+        import config_abstract
+        import config_platform
         from config_regions import Storage, borrow
 
         args = self.sequence("seq_f32", bytes(range(7)))
@@ -3589,7 +3598,8 @@ class AbstractPrimitiveInterfaces(unittest.TestCase):
             config_decode_effects.decode_effect(*self.decoder("slice_pop"))
 
     def test_narrow_cursor_and_count_endpoints_keep_exact_paired_exit_spans(self):
-        import config_abstract, config_platform
+        import config_abstract
+        import config_platform
         from dataclasses import replace
         from config_regions import Storage, borrow
 
@@ -3736,7 +3746,8 @@ class ConstructionInterfaces(unittest.TestCase):
                     self.assertEqual(proof["requires_parent_outline_abi"], outline)
 
     def test_unknown_append_unions_keep_prefix_count_capacity_and_no_write_error(self):
-        import config_construction, config_helpers
+        import config_construction
+        import config_helpers
         from config_abstract import Span
 
         for capacity in (14, 20, 24):
@@ -3764,7 +3775,8 @@ class ConstructionInterfaces(unittest.TestCase):
             )
 
     def test_capacity_error_and_zero_append_do_not_initialize_slack(self):
-        import config_construction, config_helpers
+        import config_construction
+        import config_helpers
         from config_abstract import Span
 
         objects, records, item, instance, frame = self.fixture()
@@ -3784,7 +3796,8 @@ class ConstructionInterfaces(unittest.TestCase):
             self.assertTrue(all(o["length"] == Span(*length) for o in result["outcomes"]))
 
     def test_header_full_owner_source_and_deeper_save_aliases_reject(self):
-        import config_construction, config_helpers
+        import config_construction
+        import config_helpers
         from dataclasses import replace
         from config_regions import Storage, borrow
 
@@ -3812,7 +3825,8 @@ class ConstructionInterfaces(unittest.TestCase):
             )
 
     def test_try_from_keeps_tag_only_error_and_separate_opaque_success_transport(self):
-        import config_construction, config_helpers
+        import config_construction
+        import config_helpers
         from config_regions import Storage, borrow
 
         objects, records, item, instance, frame = self.fixture("string_try14")
@@ -3843,7 +3857,8 @@ class ConstructionInterfaces(unittest.TestCase):
         self.assertTrue(result["requires_source_valid_str"])
 
     def test_try_result_and_source_must_survive_local_scratch_and_every_child_prologue(self):
-        import config_construction, config_helpers
+        import config_construction
+        import config_helpers
         from dataclasses import replace
         from config_regions import Storage, borrow
 
@@ -3910,7 +3925,8 @@ class ConstructionInterfaces(unittest.TestCase):
                 replace(state, **change)
 
     def test_wrapper_capacity_sum_overflow_and_stale_inventory_reject(self):
-        import config_construction, config_helpers
+        import config_construction
+        import config_helpers
         from config_abstract import Span
         from config_abstract_compare import InitializedPrefix
         from config_regions import Storage, borrow
@@ -4109,7 +4125,8 @@ class DefaultPreparationInterfaces(unittest.TestCase):
                 config_default.default_preparation(objects, root, records, frame, ())
 
     def test_view_literal_channel_array_and_static_identity_are_actual_data(self):
-        import config_default, config_entry
+        import config_default
+        import config_entry
 
         for address in (0x1002BFC8, 0x100200E8, 0x100200EC, 0x100200F0):
             objects, records, root, frame = self.fixture()
@@ -4483,7 +4500,6 @@ class RefillChildInterfaces(unittest.TestCase):
 
     def test_catalog_table_source_bytes_and_lr_destination_remain_typed(self):
         import config_refill_children
-        from config_refill_contracts import REFILL_GRAMMARS
 
         for fault in ("table", "source", "lr"):
             objects, records, item = self.fixture("sizez")
@@ -4561,7 +4577,8 @@ class RefillChildInterfaces(unittest.TestCase):
 
 class AbstractCanonicalInterfaces(unittest.TestCase):
     def compare(self):
-        import config_abstract, config_abstract_compare
+        import config_abstract
+        import config_abstract_compare
 
         args = list(OrdinaryCompareEffects.fixture(self, b"abcdef", b"abc"))
         state = args[3]
@@ -4573,7 +4590,8 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
         return args
 
     def serialize(self, semantic):
-        import config_abstract, config_abstract_compare
+        import config_abstract
+        import config_abstract_compare
 
         source = OrdinarySerializeEffects.fixture(self, semantic, b"abcdef", "u8", 8, 0)
         args = list(source[:4] + source[5:])
@@ -4596,7 +4614,8 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
         self.assertFalse(any("data" in o for o in result["outcomes"]))
 
     def test_scalar_families_keep_all_prefix_lengths_without_executing_values(self):
-        import config_abstract, config_abstract_compare
+        import config_abstract
+        import config_abstract_compare
 
         for semantic, kind, bits, maximum in (
             ("serialize_u8", "u8", 8, 1),
@@ -4615,7 +4634,8 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
             self.assertNotIn("encoded", result)
 
     def test_specialized_u32_and_wrong_width_cannot_borrow_an_abstract_type_name(self):
-        import config_abstract, config_abstract_compare
+        import config_abstract
+        import config_abstract_compare
 
         args = self.serialize("varint_u32_small")
         for kind, upper in (("u32", 128), ("u16", 127)):
@@ -4624,7 +4644,8 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
                 config_abstract_compare.serialize_interface(*args[:4], value, *args[4:])
 
     def test_string_prefix_and_body_failures_keep_paired_partial_progress(self):
-        import config_abstract, config_abstract_compare
+        import config_abstract
+        import config_abstract_compare
         from config_regions import Storage, borrow
 
         args = self.serialize("serialize_str")
@@ -4642,7 +4663,8 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
         self.assertEqual(result["conservative_activation_frames"], (24, 24, 24, 32))
 
     def test_source_and_header_must_survive_helper_and_memcmp_prologues(self):
-        import config_abstract, config_abstract_compare
+        import config_abstract
+        import config_abstract_compare
         from config_regions import Storage, borrow
 
         for fault in ("C_end", "source"):
@@ -4664,7 +4686,9 @@ class AbstractCanonicalInterfaces(unittest.TestCase):
                 config_abstract_compare.compare_interface(*args)
 
     def test_declared_policy_survives_nested_prefix_and_body_and_cannot_become_stale(self):
-        import config_abstract, config_abstract_compare, config_platform
+        import config_abstract
+        import config_abstract_compare
+        import config_platform
         from dataclasses import replace
         from config_regions import Storage, borrow
 
@@ -5056,7 +5080,8 @@ class OwnedPlatformDependencies(unittest.TestCase):
                 )
 
     def test_current_owned_sites_bind_typed_functions_bytes_and_relocations(self):
-        import config_owned_access, config_default
+        import config_owned_access
+        import config_default
         from dataclasses import replace
 
         for code, data in ((0, 0), (0x2800, 0x19000)):
@@ -5913,7 +5938,7 @@ class OrdinaryCoverage(unittest.TestCase):
 
     def test_cross_region_fallthrough_needs_its_exact_continuation(self):
         from dataclasses import replace
-        from config_regions import audit_coverage, Region, Transfer
+        from config_regions import audit_coverage, Transfer
 
         objects, name, records, context, region = self.fixture()
         base = context[0]
@@ -5954,7 +5979,7 @@ class OrdinaryCoverage(unittest.TestCase):
                 audit_coverage(objects, name, records, context, (region, bad))
 
     def test_a_matched_issuer_region_does_not_cover_the_rest_of_its_loader(self):
-        from config_regions import Region, Transfer, audit_coverage
+        from config_regions import Region, audit_coverage
         import config_upstream
 
         objects, records, item = IssuerRegions().fixture("sizez")
@@ -5970,7 +5995,7 @@ class OrdinaryCoverage(unittest.TestCase):
 
     def test_conditional_external_tail_must_keep_its_untaken_fallthrough(self):
         from dataclasses import replace
-        from config_regions import Region, Transfer, audit_coverage
+        from config_regions import Transfer, audit_coverage
 
         objects, name, records, context, region = self.fixture()
         base = context[0]
@@ -8014,7 +8039,9 @@ class ValidatorPlatformFamilies(unittest.TestCase):
     def test_exact_wire_bound_is_preserved_at_actual_stack_result_boundary(self):
         import config_platform
 
-        size = lambda value: len((json.dumps(value, sort_keys=True) + "\n").encode())
+        def size(value):
+            return len((json.dumps(value, sort_keys=True) + "\n").encode())
+
         _, _, small = self.image_fixture("sizes", 1)
         elf, eav, near = self.image_fixture("sizes", 65500 - size(small["policies"][0]) + 1)
         self.assertEqual(size(near["policies"][0]), 65500)
@@ -8196,12 +8223,16 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         return elf, eav, stack
 
     def test_actual_image_and_capture_readers_preserve_v8_with_supplied_stage_facts(self):
-        import check_memory_layout, capture_target_bench as capture
+        import check_memory_layout
+        import capture_target_bench as capture
         from test_target_capture import CaptureMemoryQualification
         from unittest.mock import patch
         from contextlib import redirect_stdout
         from copy import deepcopy
-        import io, tempfile, subprocess, sys
+        import io
+        import tempfile
+        import subprocess
+        import sys
 
         real_run = subprocess.run
         for mode in ("speed2", "sizes", "sizez"):
@@ -8325,7 +8356,9 @@ class ValidatorPlatformFamilies(unittest.TestCase):
         from unittest.mock import patch
         import tempfile
 
-        size = lambda value: len((json.dumps(value, sort_keys=True) + "\n").encode())
+        def size(value):
+            return len((json.dumps(value, sort_keys=True) + "\n").encode())
+
         _, _, small = self.image_fixture("sizes", 1)
         elf, eav, stack = self.image_fixture("sizes", 65500 - size(small) + 1)
         self.assertEqual(size(stack), 65500)
@@ -8401,7 +8434,6 @@ class ValidatorPlatformFamilies(unittest.TestCase):
 
 class ValidatorResultBoundary(unittest.TestCase):
     def fixture(self, phase="default_validation", shift=0):
-        from dataclasses import replace
         import re
 
         item = json.loads(
@@ -13733,7 +13765,7 @@ class ActualDecodedViews(unittest.TestCase):
         # neither an address anchor nor the destination grants context/state.
         objects, rows, context, item = self.fixture()
         site = V + 420
-        old = rows[site]
+        _old = rows[site]
         raw = bytes.fromhex("aff30080")
         StartupConfigurationCopy.put(objects, site, raw)
         rows[site] = Instruction(site, raw, "nop.w", "")
@@ -15230,7 +15262,6 @@ class WidgetEmptyEntries(unittest.TestCase):
 class WidgetPayloadBinding(unittest.TestCase):
     @staticmethod
     def fixture(provider="ordinary", changed_first=False):
-        from config_decode_effects import decode_effect
         from config_platform import reviewed_eav_policy, TARGET, BOOT_CONTEXT
         from config_structural import _detached_inputs
         from config_regions import Storage, borrow
@@ -15730,7 +15761,8 @@ class WidgetConstructionAdapters(unittest.TestCase):
             )
 
     def test_explicit_String5_inner_append_preserves_capacity_and_error_no_write(self):
-        import config_construction, config_helpers
+        import config_construction
+        import config_helpers
         from config_regions import Storage, borrow
         from config_abstract import Span
         from config_abstract_compare import InitializedPrefix

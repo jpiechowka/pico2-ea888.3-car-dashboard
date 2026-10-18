@@ -6,7 +6,6 @@ never an owner, validated/publication capability, policy or resource result.
 """
 
 from dataclasses import replace
-import re
 from config_refill_handoff import _checksum_refill_state
 from config_validator_controls import validator_controls, _child as control_child
 from config_validator_pointers import _leaf
@@ -21,7 +20,6 @@ from config_validator_traversal import (
     _led_copies,
     _source_catalogue,
     _coverage,
-    _child_allocation,
     _color_capture,
     _phase_relations,
 )
@@ -36,7 +34,7 @@ from config_finite import _literal_body
 from config_helpers import _helper_function
 from config_loader_boundary import _physical
 from config_roots import root_adapter, root_window
-from config_regions import Storage, borrow, require_disjoint
+from config_regions import Storage, borrow
 from config_stack import canonical_symbol
 from validation import require
 

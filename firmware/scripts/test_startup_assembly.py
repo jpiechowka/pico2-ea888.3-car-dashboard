@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-import struct
 from types import SimpleNamespace
 import unittest
 from llvm_stack import Instruction
@@ -146,8 +145,8 @@ class AssemblyStartup(unittest.TestCase):
         for mode in ("speed2", "sizes", "sizez"):
             base = historical.StartupConfigurationCopy()
             objects, rows, _ = base.fixture(mode)
-            elf = objects.elf
-            reset = self.install(objects, rows)
+            _elf = objects.elf
+            _reset = self.install(objects, rows)
             proof = startup_configuration_copy(objects, rows)
             self.assertFalse(proof["requires_M2_pre_init_source_reconciliation"])
             self.assertEqual(proof["pre_init"]["frame"], 0)

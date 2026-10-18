@@ -1,5 +1,6 @@
 """Conservative host capture policy; never persist arbitrary config/secrets."""
 
+from collections.abc import Mapping
 import os
 from pathlib import Path
 import subprocess
@@ -27,18 +28,18 @@ ENV_PREFIXES = (
 )
 
 
-def validate_filter(value):
+def validate_filter(value: str) -> None:
     if value.startswith("-"):
         raise ValueError("benchmark filter cannot begin with a CLI option prefix")
 
 
-def check_environment(env):
+def check_environment(env: Mapping[str, str]) -> None:
     bad = sorted(name for name, value in env.items() if value and name.startswith(ENV_PREFIXES))
     if bad:
         raise ValueError("unset benchmark compiler/config overrides: " + ", ".join(bad))
 
 
-def configuration(host):
+def configuration(host: str | Path) -> dict[str, str]:
     # Query effective configuration, including Cargo home, ancestors and includes.
     # Reject overrides rather than recording potentially private values. Manifests
     # and the exact normal compiler remain in the run's source/compiler evidence.
@@ -56,7 +57,7 @@ def configuration(host):
     return {key: "not set" for key in CONFIG_KEYS}
 
 
-def compiler(host):
+def compiler(host: str | Path) -> tuple[str, str]:
     check_environment(os.environ)
     rustc = subprocess.check_output(
         ["rustup", "which", "rustc"], cwd=host, text=True, encoding="utf-8"

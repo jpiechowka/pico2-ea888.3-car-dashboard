@@ -7,7 +7,7 @@ exceptional resume or permission to execute the loader successor.
 
 from dataclasses import dataclass
 import re
-from config_headers import VISITOR, ROOT, VISITOR_ROWS
+from config_headers import VISITOR, VISITOR_ROWS
 from config_finite import _literal_body
 from config_tail_parent_contracts import GRAMMARS
 from config_tail_children import _function, _outline, tail_body
@@ -991,7 +991,6 @@ class _TailActiveControl:
     actual_reached_accesses_pending: bool = True
 
     def current(self):
-        from config_decoded_sources import _phase_graph
 
         require(
             self.actual_reached_accesses_pending is True,
@@ -1283,7 +1282,6 @@ def _tail_control(state):
     enter. Unproved exceptional entry/return cannot resume this state.
     """
     from config_decoded_tail import _TailPhasesState
-    from config_decoded_sources import _phase_graph
 
     require(type(state) is _TailPhasesState, "Tail control lacks its actual private producer")
     state.current()

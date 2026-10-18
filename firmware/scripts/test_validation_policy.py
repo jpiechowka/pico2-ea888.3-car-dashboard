@@ -74,7 +74,7 @@ class MemoryQualification(unittest.TestCase):
         self.enterContext(redirect_stdout(self.stdout))
 
     def fixture(self):
-        from config_platform import PlatformPolicy, qualified_stack_result
+        from config_platform import PlatformPolicy
 
         payload = b"current payload"
         eav = b"EAV1" + struct.pack("<HH", 4, len(payload)) + bytes(4) + payload
@@ -112,7 +112,7 @@ class MemoryQualification(unittest.TestCase):
         # A deliberately synthetic full-image consumer fixture. Only the
         # declared source producer is mocked; readers really check policy,
         # geometry, exact instruction sites and current ELF/EAV identities.
-        from config_platform import PlatformPolicy, qualified_stack_result
+        from config_platform import PlatformPolicy
         from config_owned_access import OwnedAccess
         from config_regions import Storage, borrow
         from config_headers import ROOT

@@ -1,6 +1,6 @@
 """Non-removable predicates for build and source policy gates."""
 
 
-def require(condition, message="validation failed"):
+def require(condition: object, message: str = "validation failed") -> None:
     if not condition:
         raise AssertionError(message)

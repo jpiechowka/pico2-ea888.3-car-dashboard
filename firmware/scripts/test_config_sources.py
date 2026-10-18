@@ -986,7 +986,6 @@ class SourceCopyDescriptions(unittest.TestCase):
 
     def test_complete_context_types_fields_and_unsupported_fallback_do_not_merge(self):
         from config_source_sharing import _CopyDescriptions
-        import copy
 
         objects, rows = self.inputs()
         pool = _CopyDescriptions(objects, rows)
@@ -1220,7 +1219,7 @@ class SourceUseGraph(unittest.TestCase):
     def test_equal_copy_visible_only_outside_member_requires_whole_graph(self):
         from types import SimpleNamespace
         from config_decoded_sources import _phase_graph
-        from config_source_uses import _SourceUse, _member_graph, _checked_bridge_graph
+        from config_source_uses import _SourceUse, _checked_bridge_graph
 
         package = {"cursor": [1, 2]}
         uses = tuple(
@@ -1547,7 +1546,9 @@ class SourcePhaseSnapshot(unittest.TestCase):
         self.assertEqual(Changing.__module__, "changed_after_capture")
 
     def test_construction_workspaces_release_without_cyclic_collection_on_success_and_error(self):
-        import gc, sys, weakref
+        import gc
+        import sys
+        import weakref
         from config_decoded_sources import _phase_graph
 
         visitors = []
@@ -2471,9 +2472,10 @@ class SourceAccessFamilies(unittest.TestCase):
 
         def moved(visitor_start):
             delta = visitor_start - c.visitor.start
-            shift = lambda v: (
-                replace(v, start=v.start + delta) if v.space.startswith("stack:") else v
-            )
+
+            def shift(v):
+                return replace(v, start=v.start + delta) if v.space.startswith("stack:") else v
+
             return replace(
                 original,
                 context=replace(
@@ -2499,7 +2501,8 @@ class ActualDecodedSources(unittest.TestCase):
         objects, rows, source, item = SourceLiteralBodies.fixture(delta)
         if extent is None:
             return objects, rows, source, item
-        import struct, zlib
+        import struct
+        import zlib
         from llvm_stack import Instruction
         from test_config_stack import StartupConfigurationCopy, SameBLoaderBoundary
 
@@ -3007,7 +3010,8 @@ class SourceStructuralReuse(unittest.TestCase):
 
     def test_warm_structure_keeps_fresh_dynamic_source_proof_guards_and_returns(self):
         from unittest.mock import patch
-        import config_source_children as children, config_source_effects as effects
+        import config_source_children as children
+        import config_source_effects as effects
         from config_source_effects import channel_source_interface
         from config_source_children import source_coverage
         from config_structural import _detached_inputs
@@ -3111,7 +3115,8 @@ class SourceReturnBodySelection(unittest.TestCase):
         )
 
     def test_current_frozen_walk_avoids_repeated_full_map_scans_without_caching_returns(self):
-        import inspect, sys
+        import inspect
+        import sys
         from config_finite_returns import _closed_child_returns
         from config_widget_contracts import ROLES
 
@@ -3404,7 +3409,8 @@ class SourcePolicyV7(unittest.TestCase):
         )
 
     def test_current_policy_rejects_missing_duplicate_old_scope_and_cross_activation_sources(self):
-        import json, copy
+        import json
+        import copy
         import config_platform as subject
         from test_config_stack import ValidatorPlatformFamilies, ConditionalStackPolicy
 
@@ -3470,7 +3476,8 @@ class SourcePolicyV7(unittest.TestCase):
                 subject.read_policy(changed, policy)
 
     def test_current_image_rechecks_each_Source_site_after_coherent_artifact_identity_change(self):
-        import hashlib, copy
+        import hashlib
+        import copy
         from config_platform import current_image_policy
         from test_config_stack import ValidatorPlatformFamilies
 
@@ -3496,7 +3503,8 @@ class SourcePolicyV7(unittest.TestCase):
                 elf.data = original
 
     def test_supplied_27_family_image_obeys_exact_enclosing_wire_cap(self):
-        import json, tempfile
+        import json
+        import tempfile
         from pathlib import Path
         from unittest.mock import patch
         import check_memory_layout as image
@@ -3509,7 +3517,10 @@ class SourcePolicyV7(unittest.TestCase):
         small = image._qualified_image(
             stack, elf, static, headroom, eav, elf.fixture_source_context
         )
-        size = lambda v: len((json.dumps(v, sort_keys=True) + "\n").encode())
+
+        def size(v):
+            return len((json.dumps(v, sort_keys=True) + "\n").encode())
+
         elf, eav, stack = supplied.image_fixture("sizez", 65536 - size(small) + 1)
         static, headroom = image.geometry(elf)
         record = image._qualified_image(
