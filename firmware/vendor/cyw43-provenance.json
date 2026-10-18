@@ -1,0 +1,39 @@
+{
+  "crate": "cyw43",
+  "version": "0.7.0",
+  "source": "https://static.crates.io/crates/cyw43/cyw43-0.7.0.crate",
+  "archive_sha256": "033e856bf6f38c96fee3e3f398cceff0ca2c2fae5db255bcd23495216c7047da",
+  "original": {
+    ".cargo_vcs_info.json": "96595a865bb5c67cbf71506cafb8a9e3410761d5914361ff6e741a5df77bcb18",
+    "Cargo.lock": "e9b78514f12fdb5b9aed4ecaf0407bcf5788fa9704a89e691abbc6fb517ab814",
+    "Cargo.toml": "096738a53754d10d1d7860aeeb12c9808214ff8ceffab820b22d1deb2e460cbd",
+    "Cargo.toml.orig": "e4412a02bdb7b5b36d6a838d9a93d7be646ea6ec2fe96c9ba06a66f93cbfcad7",
+    "CHANGELOG.md": "56c4d80cffcccd3add2b5812c09c78edd9e98971e1ca77dbc6ed9f2f6ec0b930",
+    "README.md": "611e2d0ba1ac15a883b9cb1533459e15d110ccd304e8eb73e0feeb883d72bf6d",
+    "src/bluetooth.rs": "f183d1b1353ed621469ce7ed7133e8cf76bde15084af975fbb7690d56d6e20a5",
+    "src/consts.rs": "3a8a86ca719084daf7757b4b34339b88359095f02751d3795b68aad0552d9132",
+    "src/control.rs": "6e2528ba55b2d613f4a5dcd5fe211f2a2495d6363d47d3da5046d7aa3be32d63",
+    "src/countries.rs": "84acdd1be9a9d81620bdc6ff8e90b20a05f0f106a2b9ab63712340641cb5e186",
+    "src/events.rs": "a4e87894b7fa09f53d764079714520563856ab3c495596514d7784fa8ea3870f",
+    "src/fmt.rs": "29efbba075d0bcf8acd4c3f3228bbe5ab3be735c48d3894c86a957d15bab0f12",
+    "src/ioctl.rs": "7321f305bf50de0a5c47b3467e610fd10d75b8b7f96fd17cb6a387bad5dd8359",
+    "src/lib.rs": "bd935a9b304bf9e779709c3b981ef1593c5f4c03ccf6a26812cdc6afec021078",
+    "src/runner.rs": "ced90f5cd7e6e78b87b88dabde630379a697f77d04fadec7cef147b20cedd58d",
+    "src/sdio.rs": "4ffbe81315130568139fc98d2d0e968845f1735e131bdadcea1430eba7263116",
+    "src/spi.rs": "bbc512231d1b2c31e377724fb29f4b0bc109353ba79feeb6ce1b2e49d56013a5",
+    "src/structs.rs": "603cdf7b9d51fe7a5383ac7879f861802d29ff33caf69397c1bb7465af3d3c14",
+    "src/util.rs": "51d10a1f43045bd88cc473a2aa1a29eeff26900130bd6de85d7cd08e0452fe53"
+  },
+  "modified": {
+    "Cargo.lock": "1b55b62d3c015a674bf22f731bc235c6d0426ce67fe72b40890c59b11a12e9c4",
+    "Cargo.toml": "366d176d39b32689f57260a452b23c20968439b8096ca9b6ab09059ae2c40b37",
+    "Cargo.toml.orig": "895d9ab82dcfa5ad9b243faa58a3c3634bcffc6c10a14c50af47ee6bb33e78be",
+    "LOCAL_PATCHES.md": "9f8783c06fa1ad4d2a59915fc78568bdd690404fcaac6b1619230e1016b01969",
+    "rustfmt.toml": "b204ff86e8e4d95ce01281f2bba275d2013cbc7fe172bbc35138e1fa10f80ed4",
+    "src/bluetooth.rs": "ab085a0f43fac304b450f3ce63444a5cab01487ea7633f8d997c3d458c63c597",
+    "src/lib.rs": "b6bdd8337d73fafbd51ea8adec324550c907baebe8764f6d22325f3ec538ee0f",
+    "src/regression_tests.rs": "42b1dc684c8d3e06a89ca84e481cf1b1594ce1823e1824e892387b8ba61564bf",
+    "src/runner.rs": "cc352423e33e3db476b497529c73dd4d6fb7f7b2a54e507ab4856e9a0ed1dbc8",
+    "src/structs.rs": "5d6ea3530d136b3f915e8f8dcfc980a374d98a34eaf55227ddd5e432d6a69567"
+  }
+}
