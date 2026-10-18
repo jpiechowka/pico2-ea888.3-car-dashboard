@@ -9,8 +9,8 @@ use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use dashboard_helper_protocol::*;
 use serde_json::{Value, json};
 
+use crate::jobs::JobStore;
 use crate::jobs::logs::{LogInput, StreamFramer};
-use crate::jobs::{JobStore, OutputClosure};
 mod http;
 mod operations;
 use http::*;

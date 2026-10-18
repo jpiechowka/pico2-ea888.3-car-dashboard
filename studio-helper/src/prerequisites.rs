@@ -13,11 +13,12 @@ fn find(name: &str) -> Option<PathBuf> {
         .and_then(|p| p.canonicalize().ok())
 }
 fn probe(
+    process: &mut process::ProcessContext,
     path: &Path,
     args: &[&str],
     repo: &Path,
 ) -> Result<String, String> {
-    let output = process::run(path, args, repo)?;
+    let output = process.run(path, args, repo)?;
     if output.code != Some(0) {
         return Err(format!("probe exited {:?}: {}", output.code, output.stderr.trim()));
     }
@@ -35,7 +36,9 @@ fn row(
         json!({"id":id,"stage":"prerequisites","status":status,"evidence":evidence,"setup":setup,"required":required}),
     );
 }
+#[allow(clippy::too_many_arguments)]
 fn version(
+    process: &mut process::ProcessContext,
     rows: &mut Vec<Value>,
     id: &str,
     path: Option<PathBuf>,
@@ -56,7 +59,7 @@ fn version(
             )
         }
         Some(p) => {
-            match probe(&p, args, repo) {
+            match probe(process, &p, args, repo) {
                 Ok(v) if v.lines().any(|line| line.trim() == expected) => {
                     row(rows, id, "passed", format!("{}: {v}", p.display()), "", true)
                 }
@@ -89,7 +92,11 @@ fn channel(repo: &Path) -> Result<String, String> {
     }
     Ok(value.into())
 }
-pub fn check(repo: &Path) -> Value {
+pub fn check(repo: &Path) -> Value { check_with_process(&mut process::ProcessContext::default(), repo) }
+pub(crate) fn check_with_process(
+    process: &mut process::ProcessContext,
+    repo: &Path,
+) -> Value {
     let mut rows = Vec::new();
     let repo = match repo.canonicalize() {
         Ok(p) if p.join("studio-helper/Cargo.toml").is_file() && p.join("configurator/Trunk.toml").is_file() => p,
@@ -121,7 +128,7 @@ pub fn check(repo: &Path) -> Value {
         if let Some(rustup) = rustup {
             let mut sysroot = None;
             for tool in ["rustc", "cargo"] {
-                match probe(&rustup, &["which", "--toolchain", &selected, tool], &repo).and_then(|s| {
+                match probe(process, &rustup, &["which", "--toolchain", &selected, tool], &repo).and_then(|s| {
                     let p = PathBuf::from(s);
                     if p.is_absolute() && p.is_file() {
                         Ok(p)
@@ -130,7 +137,7 @@ pub fn check(repo: &Path) -> Value {
                     }
                 }) {
                     Ok(path) => {
-                        match probe(&path, &["--version", "--verbose"], &repo) {
+                        match probe(process, &path, &["--version", "--verbose"], &repo) {
                             Ok(v) if tool == "cargo" || v.lines().any(|s| s == "host: x86_64-pc-windows-msvc") => {
                                 row(&mut rows, tool, "passed", format!("{}: {v}", path.display()), "", true)
                             }
@@ -138,7 +145,9 @@ pub fn check(repo: &Path) -> Value {
                             Err(e) => row(&mut rows, tool, "failed", e, &rust_setup, true),
                         }
                         if tool == "rustc" {
-                            sysroot = probe(&path, &["--print", "sysroot"], &repo).ok().map(PathBuf::from);
+                            sysroot = probe(process, &path, &["--print", "sysroot"], &repo)
+                                .ok()
+                                .map(PathBuf::from);
                         }
                     }
                     Err(e) => row(&mut rows, tool, "missing", e, &rust_setup, true),
@@ -161,7 +170,7 @@ pub fn check(repo: &Path) -> Value {
                     "llvm-tools-x86_64-pc-windows-msvc",
                 ),
             ] {
-                match probe(&rustup, &args, &repo) {
+                match probe(process, &rustup, &args, &repo) {
                     Ok(v) if v.lines().any(|s| s == expected) => {
                         row(&mut rows, id, "passed", expected.into(), "", true)
                     }
@@ -180,7 +189,7 @@ pub fn check(repo: &Path) -> Value {
             }
             if let Some(root) = sysroot.filter(|p| p.is_absolute()) {
                 let llvm = root.join("lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-objdump.exe");
-                match probe(&llvm, &["--version"], &repo) {
+                match probe(process, &llvm, &["--version"], &repo) {
                     Ok(v) if v.contains("arm") && v.contains("thumb") => {
                         row(
                             &mut rows,
@@ -218,6 +227,7 @@ pub fn check(repo: &Path) -> Value {
         match python {
             Some(p) => {
                 match probe(
+                    process,
                     &p,
                     &[
                         "-I",
@@ -259,6 +269,7 @@ pub fn check(repo: &Path) -> Value {
         ] {
             let p = tools.join(file);
             version(
+                process,
                 &mut rows,
                 id,
                 p.is_file().then_some(p),
@@ -270,6 +281,7 @@ pub fn check(repo: &Path) -> Value {
         }
         let optimizer = tools.join("wasm-opt.exe");
         version(
+            process,
             &mut rows,
             "wasm_opt",
             optimizer.is_file().then_some(optimizer),
@@ -280,6 +292,7 @@ pub fn check(repo: &Path) -> Value {
         );
         let picotool = repo.join("target/configurator-tools/bin/picotool.exe");
         version(
+            process,
             &mut rows,
             "picotool",
             picotool.is_file().then_some(picotool.clone()),
@@ -289,7 +302,7 @@ pub fn check(repo: &Path) -> Value {
             "Run configurator/Studio.ps1 -Setup to install pinned official picotool 2.3.1",
         );
         if picotool.is_file() {
-            match probe(&picotool, &["help", "load"], &repo) {
+            match probe(process, &picotool, &["help", "load"], &repo) {
                 Ok(v) if v.contains("--ignore-partitions") => {
                     row(
                         &mut rows,
@@ -328,6 +341,7 @@ pub fn check(repo: &Path) -> Value {
         match vswhere.filter(|p| p.is_file()) {
             Some(p) => {
                 match probe(
+                    process,
                     &p,
                     &[
                         "-latest",
@@ -485,18 +499,29 @@ mod tests {
     #[test]
     fn missing_version_is_reported() {
         let mut rows = Vec::new();
-        version(&mut rows, "missing", None, &[], "wanted", Path::new("C:/"), "install");
+        version(
+            &mut process::ProcessContext::default(),
+            &mut rows,
+            "missing",
+            None,
+            &[],
+            "wanted",
+            Path::new("C:/"),
+            "install",
+        );
         assert_eq!(rows[0]["status"], "missing");
     }
     #[cfg(windows)]
     #[test]
     fn exact_version_passes_and_wrong_version_fails() {
+        let process = &mut process::ProcessContext::default();
         let python = find("python.exe").expect("Windows runner tests require Python");
         let repo = std::env::current_dir().unwrap();
         for (observed, expected_status) in [("2.3.1", "passed"), ("2.2.0-a4", "incompatible")] {
             let script = format!("print('{observed}')");
             let mut rows = Vec::new();
             version(
+                process,
                 &mut rows,
                 "fixture",
                 Some(python.clone()),

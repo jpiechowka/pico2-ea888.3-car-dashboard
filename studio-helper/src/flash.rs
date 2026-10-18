@@ -38,13 +38,14 @@ pub(crate) fn admit(
     Ok(())
 }
 fn fresh(
+    process: &mut crate::process::ProcessContext,
     repo: &Path,
     session: &SessionId,
     device: &DeviceSummary,
     inspection: &DeviceInspection,
 ) -> Result<(), String> {
-    let observed = crate::device_inspection::inspect(repo, session.clone(), device.clone());
-    cancellation()?;
+    let observed = crate::device_inspection::inspect(process, repo, session.clone(), device.clone());
+    cancellation(process)?;
     if !observed.complete || observed.descriptor_sha256 != inspection.descriptor_sha256 {
         return Err("Selected device unavailable or changed during fresh inspection".into());
     }
@@ -61,8 +62,9 @@ fn fresh(
     }
     Ok(())
 }
-fn cancellation() -> Result<(), String> {
+fn cancellation(process: &mut crate::process::ProcessContext) -> Result<(), String> {
     if crate::process::cancelled() {
+        process.last_failure = Some(crate::process::FailureKind::Cancelled);
         Err("cancelled: no further command dispatched".into())
     } else {
         Ok(())
@@ -82,6 +84,7 @@ pub(crate) struct Operation<'a> {
     pub inspection: &'a DeviceInspection,
 }
 pub(crate) fn run(
+    process: &mut crate::process::ProcessContext,
     operation: Operation<'_>,
     transition: &mut dyn FnMut(FirmwareStage, StageState) -> Result<(), String>,
     log: &mut dyn FnMut(FirmwareStage, bool, &str),
@@ -105,15 +108,15 @@ pub(crate) fn run(
     let mut outcome = WriteOutcome::NotStarted;
     let mut exit = None;
     let result = (|| {
-        cancellation()?;
+        cancellation(process)?;
         let lease = artifact.verify_lease()?;
         transition(FirmwareStage::Prerequisites, StageState::Succeeded)?;
         transition(FirmwareStage::Validation, StageState::Running)?;
         artifact.verify_lease()?;
         transition(FirmwareStage::Validation, StageState::Succeeded)?;
         transition(FirmwareStage::DeviceSelection, StageState::Running)?;
-        fresh(repo, session, device, inspection)?;
-        cancellation()?;
+        fresh(process, repo, session, device, inspection)?;
+        cancellation(process)?;
         transition(FirmwareStage::DeviceSelection, StageState::Succeeded)?;
         let serial = device.serial.as_ref().ok_or("Missing stored serial")?.as_str();
         if serial.starts_with('-') || !serial.is_ascii() || serial.chars().any(char::is_control) {
@@ -134,10 +137,10 @@ pub(crate) fn run(
             (Command::Verify, FirmwareStage::Verification),
             (Command::Reboot, FirmwareStage::Reboot),
         ] {
-            cancellation()?;
+            cancellation(process)?;
             if command != Command::Load {
-                fresh(repo, session, device, inspection)?;
-                cancellation()?;
+                fresh(process, repo, session, device, inspection)?;
+                cancellation(process)?;
             }
             artifact.verify_lease()?;
             if command == Command::Reboot {
@@ -153,7 +156,7 @@ pub(crate) fn run(
                 Command::Reboot => vec!["reboot", "-a", "-c", "arm"],
             };
             args.extend(["--vid", "0x2e8a", "--pid", "0x000f", "--ser", serial]);
-            let output = crate::process::run_flash(
+            let output = process.flash(
                 &lease.converter.path,
                 &args,
                 lease.frozen.source_root(),

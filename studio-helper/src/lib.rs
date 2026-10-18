@@ -2,11 +2,11 @@
 //! Studio jobs, bounded native tool checks, immutable builds and explicit device operations.
 pub mod build_input;
 pub mod devices;
+mod diagnostics;
 mod host;
 pub mod jobs;
 pub mod prerequisites;
 mod process;
-mod diagnostics;
 pub mod server;
 
 pub mod relay;

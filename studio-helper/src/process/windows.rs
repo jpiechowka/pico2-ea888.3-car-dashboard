@@ -12,7 +12,7 @@ use windows_sys::Win32::System::JobObjects::*;
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, PROC_THREAD_ATTRIBUTE_JOB_LIST};
 
-use super::Output;
+use super::{Failure, FailureKind, Output};
 use crate::jobs::logs::StreamFramer;
 struct Job(HANDLE);
 impl Drop for Job {
@@ -62,17 +62,27 @@ impl Job {
         Ok(info.ActiveProcesses)
     }
 
-    fn terminate_and_join(&self) -> Result<(), String> {
+    fn terminate_and_join(&self) -> Result<(), Failure> {
         if unsafe { TerminateJobObject(self.0, 1) } == 0 {
-            return Err(format!("cleanup fatal: {}", io::Error::last_os_error()));
+            return Err(Failure::new(
+                FailureKind::Cleanup,
+                format!("cleanup fatal: {}", io::Error::last_os_error()),
+            ));
         }
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if self.active().map_err(|e| format!("cleanup fatal: {e}"))? == 0 {
+            if self
+                .active()
+                .map_err(|e| Failure::new(FailureKind::Cleanup, format!("cleanup fatal: {e}")))?
+                == 0
+            {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                return Err("cleanup fatal: job processes did not terminate".into());
+                return Err(Failure::new(
+                    FailureKind::Cleanup,
+                    "cleanup fatal: job processes did not terminate",
+                ));
             }
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -84,6 +94,7 @@ struct Pipe {
     raw: Vec<u8>,
     bytes: usize,
     closed: bool,
+    discarded: u64,
 }
 impl Pipe {
     fn new() -> Self {
@@ -93,6 +104,7 @@ impl Pipe {
             raw: Vec::new(),
             bytes: 0,
             closed: false,
+            discarded: 0,
         }
     }
 
@@ -100,7 +112,7 @@ impl Pipe {
         &mut self,
         pipe: &mut (impl Read + AsRawHandle),
         limit: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), Failure> {
         if self.closed {
             return Ok(());
         }
@@ -118,35 +130,61 @@ impl Pipe {
         {
             let e = io::Error::last_os_error();
             if e.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
-                self.closed = true;
-                self.frame
-                    .finish(|s, _| {
-                        self.text.push_str(&s);
-                        self.text.push('\n');
-                    })
-                    .unwrap();
+                self.finish();
                 return Ok(());
             }
-            return Err(e.to_string());
+            return Err(Failure::new(FailureKind::Io, e.to_string()));
         }
         if available > 0 {
             let mut buffer = [0; 4096];
             let n = pipe
                 .read(&mut buffer[..(available as usize).min(4096)])
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| Failure::new(FailureKind::Io, e.to_string()))?;
+            let accepted = n.min(limit.saturating_sub(self.bytes));
             self.bytes += n;
-            if self.bytes > limit {
-                return Err(format!("output_limit: process exceeded {limit} bytes per stream"));
-            }
-            self.raw.extend_from_slice(&buffer[..n]);
+            self.discarded += (n - accepted) as u64;
+            self.raw.extend_from_slice(&buffer[..accepted]);
             self.frame
-                .push(&buffer[..n], |s, _| {
+                .push(&buffer[..accepted], |s, _| {
                     self.text.push_str(&s);
                     self.text.push('\n');
                 })
                 .unwrap();
+            if self.bytes > limit {
+                return Err(Failure::new(
+                    FailureKind::OutputLimit,
+                    format!("output_limit: process exceeded {limit} bytes per stream"),
+                ));
+            }
         }
         Ok(())
+    }
+
+    fn finish(&mut self) {
+        if !self.closed {
+            self.frame
+                .finish(|s, _| {
+                    self.text.push_str(&s);
+                    self.text.push('\n');
+                })
+                .unwrap();
+            self.closed = true;
+        }
+    }
+
+    fn drain_to(
+        &mut self,
+        pipe: &mut (impl Read + AsRawHandle),
+        limit: usize,
+        stderr: bool,
+        sink: &mut dyn FnMut(bool, &str),
+    ) -> Result<(), Failure> {
+        let start = self.text.len();
+        let result = self.drain(pipe, limit);
+        for line in self.text[start..].lines() {
+            sink(stderr, line);
+        }
+        result
     }
 }
 pub(super) fn run(
@@ -155,7 +193,7 @@ pub(super) fn run(
     cwd: &Path,
     timeout: Duration,
     limit: usize,
-) -> Result<Output, String> {
+) -> Result<Output, Failure> {
     run_stream(path, args, cwd, timeout, limit, &mut |_, _| {})
 }
 pub(super) fn run_stream(
@@ -165,15 +203,16 @@ pub(super) fn run_stream(
     timeout: Duration,
     limit: usize,
     sink: &mut dyn FnMut(bool, &str),
-) -> Result<Output, String> {
-    let job = Job::new().map_err(|e| e.to_string())?;
+) -> Result<Output, Failure> {
+    let io_failure = |e: io::Error| Failure::new(FailureKind::Io, e.to_string());
+    let job = Job::new().map_err(io_failure)?;
     // The non-inheritable Job handle and array outlive attribute list and spawn.
     // JOB_LIST assigns ownership during CreateProcess, before any child code executes.
     let jobs = [job.0];
     let attributes = ProcThreadAttributeList::build()
         .attribute(PROC_THREAD_ATTRIBUTE_JOB_LIST as usize, &jobs)
         .finish()
-        .map_err(|e| e.to_string())?;
+        .map_err(io_failure)?;
     let mut command = Command::new(path);
     command
         .args(args)
@@ -187,7 +226,7 @@ pub(super) fn run_stream(
         .env("NO_COLOR", "true")
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("CARGO_NET_OFFLINE", "true");
-    let mut child = command.spawn_with_attributes(&attributes).map_err(|e| e.to_string())?;
+    let mut child = command.spawn_with_attributes(&attributes).map_err(io_failure)?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let mut out = Pipe::new();
@@ -195,22 +234,14 @@ pub(super) fn run_stream(
     let start = Instant::now();
     let result = (|| {
         loop {
-            super::check_scratch()?;
-            let out_start = out.text.len();
-            let err_start = err.text.len();
-            out.drain(&mut stdout, limit)?;
-            err.drain(&mut stderr, limit)?;
-            for line in out.text[out_start..].lines() {
-                sink(false, line);
-            }
-            for line in err.text[err_start..].lines() {
-                sink(true, line);
-            }
-            let status = child.try_wait().map_err(|e| e.to_string())?;
+            super::check_scratch().map_err(|e| Failure::new(FailureKind::Scratch, e))?;
+            out.drain_to(&mut stdout, limit, false, sink)?;
+            err.drain_to(&mut stderr, limit, true, sink)?;
+            let status = child.try_wait().map_err(io_failure)?;
             if let Some(status) = status
                 && out.closed
                 && err.closed
-                && job.active().map_err(|e| e.to_string())? == 0
+                && job.active().map_err(io_failure)? == 0
             {
                 return Ok(Output {
                     code: status.code(),
@@ -221,10 +252,13 @@ pub(super) fn run_stream(
                 });
             }
             if super::cancelled() && !super::transfer_active() {
-                return Err("cancelled: probe check cancelled".into());
+                return Err(Failure::new(FailureKind::Cancelled, "cancelled: probe check cancelled"));
             }
             if start.elapsed() >= timeout {
-                return Err("deadline: probe exceeded its deadline".into());
+                return Err(Failure::new(
+                    FailureKind::Deadline,
+                    "deadline: probe exceeded its deadline",
+                ));
             }
             if out.bytes == 0 && err.bytes == 0 {
                 std::thread::sleep(Duration::from_millis(5));
@@ -234,9 +268,46 @@ pub(super) fn run_stream(
         }
     })();
     // Always close the entire tree and reap the direct child, including pipe errors.
-    job.terminate_and_join()?;
-    child.wait().map_err(|e| format!("cleanup fatal: {e}"))?;
-    result
+    let cleanup = job.terminate_and_join().and_then(|()| {
+        child
+            .wait()
+            .map(|_| ())
+            .map_err(|e| Failure::new(FailureKind::Cleanup, format!("cleanup fatal: {e}")))
+    });
+    let result = match cleanup {
+        Ok(()) => result,
+        Err(failure) => Err(failure),
+    };
+    result.map_err(|mut failure| {
+        // The child tree has stopped when cleanup succeeded. Bound recovery work
+        // even if a pipe is broken or the retained-output quota is exhausted.
+        for _ in 0..64 {
+            let before = out.bytes + err.bytes;
+            let a = out.drain_to(&mut stdout, limit, false, sink);
+            let b = err.drain_to(&mut stderr, limit, true, sink);
+            if a.is_err() || b.is_err() || before == out.bytes + err.bytes {
+                break;
+            }
+        }
+        for (stderr, pipe) in [(false, &mut out), (true, &mut err)] {
+            let start = pipe.text.len();
+            pipe.finish();
+            for line in pipe.text[start..].lines() {
+                sink(stderr, line);
+            }
+        }
+        failure.output_incomplete = true;
+        failure.discarded_bytes = out.discarded + err.discarded;
+        // Non-streaming probes still retain bounded diagnostic tails in their
+        // failure report. These sanitized strings are never machine admission.
+        for (name, text) in [("stdout", &out.text), ("stderr", &err.text)] {
+            if !text.is_empty() {
+                let start = text.ceil_char_boundary(text.len().saturating_sub(2048));
+                failure.message.push_str(&format!("; {name} tail: {}", &text[start..]));
+            }
+        }
+        failure
+    })
 }
 #[cfg(test)]
 mod tests {
@@ -320,6 +391,67 @@ mod tests {
         );
     }
     #[test]
+    fn deadline_retains_sanitized_partial_line() {
+        let mut lines = Vec::new();
+        let result = run_stream(
+            &cmd(),
+            &[
+                "-I",
+                "-u",
+                "-c",
+                "import sys,time; sys.stdout.buffer.write(b'important diagnostic\\x1b[31m\\xe2'); sys.stdout.flush(); \
+                 time.sleep(30)",
+            ],
+            &std::env::current_dir().unwrap(),
+            Duration::from_secs(1),
+            65536,
+            &mut |stderr, text| lines.push((stderr, text.to_owned())),
+        );
+        let failure = result.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Deadline);
+        assert!(failure.output_incomplete);
+        assert_eq!(failure.discarded_bytes, 0);
+        assert!(failure.message.contains("important diagnostic�"));
+        assert_eq!(lines, [(false, "important diagnostic�".to_owned())]);
+        let mut operation = super::super::ProcessContext::default();
+        assert!(operation.record(Err(failure)).is_err());
+        assert!(operation.closure(0, 0).output_incomplete);
+        assert!(!super::super::ProcessContext::default().closure(0, 0).output_incomplete);
+    }
+    #[test]
+    fn cancellation_finishes_both_streams_and_accounts_loss() {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) { super::super::TEST_CANCEL.set(false); }
+        }
+        let _reset = Reset;
+        let mut lines = Vec::new();
+        let failure = run_stream(
+            &cmd(),
+            &[
+                "-I",
+                "-u",
+                "-c",
+                "import sys,time; sys.stdout.write('partial'); sys.stdout.flush(); sys.stderr.write('ready\\n'); \
+                 sys.stderr.flush(); time.sleep(30)",
+            ],
+            &std::env::current_dir().unwrap(),
+            Duration::from_secs(5),
+            65536,
+            &mut |stderr, text| {
+                lines.push((stderr, text.to_owned()));
+                if stderr && text == "ready" {
+                    super::super::TEST_CANCEL.set(true);
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Cancelled);
+        assert!(failure.output_incomplete);
+        assert_eq!(failure.discarded_bytes, 0);
+        assert_eq!(lines, [(true, "ready".into()), (false, "partial".into())]);
+    }
+    #[test]
     fn deadline_closes_descendant_tree() {
         let e = run(
             &cmd(),
@@ -334,7 +466,7 @@ mod tests {
             65536,
         )
         .unwrap_err();
-        assert!(e.starts_with("deadline"), "{e}");
+        assert_eq!(e.kind, FailureKind::Deadline);
     }
     #[test]
     fn descendant_is_observed_and_joined() {
@@ -395,7 +527,9 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(error.starts_with("output_limit"), "{error}");
+        assert_eq!(error.kind, FailureKind::OutputLimit);
+        assert!(error.output_incomplete);
+        assert!(error.discarded_bytes > 0);
         assert!(
             acknowledged && observed_live,
             "descendant must be observed alive before inducing pipe failure"
@@ -415,6 +549,7 @@ mod tests {
             1024,
         )
         .unwrap_err();
-        assert!(e.starts_with("output_limit"), "{e}");
+        assert_eq!(e.kind, FailureKind::OutputLimit);
+        assert!(e.output_incomplete);
     }
 }

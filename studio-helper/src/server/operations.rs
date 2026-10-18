@@ -113,17 +113,24 @@ pub(super) async fn start_check(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let mut process = crate::process::ProcessContext::default();
         let report = if let Some(selected) = selected {
             serde_json::to_value(crate::device_inspection::inspect(
+                &mut process,
                 &worker_state.repo,
                 worker_state.session.clone(),
                 selected,
             ))
             .unwrap()
         } else if device_scan {
-            serde_json::to_value(crate::devices::scan(&worker_state.repo, worker_state.session.clone())).unwrap()
+            serde_json::to_value(crate::devices::scan(
+                &mut process,
+                &worker_state.repo,
+                worker_state.session.clone(),
+            ))
+            .unwrap()
         } else {
-            crate::prerequisites::check(&worker_state.repo)
+            crate::prerequisites::check_with_process(&mut process, &worker_state.repo)
         };
         let mut inner = worker_state.inner.lock().unwrap();
         if inspection {
@@ -201,19 +208,7 @@ pub(super) async fn start_check(
             &format!("{stage:?}: {state:?}"),
         );
         let _ = inner.jobs.transition(&id, stage, state, reason);
-        let _ = inner.jobs.finish(
-            &id,
-            cause,
-            OutputClosure {
-                workers_joined: true,
-                tree_empty: true,
-                output_incomplete: false,
-                discarded_bytes: 0,
-                discarded_chunks: 0,
-            },
-            None,
-            None,
-        );
+        let _ = inner.jobs.finish(&id, cause, process.closure(0, 0), None, None);
     }));
     Ok(result)
 }
@@ -236,6 +231,7 @@ pub(super) async fn start_build(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let mut process = crate::process::ProcessContext::default();
         let mut stage = prerequisite;
         let transition = |stage, state, reason| {
             crate::terminal::event(false, id.as_str(), &format!("{stage:?}: {state:?}"));
@@ -282,7 +278,7 @@ pub(super) async fn start_build(
             if !crate::host::host().0 {
                 return Err("Unsupported native host".into());
             }
-            let converter = crate::artifacts::converter(&worker_state.repo)?;
+            let converter = crate::artifacts::converter(&mut process, &worker_state.repo)?;
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Snapshot);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
@@ -299,7 +295,7 @@ pub(super) async fn start_build(
             transition(stage, StageState::Succeeded, None).map_err(|e| e.to_string())?;
             stage = StageId::Firmware(FirmwareStage::Compilation);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
-            let output = crate::build_input::capture(&frozen, &mut |stderr, text| {
+            let output = crate::build_input::capture(&mut process, &frozen, &mut |stderr, text| {
                 log_output(stage, stderr, text);
             });
             let output = output?;
@@ -310,6 +306,7 @@ pub(super) async fn start_build(
             stage = StageId::Firmware(FirmwareStage::Validation);
             transition(stage, StageState::Running, None).map_err(|e| e.to_string())?;
             crate::artifacts::admit(
+                &mut process,
                 frozen,
                 &input,
                 worker_state.session.clone(),
@@ -408,19 +405,7 @@ pub(super) async fn start_build(
             }
         };
         let transition_ok = inner.jobs.transition(&id, stage, state, reason).is_ok();
-        let finished = inner.jobs.finish(
-            &id,
-            cause,
-            OutputClosure {
-                workers_joined: true,
-                tree_empty: true,
-                output_incomplete: false,
-                discarded_bytes: 0,
-                discarded_chunks: 0,
-            },
-            artifact_id,
-            None,
-        );
+        let finished = inner.jobs.finish(&id, cause, process.closure(0, 0), artifact_id, None);
         if transition_ok
             && finished.is_ok()
             && let Some(artifact) = admitted
@@ -474,6 +459,7 @@ pub(super) async fn start_flash(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let mut process = crate::process::ProcessContext::default();
         let mut transition = |stage, status| {
             crate::terminal::event(false, id.as_str(), &format!("{stage:?}: {status:?}"));
             worker_state
@@ -487,6 +473,7 @@ pub(super) async fn start_flash(
         let mut dropped_bytes = 0u64;
         let mut dropped_chunks = 0u64;
         let execution = crate::flash::run(
+            &mut process,
             crate::flash::Operation {
                 repo: &worker_state.repo,
                 session: &worker_state.session,
@@ -561,9 +548,9 @@ pub(super) async fn start_flash(
                     );
                 }
                 (
-                    if cancelled && reason.starts_with("cancelled:") {
+                    if cancelled && process.last_failure == Some(crate::process::FailureKind::Cancelled) {
                         TerminalCause::Cancelled
-                    } else if reason.starts_with("deadline:") {
+                    } else if process.last_failure == Some(crate::process::FailureKind::Deadline) {
                         TerminalCause::Deadline
                     } else {
                         TerminalCause::Failed
@@ -572,19 +559,9 @@ pub(super) async fn start_flash(
                 )
             }
         };
-        let _ = inner.jobs.finish(
-            &id,
-            cause,
-            OutputClosure {
-                workers_joined: true,
-                tree_empty: true,
-                output_incomplete: false,
-                discarded_bytes: dropped_bytes,
-                discarded_chunks: dropped_chunks,
-            },
-            None,
-            exit,
-        );
+        let _ = inner
+            .jobs
+            .finish(&id, cause, process.closure(dropped_bytes, dropped_chunks), None, exit);
         // Every completed attempt invalidates selection evidence; qualification is never sticky.
         inner.inspections.remove(&request.device_id);
     }));
@@ -605,6 +582,7 @@ pub(super) async fn start_cleanup(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(tokio::task::spawn_blocking(move || {
+        let process = crate::process::ProcessContext::default();
         let mut failure = None;
         let mut cancelled = false;
         let protected = worker_state
@@ -694,19 +672,7 @@ pub(super) async fn start_cleanup(
             (StageState::Succeeded, TerminalCause::Succeeded, None)
         };
         let _ = inner.jobs.transition(&id, stage, status, reason);
-        let _ = inner.jobs.finish(
-            &id,
-            cause,
-            OutputClosure {
-                workers_joined: true,
-                tree_empty: true,
-                output_incomplete: false,
-                discarded_bytes: 0,
-                discarded_chunks: 0,
-            },
-            None,
-            None,
-        );
+        let _ = inner.jobs.finish(&id, cause, process.closure(0, 0), None, None);
     }));
     Ok(summary)
 }

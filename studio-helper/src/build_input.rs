@@ -337,6 +337,7 @@ impl UploadedProject {
 }
 
 pub(crate) fn capture(
+    process: &mut crate::process::ProcessContext,
     frozen: &FrozenInput,
     sink: &mut dyn FnMut(bool, &str),
 ) -> Result<crate::process::Output, String> {
@@ -375,7 +376,7 @@ pub(crate) fn capture(
             asset.to_str().ok_or("Non-UTF8 input path")?.into(),
         ]);
     }
-    let output = crate::process::run_capture_stream(
+    let output = process.capture(
         &python,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
         &frozen.source,

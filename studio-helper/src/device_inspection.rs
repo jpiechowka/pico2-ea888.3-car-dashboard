@@ -166,11 +166,12 @@ pub(crate) fn parse(
     })
 }
 fn same_descriptor(
+    process: &mut crate::process::ProcessContext,
     repo: &Path,
     session: &SessionId,
     selected: &DeviceSummary,
 ) -> Result<(), String> {
-    let scan = crate::devices::scan(repo, session.clone());
+    let scan = crate::devices::scan(process, repo, session.clone());
     if !scan.complete || scan.devices.iter().any(|d| d.status != DeviceStatus::DescriptorOnly) {
         return Err("Descriptor snapshot incomplete or ambiguous".into());
     }
@@ -185,6 +186,7 @@ fn same_descriptor(
     Ok(())
 }
 pub(crate) fn inspect(
+    process: &mut crate::process::ProcessContext,
     repo: &Path,
     session: SessionId,
     selected: DeviceSummary,
@@ -214,10 +216,10 @@ pub(crate) fn inspect(
             if !serial.is_ascii() || serial.starts_with('-') || serial.chars().any(char::is_control) {
                 return Err("Unsupported serial syntax".into());
             }
-            same_descriptor(repo, &session, &selected)?;
+            same_descriptor(process, repo, &session, &selected)?;
             let tool = repo.join("target/configurator-tools/bin/picotool.exe");
-            let _tool = crate::artifacts::converter(repo)?;
-            let information = crate::process::run(
+            let _tool = crate::artifacts::converter(process, repo)?;
+            let information = process.run(
                 &tool,
                 &[
                     "info", "-d", "--debug", "--vid", "0x2e8a", "--pid", "0x000f", "--ser", serial,
@@ -227,7 +229,7 @@ pub(crate) fn inspect(
             if information.code != Some(0) || !information.raw_stderr.is_empty() {
                 return Err("Descriptor visible but picotool information unavailable".into());
             }
-            let partitions = crate::process::run(
+            let partitions = process.run(
                 &tool,
                 &[
                     "partition",
@@ -245,7 +247,7 @@ pub(crate) fn inspect(
                 return Err("Partition information unavailable".into());
             }
             let facts = parse(&information.raw_stdout, &partitions.raw_stdout)?;
-            same_descriptor(repo, &session, &selected)?;
+            same_descriptor(process, repo, &session, &selected)?;
             Ok(facts)
         },
     );

@@ -57,20 +57,24 @@ fn bytes(
 }
 /// Validation stdout may be a machine report; stderr is always observable.
 fn run_validation_tool(
+    process: &mut crate::process::ProcessContext,
     tool: &Path,
     args: &[&str],
     cwd: &Path,
     machine_stdout: bool,
     sink: &mut dyn FnMut(bool, &str),
 ) -> Result<crate::process::Output, String> {
-    crate::process::run_capture_stream(tool, args, cwd, &mut |stderr, text| {
+    process.capture(tool, args, cwd, &mut |stderr, text| {
         if stderr || !machine_stdout {
             sink(stderr, text);
         }
     })
 }
 
-pub(crate) fn converter(repo: &Path) -> Result<Converter, String> {
+pub(crate) fn converter(
+    process: &mut crate::process::ProcessContext,
+    repo: &Path,
+) -> Result<Converter, String> {
     let path = repo
         .join("target/configurator-tools/bin/picotool.exe")
         .canonicalize()
@@ -78,11 +82,11 @@ pub(crate) fn converter(repo: &Path) -> Result<Converter, String> {
     let parents = crate::file_locks::ancestors(std::slice::from_ref(&path))?;
     let mut file = held(&path)?;
     let hash = digest(&bytes(&mut file, 64 * 1024 * 1024)?);
-    let output = crate::process::run(&path, &["version", "-s"], repo)?;
+    let output = process.run(&path, &["version", "-s"], repo)?;
     if output.code != Some(0) || output.stdout.trim() != "2.3.1" {
         return Err("Exact picotool2.3.1 converter required; run Studio.ps1 -Setup".into());
     }
-    let help = crate::process::run(&path, &["help", "uf2", "convert"], repo)?;
+    let help = process.run(&path, &["help", "uf2", "convert"], repo)?;
     if help.code != Some(0) || !help.stdout.contains("--family") || !help.stdout.contains("--platform") {
         return Err("Pinned converter capabilities unavailable".into());
     }
@@ -94,6 +98,7 @@ pub(crate) fn converter(repo: &Path) -> Result<Converter, String> {
     })
 }
 pub(crate) fn admit(
+    process: &mut crate::process::ProcessContext,
     frozen: Arc<FrozenInput>,
     input: &AcceptedInput,
     session: SessionId,
@@ -131,7 +136,7 @@ pub(crate) fn admit(
         "rp2350",
     ];
     sink(true, "Running pinned UF2 converter");
-    let converted = run_validation_tool(&converter.path, &args, frozen.source_root(), false, sink)?;
+    let converted = run_validation_tool(process, &converter.path, &args, frozen.source_root(), false, sink)?;
     if converted.code != Some(0) {
         return Err("Pinned UF2 conversion failed".into());
     }
@@ -154,7 +159,7 @@ pub(crate) fn admit(
     ];
     // The script uses only its frozen sibling authorities, never current-checkout fallback.
     sink(true, "Running frozen artifact validator");
-    let output = run_validation_tool(&python, &args, frozen.source_root(), true, sink)?;
+    let output = run_validation_tool(process, &python, &args, frozen.source_root(), true, sink)?;
     if output.code != Some(0) {
         return Err("Artifact validation failed; no artifact published".into());
     }
@@ -294,6 +299,7 @@ mod diagnostic_tests {
         let cwd = std::env::current_dir().unwrap();
         let mut observed = Vec::new();
         let output = super::run_validation_tool(
+            &mut crate::process::ProcessContext::default(),
             &cmd,
             &[
                 "-I",

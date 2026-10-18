@@ -145,12 +145,13 @@ pub fn enumerate_child() -> i32 {
     }
 }
 pub(crate) fn scan(
+    process: &mut crate::process::ProcessContext,
     repo: &Path,
     session: SessionId,
 ) -> DeviceScanReport {
     let result = std::env::current_exe()
         .map_err(|e| e.to_string())
-        .and_then(|exe| crate::process::run(&exe, &["--internal-device-descriptors"], repo))
+        .and_then(|exe| process.run(&exe, &["--internal-device-descriptors"], repo))
         .and_then(|o| {
             if o.code != Some(0) {
                 return Err(format!("Descriptor child exited {:?}: {}", o.code, o.stderr));
@@ -162,12 +163,7 @@ pub(crate) fn scan(
             report.session_id = session;
             report
         }
-        Err(e) => {
-            empty(
-                session,
-                &format!("Descriptor scan failed: {e}"),
-            )
-        }
+        Err(e) => empty(session, &format!("Descriptor scan failed: {e}")),
     }
 }
 #[cfg(test)]
