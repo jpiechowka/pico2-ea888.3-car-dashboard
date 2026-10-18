@@ -51,3 +51,32 @@ queued-byte quarantine, cancellation ordering, and terminal connection/stack
 status. Decoded HCI security failures additionally verify source-state revocation
 and terminal cleanup. No test establishes physical radio performance, pairing interoperability
 or actual flash lockout timing. Root firmware gates remain mandatory.
+
+## Discovery input hardening (2026-10-19)
+
+Primary service discovery rejects zero, reversed, overlapping, out-of-range and
+nonprogressing ranges. ReadByType and FindInformation validate ordered handles
+inside the requested range and use widened cursors so handle 0xffff finishes
+without overflow. Descriptor iterator errors are propagated instead of ignored.
+Read/ReadBlob reject payloads above the negotiated ATT MTU; long reads stop when
+the destination fills and reject an offset that would wrap on the next request.
+
+Nine raw-response regression tests exercise these public async paths, including
+valid terminal handles and multiple pages. The fixtures drain outgoing packets
+so the shared test pool remains available to other tests. The library suite
+passed 46 tests without security and 84 with security, serialized on the native
+Windows target. Eight new regressions failed against the prior implementation;
+the valid terminal-service fixture already passed. This does not qualify radio
+hardware or make a canceled ATT request safe to reuse: disconnect before retry.
+
+The local `discovery-no-security` feature is a compile-time exclusion guard.
+Enabling it together with `security` is an error, including Cargo feature
+unification from another workspace package. The standalone discovery utility
+requires this feature. Build it separately from the pairing-enabled dashboard;
+a combined workspace all-features build is intentionally unsupported. Original
+published Cargo.toml.orig remains untouched as upstream metadata; the normalized
+Cargo.toml carries the local feature addition.
+
+Guard verification: the 46-test native central/gatt/scan library suite passed
+with discovery-no-security. Adding security to the same feature set was rejected
+by the intended compile_error diagnostic, not an unrelated compiler failure.

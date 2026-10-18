@@ -60,16 +60,18 @@
     "src/security_manager/pairing/util.rs": "92cb2e1c2a33540357faf8b1531663e87b1076989be553d5e9106f5230f96303"
   },
   "modified": {
-    "LOCAL_PATCHES.md": "d64b64ae80bee95caf48eb97b53a155dc9ee101b317be00a0b5bd941060f1965",
+    "LOCAL_PATCHES.md": "d3fa1cd67044835186f3ec55ec5315789e3db6251a0ecb8e08b929e894aade29",
     "rustfmt.toml": "8d3ecaf636a4420607560a59b51447634c990158192e27f627703c851eab260a",
     "src/central.rs": "368e545f0377fe38d669074e3358a465d57f968b9803027d584f66e733084ed5",
     "src/command.rs": "480a920bc60fa9ad7ef1d493d8c0ffc0b07f66ed7fed45b868ab4fff73d86055",
     "src/connection.rs": "258ca660191b769fcb6c92a1631bd5d3f54ffe0e3684a23be1ed20975706228d",
     "src/connection_manager.rs": "c5634773d70241e0e75d4943dcc2e4d12a5cfc11f42ae173dc5d3ab74d4f2c34",
-    "src/gatt.rs": "583616c9a73ddc00ed257d7cd23d93212932fd01ac00592864e00347b50ae7bd",
+    "src/gatt.rs": "7d846525cfb32d70226dacc007222795245cabdf577dde01f910c105b7533beb",
     "src/host.rs": "67a2c39c021e03ea830fd36c8c4205483ba70b3d8ea2164cc44dc0b0119c7787",
     "src/host_regression_tests.rs": "825bb3e7b688895acb6b92de4dcf6c156ee83790546df68b8e7e1d4ce80599fb",
-    "src/lib.rs": "3c2f387fea4063ff6e7cfdc6af85931ee65ded7ccb718cb46c4e56b485050e62",
-    "src/security_manager/mod.rs": "e82f1d44fc4f27e780614c31dd4292b2128d2d91672645919d08338441857216"
+    "src/lib.rs": "22f7317a724e6bda69c00eb65a83a6e8955e4b68d4181a320771263f6be5ac9d",
+    "src/security_manager/mod.rs": "e82f1d44fc4f27e780614c31dd4292b2128d2d91672645919d08338441857216",
+    "src/gatt_discovery_tests.rs": "50b96d73446cf3e128c9309876512df2007f26e1d81d01c6b0c6a78ad88cfaaf",
+    "Cargo.toml": "5f0132cd182196e7c1130567df065c88d61b1dbf55579079cd95654cb7a9ce1c"
   }
 }

@@ -59,6 +59,8 @@ features = [
 targets = ["thumbv7em-none-eabi"]
 
 [features]
+# Standalone discovery must never gain automatic SMP pairing through unification.
+discovery-no-security = []
 allow-reserved-l2cap-psu = []
 att-queued-writes = ["gatt"]
 central = []

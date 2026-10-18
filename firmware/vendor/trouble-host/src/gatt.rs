@@ -1271,6 +1271,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     while let Some(res) = it.next() {
                         let (handle, data) = res?;
 
+                        if handle < start || handle > range_end || handle <= end {
+                            return Err(Error::UnexpectedGattResponse.into());
+                        }
                         // ReadByGroupType responses have uniform-length attribute
                         // data, so services with a different UUID size are skipped.
                         // Push any gaps onto the pending stack to discover them.
@@ -1282,6 +1285,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
                         let mut r = ReadCursor::new(data);
                         end = r.read()?;
+                        if end < handle || end > range_end {
+                            return Err(Error::UnexpectedGattResponse.into());
+                        }
                         let uuid = Uuid::try_from(r.remaining())?;
 
                         let svc = ServiceHandle {
@@ -1295,6 +1301,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         if !known.contains(&svc) {
                             known.push(svc).map_err(|_| Error::InsufficientSpace)?;
                         }
+                    }
+                    if end < start {
+                        return Err(Error::UnexpectedGattResponse.into());
                     }
                     if end < range_end {
                         pending
@@ -1533,7 +1542,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         start: u16,
         end: u16,
         mut make_req: impl FnMut(u16, u16) -> AttReq<'static>,
-        mut handle_rsp: impl for<'a> FnMut(AttRsp<'a>) -> Result<ControlFlow<R, u16>, Error>,
+        mut handle_rsp: impl for<'a> FnMut(AttRsp<'a>) -> Result<ControlFlow<R, u32>, Error>,
     ) -> Result<Option<R>, BleHostError<C::Error>> {
         let mut start_handle = start;
         while start_handle <= end {
@@ -1546,7 +1555,15 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 AttRsp::Error { code, .. } => return Err(Error::Att(code).into()),
                 rsp => match handle_rsp(rsp)? {
                     ControlFlow::Break(val) => return Ok(Some(val)),
-                    ControlFlow::Continue(next) => start_handle = next,
+                    ControlFlow::Continue(next) => {
+                        if next <= u32::from(start_handle) {
+                            return Err(Error::UnexpectedGattResponse.into());
+                        }
+                        if next > u32::from(end) {
+                            return Ok(None);
+                        }
+                        start_handle = next as u16;
+                    }
                 },
             }
         }
@@ -1563,6 +1580,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         end: u16,
         mut callback: impl FnMut(u16, Uuid) -> ControlFlow<R>,
     ) -> Result<Option<R>, BleHostError<C::Error>> {
+        // Widen the cursor so a valid final handle of 0xffff can finish normally.
+        let mut minimum = u32::from(start);
         self.paginated_request(
             start,
             end,
@@ -1573,8 +1592,13 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             |rsp| match rsp {
                 AttRsp::FindInformation { mut it } => {
                     let mut next_handle = None;
-                    while let Some(Ok((handle, uuid))) = it.next() {
-                        next_handle = Some(handle + 1);
+                    while let Some(item) = it.next() {
+                        let (handle, uuid) = item?;
+                        if u32::from(handle) < minimum || handle == 0 || handle > end {
+                            return Err(Error::UnexpectedGattResponse);
+                        }
+                        minimum = u32::from(handle) + 1;
+                        next_handle = Some(minimum);
                         if let ControlFlow::Break(val) = callback(handle, uuid) {
                             return Ok(ControlFlow::Break(val));
                         }
@@ -1671,6 +1695,8 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         attribute_type: &Uuid,
         mut callback: impl FnMut(u16, &[u8]) -> ControlFlow<R>,
     ) -> Result<Option<R>, BleHostError<C::Error>> {
+        // Widen the cursor so a valid final handle of 0xffff can finish normally.
+        let mut minimum = u32::from(start);
         self.paginated_request(
             start,
             end,
@@ -1684,7 +1710,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     let mut next_handle = None;
                     while let Some(res) = it.next() {
                         let (handle, data) = res?;
-                        next_handle = Some(handle + 1);
+                        if u32::from(handle) < minimum || handle == 0 || handle > end {
+                            return Err(Error::UnexpectedGattResponse);
+                        }
+                        minimum = u32::from(handle) + 1;
+                        next_handle = Some(minimum);
                         if let ControlFlow::Break(val) = callback(handle, data) {
                             return Ok(ControlFlow::Break(val));
                         }
@@ -1762,6 +1792,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
         match Self::response(response.pdu.as_ref())? {
             AttRsp::Read { data } => {
+                if data.len() >= usize::from(self.connection.att_mtu()) {
+                    return Err(Error::UnexpectedGattResponse.into());
+                }
                 let to_copy = data.len().min(dest.len());
                 dest[..to_copy].copy_from_slice(&data[..to_copy]);
 
@@ -1803,6 +1836,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
             match Self::response(response.pdu.as_ref())? {
                 AttRsp::ReadBlob { data } => {
+                    if data.len() >= att_mtu {
+                        return Err(Error::UnexpectedGattResponse.into());
+                    }
                     if data.is_empty() {
                         break;
                     }
@@ -1813,8 +1849,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     pos += len_to_copy;
                     blob_offset += blob_read_len;
 
-                    if blob_read_len < att_mtu - 1 || len_to_copy < blob_read_len {
+                    if blob_read_len < att_mtu - 1 || pos == dest.len() {
                         break;
+                    }
+                    if blob_offset > usize::from(u16::MAX) {
+                        return Err(Error::InvalidValue.into());
                     }
                 }
                 AttRsp::Error { code, .. } if code == att::AttErrorCode::INVALID_OFFSET => {
@@ -2011,7 +2050,7 @@ mod tests {
     use crate::prelude::*;
     use crate::Address;
 
-    fn test_client(
+    pub(super) fn test_client(
         connection: &Connection<'static, DefaultPacketPool>,
     ) -> GattClient<'static, crate::mock_controller::MockController, DefaultPacketPool, 1> {
         GattClient {
@@ -2381,3 +2420,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "gatt_discovery_tests.rs"]
+mod discovery_tests;
