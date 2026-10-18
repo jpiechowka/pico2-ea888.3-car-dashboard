@@ -46,6 +46,7 @@ class Comparison(unittest.TestCase):
             "host/scripts/source_inventory.py",
             "host/scripts/capture_benchmark.py",
             "host/scripts/benchmark_environment.py",
+            "host/scripts/owned_process.py",
             *BUILD_INPUTS,
         ]:
             before = (metadata(), {"fixture": (100, 95, 105)})

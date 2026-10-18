@@ -10,9 +10,9 @@ import zipfile
 
 BENCH = "host/benches/dashboard_perf.rs"
 RUNNERS = ("host/scripts/capture_benchmark.py", "host/scripts/benchmark_environment.py")
-# Older captures predate the shared inventory helper. Its presence/bytes still
+# Older captures predate the shared inventory/process helpers. Their presence/bytes still
 # participate in identity, without making historical captures unreadable.
-OPTIONAL_RUNNERS = ("host/scripts/source_inventory.py",)
+OPTIONAL_RUNNERS = ("host/scripts/source_inventory.py", "host/scripts/owned_process.py")
 BUILD_INPUTS = ("host/Cargo.toml", "host/Cargo.lock", "host/rust-toolchain.toml")
 
 
