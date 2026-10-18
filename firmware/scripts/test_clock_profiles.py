@@ -34,7 +34,11 @@ class ClockProfiles(unittest.TestCase):
             "pico2-ble-280-70-1v30",
             "pico2-ble-280-70-1v30-run",
         }
-        self.assertEqual(set(aliases), expected | ble_aliases)
+        probe_aliases = {
+            "ble-probe": [],
+            "ble-probe-280-70-1v30": ["--features", "cpu280-spi70-1v30"],
+        }
+        self.assertEqual(set(aliases), expected | ble_aliases | probe_aliases.keys())
         self.assertEqual(len(expected), 20)
         for row in rows:
             p = row["profile"]
@@ -57,6 +61,25 @@ class ClockProfiles(unittest.TestCase):
             self.assertEqual(tokens[0], "run" if alias.endswith("-run") else "build")
             self.assertEqual(tokens[1:4], ["-p", "dashboard-pico2", "--release"])
             self.assertEqual(set(tokens[-1].split(",")), {"simple-outline", "ble-obd", clock})
+        for alias, features in probe_aliases.items():
+            # Utility aliases must build only; no inherited flashing runner.
+            self.assertEqual(
+                aliases[alias].split(),
+                [
+                    "build",
+                    "-p",
+                    "dashboard-ble-probe",
+                    "--bin",
+                    "ble-probe",
+                    "--release",
+                    *features,
+                ],
+            )
+        probe = tomllib.loads((REPO / "firmware/ble-probe/Cargo.toml").read_text())
+        self.assertEqual(probe["features"]["default"], [])
+        self.assertEqual(
+            probe["features"]["cpu280-spi70-1v30"], ["dashboard-pico2/cpu280-spi70-1v30"]
+        )
         config = tomllib.loads((REPO / "firmware/.cargo/config.toml").read_text())
         self.assertEqual(config["build"]["target"], "thumbv8m.main-none-eabihf")
         self.assertIn(
