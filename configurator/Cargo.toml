@@ -47,3 +47,7 @@ panic = "abort"
 strip = false
 [features]
 browser-tests = []
+
+[[bench]]
+name = "artwork_readiness"
+harness = false

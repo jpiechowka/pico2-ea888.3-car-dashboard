@@ -672,15 +672,14 @@ impl Editor {
 
     /// Retain source and converted bytes while an orientation edit awaits reconversion.
     pub fn artwork_geometry_mismatch(&self) -> bool {
+        // Artwork admission already checked its immutable bytes against this geometry.
         self.accepted.artwork.as_ref().is_some_and(|art| {
-            dashboard_config::startup_asset::Asset::parse(art.converted()).map_or(true, |asset| {
-                asset.geometry()
-                    != self
-                        .accepted
-                        .startup
-                        .effective_splash_orientation(self.preview().config().orientation)
-                        .geometry()
-            })
+            art.geometry()
+                != self
+                    .accepted
+                    .startup
+                    .effective_splash_orientation(self.preview().config().orientation)
+                    .geometry()
         })
     }
 
