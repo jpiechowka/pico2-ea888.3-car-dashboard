@@ -37,6 +37,7 @@ $previousColor = $env:NO_COLOR
 $previousAutoInstall = $env:RUSTUP_AUTO_INSTALL
 $previousPath = $env:PATH
 $previousToolchain = $env:RUSTUP_TOOLCHAIN
+$setupLock = $null
 Push-Location -LiteralPath $PSScriptRoot
 try {
     $env:NO_COLOR = 'true'
@@ -44,24 +45,22 @@ try {
     $env:RUSTUP_TOOLCHAIN = $toolchain
     $env:PATH = (Join-Path $toolRoot 'bin') + [IO.Path]::PathSeparator + $previousPath
     if ($Setup) {
+        . (Join-Path $PSScriptRoot 'SetupTools.ps1')
+        Assert-StudioSetupPython
         if (-not (Get-Command rustup -CommandType Application -ErrorAction SilentlyContinue)) {
             throw 'Rustup is missing. Install Rust for Windows x64 from https://rustup.rs, reopen PowerShell, then rerun configurator/Studio.ps1 -Setup. Install Visual Studio Build Tools with Desktop development with C++ and the Windows SDK when prompted.'
         }
+        [IO.Directory]::CreateDirectory($toolRoot) | Out-Null
+        $setupLock = Open-StudioSetupLock (Join-Path $toolRoot 'setup.lock')
         Write-Host "Explicit setup: $toolchain, ARM/Wasm targets, LLVM tools, pinned editor CLIs and the prerequisite checker. Downloads may occur."
-        & rustup toolchain install $toolchain --profile minimal --component llvm-tools-preview --component rustfmt --component clippy --target thumbv8m.main-none-eabihf --target wasm32-unknown-unknown
-        if ($LASTEXITCODE -ne 0) { throw 'Pinned Rust setup failed. Install Rust from rustup.rs and MSVC Build Tools with Windows SDK if missing.' }
-        & cargo "+$toolchain" install trunk --version 0.21.14 --locked --root $toolRoot
-        if ($LASTEXITCODE -ne 0) { throw 'Trunk installation failed' }
-        & cargo "+$toolchain" install wasm-bindgen-cli --version 0.2.129 --locked --root $toolRoot
-        if ($LASTEXITCODE -ne 0) { throw 'wasm-bindgen installation failed' }
-        . (Join-Path $PSScriptRoot 'SetupTools.ps1')
+        Invoke-StudioSetupProcess $repoRoot @('rustup','toolchain','install',$toolchain,'--profile','minimal','--component','llvm-tools-preview','--component','rustfmt','--component','clippy','--target','thumbv8m.main-none-eabihf','--target','wasm32-unknown-unknown') -Timeout 1800 -Stream
+        Invoke-StudioSetupProcess $repoRoot @('cargo',"+$toolchain",'install','trunk','--version','0.21.14','--locked','--root',$toolRoot) -Timeout 1800 -Stream
+        Invoke-StudioSetupProcess $repoRoot @('cargo',"+$toolchain",'install','wasm-bindgen-cli','--version','0.2.129','--locked','--root',$toolRoot) -Timeout 1800 -Stream
         Install-StudioReleaseTools -Repository $repoRoot
-        & cargo "+$toolchain" build --manifest-path (Join-Path $repoRoot 'studio-helper/Cargo.toml') --locked --target-dir $helperRoot
-        if ($LASTEXITCODE -ne 0) { throw 'Prerequisite checker compilation failed' }
-        & cargo "+$toolchain" fetch --manifest-path (Join-Path $repoRoot 'configurator/Cargo.toml') --locked
-        if ($LASTEXITCODE -ne 0) { throw 'Studio locked dependency fetch failed' }
-        Write-Host 'Setup installed the pinned Rust/editor tools, Binaryen 133 and picotool 2.3.1. Python and MSVC/SDK may still require the manual steps listed by Check.'
-        & $helperExecutable check --repo $repoRoot
+        Invoke-StudioSetupProcess $repoRoot @('cargo',"+$toolchain",'build','--manifest-path',(Join-Path $repoRoot 'studio-helper/Cargo.toml'),'--locked','--target-dir',$helperRoot) -Timeout 1800 -Stream
+        Invoke-StudioSetupProcess $repoRoot @('cargo',"+$toolchain",'fetch','--manifest-path',(Join-Path $repoRoot 'configurator/Cargo.toml'),'--locked') -Timeout 1800 -Stream
+        Write-Host 'Setup installed the pinned Rust/editor tools, Binaryen 133 and picotool 2.3.1. MSVC/SDK may still require the manual steps listed by Check.'
+        Invoke-StudioSetupProcess $repoRoot @($helperExecutable,'check','--repo',$repoRoot) -Stream -AllowFailure
         exit $LASTEXITCODE
     }
     if (-not (Test-Path -LiteralPath $trunk -PathType Leaf)) { throw 'Trunk is missing. Run .\configurator\Studio.ps1 -Setup explicitly first.' }
@@ -74,6 +73,7 @@ try {
     else { & $trunk build --release --locked --offline }
     if ($LASTEXITCODE -ne 0) { throw 'Studio build or server failed. Missing locked dependencies require an explicit setup/fetch step.' }
 } finally {
+    if ($null -ne $setupLock) { $setupLock.Dispose() }
     $env:NO_COLOR = $previousColor
     $env:RUSTUP_AUTO_INSTALL = $previousAutoInstall
     $env:PATH = $previousPath
