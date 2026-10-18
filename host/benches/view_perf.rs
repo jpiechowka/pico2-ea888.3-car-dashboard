@@ -312,7 +312,7 @@ fn graph_retention(c: &mut Criterion) {
 fn orientation(c: &mut Criterion) {
     use dashboard_config::{Geometry, Orientation};
     let mut group = c.benchmark_group("orientation");
-    group.sample_size(20);
+    group.sample_size(30);
     group.warm_up_time(std::time::Duration::from_secs(1));
     group.measurement_time(std::time::Duration::from_secs(2));
     for geometry in Geometry::ALL {

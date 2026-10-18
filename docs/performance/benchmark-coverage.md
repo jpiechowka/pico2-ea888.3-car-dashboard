@@ -1,8 +1,9 @@
 # Fixed host workload coverage
 
-The current host suite contains 143 Criterion cases on the production pure Rust
+The current host suite contains 152 Criterion cases on the production pure Rust
 modules. The fixture sources are in `host/benches/dashboard_perf.rs`,
-`scene_replay/`, `coverage/`, `config_perf.rs`, `view_perf.rs` and `rule_perf.rs`.
+`scene_replay/`, `coverage/`, `config_perf.rs`, `view_perf.rs`, `rule_perf.rs` and
+`ble_protocol.rs`.
 The first two helper directories are also compiled by host tests. The count is
 the unique registered `Testing ... / Success` cases from a complete benchmark
 smoke run, including loop-generated cases, rather than textual macro calls.
@@ -32,6 +33,14 @@ RP2350 cycles, DMA overlap or physical FPS.
 | Configured views (34 cases) | Default/wide full and retained paths plus all six styles, prepared once per frame through production presentation, including default smoothing Off |
 | Advanced bounded work (13 cases) | 0/8/64 warnings, 64 independent peaks sharing one channel, one-day history gap, eight smoothed three-band Circular/Horizontal gauges with both identical and changed pixels, static/reconstructed graphs, complete 64-warning cycles in both paging modes |
 | Rule/LED work (4 cases) | Maximum ingestion, snapshot and single warning-page scan, plus admitted LED policy evaluation |
+| Orientation (6 cases) | Landscape/portrait full, retained stationary and one-cell rendering |
+| BLE protocol (3 cases) | Synthetic coolant response in one chunk or single-byte notifications; four-channel scheduler completion and latency accounting, without radio or ECU I/O |
+
+Orientation now uses the same 30-sample minimum as the strict comparator; its
+earlier 20-sample default was insufficient for that admission policy. Historical
+captures retain their original sample counts and cannot be relabelled. The
+separate Studio artwork benchmark uses seven batches and reports its own format
+and limits in [its guide](../../configurator/benches/README.md).
 
 Both outline configurations pass correctness and benchmark smoke checks.
 Published timing captures state their exact feature flags; do not infer the

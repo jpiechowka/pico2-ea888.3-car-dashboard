@@ -121,8 +121,8 @@ pub fn benchmarks(c: &mut Criterion) {
                 black_box(slot.load_at_boot(black_box(&bytes)));
             });
         });
-        // Last field is the orientation enum. Reseal an invalid variant so
-        // fallback follows a complete bounded decode, rather than CRC rejection.
+        // Reseal an unterminated final varint so fallback follows a late
+        // bounded decode failure rather than CRC rejection.
         let mut late = bytes.clone();
         *late.last_mut().unwrap() = 0xFF;
         let crc = crc32(late[..8].iter().chain(late[HEADER_BYTES..].iter()).copied());

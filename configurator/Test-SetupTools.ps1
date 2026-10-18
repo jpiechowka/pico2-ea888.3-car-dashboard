@@ -5,7 +5,9 @@ $legacyShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powers
 $originalPath = $env:PATH
 try {
     $env:PATH = ''
-    $legacyOutput = (& $legacyShell -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Studio.ps1') -Setup 2>&1) -join "`n"
+    # This process-only policy lets the fixture reach our version guard without
+    # depending on the host's script policy; no machine/user policy is changed.
+    $legacyOutput = (& $legacyShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Studio.ps1') -Setup 2>&1) -join "`n"
     if ($LASTEXITCODE -eq 0 -or $legacyOutput -notlike '*PowerShell 7.2 or newer*pwsh*') {
         throw 'Legacy shell reached setup without an actionable shell prerequisite failure'
     }

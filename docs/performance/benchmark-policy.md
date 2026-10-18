@@ -33,7 +33,9 @@ The comparison checks ZIP CRC, all archived hashes, complete raw files, at
 least 30 finite positive samples per case, and identical measurement coverage.
 It independently derives the median from Criterion's `time / iterations`
 samples. Runner identity, OS/CPU, compiler, environment, Cargo configuration,
-build options, host manifest/lock/toolchain, every benchmark helper and both capture scripts must match.
+build options, host manifest/lock/toolchain, every benchmark helper and capture
+scripts must match, including the shared source inventory and process supervisor
+when present. A newly introduced shared helper also changes workload identity.
 An implementation difference is allowed; a changed workload requires separate
 review and a new matched pair. Source archives also make such review possible.
 
