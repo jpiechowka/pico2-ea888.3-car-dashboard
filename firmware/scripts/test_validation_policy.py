@@ -45,13 +45,18 @@ class ValidationPolicy(unittest.TestCase):
             check_memory_layout.check_headroom(headroom)
 
     def test_modified_vendor_source_is_rejected(self):
-        original = Path.read_bytes
-        changed = check_vendor.ROOT / "embassy-rp/src/lib.rs"
-        with patch.object(
-            Path, "read_bytes", lambda p: original(p) + (b"changed" if p == changed else b"")
-        ):
-            with self.assertRaisesRegex(AssertionError, "vendor mismatch"):
-                check_vendor.check()
+        # Real filesystem corruption must fail in the Rust subprocess as well.
+        import shutil
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            shutil.copytree(check_vendor.ROOT / "embassy-rp", root / "embassy-rp")
+            shutil.copy2(check_vendor.ROOT / "embassy-rp-provenance.json", root)
+            changed = root / "embassy-rp/src/lib.rs"
+            changed.write_bytes(changed.read_bytes() + b"changed")
+            with patch.object(check_vendor, "ROOT", root):
+                with self.assertRaisesRegex(AssertionError, "vendor mismatch"):
+                    check_vendor.check()
 
     def test_invalid_feature_compile_success_is_rejected(self):
         accepted = subprocess.CompletedProcess([], 0, "", "")
