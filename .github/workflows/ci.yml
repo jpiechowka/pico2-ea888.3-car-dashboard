@@ -237,6 +237,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: firmware
+      - name: Fetch locked firmware dependencies
+        # Offline policy checks inspect optional backends, including BLE crypto.
+        run: cargo fetch --locked
+        working-directory: firmware
       - name: Clippy (pico2)
         run: cargo clippy --locked -p dashboard-pico2 --target thumbv8m.main-none-eabihf -- -D warnings
         working-directory: firmware

@@ -60,6 +60,12 @@ helper-access attempts were repeated with the required local process permissions
 they were not counted as passes. The final build used the repository-installed
 Trunk/wasm-bindgen tools as `Studio.ps1` configures them.
 
+The first published CI run exposed a cold-cache setup gap: the all-feature,
+offline logging-policy check could not download optional `aes 0.8.4`, which the
+preceding default-backend Clippy build did not need. CI now fetches the locked
+firmware dependencies before those offline checks. The policy and strict Clippy
+requirements are unchanged; this repair changes no firmware source or allocation.
+
 ## Exact linked images
 
 All four captures used nightly-2026-10-16, `thumbv8m.main-none-eabihf`, explicit
