@@ -27,6 +27,32 @@ supervisor and new transport faults enter it before optional output or terminal
 recovery. Transport fault observations are coalesced at the 10 ms publication limit;
 the latest fault and cumulative counter remain available in `LinkSnapshot`.
 
+## BLE transition records
+
+The radio owner logs only changes in link state or fault, after releasing its
+status lock. `BLE <epoch> <state> <reason>` retains the full reconnect epoch and
+a distinct state/reason in at most 39 ASCII bytes. Any explicit fault, or the
+terminal Fault state, uses Fault severity and the protected latest-fault slot.
+Normal connect, ready and maintenance transitions use Info and do not replace it.
+No peer address, passkey or adapter payload enters these records.
+
+State codes are `OFF`, `START`, `CONN`, `SEC`, `DISC`, `IDENT`, `READY`, `SYNTH`,
+`BACK`, `PARK` and `FAULT`, respectively: disabled, starting, connecting, securing,
+discovering, identifying, adapter ready, synthetic ready, backoff, maintenance and
+terminal fault. `READY` does not imply qualified vehicle data.
+
+Reasons `CONFIG`, `SECURITY`, `DISCOVER`, `LINK`, `RX-LOSS`, `TIMEOUT`, `CLOCK` and
+`EXHAUST` identify the corresponding link fault; `OK` means no fault detail.
+Protocol reasons retain a `P-` prefix: `DISCON`, `EPOCH`, `BUSY`, `UNQUAL`, `INIT`,
+`TOKEN`, `LOSS`, `LENGTH`, `OVER`, `CLOCK`, `TIME`, `EXHAUS`, `UNEXP` and `REPLY`.
+Parser reasons retain `E-`: `OVER`, `ASCII`, `FRAME`, `SEQ`, `OTHER` (foreign frame),
+and `SHORT` (incomplete response). These codes preserve nested failure distinctions
+without relying on truncatable Rust Debug output.
+
+Host regressions exercise all 11 states and all 29 optional reasons at epoch zero
+and u64 maximum through the real bounded log store, plus retained faults through
+normal reconnect and history eviction. They do not validate radio hardware timing.
+
 ## Locked dependency review
 
 For defmt-rtt 1.3.0, ordinary writes ignore host-selected blocking flags with

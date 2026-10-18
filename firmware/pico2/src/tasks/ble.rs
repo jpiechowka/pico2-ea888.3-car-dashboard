@@ -63,7 +63,13 @@ fn publish(
         changed.then_some(next.epoch)
     });
     if let Some(epoch) = changed {
-        crate::log_info!("BLE {:?}, fault {:?}, epoch {}", state, fault, epoch);
+        dashboard_pico2::ble::link::log_transition(
+            &crate::profiling::LOGS,
+            Instant::now().as_millis(),
+            state,
+            fault,
+            epoch,
+        );
     }
 }
 
