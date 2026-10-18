@@ -8,6 +8,44 @@ use dashboard_config_tools::*;
 struct Temp(PathBuf);
 
 #[test]
+fn cli_replaces_unicode_output_and_compiles_in_place() {
+    let temp = Temp::new();
+    let output = temp.0.join("réglages de voiture.eav");
+    std::fs::write(&output, b"old").unwrap();
+    let exe = env!("CARGO_BIN_EXE_dashboard-config");
+    assert!(
+        std::process::Command::new(exe)
+            .arg("default")
+            .arg(&output)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let original = std::fs::read(&output).unwrap();
+    decode(&original).unwrap();
+    assert!(
+        std::process::Command::new(exe)
+            .arg("compile")
+            .arg(&output)
+            .arg(&output)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), original);
+    assert_eq!(std::fs::read_dir(&temp.0).unwrap().count(), 1);
+    assert!(
+        !std::process::Command::new(exe)
+            .arg("default")
+            .arg(&temp.0)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), original);
+}
+
+#[test]
 fn old_binary_input_is_compiled_to_current_firmware_schema() {
     let temp = Temp::new();
     let file = temp.0.join("old.eav");

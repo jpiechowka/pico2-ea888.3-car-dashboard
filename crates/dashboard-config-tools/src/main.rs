@@ -2,6 +2,7 @@ use std::path::Path;
 
 use dashboard_config::{default_config, to_json, validate};
 use dashboard_config_tools::{compile, import, sha256_hex};
+mod publication;
 
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -36,13 +37,13 @@ fn run() -> Result<(), String> {
             } else {
                 compile(&config).map_err(|e| e.to_string())?
             };
-            std::fs::write(output, &bytes).map_err(|e| e.to_string())?;
+            publication::publish(Path::new(output), &bytes).map_err(|e| e.to_string())?;
             println!("{} bytes; SHA-256 {}", bytes.len(), sha256_hex(&bytes));
         }
         [command, input, output] if command == "compile" => {
             let config = import(Path::new(input)).map_err(|e| e.to_string())?;
             let bytes = compile(&config).map_err(|e| e.to_string())?;
-            std::fs::write(output, &bytes).map_err(|e| e.to_string())?;
+            publication::publish(Path::new(output), &bytes).map_err(|e| e.to_string())?;
             println!("{} bytes; SHA-256 {}", bytes.len(), sha256_hex(&bytes));
         }
         [command, input] if command == "inspect" => {
