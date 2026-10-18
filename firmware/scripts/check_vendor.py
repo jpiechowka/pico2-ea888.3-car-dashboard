@@ -5,16 +5,18 @@ No archive contents are extracted or executed.
 """
 
 import argparse
-import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 ROOT = REPO / "firmware" / "vendor"
+sys.path.insert(0, str(REPO / "host/scripts"))
+from owned_process import run_bounded  # noqa: E402
 
 
 def run_verifier(arguments: list[str], input_json: str | None = None) -> str:
     """Keep admission in Rust; launch from root so firmware ARM flags do not leak."""
-    result = subprocess.run(
+    result = run_bounded(
         [
             "cargo",
             "run",
@@ -29,19 +31,15 @@ def run_verifier(arguments: list[str], input_json: str | None = None) -> str:
             *arguments,
         ],
         cwd=REPO,
-        input=input_json,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        input_bytes=None if input_json is None else input_json.encode("utf-8"),
+        on_stderr=lambda _: None,
         timeout=300,
-        check=False,
     )
     if result.returncode:
         raise AssertionError(
-            f"provenance verifier failed ({result.returncode}): {result.stderr[-4096:]}"
+            f"provenance verifier failed ({result.returncode}): {result.stderr[-4096:].decode('utf-8', errors='replace')}"
         )
-    return result.stdout
+    return result.stdout.decode("utf-8", errors="replace")
 
 
 def check(archive: Path | None = None) -> None:
