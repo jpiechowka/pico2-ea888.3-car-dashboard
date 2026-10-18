@@ -23,7 +23,7 @@ unchanged Core0/Core1 stack reserves of 8192/4096 bytes. Both guards apply;
 the linker assertion itself remains 32 KiB. `scripts/check_memory_layout.py` reads the actual ELF sections and
 symbols, checks all allocated RAM against those boundaries, and confirms the
 boot footer stays in FLASH. The check failed on the original diagnostic ELF
-and passes after the fix. CI runs it on twelve target matrix entries, covering stock, traced Demo/Vehicle,
+and passes after the fix. CI runs it on fourteen target matrix entries, covering stock, traced Demo/Vehicle,
 280/70, legacy overclocks and serial/full-outline variants; the exact matrix
 is in `.github/workflows/ci.yml`.
 

@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-18",
+  "browser": "Codex in-app browser",
+  "source_commit": "23ef6e6b6e378fa3a81dccaf1cfe3a26904a5115",
+  "build": "trunk build --release --locked --offline --dist target/maintenance-preview",
+  "synthetic": true,
+  "device_operations": false,
+  "production_main_wasm": {
+    "bytes": 5303302,
+    "sha256": "e1cc51d616a06cf8b8d3b3d8609ebbf445093e09894f81ab0dce7a91805b9c44"
+  },
+  "viewports_css_pixels": [
+    [
+      1440,
+      1000
+    ],
+    [
+      760,
+      1000
+    ]
+  ],
+  "images": {
+    "maintenance-occupancy.jpg": "3c7e7fab032834ecca39f12169cd2484fb784b320d869b37a5d5a46b5a20685e",
+    "maintenance-occupancy-narrow.jpg": "51291a874270186cc5ea864029ade75e849888972f09bf363da08448eac98588"
+  },
+  "scenario": "Fresh origin: duplicate Overview, rename Portrait, apply portrait override, inspect Diagnostics > Measurements",
+  "checks": [
+    "Overview 4 x 2, 8/8, mask 11111111",
+    "Portrait 2 x 4, 8/8, mask 11111111",
+    "760px viewport: document scrollWidth equals clientWidth (745px)",
+    "No browser warning/error console entries"
+  ],
+  "cleanup": "Temporary capture tab and owned server closed; existing Studio preserved"
+}

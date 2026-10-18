@@ -80,6 +80,23 @@ High/Low/window rules, dwell, priority, latch and snooze use qualified raw sampl
 
 ## Diagnostics and source evidence
 
+### Check layout and file budgets
+
+[![Mixed-orientation occupancy and resource budgets](../images/gallery/workflows/maintenance-occupancy.jpg)](../images/gallery/workflows/maintenance-occupancy.jpg)
+
+Open **Diagnostics → Measurements** to see the accepted configuration's encoded
+size, saved-envelope overhead, view/widget counts and per-view occupancy. Each
+row resolves the device default and view override independently: the example
+contains a 4×2 Overview and a 2×4 Portrait view, each using all eight cells.
+Drafts cannot supply export sizes; invalid edits remain repairable in the preview.
+Source definitions below the table explain their runtime qualification limits.
+
+[![Resource diagnostics at the 760-pixel breakpoint](../images/gallery/workflows/maintenance-occupancy-narrow.jpg)](../images/gallery/workflows/maintenance-occupancy-narrow.jpg)
+
+At narrower widths the budget cards wrap and the occupancy table stays readable.
+The 760×1000 check had no document-wide horizontal overflow. These are browser
+layout and configuration measurements, not Pico memory or vehicle telemetry.
+
 ### Configure and exercise the BLE prototype
 
 [![BLE peer settings with CX encryption help](../images/gallery/workflows/ble-settings.jpg)](../images/gallery/workflows/ble-settings.jpg)
@@ -169,6 +186,14 @@ physical scanout or warning timing. The distinct measured performance pass is
 separate; [benchmark scope](../performance/benchmark-coverage.md) remains explicit.
 
 ## Capture record
+
+The two resource/occupancy captures were taken on 18 October 2026 from the normal
+production bundle built at `23ef6e6`, at 1440×1000 and 760×1000. A fresh isolated
+origin held the duplicated default view and its applied portrait override.
+The [maintenance capture manifest](../images/gallery/workflows/maintenance-capture.json)
+records exact Wasm/image hashes. The subsequent private Promise cancellation
+repair changes no visible controls or pixels. The user's existing project/server
+was preserved; the temporary server and tab were closed after capture.
 
 The three BLE workflow captures were taken on 18 October 2026 from the normal
 optimized production build at `394ac1f`, in an isolated origin at 1440×1000.

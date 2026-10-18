@@ -96,8 +96,8 @@ the configured source session.
 
 The [gauge and colour guide](gauges-and-colours.md) describes fixed/expanding
 scales, per-style capabilities, RGB565 validation and the shared preview/device
-renderer. Historical v1/v2/v3/v4 documents import through explicit migration; exports
-use the current v5 schema. See
+renderer. Historical v1 through v5 documents import through explicit migration; exports
+use the current v6 schema. See
 [advanced controls](advanced-controls.md) for units, smoothing, history, bands,
 markers, priorities/latch/snooze and the RGB indicator panel.
 

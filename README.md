@@ -12,7 +12,7 @@ without publishing vehicle readings. [Runtime and qualification limits](docs/veh
 
 Browse the offline **ECU Reference** workspace while configuring views: searchable source/scaling evidence, family limitations and unresolved definitions, with the shared preview retained. [Studio usage](docs/configurator/ecu-reference.md) · [Technical ECU library](docs/vehicle/ecu-reference/README.md).
 
-[Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
+[Requirements](#requirements-and-first-run) · [Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
 [Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
 [Bluetooth setup](#bluetooth-prototype-in-studio) ·
 [Hardware & wiring](#hardware-protection-and-wiring-for-the-dnuc-cupra) ·
@@ -22,17 +22,55 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 
 *Studio edits a shared-renderer dashboard. Preview readings are synthetic; they do not establish vehicle support.*
 
-## Configure dashboard views
+## Requirements and first run
 
-Launch the Rust/Wasm editor from the repository root:
+| Use | Requirements |
+| --- | --- |
+| Dashboard hardware | Raspberry Pi **Pico 2 W**, Pimoroni **PIM715** display, USB power/data cable; retain the Adafruit **5880 I2C encoder** on the documented 3.3 V connection. No Longan, Pololu or covered power switch is needed for the selected BLE route. |
+| Vehicle connection | A separately qualified BLE OBD adapter. MC+/CX profiles currently identify the adapter only; buying one does not enable DNUC measurements. [Qualification limits](docs/vehicle/ble-runtime.md). |
+| Edit an existing Studio build | A modern browser with Wasm, IndexedDB and Web Locks on localhost or a secure origin. No Rust, Node/npm or connected Pico is needed on that browser's computer. |
+| Build/serve/flash on Windows | Windows 10/11 x64; current supported **PowerShell 7** (`pwsh`, minimum 7.2); **Python 3.11+ on PATH**; rustup; Visual Studio C++ Build Tools and Windows SDK. Setup installs the repository's pinned compiler and editor/device tools. |
+| Build storage | 4 GiB scratch reservation plus 256 MiB free headroom, **in addition** to toolchains, caches and retained attempts. A minimum RAM specification has not been qualified. |
+
+### Windows setup
+
+1. Install the manual prerequisites above. Use **PowerShell 7**, not the bundled
+   Windows PowerShell 5.1. Reopen the terminal after adding Python/rustup to PATH.
+2. From the repository root, run the explicit setup, then its read-only check:
 
 ```powershell
 ./configurator/Studio.ps1 -Setup
 ./configurator/Studio.ps1 -Check
+```
+
+3. Resolve any reported MSVC/SDK/tool requirement, then start the editor:
+
+```powershell
 ./configurator/Studio.ps1 -Serve
 ```
 
-Open `http://127.0.0.1:8080`. Drag widgets onto a landscape 4×2 or portrait 2×4 grid, configure up to eight
+4. Open `http://127.0.0.1:8080`. Leave that terminal running. For **Build & Flash**,
+   open a second terminal in the same repository and run
+   `./configurator/Studio.ps1 -Helper`, then connect from the workspace. Neither
+   setup nor connection flashes a device. Stop each foreground process with Ctrl+C.
+
+Setup checks Python and the shell before installing. Concurrent setup runs are
+rejected; downloads are bounded, hash-checked and staged before publication.
+Normal serving does not silently install missing tools. Follow the actionable
+error and rerun Setup explicitly. [Installation and recovery details](docs/configurator/setup-tools.md).
+
+### Linux scope
+
+Linux is supported for browser editing and receives portable Rust/Python and
+browser CI checks. Manual Studio and firmware compilation are documented for
+modern distributions; **the native helper and supported flashing workflow remain
+Windows-only**. Full Arch/Fedora and USB qualification is deferred. Use the
+[manual Linux setup](docs/configurator/setup-tools.md#linux-editor-and-development-checks)
+or edit in a browser and export a complete project for a Windows build.
+
+## Configure dashboard views
+
+Drag widgets onto a landscape 4×2 or portrait 2×4 grid, configure up to eight
 named views, and export a complete `.eavp` project. Dashboard-only JSON and compact
 `.eav` exports remain available. The preview
 uses the firmware renderer. See the [View Studio guide](docs/configurator/studio.md)
@@ -41,10 +79,7 @@ Choose numeric/history, circular, needle, horizontal, vertical or segmented
 gauges. [Gauge and colour controls](docs/configurator/gauges-and-colours.md) include
 fixed or expanding scales, per-widget palettes and separate combined warnings.
 
-Browser editing of an already served build needs no local Rust toolchain. Native
-builds require Windows x64, the documented tools, and **4 GiB scratch space plus
-256 MiB free headroom**, in addition to installations and caches. A practical
-build and verified download succeeded on Windows 11 Pro with an i9-13900HX and
+A practical native build and verified download succeeded on Windows 11 Pro with an i9-13900HX and
 31.8 GiB RAM; a minimum RAM specification has not been established. The earlier
 16.5 GB observation belongs to the separate experimental instruction proof.
 [PC requirements and measurement limits](docs/configurator/setup-tools.md#pc-requirements-and-measurement-limits).
@@ -78,6 +113,12 @@ guides describe the current workflows and remaining device checks.
    JSON and startup timing need Apply or Discard before save/export/build.
 4. Use Undo/Redo for accepted changes. Export a complete project for a portable
    backup; browser storage belongs to this browser and origin and can fail or fill.
+
+Storage waits report a timeout after ten seconds of browser event-loop progress;
+suspended tabs can delay timers. Close an older tab when a database upgrade is
+blocked. If a write reports an **unknown commit outcome**, export the working
+project before reloading to inspect the stored copy. A queued request never earns
+a false Saved indicator.
 
 | Export | Keeps | Use |
 |---|---|---|
@@ -264,9 +305,9 @@ cargo clippy --locked -p dashboard-pico2 -- -D warnings
 exclusive. The no-backend build remains available with unknown vehicle channels.
 BLE settings default to disabled and require an explicit peer address.
 All Rust workspaces pin
-`nightly-2026-10-16`, installed after `rustup update`; firmware also requests
+`nightly-2026-10-18`, installed after `rustup update`; firmware also requests
 `thumbv8m.main-none-eabihf` and `target-cpu=cortex-m33`. The root `rustfmt.toml` applies to the workspaces.
-The [dependency review](docs/dependencies/upgrade-2026-10-16.md) records current
+The [dependency review](docs/dependencies/upgrade-2026-10-18.md) records current
 releases, compatibility constraints and reviewed local HAL corrections.
 
 Run shared correctness checks from `host/`:
@@ -291,6 +332,22 @@ records actual browser storage/worker/canvas/transport faults, deterministic
 format and state tests, native recovery, ten-theme visual checks and final image
 limits. CI runs the browser suite in an isolated profile and keeps strict nightly
 Clippy. The instruction-level proof remains separate unfinished research.
+
+Maintained Python is formatted/linted by Ruff and selected production boundaries
+are checked with strict Mypy on Windows/Ubuntu with Python 3.11 and 3.15. Install
+the hash-locked development tools in a virtual environment:
+
+```text
+python -m pip install --require-hashes -r python-quality-requirements.txt
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy
+```
+
+The [maintenance audit](docs/validation/maintenance-2026-10-18.md) records storage,
+process, concurrency and failure-path fixes, source coverage and the remaining
+physical-validation boundaries. Vendor source/archive verification now uses
+the typed, bounded [Rust verifier](crates/dashboard-provenance/README.md).
 
 The [overhaul acceptance record](docs/validation/overhaul-2026-10-11.md) maps
 the implemented stages and review corrections to local test/build evidence and
@@ -364,6 +421,15 @@ The pass preserves all gauges, animations, controls and validation gates.
   native query measured about 5.5 ms before and 3.6 µs after; this is a host seam
   measurement, not browser latency. Content edits still recompute identity, and
   actual Build/Flash actions perform fresh checks.
+- **Custom splash preview:** accepted immutable artwork is validated once and
+  borrowed by previews/replays. A matched maximum-asset host workload fell from
+  4.22 ms to 0.59–0.60 ms per rendered frame; small-asset timings remained within
+  noise. Readiness no longer repeatedly scans the artwork. Raw imports still
+  receive complete validation. [Workload and limits](configurator/benches/README.md).
+- **Vendor checks:** direct Rust tree verification measured 28 ms versus 88 ms
+  for the previous Python HAL check, and 38 ms versus 74 ms for radio trees.
+  CI builds the verifier once. Compatibility wrappers remain slower because they
+  start Python and Cargo; these host timings exclude first compilation.
 - **Local builds:** reuse of the attempt's configuration compiler removed a
   duplicate compilation. One matched admitted build pair took 69.7 s before and
   45.8 s after. Firmware optimization settings remain unchanged; timings vary by
@@ -555,6 +621,13 @@ missing/stale/faulted samples, delayed reset acknowledgments and dropped frame
 completions. Appearance preview uses synthetic reconstructed history; use the
 simulator for timing and completion behavior. Resources distinguish encoded file
 sizes from artifact-bound target figures; absent measurements remain explicit.
+
+[![Mixed landscape and portrait resource diagnostics beside the synthetic preview](docs/images/gallery/workflows/maintenance-occupancy.jpg)](docs/configurator/gallery.md#check-layout-and-file-budgets)
+
+**Diagnostics → Measurements** reports each view's effective grid, occupied cells
+and actual serialization budgets. Landscape and portrait overrides are resolved
+independently. The panel also distinguishes configured source definitions from
+qualified live measurements. [Narrow-layout example](docs/images/gallery/workflows/maintenance-occupancy-narrow.jpg).
 
 Warning rules support hysteresis, dwell, priority, latching and snooze. Dwell needs
 new qualified measurements. Acknowledging an active warning does not clear it;

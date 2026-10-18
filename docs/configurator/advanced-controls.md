@@ -1,6 +1,6 @@
 # Units, history and warning controls
 
-These Studio controls expose the advanced fields in the current v5 configuration. Firmware and browser
+These Studio controls expose the advanced fields in the current v6 configuration. Firmware and browser
 share the advanced runtime; exports use the normal strict configuration codec.
 See [historical v4 release evidence](advanced-v4-release.md) and
 [current orientation controls](orientation.md).

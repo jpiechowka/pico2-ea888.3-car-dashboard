@@ -1,0 +1,96 @@
+{
+  "compiler": "rustc 1.101.0-nightly (8006091eb 2026-10-17)\nbinary: rustc\ncommit-hash: 8006091eb71ae7d9e9bccb66c6122c9d68af4466\ncommit-date: 2026-10-17\nhost: x86_64-pc-windows-msvc\nrelease: 1.101.0-nightly\nLLVM version: 23.1.4\n",
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "binary_sha256": "1a015e3f2024712e01a028641852a19ba93ba8e7381d2b27eedcb05982e1b113",
+  "source_sha256": {
+    "Cargo.toml": "16c765ac5bd19ca29e4b6c81acf6dd6472d306c8f6b8451f41d4d65f5c94dd8b",
+    "Cargo.lock": "ce0ce3d3c681703c137641b9976ef5ac0eede9e5951e781638ec815311f0040c",
+    "crates\\dashboard-provenance\\src\\archive.rs": "b4d786782babffb89b1228a02148e73a044fe24ed75d9a9c0139e1cfb2248662",
+    "crates\\dashboard-provenance\\src\\lib.rs": "342843a9775f134deec0084a01fb2cdaa44773e88b27be8c38ab193535e922ce",
+    "crates\\dashboard-provenance\\src\\main.rs": "3b7f9e0b9422b0cce7f580c182f9961d8f17e66657b3fc66c643306f22a9040a",
+    "crates\\dashboard-provenance\\src\\manifests.rs": "dcc506b806517b2b81df9ed05a8bac37c8569510037c30c1a9881336be49773e",
+    "crates\\dashboard-provenance\\tests\\cli.rs": "cd51a4b04e7f299c6a3a96bd33298cf9aff02f69c03bdf03ecf9a7cc0caf77cf",
+    "crates\\dashboard-provenance\\tests\\verification.rs": "437c0129ab05d21d48a3e4242aecbb4d7a7dbe621171061c9562eb571ff2b65f",
+    "firmware\\scripts\\check_vendor.py": "e17f8950bb4ba267fd508974799bcfb8ac089a6cc5633cb4d0235e00e03ae840",
+    "firmware\\scripts\\check_radio_vendor.py": "54d2b033c7d1e3b5cb0198a5b9005427eb4bfa3a05bc1d19d4eb1d8ad7a8170a"
+  },
+  "old_script_sha256": {
+    "check_vendor.py": "070e7195d9a634cbc575e6fd3b57d0ad54234d93c581b57f8ead47688848dd83",
+    "check_radio_vendor.py": "7159146ae77d34458272b3fb647836d8df2f03efa398cf1a7821ed09aa35146d"
+  },
+  "outputs": {
+    "hal_python": "Verified 73 original files, 8 modified files and 2 added helpers; archive=not supplied",
+    "hal_rust": "Verified 73 original files, 8 modified files and 2 added helpers; archive=not supplied",
+    "hal_wrapper": "Verified 73 original files, 8 modified files and 2 added helpers; archive=not supplied",
+    "radio_python": "cyw43 0.7.0: complete upstream tree and reviewed overlay verified\r\ntrouble-host 0.8.0: complete upstream tree and reviewed overlay verified\r\nCYW firmware, NVRAM and license bytes verified",
+    "radio_rust": "cyw43 0.7.0: complete upstream tree and reviewed overlay verified\ntrouble-host 0.8.0: complete upstream tree and reviewed overlay verified\nCYW firmware, NVRAM and license bytes verified",
+    "radio_wrapper": "cyw43 0.7.0: complete upstream tree and reviewed overlay verified\r\ntrouble-host 0.8.0: complete upstream tree and reviewed overlay verified\r\nCYW firmware, NVRAM and license bytes verified"
+  },
+  "samples_ms": {
+    "hal_python": [
+      92.277,
+      84.4542,
+      88.0568,
+      90.3721,
+      92.3735,
+      81.8031,
+      79.6839
+    ],
+    "hal_rust": [
+      32.758,
+      27.7216,
+      26.9467,
+      27.4358,
+      32.1744,
+      27.892,
+      30.1581
+    ],
+    "hal_wrapper": [
+      188.3226,
+      201.7872,
+      180.5687,
+      182.8642,
+      189.3698,
+      183.2121,
+      173.5385
+    ],
+    "radio_python": [
+      75.0459,
+      73.5587,
+      73.9467,
+      77.8966,
+      72.7606,
+      62.5659,
+      69.363
+    ],
+    "radio_rust": [
+      34.4394,
+      38.1797,
+      38.7355,
+      33.5389,
+      41.6666,
+      42.6609,
+      33.5658
+    ],
+    "radio_wrapper": [
+      180.5597,
+      190.0599,
+      196.0409,
+      176.7202,
+      188.9368,
+      186.82,
+      180.0211
+    ]
+  },
+  "median_ms": {
+    "hal_python": 88.0568,
+    "hal_rust": 27.892,
+    "hal_wrapper": 183.2121,
+    "radio_python": 73.5587,
+    "radio_rust": 38.1797,
+    "radio_wrapper": 186.82
+  },
+  "notes": "7 interleaved subprocess samples after warm-up, same input root. Wrapper includes Cargo launch; cold compilation excluded. Source frozen during capture; quiet slot coordinated.",
+  "input": "firmware/vendor at baseline 4fed659f74d911b92e12db4c3fa9a2c235b9af3d; unchanged during the measured tree checks",
+  "scope": "Warm tree verification only; source hashes predate archive-only end-block repair; no archive timing claim. Absolute local paths omitted."
+}

@@ -16,13 +16,13 @@ after upgrading. No saved confirmation is migrated. The `/api/v1/` route namespa
 project/configuration formats and `pico2` Cargo/script identifiers stay compatible.
 Existing flash journals remain readable through a separate historical decoder;
 legacy records cannot create current consent or resume an operation.
-This identity correction does not add a Bluetooth transport.
+That identity-only correction preceded the separate [BLE prototype](ble-prototype.md).
 
 ## Workflow
 
 The Build & Flash workspace sits alongside Views, Device, Data & warnings and Diagnostics, with a link from Device settings. The build uses the accepted configuration only; invalid or unapplied JSON edits block a new build or flash and remain visible in the diagnostic preview. The user chooses Demo or Vehicle, a named clock profile or Custom, and supported build options. A read-only details panel shows the actual rustup toolchain, `rustc -Vv`, Cargo version, target, features, optimization/outline/trace options, configuration hash, and exact executable arguments and relevant environment overrides.
 
-Nightly is preferred. Resolve the project's dated nightly and report the installed compiler used by the build. A toolchain update is a separate visible operation: an in-flight build keeps its resolved compiler. Missing components, unavailable nightly, build failures and unsupported options are reported without silently selecting another compiler or profile.
+The project's dated nightly is required. Resolve it and report the installed compiler used by the build. A toolchain update is a separate visible operation: an in-flight build keeps its resolved compiler. Missing components, unavailable nightly, build failures and unsupported options are reported without silently selecting another compiler or profile.
 
 Custom firmware embeds the selected configuration, so it requires a local build. Studio's static server runs on loopback port 8080; the native Rust helper exposes its typed API separately on 127.0.0.1:8765. It launches fixed Cargo/build-validation/picotool operations with argument arrays. It never accepts arbitrary shell text, arbitrary executable paths or unrestricted environment variables. The PowerShell entry point starts each service explicitly. The static editor remains usable for configuration export and command inspection without the helper.
 
@@ -68,9 +68,9 @@ Compare profiles using the same firmware source, configuration, sample sequence 
 
 ### Visible status and stage logs
 
-Always show the current operation, a textual status, elapsed time, and a stage timeline. The stages are prerequisite checks, configuration snapshot, compilation, artifact validation, device detection and selection, transfer, verification, and reboot request. Setup/toolchain updates have their own timeline. Each stage is Pending, Running, Succeeded, Failed, Cancelled, or Skipped with a reason. Do not rely on colour alone. Flash success requires successful verification; reboot requested and observed running firmware are separate facts.
+Always show the current operation, a textual status, elapsed time, and a stage timeline. The stages are prerequisite checks, configuration snapshot, compilation, artifact validation, device detection and selection, transfer, verification, and reboot request. Setup/toolchain installation runs through the explicit PowerShell bootstrap with terminal progress; no browser Setup endpoint is exposed. Each job stage is Pending, Running, Succeeded, Failed, Cancelled, or Skipped with a reason. Do not rely on colour alone. Flash success requires successful verification; reboot requested and observed running firmware are separate facts.
 
-Each operation has a fixed typed stage layout. Build shows Prerequisites, Snapshot, Compilation and Validation. Flash shows Prerequisites, Validation, Device selection, Transfer, Verification and Reboot. Setup shows Check, Download, Verify, Install and Validate, with bounded per-tool substeps. A prerequisite check or device scan has its own single stage. Only stages belonging to that operation appear; interrupted pending stages show Skipped with a reason.
+Each operation has a fixed typed stage layout. Build shows Prerequisites, Snapshot, Compilation and Validation. Flash shows Prerequisites, Validation, Device selection, Transfer, Verification and Reboot. The retained typed Setup model defines Check, Download, Verify, Install and Validate with bounded per-tool substeps, but is not a deployed HTTP operation. A prerequisite check or device scan has its own single stage. Only stages belonging to that operation appear; interrupted pending stages show Skipped with a reason.
 
 Every stage emits timestamped start, meaningful progress, and terminal records with a job ID and stage ID. Stream bounded stdout/stderr and structured tool results into the stage's expandable log, with filtering, copy and export. Show a truncation/dropped-record count when bounds are reached. Preserve failed and completed jobs through navigation and browser reconnection while the helper remains alive; an expired or restarted helper session is explicitly unavailable, not a successful job. Redact session capabilities and avoid dumping unrelated environment variables.
 

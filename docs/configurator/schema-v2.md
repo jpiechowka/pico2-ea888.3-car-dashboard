@@ -1,7 +1,7 @@
 # Configuration v2 contract
 
 Historical wire contract, retained for explicit migration. New exports and
-firmware use [current v5](configuration-format.md#current-v5-contract).
+firmware use [current v6](configuration-format.md#current-v6-contract).
 
 Version 2 added gauges and RGB565 palettes. The catalogue remains version 1;
 source, decoder, fuel, warning and placement contracts in [v1](schema-v1.md)
@@ -62,8 +62,8 @@ This does not use Serde defaults to reinterpret an old binary layout.
 At the v2 stage, the firmware parser accepted only v2. An unsupported or damaged embedded file
 takes the existing fault/default path. The stage
 compiler accepted v1 input, validated and upgraded it to canonical v2 bytes.
-The current compiler explicitly migrates v1/v2/v3/v4 to v5; current firmware
-accepts only v5. Captures
+The current compiler explicitly migrates v1 through v5 to v6; current firmware
+accepts only v6. Captures
 retain the original input and its hash plus the normalized/embedded hash;
 they independently compile the frozen input and require byte equality.
 

@@ -67,6 +67,7 @@ Keep the existing `pico2` package, path and command identifiers compatible. Use 
 | `crates/dashboard-startup-tools/` | PNG/GIF/sprite conversion and bounded worker contracts |
 | `crates/dashboard-build-profiles/` | Common clock/profile definitions and validation |
 | `crates/dashboard-helper-protocol/` | Typed Studio/helper messages |
+| `crates/dashboard-provenance/` | Host-only bounded source/archive provenance verification |
 | `firmware/pico2/src/` | Hardware adapters, tasks, ownership and runtime integration |
 | `firmware/vendor/` | Reviewed HAL/radio/BLE source, radio binaries and provenance |
 | `configurator/` | Leptos Rust/Wasm editor, browser storage and shared preview |
@@ -126,10 +127,22 @@ the table is a starting point, not a replacement for those gates.
 
 From the repository root, Studio uses `./configurator/Studio.ps1 -Setup`, then
 `-Check` and `-Serve`. Run `-Helper` separately for Build & Flash. Setup explicitly
-installs prerequisites; a browser-only page cannot run Cargo. See
+installs prerequisites; PowerShell 7.2+, Python 3.11+ on PATH, rustup and the
+MSVC/SDK prerequisites must be installed first. A browser-only page cannot run Cargo. See
 [setup](docs/configurator/setup-tools.md) and [building](docs/configurator/building.md).
 `cargo run` in the firmware context can invoke the hardware flashing runner;
 use `cargo build` for compilation without device operations.
+
+- Maintained Python uses hash-locked Ruff formatting/linting and strict Mypy for
+  the selected production boundary modules in `pyproject.toml`. Preserve typing
+  and regression coverage when changing those boundaries. Deferred instruction
+  research is linted, but not claimed to be fully typed or proved.
+- Reuse `host/scripts/owned_process.py` for bounded Python tool execution. Keep
+  process-tree ownership, output limits, diagnostic tails and cancellation cleanup
+  coherent across wrappers. Bind supervisor source into benchmark identity.
+- Linux support is optional at this stage: maintain browser editing, portable
+  contracts/CI and manual build guidance. The native helper/launcher remain Windows
+  only; Linux compilation is not USB or physical-flashing qualification.
 
 ## Hardware, concurrency and memory
 

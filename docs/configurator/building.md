@@ -271,7 +271,7 @@ preservation. Host owner tests cover tighter freshness and dwell gaps, configure
 poll/retry intervals, transport epochs, maintenance, reset and unqualified fallback.
 ## Native prerequisite checks and explicit setup
 
-Run from the repository root in PowerShell 7:
+Run from the repository root in PowerShell 7.2+ (`pwsh`):
 
 ```powershell
 .\configurator\Studio.ps1 -Check
@@ -288,8 +288,9 @@ into `target/studio-helper/debug`, and fetches the editor's locked dependencies.
 Setup may download and compile. It also verifies and installs Binaryen 133 and
 official USB-enabled picotool 2.3.1 under `target/configurator-tools/bin` from
 pinned release archives. It ends with Check; exit 4 means a listed manual
-prerequisite remains. Python and Visual Studio Build Tools/Windows SDK require
-manual installation. The legacy tracked `firmware/tools/picotool.exe` is
+prerequisite remains. Python 3.11+ must be on PATH before Setup; it supervises
+tool processes. Python and Visual Studio Build Tools/Windows SDK require manual
+installation. The legacy tracked `firmware/tools/picotool.exe` is
 unchanged; the native helper uses the ignored tool directory. See
 [explicit tool setup](setup-tools.md) for release hashes and installation checks.
 
@@ -324,8 +325,10 @@ non-inheritable Windows Job Object at process creation, with no breakaway flag,
 a 15-second deadline and 64 KiB raw output limit per stream. Both pipes are
 polled and drained through the existing log sanitizer; errors terminate the
 owned tree, wait for zero active processes (up to five seconds), and reap the
-child. These bounds apply to the check probes, not the legacy interactive
-PowerShell Setup or static Trunk build/serve processes. The runner does not
+child. These bounds apply to native check probes. Explicit PowerShell Setup uses
+the separate shared supervisor, 30-minute installation limits and 8 MiB streams;
+its release downloads and staging have their own bounds. Static Trunk build/serve
+remains foreground user-owned work. The native probe runner does not
 claim an explicit Windows HANDLE_LIST policy for std's inherited standard IO.
 No device operation is run by any check.
 

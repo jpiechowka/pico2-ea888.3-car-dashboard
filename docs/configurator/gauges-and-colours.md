@@ -34,8 +34,8 @@ Invalid colours remain visible for diagnosis with safe geometry; invalid rules
 or geometry never become the accepted device configuration. Save/export remain
 blocked until repaired or discarded. Use the stress-value selector to inspect
 channel endpoints, extreme digit widths and unavailable AFR. Export JSON for
-editing and `.eav` for a firmware build. Historical v1/v2/v3/v4 files migrate to the
-current v5 schema. Native landscape/portrait grids and per-screen overrides are
+editing and `.eav` for a firmware build. Historical v1 through v5 files migrate to the
+current v6 schema. Native landscape/portrait grids and per-screen overrides are
 described in [screen orientation](orientation.md). See
 [advanced controls](advanced-controls.md) for smoothing, history, markers,
 bands and warning acknowledgment.

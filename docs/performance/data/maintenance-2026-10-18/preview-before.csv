@@ -1,0 +1,16 @@
+preview,small,bytes=1012,sha256=4b28cce2ad4fe1a6fead1ea35df6cc852341fd288ff057ee5541b745a8b67b9d
+preview,small,0,128,69750.000
+preview,small,1,128,75550.781
+preview,small,2,128,79428.906
+preview,small,3,128,73103.906
+preview,small,4,128,70521.875
+preview,small,5,128,73053.906
+preview,small,6,128,70467.969
+preview,maximum,bytes=524288,sha256=6e8cc35a33e7000ec3ccacf8ecbe31a830d1dffd70353879c39ebd80b4420e0b
+preview,maximum,0,128,4289043.750
+preview,maximum,1,128,4262160.156
+preview,maximum,2,128,4221943.750
+preview,maximum,3,128,4238287.500
+preview,maximum,4,128,4106833.594
+preview,maximum,5,128,4190082.031
+preview,maximum,6,128,3963999.219

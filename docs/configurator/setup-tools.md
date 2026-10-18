@@ -1,7 +1,16 @@
 # Explicit Windows tool setup
 
-Run `configurator/Studio.ps1 -Setup` on Windows 10/11 x64. Setup installs the
-pinned Rust toolchain/targets, Trunk and wasm-bindgen, then verifies and installs:
+Run `configurator/Studio.ps1 -Setup` on Windows 10/11 x64 in **PowerShell 7.2 or
+newer** (`pwsh`, preferably a currently supported release). Windows PowerShell
+5.1 is rejected before setup performs I/O. Install **Python 3.11 or newer on PATH**,
+rustup and Visual Studio C++ Build Tools with Windows SDK first. Python owns
+bounded child-process execution during setup; it is not installed by this script.
+[Install PowerShell](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell-on-windows),
+[Python for Windows](https://www.python.org/downloads/windows/),
+[Rust installation](https://www.rust-lang.org/tools/install).
+
+Setup installs the pinned Rust toolchain/targets, Trunk and wasm-bindgen, then
+verifies and installs:
 
 | Tool | Official release | Installed executable |
 | --- | --- | --- |
@@ -17,10 +26,18 @@ help run before publishing the executables. No USB command, driver installer,
 firmware flashing, or global PATH modification occurs.
 
 `-Check`, normal build and serving do not invoke release installation. Setup's
-remaining checker results may require Python or Visual Studio Build Tools with
-C++ and Windows SDK; these system installers remain explicit manual actions.
-`configurator/Test-SetupTools.ps1` covers PowerShell parsing and cached-package
-hash/size rejection without downloading tools or accessing USB.
+final check reports any missing MSVC/SDK components. A checkout-wide setup lock
+rejects simultaneous installers. Downloads have a 120-second deadline and
+128 MiB bound, use unique temporary files and are checked before cache admission.
+Extraction/version checks use isolated staging; executable replacements are
+atomic individually, not one transaction for the pair. A failed run can be
+retried explicitly. If a cached archive fails its hash, remove only the reported
+archive and retry; no unverified executable is installed.
+
+Tool subprocesses use the shared owned-process supervisor with stream limits,
+deadlines and descendant cleanup. `configurator/Test-SetupTools.ps1` covers the
+legacy-shell guard, locking, interrupted downloads, cached-package rejection and
+failed publication without downloading tools or accessing USB.
 
 The legacy tracked `firmware/tools/picotool.exe` remains unchanged at
 2.2.0-a4 (6,121,118 bytes; SHA256
@@ -35,7 +52,7 @@ Updating prerequisites does not rewrite the repository's tracked binaries.
 | Work | Host requirements and scope |
 | --- | --- |
 | Edit an already served Studio build | A browser with WebAssembly and browser storage. No Rust compiler is needed on that browser's computer. Local browser storage is origin-specific; export a project for a portable backup. |
-| Build/serve Studio and run the native helper | The supplied launcher supports Windows 10/11 x64. Install rustup, Visual Studio C++ Build Tools with Windows SDK, and Python 3.11 or newer on PATH. Explicit `-Setup` downloads the pinned Rust toolchain, ARM/Wasm targets and editor/helper tools. Windows `tar.exe` is needed for the Binaryen archive. |
+| Build/serve Studio and run the native helper | The supplied launcher supports Windows 10/11 x64 and PowerShell 7.2+. Install rustup, Visual Studio C++ Build Tools with Windows SDK, and Python 3.11+ on PATH before Setup. Explicit `-Setup` downloads the pinned Rust toolchain, ARM/Wasm targets and editor/helper tools. Windows `tar.exe` is needed for the Binaryen archive. |
 | Build and validate firmware | The same native tools, plus writable disk space for frozen source, compilation and retained artifacts. Practical image checks run before artifact admission. A successful build/download does not prove device transfer, reboot or hardware operation. |
 | Experimental instruction proof | A separate research workload with substantially different resource behavior. It is not a prerequisite for normal practical image checks. |
 
@@ -43,6 +60,52 @@ For browser-to-helper use, serve Studio on `http://127.0.0.1:8080` or
 `http://localhost:8080` on the helper's computer. The helper listens on loopback
 port 8765 and accepts those two origins. A different `-Port` can serve the editor,
 but does not change the helper's origin allowlist.
+
+## Linux: editor and development checks
+
+Linux support is deliberately partial. A modern browser can edit an already
+served Studio build, including previews, local saves and project export. CI on
+Ubuntu also builds the Wasm app, exercises browser failures, runs Rust/Python
+tests and cross-compiles firmware. These checks do not qualify Arch/Fedora
+installation, USB drivers or physical flashing. **The native helper and
+PowerShell launcher still require Windows**; Linux pure-helper tests do not
+change that boundary. Export a complete project and use Windows for the supported
+Build & Flash workflow.
+
+For a manual development setup, install a C/C++ build toolchain, Git, Python 3.11+
+and rustup. Example system-package commands for recent distributions:
+
+```sh
+# Arch Linux
+sudo pacman -S --needed base-devel git python rustup
+# Fedora (use this instead of the Arch command)
+sudo dnf install gcc gcc-c++ make git python3 rustup
+```
+
+Package availability varies by release. Use the official
+[Arch rustup package](https://archlinux.org/packages/extra/x86_64/rustup/),
+[Fedora package](https://packages.fedoraproject.org/pkgs/rustup/rustup/) or
+[rustup installation instructions](https://rust-lang.github.io/rustup/installation/index.html).
+From the repository root, install the dated pin in `rust-toolchain.toml`, then
+build the editor using the same CLI versions as CI:
+
+```sh
+rustup toolchain install nightly-2026-10-18 --profile minimal --component rustfmt,clippy,llvm-tools-preview --target wasm32-unknown-unknown,thumbv8m.main-none-eabihf
+cargo install trunk --version 0.21.14 --locked
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
+cd configurator
+cargo fetch --locked
+trunk serve --release --locked --address 127.0.0.1 --port 8080
+```
+
+Open `http://127.0.0.1:8080`; stop this foreground server with Ctrl+C. To check
+without serving, use `trunk build --release --locked`. See the
+[official Trunk guide](https://trunk-rs.github.io/trunk/) for platform tooling.
+No Node/npm application toolchain is required. The default locked Trunk build
+uses Rustls; alternate native-TLS builds can require additional system libraries.
+For firmware compilation only, enter `firmware/` and run the documented
+`cargo build` commands. Do not substitute `cargo run`, which can invoke a
+hardware runner. No Linux hardware-validation claim is made.
 
 ### Disk space
 
