@@ -176,7 +176,10 @@ fn maximum_clock_and_zero_duration_have_defined_results() {
     let r = window.report(u64::MAX, InputCounters::ZERO).unwrap().unwrap();
     assert_eq!(r.metrics[3].max, Some(0));
     assert!(window.report(u64::MAX, InputCounters::ZERO).unwrap().is_none());
-    assert!(core::mem::size_of::<FrameWindow>() < 38000);
+    // Leave room for radio resources while retaining every frame metric.
+    let bytes = core::mem::size_of::<FrameWindow>();
+    println!("FrameWindow static bytes: {bytes}");
+    assert!(bytes <= 29000);
 }
 
 #[test]

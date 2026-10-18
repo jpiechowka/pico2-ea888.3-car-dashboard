@@ -48,6 +48,42 @@ critical sections. A Watch copies the compact report; main exports outside the
 transfer operation. Sequence gaps expose overwritten reports. The independent
 64-record raw ring is not the source of these distributions.
 
+### Exact counter packing
+
+Histogram counters retain their full `u32` range. Each bin stores its low 24
+bits in a `u16` and a `u8`; a 156-byte bitset stores the high bytes as unary
+runs terminated by zero bits. Since all accepted bin counts together cannot
+exceed `u32::MAX`, the sum of their high bytes is at most 255. Thus even 976
+bin delimiters plus 255 one bits fit in the fixed 1248-bit bitset. Overflow
+samples use the existing separate counter. This proof assumes no frame rate,
+clock increment, maximum timing value or early window reset.
+
+Ordinary recording updates the low counter directly. A 24-bit carry inserts
+one bit with at most 39 word scans, 31 zero selections and 39 word shifts. At
+most 255 such carries occur between clears. Quantiles decode at most 976 bins
+and 255 high bits; the three summary percentiles share one forward scan.
+All work remains outside locks, with no allocation or temporary histogram.
+Count exhaustion, rejection saturation, exact extrema, inclusive bounds and
+the versioned export remain unchanged, including idle gaps spanning `u64`.
+
+Host regression checks bound `FrameWindow` to 29000 bytes; the current Windows
+layout is 28440 bytes. Linked ARM images, stack allowances and the two fixed
+framebuffers require their separate image checks. The seeded differential
+tests retain the dense implementation from `168cb0d7` and cover every bin's
+carry positions, full high capacity, counter exhaustion, compact overflow,
+all percentile inputs and full-range boundary/random streams.
+
+The 2026-10-18 matched policy-2 captures `ble_ram_before` and
+`ble_ram_after_scan` use nightly-2026-10-16, unchanged workloads and 30 raw
+samples per case on `ea888-workstation-01`. Median nine-metric recording cost
+was 47.932 ns before and 54.300 ns after (+13.29%); summary/reset of 1500 frames
+was 1305.789 ns before and 1088.874 ns after (-16.61%). Both pass the explicit
+20% host comparison budget. The initial `ble_ram_after` capture retained three
+scans and regressed summary cost to 1964.777 ns; that evidence is retained.
+These are host observations, not target cycle bounds or physical FPS. The
+finite carry path is covered by seeded correctness tests and the work bound
+above; it is not exercised by these short benchmark workloads.
+
 ## Versioned export and collector
 
 RTT writes are nonblocking and may lose data. The shared Rust encoder is also
