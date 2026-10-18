@@ -86,6 +86,7 @@ pub(super) async fn start_check(
     device_scan: bool,
     selected: Option<DeviceSummary>,
 ) -> Result<JobSummary, Error> {
+    let permit = state.reserve()?;
     let mut inner = idle(&state).await?;
     let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
     if let Some(selected) = &selected
@@ -141,6 +142,7 @@ pub(super) async fn start_check(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(spawn_worker(&state, move || {
+        let _permit = permit;
         let mut process = crate::process::ProcessContext::default();
         let report = if let Some(selected) = selected {
             serde_json::to_value(crate::device_inspection::inspect(
@@ -244,13 +246,19 @@ pub(super) async fn start_build(
     state: Arc<State>,
     request: ProjectBuildRequest,
 ) -> Result<JobSummary, Error> {
+    let permit = state.reserve()?;
+    let project = {
+        let inner = idle(&state).await?;
+        inner.project.clone().ok_or(Error::NotFoundOrUnavailable)?
+    };
+    let session = state.session.clone();
+    let acceptance_request = request.clone();
+    let (input, permit) =
+        tokio::task::spawn_blocking(move || (project.accepted(&session, &acceptance_request), permit))
+            .await
+            .map_err(|_| Error::InvalidState)?;
+    let input = input.map_err(|_| Error::Schema)?;
     let mut inner = idle(&state).await?;
-    let input = inner
-        .project
-        .as_ref()
-        .ok_or(Error::NotFoundOrUnavailable)?
-        .accepted(&state.session, &request)
-        .map_err(|_| Error::Schema)?;
     let id = JobId::new(random_hex::<16>().map_err(|_| Error::InvalidState)?)?;
     let result = inner.jobs.start(id.clone(), OperationKind::Build, request.retry_of)?;
     crate::terminal::event(false, id.as_str(), "Accepted project build started");
@@ -259,6 +267,7 @@ pub(super) async fn start_build(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(spawn_worker(&state, move || {
+        let _permit = permit;
         let mut process = crate::process::ProcessContext::default();
         let mut stage = prerequisite;
         let transition = |stage, state, reason| {
@@ -450,6 +459,7 @@ pub(super) async fn start_flash(
     state: Arc<State>,
     request: FlashRequest,
 ) -> Result<JobSummary, Error> {
+    let permit = state.reserve()?;
     let mut inner = idle(&state).await?;
     let artifact = inner
         .artifacts
@@ -487,6 +497,7 @@ pub(super) async fn start_flash(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(spawn_worker(&state, move || {
+        let _permit = permit;
         let mut process = crate::process::ProcessContext::default();
         let mut transition = |stage, status| {
             crate::terminal::event(false, id.as_str(), &format!("{stage:?}: {status:?}"));
@@ -600,6 +611,7 @@ pub(super) async fn start_cleanup(
     request: CleanupRequest,
     build: bool,
 ) -> Result<JobSummary, Error> {
+    let permit = state.reserve()?;
     request.validate()?;
     let mut inner = idle(&state).await?;
     // JobStore admission refuses every open job, including stopped-but-unclosed attempts.
@@ -610,6 +622,7 @@ pub(super) async fn start_cleanup(
     crate::process::reset_cancel();
     let worker_state = state.clone();
     inner.worker = Some(spawn_worker(&state, move || {
+        let _permit = permit;
         let process = crate::process::ProcessContext::default();
         let mut failure = None;
         let mut cancelled = false;

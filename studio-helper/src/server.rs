@@ -22,7 +22,7 @@ struct Inner {
     jobs: JobStore,
     cached: Value,
     devices: DeviceScanReport,
-    project: Option<crate::build_input::UploadedProject>,
+    project: Option<Arc<crate::build_input::UploadedProject>>,
     artifacts: Vec<crate::artifacts::Artifact>,
     inspections: std::collections::BTreeMap<DeviceId, DeviceInspection>,
     worker: Option<tokio::task::JoinHandle<()>>,
@@ -35,6 +35,7 @@ struct State {
     relay: crate::relay::Relay,
     inner: Mutex<Inner>,
     fatal: std::sync::atomic::AtomicBool,
+    activity: Arc<tokio::sync::Semaphore>,
 }
 fn random_hex<const N: usize>() -> Result<String, String> {
     let mut b = [0u8; N];
@@ -50,6 +51,7 @@ impl State {
             capability: random_hex::<32>()?,
             relay: crate::relay::Relay::new(),
             fatal: std::sync::atomic::AtomicBool::new(false),
+            activity: Arc::new(tokio::sync::Semaphore::new(1)),
             inner: Mutex::new(Inner {
                 jobs: JobStore::new(session.clone()),
                 devices: crate::devices::empty(session, "Device scan not run"),
@@ -61,6 +63,13 @@ impl State {
                 stopping: false,
             }),
         }))
+    }
+
+    fn reserve(&self) -> Result<tokio::sync::OwnedSemaphorePermit, Error> {
+        if self.fatal.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Error::InvalidState);
+        }
+        self.activity.clone().try_acquire_owned().map_err(|_| Error::Busy)
     }
 }
 fn summary(
@@ -74,6 +83,32 @@ fn summary(
         .jobs
         .poll(id, PollRequest { after: 0, limit: 1 })
         .map(|b| b.summary)
+}
+async fn read_build_storage(
+    state: Arc<State>,
+    read: impl FnOnce(&std::path::Path, &std::collections::BTreeSet<String>) -> Result<BuildStorage, String>
+    + Send
+    + 'static,
+) -> Result<BuildStorage, &'static str> {
+    let permit = state.reserve().map_err(|_| "BuildStorageBusy")?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let protected = {
+            let inner = state.inner.lock().map_err(|_| "BuildStorageUnavailable")?;
+            if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+                return Err("BuildStorageBusy");
+            }
+            inner
+                .artifacts
+                .iter()
+                .filter_map(|a| a.lease.as_ref())
+                .filter_map(|a| a.frozen.attempt_root().file_name()?.to_str().map(str::to_owned))
+                .collect()
+        };
+        read(&state.repo, &protected).map_err(|_| "BuildStorageQuarantined")
+    })
+    .await
+    .map_err(|_| "BuildStorageUnavailable")?
 }
 async fn dispatch(
     state: Arc<State>,
@@ -230,16 +265,29 @@ async fn dispatch(
             Ok(b) => b,
             Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "ProjectBodyBound", origin),
         };
+        let permit = match state.reserve() {
+            Ok(p) => p,
+            Err(e) => return store_error(e, origin),
+        };
+        let session = state.session.clone();
+        let (upload, _permit) = match tokio::task::spawn_blocking(move || {
+            (crate::build_input::UploadedProject::admit(session, bytes), permit)
+        })
+        .await
+        {
+            Ok((Ok(p), permit)) => (p, permit),
+            Ok((Err(_), _)) => return error(StatusCode::BAD_REQUEST, "InvalidConvertedProject", origin),
+            Err(_) => return error(StatusCode::SERVICE_UNAVAILABLE, "ProjectAdmissionUnavailable", origin),
+        };
         let mut inner = state.inner.lock().unwrap();
-        if inner.stopping || inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+        if inner.stopping
+            || state.fatal.load(std::sync::atomic::Ordering::SeqCst)
+            || inner.worker.as_ref().is_some_and(|w| !w.is_finished())
+        {
             return store_error(Error::Busy, origin);
         }
-        let upload = match crate::build_input::UploadedProject::admit(state.session.clone(), bytes) {
-            Ok(p) => p,
-            Err(_) => return error(StatusCode::BAD_REQUEST, "InvalidConvertedProject", origin),
-        };
         let result = serde_json::to_value(&upload.response).unwrap();
-        inner.project = Some(upload);
+        inner.project = Some(Arc::new(upload));
         return response(StatusCode::CREATED, result, origin);
     }
     if one(headers, "content-length").is_some_and(|l| l != "0") {
@@ -280,32 +328,23 @@ async fn dispatch(
             }
         }
         ("GET", "/api/v1/build-attempts") => {
-            let state = state.clone();
-            match tokio::task::spawn_blocking(move || {
-                // Serialize bounded metadata reads with admission, and do not race
-                // index replacement or DELETE handles in the active worker.
-                let inner = state.inner.lock().unwrap();
-                if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
-                    return Err("BuildStorageBusy");
-                }
-                let protected = inner
-                    .artifacts
-                    .iter()
-                    .filter_map(|a| a.lease.as_ref())
-                    .filter_map(|a| a.frozen.attempt_root().file_name()?.to_str().map(str::to_owned))
-                    .collect();
-                crate::build_storage::list(&state.repo, &protected).map_err(|_| "BuildStorageQuarantined")
-            })
-            .await
-            {
-                Ok(Ok(report)) => response(StatusCode::OK, json!(report), origin),
-                Ok(Err(reason)) => error(StatusCode::CONFLICT, reason, origin),
-                _ => error(StatusCode::CONFLICT, "BuildStorageUnavailable", origin),
+            match read_build_storage(state.clone(), crate::build_storage::list).await {
+                Ok(report) => response(StatusCode::OK, json!(report), origin),
+                Err(reason) => error(StatusCode::CONFLICT, reason, origin),
             }
         }
         ("GET", "/api/v1/flash-attempts") => {
+            let permit = match state.reserve() {
+                Ok(p) => p,
+                Err(e) => return store_error(e, origin),
+            };
             let repo = state.repo.clone();
-            match tokio::task::spawn_blocking(move || crate::flash_intent::history(&repo)).await {
+            match tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                crate::flash_intent::history(&repo)
+            })
+            .await
+            {
                 Ok(Ok(records)) => response(StatusCode::OK, json!(records), origin),
                 _ => error(StatusCode::CONFLICT, "FlashHistoryUnavailable", origin),
             }
@@ -536,6 +575,45 @@ async fn serve_async(state: Arc<State>) -> Result<(), String> {
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn slow_storage_read_does_not_hold_status_owner() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let reader = tokio::spawn(read_build_storage(state.clone(), move |_, _| {
+            let _ = entered.send(());
+            let _ = wait.recv_timeout(Duration::from_secs(3));
+            Err("injected read failure".into())
+        }));
+        ready.await.unwrap();
+        let available = state.inner.try_lock().is_ok();
+        assert!(matches!(state.reserve(), Err(Error::Busy)));
+        let request = Request::builder()
+            .uri("/api/v1/session")
+            .header("host", AUTHORITY)
+            .header("origin", ORIGINS[0])
+            .header("x-studio-capability", &state.capability)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), dispatch(state.clone(), request))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        // Dropping a timed-out HTTP future cannot release a blocking reader's
+        // permit. A replacement request stays bounded until the real work ends.
+        reader.abort();
+        assert!(reader.await.unwrap_err().is_cancelled());
+        assert!(matches!(state.reserve(), Err(Error::Busy)));
+        release.send(()).unwrap();
+        let _permit = tokio::time::timeout(Duration::from_secs(1), state.activity.acquire())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(available, "filesystem work must not hold the status owner mutex");
+    }
+    #[tokio::test]
     async fn cleanup_requires_authority_and_a_closed_operation() {
         let state = State::new(std::env::current_dir().unwrap()).unwrap();
         let body = serde_json::json!({"attempts":["1".repeat(32)]}).to_string();
@@ -753,7 +831,7 @@ mod tests {
             options: BuildOptions::default(),
             retry_of: None,
         };
-        state.inner.lock().unwrap().project = Some(project);
+        state.inner.lock().unwrap().project = Some(Arc::new(project));
         request.project_sha256 = Sha256::new("0".repeat(64)).unwrap();
         assert_eq!(
             start_build(state.clone(), request.clone()).await.unwrap_err(),
@@ -813,7 +891,7 @@ mod tests {
             options: BuildOptions::default(),
             retry_of: None,
         };
-        state.inner.lock().unwrap().project = Some(upload);
+        state.inner.lock().unwrap().project = Some(Arc::new(upload));
         let request = Request::builder()
             .uri("/api/v1/builds")
             .method("POST")
