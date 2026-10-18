@@ -121,8 +121,11 @@ pub fn restore(ui: Ui) {
                 }
             }
             Err(_) => {
-                ui.notice
-                    .set("Complete-project browser storage is unavailable. Export .eavp to keep your work.".into());
+                ui.notice.set(
+                    "Complete-project browser storage is unavailable or busy. Close older Studio tabs and retry Save; \
+                     export .eavp to keep your work."
+                        .into(),
+                );
                 ui.storage_read_outcome(
                     StorageArea::Draft,
                     Err(StorageIssue::Failure(StorageFailure::Unavailable)),
@@ -179,10 +182,8 @@ async fn write(
             }
         }
     });
-    get.set_onsuccess(Some(read.as_ref().unchecked_ref()));
+    let _read = super::idb::SuccessHandler::new(get, read);
     let completed = settled(&tx).await;
-    get.set_onsuccess(None);
-    drop(read);
     if completed.is_err() && outcome.get() == WriteOutcome::Written {
         outcome.set(WriteOutcome::Failed);
     }
@@ -264,8 +265,8 @@ pub fn save(
                     let _ = e.acknowledge_save(token, Err(StorageFailure::Unavailable));
                 });
                 ui.notice.set(
-                    "Complete project could not be saved in this browser. Export .eavp to preserve startup and \
-                     original artwork."
+                    "Complete project save could not be confirmed. Export .eavp first, close older Studio tabs, then \
+                     reload before replacing stored work. Export preserves startup and original artwork."
                         .into(),
                 );
                 ui.storage_outcome(

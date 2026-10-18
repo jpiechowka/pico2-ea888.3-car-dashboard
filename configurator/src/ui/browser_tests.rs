@@ -75,6 +75,8 @@ pub(super) async fn progress(label: &str) {
     let _ = JsFuture::from(web_sys::window().unwrap().fetch_with_str_and_init("/__progress", &init)).await;
 }
 async fn run(ui: Ui) -> Result<(), JsValue> {
+    progress("RUN IDB blocked upgrade and retry").await;
+    idb::browser_cases().await?;
     progress("RUN IDB abort").await;
     // A successful request followed by abort must never masquerade as a commit.
     let db = idb::database().await?;

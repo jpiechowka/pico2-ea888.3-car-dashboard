@@ -91,22 +91,76 @@ async fn owner() -> Result<String, JsValue> {
     JsFuture::from(ready).await?;
     Ok(id)
 }
+struct LockWait {
+    controller: web_sys::AbortController,
+    retired: Rc<std::cell::Cell<bool>>,
+}
+impl Drop for LockWait {
+    fn drop(&mut self) {
+        self.retired.set(true);
+        self.controller.abort();
+    }
+}
 pub async fn locked<T: 'static>(operation: impl Future<Output = Result<T, JsValue>> + 'static) -> Result<T, JsValue> {
+    locked_with_timeout(operation, super::idb::DEADLINE_MS).await
+}
+async fn locked_with_timeout<T: 'static>(
+    operation: impl Future<Output = Result<T, JsValue>> + 'static,
+    timeout_ms: i32,
+) -> Result<T, JsValue> {
     let manager = locks()?;
+    let controller = web_sys::AbortController::new()?;
+    let retired = Rc::new(std::cell::Cell::new(false));
+    let _wait = LockWait {
+        controller: controller.clone(),
+        retired: retired.clone(),
+    };
+    let options = js_sys::Object::new();
+    js_sys::Reflect::set(&options, &"signal".into(), controller.signal().as_ref())?;
     let result = Rc::new(RefCell::new(None));
     let output = result.clone();
-    let callback = Closure::once_into_js(move |_: JsValue| -> js_sys::Promise {
+    let expired = retired.clone();
+    let timer = Rc::new(RefCell::new(Some(super::idb::Deadline::new(timeout_ms, move || {
+        expired.set(true);
+        controller.abort();
+    })?)));
+    let acquired_timer = timer.clone();
+    let mut operation = Some(operation);
+    let callback = Closure::<dyn FnMut(JsValue) -> js_sys::Promise>::new(move |_| {
+        // The deadline applies to acquisition only. An acquired operation keeps
+        // the lock until its transaction reports completion or rollback.
+        acquired_timer.borrow_mut().take();
+        if retired.get() {
+            return js_sys::Promise::resolve(&JsValue::UNDEFINED);
+        }
+        let operation = operation.take();
+        let output = output.clone();
         future_to_promise(async move {
-            *output.borrow_mut() = Some(operation.await);
-            Ok(JsValue::UNDEFINED)
+            if let Some(operation) = operation {
+                *output.borrow_mut() = Some(operation.await);
+                Ok(JsValue::UNDEFINED)
+            } else {
+                Err("Browser storage lock invoked twice".into())
+            }
         })
     });
     let promise = method(&manager, "request")?
-        .call2(&manager, &LOCK.into(), &callback)?
+        .call3(&manager, &LOCK.into(), &options, callback.as_ref())?
         .dyn_into::<js_sys::Promise>()?;
-    JsFuture::from(promise).await?;
+    // Abort is processed on the browser lock queue. Keep the callback alive
+    // until that request settles, even if the Rust waiter is dropped first.
+    let cleanup = promise.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        let _callback = callback;
+        let _timer = timer;
+        let _ = JsFuture::from(cleanup).await;
+    });
+    JsFuture::from(promise).await.map_err(|_| {
+        JsValue::from_str("Browser storage lock unavailable or timed out; close other Studio tabs and retry")
+    })?;
     result.borrow_mut().take().ok_or(JsValue::NULL)?
 }
+
 fn register(reference: Arc<OriginalReference>) -> Arc<OriginalReference> {
     REFERENCES.with(|refs| {
         let mut refs = refs.borrow_mut();
@@ -404,6 +458,33 @@ pub(super) async fn browser_cases() -> Result<(), JsValue> {
         .call2(&manager, &LOCK.into(), &callback)?
         .unchecked_into::<js_sys::Promise>();
     JsFuture::from(ready).await?;
+    let expired_entered = Rc::new(std::cell::Cell::new(false));
+    let expired_observed = expired_entered.clone();
+    if locked_with_timeout(
+        async move {
+            expired_observed.set(true);
+            Ok(())
+        },
+        30,
+    )
+    .await
+    .is_ok()
+    {
+        return Err("queued origin lock did not expire".into());
+    }
+    let cancelled_entered = Rc::new(std::cell::Cell::new(false));
+    let cancelled_observed = cancelled_entered.clone();
+    {
+        use std::future::Future;
+        let mut cancelled = std::pin::pin!(locked(async move {
+            cancelled_observed.set(true);
+            Ok(())
+        }));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        if !cancelled.as_mut().poll(&mut cx).is_pending() {
+            return Err("blocked lock completed synchronously".into());
+        }
+    }
     let entered = Rc::new(std::cell::Cell::new(false));
     let observed = entered.clone();
     wasm_bindgen_futures::spawn_local(async move {
@@ -423,6 +504,9 @@ pub(super) async fn browser_cases() -> Result<(), JsValue> {
     release.unwrap().call0(&JsValue::NULL)?;
     JsFuture::from(holding).await?;
     super::browser_tests::until(|| entered.get()).await;
+    if expired_entered.get() || cancelled_entered.get() {
+        return Err("expired origin lock ran after its owner released".into());
+    }
     frame.remove();
     // Production origin lock and lifetime lock, real IDB pins and GC.
     locked(async {
