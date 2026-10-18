@@ -64,7 +64,7 @@ cut USB power or a separately powered Bluetooth dongle.
 
 After the merge, update a clean checkout from `master`. Keep local evidence out
 of commits. The shared crates, firmware, host, configurator and native helper use
-the pinned `nightly-2026-10-16`; a newer
+the pinned `nightly-2026-10-18`; a newer
 compiler requires rerunning the checks, including the exact flash-code gates.
 
 Run this PowerShell block. It builds only, without contacting the Pico:

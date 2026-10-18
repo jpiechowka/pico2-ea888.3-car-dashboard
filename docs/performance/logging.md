@@ -55,10 +55,10 @@ normal reconnect and history eviction. They do not validate radio hardware timin
 
 ## Locked dependency review
 
-For defmt-rtt 1.3.0, ordinary writes ignore host-selected blocking flags with
-`disable-blocking-mode`. Its [exact channel implementation](https://github.com/knurling-rs/defmt/blob/9087a689a32aaae57c7ec2058d15d9c98c12bc81/firmware/defmt-rtt/src/channel.rs)
+For the current defmt-rtt 1.3.1, ordinary writes ignore host-selected blocking flags with
+`disable-blocking-mode`. Its [exact channel implementation](https://github.com/knurling-rs/defmt/blob/719491ca3529abd07205165b9b10e4d988552bc2/firmware/defmt-rtt/src/channel.rs)
 still permits `flush()` to wait indefinitely. No application path may call it.
-The [encoder implementation](https://github.com/knurling-rs/defmt/blob/9087a689a32aaae57c7ec2058d15d9c98c12bc81/firmware/defmt-rtt/src/lib.rs)
+The [encoder implementation](https://github.com/knurling-rs/defmt/blob/719491ca3529abd07205165b9b10e4d988552bc2/firmware/defmt-rtt/src/lib.rs)
 uses IPSR alone with `drop-on-contention`: both cores in thread mode share IPSR0,
 which can alias ownership after a failed CAS. Keep that optional feature off.
 Default encoding uses Embassy RP's core-aware global critical section.
@@ -69,13 +69,16 @@ rejects aliases/imports as well as direct flush calls; it is not a complete Rust
 parser or a proof about future dependencies. Legal grouped and root-qualified
 import bypasses have explicit regression fixtures.
 
-The published archives and all 199 original files of defmt-rtt 1.3.0, defmt and
+The original audit checked published archives and all 199 original files of defmt-rtt 1.3.0, defmt and
 macros 1.1.1, panic-probe 1.0.0, critical-section 1.2.0 and cortex-m 0.7.9 were checked
 against lock checksums. Release/migration evidence and primary discussions were
 checked alongside source: [RTT PR915](https://github.com/knurling-rs/defmt/pull/915),
 [1051](https://github.com/knurling-rs/defmt/issues/1051#issuecomment-4313075319),
 [PR1053](https://github.com/knurling-rs/defmt/pull/1053), and
 [panic source](https://github.com/knurling-rs/defmt/blob/f6decae6e09d1216aff052aa0733a6b5e632a100/firmware/panic-probe/src/lib.rs).
+The 18 October maintenance pass re-read the locked 1.3.1 channel/encoder and
+confirmed this policy with defmt 1.2.0. The versions and file count above describe
+the historical audit, not the current dependency graph.
 Panic-probe print-defmt does not flush, reset, or populate the application slot.
 Reporting is best effort; watchdog recovery applies after watchdog initialization.
 
@@ -83,7 +86,11 @@ Nonblocking RTT can overwrite unread bytes and partial encoded frames. It expose
 no loss counter; application counters cannot measure this. No universal wait-free
 or guaranteed panic-print claim follows from this configuration.
 
-## Verification and cost
+## Historical verification and cost
+
+These measurements describe the original logging stage. Current image limits and
+BLE resource evidence are in [memory layout](memory-layout.md); rerun comparisons
+on matched toolchains before attributing a change to logging.
 
 Eight new shared logging tests cover capacity/UTF-8, sequence exhaustion, saturated
 counters, busy history, protected faults, scroll eviction, simultaneous producers,

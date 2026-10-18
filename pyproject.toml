@@ -11,7 +11,7 @@ select = ["E4", "E7", "E9", "F", "B006", "B012", "B018", "B019", "B021", "B024",
 [tool.ruff.format]
 line-ending = "lf"
 
-# Start with the production binary-reader and reproducibility boundaries. Legacy
+# Type production binary-reader, process and reproducibility boundaries. Legacy
 # instruction-proof modules remain linted; they are not claimed to be fully typed.
 [tool.mypy]
 python_version = "3.11"
@@ -21,4 +21,7 @@ files = [
     "firmware/scripts/elf_image.py",
     "host/scripts/source_inventory.py",
     "host/scripts/benchmark_environment.py",
+    "host/scripts/owned_process.py",
+    "firmware/scripts/check_vendor.py",
+    "firmware/scripts/check_radio_vendor.py",
 ]
