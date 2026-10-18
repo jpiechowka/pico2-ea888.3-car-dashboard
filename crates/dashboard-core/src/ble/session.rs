@@ -225,6 +225,9 @@ impl Session {
         if self.active.is_some() {
             return Err(Error::Busy);
         }
+        if self.sequence == u64::MAX {
+            return self.fail(Error::Exhausted);
+        }
         if let Command::Read(_) = command {
             if self.mode != Mode::SyntheticPeer {
                 return Err(Error::Unqualified);
@@ -950,5 +953,42 @@ mod tests {
         session.connect(1, 0).unwrap();
         session.begin(Command::Identity, 0, 100).unwrap();
         assert_eq!(session.notify(1, 1, b"ELM327 v2.3\r>", 1), Err(Error::Unexpected));
+    }
+
+    #[test]
+    fn notification_counter_exhaustion_blocks_next_transmission() {
+        let mut session = Session::new(Mode::AdapterOnly);
+        session.connect(1, 0).unwrap();
+        session.sequence = u64::MAX - 1;
+        let tx = session.begin(Command::Identity, 0, 100).unwrap();
+        session.sent(tx.token, 0).unwrap();
+        session.notify(1, u64::MAX, b"ELM327 v2.3\r>", 1).unwrap();
+        assert_eq!(session.begin(Command::Identity, 2, 100).unwrap_err(), Error::Exhausted);
+    }
+
+    #[test]
+    fn voltage_preserves_big_endian_millivolts_and_negative_width_is_exact() {
+        let (mut session, seq) = initialized();
+        let tx = session
+            .begin(Command::Read(QualifiedRead::synthetic_obd(0x42).unwrap()), 1, 500)
+            .unwrap();
+        assert_eq!(tx.bytes.as_slice(), b"0201420000000000\r");
+        session.sent(tx.token, 2).unwrap();
+        let done = session
+            .notify(1, seq + 1, b"7E8 8 04 41 42 35 E8 00 00 00\r>", 3)
+            .unwrap()
+            .unwrap();
+        let Response::Diagnostic(data) = done.response else {
+            panic!("missing voltage")
+        };
+        assert_eq!(
+            crate::diagnostics::obd::decode(0x42, &data[2..]).unwrap(),
+            crate::diagnostics::obd::Decoded::Quantity(crate::samples::Quantity::ModuleVolts(13.8))
+        );
+        for bytes in [b"7E8 4 03 7F 22 78\r>".as_slice(), b"7E8 5 04 7F 01 78 00\r>"] {
+            let (mut session, seq) = initialized();
+            coolant(&mut session);
+            assert_eq!(session.notify(1, seq + 1, bytes, 3), Err(Error::Reply));
+        }
     }
 }

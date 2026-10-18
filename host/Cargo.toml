@@ -27,3 +27,7 @@ critical-section = { version = "=1.2.0", features = ["std"] }
 [[bench]]
 name = "dashboard_perf"
 harness = false
+
+[[bench]]
+name = "ble_protocol"
+harness = false

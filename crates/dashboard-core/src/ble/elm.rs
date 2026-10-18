@@ -62,6 +62,9 @@ impl Parser {
 }
 
 pub fn frame(line: &[u8]) -> Result<CanFrame, Error> {
+    if line.len() > LINE_CAPACITY {
+        return Err(Error::Overflow);
+    }
     let mut parts = line.split(|b| *b == b' ').filter(|part| !part.is_empty());
     let header = parts.next().ok_or(Error::Frame)?;
     if header.len() != 3 {
@@ -143,5 +146,12 @@ mod tests {
             assert!(frame(line).is_err(), "{:?}", line);
         }
         assert_eq!(frame(b"7e8 4 03 41 05 82").unwrap().id(), 0x7E8);
+    }
+
+    #[test]
+    fn standalone_frame_decoder_also_bounds_input_work() {
+        let mut line = [b' '; 1024];
+        line[..17].copy_from_slice(b"7E8 4 03 41 05 82");
+        assert_eq!(frame(&line), Err(Error::Overflow));
     }
 }

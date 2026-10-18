@@ -126,3 +126,18 @@ fair polling, failed freshness and stale scheduler tickets across owner recreati
 Host correctness, CPU timings, ARM image resources and physical radio/vehicle
 validation remain separate evidence. No vehicle requests or flashing are needed
 to execute these tests.
+
+### Initial host CPU baseline
+
+From `host/`, run `cargo bench --locked --bench ble_protocol -- --noplot`.
+The 2026-10-18 run used the pinned nightly-2026-10-16 compiler, 30 samples per
+workload and a coordinated quiet interval. Local medians were 142.9 ns for a
+coolant transaction delivered in one notification, 351.0 ns for the identical
+reply delivered byte by byte, and 76.0 ns for four scheduler admissions and
+completions. Adapter initialization is outside the transaction timing. These are
+new host CPU baselines, not an optimization comparison or radio/ECU latency.
+
+On this x86_64 Windows build, `Session` occupies 344 bytes, `Completion` 120,
+`Scheduler<8>` 448 and `LinkSnapshot` 40. The two response variants share bounded
+enum storage. These host layouts do not measure ARM task futures or stack peaks;
+the integrated target image and concurrency checks own that evidence.
