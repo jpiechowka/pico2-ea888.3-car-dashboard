@@ -6,6 +6,7 @@ mod host;
 pub mod jobs;
 pub mod prerequisites;
 mod process;
+mod diagnostics;
 pub mod server;
 
 pub mod relay;

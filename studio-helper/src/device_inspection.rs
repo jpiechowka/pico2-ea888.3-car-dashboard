@@ -261,7 +261,7 @@ pub(crate) fn inspect(
             )
             .unwrap();
         }
-        Err(reason) => report.reason = Text::new(reason.chars().take(120).collect::<String>()).unwrap(),
+        Err(reason) => report.reason = crate::diagnostics::summary(&reason),
     }
     report
 }

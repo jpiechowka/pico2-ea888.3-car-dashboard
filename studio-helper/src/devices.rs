@@ -14,7 +14,7 @@ pub(crate) fn empty(
         schema_version: 1,
         session_id: session,
         complete: false,
-        reason: Text::new(reason).unwrap(),
+        reason: crate::diagnostics::summary(reason),
         devices: BoundedVec::new(vec![]).unwrap(),
     }
 }
@@ -165,7 +165,7 @@ pub(crate) fn scan(
         Err(e) => {
             empty(
                 session,
-                &format!("Descriptor scan failed: {}", e.chars().take(350).collect::<String>()),
+                &format!("Descriptor scan failed: {e}"),
             )
         }
     }
@@ -173,6 +173,20 @@ pub(crate) fn scan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failure_reason_accepts_long_unicode_without_panicking() {
+        for value in ["é", "界", "😀"] {
+            let report = empty(
+                SessionId::new("0".repeat(32)).unwrap(),
+                &format!("Descriptor scan failed: {}", value.repeat(350)),
+            );
+            assert!(!report.complete);
+            assert!(report.reason.as_str().len() <= 512);
+            assert!(report.reason.as_str().starts_with("Descriptor scan failed: "));
+            assert!(report.reason.as_str().ends_with("..."));
+            report.validate().unwrap();
+        }
+    }
     fn device(serial: Option<&str>) -> DeviceSummary {
         DeviceSummary {
             device_id: id().unwrap(),

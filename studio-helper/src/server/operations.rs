@@ -403,7 +403,7 @@ pub(super) async fn start_build(
                     } else {
                         TerminalCause::Failed
                     },
-                    Some(Text::new(reason.chars().take(120).collect::<String>()).unwrap()),
+                    Some(crate::diagnostics::summary(&reason)),
                 )
             }
         };
@@ -555,7 +555,7 @@ pub(super) async fn start_flash(
                         LogInput {
                             stage,
                             source: Source::Internal,
-                            text: reason.chars().take(512).collect(),
+                            text: crate::diagnostics::summary::<512>(&reason).as_str().to_owned(),
                             progress: false,
                         },
                     );
@@ -682,7 +682,7 @@ pub(super) async fn start_cleanup(
             (
                 StageState::Failed,
                 TerminalCause::Failed,
-                Some(Text::new(error.chars().take(512).collect::<String>()).unwrap()),
+                Some(crate::diagnostics::summary(&error)),
             )
         } else if cancelled {
             (
