@@ -186,8 +186,8 @@ the linked runbook, then use a **Demo** image for layout and controls:
    and extended soak checks before treating the configuration as qualified.
 
 Vehicle validation is a separate step. Candidate source selection does not
-enable an unimplemented decoder or qualify the Longan adapter/ECU. Obtain ECU
-identity and timestamped captures before establishing DNUC support; use the
+enable an unimplemented decoder or qualify a BLE adapter, legacy Longan transport
+or ECU. Obtain ECU identity and timestamped captures before establishing DNUC support; use the
 runbook's parked-vehicle procedure. Do not substitute demo warnings or catalogue
 documentation for vehicle evidence.
 

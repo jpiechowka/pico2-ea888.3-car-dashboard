@@ -14,6 +14,7 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 
 [Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
 [Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
+[Bluetooth setup](#bluetooth-prototype-in-studio) ·
 [Hardware & wiring](#hardware-protection-and-wiring-for-the-dnuc-cupra) ·
 [Architecture](#architecture) · [Validation](#firmware-build-and-validation)
 
@@ -128,6 +129,37 @@ scenes, with synthetic status; physical controls keep their assignments.*
 
 *Debug and Logs inherit the device orientation. The simulator exercises screen
 changes, recovery and completion-bound LED/backlight state without a Pico.*
+
+### Bluetooth prototype in Studio
+
+Open **Device → Bluetooth connection** to select an explicit peer address,
+MC+/CX/test-peer profile, reconnect policy and bounded connection/response timing.
+BLE starts disabled, including in older imported projects. Invalid addresses or
+timings remain visible for repair and block export/build. Existing dashboard,
+startup, LED and encoder settings stay available.
+
+[![Studio BLE configuration with CX security guidance and an illustrative peer address](docs/images/gallery/workflows/ble-settings.jpg)](docs/configurator/ble-prototype.md)
+
+**Open synthetic BLE diagnostics** jumps directly to the shared parser/session
+fixture. Exercise fragmented replies, stale epochs, lost notifications, deadlines
+and reconnects without an adapter. Its elapsed times are simulated; Studio does
+not report a physical BLE connection. CX requires encryption and prototype bonds
+are volatile, so a Pico restart requires pairing again.
+
+[![Synthetic BLE diagnostics after a fragmented fixture response](docs/images/gallery/workflows/ble-diagnostics.jpg)](docs/configurator/ble-prototype.md#exercise-the-protocol)
+
+Choose **BLE prototype · wireless adapter** in Build & Flash. The accepted BLE
+settings enter the complete project and firmware build identity. MC+/CX currently
+initialize and identify the adapter only; **live DNUC polling remains disabled**.
+The test peer uses its own service and never publishes synthetic vehicle readings.
+The two-second identity loop can prevent adapter sleep, and USB off does not turn
+off the dongle. Unplug it for long parking.
+
+[![BLE firmware mode with stock clock settings in Studio](docs/images/gallery/workflows/ble-build.jpg)](docs/configurator/building.md#ble-prototype-mode)
+
+[Setup and failure-simulation workflow](docs/configurator/ble-prototype.md) ·
+[Radio ownership and qualification limits](docs/vehicle/ble-runtime.md) ·
+[Software validation record](docs/validation/ble-prototype-2026-10-18.md)
 
 ## Widget gallery
 
@@ -268,7 +300,7 @@ states exactly what each group of host benchmarks measures.
 For future authorized device testing, follow the [validation runbook](docs/validation/pico2-dnuc-runbook.md)
 and [BLE runtime acceptance checks](docs/vehicle/ble-runtime.md#verification-boundaries).
 Compile with `cargo build`; firmware `cargo run` can flash and execute an image.
-Software checks do not authorize a purchase, flashing or vehicle communication.
+Radio interoperability and exact ECU support still require physical qualification.
 
 ## Hardware protection and wiring for the DNUC Cupra
 
@@ -339,6 +371,11 @@ The pass preserves all gauges, animations, controls and validation gates.
 - **Pico 2 W targeting:** every firmware route selects the RP2350's Cortex-M33
   with `-C target-cpu=cortex-m33` and the hard-float ARM target. The two RGB565
   framebuffers, DMA ownership and stack reserves remain unchanged.
+- **BLE RAM:** exact compact histograms recover 7,344 bytes. Bluetooth-only HCI
+  and unused Wi-Fi payload bounds recover another 8,916 bytes before metadata.
+  All HCI queue slots, ATT capacity and dashboard features remain. Traced stock
+  and 280/70 BLE images pass the unchanged memory gates with 66,120 bytes before
+  the core 0 stack top. [Bounds and measured tradeoffs](docs/performance/memory-layout.md#ble-prototype-integration-evidence-2026-10-18).
 - **Native orientation:** both shapes render directly into the existing buffers,
   with no transpose or additional framebuffer. A
   [matched landscape comparison](docs/performance/orientation-landscape-2026-10-17.md)

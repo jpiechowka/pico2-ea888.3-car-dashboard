@@ -59,7 +59,7 @@ synthetic dashboard sample controls. No connection failure switches to demo data
 | Trouble host, GATT and ELM session | Core 0; one connection, one transaction in flight |
 | Default ATT packet pool | Eight 251-byte packet buffers |
 | Client notifications | Four 244-byte values; observable overflow/loss |
-| CYW HCI staging | Four 1024-byte RX and four 1024-byte TX buffers |
+| CYW HCI staging | Four 272-byte RX and four 272-byte TX buffers in Bluetooth-only mode |
 | ELM parsing | 64-byte line, 64-byte diagnostic/identity result, 1024-byte transaction input |
 | Cross-core diagnostics | Compact mutex-protected snapshot; no credentials or payload log |
 | Display | Existing two 153600-byte RGB565 framebuffers; no third buffer |
@@ -82,11 +82,17 @@ changes and Trouble 0.8.0. The firmware lockfile, vendor provenance manifests an
 radio-binary manifest identify exact inputs. Helper and target-capture source
 identity include the complete `firmware/vendor/` subtree, including radio binaries
 and nested files. This does not rely on an untracked local firmware download.
+The [radio dependency review](../dependencies/radio-review-2026-10-18.md) records
+the retained buffer bounds, compatibility constraints and reviewed repairs.
 
 ## Stream, deadlines and connection lifetime
 
-GATT writes use at most 20 bytes and await each write response, covering the minimum
-ATT MTU 23. Notifications can arrive before the write response; they remain in a
+GATT writes use at most 20 bytes, covering the minimum ATT MTU 23. Discovery
+requires Notify and prefers Write with response. Only MC+ may use Write without
+response when that is its advertised write capability; CX and TestPeer require
+acknowledged writes. A failed write never triggers a write-type fallback. Both
+modes still require the expected ELM reply and prompt within the same deadline.
+Notifications can arrive before the write response; they remain in a
 bounded queue until `sent(token)` acknowledges the complete command. A notification
 is an arbitrary fragment, never an assumed complete reply. CR/LF, echo, CAN header,
 DLC, ISO-TP length/sequence and final prompt are parsed explicitly.
@@ -173,17 +179,17 @@ remain physical checks.
 - Future authorized no-car bench tests need a real synthetic BLE peer, USB-powered
   Pico/display/encoder, observed negotiated MTU/interval/security, forced loss,
   reconnect, flash pause and reset cases. Do not substitute host timings for them.
-- No adapter purchase, physical flashing or vehicle communication was performed
-  or authorized by these implementation checks. DNUC request/address/decoder and
+- No adapter purchase, physical flashing or vehicle communication was performed.
+  DNUC request/address/decoder and
   alarm qualification remains governed by [sample quality](sample-quality.md).
 
 Automatic adapter sleep and vehicle-off behavior remain unqualified. The current
 2 s identity loop is ongoing adapter traffic and may prevent inactivity sleep.
 Turning off dashboard USB does not remove dongle power. Read-only commands do
 not certify vehicle-port fault safety. Retain explicit physical disconnection for
-long parking. MC+ write-with-response support also remains a profile qualification
-gate: the referenced embedded implementation uses write-without-response; CX
-explicitly documents both write types.
+long parking. Actual MC+ characteristic properties and either adapter's timing
+remain physical qualification gates; the referenced MC+ integration uses Write
+without response, while CX explicitly documents both write types.
 
 ## Source record
 

@@ -5,7 +5,9 @@ ELM ASCII transaction owner. Real adapters use `Mode::AdapterOnly`, which can
 initialize and identify the adapter but cannot construct a diagnostic transmission.
 No exact DNUC ECU source is qualified by this prototype. Existing widgets remain
 unavailable until independent source and vehicle qualification; no disconnect or
-failed request substitutes Demo data.
+failed request substitutes Demo data. The hardware owner and security/flash
+contract are documented in [BLE runtime](ble-runtime.md); reviewed dependency
+changes are recorded in the [radio source review](../dependencies/radio-review-2026-10-18.md).
 
 `Mode::SyntheticPeer` is only for the explicitly selected test profile and a peer
 that exposes the firmware's unique test service. Selecting an MC+ or CX profile
@@ -29,6 +31,15 @@ call `sent(token, now_ms)`. A complete GATT write is not ECU receipt. Early noti
 must remain in the owner's bounded queue until `sent`; feeding them early closes
 the session. A partial write, cancellation, disconnect or flash park calls
 `invalidate()`, cancels outstanding work and requires a new connection epoch.
+
+The firmware chooses write mode once from discovered characteristic properties.
+Notify is mandatory. It prefers Write Request and awaits each ATT response; only
+MC+ may use advertised Write Without Response when Write Request is unavailable.
+CX and TestPeer require Write Request. No failed write triggers a change of mode
+or a resend. Both modes use at most 20-byte chunks, and the transaction still
+requires its exact ELM reply and prompt. A Write Command completion only means
+local transport acceptance, not peer acknowledgment. The shared session does not
+weaken its deadline or early-notification rule for that mode.
 
 `notify(epoch, sequence, bytes, now_ms)` accepts at most 244 bytes per call. Sequence
 starts at one and counts actual notifications at ingress, before any queue can
@@ -123,6 +134,9 @@ all 61 bounded DID data widths with 17 deterministic fragmentation partitions ea
 overflow, malformed/foreign/duplicate frames, early RX, echo handling, NRC/error
 states, immutable deadlines, time reversal, stale callbacks, exhausted identities,
 fair polling, failed freshness and stale scheduler tickets across owner recreation.
+The shared runtime property matrix also covers missing Notify, absent write
+properties, MC+ command-only admission and response-required CX/TestPeer. Firmware
+uses this same decision function; adapter interoperability remains unmeasured.
 Host correctness, CPU timings, ARM image resources and physical radio/vehicle
 validation remain separate evidence. No vehicle requests or flashing are needed
 to execute these tests.

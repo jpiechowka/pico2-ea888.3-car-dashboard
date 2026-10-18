@@ -55,6 +55,15 @@ No ADC sampler shares GP29. Non-BLE builds do not initialize CYW43439. These are
 software ownership facts, not measured shutdown current or a guarantee about
 every warm-reset electrical state.
 
+The radio runner and its initialization retain PIO/DMA ownership until normal
+bus completion; an outer timeout must not drop those futures. Connection and
+GATT deadlines operate above bounded queues. Flash park is acknowledged only at
+a completed bus boundary with radio CS high and DMA1 idle; the settings driver
+rechecks all DMA channels immediately before writing. A missing acknowledgment
+rejects the save. Watchdog recovery covers a stalled owner without reusing its
+DMA buffer. See the [source and dependency review](../dependencies/radio-review-2026-10-18.md)
+for the distinction between software completion and physical validation.
+
 ## HAL, reset and clock audit
 
 The resolved HAL is the reviewed `embassy-rp` 0.10.0 source in
@@ -101,6 +110,12 @@ supply; it is not a universal disconnect for USB or signal wires. The W datashee
 specifies VSYS 1.8–5.5 V and a −20 to +70 °C operating range including self-heating.
 Do not import another board's rating or infer automotive qualification. See the
 [protected power proposal](../../hardware/protection-plan.md).
+
+The selected prototype uses USB power, not that historical protection assembly.
+Removing dashboard USB power does not remove an OBD dongle's vehicle-side supply.
+Adapter sleep, USB startup/dips, installed temperature and antenna clearance
+remain physical checks; the software identity-only loop may prevent adapter
+inactivity sleep.
 
 ## Radio and future supply sensing
 

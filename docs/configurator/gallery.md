@@ -80,6 +80,21 @@ High/Low/window rules, dwell, priority, latch and snooze use qualified raw sampl
 
 ## Diagnostics and source evidence
 
+### Configure and exercise the BLE prototype
+
+[![BLE peer settings with CX encryption help](../images/gallery/workflows/ble-settings.jpg)](../images/gallery/workflows/ble-settings.jpg)
+
+Device keeps the profile, explicit peer, reconnect policy and bounded timing in
+the same validated project as views and controls. The address shown is illustrative.
+MC+/CX are adapter-identity profiles; no live DNUC source is enabled.
+
+[![Shared BLE fixture after a fragmented reply](../images/gallery/workflows/ble-diagnostics.jpg)](../images/gallery/workflows/ble-diagnostics.jpg)
+
+The direct diagnostics shortcut focuses the protocol fixture. Its synthetic
+milliseconds, loss/timeout/old-epoch controls and explicit reconnect exercise the
+shared Rust session, without browser Bluetooth or physical connection telemetry.
+See the [BLE workflow](ble-prototype.md) for repair and failure paths.
+
 ### Inspect events and simulation
 
 [![Studio: inspect events and simulation](../images/gallery/workflows/diagnostics.jpg)](../images/gallery/workflows/diagnostics.jpg)
@@ -100,6 +115,15 @@ Search the offline evidence library and inspect requests, decoder/scaling detail
 [Diagnostics guide](workspace-and-diagnostics-design.md) · [ECU workspace](ecu-reference.md) · [Technical library](../vehicle/ecu-reference/README.md)
 
 ## Build and flash
+
+### Select wireless firmware
+
+[![BLE firmware mode and resolved clock settings](../images/gallery/workflows/ble-build.jpg)](../images/gallery/workflows/ble-build.jpg)
+
+BLE prototype mode uses the accepted Device settings. Demo remains a separate
+build mode; disconnecting BLE never substitutes demo measurements. Stock stays
+the default, and the retained 280/70 profile requires Expert mode. This capture
+has no connected helper or admitted firmware and performs no device operation.
 
 ### Build the accepted project
 
@@ -145,6 +169,13 @@ physical scanout or warning timing. The distinct measured performance pass is
 separate; [benchmark scope](../performance/benchmark-coverage.md) remains explicit.
 
 ## Capture record
+
+The three BLE workflow captures were taken on 18 October 2026 from the normal
+optimized production build at `394ac1f`, in an isolated origin at 1440×1000.
+The [BLE capture manifest](../images/gallery/workflows/ble-capture.json) records
+the Wasm and image hashes. The real browser checks included accepted peer edits,
+CX help, the direct shortcut, a fragmented reply, old-epoch rejection, notification
+loss and BLE build selection. The existing user project and server were preserved.
 
 The following record describes the browser workflow images. Native startup
 animations have their own current [capture manifest](../images/gallery/startup/capture.json)

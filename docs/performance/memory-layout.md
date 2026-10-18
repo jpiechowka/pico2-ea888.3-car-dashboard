@@ -71,7 +71,7 @@ proof by changing the result schema. The retained Source/Tail composition stops
 at the original configuration Visitor return for its historical SizeZ family; loader
 finalization, validation, diagnostics and complete resource composition remain
 open. Its authored v4 machine/layout contracts also require a separately reviewed
-port for current v5 images. A successful historical component replay would close
+port for current v6 images. A successful historical component replay would close
 that component only, not the full current-image gate.
 
 ### Experimental validator allocation repair (2026-10-17)
@@ -137,10 +137,69 @@ it is not whole-program stack or exception/reset-reentry safety proof, physical
 stack high-water, clock/voltage qualification, or device validation. The full
 experimental source/alias/diagnostic/loader graph work remains separate.
 
-The trace plus 300 MHz diagnostic build used 373264 bytes of static RAM and
+The historical trace plus 300 MHz diagnostic build used 373264 bytes of static RAM and
 left 151024 bytes before the core 0 stack top. These numbers vary with features
 and source changes. They are allocation evidence, not measured worst-case
 stack use. The ELF check and linker assertions are the continuing gates.
+
+### BLE prototype integration evidence (2026-10-18)
+
+The radio adds static futures, HCI/ACL/GATT pools and security state. The selected
+Bluetooth-only CYW configuration retains four RX and four TX HCI slots of 272
+bytes, eight 251-byte ACL buffers and four notification values. Its inert Wi-Fi
+channel retains one 64-byte slot per direction because a zero-capacity channel
+panics during construction. Wi-Fi initialization is excluded. These payload
+bounds are explained in the [radio dependency review](../dependencies/radio-review-2026-10-18.md);
+they do not replace linked allocation measurements.
+
+| Traced BLE artifact | Static RAM | Core 0 headroom | 65536 B geometry gate |
+| --- | ---: | ---: | --- |
+| Initial integration | 467040 B | 57248 B | Rejected |
+| Compact buffers | 458144 B | 66144 B | Pass |
+| Reviewed security/lifecycle image | 458168 B | 66120 B | Pass |
+
+The last row is the review-stage unstripped ELF with SHA-256
+`05b9b3e414e405ad890654025f4552f6ef779ea2921f6f56c7bf38ef6f47f37b`.
+It used nightly-2026-10-16, the Cortex-M33 target, default features plus
+`ble-obd,frame-trace,te-trace`, and `CARGO_PROFILE_RELEASE_STRIP=none`.
+It leaves 584 B above the minimum headroom gate. These offline geometry and named
+frame checks describe that historical artifact. Final practical captures at
+`394ac1f` subsequently passed with the following geometry:
+
+| Final capture | Static RAM | Core 0 headroom |
+| --- | ---: | ---: |
+| Normal BLE | 418056 B | 106232 B |
+| Stock traced BLE | 458168 B | 66120 B |
+| 280/70 traced BLE | 458168 B | 66120 B |
+| Traced BLE, 64 widgets and 524288-byte custom artwork | 458168 B | 66120 B |
+
+All four retained identical production source hash maps and passed independent
+ELF/UF2 payload checks. Their hashes, input sizes and named-bound differences are
+in the [final software validation record](../validation/ble-prototype-2026-10-18.md#exact-linked-images).
+These remain artifact checks, not measured physical stack high-water.
+
+The reviewed named bounds are boot 3336 B, core1 construction 18736 B, core1
+runtime 15632 B, dashboard 28200 B and radio 16640 B. Radio adds an optional `radio`
+bound to the existing frame record; no-BLE records keep their previous shape.
+The radio path must fit actual core0 headroom with the unchanged 8192 B reserve.
+Core1 remains 32768 B with 4096 B reserve. Both 153600-byte framebuffer payloads
+remain unchanged.
+
+Radio admission counts emitted initialization and poll frames, secure pairing
+and P-256 helpers, taking the maximum of sibling paths. Static future storage
+is already counted in RAM. A fixed 4096 B child allowance covers reviewed smaller
+crypto, ATT/GATT/ELM, bus, executor, formatting and memory helpers. Exact named
+boundaries and metadata are required; aliases count once. The mutex refinement
+inlined host selection into an emitted `Join::poll`, which has its own reviewed
+fixture. Missing boundaries cannot silently remove radio admission.
+
+The v6 configuration path retains both BleSettings helpers and their folded
+Color decoder/serializer children. Frame growth and malformed/missing metadata,
+radio initialization, sibling maxima, old captures and altered receipt fields
+have regressions. Dependency or compiler outlining changes require renewed
+source/disassembly review of the allowances. This remains a practical named-path
+check, with no complete indirect-call, recursion, exception or hardware high-water
+proof. Later source or configuration changes need their own exact image admission.
 
 The runtime script was checked at the exact published
 [cortex-m-rt revision](https://github.com/rust-embedded/cortex-m/blob/f259e379457008329659c3b1207f61316c35b6f0/cortex-m-rt/link.x.in),

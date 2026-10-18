@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-18",
+  "browser": "Codex in-app browser",
+  "viewport_css_pixels": [
+    1440,
+    1000
+  ],
+  "source_commit": "394ac1f3b5c6c925fcd3465be989f5b360520438",
+  "synthetic": true,
+  "peer_address_is_illustrative": true,
+  "device_operations": false,
+  "production_main_wasm": {
+    "bytes": 5281938,
+    "sha256": "74582a8a576144b3cab7ec62bf2088cdaeb2428dbb299653ad9f043bf8f6a0d5"
+  },
+  "images": {
+    "ble-settings.jpg": "f44bd4fee279247e4e48a1c51db44e13eb6ed45f9e7b23593abd4f045858c2da",
+    "ble-diagnostics.jpg": "ddd6083f696ca209e66f90be565f9ddc2e00431b2a44fa5df4d27f5981301bde",
+    "ble-build.jpg": "a3e070bb9f52c991466a69f3b612e1318b96af8cb74036e73006c4478d433ba0"
+  }
+}
