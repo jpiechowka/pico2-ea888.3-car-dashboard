@@ -380,6 +380,7 @@ pub(crate) fn capture(
         &python,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
         &frozen.source,
+        false,
         sink,
     )?;
     frozen.verify()?;

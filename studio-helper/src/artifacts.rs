@@ -64,7 +64,7 @@ fn run_validation_tool(
     machine_stdout: bool,
     sink: &mut dyn FnMut(bool, &str),
 ) -> Result<crate::process::Output, String> {
-    process.capture(tool, args, cwd, &mut |stderr, text| {
+    process.capture(tool, args, cwd, machine_stdout, &mut |stderr, text| {
         if stderr || !machine_stdout {
             sink(stderr, text);
         }

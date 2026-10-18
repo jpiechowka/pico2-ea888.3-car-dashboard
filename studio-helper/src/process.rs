@@ -35,6 +35,8 @@ pub(crate) struct Failure {
     pub message: String,
     pub output_incomplete: bool,
     pub discarded_bytes: u64,
+    stdout_tail: String,
+    stderr_tail: String,
 }
 impl Failure {
     fn new(
@@ -46,6 +48,8 @@ impl Failure {
             message: message.into(),
             output_incomplete: false,
             discarded_bytes: 0,
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
         }
     }
 }
@@ -54,7 +58,13 @@ impl std::fmt::Display for Failure {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        self.message.fmt(f)
+        self.message.fmt(f)?;
+        for (name, tail) in [("stdout", &self.stdout_tail), ("stderr", &self.stderr_tail)] {
+            if !tail.is_empty() {
+                write!(f, "; {name} tail: {tail}")?;
+            }
+        }
+        Ok(())
     }
 }
 /// Explicit owner of all child output facts for one operation, including probes
@@ -109,9 +119,23 @@ impl ProcessContext {
         path: &Path,
         args: &[&str],
         cwd: &Path,
+        machine_stdout: bool,
         sink: &mut dyn FnMut(bool, &str),
     ) -> Result<Output, String> {
-        self.record(run_capture_stream(path, args, cwd, sink))
+        self.record_capture(run_capture_stream(path, args, cwd, sink), machine_stdout)
+    }
+
+    fn record_capture(
+        &mut self,
+        result: Result<Output, Failure>,
+        machine_stdout: bool,
+    ) -> Result<Output, String> {
+        self.record(result.map_err(|mut failure| {
+            if machine_stdout {
+                failure.stdout_tail.clear();
+            }
+            failure
+        }))
     }
 
     pub fn flash(

@@ -300,10 +300,13 @@ pub(super) fn run_stream(
         failure.discarded_bytes = out.discarded + err.discarded;
         // Non-streaming probes still retain bounded diagnostic tails in their
         // failure report. These sanitized strings are never machine admission.
-        for (name, text) in [("stdout", &out.text), ("stderr", &err.text)] {
+        for (tail, text) in [
+            (&mut failure.stdout_tail, &out.text),
+            (&mut failure.stderr_tail, &err.text),
+        ] {
             if !text.is_empty() {
                 let start = text.ceil_char_boundary(text.len().saturating_sub(2048));
-                failure.message.push_str(&format!("; {name} tail: {}", &text[start..]));
+                *tail = text[start..].to_owned();
             }
         }
         failure
@@ -411,7 +414,7 @@ mod tests {
         assert_eq!(failure.kind, FailureKind::Deadline);
         assert!(failure.output_incomplete);
         assert_eq!(failure.discarded_bytes, 0);
-        assert!(failure.message.contains("important diagnostic�"));
+        assert!(failure.to_string().contains("important diagnostic�"));
         assert_eq!(lines, [(false, "important diagnostic�".to_owned())]);
         let mut operation = super::super::ProcessContext::default();
         assert!(operation.record(Err(failure)).is_err());
@@ -450,6 +453,28 @@ mod tests {
         assert!(failure.output_incomplete);
         assert_eq!(failure.discarded_bytes, 0);
         assert_eq!(lines, [(true, "ready".into()), (false, "partial".into())]);
+    }
+    #[test]
+    fn failed_machine_report_retains_only_public_stderr_tail() {
+        let result = run_stream(
+            &cmd(),
+            &[
+                "-I",
+                "-u",
+                "-c",
+                "import sys,time; print('private-machine-report'); print('public-diagnostic',file=sys.stderr); \
+                 time.sleep(30)",
+            ],
+            &std::env::current_dir().unwrap(),
+            Duration::from_secs(1),
+            65536,
+            &mut |_, _| {},
+        );
+        let mut operation = super::super::ProcessContext::default();
+        let message = operation.record_capture(result, true).unwrap_err();
+        assert!(message.contains("public-diagnostic"));
+        assert!(!message.contains("private-machine-report"));
+        assert!(operation.closure(0, 0).output_incomplete);
     }
     #[test]
     fn deadline_closes_descendant_tree() {
