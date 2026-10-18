@@ -13,6 +13,23 @@ The helper owns only generated attempts recorded in its private `target/studio-h
 
 Authenticated `GET /api/v1/build-attempts` returns `BuildStorage`: `attempts` (at most 21 `BuildAttemptSummary`) and `reason`. Each summary contains `attempt_id`, `state` (`artifact`, `failed`, `incomplete`), charged `bytes`, and `protected`. While an operation owns the worker, listing returns `409 BuildStorageBusy`; refresh after closure. An invalid, unknown or incomplete index publication produces `409 BuildStorageQuarantined`.
 
+Storage/history reads, project admission and native operations share one admission
+permit. Filesystem reads and project decoding run outside the status mutex and
+outside the HTTP executor. A connection timeout does not cancel blocking filesystem
+work: that work retains its permit until it actually ends, so repeated requests
+cannot create an unbounded queue. Status and cancellation remain available.
+
+Process failures retain bounded sanitized tails, mark output incomplete and count
+observed discarded bytes separately from unknown unread output. A worker panic or
+unproven process cleanup disables new operations. Available read-only diagnostics
+remain accessible; an unknown process tree is never marked closed. A poisoned owner
+returns an explicit unavailable response while the session route explains the fault.
+Recovery requires an explicit helper restart and fresh admission.
+
+These native storage and process-ownership guarantees apply to Windows. Shared
+contract tests can run on Linux, but the helper still reports that native operations
+are unsupported there; portable compilation does not establish device support.
+
 Authenticated `POST /api/v1/build-attempts/cleanup` accepts existing `CleanupRequest` with 1 to 16 unique `attempts` IDs. It starts the same exclusive idle Cleanup job as flash-history cleanup. There is no path input, automatic retry, or device operation.
 
 All selected records are preflighted before the first deletion: closed state, no retained artifact backing, original directory and member volume/file identities, exact inventory and no active readers. Combined cleanup budget is 65,536 members and 32 MiB metadata. Retained DELETE handles bind removal to those identities. Cancellation stops before the next attempt; prior deletions remain. An OS deletion failure is reported truthfully and remaining/inconsistent records stay charged or quarantined for manual review. Unknown children and reparse points are never followed or removed.

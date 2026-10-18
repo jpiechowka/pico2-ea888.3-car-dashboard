@@ -1,6 +1,8 @@
 //! Retain Windows deny-write/delete files and deny-delete ancestor directories.
 use std::collections::BTreeSet;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(windows)]
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 pub(crate) fn read_file(path: &Path) -> Result<File, String> {
     reject_reparse(path)?;
@@ -39,7 +41,10 @@ pub(crate) fn ancestors(paths: &[PathBuf]) -> Result<Vec<File>, String> {
             parents.insert(parent.to_path_buf());
         }
     }
+    #[cfg(windows)]
     let mut files = Vec::new();
+    #[cfg(not(windows))]
+    let files = Vec::new();
     for parent in parents {
         reject_reparse(&parent)?;
         #[cfg(windows)]

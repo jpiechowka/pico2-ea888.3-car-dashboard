@@ -21,8 +21,10 @@ use std::time::Duration;
 pub(crate) enum FailureKind {
     Cancelled,
     Deadline,
+    #[cfg(windows)]
     OutputLimit,
     Io,
+    #[cfg(windows)]
     Scratch,
     Cleanup,
 }
@@ -229,6 +231,7 @@ pub(crate) fn run_capture_stream(
 }
 
 thread_local! { static TRANSFER_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+#[cfg(windows)]
 pub(crate) fn transfer_active() -> bool { TRANSFER_ACTIVE.get() }
 /// Ordinary cancellation is deferred only while the fixed load command is owned.
 /// Deadlines and fatal cleanup still apply; no retry is performed.
@@ -337,6 +340,7 @@ impl ScratchBudget {
 impl Drop for ScratchBudget {
     fn drop(&mut self) { SCRATCH.with_borrow_mut(|s| *s = None); }
 }
+#[cfg(windows)]
 pub(crate) fn check_scratch() -> Result<(), String> {
     SCRATCH.with_borrow_mut(|s| {
         if let Some((path, last)) = s

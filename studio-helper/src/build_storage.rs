@@ -463,6 +463,7 @@ impl Reservation {
     }
 }
 /// Polling bounds owned scratch; not an instantaneous filesystem quota.
+#[cfg(windows)]
 pub(crate) fn check_scratch(path: &Path) -> Result<(), String> {
     let (bytes, _) = inventory(path, false)?;
     if bytes > 4 * GIB {
