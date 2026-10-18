@@ -13,8 +13,9 @@ proof. Initial full-byte review: task-2-format-bridges-report.md (ignored).
 """
 
 FORMAT_GRAMMARS = {
-    '_RNvNtCs_4core3fmt5write': (
-        262, 56,
+    "_RNvNtCs_4core3fmt5write": (
+        262,
+        56,
         """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
@@ -122,9 +123,11 @@ FORMAT_GRAMMARS = {
 0fe add	sp, #0x14
 100 pop.w	{r8, r9, r10, r11}
 104 pop	{r4, r5, r6, r7, pc}
-""".strip().splitlines()),
-    '_RNvMs2_NtNtCs_4core3fmt8buildersNtB5_11DebugStruct5field': (
-        282, 72,
+""".strip().splitlines(),
+    ),
+    "_RNvMs2_NtNtCs_4core3fmt8buildersNtB5_11DebugStruct5field": (
+        282,
+        72,
         """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
@@ -233,9 +236,11 @@ FORMAT_GRAMMARS = {
 112 movt	r1, @addr6.high
 116 blx	r3
 118 b	@self+f4
-""".strip().splitlines()),
-    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field5_finish': (
-        198, 40,
+""".strip().splitlines(),
+    ),
+    "_RNvMsa_NtCs_4core3fmtNtB5_9Formatter26debug_struct_field5_finish": (
+        198,
+        40,
         """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
@@ -315,9 +320,11 @@ FORMAT_GRAMMARS = {
 0be add	sp, #0x10
 0c0 ldr	r11, [sp], #4
 0c4 pop	{r4, r5, r6, r7, pc}
-""".strip().splitlines()),
-    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish': (
-        206, 64,
+""".strip().splitlines(),
+    ),
+    "_RNvMsa_NtCs_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish": (
+        206,
+        64,
         """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
@@ -397,5 +404,6 @@ FORMAT_GRAMMARS = {
 0c8 movs	r2, #0x1
 0ca blx	r10
 0cc b	@self+1e
-""".strip().splitlines()),
+""".strip().splitlines(),
+    ),
 }

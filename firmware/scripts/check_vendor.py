@@ -3,6 +3,7 @@
 Optional --archive verifies the downloaded .crate and every original file too.
 No archive contents are extracted or executed.
 """
+
 import argparse
 import hashlib
 import json
@@ -21,19 +22,40 @@ def check(archive=None):
     manifest = json.loads((ROOT / "embassy-rp-provenance.json").read_text(encoding="utf-8"))
     original = manifest["original_files_sha256"]
     patched = manifest["patched_files_sha256"]
-    require(set(patched) == {"src/uart/buffered.rs", "src/uart/mod.rs", "src/uart/buffered_io.rs",
-                            "src/multicore.rs", "src/flash.rs", "src/flash_probe.rs", "src/pwm.rs",
-                            "Cargo.toml", "Cargo.toml.orig", "src/lib.rs"})
+    require(
+        set(patched)
+        == {
+            "src/uart/buffered.rs",
+            "src/uart/mod.rs",
+            "src/uart/buffered_io.rs",
+            "src/multicore.rs",
+            "src/flash.rs",
+            "src/flash_probe.rs",
+            "src/pwm.rs",
+            "Cargo.toml",
+            "Cargo.toml.orig",
+            "src/lib.rs",
+        }
+    )
     expected = original | patched
     for name in expected:
         path = PurePosixPath(name)
         require(not path.is_absolute() and ".." not in path.parts and "\\" not in name)
     tree = ROOT / "embassy-rp"
-    actual = {p.relative_to(tree).as_posix(): digest(p.read_bytes()) for p in tree.rglob("*") if p.is_file()}
-    require(actual == expected, f"vendor mismatch: {sorted(k for k in actual.keys() | expected.keys() if actual.get(k) != expected.get(k))}")
+    actual = {
+        p.relative_to(tree).as_posix(): digest(p.read_bytes())
+        for p in tree.rglob("*")
+        if p.is_file()
+    }
+    require(
+        actual == expected,
+        f"vendor mismatch: {sorted(k for k in actual.keys() | expected.keys() if actual.get(k) != expected.get(k))}",
+    )
     if archive is not None:
-        require(digest(archive.read_bytes()) == manifest["archive_sha256"], "archive checksum mismatch")
-        prefix = f'{manifest["crate"]}-{manifest["version"]}/'
+        require(
+            digest(archive.read_bytes()) == manifest["archive_sha256"], "archive checksum mismatch"
+        )
+        prefix = f"{manifest['crate']}-{manifest['version']}/"
         with tarfile.open(archive, "r:gz") as tar:
             restored = {}
             for member in tar.getmembers():
@@ -41,11 +63,13 @@ def check(archive=None):
                 if member.isdir():
                     continue
                 require(member.isfile(), "unexpected archive entry type")
-                name = member.name[len(prefix):]
+                name = member.name[len(prefix) :]
                 require(name not in restored, "duplicate archive entry")
                 restored[name] = digest(tar.extractfile(member).read())
         require(restored == original, "original file manifest does not match published archive")
-    print(f"Verified {len(original)} original files, {len(set(patched) & set(original))} modified files and {len(set(patched) - set(original))} added helpers; archive={'checked' if archive else 'not supplied'}")
+    print(
+        f"Verified {len(original)} original files, {len(set(patched) & set(original))} modified files and {len(set(patched) - set(original))} added helpers; archive={'checked' if archive else 'not supplied'}"
+    )
 
 
 if __name__ == "__main__":

@@ -7,9 +7,13 @@ flags 0x60000020, width 0 and precision 0 at each entry. No custom/hex admission
 """
 
 NUMERIC_VARIANTS = {
-    '_RNvXsZ_NtNtCs_4core3fmt3numjNtB7_5Debug3fmt': (
-        ('<usize as core::fmt::Debug>::fmt', 278, 40, ((0, 278, 't'),),
-         """
+    "_RNvXsZ_NtNtCs_4core3fmt3numjNtB7_5Debug3fmt": (
+        (
+            "<usize as core::fmt::Debug>::fmt",
+            278,
+            40,
+            ((0, 278, "t"),),
+            """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
 004 str	r11, [sp, #-4]!
@@ -103,9 +107,14 @@ NUMERIC_VARIANTS = {
 10e add	sp, #0x10
 110 ldr	r11, [sp], #4
 114 pop	{r4, r5, r6, r7, pc}
-""".strip().splitlines()),
-        ('<usize as core::fmt::Debug>::fmt', 38, 8, ((0, 38, 't'),),
-         """
+""".strip().splitlines(),
+        ),
+        (
+            "<usize as core::fmt::Debug>::fmt",
+            38,
+            8,
+            ((0, 38, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 ldr	r2, [r1, #0x8]
@@ -119,11 +128,16 @@ NUMERIC_VARIANTS = {
 01a b.w	@role:_RNvXs6_NtNtCs_4core3fmt3numjNtB7_8LowerHex3fmt
 01e pop.w	{r7, lr}
 022 b.w	@role:_RNvXs8_NtNtCs_4core3fmt3numjNtB7_8UpperHex3fmt
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter3pad': (
-        ('<core::fmt::Formatter>::pad', 452, 40, ((0, 266, 't'), (266, 270, 'd'), (270, 452, 't')),
-         """
+    "_RNvMsa_NtCs_4core3fmtNtB5_9Formatter3pad": (
+        (
+            "<core::fmt::Formatter>::pad",
+            452,
+            40,
+            ((0, 266, "t"), (266, 270, "d"), (270, 452, "t")),
+            """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
 004 push.w	{r8, r9, r10, r11}
@@ -294,9 +308,14 @@ NUMERIC_VARIANTS = {
 1c0 addgt	r1, #0x1
 1c2 b	@self+f4
 10a DATA 11020f11
-""".strip().splitlines()),
-        ('<core::fmt::Formatter>::pad', 320, 40, ((0, 182, 't'), (182, 186, 'd'), (186, 320, 't')),
-         """
+""".strip().splitlines(),
+        ),
+        (
+            "<core::fmt::Formatter>::pad",
+            320,
+            40,
+            ((0, 182, "t"), (182, 186, "d"), (186, 320, "t")),
+            """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
 004 push.w	{r8, r9, r10, r11}
@@ -424,11 +443,16 @@ NUMERIC_VARIANTS = {
 13c movs	r0, #0x0
 13e b	@self+130
 0b6 DATA 12020f12
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvMsa_NtCs_4core3fmtNtB5_9Formatter12pad_integral': (
-        ('<core::fmt::Formatter>::pad_integral', 412, 64, ((0, 122, 't'), (122, 126, 'd'), (126, 412, 't')),
-         """
+    "_RNvMsa_NtCs_4core3fmtNtB5_9Formatter12pad_integral": (
+        (
+            "<core::fmt::Formatter>::pad_integral",
+            412,
+            64,
+            ((0, 122, "t"), (122, 126, "d"), (126, 412, "t")),
+            """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
 004 push.w	{r8, r9, r10, r11}
@@ -586,9 +610,14 @@ NUMERIC_VARIANTS = {
 198 beq	@self+180
 19a b	@self+16e
 07a DATA 54025102
-""".strip().splitlines()),
-        ('<core::fmt::Formatter>::pad_integral', 396, 64, ((0, 112, 't'), (112, 116, 'd'), (116, 396, 't')),
-         """
+""".strip().splitlines(),
+        ),
+        (
+            "<core::fmt::Formatter>::pad_integral",
+            396,
+            64,
+            ((0, 112, "t"), (112, 116, "d"), (116, 396, "t")),
+            """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
 004 push.w	{r8, r9, r10, r11}
@@ -746,11 +775,16 @@ NUMERIC_VARIANTS = {
 188 beq	@self+170
 18a b	@self+15e
 070 DATA 53025002
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvNvMsa_NtCs_4core3fmtNtB7_9Formatter12pad_integral12write_prefix': (
-        ('<core::fmt::Formatter>::pad_integral::write_prefix', 68, 24, ((0, 68, 't'),),
-         """
+    "_RNvNvMsa_NtCs_4core3fmtNtB7_9Formatter12pad_integral12write_prefix": (
+        (
+            "<core::fmt::Formatter>::pad_integral::write_prefix",
+            68,
+            24,
+            ((0, 68, "t"),),
+            """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
 004 str	r8, [sp, #-4]!
@@ -779,11 +813,16 @@ NUMERIC_VARIANTS = {
 03c movs	r0, #0x0
 03e ldr	r8, [sp], #4
 042 pop	{r4, r5, r6, r7, pc}
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt': (
-        ('<u32 as core::fmt::Display>::fmt', 230, 64, ((0, 230, 't'),),
-         """
+    "_RNvXs8_NtNtNtCs_4core3fmt3num3impmNtB9_7Display3fmt": (
+        (
+            "<u32 as core::fmt::Display>::fmt",
+            230,
+            64,
+            ((0, 230, "t"),),
+            """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
 004 push.w	{r8, r9, r10, r11}
@@ -865,11 +904,16 @@ NUMERIC_VARIANTS = {
 0de add	sp, #0x1c
 0e0 pop.w	{r8, r9, r10, r11}
 0e4 pop	{r4, r5, r6, r7, pc}
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXNtNtNtCs_4core3fmt3num3imphNtB6_7Display3fmt': (
-        ('<u8 as core::fmt::Display>::fmt', 96, 16, ((0, 96, 't'),),
-         """
+    "_RNvXNtNtNtCs_4core3fmt3num3imphNtB6_7Display3fmt": (
+        (
+            "<u8 as core::fmt::Display>::fmt",
+            96,
+            16,
+            ((0, 96, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 sub	sp, #0x8
@@ -909,11 +953,16 @@ NUMERIC_VARIANTS = {
 058 bl	@role:_RNvMsa_NtCs_4core3fmtNtB5_9Formatter12pad_integral
 05c add	sp, #0x8
 05e pop	{r7, pc}
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs3_NtNtNtCs_4core3fmt3num3imptNtB9_7Display3fmt': (
-        ('<u16 as core::fmt::Display>::fmt', 158, 32, ((0, 158, 't'),),
-         """
+    "_RNvXs3_NtNtNtCs_4core3fmt3num3imptNtB9_7Display3fmt": (
+        (
+            "<u16 as core::fmt::Display>::fmt",
+            158,
+            32,
+            ((0, 158, "t"),),
+            """
 000 push	{r4, r6, r7, lr}
 002 add	r7, sp, #0x8
 004 sub	sp, #0x10
@@ -975,11 +1024,16 @@ NUMERIC_VARIANTS = {
 096 bl	@role:_RNvMsa_NtCs_4core3fmtNtB5_9Formatter12pad_integral
 09a add	sp, #0x10
 09c pop	{r4, r6, r7, pc}
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs1g_NtCs_4core3fmtRtNtB6_5Debug3fmtCs_16dashboard_config': (
-        ('<&u16 as core::fmt::Debug>::fmt', 234, 24, ((0, 234, 't'),),
-         """
+    "_RNvXs1g_NtCs_4core3fmtRtNtB6_5Debug3fmtCs_16dashboard_config": (
+        (
+            "<&u16 as core::fmt::Debug>::fmt",
+            234,
+            24,
+            ((0, 234, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 sub	sp, #0x10
@@ -1056,11 +1110,16 @@ NUMERIC_VARIANTS = {
 0e2 bl	@role:_RNvMsa_NtCs_4core3fmtNtB5_9Formatter12pad_integral
 0e6 add	sp, #0x10
 0e8 pop	{r7, pc}
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs1g_NtCs_4core3fmtRbNtB6_5Debug3fmtCs_16dashboard_config': (
-        ('<&bool as core::fmt::Debug>::fmt', 50, 8, ((0, 50, 't'),),
-         """
+    "_RNvXs1g_NtCs_4core3fmtRbNtB6_5Debug3fmtCs_16dashboard_config": (
+        (
+            "<&bool as core::fmt::Debug>::fmt",
+            50,
+            8,
+            ((0, 50, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 ldr	r0, [r0]
@@ -1078,11 +1137,16 @@ NUMERIC_VARIANTS = {
 028 movs	r2, #0x5
 02a pop.w	{r7, lr}
 02e b.w	@role:_RNvMsa_NtCs_4core3fmtNtB5_9Formatter3pad
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_14dashboard_core': (
-        ('<&u8 as core::fmt::Debug>::fmt', 212, 24, ((0, 212, 't'),),
-         """
+    "_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_14dashboard_core": (
+        (
+            "<&u8 as core::fmt::Debug>::fmt",
+            212,
+            24,
+            ((0, 212, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 sub	sp, #0x10
@@ -1164,11 +1228,16 @@ NUMERIC_VARIANTS = {
 0cc bl	@role:_RNvMsa_NtCs_4core3fmtNtB5_9Formatter12pad_integral
 0d0 add	sp, #0x10
 0d2 pop	{r7, pc}
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXsg_NtCs_4core3fmtbNtB5_7Display3fmt': (
-        ('<bool as core::fmt::Display>::fmt', 50, 8, ((0, 50, 't'),),
-         """
+    "_RNvXsg_NtCs_4core3fmtbNtB5_7Display3fmt": (
+        (
+            "<bool as core::fmt::Display>::fmt",
+            50,
+            8,
+            ((0, 50, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 ldrb	r0, [r0]
@@ -1186,11 +1255,16 @@ NUMERIC_VARIANTS = {
 028 movs	r2, #0x5
 02a pop.w	{r7, lr}
 02e b.w	@role:_RNvMsa_NtCs_4core3fmtNtB5_9Formatter3pad
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_16dashboard_config': (
-        ('<&u8 as core::fmt::Debug>::fmt', 40, 8, ((0, 40, 't'),),
-         """
+    "_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_16dashboard_config": (
+        (
+            "<&u8 as core::fmt::Debug>::fmt",
+            40,
+            8,
+            ((0, 40, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 ldr	r2, [r1, #0x8]
@@ -1205,21 +1279,31 @@ NUMERIC_VARIANTS = {
 01c b.w	@role:_RNvXse_NtNtCs_4core3fmt3numhNtB7_8LowerHex3fmt
 020 pop.w	{r7, lr}
 024 b.w	@role:_RNvXsg_NtNtCs_4core3fmt3numhNtB7_8UpperHex3fmt
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs1g_NtCs_4core3fmtRbNtB6_5Debug3fmtCs_6rp_pac': (
-        ('<&bool as core::fmt::Debug>::fmt', 14, 8, ((0, 14, 't'),),
-         """
+    "_RNvXs1g_NtCs_4core3fmtRbNtB6_5Debug3fmtCs_6rp_pac": (
+        (
+            "<&bool as core::fmt::Debug>::fmt",
+            14,
+            8,
+            ((0, 14, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 ldr	r0, [r0]
 006 pop.w	{r7, lr}
 00a b.w	@role:_RNvXsg_NtCs_4core3fmtbNtB5_7Display3fmt
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs1g_NtCs_4core3fmtRtNtB6_5Debug3fmtCs_6rp_pac': (
-        ('<&u16 as core::fmt::Debug>::fmt', 40, 8, ((0, 40, 't'),),
-         """
+    "_RNvXs1g_NtCs_4core3fmtRtNtB6_5Debug3fmtCs_6rp_pac": (
+        (
+            "<&u16 as core::fmt::Debug>::fmt",
+            40,
+            8,
+            ((0, 40, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 ldr	r2, [r1, #0x8]
@@ -1234,11 +1318,16 @@ NUMERIC_VARIANTS = {
 01c b.w	@role:_RNvXsm_NtNtCs_4core3fmt3numtNtB7_8LowerHex3fmt
 020 pop.w	{r7, lr}
 024 b.w	@role:_RNvXso_NtNtCs_4core3fmt3numtNtB7_8UpperHex3fmt
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
-    '_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_20embassy_hal_internal': (
-        ('<&u8 as core::fmt::Debug>::fmt', 40, 8, ((0, 40, 't'),),
-         """
+    "_RNvXs1g_NtCs_4core3fmtRhNtB6_5Debug3fmtCs_20embassy_hal_internal": (
+        (
+            "<&u8 as core::fmt::Debug>::fmt",
+            40,
+            8,
+            ((0, 40, "t"),),
+            """
 000 push	{r7, lr}
 002 mov	r7, sp
 004 ldr	r2, [r1, #0x8]
@@ -1253,6 +1342,7 @@ NUMERIC_VARIANTS = {
 01c b.w	@role:_RNvXse_NtNtCs_4core3fmt3numhNtB7_8LowerHex3fmt
 020 pop.w	{r7, lr}
 024 b.w	@role:_RNvXsg_NtNtCs_4core3fmt3numhNtB7_8UpperHex3fmt
-""".strip().splitlines()),
+""".strip().splitlines(),
+        ),
     ),
 }

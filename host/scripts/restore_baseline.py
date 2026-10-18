@@ -24,7 +24,11 @@ for estimates in source.rglob("estimates.json"):
     if destination.exists():
         for existing in measured.iterdir():
             copy = destination / existing.name
-            if not copy.is_file() or hashlib.sha256(existing.read_bytes()).digest() != hashlib.sha256(copy.read_bytes()).digest():
+            if (
+                not copy.is_file()
+                or hashlib.sha256(existing.read_bytes()).digest()
+                != hashlib.sha256(copy.read_bytes()).digest()
+            ):
                 parser.error(f"existing Criterion baseline differs: {copy}")
     else:
         shutil.copytree(measured, destination)

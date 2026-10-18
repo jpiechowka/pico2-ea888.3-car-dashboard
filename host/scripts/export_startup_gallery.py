@@ -27,12 +27,19 @@ def animation(frames, output):
     palette += [0] * (768 - len(palette))
     indexed = []
     for frame in frames:
-        item = Image.frombytes("P", frame.size, bytes(lookup[pixel] for pixel in frame.get_flattened_data()))
+        item = Image.frombytes(
+            "P", frame.size, bytes(lookup[pixel] for pixel in frame.get_flattened_data())
+        )
         item.putpalette(palette)
         indexed.append(item)
     indexed[0].save(
-        output, save_all=True, append_images=indexed[1:], duration=50,
-        loop=0, optimize=False, disposal=2,
+        output,
+        save_all=True,
+        append_images=indexed[1:],
+        duration=50,
+        loop=0,
+        optimize=False,
+        disposal=2,
     )
     # Encoders can coalesce identical frames. Verify decoded pixels and the
     # complete two-second timeline, including those merged intervals.
@@ -61,14 +68,18 @@ def main():
     args = parser.parse_args()
     source, destination = args.source.resolve(), args.destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    names = sorted(path.name.removesuffix("-Landscape-1200.ppm")
-                   for path in source.glob("*-Landscape-1200.ppm"))
+    names = sorted(
+        path.name.removesuffix("-Landscape-1200.ppm")
+        for path in source.glob("*-Landscape-1200.ppm")
+    )
     if not names:
         raise ValueError("no landscape frame exports found")
     records = []
     for name in names:
-        for geometry, size, suffix in [("Landscape", (320, 240), ""),
-                                       ("Portrait", (240, 320), "-portrait")]:
+        for geometry, size, suffix in [
+            ("Landscape", (320, 240), ""),
+            ("Portrait", (240, 320), "-portrait"),
+        ]:
             stem = f"{name}{suffix}"
             still_source = source / f"{name}-{geometry}-1200.ppm"
             with Image.open(still_source) as image:
@@ -90,18 +101,36 @@ def main():
                 frames.append(frame)
             gif = destination / f"{stem}.gif"
             animation(frames, gif)
-            records.append({"theme": name, "geometry": geometry,
-                            "png_sha256": digest(png), "gif_sha256": digest(gif)})
+            records.append(
+                {
+                    "theme": name,
+                    "geometry": geometry,
+                    "png_sha256": digest(png),
+                    "gif_sha256": digest(gif),
+                }
+            )
             print(f"Verified {stem}: 40 frames, 2000 ms, {gif.stat().st_size} bytes")
     repo = Path(__file__).resolve().parents[2]
-    manifest = {"pillow": pillow_version, "sample_ms": 50, "cycle_ms": 2000,
-                "still_ms": 1200, "lossless_rgb_verified": True,
-                "source_hash_line_endings": "LF",
-                "source_sha256": {path: hashlib.sha256((repo / path).read_text(encoding="utf-8").encode()).hexdigest() for path in [
-                    "crates/dashboard-core/src/startup/scene.rs",
-                    "crates/dashboard-config/src/startup.rs",
-                    "host/examples/startup_gallery.rs"]}, "captures": records}
-    (destination / "capture.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest = {
+        "pillow": pillow_version,
+        "sample_ms": 50,
+        "cycle_ms": 2000,
+        "still_ms": 1200,
+        "lossless_rgb_verified": True,
+        "source_hash_line_endings": "LF",
+        "source_sha256": {
+            path: hashlib.sha256((repo / path).read_text(encoding="utf-8").encode()).hexdigest()
+            for path in [
+                "crates/dashboard-core/src/startup/scene.rs",
+                "crates/dashboard-config/src/startup.rs",
+                "host/examples/startup_gallery.rs",
+            ]
+        },
+        "captures": records,
+    }
+    (destination / "capture.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":

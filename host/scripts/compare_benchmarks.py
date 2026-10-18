@@ -1,4 +1,5 @@
 """Compare source-frozen captures on an operator-identified controlled runner."""
+
 import argparse
 import hashlib
 import json
@@ -16,7 +17,12 @@ BUILD_INPUTS = ("host/Cargo.toml", "host/Cargo.lock", "host/rust-toolchain.toml"
 
 
 def positive(value):
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
         raise ValueError("expected finite positive measurement")
     return value
 
@@ -27,24 +33,36 @@ def load(path):
     with zipfile.ZipFile(path / "source.zip") as archive:
         if archive.testzip() is not None or len(archive.namelist()) != len(set(archive.namelist())):
             raise ValueError("invalid source archive")
-        hashes = {name: hashlib.sha256(archive.read(name)).hexdigest() for name in archive.namelist()}
+        hashes = {
+            name: hashlib.sha256(archive.read(name)).hexdigest() for name in archive.namelist()
+        }
         if hashes != metadata["sha256"] or BENCH not in hashes:
             raise ValueError("source provenance mismatch")
     records = {}
-    if not metadata["median_ns"] or metadata["median_ns"].keys() != metadata["sample_counts"].keys():
+    if (
+        not metadata["median_ns"]
+        or metadata["median_ns"].keys() != metadata["sample_counts"].keys()
+    ):
         raise ValueError("incomplete measurement index")
     for name, median in metadata["median_ns"].items():
         relative = PurePosixPath(name)
         if relative.is_absolute() or ".." in relative.parts or "\\" in name or ":" in name:
             raise ValueError("invalid measurement path")
         try:
-            raw = {filename: json.loads((path / name / filename).read_text(encoding="utf-8"))
-                   for filename in ("benchmark.json", "estimates.json", "sample.json", "tukey.json")}
+            raw = {
+                filename: json.loads((path / name / filename).read_text(encoding="utf-8"))
+                for filename in ("benchmark.json", "estimates.json", "sample.json", "tukey.json")
+            }
         except (OSError, json.JSONDecodeError) as error:
             raise ValueError("incomplete raw measurement files") from error
         sample = raw["sample.json"]
         count = metadata["sample_counts"][name]
-        if type(count) is not int or len(sample["iters"]) != len(sample["times"]) or len(sample["times"]) != count or count < 30:
+        if (
+            type(count) is not int
+            or len(sample["iters"]) != len(sample["times"])
+            or len(sample["times"]) != count
+            or count < 30
+        ):
             raise ValueError("incomplete raw samples")
         for value in sample["iters"] + sample["times"]:
             positive(value)
@@ -56,7 +74,11 @@ def load(path):
             raise ValueError("median disagrees with raw samples")
         interval = estimate["confidence_interval"]
         lo, hi = positive(interval["lower_bound"]), positive(interval["upper_bound"])
-        if point != positive(median) or not lo <= point <= hi or interval["confidence_level"] != 0.95:
+        if (
+            point != positive(median)
+            or not lo <= point <= hi
+            or interval["confidence_level"] != 0.95
+        ):
             raise ValueError("invalid median or confidence interval")
         records[name] = (point, lo, hi)
     return metadata, records
@@ -73,15 +95,23 @@ def compatible(before, after):
     for key in ["runner_id", "host", "processor", "rustc", "environment", "cargo_config"]:
         if key not in before or before[key] != after.get(key):
             raise ValueError("comparison identity mismatch: " + key)
+
     def workload(metadata):
-        return {name: digest for name, digest in metadata["sha256"].items()
-                if name.startswith("host/benches/") or name in (*RUNNERS, *OPTIONAL_RUNNERS, *BUILD_INPUTS)}
+        return {
+            name: digest
+            for name, digest in metadata["sha256"].items()
+            if name.startswith("host/benches/")
+            or name in (*RUNNERS, *OPTIONAL_RUNNERS, *BUILD_INPUTS)
+        }
+
     if workload(before) != workload(after):
         raise ValueError("fixture or capture source changed; review workload semantics separately")
+
     # Ignore Criterion's filter/run name, but require identical Cargo features.
     def cargo_options(metadata):
         command = metadata["command"]
-        return command[:command.index("--")]
+        return command[: command.index("--")]
+
     if cargo_options(before) != cargo_options(after):
         raise ValueError("Cargo build options differ")
 
@@ -107,7 +137,11 @@ if __name__ == "__main__":
     parser.add_argument("baseline", type=Path)
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--budget-percent", type=float, required=True)
-    parser.add_argument("--gate", action="store_true", help="fail on either review or regression; use only on a quiet controlled runner")
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="fail on either review or regression; use only on a quiet controlled runner",
+    )
     args = parser.parse_args()
     rows = compare(load(args.baseline), load(args.candidate), args.budget_percent)
     print("| Fixture | Before ns | After ns | Change | Result |\n|---|---:|---:|---:|---|")

@@ -1,9 +1,23 @@
 """Finite ValidationError source-field assembly, reviewed Task2 contracts."""
 
 VALIDATION_BUILDERS = {
-    'wide': (
-        158, 80, ((0, 158, 't'),),
-        (((14, 22), ('debug', 'option_channel_ref')), ((18, 28), ('literal', b'channel')), ((32, 36), ('debug', 'option_u16')), ((46, 74), ('literal', b'view')), ((50, 78), ('debug', 'field')), ((70, 86), ('debug', 'option_u8')), ((82, 114), ('literal', b'widget')), ((90, 118), ('literal', b'field')), ((94, 122), ('debug', 'error_code')), ((106, 128), ('literal', b'ValidationError')), ((110, 132), ('literal', b'code'))),
+    "wide": (
+        158,
+        80,
+        ((0, 158, "t"),),
+        (
+            ((14, 22), ("debug", "option_channel_ref")),
+            ((18, 28), ("literal", b"channel")),
+            ((32, 36), ("debug", "option_u16")),
+            ((46, 74), ("literal", b"view")),
+            ((50, 78), ("debug", "field")),
+            ((70, 86), ("debug", "option_u8")),
+            ((82, 114), ("literal", b"widget")),
+            ((90, 118), ("literal", b"field")),
+            ((94, 122), ("debug", "error_code")),
+            ((106, 128), ("literal", b"ValidationError")),
+            ((110, 132), ("literal", b"code")),
+        ),
         """
 000 push	{r4, r5, r6, r7, lr}
 002 add	r7, sp, #0xc
@@ -51,10 +65,25 @@ VALIDATION_BUILDERS = {
 096 add	sp, #0x38
 098 ldr	r8, [sp], #4
 09c pop	{r4, r5, r6, r7, pc}
-""".strip().splitlines()),
-    'pool': (
-        124, 72, ((0, 80, 't'), (80, 124, 'd')),
-        (((10, 120), ('literal', b'code')), ((16, 80), ('debug', 'option_channel_ref')), ((24, 84), ('literal', b'channel')), ((28, 88), ('debug', 'option_u16')), ((34, 92), ('literal', b'widget')), ((38, 96), ('debug', 'option_u8')), ((46, 100), ('literal', b'view')), ((50, 104), ('debug', 'field')), ((62, 108), ('literal', b'field')), ((66, 112), ('debug', 'error_code')), ((70, 116), ('literal', b'ValidationError'))),
+""".strip().splitlines(),
+    ),
+    "pool": (
+        124,
+        72,
+        ((0, 80, "t"), (80, 124, "d")),
+        (
+            ((10, 120), ("literal", b"code")),
+            ((16, 80), ("debug", "option_channel_ref")),
+            ((24, 84), ("literal", b"channel")),
+            ((28, 88), ("debug", "option_u16")),
+            ((34, 92), ("literal", b"widget")),
+            ((38, 96), ("debug", "option_u8")),
+            ((46, 100), ("literal", b"view")),
+            ((50, 104), ("debug", "field")),
+            ((62, 108), ("literal", b"field")),
+            ((66, 112), ("debug", "error_code")),
+            ((70, 116), ("literal", b"ValidationError")),
+        ),
         """
 000 push	{r4, r6, r7, lr}
 002 add	r7, sp, #0x8
@@ -93,5 +122,6 @@ VALIDATION_BUILDERS = {
 048 bl	@struct5
 04c add	sp, #0x38
 04e pop	{r4, r6, r7, pc}
-""".strip().splitlines()),
+""".strip().splitlines(),
+    ),
 }

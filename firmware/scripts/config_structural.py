@@ -4,9 +4,10 @@ Only the closed APIs below produce reusable structural results. Mutable source
 states, effect outcomes, frames, guards and completion never enter this store.
 Ordinary callers and unsupported input providers retain their existing checks.
 """
+
 from functools import wraps
 from bisect import bisect_left
-from types import MappingProxyType,SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 import copy
 import hashlib
 import inspect
@@ -16,60 +17,95 @@ from llvm_stack import Instruction
 from validation import require
 
 
-_APIS=frozenset((
-    ('config_helpers','helper_body'),('config_helpers','helper_coverage'),
-    ('config_logger','logger_body'),('config_refill_children','child_body'),
-    ('config_refill_children','child_coverage'),('config_utf8','utf8_body'),
-    ('config_widget_children','widget_body'),
-    ('config_source_children','source_coverage'),
-    ('config_tail_children','tail_coverage'),
-))
+_APIS = frozenset(
+    (
+        ("config_helpers", "helper_body"),
+        ("config_helpers", "helper_coverage"),
+        ("config_logger", "logger_body"),
+        ("config_refill_children", "child_body"),
+        ("config_refill_children", "child_coverage"),
+        ("config_utf8", "utf8_body"),
+        ("config_widget_children", "widget_body"),
+        ("config_source_children", "source_coverage"),
+        ("config_tail_children", "tail_coverage"),
+    )
+)
 
 
 def _freeze(value):
-    if type(value) in (str,bytes,int,bool,type(None)):return value
-    if type(value) in (list,tuple):return tuple(_freeze(v) for v in value)
-    if type(value) is dict:return MappingProxyType({_freeze(k):_freeze(v) for k,v in value.items()})
+    if type(value) in (str, bytes, int, bool, type(None)):
+        return value
+    if type(value) in (list, tuple):
+        return tuple(_freeze(v) for v in value)
+    if type(value) is dict:
+        return MappingProxyType({_freeze(k): _freeze(v) for k, v in value.items()})
     if type(value) is Instruction:
-        require(type(value.address) is int and type(value.raw) is bytes and
-            type(value.mnemonic) is str and type(value.operands) is str,'untyped detached instruction')
-        return Instruction(value.address,value.raw,value.mnemonic,value.operands)
-    raise TypeError('unsupported detached structural input')
+        require(
+            type(value.address) is int
+            and type(value.raw) is bytes
+            and type(value.mnemonic) is str
+            and type(value.operands) is str,
+            "untyped detached instruction",
+        )
+        return Instruction(value.address, value.raw, value.mnemonic, value.operands)
+    raise TypeError("unsupported detached structural input")
 
 
 class _FrozenElf:
-    __slots__=('_attributes',)
+    __slots__ = ("_attributes",)
 
-    def __init__(self,attributes):object.__setattr__(self,'_attributes',_freeze(attributes))
-    def __getattr__(self,name):
-        try:return self._attributes[name]
-        except KeyError:raise AttributeError(name) from None
-    def __setattr__(self,name,value):raise AttributeError('immutable detached ELF')
-    function_bytes=ElfImage.function_bytes
-    section_bytes=ElfImage.section_bytes
+    def __init__(self, attributes):
+        object.__setattr__(self, "_attributes", _freeze(attributes))
+
+    def __getattr__(self, name):
+        try:
+            return self._attributes[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name, value):
+        raise AttributeError("immutable detached ELF")
+
+    function_bytes = ElfImage.function_bytes
+    section_bytes = ElfImage.section_bytes
 
 
 class _FrozenObjects(DiagnosticObjects):
     # Properties keep the inherited __dict__ from replacing any consumed input.
-    __slots__=('_image','_sizes','_rows','_memo','_counts','_hashes','_typed_names','_instruction_index')
+    __slots__ = (
+        "_image",
+        "_sizes",
+        "_rows",
+        "_memo",
+        "_counts",
+        "_hashes",
+        "_typed_names",
+        "_instruction_index",
+    )
 
-    def __init__(self,elf,sizes,rows):
-        object.__setattr__(self,'_image',elf)
-        object.__setattr__(self,'_sizes',_freeze(sizes))
-        object.__setattr__(self,'_rows',_freeze(rows))
-        object.__setattr__(self,'_memo',{})
-        object.__setattr__(self,'_counts',{})
-        object.__setattr__(self,'_hashes',{})
-        object.__setattr__(self,'_typed_names',None)
-        object.__setattr__(self,'_instruction_index',None)
+    def __init__(self, elf, sizes, rows):
+        object.__setattr__(self, "_image", elf)
+        object.__setattr__(self, "_sizes", _freeze(sizes))
+        object.__setattr__(self, "_rows", _freeze(rows))
+        object.__setattr__(self, "_memo", {})
+        object.__setattr__(self, "_counts", {})
+        object.__setattr__(self, "_hashes", {})
+        object.__setattr__(self, "_typed_names", None)
+        object.__setattr__(self, "_instruction_index", None)
+
     @property
-    def elf(self):return self._image
+    def elf(self):
+        return self._image
+
     @property
-    def sizes(self):return self._sizes
-    def __setattr__(self,name,value):raise AttributeError('immutable detached objects')
+    def sizes(self):
+        return self._sizes
+
+    def __setattr__(self, name, value):
+        raise AttributeError("immutable detached objects")
 
 
-def _detached_inputs(objects,rows):
+def _detached_inputs(objects, rows):
     """Detach supported providers; custom readers keep the original rechecks.
 
     The complete raw image, all metadata and all rows are copied. No mutable
@@ -77,20 +113,30 @@ def _detached_inputs(objects,rows):
     SourceContext is independently typed/revalidated by the existing producer.
     """
     if type(objects) is _FrozenObjects:
-        require(rows is objects._rows,'structural proof uses another immutable input package')
-        return objects,rows
-    if type(objects) is not DiagnosticObjects or type(objects.elf) not in (ElfImage,SimpleNamespace) or type(rows) is not dict:
-        return objects,rows
+        require(rows is objects._rows, "structural proof uses another immutable input package")
+        return objects, rows
+    if (
+        type(objects) is not DiagnosticObjects
+        or type(objects.elf) not in (ElfImage, SimpleNamespace)
+        or type(rows) is not dict
+    ):
+        return objects, rows
     try:
-        elf=_FrozenElf(vars(objects.elf))
-        frozen=_FrozenObjects(elf,objects.sizes,rows)
-    except TypeError:return objects,rows
-    require(all(type(at) is int and type(row) is Instruction and at==row.address for at,row in frozen._rows.items()),
-        'detached instruction map keys differ from actual records')
-    return frozen,frozen._rows
+        elf = _FrozenElf(vars(objects.elf))
+        frozen = _FrozenObjects(elf, objects.sizes, rows)
+    except TypeError:
+        return objects, rows
+    require(
+        all(
+            type(at) is int and type(row) is Instruction and at == row.address
+            for at, row in frozen._rows.items()
+        ),
+        "detached instruction map keys differ from actual records",
+    )
+    return frozen, frozen._rows
 
 
-def _raw_composition_inputs(objects,instructions,source_context):
+def _raw_composition_inputs(objects, instructions, source_context):
     """Select canonical raw inputs, never a supplied checked-state flag.
 
     Actual fresh detachment is checked separately after the real producer
@@ -98,89 +144,135 @@ def _raw_composition_inputs(objects,instructions,source_context):
     their independently validating retained path.
     """
     from config_build_source import SourceContext
-    return (type(objects) is DiagnosticObjects and set(vars(objects))=={'elf','sizes'} and
-        type(objects.elf) in (ElfImage,SimpleNamespace) and type(instructions) is dict and
-        type(source_context) is SourceContext and
-        set(vars(source_context))=={'elf_sha256','attempt','build_options','sources'})
+
+    return (
+        type(objects) is DiagnosticObjects
+        and set(vars(objects)) == {"elf", "sizes"}
+        and type(objects.elf) in (ElfImage, SimpleNamespace)
+        and type(instructions) is dict
+        and type(source_context) is SourceContext
+        and set(vars(source_context)) == {"elf_sha256", "attempt", "build_options", "sources"}
+    )
 
 
-def _fresh_composition_inputs(objects,instructions,source_context,owned,rows,current_context):
+def _fresh_composition_inputs(objects, instructions, source_context, owned, rows, current_context):
     """Compare only the original and actually derived input triples.
 
     No private state, approval token or evaluated result enters this predicate.
     Its caller owns the fixed nonescaping construction and all semantic checks.
     """
-    return (type(owned) is _FrozenObjects and type(owned.elf) is _FrozenElf and
-        owned is not objects and not vars(owned) and rows is owned._rows and
-        rows is not instructions and current_context is not source_context)
+    return (
+        type(owned) is _FrozenObjects
+        and type(owned.elf) is _FrozenElf
+        and owned is not objects
+        and not vars(owned)
+        and rows is owned._rows
+        and rows is not instructions
+        and current_context is not source_context
+    )
 
 
 def _structural(rows_index):
     """Wrap only an explicitly listed structural API, preserving its signature."""
+
     def decorate(function):
-        api=(function.__module__,function.__name__)
-        require(api in _APIS,'unreviewed structural reuse API')
-        signature=inspect.signature(function);parameters=tuple(signature.parameters)
-        row_parameter=parameters[rows_index]
+        api = (function.__module__, function.__name__)
+        require(api in _APIS, "unreviewed structural reuse API")
+        signature = inspect.signature(function)
+        parameters = tuple(signature.parameters)
+        row_parameter = parameters[rows_index]
+
         @wraps(function)
-        def checked(*args,**kwargs):
-            bound=signature.bind(*args,**kwargs);bound.apply_defaults()
-            objects=bound.arguments['objects']
-            if type(objects) is not _FrozenObjects:return function(*args,**kwargs)
-            require(bound.arguments[row_parameter] is objects._rows,'structural proof uses another immutable input package')
+        def checked(*args, **kwargs):
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            objects = bound.arguments["objects"]
+            if type(objects) is not _FrozenObjects:
+                return function(*args, **kwargs)
+            require(
+                bound.arguments[row_parameter] is objects._rows,
+                "structural proof uses another immutable input package",
+            )
             # These APIs take only names, roles, ancestry and contextual scalar
             # tuples in addition to their exact objects/map. Preserve all keys.
-            key=(api,tuple((name,value) for name,value in bound.arguments.items() if name not in ('objects',row_parameter)))
-            try:hash(key)
-            except TypeError:return function(*args,**kwargs)
-            misses,hits=objects._counts.get(api,(0,0))
+            key = (
+                api,
+                tuple(
+                    (name, value)
+                    for name, value in bound.arguments.items()
+                    if name not in ("objects", row_parameter)
+                ),
+            )
+            try:
+                hash(key)
+            except TypeError:
+                return function(*args, **kwargs)
+            misses, hits = objects._counts.get(api, (0, 0))
             if key in objects._memo:
-                objects._counts[api]=(misses,hits+1)
+                objects._counts[api] = (misses, hits + 1)
                 return copy.deepcopy(objects._memo[key])
-            result=function(*args,**kwargs)
-            objects._memo[key]=copy.deepcopy(result)
-            misses,hits=objects._counts.get(api,(0,0))
-            objects._counts[api]=(misses+1,hits)
+            result = function(*args, **kwargs)
+            objects._memo[key] = copy.deepcopy(result)
+            misses, hits = objects._counts.get(api, (0, 0))
+            objects._counts[api] = (misses + 1, hits)
             return result
+
         return checked
+
     return decorate
 
 
-def _instruction_addresses(objects,rows):
+def _instruction_addresses(objects, rows):
     """Only exact immutable row inputs share an address index, never a proof.
 
     Direct private construction does not grant the factory's key invariant.
     Unsupported/malformed maps retain each caller's eager items behavior.
     """
-    if type(objects) is not _FrozenObjects or rows is not objects._rows or type(rows) is not MappingProxyType:
+    if (
+        type(objects) is not _FrozenObjects
+        or rows is not objects._rows
+        or type(rows) is not MappingProxyType
+    ):
         return None
-    cached=objects._instruction_index
-    if type(cached) is tuple and len(cached)==2 and cached[0] is rows:return cached[1]
-    if not all(type(at) is int and type(row) is Instruction and at==row.address for at,row in rows.items()):
+    cached = objects._instruction_index
+    if type(cached) is tuple and len(cached) == 2 and cached[0] is rows:
+        return cached[1]
+    if not all(
+        type(at) is int and type(row) is Instruction and at == row.address
+        for at, row in rows.items()
+    ):
         return None
-    addresses=tuple(sorted(rows))
-    object.__setattr__(objects,'_instruction_index',(rows,addresses))
+    addresses = tuple(sorted(rows))
+    object.__setattr__(objects, "_instruction_index", (rows, addresses))
     return addresses
 
 
-def _instruction_items(objects,rows,start,extent):
+def _instruction_items(objects, rows, start, extent):
     """Fresh complete span selection, including odd/interior instruction keys."""
-    addresses=_instruction_addresses(objects,rows)
-    if addresses is not None and type(start) is type(extent) is int and 0<=start<start+extent<=2**32:
-        end=start+extent
-        selected=addresses[bisect_left(addresses,start):bisect_left(addresses,end)]
-        return ((at,rows[at]) for at in selected)
-    return ((at,row) for at,row in rows.items() if start<=at<start+extent)
+    addresses = _instruction_addresses(objects, rows)
+    if (
+        addresses is not None
+        and type(start) is type(extent) is int
+        and 0 <= start < start + extent <= 2**32
+    ):
+        end = start + extent
+        selected = addresses[bisect_left(addresses, start) : bisect_left(addresses, end)]
+        return ((at, rows[at]) for at in selected)
+    return ((at, row) for at, row in rows.items() if start <= at < start + extent)
 
 
 def _image_hash(objects):
-    if type(objects) is not _FrozenObjects:return hashlib.sha256(objects.elf.data).hexdigest()
-    if 'image' not in objects._hashes:objects._hashes['image']=hashlib.sha256(objects.elf.data).hexdigest()
-    return objects._hashes['image']
+    if type(objects) is not _FrozenObjects:
+        return hashlib.sha256(objects.elf.data).hexdigest()
+    if "image" not in objects._hashes:
+        objects._hashes["image"] = hashlib.sha256(objects.elf.data).hexdigest()
+    return objects._hashes["image"]
 
 
-def _readonly_hash(objects,start,extent):
-    if type(objects) is not _FrozenObjects:return hashlib.sha256(objects.read_only(start,extent)).hexdigest()
-    key=(start,extent)
-    if key not in objects._hashes:objects._hashes[key]=hashlib.sha256(objects.read_only(start,extent)).hexdigest()
+def _readonly_hash(objects, start, extent):
+    if type(objects) is not _FrozenObjects:
+        return hashlib.sha256(objects.read_only(start, extent)).hexdigest()
+    key = (start, extent)
+    if key not in objects._hashes:
+        objects._hashes[key] = hashlib.sha256(objects.read_only(start, extent)).hexdigest()
     return objects._hashes[key]

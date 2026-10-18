@@ -3,76 +3,103 @@
 Readers recompute the checks against the exact ELF and explicit source pair.
 No execution receipt, mutable owner or whole-program proof is issued here.
 """
+
 from contextlib import redirect_stdout
 import hashlib
 import io
 import json
 import struct
 import zlib
-from check_stack_budget import check as stack_check,FrameAdmission
-from check_program_image import inspect_program,linked_configuration
+from check_stack_budget import check as stack_check, FrameAdmission
+from check_program_image import inspect_program, linked_configuration
 from config_build_source import validate_source_context
 from validation import require
 
 # Current-only device envelope; historical files migrate through host tooling.
 CURRENT_EAV_VERSION = 6
 
-ASSUMPTIONS=(
-    'supported_rp2350_pico2_fresh_boot_and_selected_profile',
-    'source_reviewed_named_paths_and_fixed_child_stack_allowances',
-    'source_reviewed_buffer_config_and_flash_ownership_protocols',
+ASSUMPTIONS = (
+    "supported_rp2350_pico2_fresh_boot_and_selected_profile",
+    "source_reviewed_named_paths_and_fixed_child_stack_allowances",
+    "source_reviewed_buffer_config_and_flash_ownership_protocols",
 )
-LIMITATIONS=(
-    'no_complete_instruction_effect_or_activation_graph_proof',
-    'no_exception_or_reset_reentry_safety_proof',
-    'captured_source_pair_is_not_complete_compiler_consumed_input_closure',
-    'no_physical_stack_high_water_clock_voltage_or_device_qualification',
+LIMITATIONS = (
+    "no_complete_instruction_effect_or_activation_graph_proof",
+    "no_exception_or_reset_reentry_safety_proof",
+    "captured_source_pair_is_not_complete_compiler_consumed_input_closure",
+    "no_physical_stack_high_water_clock_voltage_or_device_qualification",
 )
 
 
-def _configuration(elf,expected):
-    sections=[section for _,name,section in elf.section_entries if name=='.dashboard_config']
-    require(len(sections)==1,'unique linked EAV section required')
-    section=sections[0];require(12<section[5]<=16384,'linked EAV byte bound')
-    raw=elf.data[section[4]:section[4]+section[5]]
-    require(len(raw)==section[5] and raw[:4]==b'EAV1' and
-            struct.unpack_from('<HH',raw,4)==(CURRENT_EAV_VERSION,len(raw)-12) and
-            zlib.crc32(raw[:8]+raw[12:])==struct.unpack_from('<I',raw,8)[0],
-            'linked EAV envelope/checksum mismatch')
-    if expected is not None:require(type(expected) is bytes and raw==expected,'accepted EAV differs from image')
-    linked_configuration(elf,raw)
+def _configuration(elf, expected):
+    sections = [section for _, name, section in elf.section_entries if name == ".dashboard_config"]
+    require(len(sections) == 1, "unique linked EAV section required")
+    section = sections[0]
+    require(12 < section[5] <= 16384, "linked EAV byte bound")
+    raw = elf.data[section[4] : section[4] + section[5]]
+    require(
+        len(raw) == section[5]
+        and raw[:4] == b"EAV1"
+        and struct.unpack_from("<HH", raw, 4) == (CURRENT_EAV_VERSION, len(raw) - 12)
+        and zlib.crc32(raw[:8] + raw[12:]) == struct.unpack_from("<I", raw, 8)[0],
+        "linked EAV envelope/checksum mismatch",
+    )
+    if expected is not None:
+        require(type(expected) is bytes and raw == expected, "accepted EAV differs from image")
+    linked_configuration(elf, raw)
     return raw
 
 
-def check(elf,expected_eav=None,source_context=None):
-    from check_memory_layout import geometry,check_boundaries
-    context=validate_source_context(source_context,elf)
-    static,headroom=geometry(elf)
+def check(elf, expected_eav=None, source_context=None):
+    from check_memory_layout import geometry, check_boundaries
+
+    context = validate_source_context(source_context, elf)
+    static, headroom = geometry(elf)
     inspect_program(elf)
-    eav=_configuration(elf,expected_eav)
-    stack=stack_check(elf,headroom,source_context=context)
-    require(type(stack) is FrameAdmission,'missing conservative frame admission')
+    eav = _configuration(elf, expected_eav)
+    stack = stack_check(elf, headroom, source_context=context)
+    require(type(stack) is FrameAdmission, "missing conservative frame admission")
     check_boundaries(elf)
-    sha=lambda raw:hashlib.sha256(raw).hexdigest()
-    result=dict(schema=3,gate='practical_image',status='STATIC_IMAGE_CHECKS_PASS',
-        hardware_qualified=False,complete_instruction_proof=False,
-        elf_sha256=sha(elf.data),config_sha256=sha(eav),source_context_sha256=sha(context.to_bytes()),
-        static_ram_bytes=static,headroom=headroom,stack=stack.to_record(),
-        assumptions=list(ASSUMPTIONS),limitations=list(LIMITATIONS))
-    require(len(json.dumps(result,sort_keys=True).encode())<=65536,'practical image result bound')
-    print('STATIC_IMAGE_CHECKS_PASS; conservative named stack paths; complete instruction proof=false; hardware_qualified=false')
+    sha = lambda raw: hashlib.sha256(raw).hexdigest()
+    result = dict(
+        schema=3,
+        gate="practical_image",
+        status="STATIC_IMAGE_CHECKS_PASS",
+        hardware_qualified=False,
+        complete_instruction_proof=False,
+        elf_sha256=sha(elf.data),
+        config_sha256=sha(eav),
+        source_context_sha256=sha(context.to_bytes()),
+        static_ram_bytes=static,
+        headroom=headroom,
+        stack=stack.to_record(),
+        assumptions=list(ASSUMPTIONS),
+        limitations=list(LIMITATIONS),
+    )
+    require(
+        len(json.dumps(result, sort_keys=True).encode()) <= 65536, "practical image result bound"
+    )
+    print(
+        "STATIC_IMAGE_CHECKS_PASS; conservative named stack paths; complete instruction proof=false; hardware_qualified=false"
+    )
     return result
 
 
-def read_result(record,elf,expected_eav=None,source_context=None):
-    require(type(record) is dict and record.get('gate')=='practical_image' and
-            type(record.get('schema')) is int and record['schema']==3,
-            'practical image requires its distinct schema3 receipt')
+def read_result(record, elf, expected_eav=None, source_context=None):
+    require(
+        type(record) is dict
+        and record.get("gate") == "practical_image"
+        and type(record.get("schema")) is int
+        and record["schema"] == 3,
+        "practical image requires its distinct schema3 receipt",
+    )
     # JSON consumers must not mix diagnostic lines into their output.
     with redirect_stdout(io.StringIO()):
-        wanted=check(elf,expected_eav,source_context)
+        wanted = check(elf, expected_eav, source_context)
     # Canonical JSON preserves bool/int distinctions at every nesting level.
-    require(json.dumps(record,sort_keys=True,separators=(',',':'),allow_nan=False)==
-            json.dumps(wanted,sort_keys=True,separators=(',',':'),allow_nan=False),
-            'practical image result fields, assumptions or current identity differ')
+    require(
+        json.dumps(record, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        == json.dumps(wanted, sort_keys=True, separators=(",", ":"), allow_nan=False),
+        "practical image result fields, assumptions or current identity differ",
+    )
     return wanted
