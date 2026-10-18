@@ -152,8 +152,12 @@ fn log_settings_error(error: &drivers::settings_flash::JournalError) {
     }
 }
 
-#[cfg(all(feature = "demo", feature = "longan-rx12"))]
-compile_error!("Select either demo or longan-rx12; vehicle transport never falls back to demo.");
+#[cfg(any(
+    all(feature = "demo", feature = "longan-rx12"),
+    all(feature = "demo", feature = "ble-obd"),
+    all(feature = "longan-rx12", feature = "ble-obd")
+))]
+compile_error!("Select exactly one acquisition backend: demo, ble-obd or longan-rx12");
 
 fn core1_main(
     animation_start: Instant,
@@ -170,8 +174,11 @@ fn core1_main(
 }
 
 bind_interrupts!(struct Irqs {
-    DMA_IRQ_0 => DmaInterruptHandler<embassy_rp::peripherals::DMA_CH0>;
+    DMA_IRQ_0 => DmaInterruptHandler<embassy_rp::peripherals::DMA_CH0>,
+        #[cfg(feature = "ble-obd")] DmaInterruptHandler<embassy_rp::peripherals::DMA_CH1>;
     I2C0_IRQ => I2cInterruptHandler<embassy_rp::peripherals::I2C0>;
+    #[cfg(feature = "ble-obd")]
+    PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<embassy_rp::peripherals::PIO0>;
 });
 
 #[embassy_executor::main]
@@ -192,7 +199,7 @@ async fn dashboard_task(
 
     let p = {
         // Pico 2 W: GP23/24/25/29 belong to wireless/VSYS, not LED/VBUS/SMPS.
-        // No radio or ADC owner is started; PIM715 RGB uses GP26/27/28 below.
+        // The optional BLE task owns these pins; PIM715 RGB uses GP26/27/28.
         let mut config = embassy_rp::config::Config::default();
         config.clocks = dashboard_pico2::clock_profile::clock_config();
         log_info!(
@@ -321,6 +328,22 @@ async fn dashboard_task(
     let mut rendered_orientations = [None; 2];
     spawner.spawn(crate::tasks::recovery::recovery_task(watchdog).unwrap());
 
+    #[cfg(feature = "ble-obd")]
+    spawner.spawn(
+        tasks::ble::radio_task(
+            dashboard_configuration.config.config().ble,
+            tasks::ble::Resources {
+                pio: p.PIO0,
+                dma: p.DMA_CH1,
+                power: p.PIN_23,
+                data: p.PIN_24,
+                cs: p.PIN_25,
+                clock: p.PIN_29,
+            },
+        )
+        .unwrap(),
+    );
+
     static FLUSHER: StaticCell<St7789Flusher<'static>> = StaticCell::new();
     let flusher: &'static mut St7789Flusher<'static> = FLUSHER.init(flusher);
 
@@ -403,7 +426,7 @@ async fn dashboard_task(
     let mut link_receiver = tasks::acquisition::VEHICLE_LINK.dyn_receiver().unwrap();
     #[cfg(feature = "longan-rx12")]
     let mut vehicle_link = None;
-    #[cfg(not(feature = "longan-rx12"))]
+    #[cfg(not(any(feature = "longan-rx12", feature = "ble-obd")))]
     let vehicle_link = None;
     #[cfg(all(feature = "longan-rx12", feature = "frame-trace"))]
     let mut diagnostic_receiver = tasks::acquisition::VEHICLE_DIAGNOSTICS.dyn_receiver().unwrap();
@@ -553,12 +576,15 @@ async fn dashboard_task(
         if let Some(link) = link_receiver.try_changed() {
             vehicle_link = Some(link);
         }
+        #[cfg(not(feature = "ble-obd"))]
         let vehicle_status = dashboard_pico2::vehicle_status::VehicleStatus::derive(
             cfg!(feature = "longan-rx12"),
             vehicle_link,
             &measurements,
             now_ms,
         );
+        #[cfg(feature = "ble-obd")]
+        let vehicle_status = dashboard_pico2::vehicle_status::VehicleStatus::from_ble(tasks::ble::snapshot().state);
 
         let frame_count = COMPLETED_FRAMES.load(Ordering::Relaxed);
         if let Some(rate) = fps_meter

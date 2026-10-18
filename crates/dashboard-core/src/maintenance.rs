@@ -4,7 +4,6 @@ use crate::health::{MAINTENANCE_MS, MaintenanceTicket};
 
 pub const PREPARE_MS: u64 = 400;
 pub const WRITE_MS: u64 = 500;
-const ALL: u8 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Request {
@@ -24,12 +23,14 @@ pub enum Command {
 pub enum Owner {
     Acquisition,
     Input,
+    Radio,
 }
 impl Owner {
     const fn bit(self) -> u8 {
         match self {
             Self::Acquisition => 1,
             Self::Input => 2,
+            Self::Radio => 4,
         }
     }
 }
@@ -55,16 +56,22 @@ pub struct Gate {
     last_generation: u64,
     active: Option<Active>,
     fatal: Option<Error>,
+    owners: u8,
 }
 impl Default for Gate {
     fn default() -> Self { Self::new() }
 }
 impl Gate {
-    pub const fn new() -> Self {
+    pub const fn new() -> Self { Self::with_radio(false) }
+
+    /// Freeze the required owners before any maintenance can begin. Even a
+    /// configured-off radio task must acknowledge when its feature is linked.
+    pub const fn with_radio(radio: bool) -> Self {
         Self {
             last_generation: 0,
             active: None,
             fatal: None,
+            owners: if radio { 7 } else { 3 },
         }
     }
 
@@ -109,7 +116,7 @@ impl Gate {
         let Some(active) = &mut self.active else {
             return false;
         };
-        if command != active.command || active.seen & owner.bit() != 0 {
+        if command != active.command || active.seen & owner.bit() != 0 || self.owners & owner.bit() == 0 {
             return false;
         }
         active.seen |= owner.bit();
@@ -156,7 +163,7 @@ impl Gate {
             active.error = Some(error);
             return Err(error);
         }
-        Ok(active.seen == ALL)
+        Ok(active.seen == self.owners)
     }
 
     pub fn ready(

@@ -1,5 +1,5 @@
 //! One main-loop initiator. Never cancel `run`: it retains the health permit
-//! until both owners have acknowledged resumption, including rejected saves.
+//! until every linked owner acknowledges resumption, including rejected saves.
 use core::cell::RefCell;
 
 use dashboard_pico2::maintenance::{Command, Gate, Owner, Request};
@@ -7,7 +7,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Instant, Timer};
 
-static GATE: Mutex<CriticalSectionRawMutex, RefCell<Gate>> = Mutex::new(RefCell::new(Gate::new()));
+static GATE: Mutex<CriticalSectionRawMutex, RefCell<Gate>> =
+    Mutex::new(RefCell::new(Gate::with_radio(cfg!(feature = "ble-obd"))));
 
 pub fn command() -> Option<Command> { GATE.lock(|gate| gate.borrow().command()) }
 pub fn acknowledge(

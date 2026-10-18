@@ -13,6 +13,55 @@ fn progress(n: u32) -> Progress {
 }
 
 #[test]
+fn radio_is_a_required_owner_only_in_the_radio_gate() {
+    for radio in [false, true] {
+        let mut health = ProgressMonitor::new(0, progress(0));
+        let ticket = health.begin_maintenance(0, progress(0)).unwrap();
+        let mut gate = Gate::with_radio(radio);
+        let request = gate.begin(&ticket).unwrap();
+        let park = Command::Park(request);
+        for owner in [Owner::Acquisition, Owner::Input] {
+            assert!(gate.acknowledge(park, owner, true));
+        }
+        assert_eq!(gate.ready(1), Ok(!radio));
+        assert_eq!(gate.acknowledge(park, Owner::Radio, true), radio);
+        assert_eq!(gate.begin_write(2), Ok(()));
+        assert_eq!(gate.writing(request, 3), Ok(()));
+        gate.release(request).unwrap();
+        assert!(!gate.acknowledge(park, Owner::Radio, true));
+        for owner in [Owner::Input, Owner::Acquisition] {
+            assert!(gate.acknowledge(Command::Resume(request), owner, true));
+        }
+        assert_eq!(gate.resumed(4), Ok(!radio));
+        assert_eq!(gate.acknowledge(Command::Resume(request), Owner::Radio, true), radio);
+        assert_eq!(gate.finish(request, 5), Ok(()));
+    }
+}
+
+#[test]
+fn radio_failure_or_missing_ack_cannot_be_masked_by_other_owners() {
+    for success in [None, Some(false)] {
+        let mut health = ProgressMonitor::new(0, progress(0));
+        let ticket = health.begin_maintenance(0, progress(0)).unwrap();
+        let mut gate = Gate::with_radio(true);
+        let request = gate.begin(&ticket).unwrap();
+        for owner in [Owner::Acquisition, Owner::Input] {
+            gate.acknowledge(Command::Park(request), owner, true);
+        }
+        if let Some(ok) = success {
+            gate.acknowledge(Command::Park(request), Owner::Radio, ok);
+        }
+        assert!(gate.begin_write(400).is_err());
+        assert!(gate.begin_write(401).is_err());
+        gate.release(request).unwrap();
+        for owner in [Owner::Radio, Owner::Input, Owner::Acquisition] {
+            assert!(gate.acknowledge(Command::Resume(request), owner, true));
+        }
+        assert_eq!(gate.finish(request, 402), Ok(()));
+    }
+}
+
+#[test]
 fn both_owners_must_park_and_resume_for_the_same_generation() {
     for owners in [[Owner::Acquisition, Owner::Input], [Owner::Input, Owner::Acquisition]] {
         let mut health = ProgressMonitor::new(0, progress(0));

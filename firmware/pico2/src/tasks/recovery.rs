@@ -55,9 +55,22 @@ fn progress() -> Progress {
 #[embassy_executor::task]
 pub async fn recovery_task(mut watchdog: RecoveryWatchdog) {
     let mut monitor = ProgressMonitor::new(Instant::now().as_millis(), progress());
+    #[cfg(feature = "ble-obd")]
+    let mut radio = dashboard_pico2::ble::runtime::Liveness::new(Instant::now().as_millis());
     loop {
         let now = Instant::now().as_millis();
         let current = progress();
+        #[cfg(feature = "ble-obd")]
+        if super::ble::FATAL.load(Ordering::Relaxed)
+            || !radio.observe(
+                super::ble::PROGRESS.load(Ordering::Relaxed),
+                now,
+                !monitor.feeding_allowed(),
+            )
+        {
+            crate::log_fault!("BLE owner failed or stalled; watchdog recovery");
+            core::future::pending::<()>().await;
+        }
         let result = monitor.observe(now, current).and_then(|()| {
             match REQUEST.try_receive() {
                 Ok(Request::Begin) => {

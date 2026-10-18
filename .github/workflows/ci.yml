@@ -181,6 +181,17 @@ jobs:
       - name: Verify vendored HAL source
         run: python3 scripts/check_vendor.py
         working-directory: firmware
+      - name: Verify radio source and firmware provenance
+        run: |
+          python3 scripts/check_radio_vendor.py
+          python3 scripts/test_radio_vendor.py
+          python3 -O scripts/test_radio_vendor.py
+        working-directory: firmware
+      - name: Radio transport and security regressions
+        run: |
+          cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth-only,firmware-logs
+          cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth
+          cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,security,default-packet-pool -- --test-threads=1
       - name: Target artifact capture contracts
         run: |
           cargo fetch --locked --manifest-path ../Cargo.toml

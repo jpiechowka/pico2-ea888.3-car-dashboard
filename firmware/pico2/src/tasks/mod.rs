@@ -4,6 +4,8 @@ use embassy_executor::Executor;
 use static_cell::StaticCell;
 
 pub mod acquisition;
+#[cfg(feature = "ble-obd")]
+pub mod ble;
 pub mod flush;
 pub mod maintenance;
 pub mod recovery;

@@ -15,6 +15,9 @@ pub enum VehicleStatus {
     Stale,
     ResetRequired,
     Maintenance,
+    AdapterOnly,
+    SyntheticPeer,
+    Pairing,
 }
 impl VehicleStatus {
     pub const fn label(self) -> &'static str {
@@ -29,6 +32,24 @@ impl VehicleStatus {
             Self::Stale => "STALE",
             Self::ResetRequired => "RESET REQ",
             Self::Maintenance => "MAINT",
+            Self::AdapterOnly => "BLE ONLY",
+            Self::SyntheticPeer => "TEST PEER",
+            Self::Pairing => "PAIRING",
+        }
+    }
+
+    /// A connected prototype adapter has no qualified vehicle acquisition path.
+    pub const fn from_ble(state: crate::ble::link::LinkState) -> Self {
+        use crate::ble::link::LinkState as Ble;
+        match state {
+            Ble::Disabled => Self::Disabled,
+            Ble::Starting | Ble::Connecting | Ble::Discovering | Ble::Identifying => Self::Starting,
+            Ble::Securing => Self::Pairing,
+            Ble::AdapterReady => Self::AdapterOnly,
+            Ble::SyntheticReady => Self::SyntheticPeer,
+            Ble::Backoff => Self::Retrying,
+            Ble::Maintenance => Self::Maintenance,
+            Ble::Fault => Self::ResetRequired,
         }
     }
 

@@ -98,6 +98,9 @@ fn each_link_status_repairs_both_retained_headers_without_sensor_changes() {
         VehicleStatus::ResetRequired,
         VehicleStatus::Retrying,
         VehicleStatus::Maintenance,
+        VehicleStatus::AdapterOnly,
+        VehicleStatus::SyntheticPeer,
+        VehicleStatus::Pairing,
         VehicleStatus::Starting,
     ] {
         let scene = DashboardScene {
@@ -122,4 +125,29 @@ fn each_link_status_repairs_both_retained_headers_without_sensor_changes() {
         }
         assert!(!cache.prepare(0, &scene).header);
     }
+}
+
+#[test]
+fn ble_readiness_never_claims_qualified_vehicle_data() {
+    use dashboard_host_validation::ble::link::LinkState as Ble;
+    for state in [
+        Ble::Disabled,
+        Ble::Starting,
+        Ble::Connecting,
+        Ble::Securing,
+        Ble::Discovering,
+        Ble::Identifying,
+        Ble::AdapterReady,
+        Ble::SyntheticReady,
+        Ble::Backoff,
+        Ble::Maintenance,
+        Ble::Fault,
+    ] {
+        assert_ne!(VehicleStatus::from_ble(state), VehicleStatus::Data);
+        assert_ne!(VehicleStatus::from_ble(state), VehicleStatus::Demo);
+    }
+    assert_eq!(VehicleStatus::from_ble(Ble::AdapterReady).label(), "BLE ONLY");
+    assert_eq!(VehicleStatus::from_ble(Ble::SyntheticReady).label(), "TEST PEER");
+    assert_eq!(VehicleStatus::from_ble(Ble::Securing).label(), "PAIRING");
+    assert_eq!(VehicleStatus::from_ble(Ble::Fault), VehicleStatus::ResetRequired);
 }

@@ -18,6 +18,7 @@ default = ["simple-outline"]
 demo = []
 # Explicit preprovisioned adapter bring-up. Receive metadata remains unqualified.
 longan-rx12 = ["dep:embedded-io-async"]
+ble-obd = ["dep:cyw43", "dep:cyw43-pio", "dep:trouble-host"]
 # Overclock profiles: cpu{MHz}-spi{MHz}-{voltage}
 # All profiles use simple-outline by default for best FPS
 cpu150-spi62-1v10 = []
@@ -41,6 +42,9 @@ te-trace = []
 target-bench = []
 
 [dependencies]
+cyw43 = { version = "0.7.0", features = ["bluetooth-only", "defmt"], optional = true }
+cyw43-pio = { version = "0.10.0", optional = true }
+trouble-host = { version = "0.8.0", default-features = false, features = ["central", "gatt", "security", "defmt", "default-packet-pool-size-8", "default-packet-pool-mtu-251", "gatt-client-notification-queue-size-4"], optional = true }
 dashboard-core = { path = "../../crates/dashboard-core", default-features = false }
 embedded-graphics = "0.8.2"
 embedded-hal-async = "1.0.0"

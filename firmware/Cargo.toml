@@ -1,12 +1,14 @@
 [workspace]
 resolver = "2"
 members = ["pico2"]
-exclude = ["vendor/embassy-rp"]
+exclude = ["vendor/embassy-rp", "vendor/cyw43", "vendor/trouble-host"]
 
 [patch.crates-io]
 # Published 0.10.0 plus reviewed UART, multicore and flash corrections.
 # See vendor/README.md and the source/ELF integrity gates.
 embassy-rp = { path = "vendor/embassy-rp" }
+cyw43 = { path = "vendor/cyw43" }
+trouble-host = { path = "vendor/trouble-host" }
 
 [profile.release]
 codegen-units = 1

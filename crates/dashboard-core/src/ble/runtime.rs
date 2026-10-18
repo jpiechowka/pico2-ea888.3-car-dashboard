@@ -1,0 +1,152 @@
+//! Small hardware-independent contracts used by the radio owner.
+
+use crate::view_config::BleProfile;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteMode {
+    Request,
+    Command,
+}
+
+/// Decide from discovered properties, never switch write type after a failure.
+/// CX and the fixture require acknowledged writes. MC+ also supports the
+/// command-only characteristic used by its published embedded integration.
+pub const fn write_mode(
+    profile: BleProfile,
+    notify: bool,
+    response: bool,
+    command: bool,
+) -> Option<WriteMode> {
+    if !notify {
+        None
+    } else if response {
+        Some(WriteMode::Request)
+    } else if matches!(profile, BleProfile::VlinkerMcPlus) && command {
+        Some(WriteMode::Command)
+    } else {
+        None
+    }
+}
+
+/// CYW43439 GSPI uses two PIO cycles per clock. Integer division avoids short
+/// fractional-divider cycles exceeding the documented 50 MHz GSPI limit.
+pub const fn pio_divider(cpu_hz: u32) -> Option<u16> {
+    if cpu_hz == 0 || cpu_hz > 300_000_000 {
+        return None;
+    }
+    Some(cpu_hz.div_ceil(100_000_000) as u16)
+}
+
+/// Observe completed radio bus boundaries, never a timer-only heartbeat.
+pub struct Liveness {
+    previous: u32,
+    last_ms: u64,
+    observed_ms: u64,
+    started: bool,
+    failed: bool,
+}
+impl Liveness {
+    pub const fn new(now_ms: u64) -> Self {
+        Self {
+            previous: 0,
+            last_ms: now_ms,
+            observed_ms: now_ms,
+            started: false,
+            failed: false,
+        }
+    }
+
+    pub fn observe(
+        &mut self,
+        count: u32,
+        now_ms: u64,
+        maintenance: bool,
+    ) -> bool {
+        if self.failed || now_ms < self.observed_ms {
+            self.failed = true;
+            return false;
+        }
+        self.observed_ms = now_ms;
+        if count != self.previous {
+            self.started = true;
+            self.previous = count;
+            self.last_ms = now_ms;
+        }
+        // The existing maintenance monitor independently bounds the whole pause
+        // and withholds watchdog feeds; this only rebases radio liveness.
+        if maintenance {
+            self.last_ms = now_ms;
+        }
+        let budget = if self.started { 500 } else { 10_000 };
+        self.failed = now_ms - self.last_ms >= budget;
+        !self.failed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gatt_modes_require_notify_and_profile_compatible_writes() {
+        use crate::view_config::BleProfile::{ObdLinkCx, TestPeer, VlinkerMcPlus};
+        for profile in [ObdLinkCx, TestPeer, VlinkerMcPlus] {
+            for response in [false, true] {
+                for command in [false, true] {
+                    assert_eq!(write_mode(profile, false, response, command), None);
+                }
+            }
+            assert_eq!(write_mode(profile, true, false, false), None);
+        }
+        // MC+ source uses Write Command; prefer an acknowledged write if exposed.
+        assert_eq!(write_mode(VlinkerMcPlus, true, false, true), Some(WriteMode::Command));
+        assert_eq!(write_mode(VlinkerMcPlus, true, true, true), Some(WriteMode::Request));
+        for profile in [ObdLinkCx, TestPeer] {
+            assert_eq!(write_mode(profile, true, false, true), None);
+            assert_eq!(write_mode(profile, true, true, false), Some(WriteMode::Request));
+        }
+    }
+
+    #[test]
+    fn integer_radio_clock_is_bounded_at_all_supported_cpu_speeds() {
+        for hz in [
+            132_000_000,
+            140_000_000,
+            150_000_000,
+            250_000_000,
+            280_000_000,
+            290_400_000,
+            300_000_000,
+        ] {
+            let divider = u32::from(pio_divider(hz).unwrap());
+            assert!(hz <= divider * 100_000_000);
+            assert!(divider == 1 || hz > (divider - 1) * 100_000_000);
+        }
+        assert_eq!(pio_divider(0), None);
+        assert_eq!(pio_divider(300_000_001), None);
+        assert_eq!(pio_divider(u32::MAX), None);
+    }
+
+    #[test]
+    fn initialization_and_stalled_boundary_deadlines_latch() {
+        let mut live = Liveness::new(20);
+        assert!(live.observe(0, 10_019, false));
+        assert!(!live.observe(0, 10_020, false));
+        assert!(!live.observe(1, 10_021, false));
+        let mut live = Liveness::new(0);
+        assert!(live.observe(u32::MAX, 100, false));
+        assert!(live.observe(0, 101, false));
+        assert!(live.observe(0, 600, false));
+        assert!(!live.observe(0, 601, false));
+    }
+
+    #[test]
+    fn maintenance_rebases_without_masking_clock_reversal() {
+        let mut live = Liveness::new(0);
+        assert!(live.observe(1, 1, false));
+        assert!(live.observe(1, 400, true));
+        assert!(live.observe(1, 800, true));
+        assert!(live.observe(2, 801, false));
+        assert!(!live.observe(3, 800, true));
+    }
+}

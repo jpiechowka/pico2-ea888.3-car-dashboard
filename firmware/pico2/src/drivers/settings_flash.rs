@@ -51,7 +51,7 @@ impl SettingsFlash {
     }
 
     fn qualify(&mut self) -> Result<(), Error> {
-        // The linked-byte proof currently covers optimized release artifacts.
+        // Production image admission covers optimized release artifacts.
         // Debug firmware remains usable with volatile defaults, without XIP-off.
         if cfg!(debug_assertions) {
             return Err(Error::DebugBuild);
@@ -151,6 +151,10 @@ impl SettingsFlash {
             return Err(Error::Permit);
         }
         Self::configuration()?;
+        #[cfg(feature = "ble-obd")]
+        if !crate::tasks::ble::bus_idle() {
+            return Err(Error::Busy);
+        }
         let spi = pac::SPI0.sr().read();
         if crate::tasks::recovery::DISPLAY_PENDING.load(core::sync::atomic::Ordering::Relaxed)
             || (0..16).any(|n| pac::DMA.ch(n).ctrl_trig().read().busy())
