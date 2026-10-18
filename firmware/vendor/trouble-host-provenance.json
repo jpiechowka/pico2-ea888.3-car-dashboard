@@ -60,7 +60,7 @@
     "src/security_manager/pairing/util.rs": "92cb2e1c2a33540357faf8b1531663e87b1076989be553d5e9106f5230f96303"
   },
   "modified": {
-    "LOCAL_PATCHES.md": "57ef1cd37211d303496b0d300452d95beb3ec245afb4385a8775601c8a754e90",
+    "LOCAL_PATCHES.md": "d64b64ae80bee95caf48eb97b53a155dc9ee101b317be00a0b5bd941060f1965",
     "rustfmt.toml": "8d3ecaf636a4420607560a59b51447634c990158192e27f627703c851eab260a",
     "src/central.rs": "368e545f0377fe38d669074e3358a465d57f968b9803027d584f66e733084ed5",
     "src/command.rs": "480a920bc60fa9ad7ef1d493d8c0ffc0b07f66ed7fed45b868ab4fff73d86055",
@@ -69,6 +69,7 @@
     "src/gatt.rs": "583616c9a73ddc00ed257d7cd23d93212932fd01ac00592864e00347b50ae7bd",
     "src/host.rs": "67a2c39c021e03ea830fd36c8c4205483ba70b3d8ea2164cc44dc0b0119c7787",
     "src/host_regression_tests.rs": "825bb3e7b688895acb6b92de4dcf6c156ee83790546df68b8e7e1d4ce80599fb",
-    "src/lib.rs": "3c2f387fea4063ff6e7cfdc6af85931ee65ded7ccb718cb46c4e56b485050e62"
+    "src/lib.rs": "3c2f387fea4063ff6e7cfdc6af85931ee65ded7ccb718cb46c4e56b485050e62",
+    "src/security_manager/mod.rs": "e82f1d44fc4f27e780614c31dd4292b2128d2d91672645919d08338441857216"
   }
 }

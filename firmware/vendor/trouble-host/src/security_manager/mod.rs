@@ -7,15 +7,15 @@ pub(crate) mod crypto;
 mod pairing;
 mod types;
 use core::cell::{Ref, RefCell};
-use core::future::{poll_fn, Future};
+use core::future::{Future, poll_fn};
 use core::task::Poll;
 
+use bt_hci::FromHciBytes;
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
 #[cfg(feature = "central")]
 use bt_hci::param::BdAddr;
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
-use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -525,6 +525,7 @@ impl Inner {
         connections: &ConnectionManager<'_, P>,
         storage: &mut ConnectionStorage<P::Packet>,
     ) {
+        storage.security_level = SecurityLevel::NoEncryption;
         let has_bond = bonds.iter().any(|b| b.identity.match_identity(&storage.peer_identity));
         if has_bond {
             storage.bond_rejected = true;
@@ -1040,7 +1041,7 @@ impl<'d> SecurityManager<'d> {
         };
 
         if let Some((handle, status, encrypted)) = encryption_event {
-            match status.to_result() {
+            let result = match status.to_result() {
                 Ok(()) => {
                     trace!("[smp] Encryption event (encrypted={})", encrypted);
                     connections.with_connected_handle(handle, |storage| {
@@ -1051,9 +1052,12 @@ impl<'d> SecurityManager<'d> {
                             connections,
                             storage,
                         );
+                        if !encrypted {
+                            storage.security_level = SecurityLevel::NoEncryption;
+                        }
                         let _ = self.handle_security_error(connections, storage, &res);
                         res
-                    })?;
+                    })
                 }
                 Err(error) => {
                     error!("[security manager] Encryption event error {:?}", error);
@@ -1065,9 +1069,15 @@ impl<'d> SecurityManager<'d> {
                             storage,
                         );
                         Ok(())
-                    })?;
+                    })
                 }
+            };
+            // Release the storage borrow before requesting disconnect. Neither
+            // failed refresh nor encryption-off may retain application access.
+            if status.to_result().is_err() || !encrypted {
+                connections.request_handle_disconnect(handle, bt_hci::param::DisconnectReason::AuthenticationFailure);
             }
+            result?;
         }
         Ok(())
     }
@@ -1317,10 +1327,10 @@ mod tests {
     use rand_core::SeedableRng;
 
     use super::*;
+    use crate::IoCapabilities;
     use crate::connection::ConnParams;
     use crate::connection_manager::{ConnectionManager, ConnectionStorage};
     use crate::prelude::DefaultPacketPool;
-    use crate::IoCapabilities;
 
     fn setup_manager() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage: &RefCell<[_]> = Box::leak(Box::new(RefCell::new([const { ConnectionStorage::new() }; 2])));
@@ -1406,6 +1416,35 @@ mod tests {
             assert_eq!(inner.pairing_sm.as_ref().unwrap().peer_address(), other);
             Ok(())
         }));
+    }
+
+    #[test]
+    fn lost_encryption_revokes_live_connection_before_disconnect_complete() {
+        // Decoded HCI failures on refresh/change, then encryption switched off.
+        for (kind, data) in [
+            (EventKind::EncryptionKeyRefreshComplete, &[0x05, 0x05, 0x00][..]),
+            (EventKind::EncryptionChangeV1, &[0x05, 0x05, 0x00, 0x00][..]),
+            (EventKind::EncryptionChangeV1, &[0x00, 0x05, 0x00, 0x00][..]),
+        ] {
+            let mgr = setup_manager();
+            let handle = ConnHandle::new(5);
+            let peer = Address::random([0x13, 2, 3, 4, 5, 6]);
+            unwrap!(mgr.connect(handle, peer, LeConnRole::Central, ConnParams::new()));
+            let conn = embassy_futures::block_on(mgr.accept(LeConnRole::Central, &[peer]));
+            unwrap!(mgr.with_connected_handle(handle, |storage| {
+                storage.security_level = SecurityLevel::Encrypted;
+                Ok(())
+            }));
+            assert!(conn.security_level().unwrap().encrypted());
+            unwrap!(mgr.security_manager.handle_hci_event(EventPacket { kind, data }, mgr));
+            // Inspect source state, not just the application's admission flag.
+            assert_eq!(mgr.connection(0).security_level, SecurityLevel::NoEncryption);
+            assert!(!conn.is_connected());
+            assert!(!conn.is_disconnected());
+            assert!(!mgr.all_disconnected());
+            unwrap!(mgr.disconnected(handle, bt_hci::param::Status::SUCCESS));
+            assert!(conn.is_disconnected());
+        }
     }
 
     #[test]

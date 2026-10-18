@@ -22,6 +22,9 @@ metadata are retained; this is a local reviewed patch set.
   in DisconnectRequest. The control runner sends Disconnect while RX stays active.
   Failure to allocate a connection slot terminates the host instead of awaiting
   a command from the RX loop that must receive that command's response.
+- Failed HCI encryption changes/key refreshes and explicit encryption-off clear
+  the stored security level and request disconnect before further GATT admission.
+  This also works without an active pairing state or an available event slot.
 - Connection::is_disconnected means controller-confirmed terminal state.
   Stack::connections_idle additionally requires no pending central create/cancel
   and every slot terminal. Keep the host runner alive during bounded cleanup.
@@ -45,5 +48,6 @@ cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --ta
 New regressions exercise CCCD ordering, visible notification lag, malformed/empty
 PDUs, pool and GATT queue exhaustion, valid delivery, pre-ATT reassembly errors,
 queued-byte quarantine, cancellation ordering, and terminal connection/stack
-status. No test establishes physical radio performance, pairing interoperability
+status. Decoded HCI security failures additionally verify source-state revocation
+and terminal cleanup. No test establishes physical radio performance, pairing interoperability
 or actual flash lockout timing. Root firmware gates remain mandatory.
