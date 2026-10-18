@@ -129,7 +129,19 @@ fn registry_has_each_editable_descriptor_once_and_unique_numeric_dom_ids() {
     ] {
         expected.insert(Registry::raw_key(field));
     }
+    for field in [
+        BleField::Address,
+        BleField::ConnectTimeout,
+        BleField::ResponseTimeout,
+        BleField::PollGap,
+    ] {
+        expected.insert(Registry::raw_key(RawField::Ble(field)));
+    }
     for key in [
+        FieldKey::BleEnabled,
+        FieldKey::BleProfile,
+        FieldKey::BleAddressKind,
+        FieldKey::BleReconnect,
         FieldKey::Orientation,
         FieldKey::StatusOrientation,
         FieldKey::SplashOrientation,

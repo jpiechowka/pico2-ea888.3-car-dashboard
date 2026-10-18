@@ -1,4 +1,5 @@
 mod advanced;
+mod ble;
 mod build_flash;
 mod command_palette;
 mod controls;
@@ -714,6 +715,7 @@ pub fn Studio() -> impl IntoView {
                 </section>
                 <section class="workspace-panel settings-panel" id="studio-panel-device" role="tabpanel" aria-labelledby="studio-tab-device" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Device)>
                     <Group ui group=GroupId::Bindings><orientation::Picker ui scope=orientation::Scope::Device/><controls::DeviceControls ui/></Group>
+                    <Group ui group=GroupId::Ble><ble::BlePanel ui/></Group>
                     <Group ui group=GroupId::Indicator><led::LedPanel ui/></Group>
                     <startup::Panel ui/>
                     <div class="resource-navigation"><p>"Review configuration resources in Diagnostics and firmware artifacts in Build & Flash."</p><button on:click=move |_|workspaces::activate(ui,Workspace::BuildFlash)>"Open Build & Flash"</button></div>
@@ -728,7 +730,7 @@ pub fn Studio() -> impl IntoView {
                 <section class="workspace-panel settings-panel" id="studio-panel-diagnostics" role="tabpanel" aria-labelledby="studio-tab-diagnostics" tabindex="0" hidden=move ||ui.workspace.with(|s|s.active()!=Workspace::Diagnostics)>
                     <h1>"Diagnostics"</h1>
                     <event_log::EventLog ui/>
-                    <Group ui group=GroupId::Simulation><controls::SimulationControls ui/></Group>
+                    <Group ui group=GroupId::Simulation><controls::SimulationControls ui/><ble::BleSimulationPanel ui/></Group>
                     <Group ui group=GroupId::Files><io::Files ui/></Group>
                     <Group ui group=GroupId::Measurements><resources::Resources ui/></Group>
                 </section>

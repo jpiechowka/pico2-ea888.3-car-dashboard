@@ -190,7 +190,7 @@ impl Draft {
                             RawField::ViewName(id) => id == w.view,
                             RawField::WarningPageMilliseconds | RawField::WarningColor { .. } => true,
                             RawField::HistorySeconds(channel) => channel == w.channel,
-                            RawField::ControlHoldMilliseconds | RawField::Led { .. } => false,
+                            RawField::ControlHoldMilliseconds | RawField::Led { .. } | RawField::Ble(_) => false,
                         }
                     })
             })
@@ -322,6 +322,12 @@ impl Draft {
                     self.config.sources[channel.index()]
                 ));
             }
+        }
+        if self.config.ble != accepted.config().ble {
+            lines.push(format!(
+                "BLE settings: {:?}; physical connection status is unavailable in this browser.",
+                self.config.ble
+            ));
         }
         if self.config.led != accepted.config().led {
             lines.push(format!(

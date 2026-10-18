@@ -34,6 +34,8 @@
 
 pub mod appearance_presets;
 pub mod artwork_draft;
+pub mod ble;
+pub mod ble_simulator;
 pub mod build_flash;
 pub mod cache_reporting;
 pub mod diagnostic;

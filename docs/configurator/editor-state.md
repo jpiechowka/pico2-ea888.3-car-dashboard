@@ -81,3 +81,21 @@ The configurator is an independent Cargo workspace with a committed lockfile,
 like `host` and `firmware`. It consumes the same shared path crates and inherits
 the repository's pinned nightly. This isolates browser framework features and
 release settings from firmware target/linker settings.
+
+## BLE settings
+
+Device → Bluetooth connection uses the same accepted state, rejected typed draft,
+raw fields, error navigator and undo/redo path as other configuration. Enabling
+BLE with a zero peer retains the rejected enabled selection for repair while
+exports remain blocked. Fixing its peer accepts the complete repair as one undo
+transaction. Malformed addresses and inactive timing errors cannot be erased by
+switching profiles or disabling BLE. Search and error navigation route to the
+actual BLE fields; JSON candidates remain read-only until Apply/Discard.
+
+Diagnostics → Timing simulation includes a separately labelled synthetic BLE
+protocol fixture. It drives the shared session's initialization, identity,
+fragment assembly, deadlines and epoch checks. MC+/CX fixtures use adapter-only
+mode; the TestPeer fixture alone exercises a synthetic diagnostic reply. No
+fixture completion enters vehicle acquisition. Accepted configuration changes
+reset this fixture; invalid/pending JSON blocks actions without changing accepted
+configuration. This is not a browser radio, pairing test or live Pico status.

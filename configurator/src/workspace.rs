@@ -434,6 +434,7 @@ impl Workspace {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum GroupId {
+    Ble,
     Layout,
     Readout,
     Gauge,
@@ -459,6 +460,7 @@ impl GroupId {
             Self::HistoryStatistics => "history-statistics",
             Self::Warnings => "warnings",
             Self::Appearance => "appearance",
+            Self::Ble => "ble",
             Self::Bindings => "bindings",
             Self::Indicator => "indicator",
             Self::Channels => "channels",
@@ -479,6 +481,7 @@ impl GroupId {
             Self::HistoryStatistics => "History & statistics",
             Self::Warnings => "Warnings",
             Self::Appearance => "Appearance",
+            Self::Ble => "Bluetooth connection",
             Self::Bindings => "Buttons & encoder",
             Self::Indicator => "RGB indicator",
             Self::Channels => "Channel history",
@@ -513,6 +516,7 @@ impl Default for WorkspaceState {
                 GroupId::Layout,
                 GroupId::Readout,
                 GroupId::Bindings,
+                GroupId::Ble,
                 GroupId::Channels,
                 GroupId::Files,
             ]

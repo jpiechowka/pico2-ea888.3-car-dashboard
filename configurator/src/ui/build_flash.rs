@@ -128,7 +128,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
             <section class="build-card" aria-labelledby="build-profile-title"><div class="build-section-title"><span>"01"</span><h2 id="build-profile-title">"Firmware & profile"</h2></div>
                 <label class="build-field">"Firmware mode"<select prop:value=move ||ui.build.with(|s|match s.options.mode{Mode::Demo=>"demo",Mode::Vehicle=>"vehicle"}) on:change=move |e|{
                     let v=match event_target_value(&e).as_str(){"demo"=>Some(Mode::Demo),"vehicle"=>Some(Mode::Vehicle),_=>None};if let Some(v)=v{edit(ui,|s|s.options.mode=v);}
-                }><option value="demo">"Demo · synthetic engine values"</option><option value="vehicle">"Vehicle · Longan CAN acquisition"</option></select><small>"Both use the same layout and renderer. Vehicle ECU support still needs captures and hardware validation."</small></label>
+                }><option value="demo">"Demo · synthetic engine values"</option><option value="vehicle">"BLE prototype · wireless adapter"</option></select><small>"Both use the same layout and renderer. Configure the peer under Device → Bluetooth connection. Real MC+/CX profiles initialize and identify the adapter only; exact ECU polling remains unqualified. TestPeer uses synthetic data on a separate service."</small></label>
                 <label class="build-field">"Clock profile"<select prop:value=move ||ui.build.with(BuildSelection::selected_key) on:change=move |e|{let key=event_target_value(&e);edit(ui,|s|{let _=s.select(&key);});}>{dashboard_build_profiles::catalogue().iter().map(|p|view!{<option value=p.feature>{p.label}</option>}).collect_view()}<option value="custom">"Custom · exact frequencies and voltage"</option></select></label>
                 <p class="build-note">{move ||ui.build.with(profile_note)}</p>
                 <div class="build-custom" hidden=move ||!ui.build.with(|s|s.custom)>
@@ -160,6 +160,7 @@ pub fn BuildFlash(ui: Ui) -> impl IntoView {
                     <BuildToggle ui label="Frame timing trace" help="Include software frame timing diagnostics." read=|o|o.frame_trace write=|o,v|o.frame_trace=v/>
                     <BuildToggle ui label="TE timing trace" help="Include display synchronization diagnostics." read=|o|o.te_trace write=|o,v|o.te_trace=v/>
                 </details>
+                <p class="build-note">{move ||ui.editor.with(|e|format!("Accepted BLE configuration: {} · {:?}. Physical connection status is unavailable in Studio.",if e.preview().config().ble.enabled{"enabled"}else{"disabled; radio remains idle"},e.preview().config().ble.profile))}</p>
                 <details class="build-disclosure"><summary>"Exact normalized build options"</summary><pre class="build-json">{move ||ui.build.with(|s|match s.normalized(){Ok(n)=>serde_json::to_string_pretty(&n).unwrap_or_else(|_|"Options unavailable".into()),Err(e)=>e.message()})}</pre></details>
             </section>
             <section class="build-card" aria-labelledby="build-run-title"><div class="build-section-title"><span>"04"</span><h2 id="build-run-title">"Build on this computer"</h2></div>

@@ -264,6 +264,14 @@ pub enum WidgetField {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BleField {
+    Address,
+    ConnectTimeout,
+    ResponseTimeout,
+    PollGap,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LedField {
     Color,
     Brightness,
@@ -292,6 +300,7 @@ pub enum SourceField {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RawField {
+    Ble(BleField),
     HistorySeconds(Channel),
     Led { warning: bool, field: LedField },
     ControlHoldMilliseconds,
@@ -323,6 +332,7 @@ pub enum Edit {
     },
     SetReducedMotion(bool),
     SetLed(LedSettings),
+    SetBle(BleSettings),
     RemoveBand {
         id: u16,
         index: u8,
@@ -1662,6 +1672,7 @@ impl Editor {
                 InspectionOwner::Root,
                 RawField::Fuel(_)
                 | RawField::Led { .. }
+                | RawField::Ble(_)
                 | RawField::ControlHoldMilliseconds
                 | RawField::WarningPageMilliseconds
                 | RawField::WarningColor { .. },
@@ -1868,6 +1879,7 @@ impl Editor {
                 | Edit::SetHistory { .. }
                 | Edit::SetReducedMotion(_)
                 | Edit::SetLed(_)
+                | Edit::SetBle(_)
                 | Edit::RemoveBand { .. }
                 | Edit::SetWarningPresentation(_)
                 | Edit::SetFuel(_)
@@ -1906,6 +1918,7 @@ impl Editor {
             }
             Edit::SetReducedMotion(value) => config.reduced_motion = value,
             Edit::SetLed(value) => config.led = value,
+            Edit::SetBle(value) => config.ble = value,
             Edit::RemoveBand { id, index } => {
                 let slot = widget_index(&config, id)?;
                 let widget = &mut config.widgets[slot];

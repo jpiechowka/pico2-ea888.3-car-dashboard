@@ -93,7 +93,8 @@ pub(super) fn check_raw_target(
         | RawField::WarningPageMilliseconds
         | RawField::WarningColor { .. }
         | RawField::HistorySeconds(_)
-        | RawField::Led { .. } => {}
+        | RawField::Led { .. }
+        | RawField::Ble(_) => {}
     }
     Ok(())
 }
@@ -107,6 +108,16 @@ pub(crate) fn apply_raw(
     let number = || text.trim().parse::<f32>().map_err(|_| parse_error());
     let integer = || text.trim().parse::<u16>().map_err(|_| parse_error());
     match *field {
+        RawField::Ble(field) => {
+            match field {
+                BleField::Address => {
+                    config.ble.peer.address = crate::ble::parse_address(text).ok_or_else(parse_error)?
+                }
+                BleField::ConnectTimeout => config.ble.connect_timeout_ms = integer()?,
+                BleField::ResponseTimeout => config.ble.response_timeout_ms = integer()?,
+                BleField::PollGap => config.ble.poll_gap_ms = integer()?,
+            }
+        }
         RawField::HistorySeconds(channel) => config.history_seconds[channel.index()] = integer()?,
         RawField::Led { warning, field } => {
             let pattern = if warning {

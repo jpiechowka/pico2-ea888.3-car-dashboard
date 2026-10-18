@@ -489,3 +489,15 @@ records / 1 GiB, and active scratch space to 4 GiB. Admission reserves space
 before building; these caps are not a measured minimum disk requirement. The
 [storage policy](../../studio-helper/BUILD_STORAGE.md) explains quarantine,
 ownership and cleanup behavior. Flash history has its own cleanup controls.
+
+## BLE prototype mode
+
+Build & Flash offers Demo or BLE prototype. Select the explicit peer and profile
+under Device → Bluetooth connection; those accepted settings are part of the
+complete project identity sent to the helper and exported recipe. Disabled BLE
+settings are retained and keep the radio idle. MC+/CX real-adapter profiles
+initialize and identify only; they do not qualify or poll the vehicle ECU.
+The TestPeer profile uses a dedicated synthetic service. Studio never reports a
+physical connection from a browser fixture, successful build or reboot request.
+USB powers the dashboard and encoder; USB power-off does not turn off the OBD
+adapter. Hardware connection/encryption validation remains a separate device step.

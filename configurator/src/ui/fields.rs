@@ -38,6 +38,10 @@ pub fn field_id(field: RawField) -> String {
 
 fn validation_raw(error: ValidationError) -> Option<RawField> {
     let field = match error.field {
+        Field::BlePeer => return Some(RawField::Ble(BleField::Address)),
+        Field::BleConnectTimeout => return Some(RawField::Ble(BleField::ConnectTimeout)),
+        Field::BleResponseTimeout => return Some(RawField::Ble(BleField::ResponseTimeout)),
+        Field::BlePollGap => return Some(RawField::Ble(BleField::PollGap)),
         Field::HistorySeconds(c) => return Some(RawField::HistorySeconds(c)),
         Field::LedBrightness(warning) => {
             return Some(RawField::Led {
@@ -223,6 +227,14 @@ pub fn raw_value(
     }
     Registry::with_candidate(editor, |c| {
         match field {
+            RawField::Ble(field) => {
+                match field {
+                    BleField::Address => dashboard_configurator::ble::format_address(c.ble.peer.address),
+                    BleField::ConnectTimeout => c.ble.connect_timeout_ms.to_string(),
+                    BleField::ResponseTimeout => c.ble.response_timeout_ms.to_string(),
+                    BleField::PollGap => c.ble.poll_gap_ms.to_string(),
+                }
+            }
             RawField::HistorySeconds(channel) => c.history_seconds[channel.index()].to_string(),
             RawField::Led { warning, field } => {
                 let p = if warning { c.led.warning } else { c.led.normal };
@@ -492,6 +504,11 @@ pub fn error_text(error: EditorError) -> String {
     match error {
         EditorError::Validation(e) => {
             let reason = match e.code {
+                _ if e.field == Field::BlePeer => {
+                    "Enter the explicit adapter address. Zero is allowed only with BLE disabled; broadcast and private \
+                     rotating addresses are unsupported. Random static addresses require top bits 11 and a nontrivial \
+                     random part."
+                }
                 ErrorCode::Contrast => {
                     "Colours need at least 3:1 contrast after RGB565 conversion. Repair the palette or discard the \
                      edit."

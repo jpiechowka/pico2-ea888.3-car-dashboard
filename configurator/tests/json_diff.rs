@@ -142,7 +142,7 @@ fn strict_original_byte_parse_precedes_diff_and_rejects_type_changes() {
     let before = default_config();
     let text = serde_json::to_string(&before).unwrap();
     for bad in [
-        text.replacen("\"version\":5", "\"version\":5,\"version\":5", 1),
+        text.replacen("\"version\":6", "\"version\":6,\"version\":6", 1),
         text.replacen("\"decimals\":2", "\"decimals\":2,\"decimals\":3", 1),
         text.replacen("\"decimals\":2", "\"decimals\":\"2\"", 1),
         text.replacen("\"decimals\":2", "\"decimals\":2,\"unknown\":0", 1),

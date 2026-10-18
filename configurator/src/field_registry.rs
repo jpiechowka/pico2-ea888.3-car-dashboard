@@ -33,6 +33,14 @@ pub struct Descriptor {
     slug: &'static str,
 }
 registry! {
+    BleEnabled, Root, Device, Ble, "Enable BLE prototype", "wireless adapter radio usb";
+    BleProfile, Root, Device, Ble, "BLE profile", "vlinker mc+ obdlink cx test peer";
+    BleAddress, Root, Device, Ble, "BLE peer address", "mac identity public random static";
+    BleAddressKind, Root, Device, Ble, "BLE address kind", "public random static pairing";
+    BleReconnect, Root, Device, Ble, "Reconnect automatically", "bluetooth ble";
+    BleConnectTimeout, Root, Device, Ble, "Connection timeout (ms)", "bluetooth ble deadline";
+    BleResponseTimeout, Root, Device, Ble, "Response timeout (ms)", "bluetooth ble deadline";
+    BlePollGap, Root, Device, Ble, "Minimum command gap (ms)", "bluetooth ble polling";
     Orientation, Root, Device, Bindings, "Default screen orientation", "landscape portrait mounting flip rotation";
     StatusOrientation, Root, Device, Bindings, "Boot info orientation", "startup system check inherit landscape portrait flip";
     SplashOrientation, Root, Device, Bindings, "Splash orientation", "startup custom artwork inherit landscape portrait flip";
@@ -470,6 +478,10 @@ impl Registry {
     pub fn validation_key(field: Field) -> Option<FieldKey> {
         use FieldKey::*;
         Some(match field {
+            Field::BlePeer => BleAddress,
+            Field::BleConnectTimeout => BleConnectTimeout,
+            Field::BleResponseTimeout => BleResponseTimeout,
+            Field::BlePollGap => BlePollGap,
             Field::BootView => BootView,
             Field::ViewName => ViewName,
             Field::Placement => Span,
@@ -826,6 +838,14 @@ impl Registry {
     pub fn raw_key(field: RawField) -> FieldKey {
         use FieldKey::*;
         match field {
+            RawField::Ble(field) => {
+                match field {
+                    BleField::Address => BleAddress,
+                    BleField::ConnectTimeout => BleConnectTimeout,
+                    BleField::ResponseTimeout => BleResponseTimeout,
+                    BleField::PollGap => BlePollGap,
+                }
+            }
             RawField::ViewName(_) => ViewName,
             RawField::ControlHoldMilliseconds => ControlDuration,
             RawField::HistorySeconds(_) => HistorySeconds,
