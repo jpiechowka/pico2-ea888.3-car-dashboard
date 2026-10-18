@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 import os
 from pathlib import Path
-import subprocess
+from owned_process import run_checked
 
 CONFIG_KEYS = (
     "build",
@@ -44,7 +44,7 @@ def configuration(host: str | Path) -> dict[str, str]:
     # Reject overrides rather than recording potentially private values. Manifests
     # and the exact normal compiler remain in the run's source/compiler evidence.
     for key in CONFIG_KEYS:
-        result = subprocess.run(
+        result = run_checked(
             ["cargo", "-Z", "unstable-options", "config", "get", key, "--format", "json"],
             cwd=host,
             capture_output=True,
@@ -59,10 +59,10 @@ def configuration(host: str | Path) -> dict[str, str]:
 
 def compiler(host: str | Path) -> tuple[str, str]:
     check_environment(os.environ)
-    rustc = subprocess.check_output(
-        ["rustup", "which", "rustc"], cwd=host, text=True, encoding="utf-8"
-    ).strip()
+    rustc = run_checked(
+        ["rustup", "which", "rustc"], cwd=host, capture_output=True, check=True
+    ).stdout.strip()
     if not Path(rustc).is_file():
         raise ValueError("rustup compiler is unavailable")
-    version = subprocess.check_output([rustc, "-Vv"], cwd=host, text=True, encoding="utf-8")
+    version = run_checked([rustc, "-Vv"], cwd=host, capture_output=True, check=True).stdout
     return rustc, version

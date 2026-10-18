@@ -278,7 +278,7 @@ class PracticalImage(unittest.TestCase):
 
             with (
                 patch.object(capture, "ElfImage", return_value=elf),
-                patch.object(capture.subprocess, "run", side_effect=child),
+                patch.object(capture, "run_checked", side_effect=child),
             ):
                 checked = capture.run_memory_gate(frozen, destination, eav, context, source)
                 self.assertEqual(checked["record"], result)

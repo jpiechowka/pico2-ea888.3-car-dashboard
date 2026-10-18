@@ -141,7 +141,7 @@ class OrdinaryResultMigration(unittest.TestCase):
             frozen = destination / "pico2.elf"
             frozen.write_bytes(elf.data)
             with (
-                patch.object(capture.subprocess, "run") as child,
+                patch.object(capture, "run_checked") as child,
                 self.assertRaisesRegex(ValueError, "explicit source"),
             ):
                 capture.run_memory_gate(frozen, destination, eav)
@@ -176,7 +176,7 @@ class OrdinaryResultMigration(unittest.TestCase):
 
             with (
                 patch.object(capture, "ElfImage", return_value=elf),
-                patch.object(capture.subprocess, "run", side_effect=child),
+                patch.object(capture, "run_checked", side_effect=child),
                 self.assertRaises(subprocess.CalledProcessError) as error,
             ):
                 capture.run_memory_gate(frozen, destination, eav, source, path)

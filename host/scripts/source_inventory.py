@@ -15,4 +15,5 @@ def shared_inputs(repo: str | Path) -> set[Path]:
             paths.update(p for p in crate.iterdir() if p.is_file())
             paths.update(p for p in (crate / "src").rglob("*") if p.is_file())
     paths.add(Path(__file__).resolve())
+    paths.add(Path(__file__).with_name("owned_process.py").resolve())
     return paths

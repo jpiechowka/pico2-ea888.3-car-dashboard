@@ -167,7 +167,7 @@ class Comparison(unittest.TestCase):
             self.assertNotIn("private", str(error.exception))
         environment.check_environment({"RUSTUP_TOOLCHAIN": "nightly", "RUSTC_WRAPPER": ""})
         for returncode, stderr in [(0, ""), (1, "unexpected error")]:
-            with patch.object(environment.subprocess, "run") as run:
+            with patch.object(environment, "run_checked") as run:
                 run.return_value.returncode = returncode
                 run.return_value.stderr = stderr
                 with self.assertRaises(ValueError):

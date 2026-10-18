@@ -2,7 +2,15 @@ param([string]$Wrapper = (Join-Path $PSScriptRoot 'Build-Dashboard.ps1'))
 $ErrorActionPreference = 'Stop'
 $global:task2Captured = @()
 $global:task2CaptureExit = 0
-function python { $global:task2Captured = @($args); $global:LASTEXITCODE = $global:task2CaptureExit }
+$realPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+function python {
+    if ([IO.Path]::GetFileName($args[0]) -eq 'owned_process.py') {
+        & $realPython @args
+    } else {
+        $global:task2Captured = @($args)
+        $global:LASTEXITCODE = $global:task2CaptureExit
+    }
+}
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
 function Options {
     $at = [Array]::IndexOf($global:task2Captured, '--options-json')

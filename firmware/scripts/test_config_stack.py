@@ -8299,7 +8299,7 @@ class ValidatorPlatformFamilies(unittest.TestCase):
                         timeout=10,
                     )
 
-                with patch.object(capture.subprocess, "run", side_effect=writer):
+                with patch.object(capture, "run_checked", side_effect=writer):
                     self.assertEqual(
                         capture.run_memory_gate(
                             frozen, destination, eav, source, source_path, gate="experimental-full"

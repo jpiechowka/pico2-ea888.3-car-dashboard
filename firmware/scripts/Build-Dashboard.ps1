@@ -19,33 +19,23 @@ $ErrorActionPreference = 'Stop'
 $firmwareRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $firmwareRoot '..')).Path
 function Invoke-DashboardJson([string[]]$ToolArguments, [int]$Limit) {
-    $start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = 'cargo'
-    $start.WorkingDirectory = $repoRoot
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
-    $start.RedirectStandardOutput = $true
-    foreach ($argument in @('run','--locked','--offline','-p','dashboard-config-tools','--') + $ToolArguments) {
-        $start.ArgumentList.Add($argument)
-    }
-    $process = [Diagnostics.Process]::Start($start)
-    $retained = [IO.MemoryStream]::new()
+    # The supervisor owns Cargo and descendants before they run. Machine stdout
+    # is published only on success; stderr stays live and independently bounded.
+    $supervisor = Join-Path $repoRoot 'host/scripts/owned_process.py'
+    $arguments = @($supervisor,'--json','--cwd',$repoRoot,'--timeout','120',
+        '--stdout-limit',($Limit + 2).ToString(),'--','cargo','run','--locked','--offline',
+        '-p','dashboard-config-tools','--') + $ToolArguments
+    $oldEncoding = [Console]::OutputEncoding
     try {
-        $buffer = [byte[]]::new(4096)
-        $oversized = $false
-        while (($count = $process.StandardOutput.BaseStream.Read($buffer,0,$buffer.Length)) -gt 0) {
-            if ($retained.Length + $count -gt $Limit + 1) { $oversized = $true }
-            elseif (-not $oversized) { $retained.Write($buffer,0,$count) }
-        }
-        $process.WaitForExit()
-        if ($process.ExitCode -ne 0 -or $oversized) { throw 'Rust catalogue/options producer failed or exceeded JSON bound' }
         $utf8 = [Text.UTF8Encoding]::new($false,$true)
-        $text = $utf8.GetString($retained.ToArray()).TrimEnd("`n","`r")
+        [Console]::OutputEncoding = $utf8
+        $text = (& python @arguments) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw 'Rust catalogue/options producer failed or exceeded JSON bound' }
+        $text = $text.TrimEnd("`n","`r")
         if ($utf8.GetByteCount($text) -gt $Limit) { throw 'JSON output exceeds bound' }
         return @($text, ($text | ConvertFrom-Json -Depth 32))
     } finally {
-        $retained.Dispose()
-        $process.Dispose()
+        [Console]::OutputEncoding = $oldEncoding
     }
 }
 function Assert-Keys($Value, [string[]]$Keys) {

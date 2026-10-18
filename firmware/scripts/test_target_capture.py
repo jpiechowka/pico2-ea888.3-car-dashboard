@@ -14,6 +14,56 @@ import capture_target_bench as capture
 
 
 class CaptureTests(unittest.TestCase):
+    def test_diagnostic_sink_failure_stops_descendants(self):
+        import time
+
+        sys.path.insert(0, str(capture.REPO / "host/scripts"))
+        from owned_process import OwnedProcess
+
+        with tempfile.TemporaryDirectory(prefix="capture-tree-") as folder:
+            root = Path(folder)
+            heartbeat, done = root / "heartbeat", root / "done"
+            grandchild = (
+                "import pathlib,time; p=pathlib.Path(" + repr(str(heartbeat)) + "); "
+                "\nwhile True: p.write_text(str(time.time_ns())); time.sleep(.02)"
+            )
+            compiler = (
+                "import subprocess,sys,pathlib,time; subprocess.Popen([sys.executable,'-c',"
+                + repr(grandchild)
+                + "]); p=pathlib.Path("
+                + repr(str(heartbeat))
+                + "); "
+                "\nwhile not p.exists(): time.sleep(.01)\n"
+                'print(\'{"reason":"compiler-message","message":{"rendered":"failure"}}\',flush=True); time.sleep(30)'
+            )
+            wrapper = (
+                "import sys,pathlib,os,time; sys.path.insert(0,"
+                + repr(str(capture.FIRMWARE / "scripts"))
+                + "); "
+                "import capture_target_bench as m\n"
+                "def fail(*args): raise OSError('injected sink failure')\n"
+                "m.CargoDiagnostics.emit=fail\n"
+                "try: m.run_build([sys.executable,'-c',"
+                + repr(compiler)
+                + "],os.environ.copy(),pathlib.Path("
+                + repr(folder)
+                + "))\n"
+                "except OSError: pathlib.Path(" + repr(str(done)) + ").write_text('done')\n"
+                "time.sleep(30)"
+            )
+            with (root / "log").open("w+b") as log:
+                with OwnedProcess([sys.executable, "-c", wrapper], stdout=log, stderr=log):
+                    deadline = time.monotonic() + 5
+                    while not done.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(done.exists(), "sink failure never completed")
+                    time.sleep(0.1)
+                    stopped = heartbeat.read_bytes()
+                    time.sleep(0.15)
+                    self.assertEqual(
+                        heartbeat.read_bytes(), stopped, "compiler descendant survived sink failure"
+                    )
+
     def test_rust_capture_options_consumer_accepts_ble_and_explicit_legacy_envelopes(self):
         for feature, legacy in [("ble-obd", False), ("longan-rx12", True), ("", False)]:
             _, options = capture.fixed_json_tool(["--features", feature], os.environ.copy())
@@ -429,7 +479,7 @@ pub const LEGACY_ROUNDING: bool = false;
             def compile_stub(*args, **kwargs):
                 (root / "normalized.eav").write_bytes(upgraded)
 
-            with patch.object(capture.subprocess, "run", side_effect=compile_stub):
+            with patch.object(capture, "run_checked", side_effect=compile_stub):
                 capture.verify_selected_config(root, {}, upgraded, record)
                 self.assertEqual(record["sha256"], capture.hashlib.sha256(original).hexdigest())
                 self.assertEqual(
@@ -464,7 +514,7 @@ pub const LEGACY_ROUNDING: bool = false;
                 self.assertTrue(kwargs["check"])
                 (root / "normalized.eav").write_bytes(canonical)
 
-            with patch.object(capture.subprocess, "run", side_effect=child):
+            with patch.object(capture, "run_checked", side_effect=child):
                 evidence = record()
                 capture.verify_selected_config(
                     root, environment, canonical, evidence, target, reuse_host=True
@@ -478,7 +528,7 @@ pub const LEGACY_ROUNDING: bool = false;
                     )
             evidence = record()
             with patch.object(
-                capture.subprocess, "run", side_effect=subprocess.CalledProcessError(7, ["cargo"])
+                capture, "run_checked", side_effect=subprocess.CalledProcessError(7, ["cargo"])
             ):
                 with self.assertRaises(subprocess.CalledProcessError):
                     capture.verify_selected_config(
@@ -486,7 +536,7 @@ pub const LEGACY_ROUNDING: bool = false;
                     )
             self.assertNotIn("normalized_sha256", evidence)
             # Legacy CLI retains its existing release canonicalizer.
-            with patch.object(capture.subprocess, "run") as run:
+            with patch.object(capture, "run_checked") as run:
                 capture.verify_selected_config(root, environment, canonical, record())
                 self.assertIn("--release", run.call_args.args[0])
 
@@ -537,6 +587,7 @@ pub const LEGACY_ROUNDING: bool = false;
                 "firmware/vendor/trouble-host-provenance.json",
                 "firmware/scripts/capture.py",
                 "host/scripts/benchmark_environment.py",
+                "host/scripts/owned_process.py",
             )
             for name in names:
                 path = root / name
@@ -668,7 +719,7 @@ class CaptureMemoryQualification(unittest.TestCase):
 
             with (
                 patch.object(capture, "ElfImage", return_value=elf),
-                patch.object(capture.subprocess, "run", side_effect=child) as run,
+                patch.object(capture, "run_checked", side_effect=child) as run,
             ):
                 evidence = capture.run_memory_gate(
                     frozen, destination, eav, source, path, gate="experimental-full"
@@ -741,7 +792,7 @@ class CaptureMemoryQualification(unittest.TestCase):
 
                 with (
                     patch.object(capture, "ElfImage", return_value=elf),
-                    patch.object(capture.subprocess, "run", side_effect=child),
+                    patch.object(capture, "run_checked", side_effect=child),
                     self.assertRaises(
                         (
                             AssertionError,
@@ -757,7 +808,7 @@ class CaptureMemoryQualification(unittest.TestCase):
 
     def test_real_nonzero_child_preserves_file_without_admitting_it(self):
         elf, eav, record = self.fixture()
-        real_run = subprocess.run
+        real_run = capture.run_checked
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             frozen = destination / "pico2.elf"
@@ -779,7 +830,7 @@ class CaptureMemoryQualification(unittest.TestCase):
 
             with (
                 patch.object(capture, "ElfImage", return_value=elf),
-                patch.object(capture.subprocess, "run", side_effect=child),
+                patch.object(capture, "run_checked", side_effect=child),
                 self.assertRaises(subprocess.CalledProcessError) as error,
             ):
                 capture.run_memory_gate(
@@ -926,7 +977,7 @@ class CaptureMemoryQualification(unittest.TestCase):
                                 else self.fail("embedded config used old build path")
                             ),
                         ),
-                        patch.object(capture.subprocess, "run", side_effect=child),
+                        patch.object(capture, "run_checked", side_effect=child),
                         patch.object(
                             sys,
                             "argv",
@@ -1041,7 +1092,7 @@ class CaptureMemoryQualification(unittest.TestCase):
 
                 with (
                     patch.object(capture, "ElfImage", return_value=elf),
-                    patch.object(capture.subprocess, "run", side_effect=child) as run,
+                    patch.object(capture, "run_checked", side_effect=child) as run,
                 ):
                     if fault is None:
                         self.assertEqual(
@@ -1068,7 +1119,7 @@ class CaptureMemoryQualification(unittest.TestCase):
         from config_build_source import SOURCE_PATHS, make_source_context, write_source_context
 
         elf, eav, record = self.fixture()
-        real_run = subprocess.run
+        real_run = capture.run_checked
         with tempfile.TemporaryDirectory() as folder:
             destination = Path(folder).resolve()
             frozen = destination / "pico2.elf"
@@ -1110,7 +1161,7 @@ class CaptureMemoryQualification(unittest.TestCase):
 
             with (
                 patch.object(capture, "ElfImage", return_value=elf),
-                patch.object(capture.subprocess, "run", side_effect=child),
+                patch.object(capture, "run_checked", side_effect=child),
             ):
                 self.assertEqual(
                     capture.run_memory_gate(

@@ -41,6 +41,7 @@ sys.path.insert(0, str(REPO / "host" / "scripts"))
 sys.path.insert(0, str(FIRMWARE / "scripts"))
 from benchmark_environment import CONFIG_KEYS, ENV_PREFIXES, compiler  # noqa: E402
 from source_inventory import shared_inputs  # noqa: E402
+from owned_process import run_bounded, run_checked  # noqa: E402
 from elf_image import ElfImage  # noqa: E402
 from check_program_image import inspect_program, linked_configuration, linked_startup  # noqa: E402
 from check_memory_layout import read_selected_image_result  # noqa: E402
@@ -100,7 +101,7 @@ def run_memory_gate(
     inspect_source_context(current, ElfImage(frozen))
     command.extend(["--source-context", str(source_context_path.resolve())])
     command.extend(["--result-json", str(path.resolve())])
-    subprocess.run(command, cwd=FIRMWARE, check=True)
+    run_checked(command, cwd=FIRMWARE, check=True)
     return read_memory_gate(path, frozen, config_bytes, source_context, gate)
 
 
@@ -159,42 +160,36 @@ class CargoDiagnostics:
         sys.stderr.flush()
 
 
-def run_build(command, environment, destination):
+def run_build(command, environment, destination, *, timeout=1800):
     # stderr (including rendered JSON diagnostics below) uses the native redactor.
     diagnostics = CargoDiagnostics(destination)
     output = bytearray()
     pending = bytearray()
+
+    def record(chunk):
+        output.extend(chunk)
+        pending.extend(chunk)
+        while (end := pending.find(b"\n")) >= 0:
+            diagnostics.record(pending[:end])
+            del pending[: end + 1]
+
     try:
-        with subprocess.Popen(
-            command, cwd=FIRMWARE, env=environment, stdout=subprocess.PIPE
-        ) as child:
-            try:
-                while chunk := child.stdout.read1(4096):
-                    if len(output) + len(chunk) > 8 * 1024 * 1024:
-                        raise ValueError("Cargo JSON exceeds capture bound")
-                    output.extend(chunk)
-                    pending.extend(chunk)
-                    while (end := pending.find(b"\n")) >= 0:
-                        diagnostics.record(pending[:end])
-                        del pending[: end + 1]
-                if pending:
-                    diagnostics.record(pending)
-                status = child.wait()
-            except BaseException:
-                child.kill()
-                child.wait()
-                raise
+        result = run_bounded(
+            command, cwd=FIRMWARE, env=environment, timeout=timeout, on_stdout=record
+        )
+        if pending:
+            diagnostics.record(pending)
     finally:
         diagnostics.file.close()
         (destination / "cargo-messages.jsonl").write_bytes(output)
     text = output.decode("utf-8")
-    build = subprocess.CompletedProcess(command, status, text)
+    build = subprocess.CompletedProcess(command, result.returncode, text)
     build.check_returncode()
     return build
 
 
 def fixed_json_tool(arguments, environment, target_dir=None):
-    """Drain stdout without retaining unbounded output; stderr remains live."""
+    """Bound both streams and time; stop the owned tree immediately on overflow."""
     command = [
         "cargo",
         "run",
@@ -209,18 +204,10 @@ def fixed_json_tool(arguments, environment, target_dir=None):
     ]
     if target_dir is not None:
         command[2:2] = ["--target-dir", str(target_dir)]
-    with subprocess.Popen(command, cwd=REPO, env=environment, stdout=subprocess.PIPE) as child:
-        retained = bytearray()
-        oversized = False
-        while chunk := child.stdout.read(4096):
-            if len(retained) + len(chunk) > 8193:
-                oversized = True
-            elif not oversized:
-                retained.extend(chunk)
-        status = child.wait()
-    if status or oversized:
+    result = run_bounded(command, cwd=REPO, env=environment, timeout=120, stdout_limit=8193)
+    if result.returncode:
         raise ValueError("capture options producer failed or exceeded output bound")
-    value = json.loads(retained.decode("utf-8"))
+    value = json.loads(result.stdout.decode("utf-8"))
     expected = {
         "schema_version",
         "normalized",
@@ -354,7 +341,7 @@ def configuration():
     expected = tomllib.loads((FIRMWARE / ".cargo/config.toml").read_text(encoding="utf-8"))
     result = {}
     for key in CONFIG_KEYS:
-        call = subprocess.run(
+        call = run_checked(
             ["cargo", "-Z", "unstable-options", "config", "get", key, "--format", "json"],
             cwd=FIRMWARE,
             text=True,
@@ -399,7 +386,13 @@ def inputs():
             path = directory / name
             if path.is_file():
                 paths.add(path)
-    paths.update([Path(__file__).resolve(), REPO / "host/scripts/benchmark_environment.py"])
+    paths.update(
+        [
+            Path(__file__).resolve(),
+            REPO / "host/scripts/benchmark_environment.py",
+            REPO / "host/scripts/owned_process.py",
+        ]
+    )
     paths.update((FIRMWARE / "scripts").glob("*.py"))
     paths.update((FIRMWARE / "scripts").glob("*.ps1"))
     # __file__ can retain the native launcher's verbatim spelling, including in
@@ -513,7 +506,7 @@ def verify_selected_config(
         str(destination / "selected.eav"),
         str(normalized),
     ]
-    subprocess.run(command, cwd=REPO, env=environment, check=True)
+    run_checked(command, cwd=REPO, env=environment, check=True, timeout=1800)
     expected = bounded_bytes(normalized)
     if bounded_bytes(destination / "selected.eav") != original:
         raise ValueError("frozen selected configuration changed during normalization")
@@ -775,7 +768,7 @@ def main():
         frozen, destination, config_bytes, source_context, source_context_path, args.image_gate
     )
     for flags in [[], ["-O"]]:
-        subprocess.run(
+        run_checked(
             [sys.executable, *flags, "scripts/test_flash_lockout.py", str(frozen)],
             cwd=FIRMWARE,
             check=True,
