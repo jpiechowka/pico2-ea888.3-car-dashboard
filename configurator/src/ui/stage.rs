@@ -454,13 +454,13 @@ pub fn Canvas(ui: Ui) -> impl IntoView {
                         let simulation = ui.dock.mode.get_untracked() == PreviewMode::Simulation;
                         let draft = e.diagnostic();
                         if ui.dock.mode.get_untracked() == PreviewMode::Startup {
-                            p.render_startup_asset(
+                            p.render_startup_validated(
                                 e.preview(),
                                 e.selection().view,
                                 ui.startup.profile.get_untracked(),
                                 ui.sample_ms.get_untracked(),
                                 ui.startup.reduced.get_untracked() || e.preview().config().reduced_motion,
-                                e.startup_artwork().map(|a| a.converted()),
+                                e.startup_artwork().map(|a| a.asset()),
                             )
                             .map(|_| ())
                         } else if e.has_pending_json() {

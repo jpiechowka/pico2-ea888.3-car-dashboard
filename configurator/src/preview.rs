@@ -164,6 +164,34 @@ impl Preview {
         if self.pending.is_some() {
             return Err(PreviewError::PendingFrame);
         }
+        let needs_asset = profile.theme == dashboard_core::startup::StartupTheme::Custom
+            && dashboard_core::startup::Startup::preview(profile, elapsed).0 == dashboard_core::startup::Phase::Splash;
+        self.render_startup_validated(
+            config,
+            view,
+            profile,
+            elapsed,
+            reduced_motion,
+            asset
+                .filter(|_| needs_asset)
+                .and_then(|bytes| dashboard_config::startup_asset::Asset::parse(bytes).ok()),
+        )
+    }
+
+    /// Reuses admission for immutable project pixels; geometry is still checked
+    /// against the currently requested Splash before any pixels are published.
+    pub fn render_startup_validated(
+        &mut self,
+        config: &ValidatedConfig,
+        view: u8,
+        profile: dashboard_core::startup::StartupProfile,
+        elapsed: u64,
+        reduced_motion: bool,
+        asset: Option<dashboard_config::startup_asset::Asset<'_>>,
+    ) -> Result<&[u8], PreviewError> {
+        if self.pending.is_some() {
+            return Err(PreviewError::PendingFrame);
+        }
         let (phase, time) = dashboard_core::startup::Startup::preview(profile, elapsed);
         if phase == dashboard_core::startup::Phase::Dashboard {
             return self.render(
@@ -184,7 +212,7 @@ impl Preview {
         profile: dashboard_core::startup::StartupProfile,
         frame: (dashboard_core::startup::Phase, u64),
         reduced_motion: bool,
-        asset: Option<&[u8]>,
+        asset: Option<dashboard_config::startup_asset::Asset<'_>>,
     ) -> Result<&[u8], PreviewError> {
         let (phase, time) = frame;
         let geometry = dashboard_core::startup::screen_orientation(
@@ -198,9 +226,7 @@ impl Preview {
         if phase == dashboard_core::startup::Phase::Splash
             && profile.theme == dashboard_core::startup::StartupTheme::Custom
         {
-            let asset = asset
-                .and_then(|bytes| dashboard_config::startup_asset::Asset::parse(bytes).ok())
-                .ok_or(PreviewError::StartupAsset)?;
+            let asset = asset.ok_or(PreviewError::StartupAsset)?;
             if asset.geometry() != geometry {
                 return Err(PreviewError::StartupAsset);
             }

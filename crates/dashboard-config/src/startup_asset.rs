@@ -26,6 +26,33 @@ pub struct Asset<'a> {
     bytes: &'a [u8],
     geometry: Geometry,
 }
+/// Host-owned immutable bytes admitted once by the same bounded firmware parser.
+/// Clones share pixels; borrowed views cannot outlive this owner. No serialized
+/// metadata or caller-provided geometry can bypass admission.
+#[cfg(feature = "json")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnedAsset {
+    bytes: alloc::sync::Arc<[u8]>,
+    geometry: Geometry,
+}
+#[cfg(feature = "json")]
+impl OwnedAsset {
+    pub fn new(bytes: alloc::sync::Arc<[u8]>) -> Result<Self, AssetError> {
+        let geometry = Asset::parse(&bytes)?.geometry();
+        Ok(Self { bytes, geometry })
+    }
+
+    pub fn as_asset(&self) -> Asset<'_> {
+        Asset {
+            bytes: &self.bytes,
+            geometry: self.geometry,
+        }
+    }
+
+    pub fn bytes(&self) -> &[u8] { &self.bytes }
+
+    pub fn bytes_arc(&self) -> alloc::sync::Arc<[u8]> { self.bytes.clone() }
+}
 #[derive(Clone, Copy, Debug)]
 pub struct Frame<'a> {
     payload: &'a [u8],

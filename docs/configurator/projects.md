@@ -65,3 +65,14 @@ with BLE disabled. The frozen v5 decoder verifies the original dashboard bytes
 before migration; startup profile, artwork, recipe and original bytes keep their
 existing checks and are not discarded. New exports retain EAVP2 framing with an
 EAV6 dashboard. A BLE edit changes the complete project/build identity.
+
+## Immutable asset admission
+
+Host `OwnedAsset` accepts only bytes that pass the complete shared EASA parser.
+Its private immutable Arc and validated geometry stay together; clones and Undo/Redo
+share those bytes. A borrowed asset view cannot outlive its owner. Studio readiness,
+startup seeking and captured startup replay reuse that view without repeating whole
+asset CRC and row validation on every frame. The renderer still checks the requested
+Splash geometry and decodes bounded rows. Project imports and newly converted bytes
+continue through full admission, and wire formats are unchanged. The owner is available
+only with the host `json` feature; the allocation-free firmware parser is unchanged.

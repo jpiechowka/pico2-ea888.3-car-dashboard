@@ -198,14 +198,14 @@ impl ControlSimulator {
         dashboard_core::startup::StartupProfile,
         dashboard_core::startup::Phase,
         u64,
-        Option<&[u8]>,
+        Option<dashboard_config::startup_asset::Asset<'_>>,
     )> {
         let startup = self.simulation.startup.as_ref().filter(|s| s.state.active())?;
         Some((
             startup.profile,
             startup.state.phase(),
             startup.state.elapsed(self.now_ms()),
-            startup.artwork.as_deref(),
+            startup.artwork.as_ref().map(|asset| asset.as_asset()),
         ))
     }
 

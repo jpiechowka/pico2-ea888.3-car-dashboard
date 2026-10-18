@@ -156,7 +156,7 @@ impl OriginalReference {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artwork {
-    converted: Arc<[u8]>,
+    converted: dashboard_config::startup_asset::OwnedAsset,
     recipe: Recipe,
     original: Option<Arc<[u8]>>,
     reference: Option<Arc<OriginalReference>>,
@@ -228,13 +228,14 @@ impl Artwork {
         original: Option<Arc<[u8]>>,
     ) -> Result<Self, ProjectError> {
         recipe.validate()?;
-        let asset = dashboard_config::startup_asset::Asset::parse(&converted).map_err(|_| ProjectError::Asset)?;
+        let converted = dashboard_config::startup_asset::OwnedAsset::new(converted).map_err(|_| ProjectError::Asset)?;
+        let asset = converted.as_asset();
         if asset.geometry() != recipe.geometry
-            || u16le(&converted, 8) != if recipe.converter == LEGACY_CONVERTER { 1 } else { 2 }
+            || u16le(converted.bytes(), 8) != if recipe.converter == LEGACY_CONVERTER { 1 } else { 2 }
         {
             return Err(ProjectError::Recipe);
         }
-        if digest(&converted) != recipe.asset_sha256 {
+        if digest(converted.bytes()) != recipe.asset_sha256 {
             return Err(ProjectError::Integrity);
         }
         if recipe.original_included != original.is_some() {
@@ -288,7 +289,7 @@ impl Artwork {
     ) -> Result<Self, ProjectError> {
         let mut recipe = self.recipe.clone();
         recipe.original_included = true;
-        Self::new(self.converted.clone(), recipe, Some(source))
+        Self::new(self.converted_arc(), recipe, Some(source))
     }
 
     pub fn original_reference(&self) -> Option<&Arc<OriginalReference>> { self.reference.as_ref() }
@@ -297,10 +298,16 @@ impl Artwork {
 
     pub fn identity(&self) -> [u8; 32] { digest(&serde_json::to_vec(&self.recipe).expect("typed recipe serializes")) }
 
-    pub fn converted(&self) -> &[u8] { &self.converted }
+    pub fn converted(&self) -> &[u8] { self.converted.bytes() }
 
     /// Share firmware pixels without retaining an original-source pin.
-    pub fn converted_arc(&self) -> Arc<[u8]> { self.converted.clone() }
+    pub fn converted_arc(&self) -> Arc<[u8]> { self.converted.bytes_arc() }
+
+    /// Borrow the admitted view without parsing or cloning its pixels.
+    pub fn asset(&self) -> dashboard_config::startup_asset::Asset<'_> { self.converted.as_asset() }
+
+    /// Retain validated pixels without retaining original-source pins.
+    pub fn owned_asset(&self) -> dashboard_config::startup_asset::OwnedAsset { self.converted.clone() }
 
     pub fn recipe(&self) -> &Recipe { &self.recipe }
 
@@ -372,7 +379,7 @@ impl Project {
             if recipe_bytes.len() > MAX_RECIPE_BYTES {
                 return Err(ProjectError::Recipe);
             }
-            (art.converted.as_ref(), source)
+            (art.converted(), source)
         } else {
             (&[][..], &[][..])
         };

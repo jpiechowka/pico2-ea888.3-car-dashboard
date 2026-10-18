@@ -12,7 +12,7 @@ use embassy_sync::channel::Channel;
 pub(crate) struct StartupReplay {
     pub(crate) profile: dashboard_core::startup::StartupProfile,
     pub(crate) state: dashboard_core::startup::Startup,
-    pub(crate) artwork: Option<std::sync::Arc<[u8]>>,
+    pub(crate) artwork: Option<dashboard_config::startup_asset::OwnedAsset>,
 }
 pub(crate) struct Simulation {
     pub(crate) startup: Option<StartupReplay>,
@@ -95,7 +95,7 @@ impl Simulation {
         self.startup = Some(StartupReplay {
             profile: project.profile(),
             state: dashboard_core::startup::Startup::new(project.profile(), self.now_ms),
-            artwork: project.artwork().map(|a| a.converted_arc()),
+            artwork: project.artwork().map(|a| a.owned_asset()),
         });
         self.prepare(false);
     }

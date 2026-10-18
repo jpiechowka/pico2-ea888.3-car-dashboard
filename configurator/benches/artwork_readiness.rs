@@ -70,6 +70,11 @@ fn run() {
         },
     );
     assert_eq!(maximum.converted().len(), 524288);
+    if std::env::args().any(|arg| arg == "--preview") {
+        preview("small", &small);
+        preview("maximum", &maximum);
+        return;
+    }
     println!("case,asset_bytes,asset_sha256,batch,iterations,ns_per_readiness_and_save_status");
     for (name, art) in [("none", None), ("small", Some(small)), ("maximum", Some(maximum))] {
         let mut editor = Editor::default();
@@ -97,6 +102,45 @@ fn run() {
                 start.elapsed().as_nanos() as f64 / f64::from(iterations)
             );
         }
+    }
+}
+fn preview(
+    name: &str,
+    artwork: &p::Artwork,
+) {
+    use dashboard_config::startup::{StartupProfile, StartupStatus, StartupTheme};
+    let config = dashboard_config::validate(dashboard_config::default_config()).unwrap();
+    let profile = StartupProfile {
+        theme: StartupTheme::Custom,
+        status: StartupStatus::Off,
+        duration_ms: 10000,
+        ..Default::default()
+    };
+    let mut preview = dashboard_configurator::preview::Preview::default();
+    let mut render = |time| {
+        black_box(
+            preview
+                .render_startup_validated(&config, 1, profile, time, false, Some(artwork.asset()))
+                .unwrap(),
+        );
+    };
+    for at in 0..8 {
+        render(at * 100);
+    }
+    println!(
+        "preview,{name},bytes={},sha256={}",
+        artwork.converted().len(),
+        dashboard_config_tools::sha256_hex(artwork.converted())
+    );
+    for batch in 0..7 {
+        let start = Instant::now();
+        for frame in 0..128 {
+            render((frame % 4) * 100);
+        }
+        println!(
+            "preview,{name},{batch},128,{:.3}",
+            start.elapsed().as_nanos() as f64 / 128.0
+        );
     }
 }
 fn main() {

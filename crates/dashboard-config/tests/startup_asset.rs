@@ -279,3 +279,32 @@ fn mixed_literal_and_repeat_packets_preserve_every_pixel() {
     }
     assert!(!rows.next(&mut output).unwrap());
 }
+#[cfg(feature = "json")]
+#[test]
+fn owned_asset_rejects_forged_bytes_and_shares_only_immutable_validated_storage() {
+    use std::sync::Arc;
+    for geometry in dashboard_config::Geometry::ALL {
+        let bytes = asset_in(true, geometry.width(), geometry.height(), 2);
+        for length in 0..bytes.len() {
+            assert!(OwnedAsset::new(Arc::from(&bytes[..length])).is_err());
+        }
+        let mut forged = bytes.clone();
+        forged[52..54].copy_from_slice(&0xFFFF_u16.to_le_bytes());
+        let crc = crc32(&forged[52..]);
+        forged[44..48].copy_from_slice(&crc.to_le_bytes());
+        refresh_global_crc(&mut forged);
+        assert_eq!(OwnedAsset::new(forged.into()).unwrap_err(), AssetError::Pixels);
+        let mut alias: Arc<[u8]> = bytes.clone().into();
+        let owned = OwnedAsset::new(alias.clone()).unwrap();
+        let history = owned.clone();
+        assert!(Arc::ptr_eq(&alias, &owned.bytes_arc()));
+        assert!(Arc::ptr_eq(&history.bytes_arc(), &owned.bytes_arc()));
+        Arc::make_mut(&mut alias)[0] ^= 1;
+        assert!(Asset::parse(&alias).is_err());
+        assert_eq!(owned.bytes(), bytes);
+        assert_eq!(history.as_asset().geometry(), geometry);
+        assert_eq!(history.as_asset().frame_at(10000, true, false).payload(), &bytes[52..]);
+        drop(owned);
+        assert_eq!(history.as_asset().cycle_ms(), 100);
+    }
+}

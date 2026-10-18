@@ -388,3 +388,111 @@ fn history_commands_repair_retained_artwork_mismatch_without_admitting_exports()
     assert_eq!(editor.startup_artwork().unwrap().identity(), portrait.identity());
     assert!(editor.accepted_project().is_ok());
 }
+
+#[test]
+fn validated_artwork_view_keeps_exact_pixels_timing_geometry_and_history() {
+    use dashboard_config::startup::{StartupProfile, StartupStatus};
+    use dashboard_config::{Geometry, Orientation};
+    use dashboard_configurator::preview::{Preview, PreviewError};
+    use dashboard_configurator::simulator::ControlSimulator;
+    for geometry in Geometry::ALL {
+        let mut editor = Editor::default();
+        let orientation = if geometry == Geometry::Portrait {
+            Orientation::Portrait
+        } else {
+            Orientation::Landscape
+        };
+        editor.apply(Edit::SetOrientation(orientation)).unwrap();
+        let artwork = backed_artwork_in("validated", geometry);
+        let bytes = artwork.converted_arc();
+        editor.set_artwork_if_current(editor.stamp(), artwork.clone()).unwrap();
+        let profile = StartupProfile {
+            status: StartupStatus::Off,
+            duration_ms: 1000,
+            ..editor.startup_profile()
+        };
+        editor.set_startup_profile(profile).unwrap();
+        editor.undo().unwrap();
+        editor.redo().unwrap();
+        assert!(Arc::ptr_eq(&bytes, &editor.startup_artwork().unwrap().converted_arc()));
+        let owned = artwork.owned_asset();
+        assert!(Arc::ptr_eq(&bytes, &owned.bytes_arc()));
+        let mut expected = Preview::new();
+        let mut actual = Preview::new();
+        for reduced in [false, true] {
+            for time in [0, 33, 50, 99, 100, 999, 1000] {
+                let raw = expected
+                    .render_startup_asset(editor.preview(), 1, profile, time, reduced, Some(&bytes))
+                    .unwrap();
+                let cached = actual
+                    .render_startup_validated(editor.preview(), 1, profile, time, reduced, Some(owned.as_asset()))
+                    .unwrap();
+                assert_eq!(cached, raw);
+                assert_eq!(actual.geometry(), geometry);
+            }
+        }
+        let project = editor.accepted_project().unwrap();
+        let mut sim = ControlSimulator::new(editor.preview().clone());
+        sim.restart_project(&project).unwrap();
+        let raw = expected
+            .render_startup_asset(editor.preview(), 1, profile, 0, false, Some(&bytes))
+            .unwrap();
+        assert_eq!(actual.render_simulation(&sim).unwrap(), raw);
+        let other = backed_artwork_in(
+            "wrong shape",
+            if geometry == Geometry::Portrait {
+                Geometry::Landscape
+            } else {
+                Geometry::Portrait
+            },
+        );
+        assert_eq!(
+            actual
+                .render_startup_validated(
+                    editor.preview(),
+                    1,
+                    profile,
+                    0,
+                    false,
+                    Some(other.owned_asset().as_asset())
+                )
+                .unwrap_err(),
+            PreviewError::StartupAsset
+        );
+    }
+}
+
+#[test]
+fn validated_maximum_animation_matches_raw_frame_boundaries() {
+    #[path = "support/display_fixture.rs"]
+    mod fixture;
+    use dashboard_config::startup::{StartupProfile, StartupStatus, StartupTheme};
+    use dashboard_configurator::preview::Preview;
+    let artwork = fixture::artwork("maximum", 1);
+    let config = dashboard_config::validate(default_config()).unwrap();
+    let mut expected = Preview::new();
+    let mut actual = Preview::new();
+    for looping in [false, true] {
+        for reduced in [false, true] {
+            let profile = StartupProfile {
+                theme: StartupTheme::Custom,
+                status: StartupStatus::Off,
+                duration_ms: 1000,
+                loop_animation: looping,
+                ..Default::default()
+            };
+            for time in [0, 49, 50, 99, 100, 149, 150, 199, 200, 999] {
+                let raw = expected
+                    .render_startup_asset(&config, 1, profile, time, reduced, Some(artwork.converted()))
+                    .unwrap();
+                let owner = artwork.owned_asset();
+                assert_eq!(
+                    actual
+                        .render_startup_validated(&config, 1, profile, time, reduced, Some(owner.as_asset()))
+                        .unwrap(),
+                    raw
+                );
+            }
+        }
+    }
+}
