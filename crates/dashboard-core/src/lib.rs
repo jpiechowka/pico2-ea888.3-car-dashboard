@@ -11,6 +11,7 @@ extern crate alloc;
 pub mod acquisition;
 pub mod alarms;
 pub mod backlight;
+pub mod ble;
 pub mod cache_diagnostics;
 pub mod config;
 pub mod peak_hold;
