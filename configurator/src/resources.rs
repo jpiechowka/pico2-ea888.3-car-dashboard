@@ -80,6 +80,7 @@ impl ResourceLimits {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ViewUsage {
     pub id: u8,
+    pub geometry: Geometry,
     pub name: String,
     pub widget_count: usize,
     pub occupied_mask: u8,
@@ -211,17 +212,16 @@ fn measure_ready(editor: &Editor) -> Result<ConfigResources, EditorError> {
         .views
         .iter()
         .map(|view| {
+            let geometry = config.view_orientation(view.id).expect("validated view").geometry();
             let mut occupied_mask = 0_u8;
             let mut widget_count = 0;
             for widget in config.widgets.iter().filter(|widget| widget.view == view.id) {
                 widget_count += 1;
-                occupied_mask |= widget
-                    .placement
-                    .occupied_in(config.view_orientation(view.id).expect("validated view").geometry())
-                    .unwrap_or(0);
+                occupied_mask |= widget.placement.occupied_in(geometry).unwrap_or(0);
             }
             ViewUsage {
                 id: view.id,
+                geometry,
                 name: view.name.to_string(),
                 widget_count,
                 occupied_mask,

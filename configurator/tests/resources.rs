@@ -684,3 +684,29 @@ fn helper_summaries_enter_only_the_existing_bounded_common_event_sink() {
     assert_eq!(records.records()[1].subject.as_deref(), Some("redacted job 7"));
     assert!(!records.records()[1].message.contains("stdout"));
 }
+
+#[test]
+fn occupancy_reports_each_views_resolved_grid_after_override_and_undo() {
+    let mut editor = Editor::default();
+    let mut cache = ResourceCache::default();
+    editor
+        .apply(Edit::AddView {
+            name: "Portrait".into(),
+        })
+        .unwrap();
+    let view = editor.selection().view;
+    editor
+        .apply(Edit::SetViewOrientation {
+            id: view,
+            orientation: Some(Orientation::Portrait),
+        })
+        .unwrap();
+    let report = cache.inspect(&editor).unwrap().accepted.unwrap();
+    assert_eq!(report.views[0].geometry, Geometry::Landscape);
+    assert_eq!(report.views[1].geometry, Geometry::Portrait);
+    editor.undo().unwrap();
+    assert_eq!(
+        cache.inspect(&editor).unwrap().accepted.unwrap().views[1].geometry,
+        Geometry::Landscape
+    );
+}

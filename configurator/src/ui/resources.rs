@@ -102,9 +102,9 @@ fn accepted_view(
                 <div><b>{format!("{} / {}", accepted.widgets_used, accepted.limits.widgets)}</b><span>"Widgets"</span></div>
             </div>
             <p class="hint">{format!("Accepted revision {} · view names up to {} ASCII bytes · widget labels up to {} ASCII bytes · warning messages up to {} ASCII bytes.", accepted.accepted_revision, accepted.limits.view_name_bytes, accepted.limits.widget_label_bytes, accepted.limits.warning_message_bytes)}</p>
-            <h3>"4 × 2 occupancy"</h3>
-            <div class="workspace-scroll" role="region" aria-label="View occupancy" tabindex="0"><table><thead><tr><th>"View"</th><th>"Widgets"</th><th>"Cells used"</th><th>"Mask"</th></tr></thead><tbody>
-                {views.into_iter().map(|view|view!{<tr><td>{view.name}</td><td>{view.widget_count}</td><td>{format!("{} / 8",view.occupied_cells)}</td><td><code>{format!("{:08b}",view.occupied_mask)}</code></td></tr>}).collect_view()}
+            <h3>"View occupancy"</h3>
+            <div class="workspace-scroll" role="region" aria-label="View occupancy" tabindex="0"><table><thead><tr><th>"View"</th><th>"Grid"</th><th>"Widgets"</th><th>"Cells used"</th><th>"Mask"</th></tr></thead><tbody>
+                {views.into_iter().map(|view|view!{<tr><td>{view.name}</td><td>{format!("{} × {}",view.geometry.columns(),view.geometry.rows())}</td><td>{view.widget_count}</td><td>{format!("{} / 8",view.occupied_cells)}</td><td><code>{format!("{:08b}",view.occupied_mask)}</code></td></tr>}).collect_view()}
             </tbody></table></div>
             <h3>"Sources and canonical units"</h3>
             <p class="hint">"Catalogue evidence describes configured requests and decoders. A selectable source still needs ECU, transport, capability and sample qualification at runtime. Source limits are configuration bounds, not operating ranges."</p>

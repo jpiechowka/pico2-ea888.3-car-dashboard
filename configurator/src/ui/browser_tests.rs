@@ -133,6 +133,8 @@ async fn run(ui: Ui) -> Result<(), JsValue> {
     dom_cases(ui).await?;
     progress("RUN BLE DOM and protocol fixtures").await;
     super::ble_browser_tests::run(ui).await?;
+    progress("RUN occupancy geometry").await;
+    occupancy_cases(ui).await?;
     Ok(())
 }
 async fn dom_cases(ui: Ui) -> Result<(), JsValue> {
@@ -180,6 +182,25 @@ async fn dom_cases(ui: Ui) -> Result<(), JsValue> {
         check(
             ui.editor.with_untracked(|e| e.startup_profile().theme.wire_tag()) == tag,
             "startup picker mapped a wire tag to the wrong theme",
+        )?;
+    }
+    Ok(())
+}
+
+async fn occupancy_cases(ui: Ui) -> Result<(), JsValue> {
+    let doc = web_sys::window().unwrap().document().unwrap();
+    for (orientation, grid) in [(Orientation::Portrait, "2 × 4"), (Orientation::Landscape, "4 × 2")] {
+        check(
+            ui.run(|editor| editor.apply(Edit::SetOrientation(orientation))),
+            "orientation edit rejected",
+        )?;
+        tick().await;
+        let table = doc
+            .query_selector("[aria-label='View occupancy']")?
+            .ok_or(JsValue::from_str("occupancy table missing"))?;
+        check(
+            table.text_content().unwrap_or_default().contains(grid),
+            "occupancy table reported wrong grid",
         )?;
     }
     Ok(())
