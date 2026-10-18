@@ -18,7 +18,7 @@ pub fn BlePanel(ui: Ui) -> impl IntoView {
             <p>"Keep the Pico 2 W, PIM715 display and encoder. The BLE prototype replaces the wired Longan connection. USB supplies the dashboard; switching USB off does not switch off an OBD adapter."</p>
             <p class="hint">"MC+ and CX profiles currently initialize and identify the adapter only. ECU polling remains blocked until the exact ECU and diagnostic route are qualified. Selecting a profile does not establish hardware compatibility."</p>
             <p class="hint">"Test peer uses a dedicated synthetic GATT service and never sends vehicle requests. Browser preview and simulation use synthetic data; they cannot report a real BLE connection."</p>
-            <button on:click=move |_|workspaces::open(ui,Workspace::Diagnostics,GroupId::Simulation)>"Open synthetic BLE diagnostics"</button>
+            <button on:click=move |_|{workspaces::open(ui,Workspace::Diagnostics,GroupId::Simulation);command_palette::focus_region(ui,Workspace::Diagnostics,"studio-ble-simulation");}>"Open synthetic BLE diagnostics"</button>
             <p role="status" class="hint">"Physical BLE status: unavailable in Studio. Inspect the Pico diagnostics during an authorized device trial."</p>
             <p class="hint">{move || if settings().profile == BleProfile::ObdLinkCx {"OBDLink CX requires an encrypted link. Prototype bonds are volatile: re-pair after reboot. No PIN or bond key is stored in this project."} else {"Peer selection is explicit. Automatic discovery and rotating private addresses are unsupported in this prototype. No PIN or bond key is stored in this project."}}</p>
         </div><div class="settings-form">
@@ -80,10 +80,14 @@ pub fn BleSimulationPanel(ui: Ui) -> impl IntoView {
             ui.event(Notice::info(Category::Simulation, "simulation.ble", None, message));
         });
     };
-    view! { <fieldset id="studio-ble-simulation"><legend>"Synthetic BLE protocol diagnostics"</legend>
+    view! { <fieldset id="studio-ble-simulation" tabindex="-1"><legend>"Synthetic BLE protocol diagnostics"</legend>
         <p class="hint">"No browser Bluetooth connection is opened. These explicit fixture actions exercise the shared firmware parser, deadlines and epoch checks. Fixture milliseconds are simulated, not measured radio performance. MC+/CX fixture success does not prove pairing or device compatibility."</p>
         <p role="status">{move ||notice.get()}</p>
-        <p>{move ||sim.with(|s|format!("SYNTHETIC · {:?} · {} completed · {} lost notifications · last fixture response {:?} ms · pending {}",s.snapshot().state,s.snapshot().completed_transactions,s.snapshot().lost_notifications,s.snapshot().last_latency_ms,s.busy()))}</p>
+        <p>{move ||sim.with(|s|{
+            let snapshot=s.snapshot();
+            let latency=snapshot.last_latency_ms.map_or_else(||"unavailable".to_owned(),|ms|format!("{ms} ms"));
+            format!("SYNTHETIC · {:?} · {} completed · {} lost notifications · last fixture response {} · pending {}",snapshot.state,snapshot.completed_transactions,snapshot.lost_notifications,latency,s.busy())
+        })}</p>
         <div class="button-row">
             <button disabled=blocked on:click=move |_|act(BleSimulator::connect)>"Connect synthetic peer"</button>
             <button disabled=move ||blocked() ||sim.with(|s|!s.connected() ||s.busy()) on:click=move |_|act(BleSimulator::begin_reply)>"Begin fixture reply"</button>

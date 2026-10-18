@@ -145,7 +145,31 @@ pub(super) async fn run(ui: Ui) -> Result<(), JsValue> {
         "CX security help absent",
     )?;
     choice(FieldKey::BleProfile, "TestPeer").await?;
+    // A deferred shortcut must not steal focus after the user navigates away.
+    button("Open synthetic BLE diagnostics")?.click();
+    click_id("studio-tab-device")?;
+    for _ in 0..4 {
+        tick().await;
+    }
+    check(
+        doc().active_element().is_some_and(|e| e.id() == "studio-tab-device"),
+        "stale BLE shortcut stole focus",
+    )?;
     click("Open synthetic BLE diagnostics").await?;
+    for _ in 0..4 {
+        tick().await;
+    }
+    let fixture = by_id("studio-ble-simulation")?;
+    check(
+        doc().active_element().is_some_and(|e| e.id() == fixture.id()),
+        "BLE shortcut did not focus its diagnostics panel",
+    )?;
+    let top = fixture.get_bounding_client_rect().top();
+    let height = web_sys::window().unwrap().inner_height()?.as_f64().unwrap();
+    check(
+        top >= 0.0 && top < height,
+        "BLE shortcut left its panel outside the viewport",
+    )?;
     check(
         ui.workspace.with_untracked(|s| s.active()) == Workspace::Diagnostics,
         "BLE diagnostics navigation failed",
@@ -164,13 +188,17 @@ pub(super) async fn run(ui: Ui) -> Result<(), JsValue> {
     )?;
     click("Deliver fragmented reply").await?;
     check(
-        fixture_text().contains("14 completed") && fixture_text().contains("pending false"),
+        fixture_text().contains("14 completed")
+            && fixture_text().contains("pending false")
+            && fixture_text().contains("last fixture response 3 ms"),
         "fragment fixture failed",
     )?;
     click("Begin fixture reply").await?;
     click("Inject notification loss").await?;
     check(
-        fixture_text().contains("NotificationLoss") && fixture_text().contains("pending false"),
+        fixture_text().contains("NotificationLoss")
+            && fixture_text().contains("pending false")
+            && fixture_text().contains("last fixture response unavailable"),
         "notification loss did not retire fixture",
     )?;
     click("Connect synthetic peer").await?;

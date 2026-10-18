@@ -158,6 +158,38 @@ pub(super) fn focus_json(
         }
     }
 }
+/// Reveal a static workspace region after its hidden panel has rendered.
+pub(super) fn focus_region(
+    ui: Ui,
+    workspace: Workspace,
+    id: &'static str,
+) {
+    cancel_focus(ui);
+    let mut issued = None;
+    ui.focus.update(|state| issued = state.requests.issue());
+    let Some(token) = issued else {
+        ui.notice.set("Focus identity exhausted; reopen Studio".into());
+        return;
+    };
+    match request_animation_frame_with_handle(move || {
+        if ui.focus.try_with_untracked(|state| state.requests.is_current(token)) != Some(true)
+            || ui.workspace.try_with_untracked(WorkspaceState::active) != Some(workspace)
+        {
+            return;
+        }
+        let _ = ui.focus.try_update(|state| state.frame = None);
+        if let Some(node) = element(id).filter(usable) {
+            focus(&node);
+            node.scroll_into_view();
+        }
+    }) {
+        Ok(frame) => ui.focus.update(|state| state.frame = Some(frame)),
+        Err(_) => {
+            cancel_focus(ui);
+            ui.notice.set("The browser could not focus the requested panel".into());
+        }
+    }
+}
 pub fn inspect(
     ui: Ui,
     target: FieldTarget,
