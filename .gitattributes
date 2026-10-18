@@ -59,3 +59,9 @@ host/baselines/configurator_*/** -text whitespace=blank-at-eol,blank-at-eof,spac
 
 # Preserve the frozen v3 JSON fixture's exact original bytes.
 crates/dashboard-config/tests/fixtures/v3-default.json -text
+
+# Preserve archived benchmark captures byte-for-byte.
+host/baselines/task10_i1_after/** -text
+host/baselines/task10_i1_after_repeat1/** -text
+host/baselines/task10_i1_before/** -text
+host/baselines/task12_shared_render_initial/** -text
