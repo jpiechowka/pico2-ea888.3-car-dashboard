@@ -1,5 +1,16 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'SetupTools.ps1')
+# The stock Windows shell must fail before setup probes or installs tools.
+$legacyShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+$originalPath = $env:PATH
+try {
+    $env:PATH = ''
+    $legacyOutput = (& $legacyShell -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Studio.ps1') -Setup 2>&1) -join "`n"
+    if ($LASTEXITCODE -eq 0 -or $legacyOutput -notlike '*PowerShell 7.2 or newer*pwsh*') {
+        throw 'Legacy shell reached setup without an actionable shell prerequisite failure'
+    }
+} finally { $env:PATH = $originalPath }
+$global:LASTEXITCODE = 0
 foreach ($name in @('Studio.ps1', 'SetupTools.ps1')) {
     $tokens = $null; $errors = $null
     [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $name), [ref]$tokens, [ref]$errors) | Out-Null

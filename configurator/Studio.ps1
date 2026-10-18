@@ -7,6 +7,9 @@ param(
     [Parameter(Mandatory,ParameterSetName='Setup')][switch]$Setup,
     [Parameter(ParameterSetName='Serve')][ValidateRange(1024,65535)][int]$Port = 8080
 )
+if ($PSVersionTable.PSVersion -lt [version]'7.2') {
+    throw 'Studio requires PowerShell 7.2 or newer. Install a current supported PowerShell from https://aka.ms/powershell, then rerun this command using pwsh. Nothing was installed.'
+}
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $toolRoot = Join-Path $repoRoot 'target/configurator-tools'
