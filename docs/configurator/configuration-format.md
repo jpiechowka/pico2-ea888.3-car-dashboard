@@ -119,7 +119,7 @@ The catalogue exposes pinned request mapping, numeric conversion and byte-order
 references together. These documentary sources do not establish support on the
 user's DNUC ECU or DQ381 transmission.
 
-## Current v5 contract
+## Current v6 contract
 
 Version5 adds `Config.orientation` and `View.orientation: Option<Orientation>` to
 the end of their respective wire structures. The four values are Landscape,
@@ -127,9 +127,10 @@ Portrait, LandscapeInverted and PortraitInverted. View `null` means inherit the
 device default; current JSON requires the field explicitly. Placement validation
 uses each view's effective geometry. See [screen orientation](orientation.md).
 
-Host migration uses frozen v1–v4 structures and yields Landscape plus inherited
-views; it never reinterprets an old positional payload as the current type.
-Firmware and ConfigSlot accept only canonical v5 envelopes. EASP2 independently
+Host migration uses frozen v1–v5 structures. Versions1–4 yield Landscape plus
+inherited views; v5 retains its orientation. All legacy versions disable BLE.
+Migration never reinterprets an old positional payload as the current type.
+Firmware and ConfigSlot accept only canonical v6 envelopes. EASP2 independently
 stores Boot info/Splash overrides; those settings are outside dashboard-only EAV
 and JSON. Complete EAVP2 projects carry all these contracts together.
 

@@ -68,10 +68,10 @@ project admission and direct Cargo startup inputs reject mismatched Splash asset
 
 | Contract | Current output | Legacy input |
 | --- | --- | --- |
-| Dashboard EAV / JSON | v5: device and optional view orientation | Host migration from frozen v1–v4; landscape default and inherited views |
+| Dashboard EAV / JSON | v6: device/view orientation and bounded BLE selection | Frozen v1–v5 host migration; legacy BLE defaults disabled |
 | Startup EASP | v2, 16 bytes: independent Boot info/Splash overrides | v1 with all former reserved bytes zero; both overrides inherit |
 | Converted EASA | v2: exactly 320 × 240 or 240 × 320 | v1 remains exactly 320 × 240 |
-| Complete EAVP project | v2: canonical EAV6, EASP2 and Recipe2 | v1 decoded using its frozen EAV4/EASP1/Recipe1 contract |
+| Complete EAVP project | v2: canonical EAV6, EASP2 and Recipe2 | v2 with frozen canonical EAV5 migrates BLE disabled; v1 uses frozen EAV4/EASP1/Recipe1 |
 | Conversion recipe | v2: target geometry and source/output identity | Recipe1 upgrades to landscape while retaining converter/1 attribution |
 
 Migrating an EAVP1 preserves converted EASA1 bytes, source bytes and their hashes;
@@ -79,7 +79,7 @@ it does not claim they were produced by converter/2. EAVP2 can retain that migra
 legacy artwork. Newly converted assets use EASA2 and `dashboard-startup-tools/2`.
 Current firmware dashboard parsing accepts only EAV6; host tools normalize legacy
 inputs before embedding. Unknown versions, fields, dimensions, noncanonical
-encodings and malformed assets fail validation. See [configuration contracts](configuration-format.md#current-v5-contract),
+encodings and malformed assets fail validation. See [configuration contracts](configuration-format.md#current-v6-contract),
 [startup](startup.md) and [project format](projects.md#eavp-v2-format).
 
 ## Rendering and hardware boundaries

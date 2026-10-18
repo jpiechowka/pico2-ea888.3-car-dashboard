@@ -80,7 +80,7 @@ pub fn BleSimulationPanel(ui: Ui) -> impl IntoView {
             ui.event(Notice::info(Category::Simulation, "simulation.ble", None, message));
         });
     };
-    view! { <fieldset><legend>"Synthetic BLE protocol diagnostics"</legend>
+    view! { <fieldset id="studio-ble-simulation"><legend>"Synthetic BLE protocol diagnostics"</legend>
         <p class="hint">"No browser Bluetooth connection is opened. These explicit fixture actions exercise the shared firmware parser, deadlines and epoch checks. Fixture milliseconds are simulated, not measured radio performance. MC+/CX fixture success does not prove pairing or device compatibility."</p>
         <p role="status">{move ||notice.get()}</p>
         <p>{move ||sim.with(|s|format!("SYNTHETIC · {:?} · {} completed · {} lost notifications · last fixture response {:?} ms · pending {}",s.snapshot().state,s.snapshot().completed_transactions,s.snapshot().lost_notifications,s.snapshot().last_latency_ms,s.busy()))}</p>

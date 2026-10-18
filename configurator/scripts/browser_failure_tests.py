@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--browser', required=True)
     parser.add_argument('--dist', type=pathlib.Path, default=pathlib.Path('target/browser-tests'))
     parser.add_argument('--timeout', type=int, default=90)
+    parser.add_argument('--window-size', default='1440,1000', help='Owned browser viewport, e.g. 760,1000 for narrow layout')
     args = parser.parse_args()
     done = threading.Event()
     results = []
@@ -72,6 +73,7 @@ def main():
                 process = OwnedProcess([
                     args.browser, '--enable-logging=stderr', '--headless=new', '--disable-gpu', '--no-first-run',
                     '--no-default-browser-check', '--disable-background-networking', '--disable-extensions',
+                    '--window-size=' + args.window_size,
                     '--user-data-dir=' + profile,
                     'http://127.0.0.1:' + str(server.server_port) + '/?browser-tests=1',
                 ], stdout=log, stderr=log)

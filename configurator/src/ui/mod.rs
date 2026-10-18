@@ -811,3 +811,6 @@ fn Views(ui: Ui) -> impl IntoView {
 }
 #[cfg(feature = "browser-tests")]
 mod browser_tests;
+
+#[cfg(feature = "browser-tests")]
+mod ble_browser_tests;

@@ -129,6 +129,8 @@ async fn run(ui: Ui) -> Result<(), JsValue> {
     check(!ui.canvas_current(), "failed pixels published interactive targets")?;
     progress("RUN DOM repair").await;
     dom_cases(ui).await?;
+    progress("RUN BLE DOM and protocol fixtures").await;
+    super::ble_browser_tests::run(ui).await?;
     Ok(())
 }
 async fn dom_cases(ui: Ui) -> Result<(), JsValue> {

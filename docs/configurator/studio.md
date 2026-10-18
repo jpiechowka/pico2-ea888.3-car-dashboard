@@ -208,3 +208,7 @@ Implementation references: [Leptos 0.8.22](https://github.com/leptos-rs/leptos/r
 ## ECU Reference
 
 The retained ECU Reference workspace adds offline searchable signal and research cards, section/status filters, and source-detail links without changing configuration or acquisition. See [usage](ecu-reference.md) and the [technical library](../vehicle/ecu-reference/README.md).
+
+## BLE connection prototype
+
+See the [BLE workflow](ble-prototype.md) for explicit peer configuration, rejected-edit repair, synthetic protocol diagnostics and repeatable browser regressions. Physical BLE status is unavailable in Studio; MC+/CX currently identify the adapter only.
