@@ -46,6 +46,12 @@ impl Drop for Deadline {
     fn drop(&mut self) { self.cancel(); }
 }
 
+// JsFuture retains its callback state until settlement, even after its Rust
+// waiter is dropped. Rejecting an already settled Promise has no effect.
+struct CallerPromise(js_sys::Function);
+impl Drop for CallerPromise {
+    fn drop(&mut self) { let _ = self.0.call1(&JsValue::NULL, &"Browser storage wait cancelled".into()); }
+}
 struct RequestEvents {
     request: web_sys::IdbRequest,
     _success: Closure<dyn FnMut(web_sys::Event)>,
@@ -61,7 +67,9 @@ impl Drop for RequestEvents {
 pub(super) async fn request(request: &web_sys::IdbRequest) -> Result<JsValue, JsValue> {
     let mut events = None;
     let mut deadline = None;
+    let mut cancellation = None;
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
+        cancellation = Some(CallerPromise(reject.clone()));
         let req = request.clone();
         let failure = reject.clone();
         let success = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
@@ -96,9 +104,11 @@ pub(super) async fn request(request: &web_sys::IdbRequest) -> Result<JsValue, Js
             let _ = failure.call1(&JsValue::NULL, &"Browser storage read timed out".into());
         }));
     });
+    let promise = JsFuture::from(promise);
+    let _cancellation = cancellation;
     let _deadline = deadline.ok_or(JsValue::NULL)??;
     let _events = events;
-    JsFuture::from(promise).await
+    promise.await
 }
 
 /// Connections close on every return/cancellation path and yield to schema upgrades.
@@ -182,7 +192,9 @@ pub(super) async fn database() -> Result<Database, JsValue> {
     let terminal_resolve = terminal_resolve.ok_or(JsValue::NULL)?;
     let mut events = None;
     let mut deadline = None;
+    let mut cancellation = None;
     let response = js_sys::Promise::new(&mut |resolve, reject| {
+        cancellation = Some(CallerPromise(reject.clone()));
         let req = open.clone();
         let s = state.clone();
         let finish = terminal_resolve.clone();
@@ -274,6 +286,8 @@ pub(super) async fn database() -> Result<Database, JsValue> {
             );
         }));
     });
+    let response = JsFuture::from(response);
+    let _cancellation = cancellation;
     // Open requests have no cancel API. The cleanup task owns its listeners until
     // a terminal event even when the caller times out or drops its future.
     wasm_bindgen_futures::spawn_local(async move {
@@ -281,7 +295,7 @@ pub(super) async fn database() -> Result<Database, JsValue> {
         let _ = JsFuture::from(terminal).await;
     });
     let _deadline = deadline.ok_or(JsValue::NULL)??;
-    JsFuture::from(response).await?;
+    response.await?;
     let db = state.result.borrow_mut().take().ok_or(JsValue::NULL)?;
     drop(caller);
     Ok(Database::new(db))
@@ -307,7 +321,9 @@ pub(super) async fn settled(tx: &web_sys::IdbTransaction) -> Result<(), JsValue>
     let finished = Rc::new(Cell::new(false));
     let mut events = None;
     let mut deadline = None;
+    let mut cancellation = None;
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
+        cancellation = Some(CallerPromise(reject.clone()));
         let done = finished.clone();
         let complete = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
             done.set(true);
@@ -341,9 +357,11 @@ pub(super) async fn settled(tx: &web_sys::IdbTransaction) -> Result<(), JsValue>
             let _ = failure.call1(&JsValue::NULL, &message.into());
         }));
     });
+    let promise = JsFuture::from(promise);
+    let _cancellation = cancellation;
     let _events = events;
     let _deadline = deadline.ok_or(JsValue::NULL)??;
-    JsFuture::from(promise).await.map(|_| ())
+    promise.await.map(|_| ())
 }
 
 #[cfg(feature = "browser-tests")]
@@ -389,30 +407,54 @@ pub(super) async fn browser_cases() -> Result<(), JsValue> {
     // The callback properties must detach synchronously and an unacknowledged
     // write must roll back, so a later task cannot publish it.
     use std::future::Future;
-    let waker = std::task::Waker::noop();
-    let mut context = std::task::Context::from_waker(waker);
+    struct CancelWake;
+    #[allow(
+        clippy::manual_noop_waker,
+        reason = "The test needs an owning Waker to detect leaked Promise callbacks"
+    )]
+    impl std::task::Wake for CancelWake {
+        fn wake(self: std::sync::Arc<Self>) {}
+    }
+    fn cancel_pending(future: impl Future) -> Result<std::sync::Weak<CancelWake>, JsValue> {
+        let owner = std::sync::Arc::new(CancelWake);
+        let released = std::sync::Arc::downgrade(&owner);
+        let waker = std::task::Waker::from(owner);
+        let mut context = std::task::Context::from_waker(&waker);
+        let mut pending = Box::pin(future);
+        if !pending.as_mut().poll(&mut context).is_pending() {
+            return Err("storage wait completed before event dispatch".into());
+        }
+        drop(pending);
+        Ok(released)
+    }
+    tick().await;
+    let released_open = cancel_pending(database())?;
+    tick().await;
+    let open_retained = released_open.upgrade().is_some();
+    until(|| !OPEN_PENDING.with(Cell::get)).await;
     let read_tx = repaired.transaction_with_str(PROJECTS)?;
     let read = read_tx.object_store(PROJECTS)?.get(&"cancelled".into())?;
-    let mut pending = Box::pin(request(&read));
-    if !pending.as_mut().poll(&mut context).is_pending() {
-        return Err("read completed before event dispatch".into());
-    }
-    drop(pending);
+    let released_read = cancel_pending(request(&read))?;
     if read.onsuccess().is_some() || read.onerror().is_some() {
         return Err("cancelled read retained callbacks".into());
     }
+    tick().await;
+    let read_retained = released_read.upgrade().is_some();
     let tx = repaired.transaction_with_str_and_mode(PROJECTS, web_sys::IdbTransactionMode::Readwrite)?;
     tx.object_store(PROJECTS)?
         .put_with_key(&"must not commit".into(), &"cancelled".into())?;
-    let mut pending = Box::pin(settled(&tx));
-    if !pending.as_mut().poll(&mut context).is_pending() {
-        return Err("write completed before event dispatch".into());
-    }
-    drop(pending);
+    let released_write = cancel_pending(settled(&tx))?;
     if tx.oncomplete().is_some() || tx.onabort().is_some() {
         return Err("cancelled transaction retained callbacks".into());
     }
     tick().await;
+    let write_retained = released_write.upgrade().is_some();
+    if open_retained || read_retained || write_retained {
+        return Err(format!(
+            "cancelled promise waiter retained: open={open_retained}, read={read_retained}, write={write_retained}"
+        )
+        .into());
+    }
     let read_tx = repaired.transaction_with_str(PROJECTS)?;
     if !request(&read_tx.object_store(PROJECTS)?.get(&"cancelled".into())?)
         .await?
