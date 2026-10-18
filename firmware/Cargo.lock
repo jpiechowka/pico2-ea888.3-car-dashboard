@@ -421,6 +421,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashboard-ble-probe"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "cortex-m",
+ "cortex-m-rt",
+ "cyw43",
+ "cyw43-pio",
+ "dashboard-core",
+ "dashboard-pico2",
+ "defmt 1.2.0",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-async",
+ "heapless",
+ "micromath",
+ "panic-probe",
+ "profont",
+ "static_cell",
+ "trouble-host",
+]
+
+[[package]]
 name = "dashboard-build-profiles"
 version = "0.1.0"
 dependencies = [

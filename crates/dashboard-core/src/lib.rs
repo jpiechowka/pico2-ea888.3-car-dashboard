@@ -25,6 +25,7 @@ pub mod dashboard;
 pub mod debug_view;
 pub mod demo;
 pub mod diagnostics;
+pub mod discovery;
 pub mod display;
 pub mod health;
 pub mod input_model;

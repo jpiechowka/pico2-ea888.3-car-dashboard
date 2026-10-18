@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["pico2"]
+members = ["pico2", "ble-probe"]
+default-members = ["pico2"]
 exclude = ["vendor/embassy-rp", "vendor/cyw43", "vendor/trouble-host"]
 
 [patch.crates-io]

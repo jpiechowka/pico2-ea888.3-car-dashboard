@@ -14,7 +14,7 @@ Browse the offline **ECU Reference** workspace while configuring views: searchab
 
 [Requirements](#requirements-and-first-run) · [Studio workflows](docs/configurator/gallery.md) · [Widgets](#widget-gallery) ·
 [Orientation](#landscape-and-portrait) · [Startup & controls](#controls-and-startup) · [Build & Flash](#build--flash-from-studio) ·
-[Bluetooth setup](#bluetooth-prototype-in-studio) ·
+[Bluetooth setup](#bluetooth-prototype-in-studio) · [BLE discovery utility](#standalone-ble-discovery-utility) ·
 [Hardware & wiring](#hardware-protection-and-wiring-for-the-dnuc-cupra) ·
 [Architecture](#architecture) · [Validation](#firmware-build-and-validation)
 
@@ -289,6 +289,42 @@ memory**. That separate research run does not describe normal practical image
 checks, browser editing or Pico RAM.
 See [setup details](docs/configurator/setup-tools.md) and the
 [flashing contract and clock references](docs/configurator/flashing-design.md).
+
+## Standalone BLE discovery utility
+
+Take the Pico 2 W to the car to collect adapter evidence. This separate firmware
+lists nearby connectable BLE advertisements and offers **manual GATT inspection
+on encoder click**. Rotate to scroll devices/pages; A/B/X/Y work without the
+encoder. X opens advertisement evidence, Y returns or pauses scanning, and a
+two-second Y hold clears/restarts discovery.
+
+| Scan and select | Inspect services and characteristics |
+| --- | --- |
+| ![Synthetic BLE scan list](docs/images/ble-probe/scan-synthetic.png) | ![Synthetic GATT detail page](docs/images/ble-probe/details-2-synthetic.png) |
+
+These are actual shared-renderer captures with synthetic peers. Names, signal
+strength, address types, raw advertising bytes, UUIDs, handles, properties and
+readable standard Device Information remain available for photographs. Pausing
+keeps the list stable; limits, protected fields and partial results stay explicit.
+There are no automatic connections, pairing or OBD commands. A successful GATT
+inspection does not establish adapter or ECU compatibility.
+
+From the repository root, build a checked CLI artifact using the installed tools:
+
+```powershell
+./firmware/scripts/Build-BleProbe.ps1 -Name probe-stock-01
+# Explicit experimental owner-requested profile:
+./firmware/scripts/Build-BleProbe.ps1 -Name probe-280-01 -Profile 280-70 -Expert
+```
+
+The utility stays **outside Studio** and replaces the dashboard until you flash
+the dashboard back. It uses both cores, two fixed framebuffers, Cortex-M33
+instructions and bounded read-only discovery. The wrapper builds/checks only;
+flashing is a separate explicit operation. The display stays full-brightness
+landscape. Green/amber/blue indicate scanning/paused/working; terminal faults
+turn red and automatically restart, losing RAM-only observations.
+
+[Full controls, capture workflow, bounds, gallery and step-by-step CLI flashing](docs/vehicle/ble-probe.md).
 
 ## Firmware build and validation
 

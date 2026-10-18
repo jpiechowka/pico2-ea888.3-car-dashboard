@@ -26,7 +26,7 @@ def check_source(source, label):
 
 
 def check_app_sources():
-    roots = [ROOT / "pico2" / "src"]
+    roots = [ROOT / "pico2" / "src", ROOT / "ble-probe" / "src"]
     roots.extend(
         p / "src"
         for p in (ROOT.parent / "crates").iterdir()

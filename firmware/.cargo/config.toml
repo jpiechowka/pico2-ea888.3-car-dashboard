@@ -54,3 +54,7 @@ pico2-290-72-1v30-run = "run -p dashboard-pico2 --release --features simple-outl
 # 300 MHz @ 1.30V (75 MHz SPI - unverified panel timing)
 pico2-300-75-1v30 = "build -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"
 pico2-300-75-1v30-run = "run -p dashboard-pico2 --release --features simple-outline,cpu300-spi75-1v30"
+
+# Standalone discovery utility; build only, outside Studio.
+ble-probe = "build -p dashboard-ble-probe --bin ble-probe --release"
+ble-probe-280-70-1v30 = "build -p dashboard-ble-probe --bin ble-probe --release --features cpu280-spi70-1v30"

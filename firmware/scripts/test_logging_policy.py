@@ -53,6 +53,18 @@ class LoggingPolicy(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(AssertionError):
                 check_source(source, "fixture")
 
+    def test_standalone_probe_cannot_escape_policy(self):
+        original = Path.read_text
+
+        def malicious(path, *args, **kwargs):
+            source = original(path, *args, **kwargs)
+            if path.as_posix().endswith("ble-probe/src/tasks.rs"):
+                source += "\nfn bad() { defmt::flush(); }"
+            return source
+
+        with patch.object(Path, "read_text", malicious), self.assertRaises(AssertionError):
+            check_app_sources()
+
     def test_macro_paths_and_other_flushes_remain_allowed(self):
         check_source('defmt::warn!("fault"); display.flush(); uart.flush();', "fixture")
 

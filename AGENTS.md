@@ -69,6 +69,7 @@ Keep the existing `pico2` package, path and command identifiers compatible. Use 
 | `crates/dashboard-helper-protocol/` | Typed Studio/helper messages |
 | `crates/dashboard-provenance/` | Host-only bounded source/archive provenance verification |
 | `firmware/pico2/src/` | Hardware adapters, tasks, ownership and runtime integration |
+| `firmware/ble-probe/` | Standalone CLI BLE discovery; core0 hardware, core1 catalogue/render; no Studio or ECU traffic |
 | `firmware/vendor/` | Reviewed HAL/radio/BLE source, radio binaries and provenance |
 | `configurator/` | Leptos Rust/Wasm editor, browser storage and shared preview |
 | `studio-helper/` | Windows prerequisites, local builds, devices and explicit flashing |
@@ -197,6 +198,13 @@ use `cargo build` for compilation without device operations.
   build, checks, transfer, verification and reboot. Never automatically resume an
   interrupted write. Follow [flashing](docs/configurator/flashing-design.md) and
   the [physical validation runbook](docs/validation/pico2-dnuc-runbook.md).
+
+- The [standalone BLE probe](docs/vehicle/ble-probe.md) scans advertisements and
+  connects only on explicit selected-peer Inspect (encoder click or X in details).
+  Preserve its no-pairing feature guard, DIS read allowlist, generation-based
+  cancellation, stop/disconnect acknowledgments and separate image gate. Build
+  it separately from the pairing-enabled dashboard; default workspace builds
+  remain `pico2`. No Studio flashing or automatic adapter/ECU probing is implied.
 
 ## Display, controls and configuration invariants
 

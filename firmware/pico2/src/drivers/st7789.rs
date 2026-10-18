@@ -1,6 +1,6 @@
-use dashboard_pico2::display::pipeline::after_first_poll;
-use dashboard_pico2::display::transfer::{PanelBus, madctl};
-use dashboard_pico2::view_config::Orientation;
+use dashboard_core::display::pipeline::after_first_poll;
+use dashboard_core::display::transfer::{PanelBus, madctl};
+use dashboard_core::view_config::Orientation;
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::SPI0;
 use embassy_rp::spi::{Async, Error, Spi};

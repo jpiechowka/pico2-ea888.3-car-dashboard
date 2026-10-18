@@ -35,6 +35,12 @@ jobs:
         run: python -m mypy
       - name: ELF and UF2 admission regressions
         run: python firmware/scripts/test_program_image.py
+      - name: BLE utility admission regressions
+        run: |
+          python firmware/scripts/test_ble_probe_image.py
+          python -O firmware/scripts/test_ble_probe_image.py
+          python firmware/scripts/test_probe_security_guard.py
+          python -O firmware/scripts/test_probe_security_guard.py
       - name: Browser process ownership regressions
         run: python -m unittest discover -s configurator/scripts -p test_browser_process.py
       - name: Shared process ownership and stream bounds
@@ -233,6 +239,10 @@ jobs:
           cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth-only,firmware-logs
           cargo test --locked --manifest-path firmware/vendor/cyw43/Cargo.toml --target x86_64-unknown-linux-gnu --lib --features bluetooth
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,security,default-packet-pool -- --test-threads=1
+      - name: Discovery-only GATT regressions and forbidden security unification
+        run: |
+          cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,scan,discovery-no-security,default-packet-pool -- --test-threads=1
+          python3 firmware/scripts/check_probe_security_guard.py --target x86_64-unknown-linux-gnu
       - name: Target artifact capture contracts
         run: |
           cargo fetch --locked --manifest-path ../Cargo.toml
@@ -390,3 +400,39 @@ jobs:
         run: |
           python3 firmware/scripts/test_flash_lockout.py "$CAPTURE_ROOT/$CAPTURE_NAME/pico2.elf"
           python3 -O firmware/scripts/test_flash_lockout.py "$CAPTURE_ROOT/$CAPTURE_NAME/pico2.elf"
+
+  ble-probe:
+    name: Standalone BLE probe (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: 2
+      DEFMT_LOG: info,trouble_host=warn,cyw43=warn,cyw43_pio=warn
+      CARGO_PROFILE_RELEASE_STRIP: none
+    strategy:
+      matrix:
+        include:
+          - profile: stock
+            features: ""
+          - profile: 280-70
+            features: cpu280-spi70-1v30
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-18
+          components: clippy
+          targets: thumbv8m.main-none-eabihf
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: firmware
+      - name: Strict utility Clippy
+        run: cargo clippy --locked -p dashboard-ble-probe --bin ble-probe --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -D warnings
+      - name: Build optimized utility with Cortex-M33 flags from Cargo config
+        run: cargo build --locked -p dashboard-ble-probe --bin ble-probe --release --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}"
+      - name: Check linked layout and conservative stack paths
+        # This is explicitly the ELF-only CI stage. CLI captures additionally
+        # bind sources/options and check pinned-converter UF2 equality.
+        run: python3 scripts/ble_probe_image.py target/thumbv8m.main-none-eabihf/release/ble-probe --elf-only --result target/ble-probe-layout.json
