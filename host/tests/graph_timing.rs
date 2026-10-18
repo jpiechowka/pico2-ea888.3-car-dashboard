@@ -28,7 +28,7 @@ fn coalesced_graph_history_and_both_buffers_match_literal_points_after_a_long_di
         let mut cache = DashboardCache::new();
         let mut frames = [AlignedFrame::boxed(), AlignedFrame::boxed()];
         for now in (0..=124_000).step_by(10) {
-            // One sample per 100 ms; oil graph must select 0,2,...124 seconds.
+            // One sample per 100 ms; each two-second bucket keeps its last real observation.
             if now % 100 == 0 {
                 model.ingest_batch([1.0, now as f32 / 1000.0, 95.0, 80.0, 30.0, 750.0, 14.0, 1.0], now);
                 watch.sender().send(model.snapshot());
