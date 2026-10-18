@@ -1,0 +1,189 @@
+{
+  "elf_sha256": "1205b2e7f0b5a36fd6be1bb9573c6755bebd0b113daf524684ff2faec4ff2de7",
+  "compiler": "nightly-2026-10-16",
+  "features": [
+    "ble-obd",
+    "frame-trace",
+    "te-trace"
+  ],
+  "default_features": true,
+  "release_strip": "none",
+  "note": "Mutex-frozen traced prototype before final security failure-state patch. Literal linked symbols and LLVM stack metadata; not hardware evidence.",
+  "functions": [
+    {
+      "name": "_RINvMNtNtCs2xOb2eBZqtL_16embassy_executor3raw4utilINtB3_10UninitCellNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function0E14write_in_placeNCNvB1a_10radio_task0EB1e_",
+      "address": 268443004,
+      "frame": 88
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing10send_nonceINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1C_EECs55rED6LpYnf_5pico2",
+      "address": 268443700,
+      "frame": 56
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing10transitionINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1C_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268443864,
+      "frame": 1848
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing23handle_pass_key_confirmINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1P_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268459836,
+      "frame": 144
+    },
+    {
+      "name": "_RNvMsg_NtNtCs1H5DyjlrIkJ_12trouble_host16security_manager6cryptoNtB5_9SecretKey6dh_key",
+      "address": 269131844,
+      "frame": 664
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing21handle_pass_key_inputINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1N_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268459748,
+      "frame": 32
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing15handle_dhkey_eaINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1H_EECs55rED6LpYnf_5pico2",
+      "address": 268459040,
+      "frame": 336
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNtNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheral13LescPhaseDataECs55rED6LpYnf_5pico2",
+      "address": 268486128,
+      "frame": 8
+    },
+    {
+      "name": "_RNvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB2_7Pairing14store_dhkey_ea",
+      "address": 268774248,
+      "frame": 200
+    },
+    {
+      "name": "_RINvMs_NtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairingNtB5_7Pairing12handle_inputINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1s_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268464348,
+      "frame": 1560
+    },
+    {
+      "name": "_RNvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB2_7Pairing6result",
+      "address": 269111552,
+      "frame": 24
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCs9FvSXFC8bYO_12embassy_time5timer13TimeoutFutureNCNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble6serial00EEB1D_",
+      "address": 268478284,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCskp64jHA298g_15embassy_futures6select6SelectNCNvMss_NtCs1H5DyjlrIkJ_12trouble_host4gattINtB1x_10GattClientINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB1z_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EKj4_E4task0NCNvNtNtCs55rED6LpYnf_5pico25tasks3ble6serial0EEB6v_",
+      "address": 268478672,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCskp64jHA298g_15embassy_futures6select6SelectNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble17connection_events0NCNCNvB1t_9connected00EEB1x_",
+      "address": 268478884,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCskp64jHA298g_15embassy_futures6select6SelectNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble9wait_park0INtNtCs9FvSXFC8bYO_12embassy_time5timer13TimeoutFutureNCNvMNtCs1H5DyjlrIkJ_12trouble_host7centralINtB39_7CentralINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB3b_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE7connect0EEEB1x_",
+      "address": 268479032,
+      "frame": 32
+    },
+    {
+      "name": "_RNCINvMs7_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB8_8RxRunnerINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBa_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE16run_with_handlerNtB8_12DummyHandlerE0Cs55rED6LpYnf_5pico2",
+      "address": 268563016,
+      "frame": 520
+    },
+    {
+      "name": "_RNvMs_NtCs1H5DyjlrIkJ_12trouble_host18connection_managerINtB4_17ConnectionManagerINtNtB6_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE23handle_security_channelCs55rED6LpYnf_5pico2",
+      "address": 268832676,
+      "frame": 776
+    },
+    {
+      "name": "_RNCNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble4host00B9_",
+      "address": 268579248,
+      "frame": 168
+    },
+    {
+      "name": "_RNvNtNtCs55rED6LpYnf_5pico25tasks3ble7publish",
+      "address": 268848312,
+      "frame": 80
+    },
+    {
+      "name": "_RNvXs0_NtCskp64jHA298g_15embassy_futures6selectINtB5_6SelectNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble17connection_events0NCNCNvB10_9connected00ENtNtNtCs5hZZePRLgSM_4core6future6future6Future4pollB14_",
+      "address": 268857784,
+      "frame": 800
+    },
+    {
+      "name": "_RNCNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB4_6Serial3gap0B8_",
+      "address": 268592716,
+      "frame": 792
+    },
+    {
+      "name": "_RNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB2_6Serial7receive",
+      "address": 268772528,
+      "frame": 408
+    },
+    {
+      "name": "_RNCNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB4_6Serial8transact0B8_",
+      "address": 268593316,
+      "frame": 1520
+    },
+    {
+      "name": "_RNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB2_6Serial9admission",
+      "address": 268774040,
+      "frame": 16
+    },
+    {
+      "name": "_RNCNvMs8_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB7_13ControlRunnerINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE3run0Cs55rED6LpYnf_5pico2",
+      "address": 268603764,
+      "frame": 704
+    },
+    {
+      "name": "_RNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB4_6RunnerINtNtB6_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB17_11peripherals4PIO0Kj0_EEE2rxCs55rED6LpYnf_5pico2",
+      "address": 268840964,
+      "frame": 312
+    },
+    {
+      "name": "_RNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB6_6RunnerINtNtB8_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB19_11peripherals4PIO0Kj0_EEE4init0Cs55rED6LpYnf_5pico2",
+      "address": 268633932,
+      "frame": 88
+    },
+    {
+      "name": "_RNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble8boundary0B7_",
+      "address": 268651712,
+      "frame": 88
+    },
+    {
+      "name": "_RNvMs1_NtCs2xOb2eBZqtL_16embassy_executor3rawINtB5_11TaskStorageNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function0E4pollB1a_",
+      "address": 268800804,
+      "frame": 768
+    },
+    {
+      "name": "_RNvMNtCskp64jHA298g_15embassy_futures4joinINtB2_9MaybeDoneNCINvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB12_6RunnerINtNtB14_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB27_11peripherals4PIO0Kj0_EEE17run_with_boundaryNCNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function00E0E11take_outputB4j_",
+      "address": 268772476,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs5_NtCskp64jHA298g_15embassy_futures4joinINtB5_4JoinNCINvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB10_6RunnerINtNtB12_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB25_11peripherals4PIO0Kj0_EEE17run_with_boundaryNCNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function00E0NCNvB4d_4host0ENtNtNtCs5hZZePRLgSM_4core6future6future6Future4pollB4h_",
+      "address": 268888808,
+      "frame": 3080
+    },
+    {
+      "name": "_RNvMs_NtCs1H5DyjlrIkJ_12trouble_host18connection_managerINtB4_17ConnectionManagerINtNtB6_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE16request_securityCs55rED6LpYnf_5pico2",
+      "address": 268828072,
+      "frame": 832
+    },
+    {
+      "name": "_RNvNtNtNtCshwmsljyPN5I_4p25610arithmetic5field10field_impl6fe_mul",
+      "address": 269104408,
+      "frame": 200
+    },
+    {
+      "name": "_RNvXsJ_NtCs51OmdA9Rvz6_10primeorder10projectiveINtB5_15ProjectivePointNtCshwmsljyPN5I_4p2568NistP256EINtNtNtCs5hZZePRLgSM_4core3ops5arith3MulRNtNtNtB18_10arithmetic6scalar6ScalarE3mulCs1H5DyjlrIkJ_12trouble_host",
+      "address": 269118720,
+      "frame": 2152
+    },
+    {
+      "name": "_RNvXs4_NtCs51OmdA9Rvz6_10primeorder10projectiveINtB5_15ProjectivePointNtCshwmsljyPN5I_4p2568NistP256ENtNtCs5vTtuzzptLr_14elliptic_curve5point6Double6doubleCs1H5DyjlrIkJ_12trouble_host",
+      "address": 269125444,
+      "frame": 648
+    }
+  ]
+}

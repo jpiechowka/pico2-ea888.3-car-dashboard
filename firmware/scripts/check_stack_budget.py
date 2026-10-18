@@ -22,9 +22,12 @@ class FrameAdmission:
     constructor:int
     runtime:int
     dashboard:int
+    radio:int|None=None
 
     def to_record(self):
         values={key:getattr(self,key) for key in ('boot','constructor','runtime','dashboard')}
+        if self.radio is not None:
+            values['radio']=self.radio
         require(all(type(value) is int and 0<=value<=0xffffffff for value in values.values()),
                 'invalid conservative stack bound')
         return dict(schema=1,method='conservative_named_frames_v1',bounds=values,
@@ -55,11 +58,13 @@ def frames(data):
     return result
 
 
-def budgets(boot, constructor, runtime, dashboard, headroom):
+def budgets(boot, constructor, runtime, dashboard, headroom, radio=None):
     require(boot + CORE0_RESERVE <= headroom, 'boot stack path lacks 8 KiB reserve')
     require(dashboard + CORE0_RESERVE <= headroom, 'dashboard stack path lacks 8 KiB reserve')
     require(constructor + CORE1_RESERVE <= CORE1_BYTES, 'core1 constructor stack lacks 4 KiB reserve')
     require(runtime + CORE1_RESERVE <= CORE1_BYTES, 'core1 runtime stack lacks 4 KiB reserve')
+    if radio is not None:
+        require(radio + CORE0_RESERVE <= headroom, 'radio stack path lacks 8 KiB reserve')
 
 
 def task_frames(functions, sizes, name):
@@ -151,6 +156,7 @@ def configuration_frames(functions, sizes):
     # counted, with multiple distinct boundaries rejected. This is not a
     # general exemption for missing helpers or an instruction-effects proof.
     orientation = any('11orientation11Orientation' in n for n in functions)
+    ble = any('3ble11BleSettings' in n for n in functions)
 
     def reviewed_inline(*tokens):
         addresses = select('dashboard_config', *tokens, optional=True)
@@ -190,6 +196,11 @@ def configuration_frames(functions, sizes):
     controls = branch(select('dashboard_config', '15decode_in_place4next', '10ControlMap'),
                       branch(dec('14ScreenBindings'), dec('13ControlAction')))
     fields = [sources, controls]
+    if ble:
+        # LLVM folds BleSettings u16 decoding into the emitted Color decoder.
+        # Compact ELF 0x10087a66 calls Color at0x10084d8c; keep that child.
+        fields.append(branch(select('dashboard_config', '15decode_in_place4next', '3ble11BleSettings'),
+                             dec('5ColorE')))
     if orientation:
         fields.append(select('dashboard_config', '15decode_in_place4next', '11orientation11Orientation'))
     if v4:
@@ -228,6 +239,9 @@ def configuration_frames(functions, sizes):
                                 branch(ser('11LedSettings'), ser('10LedPattern'), ser('serialize_fieldb'))])
     if orientation:
         serial_children.append(orientation_serializer)
+    if ble:
+        # Same folding for u16 serialization: BleSettings calls Color twice.
+        serial_children.append(branch(ser('3ble11BleSettings'),ser('5ColorE')))
     canonical = branch(canonical, *serial_children)
     guarded = any('19visit_invalid_roles' in n or '19visit_stoichiometry' in n
                   for n in functions if 'dashboard_config' in n)
@@ -285,6 +299,77 @@ def configuration_frames(functions, sizes):
     require(all(n in covered for n in relevant),
             'unreviewed config stack helpers: ' + str([n for n in relevant if n not in covered]))
     return weight(result)
+
+
+def radio_frames(functions, sizes):
+    """Optional core0 radio poll bound, reviewed against the compact BLE ELF.
+
+    Async future storage is already static RAM. These are synchronous frames
+    resident while polling. Host RX/control, serial, security initiation and
+    CYW initialization/receive branches are alternatives, not a sum of every
+    radio function. Radio initialization runs inside this task, not main;
+    PIO/State/Bluetooth initialization inline into its counted body, with the
+    emitted CYW Runner::init future counted separately below.
+    Aliases are deduplicated across each path; missing boundaries fail closed.
+
+    LLVM23/nightly2026-10-16 disassembly: the deepest observed direct chain is
+    radio poll/body -> host select -> RX -> security channel -> Pairing input
+    -> peripheral transition -> dh_key -> P256 mul -> double -> fe_mul.
+    Peripheral transition remains emitted in this central-only host build.
+    The initiation branch conservatively retains the same pairing/crypto tree.
+
+    4096 B covers other reviewed children: crypto sibling paths (CMAC/AES,
+    decompression and RNG), bounded ATT/GATT/ELM and bus helpers, logging,
+    memory builtins, executor/entry and panic formatting. Largest alternative
+    crypto chain was below 2048 B; ordinary ELM/bus frames below 1024 B.
+    IRQ/preemption remains within the separate unchanged 8192 B reserve.
+    Dependency/source changes still require child-allowance review. This does
+    not establish indirect-call closure, recursion absence or device high-water.
+    """
+    if not any('radio_task_task' in n or 'pico25tasks3ble' in n for n in functions):
+        return None
+    task = task_frames(functions, sizes, 'radio_task_task')
+
+    def select(*tokens):
+        entries={a&~1 for n,(a,_,_) in functions.items()
+                 if 'drop_glue' not in n and all(t in n for t in tokens)}
+        require(len(entries)==1, 'missing or ambiguous radio stack path: '+str(tokens))
+        require(all(a in sizes for a in entries), 'missing radio frame metadata: '+str(tokens))
+        return entries
+
+    def weight(path):
+        return sum(sizes[a] for a in path)
+
+    def branch(parent,*children):
+        return max((parent|child for child in children),key=weight)
+
+    if any('3ble4host' in n and 'Future4poll' in n for n in functions):
+        host=select('embassy_futures','3ble4host','Future4poll')
+    else:
+        # Mutex capture: host select inlines into Join::poll(3080 B), called
+        # from TaskStorage::poll(768 B). Both already counted by task_frames.
+        # Require that exact alternative boundary rather than allowing an
+        # arbitrary missing host frame. Re-emission above remains additive.
+        select('embassy_futures','4Join','radio_task_task','Future4poll')
+        host=set()
+    connected=select('embassy_futures','3ble17connection_events','Future4poll')
+    crypto=(select('trouble_host','9SecretKey6dh_key')
+            |select('primeorder','ProjectivePoint','3Mul','3mul')
+            |select('primeorder','ProjectivePoint','6Double6double')
+            |select('p256','6fe_mul'))
+    pairing=(select('trouble_host','7Pairing12handle_input')
+             |select('trouble_host','10peripheral','7Pairing10transition')|crypto)
+    security=branch(select('trouble_host','23handle_security_channel')|pairing,
+                    select('trouble_host','8RxRunner','16run_with_handler'),
+                    select('trouble_host','13ControlRunner','3run0'))
+    serial=branch(select('pico25tasks3ble','6Serial7receive'),
+                  select('pico25tasks3ble','6Serial8transact'),
+                  select('pico25tasks3ble','6Serial3gap'))
+    application=branch(connected,serial,
+                       select('trouble_host','16request_security')|pairing)
+    bus=select('5cyw43','6Runner','2rx')
+    initialize=select('5cyw43','6Runner','4init0')
+    return task+weight(branch(set(),host|security,host|application,bus,initialize))+4096
 
 
 def publication_frames(functions, sizes):
@@ -369,8 +454,9 @@ def check(elf, headroom, source_context=None):
     constructor_bound = acquisition + constructor + 1024
     runtime_bound = acquisition + max(snapshots + 1024, 8192)
     dashboard_bound = dashboard + 16384  # drawing/formatting, flush, startup children
-    budgets(boot_bound, constructor_bound, runtime_bound, dashboard_bound, headroom)
+    radio_bound = radio_frames(elf.functions, sizes)
+    budgets(boot_bound, constructor_bound, runtime_bound, dashboard_bound, headroom, radio_bound)
     print(f'Frame admission: boot {boot_bound} B, core1 construct {constructor_bound} B, '
-          f'core1 runtime {runtime_bound} B, dashboard {dashboard_bound} B; '
+          f'core1 runtime {runtime_bound} B, dashboard {dashboard_bound} B, radio {radio_bound} B; '
           'excludes unqualified hardware high-water use')
-    return FrameAdmission(boot_bound,constructor_bound,runtime_bound,dashboard_bound)
+    return FrameAdmission(boot_bound,constructor_bound,runtime_bound,dashboard_bound,radio_bound)

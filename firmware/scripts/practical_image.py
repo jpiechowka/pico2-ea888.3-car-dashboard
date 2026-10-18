@@ -15,7 +15,7 @@ from config_build_source import validate_source_context
 from validation import require
 
 # Current-only device envelope; historical files migrate through host tooling.
-CURRENT_EAV_VERSION = 5
+CURRENT_EAV_VERSION = 6
 
 ASSUMPTIONS=(
     'supported_rp2350_pico2_fresh_boot_and_selected_profile',

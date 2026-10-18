@@ -17,7 +17,7 @@ from config_build_source import make_source_context,SOURCE_PATHS,write_source_co
 import test_stack_budget
 
 
-def fixture(version=5):
+def fixture(version=6,radio=False):
     B=0x10000000
     data=bytearray(4096)
     data[0x100:0x114]=struct.pack('<5I',0xffffded3,0x10210142,0x000001ff,0,0xab123579)
@@ -25,6 +25,11 @@ def fixture(version=5):
     eav=eav[:8]+struct.pack('<I',zlib.crc32(eav[:8]+payload))+payload
     data[512:512+len(eav)]=eav
     functions,sizes=test_stack_budget.StackBudget().slot_fixture()
+    if radio:
+        captured,metadata=test_stack_budget.StackBudget().ble_fixture()
+        functions.update({n:v for n,v in captured.items()
+                          if 'dashboard_config' not in n and 'from_utf8' not in n})
+        sizes.update(metadata)
     names=['TaskStorage4pollembassy_main_task','TaskStorage4polldashboard_task_task',
            'TaskStorage4pollacquisition_task_task','pico2view_configinitialize',
            'pico2publish_snapshot','AcquisitionOwner8snapshot','AcquisitionState8snapshot']
@@ -69,7 +74,7 @@ class PracticalImage(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<H', shipped, 4)[0], practical.CURRENT_EAV_VERSION)
         elf,eav,_=fixture()
         self.assertEqual(practical._configuration(elf,eav),eav)
-        for version in (0,1,2,3,4,6,65535):
+        for version in (0,1,2,3,4,5,7,65535):
             legacy,raw,_=fixture(version)
             with self.subTest(version=version),self.assertRaisesRegex(AssertionError,'envelope/checksum'):
                 practical._configuration(legacy,raw)
@@ -88,6 +93,23 @@ class PracticalImage(unittest.TestCase):
             expected=eav+b'x' if fault=='expected' else None
             with self.subTest(fault=fault),self.assertRaises(AssertionError):
                 practical._configuration(elf,expected)
+
+    def test_radio_receipt_required_only_when_present_in_linked_image(self):
+        elf,eav,context=fixture(radio=True)
+        record=practical.check(elf,eav,context)
+        self.assertEqual(record['stack']['bounds']['radio'],16856)
+        self.assertEqual(image.read_selected_image_result(record,elf,eav,context),record)
+        for value in (None,0,16855,True):
+            bad=deepcopy(record)
+            if value is None:del bad['stack']['bounds']['radio']
+            else:bad['stack']['bounds']['radio']=value
+            with self.subTest(value=value),self.assertRaises(AssertionError):
+                image.read_selected_image_result(bad,elf,eav,context)
+        legacy,raw,source=fixture()
+        old=practical.check(legacy,raw,source)
+        self.assertNotIn('radio',old['stack']['bounds'])
+        old['stack']['bounds']['radio']=16856
+        with self.assertRaises(AssertionError):image.read_selected_image_result(old,legacy,raw,source)
 
     def test_producer_rechecks_named_frames_geometry_source_and_linked_eav(self):
         elf,eav,context=fixture();record=practical.check(elf,eav,context)

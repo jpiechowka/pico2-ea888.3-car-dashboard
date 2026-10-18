@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 import struct
 import unittest
-from check_stack_budget import frames, budgets, task_frames, configuration_frames, REVIEWED_STARTUP_FRAMES
+from check_stack_budget import (frames, budgets, task_frames, configuration_frames,
+                               radio_frames, FrameAdmission, REVIEWED_STARTUP_FRAMES)
 
 
 # Literal .stack_sizes/symbol evidence from slot2-demo280-probe2.
@@ -49,6 +50,102 @@ SLOT_CAPTURE = """
 
 
 class StackBudget(unittest.TestCase):
+    def ble_fixture(self,name='compact'):
+        record=json.loads((Path(__file__).parent/f'fixtures/ble-stack-{name}.json').read_text())
+        return ({r['name']:(r['address']|1,4,0) for r in record['functions']},
+                {r['address']:r['frame'] for r in record['functions']})
+
+    def test_ble_config_capture_and_large_fields_remain_counted(self):
+        functions,sizes=self.ble_fixture()
+        baseline=configuration_frames(functions,sizes)
+        self.assertGreater(baseline,0)
+        for token in ('15decode_in_place4next','15serialize_field'):
+            address=next(a&~1 for n,(a,_,_) in functions.items()
+                         if token in n and '3ble11BleSettings' in n)
+            changed=dict(sizes);changed[address]=10000
+            large=configuration_frames(functions,changed)
+            self.assertGreater(large,baseline+7000)
+            child_token='12next_element' if 'decode' in token else token
+            child=next(a&~1 for n,(a,_,_) in functions.items()
+                       if child_token in n and '5ColorE' in n)
+            changed[child]+=1000
+            self.assertEqual(configuration_frames(functions,changed),large+1000)
+            del changed[address]
+            with self.assertRaisesRegex(AssertionError,'metadata'):
+                configuration_frames(functions,changed)
+        functions['dashboard_config3ble7BlePeer5valid']=(0x30000001,4,0)
+        sizes[0x30000000]=8
+        with self.assertRaisesRegex(AssertionError,'unreviewed config'):
+            configuration_frames(functions,sizes)
+
+    def test_radio_capture_bound_and_legacy_record_compatibility(self):
+        functions,sizes=self.ble_fixture()
+        bound=radio_frames(functions,sizes)
+        self.assertEqual(bound,16856)
+        self.assertIsNone(radio_frames(*self.orientation_fixture()))
+        old=FrameAdmission(1,2,3,4).to_record()
+        new=FrameAdmission(1,2,3,4,bound).to_record()
+        self.assertNotIn('radio',old['bounds'])
+        self.assertEqual(new['bounds'].pop('radio'),bound)
+        self.assertEqual(old,new)
+        for bad in (-1,True,2**32):
+            with self.assertRaises(AssertionError):FrameAdmission(1,2,3,4,bad).to_record()
+
+    def test_radio_named_frames_grow_or_reject_missing_and_ambiguous(self):
+        functions,sizes=self.ble_fixture()
+        baseline=radio_frames(functions,sizes)
+        for token in ('9SecretKey6dh_key','6Double6double','7Pairing12handle_input',
+                      '23handle_security_channel','6Serial8transact','4init0'):
+            name=next(n for n in functions if token in n and 'drop_glue' not in n)
+            address,length,section=functions[name]
+            for fault in ('growth','metadata','missing','ambiguous'):
+                changed=dict(functions);metadata=dict(sizes)
+                if fault=='growth':metadata[address&~1]+=20000
+                elif fault=='metadata':del metadata[address&~1]
+                elif fault=='missing':del changed[name]
+                else:
+                    changed[name+'.extra']=(0x30000001,length,section);metadata[0x30000000]=4
+                with self.subTest(token=token,fault=fault):
+                    if fault=='growth':self.assertGreater(radio_frames(changed,metadata),baseline+10000)
+                    else:
+                        with self.assertRaises(AssertionError):radio_frames(changed,metadata)
+        # Symbol aliases must not count the same resident frame twice.
+        name=next(n for n in functions if '9SecretKey6dh_key' in n)
+        functions[name+'.alias']=functions[name]
+        self.assertEqual(radio_frames(functions,sizes),baseline)
+
+    def test_partial_radio_symbols_cannot_silently_select_non_radio_admission(self):
+        functions,sizes=self.ble_fixture()
+        functions={n:v for n,v in functions.items() if 'radio_task_task' not in n}
+        with self.assertRaisesRegex(AssertionError,'task poll'):radio_frames(functions,sizes)
+
+    def test_radio_serial_poll_siblings_take_maximum_not_sum(self):
+        functions,sizes=self.ble_fixture()
+        transaction=next(a&~1 for n,(a,_,_) in functions.items() if '6Serial8transact' in n)
+        gap=next(a&~1 for n,(a,_,_) in functions.items() if '6Serial3gap' in n)
+        sizes[transaction]=20000
+        bound=radio_frames(functions,sizes)
+        sizes[gap]=20000
+        self.assertEqual(radio_frames(functions,sizes),bound)
+        sizes[gap]+=256
+        self.assertEqual(radio_frames(functions,sizes),bound+256)
+
+    def test_radio_mutex_capture_counts_join_with_inlined_host_select(self):
+        functions,sizes=self.ble_fixture('mutex')
+        bound=radio_frames(functions,sizes)
+        self.assertEqual(bound,16656)
+        name=next(n for n in functions if '4Join' in n and 'Future4poll' in n)
+        address=functions[name][0]&~1
+        sizes[address]+=1024
+        self.assertEqual(radio_frames(functions,sizes),bound+1024)
+        del functions[name]
+        with self.assertRaises(AssertionError):radio_frames(functions,sizes)
+
+    def test_radio_reserve_is_additive_and_unchanged(self):
+        budgets(0,0,0,0,65536,radio=65536-8192)
+        with self.assertRaisesRegex(AssertionError,'radio.*8 KiB'):
+            budgets(0,0,0,0,65536,radio=65536-8192+1)
+
     def slot_fixture(self):
         rows = [line.split(maxsplit=2) for line in SLOT_CAPTURE.splitlines() if line]
         return ({n: (int(a, 16) | 1, 4, 0) for a, _, n in rows},

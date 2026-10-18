@@ -1,0 +1,969 @@
+{
+  "elf_sha256": "4043af7eee412547658a94b6a18c8effddf6f82c1872f2099c017bcc4852e5ec",
+  "compiler": "nightly-2026-10-16",
+  "features": [
+    "ble-obd",
+    "frame-trace",
+    "te-trace"
+  ],
+  "note": "Compact traced prototype before final async TX mutex refinement. Literal linked symbols and LLVM stack metadata; not hardware evidence.",
+  "functions": [
+    {
+      "name": "_RNvNtNtCs5hZZePRLgSM_4core3str8converts9from_utf8",
+      "address": 268918416,
+      "frame": 36
+    },
+    {
+      "name": "_RINvMNtNtCs2xOb2eBZqtL_16embassy_executor3raw4utilINtB3_10UninitCellNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function0E14write_in_placeNCNvB1a_10radio_task0EB1e_",
+      "address": 268443004,
+      "frame": 88
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing10send_nonceINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1C_EECs55rED6LpYnf_5pico2",
+      "address": 268443700,
+      "frame": 56
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing10transitionINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1C_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268443864,
+      "frame": 1848
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing23handle_pass_key_confirmINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1P_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268459836,
+      "frame": 144
+    },
+    {
+      "name": "_RNvMsg_NtNtCs1H5DyjlrIkJ_12trouble_host16security_manager6cryptoNtB5_9SecretKey6dh_key",
+      "address": 269127216,
+      "frame": 664
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing21handle_pass_key_inputINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1N_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268459748,
+      "frame": 32
+    },
+    {
+      "name": "_RINvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB3_7Pairing15handle_dhkey_eaINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1H_EECs55rED6LpYnf_5pico2",
+      "address": 268459040,
+      "frame": 336
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNtNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheral13LescPhaseDataECs55rED6LpYnf_5pico2",
+      "address": 268485684,
+      "frame": 8
+    },
+    {
+      "name": "_RNvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB2_7Pairing14store_dhkey_ea",
+      "address": 268771192,
+      "frame": 200
+    },
+    {
+      "name": "_RINvMs_NtCs1H5DyjlrIkJ_12trouble_host18connection_managerINtB5_17ConnectionManagerINtNtB7_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE10reassemblyNCNvMs4_NtB7_4hostINtB3H_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EB1i_E16handle_acl_inner0uECs55rED6LpYnf_5pico2",
+      "address": 268463616,
+      "frame": 80
+    },
+    {
+      "name": "_RINvMs_NtCs1H5DyjlrIkJ_12trouble_host18connection_managerINtB5_17ConnectionManagerINtNtB7_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE10reassemblyNCNvMs4_NtB7_4hostINtB3H_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EB1i_E16handle_acl_inners_0INtNtCs5hZZePRLgSM_4core6option6OptionTNtNtNtB7_5l2cap3sar13AssemblyStateINtNtB7_3pdu3PduNtB1l_13DefaultPacketEEEECs55rED6LpYnf_5pico2",
+      "address": 268463996,
+      "frame": 56
+    },
+    {
+      "name": "_RINvMs_NtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairingNtB5_7Pairing12handle_inputINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EINtB7_14PairingOpsImplB1s_ENtNtCscBOSmVt2vu_11rand_chacha6chacha11ChaCha12RngECs55rED6LpYnf_5pico2",
+      "address": 268464348,
+      "frame": 1560
+    },
+    {
+      "name": "_RNvMNtNtNtCs1H5DyjlrIkJ_12trouble_host16security_manager7pairing10peripheralNtB2_7Pairing6result",
+      "address": 269106924,
+      "frame": 24
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCs1H5DyjlrIkJ_12trouble_host4gatt10GattClientINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBG_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EKj4_EECs55rED6LpYnf_5pico2",
+      "address": 268478088,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCs9FvSXFC8bYO_12embassy_time5timer13TimeoutFutureNCNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble6serial00EEB1D_",
+      "address": 268478284,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCINvMss_NtCs1H5DyjlrIkJ_12trouble_host4gattINtBK_10GattClientINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBM_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EKj4_E22characteristic_by_uuidShE0ECs55rED6LpYnf_5pico2",
+      "address": 268480448,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCskp64jHA298g_15embassy_futures6select6SelectNCNvMss_NtCs1H5DyjlrIkJ_12trouble_host4gattINtB1x_10GattClientINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB1z_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EKj4_E4task0NCNvNtNtCs55rED6LpYnf_5pico25tasks3ble6serial0EEB6v_",
+      "address": 268478672,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCskp64jHA298g_15embassy_futures6select6SelectNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble17connection_events0NCNCNvB1t_9connected00EEB1x_",
+      "address": 268478884,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCINvMs2_NtCs1H5DyjlrIkJ_12trouble_host10connectionNtBK_23ConnectionParamsRequest6acceptINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBM_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE0ECs55rED6LpYnf_5pico2",
+      "address": 268479660,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCINvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtBK_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBM_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE12l2cap_signalNtNtNtBM_5types5l2cap16DisconnectionReqE0ECs55rED6LpYnf_5pico2",
+      "address": 268479952,
+      "frame": 24
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueINtNtCskp64jHA298g_15embassy_futures6select6SelectNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble9wait_park0INtNtCs9FvSXFC8bYO_12embassy_time5timer13TimeoutFutureNCNvMNtCs1H5DyjlrIkJ_12trouble_host7centralINtB39_7CentralINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB3b_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE7connect0EEEB1x_",
+      "address": 268479092,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtBJ_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtBJ_17ControllerCmdSyncNtNtNtBL_3cmd12link_control10DisconnectE4exec0ECs55rED6LpYnf_5pico2",
+      "address": 268482696,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCINvMs0_NtCsc8r0vwKKnhT_5cyw439bluetoothNtBK_8BtRunner14init_bluetoothINtNtBM_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB27_11peripherals4PIO0Kj0_EEE0ECs55rED6LpYnf_5pico2",
+      "address": 268479400,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMNtCsc8r0vwKKnhT_5cyw433spiINtBG_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1n_11peripherals4PIO0Kj0_EE15backplane_readn0ECs55rED6LpYnf_5pico2",
+      "address": 268480652,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMNtCsc8r0vwKKnhT_5cyw433spiINtBG_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1n_11peripherals4PIO0Kj0_EE16backplane_writen0ECs55rED6LpYnf_5pico2",
+      "address": 268480916,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCINvMs0_NtCsc8r0vwKKnhT_5cyw439bluetoothNtBK_8BtRunner15init_bt_buffersINtNtBM_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB28_11peripherals4PIO0Kj0_EEE0ECs55rED6LpYnf_5pico2",
+      "address": 268479592,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtBI_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1p_11peripherals4PIO0Kj0_EENtNtBK_6runner9SealedBus8bp_write0ECs55rED6LpYnf_5pico2",
+      "address": 268485428,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtBJ_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBL_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE19sync_resolving_list0ECs55rED6LpYnf_5pico2",
+      "address": 268481180,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMs8_NtCs1H5DyjlrIkJ_12trouble_host4hostINtBJ_13ControlRunnerINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBL_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE3run0ECs55rED6LpYnf_5pico2",
+      "address": 268481340,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtBJ_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtBJ_17ControllerCmdSyncNtNtNtBL_3cmd2le25LeLongTermKeyRequestReplyE4exec0ECs55rED6LpYnf_5pico2",
+      "address": 268483336,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtBJ_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtBJ_17ControllerCmdSyncNtNtNtBL_3cmd2le6LeRandE4exec0ECs55rED6LpYnf_5pico2",
+      "address": 268483976,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtBJ_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtBJ_17ControllerCmdSyncNtNtNtBL_3cmd2le26LeReadFilterAcceptListSizeE4exec0ECs55rED6LpYnf_5pico2",
+      "address": 268483656,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtBJ_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtBJ_17ControllerCmdSyncNtNtNtBL_3cmd4info10ReadBdAddrE4exec0ECs55rED6LpYnf_5pico2",
+      "address": 268484296,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtBJ_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtBJ_17ControllerCmdSyncNtNtNtBL_3cmd2le16LeReadBufferSizeE4exec0ECs55rED6LpYnf_5pico2",
+      "address": 268483016,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMs9_NtCs1H5DyjlrIkJ_12trouble_host4hostINtBJ_8TxRunnerINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBL_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE3run0ECs55rED6LpYnf_5pico2",
+      "address": 268481704,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtBI_6RunnerINtNtBK_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1L_11peripherals4PIO0Kj0_EEE10core_reset0ECs55rED6LpYnf_5pico2",
+      "address": 268482216,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtBI_6RunnerINtNtBK_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1L_11peripherals4PIO0Kj0_EEE12core_disable0ECs55rED6LpYnf_5pico2",
+      "address": 268482628,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtBI_6RunnerINtNtBK_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1L_11peripherals4PIO0Kj0_EEE10handle_irq0ECs55rED6LpYnf_5pico2",
+      "address": 268482296,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtBI_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1p_11peripherals4PIO0Kj0_EENtNtBK_6runner9SealedBus4init0ECs55rED6LpYnf_5pico2",
+      "address": 268484616,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtBI_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1p_11peripherals4PIO0Kj0_EENtNtBK_6runner9SealedBus5read80ECs55rED6LpYnf_5pico2",
+      "address": 268484908,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtBI_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1p_11peripherals4PIO0Kj0_EENtNtBK_6runner9SealedBus6write80ECs55rED6LpYnf_5pico2",
+      "address": 268485040,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core3ptr9drop_glueNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtBI_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1p_11peripherals4PIO0Kj0_EENtNtBK_6runner9SealedBus7bp_read0ECs55rED6LpYnf_5pico2",
+      "address": 268485172,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCsfj9Ugxidqri_5defmt6export3fmtINtNtCskxWYFgncjeP_6bt_hci3cmd5ErrorNtNtCsc8r0vwKKnhT_5cyw439bluetooth5ErrorEECs55rED6LpYnf_5pico2",
+      "address": 268487872,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCsfj9Ugxidqri_5defmt6export3fmtNtNtCsc8r0vwKKnhT_5cyw433fmt5BytesECs55rED6LpYnf_5pico2",
+      "address": 268488252,
+      "frame": 48
+    },
+    {
+      "name": "_RINvNtCsfj9Ugxidqri_5defmt6export3fmtNtNtCsc8r0vwKKnhT_5cyw436events5EventECs55rED6LpYnf_5pico2",
+      "address": 268488416,
+      "frame": 24
+    },
+    {
+      "name": "_RINvNtCsfj9Ugxidqri_5defmt6export3fmtNtNtCsc8r0vwKKnhT_5cyw437structs12EventMessageECs55rED6LpYnf_5pico2",
+      "address": 268488484,
+      "frame": 40
+    },
+    {
+      "name": "_RNCINvMs0_NtCsc8r0vwKKnhT_5cyw439bluetoothNtB8_8BtRunner13wait_bt_awakeINtNtBa_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1u_11peripherals4PIO0Kj0_EEE0Cs55rED6LpYnf_5pico2",
+      "address": 268561404,
+      "frame": 32
+    },
+    {
+      "name": "_RNCNvMNtCsc8r0vwKKnhT_5cyw433spiINtB4_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBL_11peripherals4PIO0Kj0_EE15backplane_readn0Cs55rED6LpYnf_5pico2",
+      "address": 268578408,
+      "frame": 32
+    },
+    {
+      "name": "_RNCINvMs0_NtCsc8r0vwKKnhT_5cyw439bluetoothNtB8_8BtRunner14bt_toggle_intrINtNtBa_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB1v_11peripherals4PIO0Kj0_EEE0Cs55rED6LpYnf_5pico2",
+      "address": 268561852,
+      "frame": 32
+    },
+    {
+      "name": "_RNCNvMNtCsc8r0vwKKnhT_5cyw433spiINtB4_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBL_11peripherals4PIO0Kj0_EE16backplane_writen0Cs55rED6LpYnf_5pico2",
+      "address": 268578900,
+      "frame": 24
+    },
+    {
+      "name": "_RNCINvMs7_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB8_8RxRunnerINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBa_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE16run_with_handlerNtB8_12DummyHandlerE0Cs55rED6LpYnf_5pico2",
+      "address": 268562144,
+      "frame": 520
+    },
+    {
+      "name": "_RNvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB5_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB7_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE17handle_connectionCs55rED6LpYnf_5pico2",
+      "address": 268814912,
+      "frame": 136
+    },
+    {
+      "name": "_RNvMs_NtCs1H5DyjlrIkJ_12trouble_host18connection_managerINtB4_17ConnectionManagerINtNtB6_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE23handle_security_channelCs55rED6LpYnf_5pico2",
+      "address": 268825592,
+      "frame": 776
+    },
+    {
+      "name": "_RNCINvMss_NtCs1H5DyjlrIkJ_12trouble_host4gattINtB8_10GattClientINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtBa_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EKj4_E22characteristic_by_uuidShE0Cs55rED6LpYnf_5pico2",
+      "address": 268575200,
+      "frame": 208
+    },
+    {
+      "name": "_RNCNvXsq_NtCs1H5DyjlrIkJ_12trouble_host4gattINtB7_10GattClientINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EKj4_EINtB7_6ClientNtB1W_5ErrorB2G_E7request0Cs55rED6LpYnf_5pico2",
+      "address": 268767576,
+      "frame": 104
+    },
+    {
+      "name": "_RNCNvMNtCsc8r0vwKKnhT_5cyw433spiINtB4_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBL_11peripherals4PIO0Kj0_EE20backplane_set_window0Cs55rED6LpYnf_5pico2",
+      "address": 268579372,
+      "frame": 16
+    },
+    {
+      "name": "_RNCNvXs_CscqzeVH0NypZ_9cyw43_pioINtB6_6PioSpiNtNtCsiwrRbhZCeO5_10embassy_rp11peripherals4PIO0Kj0_ENtNtCsc8r0vwKKnhT_5cyw433spi11SpiBusCyw438cmd_read0Cs55rED6LpYnf_5pico2",
+      "address": 268761776,
+      "frame": 56
+    },
+    {
+      "name": "_RNCNvXs_CscqzeVH0NypZ_9cyw43_pioINtB6_6PioSpiNtNtCsiwrRbhZCeO5_10embassy_rp11peripherals4PIO0Kj0_ENtNtCsc8r0vwKKnhT_5cyw433spi11SpiBusCyw439cmd_write0Cs55rED6LpYnf_5pico2",
+      "address": 268762784,
+      "frame": 56
+    },
+    {
+      "name": "_RNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtB6_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBN_11peripherals4PIO0Kj0_EENtNtB8_6runner9SealedBus6write80Cs55rED6LpYnf_5pico2",
+      "address": 268764320,
+      "frame": 16
+    },
+    {
+      "name": "_RNCNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB4_6Serial3gap0B8_",
+      "address": 268579744,
+      "frame": 792
+    },
+    {
+      "name": "_RNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB2_6Serial7receive",
+      "address": 268769472,
+      "frame": 408
+    },
+    {
+      "name": "_RNCNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB4_6Serial8transact0B8_",
+      "address": 268580344,
+      "frame": 1520
+    },
+    {
+      "name": "_RNvMNtNtCs55rED6LpYnf_5pico25tasks3bleNtB2_6Serial9admission",
+      "address": 268770984,
+      "frame": 16
+    },
+    {
+      "name": "_RNCNvMss_NtCs1H5DyjlrIkJ_12trouble_host4gattINtB7_10GattClientINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EKj4_E12write_handle0Cs55rED6LpYnf_5pico2",
+      "address": 268635312,
+      "frame": 104
+    },
+    {
+      "name": "_RNCNvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB7_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE10rotate_rpa0Cs55rED6LpYnf_5pico2",
+      "address": 268584160,
+      "frame": 56
+    },
+    {
+      "name": "_RNvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB5_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB7_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE21is_rpa_rotation_readyCs55rED6LpYnf_5pico2",
+      "address": 268816888,
+      "frame": 8
+    },
+    {
+      "name": "_RNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtB7_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtB7_17ControllerCmdSyncNtNtNtB9_3cmd2le15LeSetRandomAddrE4exec0Cs55rED6LpYnf_5pico2",
+      "address": 268756160,
+      "frame": 40
+    },
+    {
+      "name": "_RNCNvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB7_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE19sync_resolving_list0Cs55rED6LpYnf_5pico2",
+      "address": 268584692,
+      "frame": 184
+    },
+    {
+      "name": "_RNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtB7_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtB7_17ControllerCmdSyncNtNtNtB9_3cmd2le25LeSetAddrResolutionEnableE4exec0Cs55rED6LpYnf_5pico2",
+      "address": 268758280,
+      "frame": 40
+    },
+    {
+      "name": "_RNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtB7_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtB7_17ControllerCmdSyncNtNtNtB9_3cmd2le31LeRemoveDeviceFromResolvingListE4exec0Cs55rED6LpYnf_5pico2",
+      "address": 268760392,
+      "frame": 40
+    },
+    {
+      "name": "_RNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtB7_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtB7_17ControllerCmdSyncNtNtNtB9_3cmd2le26LeAddDeviceToResolvingListE4exec0Cs55rED6LpYnf_5pico2",
+      "address": 268759332,
+      "frame": 40
+    },
+    {
+      "name": "_RNCNvXs2_NtCskxWYFgncjeP_6bt_hci10controllerINtB7_18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtB7_17ControllerCmdSyncNtNtNtB9_3cmd2le16LeSetPrivacyModeE4exec0Cs55rED6LpYnf_5pico2",
+      "address": 268757220,
+      "frame": 40
+    },
+    {
+      "name": "_RNCNvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB7_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE26send_conn_param_update_res0Cs55rED6LpYnf_5pico2",
+      "address": 268587692,
+      "frame": 128
+    },
+    {
+      "name": "_RNCNvMs4_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB7_7BleHostINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE9l2cap_pdu0Cs55rED6LpYnf_5pico2",
+      "address": 268589140,
+      "frame": 48
+    },
+    {
+      "name": "_RNCNvMsa_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB7_11L2capSenderINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE4send0Cs55rED6LpYnf_5pico2",
+      "address": 268632076,
+      "frame": 48
+    },
+    {
+      "name": "_RNCNvMs8_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB7_13ControlRunnerINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB9_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE3run0Cs55rED6LpYnf_5pico2",
+      "address": 268590944,
+      "frame": 680
+    },
+    {
+      "name": "_RNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB6_6RunnerINtNtB8_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB19_11peripherals4PIO0Kj0_EEE10core_reset0Cs55rED6LpYnf_5pico2",
+      "address": 268615380,
+      "frame": 32
+    },
+    {
+      "name": "_RNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB6_6RunnerINtNtB8_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB19_11peripherals4PIO0Kj0_EEE12core_disable0Cs55rED6LpYnf_5pico2",
+      "address": 268619016,
+      "frame": 32
+    },
+    {
+      "name": "_RNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB6_6RunnerINtNtB8_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB19_11peripherals4PIO0Kj0_EEE10handle_irq0Cs55rED6LpYnf_5pico2",
+      "address": 268616512,
+      "frame": 40
+    },
+    {
+      "name": "_RNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB6_6RunnerINtNtB8_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB19_11peripherals4PIO0Kj0_EEE12check_status0Cs55rED6LpYnf_5pico2",
+      "address": 268617952,
+      "frame": 48
+    },
+    {
+      "name": "_RNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtB6_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBN_11peripherals4PIO0Kj0_EENtNtB8_6runner9SealedBus7write160Cs55rED6LpYnf_5pico2",
+      "address": 268765244,
+      "frame": 16
+    },
+    {
+      "name": "_RNvMNtCsc8r0vwKKnhT_5cyw437structsNtB2_11SdpcmHeader5parse",
+      "address": 268943328,
+      "frame": 32
+    },
+    {
+      "name": "_RNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtB6_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBN_11peripherals4PIO0Kj0_EENtNtB8_6runner9SealedBus6read320Cs55rED6LpYnf_5pico2",
+      "address": 268763940,
+      "frame": 24
+    },
+    {
+      "name": "_RNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB4_6RunnerINtNtB6_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB17_11peripherals4PIO0Kj0_EEE2rxCs55rED6LpYnf_5pico2",
+      "address": 268833880,
+      "frame": 312
+    },
+    {
+      "name": "_RNCNvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB6_6RunnerINtNtB8_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB19_11peripherals4PIO0Kj0_EEE4init0Cs55rED6LpYnf_5pico2",
+      "address": 268619924,
+      "frame": 88
+    },
+    {
+      "name": "_RNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtB6_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBN_11peripherals4PIO0Kj0_EENtNtB8_6runner9SealedBus5read80Cs55rED6LpYnf_5pico2",
+      "address": 268763584,
+      "frame": 24
+    },
+    {
+      "name": "_RNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtB6_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBN_11peripherals4PIO0Kj0_EENtNtB8_6runner9SealedBus8bp_write0Cs55rED6LpYnf_5pico2",
+      "address": 268765548,
+      "frame": 32
+    },
+    {
+      "name": "_RNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble8boundary0B7_",
+      "address": 268637512,
+      "frame": 88
+    },
+    {
+      "name": "_RNvXs2_NtCscXYupWrrB4C_16dashboard_config5codecNtB5_11ConfigErrorNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt",
+      "address": 268891748,
+      "frame": 80
+    },
+    {
+      "name": "_RNvMs1_NtCs2xOb2eBZqtL_16embassy_executor3rawINtB5_11TaskStorageNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function0E4pollB1a_",
+      "address": 268797748,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core9panicking13assert_failedNtNtCscXYupWrrB4C_16dashboard_config11orientation8GeometryBM_ECs7nhhtzjkmjx_14dashboard_core",
+      "address": 268991420,
+      "frame": 32
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core6result13unwrap_failedNtNtNtB4_3str5error9Utf8ErrorECscXYupWrrB4C_16dashboard_config",
+      "address": 268971400,
+      "frame": 16
+    },
+    {
+      "name": "_RNvMNtCscXYupWrrB4C_16dashboard_config13startup_assetNtB2_5Asset5frame",
+      "address": 268980176,
+      "frame": 32
+    },
+    {
+      "name": "_RNvNtCscXYupWrrB4C_16dashboard_config13startup_asset10crc_update",
+      "address": 268980696,
+      "frame": 32
+    },
+    {
+      "name": "_RNvNtCscXYupWrrB4C_16dashboard_config13startup_asset6u32_at",
+      "address": 268980576,
+      "frame": 16
+    },
+    {
+      "name": "_RNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function0B9_",
+      "address": 268743812,
+      "frame": 3424
+    },
+    {
+      "name": "_RNvNtNtCs55rED6LpYnf_5pico25tasks3ble7publish",
+      "address": 268841228,
+      "frame": 80
+    },
+    {
+      "name": "_RNvMNtCskp64jHA298g_15embassy_futures4joinINtB2_9MaybeDoneNCINvMs_NtCsc8r0vwKKnhT_5cyw436runnerINtB12_6RunnerINtNtB14_3spi6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtB27_11peripherals4PIO0Kj0_EEE17run_with_boundaryNCNCNvNvNtNtCs55rED6LpYnf_5pico25tasks3ble17___radio_task_task32___radio_task_task_inner_function00E0E11take_outputB4j_",
+      "address": 268769420,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs0_NtCskp64jHA298g_15embassy_futures6selectINtB5_6SelectNCNvMs6_NtCs1H5DyjlrIkJ_12trouble_host4hostINtB14_6RunnerINtNtCskxWYFgncjeP_6bt_hci10controller18ExternalControllerNtNtCsc8r0vwKKnhT_5cyw439bluetooth8BtDriverKj5_EINtNtB16_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE3run0NCNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble4host00ENtNtNtCs5hZZePRLgSM_4core6future6future6Future4pollB5U_",
+      "address": 268850700,
+      "frame": 224
+    },
+    {
+      "name": "_RNvXst_NtCs5hZZePRLgSM_4core6resultINtB5_6ResultuINtCs1H5DyjlrIkJ_12trouble_host12BleHostErrorNtNtCsc8r0vwKKnhT_5cyw439bluetooth5ErrorEENtNtB7_3fmt5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268902668,
+      "frame": 64
+    },
+    {
+      "name": "_RNvMs0_NtCsc8r0vwKKnhT_5cyw439bluetoothNtB5_8BtRunner14fail_transport",
+      "address": 268943648,
+      "frame": 24
+    },
+    {
+      "name": "_RNCNvXs_NtCsc8r0vwKKnhT_5cyw433spiINtB6_6SpiBusNtNtCsiwrRbhZCeO5_10embassy_rp4gpio6OutputINtCscqzeVH0NypZ_9cyw43_pio6PioSpiNtNtBN_11peripherals4PIO0Kj0_EENtNtB8_6runner9SealedBus7bp_read0Cs55rED6LpYnf_5pico2",
+      "address": 268764624,
+      "frame": 32
+    },
+    {
+      "name": "_RNCNvXs_NtCscogjQkpvrTx_12embassy_sync6pubsubINtB6_13PubSubChannelNtNtNtB8_14blocking_mutex3raw12NoopRawMutexNtNtCsc8r0vwKKnhT_5cyw436events7MessageKj2_Kj1_KB2r_EINtB6_14PubSubBehaviorB1J_E17publish_immediate0Cs55rED6LpYnf_5pico2",
+      "address": 268766124,
+      "frame": 24
+    },
+    {
+      "name": "_RNvMs_NtCs1H5DyjlrIkJ_12trouble_host18connection_managerINtB4_17ConnectionManagerINtNtB6_11packet_pool16StaticPacketPoolNtNtNtCscogjQkpvrTx_12embassy_sync14blocking_mutex3raw23CriticalSectionRawMutexKjfb_Kj8_EE16request_securityCs55rED6LpYnf_5pico2",
+      "address": 268820988,
+      "frame": 832
+    },
+    {
+      "name": "_RNvMs3_NtCsc8r0vwKKnhT_5cyw436eventsNtB5_5Event4from",
+      "address": 268944032,
+      "frame": 8
+    },
+    {
+      "name": "_RNvMs1_NtCsc8r0vwKKnhT_5cyw436eventsNtB5_15SharedEventMask10is_enabled",
+      "address": 268943952,
+      "frame": 8
+    },
+    {
+      "name": "_RNvMs8_NtCsc8r0vwKKnhT_5cyw437structsNtB5_11ScanResults5parse",
+      "address": 268944056,
+      "frame": 16
+    },
+    {
+      "name": "_RNvMs9_NtCsc8r0vwKKnhT_5cyw437structsNtB5_7BssInfo5parse",
+      "address": 268944124,
+      "frame": 16
+    },
+    {
+      "name": "_RNvMNtNtCscXYupWrrB4C_16dashboard_config8validate4slotNtB2_10ConfigSlot12load_at_boot",
+      "address": 268981012,
+      "frame": 1288
+    },
+    {
+      "name": "_RNvMs7_NtCs7nhhtzjkmjx_14dashboard_core11acquisitionINtB5_16AcquisitionOwnerRNtNtCscXYupWrrB4C_16dashboard_config8validate15ValidatedConfigE8snapshotB7_",
+      "address": 269026152,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs0_NtCskp64jHA298g_15embassy_futures6selectINtB5_6SelectNCNvNtNtCs55rED6LpYnf_5pico25tasks3ble17connection_events0NCNCNvB10_9connected00ENtNtNtCs5hZZePRLgSM_4core6future6future6Future4pollB14_",
+      "address": 268863688,
+      "frame": 1168
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRINtCs1H5DyjlrIkJ_12trouble_host12BleHostErrorNtNtCsc8r0vwKKnhT_5cyw439bluetooth5ErrorENtB6_5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268879760,
+      "frame": 64
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCsc8r0vwKKnhT_5cyw439bluetooth5ErrorNtB6_5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268883420,
+      "frame": 48
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRINtNtB8_6option6OptionNtNtCscXYupWrrB4C_16dashboard_config5model7ChannelENtB6_5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268880152,
+      "frame": 48
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config10appearance9ColorRoleNtB6_5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268883672,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config5model7ChannelNtB6_5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268883716,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config8controls12ControlErrorNtB6_5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268883760,
+      "frame": 72
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config8validate15ValidationErrorNtB6_5Debug3fmtCs55rED6LpYnf_5pico2",
+      "address": 268885388,
+      "frame": 80
+    },
+    {
+      "name": "_RNvXs6_NtCscXYupWrrB4C_16dashboard_config8controlsNtB5_11ControlPageNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt",
+      "address": 268895644,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs6_NtCscXYupWrrB4C_16dashboard_config8validateNtB5_9ErrorCodeNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt",
+      "address": 268895688,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXsd_NtCscXYupWrrB4C_16dashboard_config8validateNtB5_5FieldNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt",
+      "address": 268898632,
+      "frame": 16
+    },
+    {
+      "name": "_RNvXse_NtCscXYupWrrB4C_16dashboard_config8controlsNtB5_8ButtonIdNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt",
+      "address": 268901364,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCsfj9Ugxidqri_5defmt6export3fmtReECsc8r0vwKKnhT_5cyw43",
+      "address": 268943544,
+      "frame": 24
+    },
+    {
+      "name": "_RINvNtCsfj9Ugxidqri_5defmt6export3fmtRjECsc8r0vwKKnhT_5cyw43",
+      "address": 268943600,
+      "frame": 24
+    },
+    {
+      "name": "_RNvNtCscXYupWrrB4C_16dashboard_config8validate12validate_ref",
+      "address": 268944208,
+      "frame": 296
+    },
+    {
+      "name": "_RNvMs1_NtCscXYupWrrB4C_16dashboard_config5modelNtB5_9Placement11occupied_in",
+      "address": 268956264,
+      "frame": 36
+    },
+    {
+      "name": "_RINvMs7_NtCscXYupWrrB4C_16dashboard_config10appearanceNtB6_12WidgetColors19visit_invalid_rolesNCINvNtB8_8validate16visit_validationNCNvB1z_12validate_ref0Es9_0EB8_",
+      "address": 268956816,
+      "frame": 140
+    },
+    {
+      "name": "_RNvMs0_NtCscXYupWrrB4C_16dashboard_config10appearanceNtB5_5Gauge5valid",
+      "address": 268957660,
+      "frame": 8
+    },
+    {
+      "name": "_RNvMs8_NtCscXYupWrrB4C_16dashboard_config10appearanceNtB5_5Color9contrasts",
+      "address": 268957784,
+      "frame": 24
+    },
+    {
+      "name": "_RNvNtCscXYupWrrB4C_16dashboard_config7catalog10definition",
+      "address": 268958604,
+      "frame": 56
+    },
+    {
+      "name": "_RNvXs1J_NtCscXYupWrrB4C_16dashboard_config5modelNtB6_6AccessNtNtCs5hZZePRLgSM_4core3cmp9PartialEq2eq",
+      "address": 268959492,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config4fuel19visit_stoichiometryNCINvNtB4_8validate16visit_validationNCNvB15_12validate_ref0Esd_0EB4_",
+      "address": 268957960,
+      "frame": 24
+    },
+    {
+      "name": "_RINvNtCs5hZZePRLgSM_4core6result13unwrap_failedNtNtCscXYupWrrB4C_16dashboard_config8validate15ValidationErrorEBN_",
+      "address": 268952188,
+      "frame": 16
+    },
+    {
+      "name": "_RNvXsk_NtCscXYupWrrB4C_16dashboard_config8validateNtB5_15ValidationErrorNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt",
+      "address": 268952232,
+      "frame": 80
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRINtNtB8_6option6OptionNtNtCscXYupWrrB4C_16dashboard_config5model7ChannelENtB6_5Debug3fmtBW_",
+      "address": 268952392,
+      "frame": 48
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config5model7ChannelNtB6_5Debug3fmtBA_",
+      "address": 268952680,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXsd_NtCscXYupWrrB4C_16dashboard_config8validateNtB5_5FieldNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt.2268",
+      "address": 268952724,
+      "frame": 16
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config10appearance9ColorRoleNtB6_5Debug3fmtBA_",
+      "address": 268954472,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config8controls12ControlErrorNtB6_5Debug3fmtBA_",
+      "address": 268954516,
+      "frame": 72
+    },
+    {
+      "name": "_RNvXse_NtCscXYupWrrB4C_16dashboard_config8controlsNtB5_8ButtonIdNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt.2269",
+      "address": 268956144,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs6_NtCscXYupWrrB4C_16dashboard_config8controlsNtB5_11ControlPageNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt.2270",
+      "address": 268956176,
+      "frame": 8
+    },
+    {
+      "name": "_RNvXs6_NtCscXYupWrrB4C_16dashboard_config8validateNtB5_9ErrorCodeNtNtCs5hZZePRLgSM_4core3fmt5Debug3fmt.2271",
+      "address": 268956220,
+      "frame": 8
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config5model4ViewEB2j_",
+      "address": 268959608,
+      "frame": 64
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config10appearance13WarningColorsEB2j_",
+      "address": 268960084,
+      "frame": 24
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementbECscXYupWrrB4C_16dashboard_config",
+      "address": 268960296,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config5codec17compare_canonicalNtNtB4_5model6ConfigEB4_",
+      "address": 268960372,
+      "frame": 56
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldINtNtCseJXmSuFUt4T_8heapless3vec8VecInnerNtNtB1a_5model6WidgetjINtNtB34_7storage15VecStorageInnerAINtNtNtCs5hZZePRLgSM_4core3mem12maybe_uninit11MaybeUninitB3G_Ej40_EEEB1a_",
+      "address": 268961380,
+      "frame": 72
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldANtNtB1a_5model13ChannelSourcej8_EB1a_",
+      "address": 268965028,
+      "frame": 40
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_5model19WarningPresentationEB1a_",
+      "address": 268966776,
+      "frame": 32
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_5model4FuelEB1a_",
+      "address": 268966992,
+      "frame": 32
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_10appearance13WarningColorsEB1a_",
+      "address": 268967392,
+      "frame": 40
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_8controls10ControlMapEB1a_",
+      "address": 268967640,
+      "frame": 40
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldAtj8_EB1a_",
+      "address": 268968668,
+      "frame": 40
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_3led11LedSettingsEB1a_",
+      "address": 268969616,
+      "frame": 16
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_11orientation11OrientationEB1a_",
+      "address": 268969820,
+      "frame": 8
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_3ble11BleSettingsEB1a_",
+      "address": 268969924,
+      "frame": 24
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_10appearance5ColorEB1a_",
+      "address": 268971256,
+      "frame": 32
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_8advanced7ReadoutEB1a_",
+      "address": 268971444,
+      "frame": 8
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_8advanced13PeakSelectionEB1a_",
+      "address": 268971672,
+      "frame": 8
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldfEB1a_",
+      "address": 268971204,
+      "frame": 12
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_8controls13ControlActionEB1a_",
+      "address": 268970756,
+      "frame": 8
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldNtNtB1a_3led10LedPatternEB1a_",
+      "address": 268970336,
+      "frame": 40
+    },
+    {
+      "name": "_RINvXs5_NtNtCs3qn4iphRW7B_8postcard3ser10serializerQINtB6_10SerializerNtNtCscXYupWrrB4C_16dashboard_config5codec7CompareENtNtCsaKkZHILksx7_10serde_core3ser15SerializeStruct15serialize_fieldbEB1a_",
+      "address": 268970700,
+      "frame": 8
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config3led10LedPatternEB2j_",
+      "address": 268972672,
+      "frame": 32
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config8controls14ScreenBindingsEB2j_",
+      "address": 268973060,
+      "frame": 64
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config8controls13ControlActionEB2j_",
+      "address": 268973544,
+      "frame": 16
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config5model13ChannelSourceEB2j_",
+      "address": 268973732,
+      "frame": 72
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config10appearance5ColorEB2j_",
+      "address": 268979596,
+      "frame": 16
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config5model10GraphRangeEB2j_",
+      "address": 268975476,
+      "frame": 16
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config5model15WarningSettingsEB2j_",
+      "address": 268975732,
+      "frame": 176
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementINtNtCseJXmSuFUt4T_8heapless6string11StringInnerjINtNtNtB2k_3vec7storage15VecStorageInnerAINtNtNtCs5hZZePRLgSM_4core3mem12maybe_uninit11MaybeUninithEj14_EEECscXYupWrrB4C_16dashboard_config",
+      "address": 268979724,
+      "frame": 48
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config8advanced8PriorityEB2j_",
+      "address": 268979988,
+      "frame": 16
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config10appearance5GaugeEB2j_",
+      "address": 268976560,
+      "frame": 16
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config10appearance12WidgetColorsEB2j_",
+      "address": 268976832,
+      "frame": 88
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config8advanced15AdvancedDisplayEB2j_",
+      "address": 268977668,
+      "frame": 384
+    },
+    {
+      "name": "_RINvYINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB8_7flavors5SliceENtNtCsaKkZHILksx7_10serde_core2de9SeqAccess12next_elementNtNtCscXYupWrrB4C_16dashboard_config8advanced13PeakSelectionEB2j_",
+      "address": 268979408,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextANtNtB4_5model13ChannelSourcej8_INtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1x_7flavors5SliceEEB4_",
+      "address": 268986352,
+      "frame": 760
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextNtNtB4_5model19WarningPresentationINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1z_7flavors5SliceEEB4_",
+      "address": 268987216,
+      "frame": 28
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextNtNtB4_5model4FuelINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1j_7flavors5SliceEEB4_",
+      "address": 268987748,
+      "frame": 36
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextNtNtB4_10appearance13WarningColorsINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1z_7flavors5SliceEEB4_",
+      "address": 268988664,
+      "frame": 24
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextNtNtB4_8controls10ControlMapINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1t_7flavors5SliceEEB4_",
+      "address": 268988896,
+      "frame": 120
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextAtj8_INtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB16_7flavors5SliceEEB4_",
+      "address": 268989268,
+      "frame": 56
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextbINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB12_7flavors5SliceEEB4_",
+      "address": 268989916,
+      "frame": 8
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextNtNtB4_3led11LedSettingsINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1p_7flavors5SliceEEB4_",
+      "address": 268989992,
+      "frame": 80
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextNtNtB4_11orientation11OrientationINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1y_7flavors5SliceEEB4_",
+      "address": 268990376,
+      "frame": 16
+    },
+    {
+      "name": "_RINvNtCscXYupWrrB4C_16dashboard_config15decode_in_place4nextNtNtB4_3ble11BleSettingsINtNtNtCs3qn4iphRW7B_8postcard2de12deserializer9SeqAccessNtNtB1p_7flavors5SliceEEB4_",
+      "address": 268990564,
+      "frame": 80
+    },
+    {
+      "name": "_RNvXs1g_NtCs5hZZePRLgSM_4core3fmtRNtNtCscXYupWrrB4C_16dashboard_config11orientation8GeometryNtB6_5Debug3fmtCs7nhhtzjkmjx_14dashboard_core",
+      "address": 268991464,
+      "frame": 8
+    },
+    {
+      "name": "_RNvNtNtNtCshwmsljyPN5I_4p25610arithmetic5field10field_impl6fe_mul",
+      "address": 269099780,
+      "frame": 200
+    },
+    {
+      "name": "_RNvXsJ_NtCs51OmdA9Rvz6_10primeorder10projectiveINtB5_15ProjectivePointNtCshwmsljyPN5I_4p2568NistP256EINtNtNtCs5hZZePRLgSM_4core3ops5arith3MulRNtNtNtB18_10arithmetic6scalar6ScalarE3mulCs1H5DyjlrIkJ_12trouble_host",
+      "address": 269114092,
+      "frame": 2152
+    },
+    {
+      "name": "_RNvXs4_NtCs51OmdA9Rvz6_10primeorder10projectiveINtB5_15ProjectivePointNtCshwmsljyPN5I_4p2568NistP256ENtNtCs5vTtuzzptLr_14elliptic_curve5point6Double6doubleCs1H5DyjlrIkJ_12trouble_host",
+      "address": 269120816,
+      "frame": 648
+    }
+  ],
+  "default_features": true,
+  "release_strip": "none"
+}
