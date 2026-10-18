@@ -1,6 +1,34 @@
 //! Serialized worker admission and operation completion. Transfer cancellation,
 //! artifact publication and cleanup failure each keep their operation-specific rules.
 use super::*;
+fn worker_fault(state: &State) {
+    state.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
+    crate::terminal::event(
+        true,
+        "worker",
+        "Worker panicked; ownership unproven, operations disabled",
+    );
+    // A poisoned owner is not safe to resume. Session status remains available
+    // independently; stateful routes report unavailable instead of mutating it.
+    if let Ok(mut inner) = state.inner.lock() {
+        for job in inner.jobs.summaries() {
+            if !job.events_closed {
+                let _ = inner.jobs.note_cleanup_fatal(&job.job_id, true);
+            }
+        }
+    }
+}
+fn spawn_worker(
+    state: &Arc<State>,
+    work: impl FnOnce() + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).is_err() {
+            worker_fault(&state);
+        }
+    })
+}
 // Reserve a footer inside the disk bound so omitted output is never silent.
 fn retain_diagnostic(
     bytes: &mut Vec<u8>,
@@ -112,7 +140,7 @@ pub(super) async fn start_check(
     )?;
     crate::process::reset_cancel();
     let worker_state = state.clone();
-    inner.worker = Some(tokio::task::spawn_blocking(move || {
+    inner.worker = Some(spawn_worker(&state, move || {
         let mut process = crate::process::ProcessContext::default();
         let report = if let Some(selected) = selected {
             serde_json::to_value(crate::device_inspection::inspect(
@@ -180,7 +208,7 @@ pub(super) async fn start_check(
         }
         if crate::process::cleanup_failed() {
             let _ = inner.jobs.note_cleanup_fatal(&id, true);
-            inner.stopping = true;
+            worker_state.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
             return;
         }
         let cancelled = inner
@@ -230,7 +258,7 @@ pub(super) async fn start_build(
     inner.jobs.transition(&id, prerequisite, StageState::Running, None)?;
     crate::process::reset_cancel();
     let worker_state = state.clone();
-    inner.worker = Some(tokio::task::spawn_blocking(move || {
+    inner.worker = Some(spawn_worker(&state, move || {
         let mut process = crate::process::ProcessContext::default();
         let mut stage = prerequisite;
         let transition = |stage, state, reason| {
@@ -364,7 +392,7 @@ pub(super) async fn start_build(
         let mut inner = worker_state.inner.lock().unwrap();
         if crate::process::cleanup_failed() {
             let _ = inner.jobs.note_cleanup_fatal(&id, true);
-            inner.stopping = true;
+            worker_state.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
             return;
         }
         let cancelled = crate::process::cancelled()
@@ -458,7 +486,7 @@ pub(super) async fn start_flash(
     let summary = inner.jobs.poll(&id, PollRequest { after: 0, limit: 1 })?.summary;
     crate::process::reset_cancel();
     let worker_state = state.clone();
-    inner.worker = Some(tokio::task::spawn_blocking(move || {
+    inner.worker = Some(spawn_worker(&state, move || {
         let mut process = crate::process::ProcessContext::default();
         let mut transition = |stage, status| {
             crate::terminal::event(false, id.as_str(), &format!("{stage:?}: {status:?}"));
@@ -504,7 +532,7 @@ pub(super) async fn start_flash(
         let mut inner = worker_state.inner.lock().unwrap();
         if crate::process::cleanup_failed() {
             let _ = inner.jobs.note_cleanup_fatal(&id, true);
-            inner.stopping = true;
+            worker_state.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
             return;
         }
         let cancelled = inner
@@ -581,7 +609,7 @@ pub(super) async fn start_cleanup(
     inner.jobs.transition(&id, stage, StageState::Running, None)?;
     crate::process::reset_cancel();
     let worker_state = state.clone();
-    inner.worker = Some(tokio::task::spawn_blocking(move || {
+    inner.worker = Some(spawn_worker(&state, move || {
         let process = crate::process::ProcessContext::default();
         let mut failure = None;
         let mut cancelled = false;
@@ -680,6 +708,9 @@ pub(super) async fn start_cleanup(
 /// Reap the prior worker before admission; JobStore still rejects any unclosed
 /// operation under the returned lock. Never await while holding the owner mutex.
 async fn idle(state: &State) -> Result<std::sync::MutexGuard<'_, Inner>, Error> {
+    if state.fatal.load(std::sync::atomic::Ordering::SeqCst) || state.inner.is_poisoned() {
+        return Err(Error::InvalidState);
+    }
     let previous = {
         let mut inner = state.inner.lock().unwrap();
         if inner.worker.as_ref().is_some_and(|w| !w.is_finished()) {
@@ -687,11 +718,14 @@ async fn idle(state: &State) -> Result<std::sync::MutexGuard<'_, Inner>, Error> 
         }
         inner.worker.take()
     };
-    if let Some(previous) = previous {
-        previous.await.map_err(|_| Error::InvalidState)?;
+    if let Some(previous) = previous
+        && previous.await.is_err()
+    {
+        worker_fault(state);
+        return Err(Error::InvalidState);
     }
     let inner = state.inner.lock().unwrap();
-    if inner.stopping || crate::process::cleanup_failed() {
+    if inner.stopping || state.fatal.load(std::sync::atomic::Ordering::SeqCst) || crate::process::cleanup_failed() {
         return Err(Error::InvalidState);
     }
     Ok(inner)
@@ -699,6 +733,58 @@ async fn idle(state: &State) -> Result<std::sync::MutexGuard<'_, Inner>, Error> 
 
 #[cfg(test)]
 mod diagnostics_tests {
+    use super::*;
+    #[tokio::test]
+    async fn failed_worker_preserves_visible_ownership_fault() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let id = JobId::new("f".repeat(32)).unwrap();
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.jobs.start(id.clone(), OperationKind::Build, None).unwrap();
+            let worker = tokio::task::spawn_blocking(|| panic!("injected worker failure"));
+            while !worker.is_finished() {
+                std::thread::yield_now();
+            }
+            inner.worker = Some(worker);
+        }
+        assert!(idle(&state).await.is_err());
+        let job = summary(&state, &id).unwrap();
+        assert_eq!(job.terminal_cause, Some(TerminalCause::OwnershipCleanupFatal));
+        assert!(job.output_incomplete);
+        assert!(!job.events_closed, "unknown ownership must not fabricate closure");
+        assert!(
+            !state.inner.lock().unwrap().stopping,
+            "status service must remain available"
+        );
+    }
+    #[tokio::test]
+    async fn poisoned_worker_keeps_session_status_and_refuses_mutation() {
+        let state = State::new(std::env::current_dir().unwrap()).unwrap();
+        let worker_state = state.clone();
+        spawn_worker(&state, move || {
+            let _owner = worker_state.inner.lock().unwrap();
+            panic!("injected owner poisoning");
+        })
+        .await
+        .unwrap();
+        assert!(state.inner.is_poisoned());
+        assert!(idle(&state).await.is_err());
+        for (method, path, expected) in [
+            ("GET", "/api/v1/session", StatusCode::OK),
+            ("GET", "/api/v1/jobs", StatusCode::SERVICE_UNAVAILABLE),
+            ("POST", "/api/v1/devices/refresh", StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(path)
+                .header("host", AUTHORITY)
+                .header("origin", ORIGINS[0])
+                .header("x-studio-capability", &state.capability)
+                .body(Body::empty())
+                .unwrap();
+            assert_eq!(dispatch(state.clone(), request).await.status(), expected);
+        }
+    }
     #[test]
     fn bounded_prefix_reserves_footer_and_validation_space() {
         let mut bytes = Vec::new();

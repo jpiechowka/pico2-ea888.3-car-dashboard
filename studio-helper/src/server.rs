@@ -34,6 +34,7 @@ struct State {
     capability: String,
     relay: crate::relay::Relay,
     inner: Mutex<Inner>,
+    fatal: std::sync::atomic::AtomicBool,
 }
 fn random_hex<const N: usize>() -> Result<String, String> {
     let mut b = [0u8; N];
@@ -48,6 +49,7 @@ impl State {
             session: session.clone(),
             capability: random_hex::<32>()?,
             relay: crate::relay::Relay::new(),
+            fatal: std::sync::atomic::AtomicBool::new(false),
             inner: Mutex::new(Inner {
                 jobs: JobStore::new(session.clone()),
                 devices: crate::devices::empty(session, "Device scan not run"),
@@ -145,6 +147,18 @@ async fn dispatch(
     }
     if headers.contains_key("transfer-encoding") && one(headers, "transfer-encoding") != Some("chunked") {
         return error(StatusCode::BAD_REQUEST, "InvalidFraming", origin);
+    }
+    if state.fatal.load(std::sync::atomic::Ordering::SeqCst) || state.inner.is_poisoned() {
+        if method == Method::GET && path == "/api/v1/session" {
+            return response(
+                StatusCode::OK,
+                json!({"protocol_version":PROTOCOL_VERSION,"session_id":state.session,"ready":false,"reason":"Helper ownership fault; operations disabled. Restart explicitly after inspecting diagnostics."}),
+                origin,
+            );
+        }
+        if !connecting && (method != Method::GET || state.inner.is_poisoned()) {
+            return error(StatusCode::SERVICE_UNAVAILABLE, "HelperOwnershipFault", origin);
+        }
     }
     if method == Method::POST
         && matches!(
@@ -482,13 +496,20 @@ async fn serve_async(state: Arc<State>) -> Result<(), String> {
                 });
             }
         }
-        if state.inner.lock().unwrap().stopping {
-            break;
+        if let Ok(inner) = state.inner.lock() {
+            if inner.stopping {
+                break;
+            }
+        } else {
+            state.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
     drop(listener);
     let worker = {
-        let mut inner = state.inner.lock().unwrap();
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Helper owner poisoned; cleanup unproven")?;
         inner.stopping = true;
         for job in inner.jobs.summaries() {
             if !job.events_closed {
