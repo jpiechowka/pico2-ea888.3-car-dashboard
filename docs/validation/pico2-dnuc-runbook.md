@@ -1,16 +1,30 @@
 # Pico 2 W and 2019 DNUC Cupra validation
 
-Use this procedure with the merged overhaul and keep one evidence directory per
-image and power-on run. **The current firmware does not enable live vehicle
-measurements.** `demo` is synthetic; the stock build has no vehicle transport;
-`longan-rx12` performs adapter bring-up with `Profile::UNQUALIFIED`. A successful
-`RAW ONLY` status does not qualify the ECU or enable diagnostic polling.
+Keep one evidence directory per image and power-on run. **The current firmware
+does not enable live vehicle measurements.** `demo` is synthetic; the no-backend
+build has no vehicle transport; `ble-obd` is the selected USB-powered prototype,
+with disabled-by-default settings and adapter-only MC+/CX profiles.
+`longan-rx12` retains the historical adapter bring-up with `Profile::UNQUALIFIED`.
+BLE ONLY, TEST PEER and RAW ONLY do not qualify the ECU or enable live polling.
 
 No device or vehicle test below has been performed by the software checks.
 
+## Selected USB/BLE route
+
+Use [current hardware](../../hardware/README.md) and the
+[BLE acceptance checks](../vehicle/ble-runtime.md#verification-boundaries) for
+the selected route. Retain the encoder. Bench testing starts with USB-powered
+Pico/display/encoder and a separate synthetic peer, with the car disconnected.
+Do not assemble the Longan/Pololu/covered-switch circuit for this prototype.
+
+The numbered procedure below retains the earlier wired runbook: its Longan power,
+UART, switch and regulator steps apply only to that historical alternative.
+Display/control/recovery checks remain useful, but require an explicitly selected
+image and separate authorization before physical flashing or any vehicle work.
+
 ## 1. Prepare and inspect, with the car disconnected
 
-Equipment: Pico 2 W (wireless hardware; current firmware leaves it uninitialized),
+Equipment for the historical wired route: Pico 2 W (radio unused in this backend),
 PIM715 Display Pack 2.8, optional Adafruit 5880
 encoder, data-capable USB cable, multimeter, current-limited bench supply, and
 the actual Longan module. For timing/recovery evidence also use a 3.3 V SWD

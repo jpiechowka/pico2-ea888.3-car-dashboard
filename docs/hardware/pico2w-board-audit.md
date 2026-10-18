@@ -3,7 +3,8 @@
 Reviewed 17 October 2026. The owner's photograph identifies **Raspberry Pi Pico
 2 W**, mounted on Pimoroni PIM715. Earlier non-W descriptions were incorrect.
 This checks source and published drawings; it does not measure the board,
-qualify its overclock, or implement wireless OBD.
+qualify its overclock, or establish physical wireless operation. Updated
+2026-10-18 for the optional [BLE runtime](../vehicle/ble-runtime.md).
 
 ## Internal pins differ; application header pins remain compatible
 
@@ -40,15 +41,18 @@ Physical pin numbers refer to the W header drawing, not a mirrored solder view.
 | LCD backlight | 20 | 26 | PWM slice 2A |
 | LCD TE | 21 | 27 | Optional timing observation |
 | PIM715 RGB R / G / B | 26 / 27 / 28 | 31 / 32 / 34 | PWM slices 5A / 5B / 6A |
+| CYW43439 power/data/CS/clock | 23 / 24 / 25 / 29 | Internal W connections | Optional BLE core0 owner, PIO0 SM0 / IRQ0, DMA channel 1 |
 
 PIM715 RGB is an external active-low LED on GP26–28, distinct from the W's
 onboard green LED. LCD reset connects to RUN (physical pin 30). GP7–11 also reach
 the pack's SP/CE expansion and are only spare while it is unused. Checked against
 the [PIM715 schematic](https://cdn.shopify.com/s/files/1/0174/1800/files/pico_display_2_8_schematic.pdf?v=1728314048).
 
-There is no application claim of GP23/24/25/29, no ADC sampler, and no CYW43 or
-Bluetooth dependency in the resolved firmware. **The radio is not initialized.**
-That is software evidence, not a measured shutdown current or a guarantee about
+The `ble-obd` feature owns GP23/24/25/29. With BLE settings enabled it initializes
+CYW43439 and the Trouble host; with settings disabled it retains power low and
+CS high and participates in flash maintenance without initializing the radio.
+No ADC sampler shares GP29. Non-BLE builds do not initialize CYW43439. These are
+software ownership facts, not measured shutdown current or a guarantee about
 every warm-reset electrical state.
 
 ## HAL, reset and clock audit
@@ -98,16 +102,17 @@ specifies VSYS 1.8–5.5 V and a −20 to +70 °C operating range including self
 Do not import another board's rating or infer automotive qualification. See the
 [protected power proposal](../../hardware/protection-plan.md).
 
-## Before adding Bluetooth or supply sensing
+## Radio and future supply sensing
 
-Wireless is a separate feature and qualification task. Allocate PIO, DMA and IRQ
-owners around display DMA channel 0; keep both fixed framebuffers. Budget radio
-firmware, packet pools, crypto, task futures, stack and flash before claiming
-the image fits. Bond persistence must obey dual-core/XIP maintenance. Serialize
-GP29/VSYS sampling with CYW43. Re-audit reconnect epochs, stale samples,
-overclock/radio coexistence, power and antenna clearance. The
-[transport comparison](../../hardware/transport-options.md) records alternatives
-without claiming a working Bluetooth implementation.
+Wireless is an optional prototype with a separate physical qualification gate.
+PIO0/DMA1 ownership preserves display DMA0 and both fixed framebuffers. Radio
+firmware, pools, crypto, task futures and stack belong in exact linked-image
+admission; see [runtime resources](../vehicle/ble-runtime.md#resources-and-ownership).
+Bonds currently stay in RAM. Any future persistence must obey dual-core/XIP
+maintenance, and GP29/VSYS sampling must serialize with CYW43. Reconnect epochs,
+overclock/radio coexistence, USB power and antenna clearance need device evidence.
+The [selected USB arrangement](../../hardware/README.md) supersedes the older
+[transport comparison](../../hardware/transport-options.md).
 
 ## Verification boundary
 

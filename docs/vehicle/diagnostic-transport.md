@@ -1,10 +1,14 @@
 # Diagnostic transport contracts
 
-Shared pure modules are exercised on the host and integrated into the optional
-core1 UART runtime. The deployment contract remains UNQUALIFIED and sends no
-diagnostic CAN requests. No captured DNUC ECU reply or physical CAN behavior has
-been validated. Sections below retain historical test, memory and performance
-checkpoints; the final section describes the integrated runtime.
+The selected transport is the [BLE prototype](ble-runtime.md), with a
+[bounded ELM protocol](ble-protocol.md). Real MC+/CX profiles send adapter
+initialization/identity commands only. No DNUC ECU request is qualified.
+
+The sections below describe shared diagnostic primitives and the retained
+optional core1 Longan UART alternative. That deployment contract remains
+UNQUALIFIED and sends no diagnostic CAN requests. No captured DNUC ECU reply or
+physical CAN behavior has been validated. Historical test, memory and performance
+checkpoints remain dated; the final section describes the legacy UART runtime.
 
 ## Wire and ownership boundaries
 

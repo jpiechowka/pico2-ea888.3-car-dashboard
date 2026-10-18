@@ -1,4 +1,11 @@
-# Isolated Longan build using ready-made modules
+# Historical isolated Longan module build
+
+**Superseded on 2026-10-18:** the selected route is now a USB-powered Pico 2 W,
+PIM715, retained Adafruit 5880 encoder and the BLE prototype. See
+[current hardware](README.md) and [BLE runtime](../docs/vehicle/ble-runtime.md).
+Longan, Pololu, the covered switch, isolation modules and added capacitors below
+belong to the earlier wired alternative. This record preserves component research
+and unresolved checks; it is not the current purchasing or assembly plan.
 
 Design checkpoint: 2026-10-17; Longan identification updated 2026-10-18.
 The owner selected **isolated Longan**, mostly
@@ -7,7 +14,7 @@ vehicle-side **5 V branch**. A custom PCB is not the default. This document
 turns the [hardware audit](protection-plan.md) into a practical shortlist;
 **conditional entries are not yet a purchasing or soldering instruction**.
 
-## Selected arrangement
+## Earlier selected arrangement
 
 - Retain Pico 2 W/PIM715, Adafruit 5880, Longan V1.4, Pololu D36V28F5 and
   Adafruit 3218. Bluetooth remains an unselected alternative.
@@ -25,9 +32,50 @@ turns the [hardware audit](protection-plan.md) into a practical shortlist;
   and UART runs local. These approved layout targets still need thermal and
   signal-integrity checks; maintain the isolation gap through connectors/mounts.
 
-The two [README diagrams](../README.md#hardware-protection-and-wiring-for-the-dnuc-cupra)
-show the power and signal domains. Boxes labelled protection are design work
-still to close; they are not claims that a particular module provides it.
+The [historical protection plan](protection-plan.md) and
+[wiring reference](wiring-diagram.txt) retain the earlier power and signal domains.
+Protection remains design work to close, not a claim about an installed module.
+
+## Earlier power and signal diagrams
+
+These preserve the superseded wired architecture. Protection blocks remain
+unqualified design work; the selected USB/BLE route uses neither diagram.
+
+```mermaid
+flowchart TD
+    OBD["OBD pin 16: vehicle supply"] --> F["Fuse close to connector"]
+    F --> INPUT["Coordinated transient / reverse / overvoltage protection"]
+    INPUT --> REG["Retained Pololu D36V28F5"]
+    REG --> PROTECT["5 V rail: independent OVP choice open"]
+    PROTECT --> SWITCH["Covered switch: vehicle-side 5 V cutoff"]
+    SWITCH --> LONGAN["Longan branch: vehicle ground"]
+    SWITCH --> ISO["Regulated isolated DC/DC"]
+    ISO --> SEC["Source-blocking diode + rail-limit checks"]
+    SEC --> PICO["Pico VSYS: dashboard ground"]
+    USB["USB VBUS through Pico onboard diode"] --> PICO
+    classDef vehicle fill:#241b24,stroke:#df5964,color:#fff
+    classDef barrier fill:#15363e,stroke:#62c4ce,color:#fff
+    classDef dashboard fill:#202b39,stroke:#8397b6,color:#fff
+    class OBD,F,INPUT,REG,PROTECT,LONGAN,SWITCH vehicle
+    class ISO barrier
+    class SEC,PICO,USB dashboard
+```
+
+```mermaid
+flowchart TD
+    CAN["OBD 6 CAN-H / 14 CAN-L"] <--> LINE["Revision-matched CAN protection"]
+    LINE <--> MODULE["Retained Longan V1.4: vehicle side"]
+    MODULE <--> BARRIER["Two UART isolation channels"]
+    BARRIER <--> UART["Pico GP0 TX / GP1 RX: dashboard side"]
+    UART --- DISPLAY["PIM715: existing display, buttons and RGB"]
+    DISPLAY --- ENCODER["3.3 V Qw/ST: GP4 SDA / GP5 SCL to encoder"]
+    classDef vehicle fill:#241b24,stroke:#df5964,color:#fff
+    classDef barrier fill:#15363e,stroke:#62c4ce,color:#fff
+    classDef dashboard fill:#202b39,stroke:#8397b6,color:#fff
+    class CAN,LINE,MODULE vehicle
+    class BARRIER barrier
+    class UART,DISPLAY,ENCODER dashboard
+```
 
 ## Conditional BOM
 

@@ -4,8 +4,11 @@ Rust firmware for a Raspberry Pi Pico 2 W, Pimoroni PIM715 display and
 Adafruit 5880 I2C encoder, intended for a 2019 Seat Leon Cupra DNUC.
 **Exact ECU support, electrical installation and physical display FPS are
 unverified.** The default build shows unavailable vehicle channels. Demo data
-requires `demo`; the optional Longan transport currently performs unqualified
-adapter bring-up and sends no diagnostic CAN requests.
+requires `demo`. The selected **USB-powered BLE prototype** retains the encoder.
+The `ble-obd` build initializes the onboard radio only when BLE is enabled in the
+configuration. MC+/CX profiles initialize and identify the adapter; they send no
+ECU requests. A separate test-peer service exercises synthetic protocol traffic
+without publishing vehicle readings. [Runtime and qualification limits](docs/vehicle/ble-runtime.md).
 
 Browse the offline **ECU Reference** workspace while configuring views: searchable source/scaling evidence, family limitations and unresolved definitions, with the shared preview retained. [Studio usage](docs/configurator/ecu-reference.md) · [Technical ECU library](docs/vehicle/ecu-reference/README.md).
 
@@ -174,7 +177,7 @@ sample. Numeric companions work at every size; gauge companions need 2×1 or 2×
 ## Build & Flash from Studio
 
 In a second terminal, run `./configurator/Studio.ps1 -Helper`. Open **Build & Flash**,
-connect the helper and check prerequisites. Choose Demo or Vehicle, a named
+connect the helper and check prerequisites. Choose Demo or Vehicle (BLE), a named
 profile or validated custom clocks, and inspect the actual frequencies and
 compiler options before building the accepted project. Invalid drafts block a
 new build; changes after a build mark its firmware as different. Identity includes
@@ -221,11 +224,14 @@ Run firmware commands from `firmware/`:
 ```text
 cargo build --locked -p dashboard-pico2 --release
 cargo build --locked -p dashboard-pico2 --release --features demo
-cargo build --locked -p dashboard-pico2 --release --features longan-rx12,frame-trace,te-trace
+cargo build --locked -p dashboard-pico2 --release --features ble-obd,frame-trace,te-trace
 cargo clippy --locked -p dashboard-pico2 -- -D warnings
 ```
 
-`demo` and `longan-rx12` are mutually exclusive. All Rust workspaces pin
+`demo`, `ble-obd` and the historical `longan-rx12` backend are mutually
+exclusive. The no-backend build remains available with unknown vehicle channels.
+BLE settings default to disabled and require an explicit peer address.
+All Rust workspaces pin
 `nightly-2026-10-16`, installed after `rustup update`; firmware also requests
 `thumbv8m.main-none-eabihf` and `target-cpu=cortex-m33`. The root `rustfmt.toml` applies to the workspaces.
 The [dependency review](docs/dependencies/upgrade-2026-10-16.md) records current
@@ -259,129 +265,57 @@ the implemented stages and review corrections to local test/build evidence and
 the remaining hardware gates. The [fixed workload matrix](docs/performance/benchmark-coverage.md)
 states exactly what each group of host benchmarks measures.
 
-For hands-on testing, follow the [Pico 2 W and DNUC validation runbook](docs/validation/pico2-dnuc-runbook.md)
-for isolated bench flashing, controls, RTT/timing capture, Longan qualification
-and parked vehicle evidence collection.
-
-For USB programming, first follow the power-domain isolation in the
-[wiring and inspection record](hardware/wiring-diagram.txt): direct VSYS wiring
-can backfeed the adapter/regulator from USB. With the assembly isolated and
-BOOTSEL active, `cargo run --locked -p dashboard-pico2 --release` uses the bundled
-`firmware/tools/picotool.exe` runner to load and execute the image. No hardware
-was flashed during this software verification pass.
+For future authorized device testing, follow the [validation runbook](docs/validation/pico2-dnuc-runbook.md)
+and [BLE runtime acceptance checks](docs/vehicle/ble-runtime.md#verification-boundaries).
+Compile with `cargo build`; firmware `cargo run` can flash and execute an image.
+Software checks do not authorize a purchase, flashing or vehicle communication.
 
 ## Hardware protection and wiring for the DNUC Cupra
 
-The hardware plan retains the owner's **Longan Serial CAN Bus V1.4**,
-**Pololu #3782 D36V28F5**, **Adafruit 3218 covered switch**, Pico 2 W/PIM715 and
-5880 encoder. The selected architecture isolates dashboard power and both UART
-directions from the vehicle. These are **architecture diagrams**, not a finished
-soldering schematic: component values, fault limits and bench measurements are
-still being resolved. [Audit, BOM planning register and build order](hardware/protection-plan.md).
-
-The selected build uses **mostly ready-made modules with some soldering**.
-The [practical module shortlist](hardware/module-build.md) covers isolated power,
-UART isolation, capacitor smoothing and the remaining component checks. No custom
-PCB, backup battery or automatic CAN-disconnect chain is selected.
-The approved compact layout groups the modules near the display: approximately
-**≤1 m to OBD** and **≤20 cm to the encoder**, with short local 5 V/UART wiring.
-Enclosure temperature, clearances and signal integrity still need bench checks.
-
-The owner's board is confirmed as **Pico 2 W**. Its header pins work with the
-existing display/encoder/UART assignments; internal GP23/24/25/29 serve wireless.
-The current firmware does not initialize the radio.
-[Board and source audit](docs/hardware/pico2w-board-audit.md) ·
-[Isolated Longan versus Bluetooth OBD comparison](hardware/transport-options.md).
-Stable `pico2` package/path/command names remain compatible.
-
-### Power domains
+The selected arrangement is **USB-powered Pico 2 W + PIM715 + Adafruit 5880
+encoder + BLE OBD**. The encoder and existing controls remain. The Longan,
+Pololu, covered switch and custom power/protection circuit are not part of this
+route. Existing plug connections avoid the proposed protection-circuit soldering;
+completely solder-free assembly still depends on the headers/connectors fitted
+to the owned boards. Keep the encoder lead short, approximately **≤20 cm**.
 
 ```mermaid
-flowchart TD
-    OBD["OBD pin 16: vehicle supply"] --> F["Fuse close to connector"]
-    F --> INPUT["Coordinated transient / reverse / overvoltage protection"]
-    INPUT --> REG["Retained Pololu D36V28F5"]
-    REG --> PROTECT["5 V rail: independent OVP choice open"]
-    PROTECT --> SWITCH["Covered switch: vehicle-side 5 V cutoff"]
-    SWITCH --> LONGAN["Longan branch: vehicle ground"]
-    SWITCH --> ISO["Regulated isolated DC/DC"]
-    ISO --> SEC["Source-blocking diode + rail-limit checks"]
-    SEC --> PICO["Pico VSYS: dashboard ground"]
-    USB["USB VBUS through Pico onboard diode"] --> PICO
-    classDef vehicle fill:#241b24,stroke:#df5964,color:#fff
-    classDef barrier fill:#15363e,stroke:#62c4ce,color:#fff
-    classDef dashboard fill:#202b39,stroke:#8397b6,color:#fff
-    class OBD,F,INPUT,REG,PROTECT,LONGAN,SWITCH vehicle
-    class ISO barrier
-    class SEC,PICO,USB dashboard
+flowchart LR
+    USB["USB supply"] --> PICO["Pico 2 W + PIM715"]
+    ENCODER["Adafruit 5880 encoder"] <-->|"3.3 V Qw/ST, I2C"| PICO
+    PICO <-. "BLE data" .-> ADAPTER["BLE OBD adapter: separately powered"]
+    OBD["Vehicle OBD port"] --- ADAPTER
 ```
 
-The isolated converter and UART barrier need **separate vehicle and dashboard
-grounds**, including through USB, mounting hardware and the switch LED. USB can
-still power the Pico when the vehicle branch is off. The covered switch's 12 V
-maximum rules out its old raw-battery placement. It now belongs on the regulated
-5 V branch feeding Longan and the isolated converter; its LED may be dimmer.
-The intended sequence is **switch off → start engine → switch on**. A clean
-restart after a supply dip is acceptable; local and bulk capacitors provide
-smoothing, without a dedicated crank ride-through circuit.
+The dashed link is wireless data. USB is the dashboard supply; the OBD dongle
+receives its own power from the vehicle. **Turning off USB does not turn off the
+dongle.** Unplug the dongle for long parking or physical OBD disconnection.
+A car USB outlet may share vehicle ground: this diagram does not certify galvanic
+isolation, USB supply quality or vehicle-port fault protection. A faulty dongle
+can still disturb the vehicle bus. No adapter model is physically qualified here.
 
-Pololu remains connected with the switch off and draws a specified 2–3 mA at
-no load, before any additional input-protection consumption. **Unplug OBD for
-long parking or physical CAN disconnection.** Opening the switch removes the
-incoming branch power; capacitor discharge takes time. Independent rail-fault
-protection is still an open choice: the diagram does not claim that a fuse or
-source diode contains a failed regulator's overvoltage.
+The `ble-obd` prototype uses the W radio pins GP23/24/25/29, PIO0 and DMA1.
+PIM715 display/buttons/RGB and encoder GP4/GP5 remain assigned as before.
+The application does not sample VSYS through shared GP29 during radio use.
+Real adapter profiles are **adapter-only**: no live DNUC queries, vehicle values
+or alarms become available simply because BLE connects. The distinct synthetic
+peer reports **TEST PEER** and never substitutes synthetic vehicle acquisition.
 
-### CAN, UART and controls
+[Selected hardware and connectors](hardware/README.md) ·
+[Board and pin audit](docs/hardware/pico2w-board-audit.md) ·
+[BLE protocol](docs/vehicle/ble-protocol.md) ·
+[Radio, security and flash ownership](docs/vehicle/ble-runtime.md).
 
-```mermaid
-flowchart TD
-    CAN["OBD 6 CAN-H / 14 CAN-L"] <--> LINE["Revision-matched CAN protection"]
-    LINE <--> MODULE["Retained Longan V1.4: vehicle side"]
-    MODULE <--> BARRIER["Two UART isolation channels"]
-    BARRIER <--> UART["Pico GP0 TX / GP1 RX: dashboard side"]
-    UART --- DISPLAY["PIM715: existing display, buttons and RGB"]
-    DISPLAY --- ENCODER["3.3 V Qw/ST: GP4 SDA / GP5 SCL to encoder"]
-    classDef vehicle fill:#241b24,stroke:#df5964,color:#fff
-    classDef barrier fill:#15363e,stroke:#62c4ce,color:#fff
-    classDef dashboard fill:#202b39,stroke:#8397b6,color:#fff
-    class CAN,LINE,MODULE vehicle
-    class BARRIER barrier
-    class UART,DISPLAY,ENCODER dashboard
-```
+### Historical wired alternative
 
-UART paths cross TX to RX. No extra CAN termination is assumed. OBD pin 4
-(chassis ground) and pin 5 (signal ground) remain separately identified in the
-return design. The pin labels above describe electrical nets, not connector-face
-orientation. Use the [pin/reference document](hardware/wiring-diagram.txt) and
-verify the actual harness by continuity.
-
-The audit found that Longan's generic MCP2551 description conflicts with its
-V1.3 schematic's SN65HVD230. The owner's **V1.4 photos identify ATmega168PA,
-MCP2515 and SIT65HVD230**; TI transceiver limits cannot be transferred to it.
-The regulator's **`662K` marking points to nominal 3.3 V**, unlike the older
-drawing's 3.0 V part. Actual rails, UART margins and termination still need
-measurement. [Owned-board identification and bench checklist](hardware/longan-v1.4-identification.md).
-Isolation protects the dashboard/USB boundary; it does not guarantee that a
-faulty adapter cannot disturb CAN.
-The firmware's unqualified, no-diagnostic-polling mode is not electrical
-listen-only certification. [Revision evidence and remaining gates](hardware/protection-plan.md#2-corrections-that-affect-the-design).
-
-### Capacitor choices and sourcing
-
-The [capacitor shortlist with Allegro links](hardware/capacitors.md) recommends
-Panasonic FR **100 µF / 63 V** for protected-input bulk and **220 µF / 50 V** for
-isolated 5 V bulk, subject to the module and inrush checks. Their specified
-100 kHz / 20°C impedances are 68 mΩ and 30 mΩ respectively. The 220 µF part
-improves on the smaller 16 V candidate's 130 mΩ without adding capacitance.
-Local ceramics and intermediate storage already fitted to the boards stay in
-the design. Exact codes, dimensions, ripple/endurance ratings and listing
-inconsistencies are recorded in the shortlist.
-
-Lowest ESR everywhere can worsen cable-induced ringing. Capacitors provide
-smoothing; fuse, clamp, damping and inrush limits still need coordination. The
-old fuse/TVS/PTC list remains provisional.
-[Capacitor design and acceptance plan](hardware/protection-plan.md#4-capacitors-local-bypass-local-storage-and-bulk).
+The [Longan module proposal](hardware/module-build.md),
+[protection audit](hardware/protection-plan.md),
+[owned-board identification](hardware/longan-v1.4-identification.md),
+[capacitor research](hardware/capacitors.md) and
+[wiring reference](hardware/wiring-diagram.txt) preserve the earlier isolated
+UART/power design and its unresolved measurements. Their conditional parts and
+soldering steps are historical, not the selected BLE shopping or assembly list.
+The optional `longan-rx12` build remains available for that separate alternative.
 
 ## Performance optimizations
 
@@ -421,7 +355,8 @@ and [frame timing capture](docs/performance/telemetry-windows.md).
 ## Architecture
 
 - **Core0:** cooperative rendering, buttons, I2C encoder, PWM backlight, DMA
-  display owner, recovery supervisor and optional TE observations.
+  display owner, recovery supervisor, optional TE observations and BLE radio/HCI/GATT.
+  The BLE prototype publishes link diagnostics only, never vehicle samples.
 - **Core1:** acquisition and per-measurement history before publication; optional
   UART parsing, bounded request scheduler, transport recovery and diagnostics.
   Static UART buffers, handles and IRQ remain on this core.
@@ -434,7 +369,7 @@ and [frame timing capture](docs/performance/telemetry-windows.md).
   Retained rendering and bounded damage regions preserve exact panel contents;
   `full-frame` and `serial-display` retain diagnostic fallbacks.
 - **Persistence:** bounded two-sector settings journal, debounced writes and a
-  coordinated display/I2C/UART pause. Reviewed flash-critical code executes in
+  coordinated display/I2C/acquisition/radio pause (UART for the legacy backend). Reviewed flash-critical code executes in
   SRAM. Physical erase, power-cut and watchdog recovery tests remain pending.
 - **Logs:** nonblocking ordinary RTT writes and bounded on-screen history with a
   protected latest fault. Cross-core locks cover bounded copies and updates.
@@ -622,11 +557,11 @@ configurator/       Rust/Wasm view editor, shared pixel preview and local saving
 studio-helper/      Native prerequisites, builds, device inspection and flashing
 configs/            Reviewed default JSON and compact runtime configuration
 firmware/pico2/src/  Hardware application, tasks, profiling and drivers
-firmware/vendor/    Reviewed Embassy RP source and provenance manifest
+firmware/vendor/    Reviewed HAL/BLE/radio source, radio binaries and provenance
 firmware/scripts/   Build, ownership, logging, vendor and ELF gates
 host/               Same pure Rust modules, replay/pixel tests and Criterion
 host/baselines/     Historical raw samples, source archives and metadata
-hardware/           Proposed wiring and physical inspection requirements
+hardware/           Selected USB/BLE hardware and historical wired alternatives
 docs/               Architecture, source checks and validation records
 ```
 

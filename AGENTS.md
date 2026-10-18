@@ -52,9 +52,11 @@ contracts and dated evidence belong in the linked documentation.
 The only supported board is **Raspberry Pi Pico 2 W / RP2350 Cortex-M33**, with the
 Pimoroni PIM715 display and Adafruit 5880 encoder. Vehicle research targets the
 2019 Seat Leon Cupra DNUC. Exact ECU support remains a separate qualification task.
-The owner confirmed the W board by photograph. Its radio is not initialized by
-the current firmware; wireless OBD remains a proposed transport. Keep the existing
-`pico2` package, path and command identifiers compatible. Use the W schematic and
+The owner confirmed the W board by photograph. The selected direction is a
+USB-powered dashboard with the retained encoder and the optional `ble-obd`
+prototype. MC+/CX profiles initialize and identify the adapter only; ECU requests
+remain disabled. The separate synthetic test service never supplies vehicle data.
+Keep the existing `pico2` package, path and command identifiers compatible. Use the W schematic and
 [board audit](docs/hardware/pico2w-board-audit.md), not non-W internal-pin mappings.
 
 | Location | Responsibility |
@@ -66,7 +68,7 @@ the current firmware; wireless OBD remains a proposed transport. Keep the existi
 | `crates/dashboard-build-profiles/` | Common clock/profile definitions and validation |
 | `crates/dashboard-helper-protocol/` | Typed Studio/helper messages |
 | `firmware/pico2/src/` | Hardware adapters, tasks, ownership and runtime integration |
-| `firmware/vendor/` | Reviewed HAL source and provenance |
+| `firmware/vendor/` | Reviewed HAL/radio/BLE source, radio binaries and provenance |
 | `configurator/` | Leptos Rust/Wasm editor, browser storage and shared preview |
 | `studio-helper/` | Windows prerequisites, local builds, devices and explicit flashing |
 | `host/` | Shared-code tests, replay/pixel checks and Criterion workloads |
@@ -131,16 +133,16 @@ use `cargo build` for compilation without device operations.
 
 ## Hardware, concurrency and memory
 
-- The selected vehicle connection is isolated Longan with the retained Pololu.
-  Prefer ready-made modules and modest soldering; no custom PCB by default.
-  The covered switch cuts the vehicle-side 5 V branch to Longan and isolated
-  power. Unplug OBD for long parking or physical CAN disconnection. Allow restart
-  on supply dips, retain smoothing capacitors, and do not add crank backup or a
-  CAN-disconnect chain without a new requirement. Use the approved compact
-  layout, approximately ≤1 m OBD and ≤20 cm encoder leads, with short local
-  power/UART runs. Prefer identifiable capacitor parts with source-checked
-  impedance/ripple ratings; preserve intentional damping. See the
-  [module build](hardware/module-build.md) for open component/measurement gates.
+- The selected arrangement is USB-powered Pico 2 W/PIM715, the retained Adafruit
+  5880 encoder and a BLE OBD prototype. Prefer existing connectors and a short
+  encoder cable (approximately ≤20 cm); a solder-free assembly depends on fitted
+  headers/connectors. No Longan, Pololu, covered switch or custom protection
+  circuit is required for this route. Preserve their evidence as a historical
+  alternative, not an active shopping or assembly list. USB power off does not
+  turn off an OBD dongle; unplug OBD for long parking or physical disconnection.
+  No purchase, flash or vehicle traffic follows from software validation alone.
+  See [selected hardware](hardware/README.md) and
+  [BLE runtime](docs/vehicle/ble-runtime.md).
 
 - Before hardware-control changes, cross-check **manufacturer specifications,
   board/controller references, and the actual locked dependency source**. Use
@@ -149,7 +151,7 @@ use `cargo build` for compilation without device operations.
   and distinguish documented guarantees, assumptions and physical observations.
 - Reserve GP23/24/25/29 for the W wireless interface and shared VSYS sensing.
   Onboard LED, SMPS mode and VBUS sense are WL_GPIO0/1/2, respectively. The PIM715
-  RGB LED remains GP26/27/28. Future radio/ADC work must serialize shared pin access
+  RGB LED remains GP26/27/28. Radio/ADC work must serialize shared pin access
   and audit PIO/DMA/IRQ, flash-maintenance, memory and power ownership together.
 - Trace both cores, IRQ ownership, locks, DMA, cancellation, timeouts, recovery
   and flash/XIP maintenance end-to-end. Preserve bounded lock duration, producer

@@ -1,4 +1,9 @@
-# Leon Cupra DNUC: hardware protection audit and proposed build plan
+# Leon Cupra DNUC: historical wired protection audit
+
+**Historical alternative, superseded 2026-10-18.** The current selected route is
+[USB power, the retained encoder and BLE](README.md). The following dated audit
+preserves the earlier Longan/Pololu/covered-switch proposal and its unresolved
+electrical checks. Its references to selected parts describe that earlier scope.
 
 Baseline reviewed 2026-10-17 against manufacturer documentation, all four published
 Longan schematics, the Pico/PIM715 drawings and the resolved firmware source.
@@ -8,7 +13,7 @@ Owner photographs identify the Longan revision and the Pololu/switch models;
 no electrical or vehicle measurements have been performed. The owner requires
 reuse of these parts and selected isolated dashboard power plus UART.
 
-[Architecture diagrams](../README.md#hardware-protection-and-wiring-for-the-dnuc-cupra)
+[Current hardware direction](README.md)
 | [Pin and connection reference](wiring-diagram.txt)
 | [W board/code audit](../docs/hardware/pico2w-board-audit.md)
 | [Wired versus Bluetooth](transport-options.md)

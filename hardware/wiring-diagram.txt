@@ -1,4 +1,7 @@
-PICO 2 W / LEON CUPRA DNUC: PROPOSED ISOLATED NET AND PIN REFERENCE
+PICO 2 W / LEON CUPRA DNUC: HISTORICAL ISOLATED NET AND PIN REFERENCE
+Superseded 2026-10-18 by USB-powered Pico/display/encoder plus BLE prototype.
+See hardware/README.md (README.md beside this file) for the selected arrangement.
+Longan/Pololu/covered-switch wiring below is a historical alternative only.
 Baseline reviewed: 2026-10-17; Longan identification updated: 2026-10-18.
 Architecture only, not assembly-ready wiring.
 Detailed protection values and electrical/vehicle acceptance remain open.

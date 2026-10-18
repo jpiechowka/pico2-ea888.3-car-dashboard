@@ -1,4 +1,9 @@
-# Capacitors for the compact isolated build
+# Capacitors for the historical isolated build
+
+This shortlist belongs to the earlier Longan/Pololu wiring proposal. The
+[selected USB/BLE arrangement](README.md) does not require assembling that circuit
+or buying these capacitors. Ratings and unresolved checks below are retained as
+dated research for the wired alternative.
 
 Checked 2026-10-17. Use **Panasonic FR** electrolytics with identifiable part
 numbers. The preferred 5 V bulk candidate is **220 µF / 50 V EEUFR1H221**:
