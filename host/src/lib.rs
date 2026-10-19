@@ -24,6 +24,7 @@
 //! ```
 
 pub use dashboard_core::*;
+pub mod probe_captures;
 pub use display::framebuffer as renderer;
 pub use renderer::FRAME_BYTES;
 

@@ -214,6 +214,10 @@ fn successful_and_protected_values_complete_but_failures_preserve_partial_rows()
         probe.event(Event::Item {
             revision,
             item: InspectionItem::Value(InfoValue {
+                service_start: 1,
+                handle: 3,
+                failure: Some(FailureReason::Att(5)),
+                elapsed_ms: 1,
                 uuid: 0x2A29,
                 value: Payload::empty(),
                 result: ReadResult::Protected,
@@ -223,6 +227,17 @@ fn successful_and_protected_values_complete_but_failures_preserve_partial_rows()
             probe.event(Event::Failure {
                 revision,
                 failure: InspectionFailure::new(FailureStage::DeviceInfo, FailureReason::Timeout),
+            });
+        }
+        for stage in [
+            InventoryStage::Services,
+            InventoryStage::Characteristics,
+            InventoryStage::Descriptors,
+            InventoryStage::Reads,
+        ] {
+            probe.event(Event::Item {
+                revision,
+                item: InspectionItem::StageComplete(stage),
             });
         }
         probe.event(Event::Complete {

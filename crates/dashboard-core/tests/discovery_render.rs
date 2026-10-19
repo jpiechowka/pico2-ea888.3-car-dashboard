@@ -85,6 +85,10 @@ fn detail_pages_cover_large_inspection_and_clamp() {
         p.inspection
             .values
             .push(InfoValue {
+                service_start: 1,
+                handle: 3,
+                failure: None,
+                elapsed_ms: 1,
                 uuid: 0x2A29,
                 value: Payload::new(&[0xFF; 64]),
                 result: ReadResult::Ok,
@@ -222,5 +226,127 @@ fn failure_and_scan_pages_preserve_telemetry_and_footer_pixels() {
                 .all(|((x, y), _)| (10..310).contains(x) && (61..198).contains(y)),
             "failure content escaped status/body or changed header/footer on page {page}"
         );
+    }
+}
+
+#[test]
+fn saved_pages_and_slot_prompts_fit_and_preserve_the_same_diagnostics_band() {
+    use capture_ui::{
+        Action as CaptureAction,
+        CaptureUi,
+        Completion,
+        Context,
+        Input as CaptureInput,
+        SaveAvailability,
+        Slot,
+    };
+    let mut probe = populated();
+    probe.input(Input::Click, 0).unwrap();
+    probe
+        .inspection
+        .services
+        .push(Service {
+            start: 1,
+            end: 9,
+            uuid: Uuid::from_wire(&[0, 0x18]).unwrap(),
+        })
+        .unwrap();
+    probe
+        .inspection
+        .characteristics
+        .push(Characteristic {
+            service_start: 1,
+            declaration: 2,
+            handle: 3,
+            properties: 2,
+            uuid: Uuid::from_wire(&[1, 0x2A]).unwrap(),
+        })
+        .unwrap();
+    probe
+        .inspection
+        .descriptors
+        .push(Descriptor {
+            service_start: 1,
+            characteristic_handle: 3,
+            handle: 4,
+            uuid: Uuid::from_wire(&[1, 0x29]).unwrap(),
+        })
+        .unwrap();
+    probe
+        .inspection
+        .values
+        .push(InfoValue {
+            service_start: 1,
+            handle: 3,
+            uuid: 0x2A01,
+            value: Payload::new(&[0xFF]),
+            result: ReadResult::Ok,
+            failure: None,
+            elapsed_ms: u32::MAX,
+        })
+        .unwrap();
+    let mut bytes = [0; 8192];
+    let n = capture::encode(
+        &probe,
+        capture::BuildIdentity {
+            source_digest: [0xAA; 32],
+            cpu_hz: 280_000_000,
+            spi_hz: 70_000_000,
+            profile: capture::BuildProfile::Expert280,
+            source_identity_available: true,
+        },
+        1,
+        &mut bytes,
+    )
+    .unwrap();
+    let mut decoder = capture::Decoder::new();
+    let view = decoder.decode(&bytes[..n]).unwrap();
+    let diagnostic = ProbeDiagnostics::default();
+    let mut first = ScreenTarget::default();
+    render_saved(&mut first, &view, 0, 0, diagnostic).unwrap();
+    for page in 0..saved_page_count(&view) {
+        let mut target = ScreenTarget::default();
+        render_saved(&mut target, &view, 0, page, diagnostic).unwrap();
+        for (&point, &pixel) in &first.pixels {
+            if (25..47).contains(&point.1) || point.1 >= 204 {
+                assert_eq!(target.pixels[&point], pixel);
+            }
+        }
+    }
+    let mut clamped = ScreenTarget::default();
+    let mut last = ScreenTarget::default();
+    render_saved(&mut clamped, &view, 255, usize::MAX, diagnostic).unwrap();
+    render_saved(&mut last, &view, 255, saved_page_count(&view) - 1, diagnostic).unwrap();
+    assert_eq!(clamped.pixels, last.pixels);
+    let mut ui = CaptureUi::new();
+    let context = Context {
+        save: SaveAvailability::Ready,
+        revision: 1,
+    };
+    ui.input(CaptureInput::XDown, 0, context);
+    let CaptureAction::Refresh { id } = ui.tick(2000).unwrap() else {
+        panic!()
+    };
+    render_slots(&mut ScreenTarget::default(), &ui, diagnostic).unwrap();
+    ui.complete(
+        id,
+        Completion::Listed([
+            Slot::SavedBlocked { generation: u64::MAX },
+            Slot::Empty,
+            Slot::Unsupported,
+            Slot::Corrupt,
+        ]),
+    );
+    ui.input(CaptureInput::XUp, 2001, context);
+    for selected in 0..4 {
+        render_slots(&mut ScreenTarget::default(), &ui, diagnostic).unwrap();
+        ui.input(CaptureInput::XDown, 2100 + selected * 10, context);
+        ui.input(CaptureInput::XUp, 2101 + selected * 10, context);
+        render_slots(&mut ScreenTarget::default(), &ui, diagnostic).unwrap();
+        if let Some(id) = ui.pending() {
+            ui.complete(id, Completion::Failed(capture_ui::UiError::Storage));
+        }
+        ui.input(CaptureInput::Back, 2102 + selected * 10, context);
+        ui.input(CaptureInput::Turn(1), 2103 + selected * 10, context);
     }
 }

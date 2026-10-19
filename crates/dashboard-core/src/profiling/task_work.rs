@@ -51,7 +51,7 @@ impl WorkWindow {
         now_us: u64,
     ) -> Option<u16> {
         let (at, value) = self.latest?;
-        (now_us.checked_sub(at)? <= 2_000_000).then_some(value)
+        crate::diagnostic_values::fresh(at, now_us).then_some(value)
     }
 }
 

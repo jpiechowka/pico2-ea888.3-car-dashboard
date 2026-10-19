@@ -1,30 +1,28 @@
 //! Core0 retains CYW bus ownership even if the host or an inspection fails.
+use core::cell::Cell;
 use core::future::Future;
 use core::ops::ControlFlow;
-use core::sync::atomic::Ordering;
+use core::pin::{Pin, pin};
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::{Context, Poll};
 
 use bt_hci::cmd::info::ReadBdAddr;
 use bt_hci::param::FilterDuplicates;
 use dashboard_core::discovery::{
     Action,
-    Characteristic,
     ConnectionFailureContext,
     Event,
     FailureReason,
     FailureStage,
-    InfoValue,
     InspectionFailure,
     InspectionItem,
-    Payload,
+    LinkInfo,
     Peer,
     ProbeError,
     RadioPhase,
-    ReadResult,
     Request,
     Service,
     Uuid as ProbeUuid,
-    characteristic_from_wire,
-    may_read,
 };
 use embassy_futures::join::join;
 use embassy_futures::select::{Either, select};
@@ -37,11 +35,13 @@ use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
 use crate::bridge;
-use crate::errors::{device_info_att_result, failure_reason};
+use crate::errors::failure_reason;
 type RadioController = ExternalController<cyw43::bluetooth::BtDriver<'static>, 5>;
 type Pool = DefaultPacketPool;
 type RadioStack<'a> = Stack<'a, RadioController, Pool>;
 type Client<'a> = GattClient<'a, RadioController, Pool, 24>;
+static BUS_IDLE: AtomicBool = AtomicBool::new(false);
+pub fn bus_idle() -> bool { BUS_IDLE.load(Ordering::SeqCst) }
 pub struct Resources {
     pub pio: Peri<'static, PIO0>,
     pub dma: Peri<'static, DMA_CH1>,
@@ -49,6 +49,15 @@ pub struct Resources {
     pub data: Peri<'static, PIN_24>,
     pub cs: Peri<'static, PIN_25>,
     pub clock: Peri<'static, PIN_29>,
+}
+// Keep the radio poll path separate from executor/metrics frames. Borrowing the
+// pinned owner avoids constructing or moving its large future at this boundary.
+#[inline(never)]
+pub fn poll_owner<F: Future>(
+    future: Pin<&mut F>,
+    cx: &mut Context<'_>,
+) -> Poll<F::Output> {
+    future.poll(cx)
 }
 use crate::reports::Reports;
 async fn state(
@@ -123,13 +132,15 @@ pub async fn run(resources: Resources) -> ! {
         cyw43::aligned_bytes!("../../vendor/cyw43-firmware/nvram_rp2040.bin"),
     )
     .await;
-    join(
-        runner.run_with_boundary(async || {
-            bridge::RADIO_PROGRESS.fetch_add(1, Ordering::Relaxed);
-        }),
-        host(driver),
-    )
-    .await;
+    let mut maintenance_request = None;
+    let bus = pin!(runner.run_with_boundary(async || {
+        bridge::RADIO_PROGRESS.fetch_add(1, Ordering::Relaxed);
+        BUS_IDLE.store(true, Ordering::SeqCst);
+        crate::maintenance::radio_boundary(&mut maintenance_request).await;
+        BUS_IDLE.store(false, Ordering::SeqCst);
+    }));
+    let protocol = pin!(host(driver));
+    join(bus, protocol).await;
     unreachable!()
 }
 async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
@@ -141,9 +152,27 @@ async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
     .build();
     let reports = Reports::new();
     let mut runner = stack.runner();
-    match select(runner.run_with_handler(&reports), operations(&stack, &reports)).await {
-        Either::First(_) => {
-            defmt::warn!("Probe HCI runner stopped");
+    let active_inspection = Cell::new(None);
+    let outcome = {
+        let hci = pin!(runner.run_with_handler(&reports));
+        let work = pin!(operations(&stack, &reports, &active_inspection));
+        select(hci, work).await
+    };
+    match outcome {
+        Either::First(result) => {
+            defmt::warn!("Probe HCI runner stopped: {:?}", defmt::Debug2Format(&result));
+            if let Some(revision) = active_inspection.get() {
+                let reason = result.err().map(failure_reason).unwrap_or(FailureReason::Disconnected);
+                failed(revision, InspectionFailure::new(FailureStage::ClientTask, reason)).await;
+                // A stopped host cannot acknowledge controller cleanup.
+                bridge::emit_event(Event::InspectionEnd {
+                    revision,
+                    at_ms: Instant::now().as_millis(),
+                    cleanup_complete: false,
+                    disconnect_reason: None,
+                })
+                .await;
+            }
             fault(ProbeError::Transport).await
         }
         Either::Second(never) => never,
@@ -152,22 +181,39 @@ async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
 async fn cleanup(
     stack: &RadioStack<'_>,
     revision: u32,
+    connection: Option<&Connection<'_, Pool>>,
+    active_inspection: &Cell<Option<u32>>,
 ) {
     state(revision, RadioPhase::Disconnecting, ProbeError::None).await;
-    if with_timeout(Duration::from_secs(5), async {
-        while !stack.connections_idle() {
-            Timer::after_millis(10).await;
-        }
-    })
-    .await
-    .is_err()
-    {
+    let complete = crate::session::finish_cleanup(
+        revision,
+        async {
+            with_timeout(Duration::from_secs(5), async {
+                while !stack.connections_idle() {
+                    Timer::after_millis(10).await;
+                }
+            })
+            .await
+            .is_ok()
+        },
+        || Instant::now().as_millis(),
+        || {
+            connection
+                .and_then(|connection| connection.disconnect_reason())
+                .map(|reason| reason.into_inner())
+        },
+        bridge::emit_event,
+    )
+    .await;
+    active_inspection.set(None);
+    if !complete {
         fault(ProbeError::Cleanup).await;
     }
 }
 async fn operations(
     stack: &RadioStack<'_>,
     reports: &Reports,
+    active_inspection: &Cell<Option<u32>>,
 ) -> ! {
     // command() waits for initialized state and proves HCI response flow.
     match with_timeout(Duration::from_secs(10), stack.command(ReadBdAddr::new())).await {
@@ -209,7 +255,8 @@ async fn operations(
                 }
             }
             Action::Inspect(peer) => {
-                inspect_peer(stack, &mut central, request, peer).await;
+                active_inspection.set(Some(request.revision));
+                inspect_peer(stack, &mut central, request, peer, active_inspection).await;
                 // Successful, canceled and failed inspections never auto-retry.
                 changed(request.revision).await;
             }
@@ -249,6 +296,7 @@ async fn inspect_peer(
     central: &mut Central<'_, RadioController, Pool>,
     request: Request,
     peer: Peer,
+    active_inspection: &Cell<Option<u32>>,
 ) {
     let mut address = peer.address;
     address.reverse();
@@ -278,22 +326,22 @@ async fn inspect_peer(
     };
     state(request.revision, RadioPhase::Connecting, ProbeError::None).await;
     let connect_started = Instant::now();
-    let connection = match select(
-        changed(request.revision),
-        with_timeout(Duration::from_secs(8), central.connect(&config)),
-    )
-    .await
-    {
+    let connected = {
+        let connect = pin!(central.connect(&config));
+        select(changed(request.revision), with_timeout(Duration::from_secs(8), connect)).await
+    };
+    // The pinned connect operation has been dropped before cleanup can wait.
+    let connection = match connected {
         Either::First(()) => {
             defmt::info!("probe.radio stage=connect-canceled revision={}", request.revision);
-            cleanup(stack, request.revision).await;
+            cleanup(stack, request.revision, None, active_inspection).await;
             return;
         }
         Either::Second(Err(_)) => {
             let mut failure = InspectionFailure::new(FailureStage::Connect, FailureReason::Timeout);
             failure.elapsed_ms = Some(elapsed_ms(connect_started));
             failed(request.revision, failure).await;
-            cleanup(stack, request.revision).await;
+            cleanup(stack, request.revision, None, active_inspection).await;
             state(request.revision, RadioPhase::Paused, ProbeError::Timeout).await;
             return;
         }
@@ -301,12 +349,15 @@ async fn inspect_peer(
             let mut failure = InspectionFailure::new(FailureStage::Connect, failure_reason(error));
             failure.elapsed_ms = Some(elapsed_ms(connect_started));
             failed(request.revision, failure).await;
-            cleanup(stack, request.revision).await;
+            cleanup(stack, request.revision, None, active_inspection).await;
             state(request.revision, RadioPhase::Paused, ProbeError::Connect).await;
             return;
         }
         Either::Second(Ok(Ok(connection))) => connection,
     };
+    // Freeze link timing before any bounded event-channel publication can wait.
+    let connected_at_ms = Instant::now().as_millis();
+    let connect_elapsed_ms = elapsed_ms(connect_started);
     if connection.peer_address() != peers[0] {
         connection.disconnect();
         failed(
@@ -314,19 +365,44 @@ async fn inspect_peer(
             InspectionFailure::new(FailureStage::Connect, FailureReason::PeerMismatch),
         )
         .await;
-        cleanup(stack, request.revision).await;
+        cleanup(stack, request.revision, Some(&connection), active_inspection).await;
         state(request.revision, RadioPhase::Paused, ProbeError::InvalidPeer).await;
         return;
     }
     state(request.revision, RadioPhase::Discovering, ProbeError::None).await;
-    let inspection_started = Instant::now();
-    let result = select(
-        changed(request.revision),
-        with_timeout(Duration::from_secs(30), inspect(stack, &connection, request.revision)),
+    link_info(
+        &connection,
+        request.revision,
+        connected_at_ms,
+        connect_elapsed_ms,
+        false,
     )
     .await;
+    let inspection_started = Instant::now();
+    let mtu_ready = Cell::new(false);
+    let result = {
+        let work = pin!(inspect(
+            stack,
+            &connection,
+            request.revision,
+            connected_at_ms,
+            connect_elapsed_ms,
+            &mtu_ready,
+        ));
+        select(changed(request.revision), with_timeout(Duration::from_secs(30), work)).await
+    };
     // Client/request futures are gone. Late ATT responses cannot become a new request.
     connection.disconnect();
+    // Final observed parameters, including updates delivered during inventory.
+    // This is a local snapshot, not another controller or ATT request.
+    link_info(
+        &connection,
+        request.revision,
+        connected_at_ms,
+        connect_elapsed_ms,
+        mtu_ready.get(),
+    )
+    .await;
     match &result {
         Either::Second(Err(_)) => {
             let mut failure = InspectionFailure::new(FailureStage::Inspection, FailureReason::Timeout);
@@ -341,7 +417,8 @@ async fn inspect_peer(
         // Retain local ingress evidence even if terminal cleanup later stalls.
         failure_context(&connection, request.revision).await;
     }
-    cleanup(stack, request.revision).await;
+    cleanup(stack, request.revision, Some(&connection), active_inspection).await;
+
     if has_failure {
         // HCI terminal reason may arrive after the operation's first failure.
         failure_context(&connection, request.revision).await;
@@ -411,12 +488,22 @@ async fn inspect(
     stack: &RadioStack<'_>,
     connection: &Connection<'_, Pool>,
     revision: u32,
+    connected_at_ms: u64,
+    connect_elapsed_ms: u32,
+    mtu_ready: &Cell<bool>,
 ) -> Result<bool, InspectionFailure> {
     crate::session::inspect_with_events(
-        att(FailureStage::Mtu, Client::new(stack, connection)),
+        pin!(att(FailureStage::Mtu, pin!(Client::new(stack, connection)))),
         |client| {
             async move {
-                match select(inventory(&client, revision), client.task()).await {
+                mtu_ready.set(true);
+                link_info(connection, revision, connected_at_ms, connect_elapsed_ms, true).await;
+                let outcome = {
+                    let work = pin!(crate::inventory::inventory(&client, revision, &bridge::emit_event));
+                    let task = pin!(client.task());
+                    select(work, task).await
+                };
+                match outcome {
                     Either::First(result) => result,
                     Either::Second(result) => {
                         Err(InspectionFailure::new(
@@ -427,9 +514,30 @@ async fn inspect(
                 }
             }
         },
-        connection_events(stack, connection),
+        pin!(connection_events(stack, connection)),
     )
     .await
+}
+async fn link_info(
+    connection: &Connection<'_, Pool>,
+    revision: u32,
+    connected_at_ms: u64,
+    connect_elapsed_ms: u32,
+    mtu_ready: bool,
+) {
+    let params = connection.params();
+    bridge::emit_event(Event::Item {
+        revision,
+        item: InspectionItem::Link(LinkInfo {
+            connected_at_ms,
+            connect_elapsed_ms,
+            interval_us: params.conn_interval.as_micros().min(u64::from(u32::MAX)) as u32,
+            latency: params.peripheral_latency,
+            supervision_timeout_us: params.supervision_timeout.as_micros().min(u64::from(u32::MAX)) as u32,
+            att_mtu: mtu_ready.then(|| connection.att_mtu()),
+        }),
+    })
+    .await;
 }
 async fn connection_events(
     stack: &RadioStack<'_>,
@@ -452,134 +560,62 @@ async fn connection_events(
         }
     }
 }
-async fn inventory(
-    client: &Client<'_>,
-    revision: u32,
-) -> Result<bool, InspectionFailure> {
-    let services = att(FailureStage::Services, client.services()).await?;
-    for service in &services {
-        let range = service.handle_range();
-        let uuid = ProbeUuid::from_wire(service.uuid().as_raw())
-            .ok_or_else(|| InspectionFailure::new(FailureStage::Services, FailureReason::InvalidValue))?;
-        bridge::emit_event(Event::Item {
-            revision,
-            item: InspectionItem::Service(Service {
-                start: *range.start(),
-                end: *range.end(),
-                uuid,
-            }),
+
+impl crate::inventory::ServiceRecord for ServiceHandle {
+    fn snapshot(&self) -> Result<Service, FailureReason> {
+        let range = self.handle_range();
+        let uuid = ProbeUuid::from_wire(self.uuid().as_raw()).ok_or(FailureReason::InvalidValue)?;
+        Ok(Service {
+            start: *range.start(),
+            end: *range.end(),
+            uuid,
         })
-        .await;
     }
-    let mut total = 0usize;
-    let mut limited = false;
-    let mut readable: Vec<(u16, u16), 8> = Vec::new();
-    for service in &services {
-        if total == 64 {
-            limited = true;
-            break;
-        }
-        let range = service.handle_range();
-        let start = *range.start();
-        let end = *range.end();
-        let service_uuid = ProbeUuid::from_wire(service.uuid().as_raw())
-            .ok_or_else(|| InspectionFailure::new(FailureStage::Characteristics, FailureReason::InvalidValue))?;
-        let mut rows: Vec<Characteristic, 64> = Vec::new();
-        let mut malformed = None;
-        let mut previous_value = start;
-        let mut last_accepted = None;
-        let started = Instant::now();
-        let result = att(
-            FailureStage::Characteristics,
-            client.read_by_type(start, end, &Uuid::new_short(0x2803), |declaration, bytes| {
-                let row = match characteristic_from_wire(start, end, previous_value, declaration, bytes) {
-                    Ok(row) => row,
-                    Err(reason) => {
-                        malformed = Some(reason);
-                        return ControlFlow::Break(());
-                    }
-                };
-                if total == 64 {
-                    limited = true;
-                    return ControlFlow::Break(());
-                }
-                if rows.push(row).is_err() {
-                    limited = true;
-                    return ControlFlow::Break(());
-                }
-                previous_value = row.handle;
-                last_accepted = Some((declaration, row.handle));
-                total += 1;
-                ControlFlow::Continue(())
-            }),
-        )
-        .await;
-        let query_elapsed_ms = elapsed_ms(started);
-        // Keep valid rows preceding a malformed response or the capacity boundary.
-        for row in rows {
-            if may_read(service_uuid, row.uuid, row.properties)
-                && let Some(uuid) = row.uuid.short()
-                && !readable.iter().any(|(seen, _)| *seen == uuid)
-                && readable.push((uuid, row.handle)).is_err()
-            {
-                limited = true;
+}
+impl crate::inventory::InventoryClient for Client<'_> {
+    type Service = ServiceHandle;
+
+    async fn services(
+        &self,
+        output: &mut Vec<ServiceHandle, 24>,
+    ) -> Result<(), FailureReason> {
+        match Client::services(self).await {
+            Ok(services) => {
+                *output = services;
+                Ok(())
             }
-            bridge::emit_event(Event::Item {
-                revision,
-                item: InspectionItem::Characteristic(row),
-            })
-            .await;
-        }
-        // Attach application query context without guessing the hidden ATT page cursor.
-        result.map_err(|mut failure| {
-            failure.range = Some((start, end));
-            failure.last_accepted = last_accepted;
-            failure
-        })?;
-        if let Some(reason) = malformed {
-            let mut failure = InspectionFailure::new(FailureStage::Characteristics, reason);
-            failure.range = Some((start, end));
-            failure.last_accepted = last_accepted;
-            failure.elapsed_ms = Some(query_elapsed_ms);
-            return Err(failure);
+            Err(error) => Err(failure_reason(error)),
         }
     }
-    defmt::info!(
-        "probe.radio inventory revision={} services={} characteristics={} info_fields={} limited={}",
-        revision,
-        services.len(),
-        total,
-        readable.len(),
-        limited
-    );
-    for (uuid, handle) in readable {
-        let mut bytes = [0u8; 64];
-        let started = Instant::now();
-        let failure = |reason| {
-            let mut failure = InspectionFailure::new(FailureStage::DeviceInfo, reason);
-            failure.range = Some((handle, handle));
-            failure.elapsed_ms = Some(elapsed_ms(started));
-            failure
-        };
-        let (result, value) = match with_timeout(Duration::from_secs(3), client.read_handle(handle, &mut bytes)).await {
-            Err(_) => {
-                return Err(failure(FailureReason::Timeout));
-            }
-            Ok(Ok(length)) => {
-                let mut value = Payload::new(&bytes[..length]);
-                value.truncated = length == bytes.len();
-                (ReadResult::Ok, value)
-            }
-            Ok(Err(BleHostError::BleHost(Error::Att(code)))) => (device_info_att_result(code), Payload::empty()),
-            Ok(Err(error)) => {
-                return Err(failure(failure_reason(error)));
-            }
-        };
-        bridge::emit_event(Event::Item {
-            revision,
-            item: InspectionItem::Value(InfoValue { uuid, value, result }),
-        })
-        .await;
+
+    async fn read_by_type(
+        &self,
+        start: u16,
+        end: u16,
+        uuid: &Uuid,
+        callback: impl FnMut(u16, &[u8]) -> ControlFlow<()>,
+    ) -> Result<Option<()>, FailureReason> {
+        Client::read_by_type(self, start, end, uuid, callback)
+            .await
+            .map_err(failure_reason)
     }
-    Ok(limited)
+
+    async fn find_information(
+        &self,
+        start: u16,
+        end: u16,
+        callback: impl FnMut(u16, Uuid) -> ControlFlow<()>,
+    ) -> Result<Option<()>, FailureReason> {
+        Client::find_information(self, start, end, callback)
+            .await
+            .map_err(failure_reason)
+    }
+
+    async fn read_handle(
+        &self,
+        handle: u16,
+        bytes: &mut [u8],
+    ) -> Result<usize, FailureReason> {
+        Client::read_handle(self, handle, bytes).await.map_err(failure_reason)
+    }
 }

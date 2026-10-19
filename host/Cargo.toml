@@ -18,6 +18,9 @@ heapless = "=0.9.3"
 micromath = "=2.1.0"
 profont = "=0.7.0"
 embassy-sync = "=0.8.0"
+serialport = { version = "=4.10.1", default-features = false }
+serde_json = "=1.0.154"
+critical-section = { version = "=1.2.0", features = ["std"] }
 
 [dev-dependencies]
 embassy-futures = "=0.1.2"
@@ -27,7 +30,6 @@ trouble-host = { version = "=0.8.0", path = "../firmware/vendor/trouble-host", d
 embassy-time = { version = "=0.5.1", features = ["std", "generic-queue-8"] }
 embassy-hal-internal = "=0.5.0"
 criterion = "=0.8.2"
-critical-section = { version = "=1.2.0", features = ["std"] }
 
 [[bench]]
 name = "dashboard_perf"

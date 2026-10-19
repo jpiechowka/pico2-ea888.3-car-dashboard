@@ -378,7 +378,7 @@ fn max_numeric_text_keeps_color_units_and_configured_requested_order() {
     for (line, x, y, text, color) in [
         // Waiting for an in-flight transfer is ordinary pipeline backpressure.
         (DebugLine::Waits, 4, 156, "Waits: 4294967295", WHITE),
-        (DebugLine::Core0Utilization, 164, 26, "UI work: 429496729.5%", YELLOW),
+        (DebugLine::Core0Utilization, 164, 26, "UI work: --", WHITE),
         (DebugLine::VregSetting, 164, 146, "Vset:4294967295/4294967295mV", WHITE),
     ] {
         let mut actual = AlignedFrame::boxed();
@@ -386,6 +386,47 @@ fn max_numeric_text_keeps_color_units_and_configured_requested_order() {
         DebugPage::new(&data, &map).draw_line(&mut St7789Renderer::new(&mut actual.0), line);
         literal(&mut expected, x, y, 156, text, color);
         assert!(actual.0 == expected.0);
+    }
+}
+
+#[test]
+fn negative_fps_is_unavailable_instead_of_a_negative_transfer_rate() {
+    let map = ControlMap::default();
+    let data = DebugData {
+        current_fps: Some(-1.0),
+        ..Default::default()
+    };
+    let mut actual = AlignedFrame::boxed();
+    let mut expected = AlignedFrame::boxed();
+    DebugPage::new(&data, &map).draw_line(&mut St7789Renderer::new(&mut actual.0), DebugLine::DoneFps);
+    literal(&mut expected, 4, 26, 156, "Done FPS: --", YELLOW);
+    assert!(actual.0 == expected.0);
+}
+
+#[test]
+fn impossible_memory_and_buffer_observations_remain_unavailable() {
+    let map = ControlMap::default();
+    let data = DebugData {
+        core0_stack_used_kb: Some(33),
+        core0_stack_total_kb: Some(32),
+        core1_stack_used_kb: None,
+        core1_stack_total_kb: Some(32),
+        static_ram_kb: Some(513),
+        ram_total_kb: Some(512),
+        render_buffer_idx: Some(2),
+        ..Default::default()
+    };
+    for (line, x, y, text) in [
+        (DebugLine::Core0Stack, 164, 54, "SP now: --K/32K"),
+        (DebugLine::Core1Stack, 164, 100, "SP seen: --K/32K"),
+        (DebugLine::Ram, 164, 174, "Static: --K/512K"),
+        (DebugLine::RenderBuffer, 4, 170, "Render: --"),
+    ] {
+        let mut actual = AlignedFrame::boxed();
+        let mut expected = AlignedFrame::boxed();
+        DebugPage::new(&data, &map).draw_line(&mut St7789Renderer::new(&mut actual.0), line);
+        literal(&mut expected, x, y, 156, text, WHITE);
+        assert!(actual.0 == expected.0, "{text}");
     }
 }
 

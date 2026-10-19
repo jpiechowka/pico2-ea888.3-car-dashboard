@@ -624,6 +624,10 @@ impl BtDriver<'_> {
 }
 
 #[cfg(test)]
+#[path = "bluetooth_ring_tests.rs"]
+mod ring_tests;
+
+#[cfg(test)]
 mod tests {
     use embassy_futures::block_on;
 

@@ -1,5 +1,9 @@
 //! Bounded, hardware-independent BLE discovery and photographic inspection.
 mod advertisement;
+pub mod capture;
+pub mod capture_store;
+pub mod capture_ui;
+pub mod capture_wire;
 mod catalog;
 mod failure;
 mod inspection;
@@ -14,4 +18,4 @@ pub use model::*;
 pub use scan_diagnostics::*;
 pub use telemetry::*;
 mod render;
-pub use render::{page_count, render};
+pub use render::{page_count, render, render_saved, render_slots, saved_page_count};

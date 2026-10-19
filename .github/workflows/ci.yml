@@ -432,7 +432,8 @@ jobs:
       - name: Strict utility Clippy
         run: cargo clippy --locked -p dashboard-ble-probe --bin ble-probe --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -D warnings
       - name: Build optimized utility with Cortex-M33 flags from Cargo config
-        run: cargo build --locked -p dashboard-ble-probe --bin ble-probe --release --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}"
+        # Match build_ble_probe.py; extra rustc options apply only to this binary.
+        run: cargo rustc --locked -p dashboard-ble-probe --bin ble-probe --release --target thumbv8m.main-none-eabihf --features "${{ matrix.features }}" -- -C llvm-args=--inline-threshold=100000
       - name: Check linked layout and conservative stack paths
         # This is explicitly the ELF-only CI stage. CLI captures additionally
         # bind sources/options and check pinned-converter UF2 equality.

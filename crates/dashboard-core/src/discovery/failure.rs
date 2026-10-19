@@ -14,6 +14,7 @@ pub enum FailureStage {
     Mtu,
     Services,
     Characteristics,
+    Descriptors,
     DeviceInfo,
     ConnectionEvents,
     ClientTask,
@@ -26,7 +27,8 @@ impl FailureStage {
             Self::Mtu => "MTU exchange",
             Self::Services => "primary services",
             Self::Characteristics => "characteristics",
-            Self::DeviceInfo => "Device Information",
+            Self::Descriptors => "descriptors",
+            Self::DeviceInfo => "standard information reads",
             Self::ConnectionEvents => "connection events",
             Self::ClientTask => "GATT receive task",
             Self::Inspection => "whole inspection",
@@ -37,6 +39,7 @@ impl FailureStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureReason {
     Controller,
+    Hardware(u8),
     Timeout,
     Disconnected,
     DisconnectCode(u8),
@@ -61,6 +64,7 @@ impl FailureReason {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Controller => "controller I/O",
+            Self::Hardware(_) => "controller hardware event",
             Self::Timeout => "deadline expired",
             Self::Disconnected => "disconnected",
             Self::DisconnectCode(_) => "disconnect HCI",
@@ -85,14 +89,14 @@ impl FailureReason {
 
     pub const fn code(self) -> Option<u8> {
         match self {
-            Self::Att(code) | Self::Hci(code) | Self::DisconnectCode(code) => Some(code),
+            Self::Att(code) | Self::Hci(code) | Self::DisconnectCode(code) | Self::Hardware(code) => Some(code),
             _ => None,
         }
     }
 
     pub const fn error(self) -> ProbeError {
         match self {
-            Self::Controller => ProbeError::Transport,
+            Self::Controller | Self::Hardware(_) => ProbeError::Transport,
             Self::Timeout => ProbeError::Timeout,
             Self::Disconnected | Self::DisconnectCode(_) => ProbeError::Disconnected,
             Self::Capacity => ProbeError::Capacity,

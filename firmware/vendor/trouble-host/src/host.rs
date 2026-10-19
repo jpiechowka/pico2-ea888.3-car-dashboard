@@ -7,6 +7,9 @@ mod mtu_tests;
 #[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_regression_tests.rs"]
 mod regression_tests;
+#[cfg(all(test, feature = "central", feature = "gatt", feature = "default-packet-pool"))]
+#[path = "host_wire_tests.rs"]
+mod wire_tests;
 #[cfg(feature = "security")]
 use core::cell::Cell;
 use core::cell::RefCell;
@@ -51,7 +54,7 @@ use bt_hci::event::le::{
 };
 #[cfg(feature = "iso")]
 use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
-use bt_hci::event::{DisconnectionComplete, EventKind, NumberOfCompletedPackets, Vendor};
+use bt_hci::event::{DisconnectionComplete, EventKind, HardwareError, NumberOfCompletedPackets, Vendor};
 #[cfg(feature = "security")]
 use bt_hci::param::BdAddr;
 #[cfg(feature = "scan")]
@@ -713,19 +716,33 @@ where
                     m.connect_events = m.connect_events.wrapping_add(1);
                 }
             }
-            Err(bt_hci::param::Error::ADV_TIMEOUT) => {
-                self.state.advertise_state.reset();
-            }
-            Err(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER) => {
-                warn!("[host] connect cancelled");
-                self.state.connect_command_state.canceled();
-            }
             Err(e) => {
-                warn!("Error connection complete event: {:?}", e);
-                self.state.connect_command_state.canceled();
+                self.handle_connection_error(e);
             }
         }
         true
+    }
+
+    fn handle_connection_error(&self, error: bt_hci::param::Error) {
+        if error == bt_hci::param::Error::ADV_TIMEOUT {
+            self.state.advertise_state.reset();
+        } else {
+            warn!("Error connection complete event: {:?}", error);
+            self.state.connect_command_state.failed(error);
+        }
+    }
+
+    fn handle_failed_connection_complete(&self, data: &[u8], expected_len: usize) -> Result<bool, Error> {
+        if data.len() != expected_len {
+            return Err(Error::HciDecode(bt_hci::FromHciBytesError::InvalidSize));
+        }
+        // HCI 4.5/Table 4.1: all fields are sent on failure, but only Status
+        // is valid. Do not reject undefined Role/AddressType/ClockAccuracy.
+        if let Err(error) = Status::new(data[0]).to_result() {
+            self.handle_connection_error(error);
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     fn handle_disconnection_complete(&self, event: DisconnectionComplete) -> Result<(), Error> {
@@ -1443,10 +1460,21 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                 Ok(ControllerToHostPacket::Event(event)) => {
                     match event.kind {
                         EventKind::Le => {
-                            let event = unwrap!(LeEventPacket::from_hci_bytes_complete(event.data));
+                            let event = match LeEventPacket::from_hci_bytes_complete(event.data) {
+                                Ok(event) => event,
+                                // The envelope decoder only validates the subevent byte.
+                                // Unsupported subevents must be ignored (HCI 5.4.4).
+                                Err(bt_hci::FromHciBytesError::InvalidValue) => continue,
+                                Err(error) => return Err(Error::HciDecode(error).into()),
+                            };
                             match event.kind {
                                 LeEventKind::LeConnectionComplete => {
-                                    let e = unwrap!(LeConnectionComplete::from_hci_bytes_complete(event.data));
+                                    // Fixed fields after the subevent: 18 octets.
+                                    if host.handle_failed_connection_complete(event.data, 18)? {
+                                        continue;
+                                    }
+                                    let e = LeConnectionComplete::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     if !host.handle_connection(
                                         e.status,
                                         e.handle,
@@ -1469,7 +1497,12 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeEnhancedConnectionComplete => {
-                                    let e = unwrap!(LeEnhancedConnectionComplete::from_hci_bytes_complete(event.data));
+                                    // v1 adds two six-octet resolvable addresses.
+                                    if host.handle_failed_connection_complete(event.data, 30)? {
+                                        continue;
+                                    }
+                                    let e = LeEnhancedConnectionComplete::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     if !host.handle_connection(
                                         e.status,
                                         e.handle,
@@ -1495,25 +1528,29 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeScanTimeout => {
+                                    bt_hci::event::le::LeScanTimeout::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     #[cfg(feature = "scan")]
                                     host.state.scan_timeout.signal(());
                                 }
                                 LeEventKind::LeAdvertisingSetTerminated => {
-                                    let set = unwrap!(LeAdvertisingSetTerminated::from_hci_bytes_complete(event.data));
+                                    let set = LeAdvertisingSetTerminated::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     host.state.advertise_state.terminate(set.adv_handle);
                                 }
                                 LeEventKind::LeExtendedAdvertisingReport => {
                                     #[cfg(feature = "scan")]
                                     {
-                                        let data =
-                                            unwrap!(LeExtendedAdvertisingReport::from_hci_bytes_complete(event.data));
+                                        let data = LeExtendedAdvertisingReport::from_hci_bytes_complete(event.data)
+                                            .map_err(Error::from)?;
                                         event_handler.on_ext_adv_reports(data.reports.iter());
                                     }
                                 }
                                 LeEventKind::LeAdvertisingReport => {
                                     #[cfg(feature = "scan")]
                                     {
-                                        let data = unwrap!(LeAdvertisingReport::from_hci_bytes_complete(event.data));
+                                        let data = LeAdvertisingReport::from_hci_bytes_complete(event.data)
+                                            .map_err(Error::from)?;
                                         event_handler.on_adv_report_data(data.reports);
                                     }
                                 }
@@ -1521,7 +1558,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     host.state.connections.handle_security_hci_le_event(event)?;
                                 }
                                 LeEventKind::LePhyUpdateComplete => {
-                                    let event = unwrap!(LePhyUpdateComplete::from_hci_bytes_complete(event.data));
+                                    let event = LePhyUpdateComplete::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error updating phy for {:?}: {:?}", event.handle, e);
                                     } else {
@@ -1535,8 +1573,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeConnectionUpdateComplete => {
-                                    let event =
-                                        unwrap!(LeConnectionUpdateComplete::from_hci_bytes_complete(event.data));
+                                    let event = LeConnectionUpdateComplete::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     if let Err(e) = event.status.to_result() {
                                         warn!(
                                             "[host] error updating connection parameters for {:?}: {:?}",
@@ -1556,7 +1594,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeDataLengthChange => {
-                                    let event = unwrap!(LeDataLengthChange::from_hci_bytes_complete(event.data));
+                                    let event =
+                                        LeDataLengthChange::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                                     let _ = host.state.connections.post_handle_event(
                                         event.handle,
                                         ConnectionEvent::DataLengthUpdated {
@@ -1568,8 +1607,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     );
                                 }
                                 LeEventKind::LeFrameSpaceUpdateComplete => {
-                                    let event =
-                                        unwrap!(LeFrameSpaceUpdateComplete::from_hci_bytes_complete(event.data));
+                                    let event = LeFrameSpaceUpdateComplete::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error updating frame space for {:?}: {:?}", event.handle, e);
                                     } else {
@@ -1586,7 +1625,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 }
                                 #[cfg(feature = "subrating")]
                                 LeEventKind::LeSubrateChange => {
-                                    let event = unwrap!(LeSubrateChange::from_hci_bytes_complete(event.data));
+                                    let event =
+                                        LeSubrateChange::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error in subrate change for {:?}: {:?}", event.handle, e);
                                     } else {
@@ -1604,7 +1644,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeConnectionRateChange => {
-                                    let event = unwrap!(LeConnectionRateChange::from_hci_bytes_complete(event.data));
+                                    let event = LeConnectionRateChange::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     if let Err(e) = event.status.to_result() {
                                         warn!("[host] error in connection rate change for {:?}: {:?}", event.handle, e);
                                     } else {
@@ -1623,9 +1664,8 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     }
                                 }
                                 LeEventKind::LeRemoteConnectionParameterRequest => {
-                                    let event = unwrap!(LeRemoteConnectionParameterRequest::from_hci_bytes_complete(
-                                        event.data
-                                    ));
+                                    let event = LeRemoteConnectionParameterRequest::from_hci_bytes_complete(event.data)
+                                        .map_err(Error::from)?;
                                     let req = ConnectionParamsRequest::new(
                                         RequestedConnParams {
                                             min_connection_interval: Duration::from_micros(
@@ -1649,12 +1689,13 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 }
                                 #[cfg(feature = "iso")]
                                 LeEventKind::LeCisRequest => {
-                                    let e = unwrap!(LeCisRequest::from_hci_bytes_complete(event.data));
+                                    let e = LeCisRequest::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                                     event_handler.on_cis_request(&e);
                                 }
                                 #[cfg(feature = "iso")]
                                 LeEventKind::LeCisEstablished => {
-                                    let e = unwrap!(LeCisEstablished::from_hci_bytes_complete(event.data));
+                                    let e =
+                                        LeCisEstablished::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                                     event_handler.on_cis_established(&e);
                                 }
                                 _ => {
@@ -1663,11 +1704,12 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                             }
                         }
                         EventKind::DisconnectionComplete => {
-                            let e = unwrap!(DisconnectionComplete::from_hci_bytes_complete(event.data));
+                            let e = DisconnectionComplete::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                             host.handle_disconnection_complete(e)?;
                         }
                         EventKind::NumberOfCompletedPackets => {
-                            let c = unwrap!(NumberOfCompletedPackets::from_hci_bytes_complete(event.data));
+                            let c =
+                                NumberOfCompletedPackets::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                             // Explicitly ignoring for now
                             for entry in c.completed_packets.iter() {
                                 match (entry.handle(), entry.num_completed_packets()) {
@@ -1682,8 +1724,12 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                 }
                             }
                         }
+                        EventKind::HardwareError => {
+                            let fault = HardwareError::from_hci_bytes_complete(event.data).map_err(Error::from)?;
+                            return Err(Error::HardwareError(fault.hardware_code).into());
+                        }
                         EventKind::Vendor => {
-                            let vendor = unwrap!(Vendor::from_hci_bytes_complete(event.data));
+                            let vendor = Vendor::from_hci_bytes_complete(event.data).map_err(Error::from)?;
                             event_handler.on_vendor(&vendor);
                         }
                         EventKind::EncryptionChangeV1 | EventKind::EncryptionKeyRefreshComplete => {

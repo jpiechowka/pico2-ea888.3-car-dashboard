@@ -9,6 +9,7 @@ use crate::input_trace::Observation;
 const MAX_DELTA: i32 = 128;
 const MAX_PRESSES: u32 = 8;
 const DEBOUNCE_MS: u64 = 50;
+pub const BUTTON_HOLD_MS: u64 = 2000;
 
 pub fn valid_encoder_identity(
     hw_id: u8,
@@ -188,6 +189,11 @@ impl DebouncedButton {
         }
     }
 
+    /// Last accepted level, not the raw/candidate level. None before first
+    /// update; a held boot/reconnect level still does not emit a press edge.
+    /// Arm release gestures only after update() actually reports a press.
+    pub fn stable_pressed(&self) -> Option<bool> { self.stable }
+
     pub fn update_with_origin(
         &mut self,
         pressed: bool,
@@ -221,5 +227,73 @@ impl DebouncedButton {
             return pressed;
         }
         false
+    }
+}
+
+/// Independent edge flags: a delayed poll can qualify hold and release together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ButtonEdges {
+    pub pressed: bool,
+    pub released: bool,
+    pub short: bool,
+    /// Fires once per accepted press, never again on its later release.
+    pub held: bool,
+}
+
+/// Stable press/release with a deferred short action and a two-second hold.
+/// Initial held/reconnected buttons are suppressed until a new accepted press.
+pub struct DeferredButton {
+    button: DebouncedButton,
+    pressed_at: Option<u64>,
+    held: bool,
+}
+impl Default for DeferredButton {
+    fn default() -> Self { Self::new() }
+}
+impl DeferredButton {
+    pub const fn new() -> Self {
+        Self {
+            button: DebouncedButton::new(),
+            pressed_at: None,
+            held: false,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        pressed: bool,
+        now_ms: u64,
+    ) -> ButtonEdges {
+        if now_ms < self.button.last_ms {
+            return ButtonEdges::default();
+        }
+        if self.button.update(pressed, now_ms) {
+            self.pressed_at = Some(now_ms);
+            self.held = false;
+            return ButtonEdges {
+                pressed: true,
+                ..ButtonEdges::default()
+            };
+        }
+        let Some(start) = self.pressed_at else {
+            return ButtonEdges::default();
+        };
+        let released = self.button.stable_pressed() == Some(false);
+        // A known early release must not become a long hold after a poll stall.
+        let end = if released { self.button.since_ms } else { now_ms };
+        let held = !self.held
+            && (pressed || released)
+            && end.checked_sub(start).is_some_and(|elapsed| elapsed >= BUTTON_HOLD_MS);
+        self.held |= held;
+        let short = released && !self.held;
+        if released {
+            self.pressed_at = None;
+        }
+        ButtonEdges {
+            pressed: false,
+            released,
+            short,
+            held,
+        }
     }
 }

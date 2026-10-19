@@ -2,6 +2,7 @@
 
 pub use dashboard_core::*;
 pub mod clock_profile;
+pub mod flash_guard;
 #[path = "drivers/st7789.rs"]
 pub mod panel;
 #[path = "drivers/watchdog.rs"]

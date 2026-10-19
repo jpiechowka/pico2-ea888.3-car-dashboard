@@ -16,7 +16,7 @@ pub struct RenderTrace {
     pub queued_us: u64,
     pub blocked_us: u64,
     pub sample_us: Option<u64>,
-    pub active_cycles: u64,
+    pub active_cycles: Option<u64>,
     pub input: Option<crate::input_trace::InputTrace>,
 }
 
@@ -28,7 +28,7 @@ impl RenderTrace {
             queued_us: at_us,
             blocked_us: 0,
             sample_us: None,
-            active_cycles: 0,
+            active_cycles: None,
             input: None,
         }
     }
@@ -51,7 +51,16 @@ impl RenderTrace {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameTrace {
     token: FrameToken,
-    render: RenderTrace,
+    render_start_us: u64,
+    render_end_us: u64,
+    queued_us: u64,
+    blocked_us: u64,
+    sample_us: Option<u64>,
+    // Keep availability independent of every u64 value. Flattening this private
+    // storage lets the flag use existing padding in each of the 64 ring entries.
+    active_cycles: u64,
+    cycles_present: bool,
+    input: Option<crate::input_trace::InputTrace>,
     started_us: u64,
     completed_us: u64,
     payload_bytes: u32,
@@ -78,7 +87,14 @@ impl FrameTrace {
         }
         Ok(Self {
             token,
-            render,
+            render_start_us: render.start_us,
+            render_end_us: render.end_us,
+            queued_us: render.queued_us,
+            blocked_us: render.blocked_us,
+            sample_us: render.sample_us,
+            active_cycles: render.active_cycles.unwrap_or(0),
+            cycles_present: render.active_cycles.is_some(),
+            input: render.input,
             started_us,
             completed_us,
             payload_bytes,
@@ -87,7 +103,17 @@ impl FrameTrace {
 
     pub fn token(&self) -> FrameToken { self.token }
 
-    pub fn render(&self) -> RenderTrace { self.render }
+    pub fn render(&self) -> RenderTrace {
+        RenderTrace {
+            start_us: self.render_start_us,
+            end_us: self.render_end_us,
+            queued_us: self.queued_us,
+            blocked_us: self.blocked_us,
+            sample_us: self.sample_us,
+            active_cycles: self.cycles_present.then_some(self.active_cycles),
+            input: self.input,
+        }
+    }
 
     pub fn started_us(&self) -> u64 { self.started_us }
 
@@ -95,20 +121,20 @@ impl FrameTrace {
 
     pub fn payload_bytes(&self) -> u32 { self.payload_bytes }
 
-    pub fn render_us(&self) -> u64 { self.render.end_us - self.render.start_us }
+    pub fn render_us(&self) -> u64 { self.render_end_us - self.render_start_us }
 
-    pub fn queue_us(&self) -> u64 { self.started_us - self.render.queued_us }
+    pub fn queue_us(&self) -> u64 { self.started_us - self.queued_us }
 
     pub fn transfer_observed_us(&self) -> u64 { self.completed_us - self.started_us }
 
-    pub fn total_us(&self) -> u64 { self.completed_us - self.render.start_us }
+    pub fn total_us(&self) -> u64 { self.completed_us - self.render_start_us }
 
-    pub fn sample_age_us(&self) -> Option<u64> { self.render.sample_us.map(|at| self.completed_us - at) }
+    pub fn sample_age_us(&self) -> Option<u64> { self.sample_us.map(|at| self.completed_us - at) }
 
-    pub fn input_age_us(&self) -> Option<u64> { self.render.input.map(|input| self.completed_us - input.observed_us) }
+    pub fn input_age_us(&self) -> Option<u64> { self.input.map(|input| self.completed_us - input.observed_us) }
 
     pub fn input_after_consume_us(&self) -> Option<u64> {
-        self.render.input.map(|input| self.completed_us - input.consumed_us)
+        self.input.map(|input| self.completed_us - input.consumed_us)
     }
 }
 
@@ -187,6 +213,7 @@ pub struct CompletionRate {
     window_us: u64,
     window_count: u64,
     total_count: u64,
+    latest: Option<(u64, FrameRate)>,
 }
 
 impl CompletionRate {
@@ -201,7 +228,17 @@ impl CompletionRate {
             window_us: now_us,
             window_count: 0,
             total_count: 0,
+            latest: None,
         }
+    }
+
+    /// A missing first window, rejected observation or expired rate is unknown.
+    pub fn latest(
+        &self,
+        now_us: u64,
+    ) -> Option<FrameRate> {
+        let (at, rate) = self.latest?;
+        crate::diagnostic_values::fresh(at, now_us).then_some(rate)
     }
 
     pub fn sample(
@@ -210,17 +247,19 @@ impl CompletionRate {
         completed: u32,
     ) -> Result<Option<FrameRate>, TelemetryError> {
         if now_us < self.last_us {
+            self.latest = None;
             return Err(TelemetryError::Clock);
         }
         let delta = completed.wrapping_sub(self.last_count);
         // A backwards reset must not masquerade as billions of completed frames.
         if delta > u32::MAX / 2 {
+            self.latest = None;
             return Err(TelemetryError::Counter);
         }
-        let total_count = self
-            .total_count
-            .checked_add(u64::from(delta))
-            .ok_or(TelemetryError::Counter)?;
+        let Some(total_count) = self.total_count.checked_add(u64::from(delta)) else {
+            self.latest = None;
+            return Err(TelemetryError::Counter);
+        };
         self.total_count = total_count;
         self.last_us = now_us;
         self.last_count = completed;
@@ -234,6 +273,7 @@ impl CompletionRate {
         };
         self.window_us = now_us;
         self.window_count = total_count;
+        self.latest = Some((now_us, rate));
         Ok(Some(rate))
     }
 }

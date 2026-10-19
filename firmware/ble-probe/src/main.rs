@@ -3,10 +3,17 @@
 
 mod bridge;
 mod errors;
+mod inventory;
+mod maintenance;
 mod metrics;
 mod radio;
 mod reports;
 mod session;
+mod storage;
+mod ui;
+mod usb;
+mod usb_session;
+include!(concat!(env!("OUT_DIR"), "/probe_identity.rs"));
 mod tasks;
 
 use dashboard_core::display::FrameBuffer;
@@ -21,6 +28,7 @@ bind_interrupts!(pub struct Irqs {
     DMA_IRQ_0 => dma::InterruptHandler<peripherals::DMA_CH0>, dma::InterruptHandler<peripherals::DMA_CH1>;
     I2C0_IRQ => i2c::InterruptHandler<peripherals::I2C0>;
     PIO0_IRQ_0 => pio::InterruptHandler<peripherals::PIO0>;
+    USBCTRL_IRQ => embassy_rp::usb::InterruptHandler<peripherals::USB>;
 });
 
 // Each object is taken once before core1 starts; channel ownership is affine.
@@ -47,6 +55,11 @@ async fn main(spawner: Spawner) {
     config.clocks = dashboard_pico2::clock_profile::clock_config();
     let p = embassy_rp::init(config);
     let watchdog = dashboard_pico2::recovery_watchdog::RecoveryWatchdog::start(p.WATCHDOG);
+    let mut flash =
+        dashboard_pico2::flash_guard::CheckedFlash::new(p.FLASH, dashboard_pico2::flash_guard::Region::Captures);
+    if let Err(error) = flash.qualify() {
+        defmt::warn!("probe.capture unavailable: {:?}", defmt::Debug2Format(&error));
+    }
     defmt::info!(
         "Probe boot: CPU={} SPI request={} reset={}",
         embassy_rp::clocks::clk_sys_freq(),
@@ -68,6 +81,8 @@ async fn main(spawner: Spawner) {
     embassy_rp::multicore::spawn_core1(p.CORE1, stack, probe_core1);
     spawner.spawn(tasks::probe_supervisor_task(watchdog, p.PIN_26, p.PIN_27, p.PIN_28).unwrap());
     spawner.spawn(tasks::probe_inputs_task(p.PIN_12, p.PIN_13, p.PIN_14, p.PIN_15).unwrap());
+    spawner.spawn(storage::probe_storage_task(flash).unwrap());
+    usb::start(spawner, p.USB);
     let mut i2c_config = i2c::Config::default();
     i2c_config.frequency = 400_000;
     spawner.spawn(tasks::probe_encoder_task(i2c::I2c::new_async(p.I2C0, p.PIN_5, p.PIN_4, Irqs, i2c_config)).unwrap());

@@ -28,12 +28,13 @@
     "Cargo.lock": "1b55b62d3c015a674bf22f731bc235c6d0426ce67fe72b40890c59b11a12e9c4",
     "Cargo.toml": "366d176d39b32689f57260a452b23c20968439b8096ca9b6ab09059ae2c40b37",
     "Cargo.toml.orig": "895d9ab82dcfa5ad9b243faa58a3c3634bcffc6c10a14c50af47ee6bb33e78be",
-    "LOCAL_PATCHES.md": "9f8783c06fa1ad4d2a59915fc78568bdd690404fcaac6b1619230e1016b01969",
+    "LOCAL_PATCHES.md": "6158a95b0e5c3cba1c615b484f225169c1fbee7f7c3cd71de62d0d13de4a005f",
     "rustfmt.toml": "b204ff86e8e4d95ce01281f2bba275d2013cbc7fe172bbc35138e1fa10f80ed4",
-    "src/bluetooth.rs": "ab085a0f43fac304b450f3ce63444a5cab01487ea7633f8d997c3d458c63c597",
+    "src/bluetooth.rs": "b928bdbf40de7bddb42ac98e98cb303c666a8e26433443101b3c88a409eea402",
     "src/lib.rs": "b6bdd8337d73fafbd51ea8adec324550c907baebe8764f6d22325f3ec538ee0f",
-    "src/regression_tests.rs": "42b1dc684c8d3e06a89ca84e481cf1b1594ce1823e1824e892387b8ba61564bf",
+    "src/regression_tests.rs": "3b626abf39b39f5bf640b2452c1c8499031e287f78eebdd9ef21d5d51950a24e",
     "src/runner.rs": "cc352423e33e3db476b497529c73dd4d6fb7f7b2a54e507ab4856e9a0ed1dbc8",
-    "src/structs.rs": "5d6ea3530d136b3f915e8f8dcfc980a374d98a34eaf55227ddd5e432d6a69567"
+    "src/structs.rs": "5d6ea3530d136b3f915e8f8dcfc980a374d98a34eaf55227ddd5e432d6a69567",
+    "src/bluetooth_ring_tests.rs": "4fdba9c779eb22b544b50a41f51cdb6d108a6e441fd2efb169651e3de2136bab"
   }
 }

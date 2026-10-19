@@ -21,26 +21,11 @@ pub fn acknowledge(
     });
 }
 
-pub fn interrupt_ready() -> bool {
-    use cortex_m::peripheral::SCB;
-    use cortex_m::peripheral::scb::VectActive;
-    use cortex_m::register::{basepri, faultmask, primask};
-    SCB::vect_active() == VectActive::ThreadMode
-        && primask::read().is_active()
-        && faultmask::read().is_active()
-        && basepri::read() == 0
-}
+pub fn interrupt_ready() -> bool { dashboard_pico2::flash_guard::interrupt_ready() }
 
-pub fn core1_ready() -> bool {
-    embassy_rp::pac::SIO.cpuid().read() == 1
-        && interrupt_ready()
-        && cortex_m::peripheral::NVIC::is_enabled(embassy_rp::pac::Interrupt::SIO_IRQ_FIFO)
-}
+pub fn core1_ready() -> bool { dashboard_pico2::flash_guard::core1_ready() }
 
-pub fn i2c_idle() -> bool {
-    let status = embassy_rp::pac::I2C0.ic_status().read();
-    !status.activity() && !status.mst_activity() && status.tfe() && !status.rfne()
-}
+pub fn i2c_idle() -> bool { dashboard_pico2::flash_guard::i2c_idle() }
 
 /// Called only between complete encoder iterations. In particular an error
 /// return need not imply STOP has finished. Observe idle without cancelling IO.

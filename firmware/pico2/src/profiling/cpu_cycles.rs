@@ -6,16 +6,9 @@ static AVAILABLE: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(fal
 /// Whether this core's initialization observed an enabled, advancing counter.
 pub fn available(core: usize) -> bool { AVAILABLE.get(core).is_some_and(|value| value.load(Ordering::Acquire)) }
 
-/// Maximum sane cycle count for a single elapsed measurement.
-/// Derived from CPU frequency: allows up to ~2 seconds of elapsed time.
-/// At 300 MHz this is 600M cycles; at 150 MHz it's 300M cycles.
-/// Using AtomicU32 so it adapts when init() is called with overclock frequencies.
-static MAX_SANE_CYCLES: AtomicU32 = AtomicU32::new(300_000_000);
-
 pub fn init(freq_hz: u32) {
-    let max_cycles = dashboard_core::cpu_math::sanity_cycles(freq_hz).expect("configured CPU clock must be nonzero");
+    assert!(freq_hz > 0, "configured CPU clock must be nonzero");
     CPU_FREQ_HZ.store(freq_hz, Ordering::Relaxed);
-    MAX_SANE_CYCLES.store(max_cycles, Ordering::Relaxed);
 
     unsafe {
         use core::ptr::{read_volatile, write_volatile};
@@ -65,11 +58,9 @@ pub fn read() -> u32 {
 pub fn elapsed(
     start: u32,
     end: u32,
-) -> u32 {
-    let elapsed = end.wrapping_sub(start);
-    let max = MAX_SANE_CYCLES.load(Ordering::Relaxed);
-
-    if elapsed > max { 0 } else { elapsed }
+    elapsed_us: u64,
+) -> Option<u64> {
+    dashboard_core::cpu_math::checked_segment(CPU_FREQ_HZ.load(Ordering::Relaxed), start, end, elapsed_us)
 }
 
 /// Calculate CPU utilization in tenths-of-percent (0–1000 → 0.0%–100.0%).
@@ -81,8 +72,8 @@ pub fn elapsed(
 /// `elapsed_us`: duration of the measurement window in microseconds
 ///               (e.g. per-frame time on Core 0, or 1_000_000 for Core 1's 1-second window).
 pub fn calc_util_percent(
-    cycles_used: u32,
-    elapsed_us: u32,
-) -> u32 {
-    dashboard_core::cpu_math::utilization(CPU_FREQ_HZ.load(Ordering::Relaxed), cycles_used, elapsed_us)
+    cycles_used: u64,
+    elapsed_us: u64,
+) -> Option<u32> {
+    dashboard_core::cpu_math::checked_utilization(CPU_FREQ_HZ.load(Ordering::Relaxed), cycles_used, elapsed_us)
 }

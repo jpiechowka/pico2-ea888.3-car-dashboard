@@ -319,6 +319,8 @@ pub enum Error {
     Hci(bt_hci::param::Error),
     /// Error decoding responses from HCI commands.
     HciDecode(FromHciBytesError),
+    /// Controller hardware fault; the code is vendor-defined, not an HCI status.
+    HardwareError(u8),
     /// Error from the Attribute Protocol.
     Att(AttErrorCode),
     #[cfg(feature = "security")]

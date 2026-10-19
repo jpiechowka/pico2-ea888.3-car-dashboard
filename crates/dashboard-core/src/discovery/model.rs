@@ -67,6 +67,12 @@ pub enum Event {
         revision: u32,
         context: ConnectionFailureContext,
     },
+    InspectionEnd {
+        revision: u32,
+        at_ms: u64,
+        cleanup_complete: bool,
+        disconnect_reason: Option<u8>,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Input {
@@ -185,6 +191,7 @@ impl Probe {
                 }
                 let peer = device.peer;
                 self.inspection = Inspection::new();
+                self.inspection.started_at_ms = Some(now_ms);
                 self.screen = Screen::Details;
                 self.page = 0;
                 self.issue(Action::Inspect(peer))
@@ -233,6 +240,7 @@ impl Probe {
             | Event::Item { revision, .. }
             | Event::Failure { revision, .. }
             | Event::FailureContext { revision, .. }
+            | Event::InspectionEnd { revision, .. }
             | Event::Complete { revision, .. } => revision,
         };
         if revision != self.request.revision {
@@ -277,8 +285,19 @@ impl Probe {
                 self.inspection.complete = !limited
                     && self.error == ProbeError::None
                     && self.failure.is_none()
+                    && self.inspection.stages.iter().all(|&complete| complete)
                     && self.inspection.omitted == 0
                     && self.inspection.malformed == 0;
+            }
+            Event::InspectionEnd {
+                at_ms,
+                cleanup_complete,
+                disconnect_reason,
+                ..
+            } if matches!(self.request.action, Action::Inspect(_)) => {
+                self.inspection.ended_at_ms = Some(at_ms);
+                self.inspection.cleanup_complete = cleanup_complete;
+                self.inspection.disconnect_reason = disconnect_reason;
             }
             _ => {}
         }

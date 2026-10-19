@@ -8,6 +8,7 @@ pub enum State<CTX> {
     Active(CTX),
     Cancel(CTX),
     CancelPending(CTX),
+    Failed(bt_hci::param::Error),
     Idle,
 }
 
@@ -69,6 +70,36 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
         .await
     }
 
+    /// Retain a failed completion until its caller consumes or drops it. New
+    /// requests cannot overwrite the status before that caller runs again.
+    pub async fn wait_result(&self) -> Result<(), bt_hci::param::Error> {
+        poll_fn(|cx| {
+            self.with_inner(|inner| {
+                inner.host.register(cx.waker());
+                match inner.state {
+                    State::Idle => Poll::Ready(Ok(())),
+                    State::Failed(error) => Poll::Ready(Err(error)),
+                    _ => Poll::Pending,
+                }
+            })
+        })
+        .await
+    }
+
+    pub fn failed(&self, error: bt_hci::param::Error) {
+        self.with_inner(|inner| {
+            inner.state = match inner.state {
+                State::Active(_) => State::Failed(error),
+                State::Failed(first) => State::Failed(first),
+                // A dropped caller has no result to consume; its terminal event
+                // releases cancellation admission as before.
+                _ => State::Idle,
+            };
+            inner.host.wake();
+            inner.controller.wake();
+        });
+    }
+
     /// Poll if the command should be canceled
     pub fn poll_cancelled(&self, cx: &mut Context<'_>) -> Poll<CTX> {
         self.with_inner(|inner| {
@@ -85,6 +116,10 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
         self.with_inner(|inner| {
             if matches!(inner.state, State::Active(_)) {
                 inner.state = State::Cancel(ctx);
+                inner.controller.wake();
+            } else if matches!(inner.state, State::Failed(_)) {
+                inner.state = State::Idle;
+                inner.host.wake();
                 inner.controller.wake();
             }
         })
@@ -123,13 +158,14 @@ impl<CTX: Clone + Copy> CommandState<CTX> {
     pub fn is_active_with(&self, predicate: impl Fn(CTX) -> bool) -> bool {
         self.with_inner(|inner| match inner.state {
             State::Active(ctx) | State::Cancel(ctx) | State::CancelPending(ctx) => predicate(ctx),
-            State::Idle => false,
+            State::Idle | State::Failed(_) => false,
         })
     }
 
     pub fn done(&self) {
         self.with_inner(|inner| {
             inner.state = State::Idle;
+            inner.host.wake();
             inner.controller.wake();
         })
     }
@@ -162,5 +198,49 @@ mod tests {
         state.canceled(); // Terminal LE Connection Complete.
         assert!(next.as_mut().poll(&mut cx).is_ready());
         assert!(state.is_active());
+    }
+
+    #[test]
+    fn failed_completion_retains_first_status_until_caller_finishes_or_drops() {
+        for drop_caller in [false, true] {
+            let state = CommandState::new();
+            block_on(state.request(false));
+            state.failed(bt_hci::param::Status::new(0x3e).to_result().unwrap_err());
+            state.failed(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER);
+            let mut next = pin!(state.request(true));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(next.as_mut().poll(&mut cx).is_pending());
+            assert!(!state.is_idle());
+            assert_eq!(
+                block_on(state.wait_result()),
+                Err(bt_hci::param::Status::new(0x3e).to_result().unwrap_err())
+            );
+            if drop_caller {
+                state.cancel(false);
+            } else {
+                state.done();
+            }
+            assert!(next.as_mut().poll(&mut cx).is_ready());
+            assert!(
+                pin!(state.wait_result()).poll(&mut cx).is_pending(),
+                "no previous failure in next attempt"
+            );
+        }
+    }
+
+    #[test]
+    fn canceled_caller_failure_releases_admission_at_terminal_event() {
+        for cancel_sent in [false, true] {
+            let state = CommandState::new();
+            block_on(state.request(false));
+            state.cancel(false);
+            if cancel_sent {
+                state.cancel_started();
+            }
+            assert!(!state.is_idle());
+            state.failed(bt_hci::param::Error::UNKNOWN_CONN_IDENTIFIER);
+            assert!(state.is_idle());
+            assert_eq!(block_on(state.wait_result()), Ok(()));
+        }
     }
 }

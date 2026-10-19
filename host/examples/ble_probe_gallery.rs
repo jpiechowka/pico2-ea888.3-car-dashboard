@@ -13,7 +13,14 @@ fn save(
     p: &Probe,
 ) {
     let mut frame = AlignedFrame::boxed();
-    render(&mut St7789Renderer::new(&mut frame.0), p, 12_000).unwrap();
+    render(&mut St7789Renderer::new(&mut frame.0), p, 12_400).unwrap();
+    save_frame(dir, name, &frame);
+}
+fn save_frame(
+    dir: &Path,
+    name: &str,
+    frame: &AlignedFrame,
+) {
     let mut f = std::fs::File::create(dir.join(format!("{name}.ppm"))).unwrap();
     f.write_all(b"P6\n320 240\n255\n").unwrap();
     for px in frame.0.as_chunks::<2>().0 {
@@ -22,6 +29,16 @@ fn save(
         f.write_all(&[(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)])
             .unwrap();
     }
+}
+fn save_slots(
+    dir: &Path,
+    name: &str,
+    ui: &capture_ui::CaptureUi,
+    diagnostics: ProbeDiagnostics,
+) {
+    let mut frame = AlignedFrame::boxed();
+    render_slots(&mut St7789Renderer::new(&mut frame.0), ui, diagnostics).unwrap();
+    save_frame(dir, name, &frame);
 }
 fn main() {
     let directory = std::env::args_os().nth(1).expect("output directory");
@@ -78,6 +95,13 @@ fn main() {
         ));
     }
     p.selected = 1;
+    p.catalog.observe(Advertisement::new(
+        p.selected_device().unwrap().peer,
+        ReportKind::ScanResponse,
+        -47,
+        &[5, 0xFF, 0x34, 0x12, 0xDE, 0xAD, 5, 0x16, 0xF0, 0xFF, 1, 2],
+        11_000,
+    ));
     save(directory, "scan-synthetic", &p);
     let pause = p.input(Input::Back, 12_000).unwrap();
     p.event(Event::State {
@@ -117,15 +141,181 @@ fn main() {
     p.inspection
         .values
         .push(InfoValue {
+            service_start: 1,
+            handle: 3,
+            failure: None,
+            elapsed_ms: 1,
             uuid: 0x2A29,
             value: Payload::new(b"Synthetic example only"),
             result: ReadResult::Ok,
         })
         .unwrap();
     p.inspection.complete = true;
+    p.inspection.stages = [true; 4];
+    p.inspection.cleanup_complete = true;
+    p.inspection.ended_at_ms = Some(12_030);
+    p.inspection.disconnect_reason = Some(0x16);
+    p.inspection.link = Some(LinkInfo {
+        connected_at_ms: 12_005,
+        connect_elapsed_ms: 5,
+        interval_us: 30_000,
+        latency: 0,
+        supervision_timeout_us: 4_000_000,
+        att_mtu: Some(247),
+    });
+    p.inspection
+        .descriptors
+        .push(Descriptor {
+            service_start: 1,
+            characteristic_handle: 3,
+            handle: 4,
+            uuid: Uuid::from_wire(&[1, 0x29]).unwrap(),
+        })
+        .unwrap();
+    // Include a binary, protected standard field and a second service's hash.
+    p.inspection.accept(InspectionItem::Characteristic(Characteristic {
+        service_start: 1,
+        declaration: 5,
+        handle: 6,
+        properties: 2,
+        uuid: Uuid::from_wire(&[0x23, 0x2A]).unwrap(),
+    }));
+    p.inspection.accept(InspectionItem::Value(InfoValue {
+        service_start: 1,
+        handle: 6,
+        uuid: 0x2A23,
+        value: Payload::empty(),
+        result: ReadResult::Protected,
+        failure: Some(FailureReason::Att(5)),
+        elapsed_ms: 14,
+    }));
+    p.inspection.accept(InspectionItem::Service(Service {
+        start: 12,
+        end: 18,
+        uuid: Uuid::from_wire(&[1, 0x18]).unwrap(),
+    }));
+    p.inspection.accept(InspectionItem::Characteristic(Characteristic {
+        service_start: 12,
+        declaration: 13,
+        handle: 14,
+        properties: 2,
+        uuid: Uuid::from_wire(&[0x2A, 0x2B]).unwrap(),
+    }));
+    p.inspection.accept(InspectionItem::Value(InfoValue {
+        service_start: 12,
+        handle: 14,
+        uuid: 0x2B2A,
+        value: Payload::new(&[0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 1, 2, 3, 4, 5, 6, 7, 8]),
+        result: ReadResult::Ok,
+        failure: None,
+        elapsed_ms: 2,
+    }));
     for page in 0..page_count(&p) {
         p.page = page;
         save(directory, &format!("details-{page}-synthetic"), &p);
+    }
+    let mut bytes = [0; 8192];
+    let size = capture::encode(
+        &p,
+        capture::BuildIdentity {
+            source_digest: [0xA5; 32],
+            cpu_hz: 280_000_000,
+            spi_hz: 70_000_000,
+            profile: capture::BuildProfile::Expert280,
+            source_identity_available: true,
+        },
+        12_040,
+        &mut bytes,
+    )
+    .unwrap();
+    let mut decoder = capture::Decoder::new();
+    let view = decoder.decode(&bytes[..size]).unwrap();
+    for page in 0..saved_page_count(&view) {
+        let mut frame = AlignedFrame::boxed();
+        render_saved(&mut St7789Renderer::new(&mut frame.0), &view, 0, page, p.diagnostics).unwrap();
+        save_frame(directory, &format!("saved-{page}-synthetic"), &frame);
+    }
+    {
+        use capture_ui::{
+            Action as CaptureAction,
+            CaptureUi,
+            Completion,
+            Context,
+            Input as CaptureInput,
+            SaveAvailability,
+            Slot,
+            UiError,
+        };
+        let mut ui = CaptureUi::new();
+        let context = Context {
+            save: SaveAvailability::Ready,
+            revision: p.request.revision,
+        };
+        let CaptureAction::Refresh { id } = ui.input(CaptureInput::XHold, 2000, context).unwrap() else {
+            panic!()
+        };
+        save_slots(directory, "slots-loading-synthetic", &ui, p.diagnostics);
+        ui.complete(
+            id,
+            Completion::Listed([
+                Slot::Saved { generation: 1 },
+                Slot::Empty,
+                Slot::Corrupt,
+                Slot::Unsupported,
+            ]),
+        );
+        for (name, input, at) in [
+            ("slots-synthetic", CaptureInput::Turn(0), 2010),
+            ("overwrite-synthetic", CaptureInput::XShort, 2030),
+            ("slots-back-synthetic", CaptureInput::Back, 2040),
+            ("slots-damaged-synthetic", CaptureInput::Turn(2), 2050),
+            ("erase-confirm-synthetic", CaptureInput::XShort, 2070),
+        ] {
+            ui.input(input, at, context);
+            save_slots(directory, name, &ui, p.diagnostics);
+        }
+        let CaptureAction::Reset { id, .. } = ui.input(CaptureInput::Click, 2080, context).unwrap() else {
+            panic!()
+        };
+        save_slots(directory, "resetting-synthetic", &ui, p.diagnostics);
+        ui.complete(id, Completion::Reset);
+        ui.input(CaptureInput::Turn(-1), 2090, context);
+        let CaptureAction::Save {
+            id, overwrite: false, ..
+        } = ui.input(CaptureInput::XShort, 2100, context).unwrap()
+        else {
+            panic!()
+        };
+        save_slots(directory, "saving-synthetic", &ui, p.diagnostics);
+        ui.complete(id, Completion::Saved { generation: 1 });
+        save_slots(directory, "saved-slot-synthetic", &ui, p.diagnostics);
+        let CaptureAction::Load { id, .. } = ui.input(CaptureInput::Click, 2110, context).unwrap() else {
+            panic!()
+        };
+        save_slots(directory, "capture-loading-synthetic", &ui, p.diagnostics);
+        ui.complete(id, Completion::Failed(UiError::Storage));
+        save_slots(directory, "storage-error-synthetic", &ui, p.diagnostics);
+        ui.input(CaptureInput::Back, 2120, context);
+        let CaptureAction::Refresh { id } = ui.input(CaptureInput::XHold, 3000, context).unwrap() else {
+            panic!()
+        };
+        ui.complete(
+            id,
+            Completion::Listed([
+                Slot::SavedBlocked { generation: 1 },
+                Slot::Empty,
+                Slot::Empty,
+                Slot::Empty,
+            ]),
+        );
+        ui.input(CaptureInput::Turn(-1), 3001, context);
+        for (name, input, at) in [
+            ("blocked-save-synthetic", CaptureInput::Turn(0), 3010),
+            ("blocked-erase-confirm-synthetic", CaptureInput::XShort, 3020),
+        ] {
+            ui.input(input, at, context);
+            save_slots(directory, name, &ui, p.diagnostics);
+        }
     }
     // Deliberately fabricated failure, not a diagnosis of any physical peer.
     p.event(Event::Failure {

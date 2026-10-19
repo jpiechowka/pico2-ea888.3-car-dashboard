@@ -62,3 +62,17 @@ HCI consumption, simultaneous blocked writers, fault wakeup, ring wrap, maximum
 packet, full queue retry, bad pointers/lengths, F2 bounds, firmware padding, and
 maintenance/RX progress under ready TX and sustained F2 traffic. These are host
 software checks, not RF, electrical, DMA timing or flash hardware validation.
+
+## Address-backed receive-ring coverage (2026-10-19 offline audit)
+
+Four additional tests place real HCI bytes in an address-backed 4096-byte firmware
+ring and run BtRunner::handle_irq, BtDriver::read and locked bt-hci 0.10.1 decoding.
+They cover every legacy data length 0..31, all padding residues, a header at the
+last word, split payload reads, nonzero padding exclusion, six ordered packets,
+four-packet drain bounds, full host queue retry without another interrupt, and
+the maximum 255-parameter-byte HCI event. Short inner reports remain InvalidSize,
+including the observed declared7/remaining16 shape; no RSSI is synthesized from
+padding. Both bluetooth-only/firmware-logs and general bluetooth configurations
+pass 16 native library tests. No transport production change was required by
+these fixtures, and passing fixtures do not establish the physical source of a
+short report.

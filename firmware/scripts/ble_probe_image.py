@@ -9,10 +9,14 @@ from pathlib import Path
 from check_memory_layout import geometry
 from check_program_image import inspect_program, read_uf2, verify_uf2
 from check_stack_budget import frames, task_frames
+from check_flash_lockout import check as check_flash_lockout
 from elf_image import ElfImage
 from validation import require
 
 GATE = "ble_probe_practical_image"
+FLASH_START = 0x10000000
+CAPTURES_START = 0x101E6000
+CAPTURES_END = 0x101FE000
 ROOTS = (
     "firmware/ble-probe",
     "firmware/pico2/src",
@@ -55,6 +59,126 @@ def source_hashes(repo):
 def check_sources(repo, expected):
     require(type(expected) is dict and bool(expected), "missing source snapshot")
     require(source_hashes(repo) == expected, "source changed since build snapshot")
+
+
+def source_digest(sources):
+    """Canonical source inventory identity, not a compiler-input closure proof."""
+    require(type(sources) is dict and 0 < len(sources) <= 20000, "source inventory bound")
+    require(
+        all(
+            type(path) is str
+            and bool(path)
+            and type(digest) is str
+            and re.fullmatch(r"[0-9a-f]{64}", digest)
+            for path, digest in sources.items()
+        ),
+        "invalid source inventory entry",
+    )
+    return sha(
+        json.dumps(sources, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+            "utf-8"
+        )
+    )
+
+
+def linked_identity(elf, expected=None):
+    sections = [
+        (index, section)
+        for index, name, section in elf.section_entries
+        if name == ".probe_identity"
+    ]
+    require(len(sections) == 1, "missing or ambiguous probe identity section")
+    index, section = sections[0]
+    require(
+        # SHF_GNU_RETAIN only prevents linker garbage collection. Rust #[used]
+        # can emit it; allocation/read-only/non-executable requirements remain.
+        section[1] == 1 and section[2] in (2, 0x200002) and section[5] == 32,
+        "probe identity must be 32 read-only allocated bytes",
+    )
+    symbols = [row for row in elf.symbol_entries if row[0] == "BLE_PROBE_SOURCE_DIGEST"]
+    require(len(symbols) == 1, "missing or ambiguous probe identity symbol")
+    _, address, size, info, symbol_index = symbols[0]
+    require(
+        address == section[3] and size == 32 and info & 15 == 1 and symbol_index == index,
+        "probe identity symbol mismatch",
+    )
+    require(section[4] + 32 <= len(elf.data), "truncated probe identity")
+    mappings = [
+        physical + address - virtual
+        for kind, offset, virtual, physical, filesz, memsz, flags, alignment in elf.segments
+        if kind == 1
+        and virtual <= address
+        and address + 32 <= virtual + filesz
+        and offset + address - virtual == section[4]
+        and filesz <= memsz
+        and offset + filesz <= len(elf.data)
+    ]
+    require(
+        len(mappings) == 1
+        and mappings[0] == address
+        and FLASH_START <= address < address + 32 <= CAPTURES_START,
+        "probe identity needs a unique program flash LOAD mapping",
+    )
+    actual = elf.data[section[4] : section[4] + 32]
+    if expected is not None:
+        require(
+            type(expected) is str
+            and re.fullmatch(r"[0-9a-f]{64}", expected) is not None
+            and expected != "00" * 32,
+            "missing or invalid expected source identity",
+        )
+        require(actual.hex() == expected, "linked probe source identity differs from snapshot")
+    return {
+        "digest": actual.hex(),
+        "available": actual != bytes(32),
+        "snapshot_bound": expected is not None,
+        "physical_address": address,
+        "bytes": 32,
+    }
+
+
+def capture_reservation(elf, mapping):
+    expected = {
+        "__captures_start": CAPTURES_START,
+        "__captures_end": CAPTURES_END,
+        "__settings_start": CAPTURES_END,
+        "__settings_end": 0x10200000,
+    }
+    for name, address in expected.items():
+        symbols = [row for row in elf.symbol_entries if row[0] == name]
+        require(
+            len(symbols) == 1 and symbols[0][1] == address,
+            "capture/settings boundary symbol " + name,
+        )
+
+    def below_capture(start, end):
+        require(
+            FLASH_START <= start < end <= CAPTURES_START,
+            "program range overlaps captures or leaves flash",
+        )
+
+    for kind, offset, virtual, physical, filesz, memsz, flags, alignment in elf.segments:
+        if kind != 1:
+            continue
+        if filesz:
+            below_capture(physical, physical + filesz)
+        elif memsz and FLASH_START <= physical < 0x10200000:
+            below_capture(physical, physical + memsz)
+    for address, payload in mapping["fragments"]:
+        below_capture(address, address + len(payload))
+    for kind in ("erase_ranges", "verification_ranges"):
+        for start, end in mapping[kind]:
+            below_capture(start, end)
+    for address, page in mapping["pages"].items():
+        require(address % 256 == 0 and len(page) == 256, "invalid program UF2 page")
+        below_capture(address, address + 256)
+    return {
+        "captures_start": CAPTURES_START,
+        "captures_end": CAPTURES_END,
+        "bytes": CAPTURES_END - CAPTURES_START,
+        "settings_start": CAPTURES_END,
+        "policy": "program_LOAD_erase_verification_and_UF2_exclude_captures",
+    }
 
 
 def objects(elf):
@@ -109,6 +233,9 @@ def stack_check(elf, headroom):
             "probe_inputs_task",
             "probe_encoder_task",
             "probe_supervisor_task",
+            "probe_storage_task",
+            "probe_usb_device_task",
+            "probe_usb_capture_task",
         )
     )
     radio = task_frames(elf.functions, sizes, "probe_radio_task")
@@ -134,7 +261,7 @@ def stack_check(elf, headroom):
         + task_frames(elf.functions, sizes, "probe_ui_task")
         + 16384,
     }
-    # 2026-10-19 optimized 280 image: all emitted frames sum to 18080 B;
+    # Historical pre-capture 280 image: all emitted frames sum to 18080 B;
     # non-radio frames total 5884 B, largest radio::run frame is 4992 B.
     # Aggregate ceilings catch nested-child growth even when task shims do not.
     # The non-radio partition follows source ownership, not an inferred call graph.
@@ -163,7 +290,10 @@ def stack_check(elf, headroom):
 def inspect_elf(elf):
     """CI layout stage only; full capture also requires sources and UF2 equality."""
     static, headroom = geometry(elf)
-    _, program = inspect_program(elf)
+    mapping, program = inspect_program(elf)
+    reservation = capture_reservation(elf, mapping)
+    identity = linked_identity(elf)
+    check_flash_lockout(elf)
     return {
         "schema": 1,
         "gate": "ble_probe_elf_layout_only",
@@ -178,6 +308,9 @@ def inspect_elf(elf):
         "objects": objects(elf),
         "stack": stack_check(elf, headroom),
         "program": program,
+        "capture_reservation": reservation,
+        "source_identity": identity,
+        "reviewed_flash_lockout": True,
     }
 
 
@@ -187,6 +320,8 @@ def check(elf_path, uf2_path, manifest_path, repo):
     manifest = json.loads(raw)
     require(manifest.get("gate") == GATE and manifest.get("schema") == 1, "utility manifest schema")
     check_sources(repo, manifest["sources"])
+    digest = source_digest(manifest["sources"])
+    require(manifest.get("source_digest") == digest, "source manifest digest mismatch")
     require(
         manifest["target"] == "thumbv8m.main-none-eabihf"
         and manifest["target_cpu"] == "cortex-m33",
@@ -196,6 +331,9 @@ def check(elf_path, uf2_path, manifest_path, repo):
     require(sha(elf.data) == manifest["elf_sha256"], "ELF identity differs")
     static, headroom = geometry(elf)
     mapping, program = inspect_program(elf)
+    reservation = capture_reservation(elf, mapping)
+    identity = linked_identity(elf, digest)
+    check_flash_lockout(elf)
     obj = objects(elf)
     stack = stack_check(elf, headroom)
     uf2 = verify_uf2(read_uf2(uf2_path), mapping)
@@ -207,6 +345,8 @@ def check(elf_path, uf2_path, manifest_path, repo):
         "hardware_qualified": False,
         "complete_instruction_proof": False,
         "manifest_sha256": sha(raw),
+        "source_bound": True,
+        "uf2_checked": True,
         "elf_sha256": sha(elf.data),
         "static_ram_bytes": static,
         "headroom": headroom,
@@ -214,6 +354,9 @@ def check(elf_path, uf2_path, manifest_path, repo):
         "stack": stack,
         "program": program,
         "uf2": uf2,
+        "capture_reservation": reservation,
+        "source_identity": identity,
+        "reviewed_flash_lockout": True,
         "limitations": [
             "source snapshot is not compiler input closure",
             "named stack paths require source review",

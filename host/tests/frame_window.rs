@@ -3,6 +3,41 @@ use dashboard_host_validation::display::telemetry::{FrameTrace, RenderTrace};
 use dashboard_host_validation::display::window::{FrameWindow, WINDOW_US};
 use dashboard_host_validation::input_trace::{InputCounters, InputTrace};
 
+#[test]
+fn unavailable_cycle_observation_preserves_transfer_distributions_and_expires_with_window() {
+    let mut window = FrameWindow::new(0);
+    let original = trace(1, 10, 20, 30, 40);
+    let missing = FrameTrace::finish(
+        original.token(),
+        RenderTrace {
+            active_cycles: None,
+            ..original.render()
+        },
+        original.started_us(),
+        original.completed_us(),
+        original.payload_bytes(),
+    )
+    .unwrap();
+    window.record(missing).unwrap();
+    window.record(trace(2, 50, 60, 70, 80)).unwrap();
+    let report = window.report(WINDOW_US, InputCounters::ZERO).unwrap().unwrap();
+    assert_eq!(report.frames, 2);
+    assert_eq!(report.active_cycles, None);
+    assert_eq!(report.metrics[3].samples, 2);
+    assert_eq!(report.metrics[3].max, Some(10));
+    let mut rows = Vec::new();
+    dashboard_host_validation::telemetry_protocol::frames(report, |s| rows.push(s.to_owned())).unwrap();
+    assert_eq!(rows[0], "FRAME2,1,0,30000000,2,307200,na,0");
+    assert_eq!(
+        window
+            .report(2 * WINDOW_US, InputCounters::ZERO)
+            .unwrap()
+            .unwrap()
+            .active_cycles,
+        Some(0)
+    );
+}
+
 fn trace(
     id: u64,
     start: u64,
@@ -20,7 +55,7 @@ fn trace(
             end_us: end,
             queued_us: end + 2,
             blocked_us: 2,
-            active_cycles: 10,
+            active_cycles: Some(10),
             sample_us: Some(0),
             input: None,
         },
@@ -44,7 +79,10 @@ fn thirty_second_windows_preserve_boundary_intervals_and_report_idle() {
         .record(trace(2, WINDOW_US, WINDOW_US + 5, WINDOW_US + 10, WINDOW_US + 100))
         .unwrap();
     let one = window.report(2 * WINDOW_US, InputCounters::ZERO).unwrap().unwrap();
-    assert_eq!((one.frames, one.payload_bytes, one.active_cycles), (1, 153600, 10));
+    assert_eq!(
+        (one.frames, one.payload_bytes, one.active_cycles),
+        (1, 153600, Some(10))
+    );
     assert_eq!(one.metrics[0].samples, 0);
     assert_eq!(one.metrics[8].samples, 0);
     let idle = window.report(3 * WINDOW_US, InputCounters::ZERO).unwrap().unwrap();
@@ -87,7 +125,7 @@ fn overlapping_and_serial_render_intervals_match_an_independent_sorted_reference
         window.record(t).unwrap();
     }
     let r = window.report(WINDOW_US, InputCounters::ZERO).unwrap().unwrap();
-    assert_eq!((r.frames, r.payload_bytes, r.active_cycles), (1500, bytes, 15000));
+    assert_eq!((r.frames, r.payload_bytes, r.active_cycles), (1500, bytes, Some(15000)));
     for (actual, mut values) in r.metrics.into_iter().zip(expected) {
         values.sort_unstable();
         assert_eq!(actual.samples as usize, values.len());
@@ -229,7 +267,7 @@ fn fixed_encoder_capacity_covers_all_maximum_width_fields() {
         end_us: u64::MAX,
         frames: u32::MAX,
         payload_bytes: u64::MAX,
-        active_cycles: u64::MAX,
+        active_cycles: Some(u64::MAX),
         rejected: u64::MAX,
         metrics: [d; 9],
         inputs: InputCounters {

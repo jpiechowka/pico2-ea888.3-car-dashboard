@@ -19,6 +19,33 @@ pub(crate) struct MockBus {
     pub writes: usize,
     pub f2_reads: usize,
     pub f2_continuous: bool,
+    pub ring: Option<std::boxed::Box<[u8; 4096]>>,
+    pub base: u32,
+    pub acknowledged: Option<u32>,
+}
+
+impl MockBus {
+    /// Address-backed firmware ring. Nonzero padding must never reach HCI.
+    pub(crate) fn ring(start: usize, packets: &[&[u8]]) -> Self {
+        let mut ring = std::boxed::Box::new([0xa5; 4096]);
+        let mut cursor = start;
+        for packet in packets {
+            let payload = &packet[1..];
+            let length = payload.len();
+            let header = [length as u8, (length >> 8) as u8, (length >> 16) as u8, packet[0]];
+            for byte in header.iter().chain(payload) {
+                ring[cursor] = *byte;
+                cursor = (cursor + 1) % 4096;
+            }
+            cursor = ((cursor + 3) & !3) % 4096;
+        }
+        Self {
+            ring: Some(ring),
+            base: 0x180000,
+            pointer: cursor as u32,
+            ..Default::default()
+        }
+    }
 }
 
 impl SealedBus for MockBus {
@@ -35,8 +62,13 @@ impl SealedBus for MockBus {
         self.writes += 1;
     }
 
-    async fn bp_read(&mut self, _: u32, data: &mut [u8]) {
+    async fn bp_read(&mut self, addr: u32, data: &mut [u8]) {
         self.reads += 1;
+        if let Some(ring) = &self.ring {
+            let offset = addr.checked_sub(self.base + BTSDIO_OFFSET_HOST_READ_BUF).unwrap() as usize;
+            data.copy_from_slice(&ring[offset..offset + data.len()]);
+            return;
+        }
         data.fill(0);
         if data.len() == 4 {
             data.copy_from_slice(&self.header);
@@ -60,14 +92,19 @@ impl SealedBus for MockBus {
     async fn bp_write16(&mut self, _: u32, _: u16) {}
 
     async fn bp_read32(&mut self, addr: u32) -> u32 {
-        if addr == BTSDIO_OFFSET_BT2HOST_IN || addr == BTSDIO_OFFSET_HOST2BT_OUT {
+        if addr == self.base + BTSDIO_OFFSET_BT2HOST_IN || addr == self.base + BTSDIO_OFFSET_HOST2BT_OUT {
             self.pointer
+        } else if self.ring.is_some() && addr == crate::CHIP.sdiod_core_base_address + SDIO_INT_STATUS {
+            0 // Polling must still drain a pending ring without a fresh IRQ.
         } else {
             u32::MAX
         }
     }
 
-    async fn bp_write32(&mut self, _: u32, _: u32) {
+    async fn bp_write32(&mut self, addr: u32, value: u32) {
+        if addr == self.base + BTSDIO_OFFSET_BT2HOST_OUT {
+            self.acknowledged = Some(value);
+        }
         self.writes += 1;
     }
 

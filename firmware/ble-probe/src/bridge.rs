@@ -2,7 +2,7 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-use dashboard_core::discovery::{Event, Input, RadioPhase, Request, ScanDiagnostics};
+use dashboard_core::discovery::{Event, RadioPhase, Request, ScanDiagnostics};
 use dashboard_core::display::FrameBuffer;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -10,7 +10,15 @@ use embassy_sync::channel::Channel;
 
 pub static REPORTS: Channel<CriticalSectionRawMutex, Event, 32> = Channel::new();
 pub static EVENTS: Channel<CriticalSectionRawMutex, Event, 8> = Channel::new();
-pub static INPUTS: Channel<CriticalSectionRawMutex, Input, 16> = Channel::new();
+pub enum Control {
+    Rotate(i32),
+    Click,
+    Back,
+    Recover,
+    XShort,
+    XHold,
+}
+pub static INPUTS: Channel<CriticalSectionRawMutex, Control, 16> = Channel::new();
 pub static FREE: Channel<CriticalSectionRawMutex, &'static mut FrameBuffer, 2> = Channel::new();
 pub static READY: Channel<CriticalSectionRawMutex, &'static mut FrameBuffer, 2> = Channel::new();
 static REQUEST: Mutex<CriticalSectionRawMutex, Cell<Request>> = Mutex::new(Cell::new(Request::INITIAL));

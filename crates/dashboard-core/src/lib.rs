@@ -52,6 +52,7 @@ pub use widgets::primitives;
 mod profiling {
     pub mod cpu_math;
     pub mod cycle_segments;
+    pub mod diagnostic_values;
     pub mod stack_samples;
     pub mod task_work;
 }
@@ -72,6 +73,6 @@ pub mod ui {
     pub use styles::*;
 }
 
-pub use profiling::{cpu_math, cycle_segments, stack_samples, task_work};
+pub use profiling::{cpu_math, cycle_segments, diagnostic_values, stack_samples, task_work};
 pub use state::{extrema, history, pages, popup, sensor_state};
 pub use ui::{animations, colors, styles};

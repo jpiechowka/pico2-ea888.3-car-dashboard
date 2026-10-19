@@ -23,13 +23,13 @@ pub fn frames(
     emit_line(
         &mut emit,
         format_args!(
-            "FRAME1,{},{},{},{},{},{},{}",
+            "FRAME2,{},{},{},{},{},{},{}",
             value.sequence,
             value.start_us,
             value.end_us,
             value.frames,
             value.payload_bytes,
-            value.active_cycles,
+            OptionalCycles(value.active_cycles),
             value.rejected
         ),
     )?;
@@ -52,6 +52,19 @@ pub fn frames(
         distribution(sequence, 0, metric as u8, value, &mut emit)?;
     }
     emit_line(&mut emit, format_args!("END1,0,{}", value.sequence))
+}
+
+struct OptionalCycles(Option<u64>);
+impl fmt::Display for OptionalCycles {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        match self.0 {
+            Some(value) => value.fmt(f),
+            None => f.write_str("na"),
+        }
+    }
 }
 
 fn distribution(

@@ -170,3 +170,40 @@ The current full HCI HTML exceeded the retrieval limit; that specific status
 rule was checked in the accessible official 5.4 text. Upstream
 [issue 619](https://github.com/embassy-rs/trouble/issues/619) concerns another platform
 and crossed MTU timing; it is context, not a diagnosis of this device.
+
+## HCI receive dispatch and connection failures (2026-10-19 offline audit)
+
+Known HCI event payloads now propagate decode errors through the host runner
+instead of panicking at an unwrap. Unknown LE subevents are ignored; a subsequent
+supported event still reaches its handler. ScanTimeout requires its exact empty
+payload. An inner advertising-report iterator error still reaches the scan
+handler and does not become a controller fault or acquire a synthetic RSSI.
+
+HardwareError terminates the host runner with `Error::HardwareError(u8)`. This
+byte is vendor-defined, separate from standardized `Error::Hci` statuses. Both
+firmware owners must retain it and enter their bounded controller-fault path.
+
+Legacy and enhanced central connection failures now retain the original HCI
+status until the requesting future consumes or drops it. A new request cannot
+overwrite an unread result. Canceled requests still require their terminal event;
+late success still enters disconnect quarantine. Failed completion events require
+their full fixed length but ignore undefined fields after Status. Successful
+completion events retain the complete decoder's validation. Advertising Timeout
+remains the advertising procedure's separate outcome.
+
+Actual RxRunner tests cover malformed envelopes/fixed events, unknown subevents,
+all 256 HardwareError codes, preserved short-report callback delivery, and complete
+connection events arriving while real Central.connect/connect_ext futures wait.
+Command-state tests cover first-failure retention, pending admission, caller drop,
+and cancellation before/after the cancel command. Eight no-security wire tests
+plus two command tests extend the previous suite to 88 tests with the probe's
+8-packet/251-byte pool; the security suite passes 124 tests. These tests use only
+in-memory controller I/O and do not qualify hardware or identify the physical
+short-report origin.
+
+References: Bluetooth Core HCI [5.4.4 event forward compatibility, 4.5/Table 4.1
+failed completion fields, 7.7.16 Hardware Error and 7.7.65.1/10 connection events](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
+The failed-completion field table was additionally cross-checked in the official
+[Core 6.0 HCI text](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
+The locked bt-hci 0.10.1 LE envelope decoder rejects only a missing or unknown
+subevent byte; known event payload decoding remains separate.

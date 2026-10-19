@@ -175,3 +175,87 @@ fn outer_cancellation_drops_both_waits_in_mtu_and_discovery_phases() {
         assert!(events_dropped.get());
     }
 }
+
+#[test]
+fn borrowed_startup_and_event_futures_are_dropped_before_outer_cleanup() {
+    for during_startup in [true, false] {
+        let work_dropped = Cell::new(false);
+        let events_dropped = Cell::new(false);
+        let mut inspection = pin!(async {
+            let result = {
+                let work_guard = DropFlag(&work_dropped);
+                let events_guard = DropFlag(&events_dropped);
+                let startup = pin!(async move {
+                    let guard = work_guard;
+                    if during_startup {
+                        pending::<()>().await;
+                    }
+                    Ok::<_, &str>(guard)
+                });
+                let events = pin!(async move {
+                    let _guard = events_guard;
+                    "disconnect"
+                });
+                session::inspect_with_events(
+                    startup,
+                    |guard| {
+                        async move {
+                            let _guard = guard;
+                            pending::<Result<bool, &str>>().await
+                        }
+                    },
+                    events,
+                )
+                .await
+            };
+            // Cleanup starts outside the scope owning the pinned operations.
+            assert!(work_dropped.get());
+            assert!(events_dropped.get());
+            result
+        });
+        assert_eq!(
+            inspection.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Err("disconnect"))
+        );
+    }
+}
+
+#[test]
+fn every_attempt_publishes_end_after_cleanup_ack_including_failed_connect() {
+    use std::cell::RefCell;
+
+    use dashboard_core::discovery::Event;
+    for (_connected, cleanup_ok, reason) in [
+        (false, true, None),
+        (true, true, Some(0x13)),
+        (false, false, None),
+        (true, false, None),
+    ] {
+        let ack = Cell::new(false);
+        let events = RefCell::new(Vec::new());
+        let mut finish = pin!(session::finish_cleanup(
+            77,
+            poll_fn(|_| {
+                if ack.get() {
+                    Poll::Ready(cleanup_ok)
+                } else {
+                    Poll::Pending
+                }
+            }),
+            || 1234,
+            || reason,
+            async |event| events.borrow_mut().push(event)
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(finish.as_mut().poll(&mut cx), Poll::Pending);
+        assert!(
+            events.borrow().is_empty(),
+            "no successful End before actual cleanup acknowledgement"
+        );
+        ack.set(true);
+        assert_eq!(finish.as_mut().poll(&mut cx), Poll::Ready(cleanup_ok));
+        assert!(
+            matches!(events.borrow().as_slice(), [Event::InspectionEnd { revision: 77, at_ms: 1234, cleanup_complete, disconnect_reason }] if *cleanup_complete == cleanup_ok && *disconnect_reason == reason)
+        );
+    }
+}

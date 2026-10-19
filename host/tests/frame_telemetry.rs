@@ -1,5 +1,150 @@
 use dashboard_host_validation::display::pipeline::{BufferId, FrameToken};
 use dashboard_host_validation::display::telemetry::{CompletionRate, FrameTrace, RenderTrace, TraceRing};
+use dashboard_host_validation::input_trace::InputTrace;
+
+#[test]
+fn trace_storage_retains_the_64_entry_ram_budget() {
+    assert_eq!(core::mem::size_of::<FrameTrace>(), 152);
+    assert_eq!(core::mem::size_of::<Option<FrameTrace>>(), 152);
+    // Native usize is wider than ARM's; neither target needs more than this.
+    assert!(core::mem::size_of::<TraceRing<64>>() <= 9752);
+}
+
+#[test]
+fn trace_roundtrips_all_optional_fields_without_reserving_any_cycle_value() {
+    for at in [0, 37, u64::MAX] {
+        for active_cycles in [None, Some(0), Some(1), Some(u64::MAX)] {
+            for sample_us in [None, Some(0), Some(at)] {
+                for input in [
+                    None,
+                    Some(InputTrace {
+                        first_id: u64::MAX,
+                        last_id: u64::MAX,
+                        observed_us: 0,
+                        accepted_us: at,
+                        consumed_us: at,
+                        events: u32::MAX,
+                    }),
+                ] {
+                    let render = RenderTrace {
+                        active_cycles,
+                        sample_us,
+                        input,
+                        ..RenderTrace::instant(at)
+                    };
+                    let token = FrameToken {
+                        buffer: BufferId::B,
+                        sequence: u64::MAX,
+                    };
+                    let trace = FrameTrace::finish(token, render, at, at, 153600).unwrap();
+                    assert_eq!(trace.render(), render);
+                    assert_eq!(trace.token(), token);
+                    assert_eq!(
+                        (trace.started_us(), trace.completed_us(), trace.payload_bytes()),
+                        (at, at, 153600)
+                    );
+                    assert_eq!(trace.sample_age_us(), sample_us.map(|sample| at - sample));
+                    assert_eq!(trace.input_age_us(), input.map(|_| at));
+                    assert_eq!(trace.input_after_consume_us(), input.map(|_| 0));
+                    assert_eq!(
+                        (
+                            trace.render_us(),
+                            trace.queue_us(),
+                            trace.transfer_observed_us(),
+                            trace.total_us()
+                        ),
+                        (0, 0, 0, 0)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn full_trace_ring_preserves_missing_zero_and_max_cycles_through_overwrites() {
+    let make = |sequence, at| {
+        FrameTrace::finish(
+            FrameToken {
+                buffer: BufferId::A,
+                sequence,
+            },
+            RenderTrace {
+                active_cycles: [None, Some(0), Some(u64::MAX)][(sequence % 3) as usize],
+                sample_us: Some(0),
+                ..RenderTrace::instant(at)
+            },
+            at,
+            at,
+            2,
+        )
+        .unwrap()
+    };
+    let mut ring = TraceRing::<64>::new();
+    for sequence in 1..=130 {
+        assert!(ring.push(make(sequence, sequence * 10)));
+    }
+    assert_eq!((ring.len(), ring.overwritten()), (64, 66));
+    for index in 0..64 {
+        let sequence = index as u64 + 67;
+        assert_eq!(ring.get(index), Some(make(sequence, sequence * 10)));
+    }
+    assert_eq!(ring.latest(), Some(make(130, 1300)));
+    assert!(!ring.push(make(130, 1300)));
+    assert!(!ring.push(make(131, 0)));
+    assert_eq!((ring.len(), ring.overwritten()), (64, 66));
+    assert!(ring.get(64).is_none());
+}
+
+#[test]
+fn compact_trace_still_rejects_invalid_tokens_payloads_and_input_metadata() {
+    let good = frame(1);
+    let token = FrameToken {
+        sequence: 0,
+        ..good.token()
+    };
+    assert!(FrameTrace::finish(token, good.render(), 180, 220, 2).is_err());
+    assert!(FrameTrace::finish(good.token(), good.render(), 180, 220, 3).is_err());
+    let input = InputTrace {
+        first_id: 1,
+        last_id: 2,
+        observed_us: 1,
+        accepted_us: 2,
+        consumed_us: 3,
+        events: 1,
+    };
+    for invalid in [
+        InputTrace { first_id: 0, ..input },
+        InputTrace { first_id: 3, ..input },
+        InputTrace {
+            observed_us: 3,
+            ..input
+        },
+        InputTrace {
+            accepted_us: 4,
+            ..input
+        },
+        InputTrace {
+            consumed_us: 101,
+            ..input
+        },
+        InputTrace { events: 0, ..input },
+    ] {
+        assert!(
+            FrameTrace::finish(
+                good.token(),
+                RenderTrace {
+                    input: Some(invalid),
+                    ..good.render()
+                },
+                180,
+                220,
+                2
+            )
+            .is_err()
+        );
+    }
+}
 
 fn frame(sequence: u64) -> FrameTrace {
     FrameTrace::finish(
@@ -13,7 +158,7 @@ fn frame(sequence: u64) -> FrameTrace {
             queued_us: 170,
             blocked_us: 25,
             sample_us: Some(90),
-            active_cycles: 200,
+            active_cycles: Some(200),
             input: None,
         },
         180,

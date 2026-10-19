@@ -18,6 +18,7 @@ pub fn failure_reason<E>(error: BleHostError<E>) -> FailureReason {
                 Error::Att(code) => FailureReason::Att(code.to_u8()),
                 Error::Hci(code) => FailureReason::Hci(code.into()),
                 Error::HciDecode(_) => FailureReason::HciDecode,
+                Error::HardwareError(code) => FailureReason::Hardware(code),
                 Error::UnexpectedGattResponse => FailureReason::UnexpectedResponse,
                 Error::CodecError(_) => FailureReason::Codec,
                 Error::InvalidState => FailureReason::InvalidState,

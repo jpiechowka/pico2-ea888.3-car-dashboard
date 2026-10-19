@@ -9,7 +9,7 @@ import shutil
 import sys
 import tomllib
 
-from ble_probe_image import GATE, check, check_sources, sha, source_hashes
+from ble_probe_image import GATE, check, check_sources, sha, source_hashes, source_digest
 from validation import require
 
 REPO = Path(__file__).resolve().parents[2]
@@ -17,6 +17,28 @@ sys.path.insert(0, str(REPO / "host/scripts"))
 from owned_process import run_checked  # noqa: E402
 
 TARGET = "thumbv8m.main-none-eabihf"
+BIN_RUSTC_FLAGS = ["-C", "llvm-args=--inline-threshold=100000"]
+
+
+def build_command(profile):
+    require(profile in ("stock", "280-70"), "unknown profile")
+    args = [
+        "cargo",
+        "rustc",
+        "--locked",
+        "--release",
+        "-p",
+        "dashboard-ble-probe",
+        "--bin",
+        "ble-probe",
+        "--target",
+        TARGET,
+    ]
+    if profile == "280-70":
+        args += ["--features", "cpu280-spi70-1v30"]
+    # Only the selected binary gets this LLVM option. Keep dependency compiler
+    # options unchanged; recheck exact SRAM helper bytes in the image gate.
+    return args + ["--", *BIN_RUSTC_FLAGS]
 
 
 def build_environment(original, toolchain, attempt):
@@ -26,7 +48,7 @@ def build_environment(original, toolchain, attempt):
     env = {
         key: value
         for key, value in original.items()
-        if not key.startswith((*ENV_PREFIXES, "DASHBOARD_"))
+        if not key.upper().startswith((*ENV_PREFIXES, "DASHBOARD_", "BLE_PROBE_"))
     }
     flags = [
         "-Z",
@@ -97,6 +119,8 @@ def build(name, profile, expert):
     (attempt / "sources-before.json").write_text(
         json.dumps(sources, sort_keys=True), encoding="utf-8"
     )
+    digest = source_digest(sources)
+    env["BLE_PROBE_SOURCE_DIGEST"] = digest
     rustc = run(["rustc", "--version", "--verbose"])
     cargo = run(["cargo", "--version"])
     converter = REPO / "target/configurator-tools/bin/picotool.exe"
@@ -107,20 +131,7 @@ def build(name, profile, expert):
     require("--family" in help_text and "--platform" in help_text, "converter capabilities")
     run([sys.executable, "scripts/check_vendor.py"], 300, host=True)
     run([sys.executable, "scripts/check_radio_vendor.py"], 300, host=True)
-    args = [
-        "cargo",
-        "build",
-        "--locked",
-        "--release",
-        "-p",
-        "dashboard-ble-probe",
-        "--bin",
-        "ble-probe",
-        "--target",
-        TARGET,
-    ]
-    if profile == "280-70":
-        args += ["--features", "cpu280-spi70-1v30"]
+    args = build_command(profile)
     print("Compilation: " + " ".join(args) + "; target-cpu=cortex-m33")
     run(args, 1200)
     check_sources(REPO, sources)
@@ -161,11 +172,13 @@ def build(name, profile, expert):
         "schema": 1,
         "gate": GATE,
         "sources": sources,
+        "source_digest": digest,
         "rustc": rustc,
         "cargo": cargo,
         "target": TARGET,
         "target_cpu": "cortex-m33",
         "flags": flags,
+        "bin_rustc_flags": BIN_RUSTC_FLAGS,
         "profile": profile,
         "command": args,
         "build_jobs": 2,

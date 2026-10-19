@@ -71,7 +71,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         match select(
             host.connections()
                 .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
-            host.connect_command_state().wait_idle(),
+            host.connect_command_state().wait_result(),
         )
         .await
         {
@@ -80,7 +80,11 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
                 host.connect_command_state().done();
                 Ok(conn)
             }
-            Either::Second(_) => Err(Error::Timeout.into()),
+            Either::Second(result) => {
+                _drop.defuse();
+                host.connect_command_state().done();
+                Err(result.err().map(Error::Hci).unwrap_or(Error::Timeout).into())
+            }
         }
     }
 
@@ -143,7 +147,7 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
         match select(
             host.connections()
                 .accept(LeConnRole::Central, config.scan_config.filter_accept_list),
-            host.connect_command_state().wait_idle(),
+            host.connect_command_state().wait_result(),
         )
         .await
         {
@@ -152,7 +156,11 @@ impl<'stack, C: Controller, P: PacketPool> Central<'stack, C, P> {
                 host.connect_command_state().done();
                 Ok(conn)
             }
-            Either::Second(_) => Err(Error::Timeout.into()),
+            Either::Second(result) => {
+                _drop.defuse();
+                host.connect_command_state().done();
+                Err(result.err().map(Error::Hci).unwrap_or(Error::Timeout).into())
+            }
         }
     }
 

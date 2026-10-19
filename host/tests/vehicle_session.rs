@@ -309,7 +309,7 @@ fn per_pid_timing_starts_at_actual_request_tx_and_preserves_epoch_totals() {
     assert!(bounds.lower <= 525 && bounds.upper >= 525);
     assert_eq!(
         session.counters().completed,
-        telemetry.channels.iter().map(|c| c.counters.completed).sum()
+        telemetry.channels.iter().map(|c| c.counters.completed).sum::<u32>()
     );
     assert_eq!(telemetry.channels[0].reply_ms.samples, 2);
 }

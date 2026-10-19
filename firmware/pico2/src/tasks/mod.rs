@@ -1,6 +1,9 @@
-use core::sync::atomic::AtomicU32;
+use core::cell::Cell;
 
+use dashboard_pico2::diagnostic_values::WorkObservation;
 use embassy_executor::Executor;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use static_cell::StaticCell;
 
 pub mod acquisition;
@@ -26,8 +29,8 @@ pub use flush::{
 
 pub static EXECUTOR_CORE1: StaticCell<Executor> = StaticCell::new();
 pub static CORE1_STACK: StaticCell<embassy_rp::multicore::Stack<{ CORE1_STACK_BYTES as usize }>> = StaticCell::new();
-pub static CORE1_UTIL_PERCENT: AtomicU32 = AtomicU32::new(0);
-pub static CORE1_STACK_USED_KB: AtomicU32 = AtomicU32::new(0);
+pub static CORE1_OBSERVATION: Mutex<CriticalSectionRawMutex, Cell<WorkObservation>> =
+    Mutex::new(Cell::new(WorkObservation::EMPTY));
 pub const CORE1_STACK_BYTES: u32 = dashboard_pico2::memory::CORE1_STACK_BYTES;
 // Keep the linked frame-admission policy synchronized with the actual stack.
 const _: () = assert!(CORE1_STACK_BYTES == 32768);

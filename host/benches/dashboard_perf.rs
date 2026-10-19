@@ -825,7 +825,7 @@ fn frame_window(c: &mut Criterion) {
                 end_us: at + 3,
                 queued_us: at + 5,
                 blocked_us: 2,
-                active_cycles: 50,
+                active_cycles: Some(50),
                 sample_us: Some(0),
                 input: Some(InputTrace {
                     first_id: id,

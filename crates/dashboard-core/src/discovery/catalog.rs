@@ -1,11 +1,20 @@
 use heapless::{String, Vec};
 
 use super::*;
+/// Metadata belongs to the packet it accompanied, not the newest peer report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PacketObservation {
+    pub at_ms: u64,
+    pub rssi: Option<i8>,
+    pub kind: ReportKind,
+}
 #[derive(Clone, Debug)]
 pub struct Device {
     pub peer: Peer,
     pub advertisement: Payload<31>,
     pub response: Payload<31>,
+    pub advertisement_meta: Option<PacketObservation>,
+    pub response_meta: Option<PacketObservation>,
     pub last_seen_ms: u64,
     pub first_seen_ms: u64,
     pub reports: u32,
@@ -71,6 +80,8 @@ impl Catalog {
                         peer: report.peer,
                         advertisement: Payload::empty(),
                         response: Payload::empty(),
+                        advertisement_meta: None,
+                        response_meta: None,
                         last_seen_ms: report.at_ms,
                         first_seen_ms: report.at_ms,
                         reports: 0,
@@ -92,10 +103,17 @@ impl Catalog {
         device.last_seen_ms = report.at_ms;
         device.reports = device.reports.saturating_add(1);
         device.rssi = (-127..=20).contains(&report.rssi).then_some(report.rssi);
+        let metadata = Some(PacketObservation {
+            at_ms: report.at_ms,
+            rssi: device.rssi,
+            kind: report.kind,
+        });
         if report.kind == ReportKind::ScanResponse {
             device.response = report.data;
+            device.response_meta = metadata;
         } else {
             device.advertisement = report.data;
+            device.advertisement_meta = metadata;
         }
     }
 }

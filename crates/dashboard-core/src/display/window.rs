@@ -15,7 +15,7 @@ pub struct WindowReport {
     pub end_us: u64,
     pub frames: u32,
     pub payload_bytes: u64,
-    pub active_cycles: u64,
+    pub active_cycles: Option<u64>,
     pub rejected: u64,
     pub metrics: [Distribution; METRICS],
     /// Lifetime counters, not per-window deltas. The collector detects reset.
@@ -30,7 +30,7 @@ pub struct FrameWindow {
     last_input: u64,
     frames: u32,
     payload_bytes: u64,
-    active_cycles: u64,
+    active_cycles: Option<u64>,
     rejected: u64,
     metrics: [Histogram<976>; METRICS],
 }
@@ -45,7 +45,7 @@ impl FrameWindow {
             last_input: 0,
             frames: 0,
             payload_bytes: 0,
-            active_cycles: 0,
+            active_cycles: Some(0),
             rejected: 0,
             metrics: [const { Histogram::new() }; METRICS],
         }
@@ -88,10 +88,12 @@ impl FrameWindow {
             .payload_bytes
             .checked_add(u64::from(trace.payload_bytes()))
             .ok_or(TelemetryError::Counter)?;
+        // Missing/overflowing cycle observations do not discard valid transfer
+        // counts or timing. The sum remains unavailable for this entire window.
         let cycles = self
             .active_cycles
-            .checked_add(trace.render().active_cycles)
-            .ok_or(TelemetryError::Counter)?;
+            .zip(trace.render().active_cycles)
+            .and_then(|(total, next)| total.checked_add(next));
         let values = [
             self.previous.map(|old| trace.completed_us() - old.completed_us()),
             Some(trace.render_us()),
@@ -162,7 +164,7 @@ impl FrameWindow {
         self.start_us = now_us;
         self.frames = 0;
         self.payload_bytes = 0;
-        self.active_cycles = 0;
+        self.active_cycles = Some(0);
         self.rejected = 0;
         Ok(Some(report))
     }
@@ -181,7 +183,7 @@ mod tests {
                 sequence: 1,
             },
             RenderTrace {
-                active_cycles: 1,
+                active_cycles: Some(1),
                 ..RenderTrace::instant(0)
             },
             0,
@@ -190,18 +192,22 @@ mod tests {
         )
         .unwrap();
         let mut window = FrameWindow::new(0);
-        for field in 0..3 {
+        for field in 0..2 {
             match field {
                 0 => window.frames = u32::MAX,
-                1 => window.payload_bytes = u64::MAX,
-                _ => window.active_cycles = u64::MAX,
+                _ => window.payload_bytes = u64::MAX,
             }
             assert_eq!(window.record(trace), Err(TelemetryError::Counter));
             assert_eq!(window.metrics[1].summary().samples, 0);
             window.frames = 0;
             window.payload_bytes = 0;
-            window.active_cycles = 0;
+            window.active_cycles = Some(0);
         }
+        window.active_cycles = Some(u64::MAX);
+        window.record(trace).unwrap();
+        assert_eq!(window.active_cycles, None);
+        assert_eq!(window.frames, 1);
+        assert_eq!(window.metrics[1].summary().samples, 1);
         window.sequence = u64::MAX;
         assert_eq!(
             window.report(WINDOW_US, InputCounters::ZERO),

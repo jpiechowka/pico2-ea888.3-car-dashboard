@@ -3,6 +3,8 @@ use core::sync::atomic::Ordering;
 #[cfg(not(feature = "longan-rx12"))]
 use dashboard_pico2::acquisition::AcquisitionModel;
 use dashboard_pico2::acquisition::DashboardSnapshot;
+use dashboard_pico2::cpu_math::CycleWindow;
+use dashboard_pico2::diagnostic_values::WorkObservation;
 #[cfg(feature = "longan-rx12")]
 use dashboard_pico2::diagnostics::service::{LinkSnapshot, Vehicle};
 use dashboard_pico2::maintenance::{Command, Owner};
@@ -14,7 +16,7 @@ use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::log_info;
-use crate::tasks::{CORE1_STACK_USED_KB, CORE1_UTIL_PERCENT};
+use crate::tasks::CORE1_OBSERVATION;
 
 pub static DASHBOARD_VALUES: Watch<CriticalSectionRawMutex, DashboardSnapshot, 1> = Watch::new();
 // Only the newest requested generation matters. The acquisition owner echoes
@@ -105,7 +107,7 @@ pub async fn acquisition_task(
     );
 
     let mut last_util_calc = Instant::now();
-    let mut total_work_cycles = 0u32;
+    let mut work_window = CycleWindow::new();
     #[cfg(not(feature = "longan-rx12"))]
     let mut model = configured_model(resources);
     #[cfg(feature = "longan-rx12")]
@@ -211,6 +213,7 @@ pub async fn acquisition_task(
             }
         }
         // Start useful-work measurement only after cooperative park ends.
+        let work_started = Instant::now();
         let work_start = crate::profiling::read();
 
         if let Some(generation) = RESET_STATISTICS.try_take() {
@@ -279,23 +282,26 @@ pub async fn acquisition_task(
             diagnostic_export = sequence;
         }
         let work_end = crate::profiling::read();
-        total_work_cycles = total_work_cycles.wrapping_add(crate::profiling::elapsed(work_start, work_end));
+        work_window.record(
+            dashboard_pico2::cpu_cycles::available(1)
+                .then(|| crate::profiling::elapsed(work_start, work_end, work_started.elapsed().as_micros()))
+                .flatten(),
+        );
 
         if util_due {
-            let util = crate::profiling::calc_util_percent(
-                total_work_cycles,
-                last_util_calc.elapsed().as_micros().min(u32::MAX as u64) as u32,
-            );
-            CORE1_UTIL_PERCENT.store(util, Ordering::Relaxed);
+            let now = Instant::now();
+            let util = work_window.finish(embassy_rp::clocks::clk_sys_freq(), (now - last_util_calc).as_micros());
 
             // Sampled depth only; never read live stack memory or claim a HWM.
-            let observed = stack_samples
-                .observe(dashboard_pico2::memory::stack_pointer())
-                .expect("core1 SP outside its stack");
-            CORE1_STACK_USED_KB.store(observed.div_ceil(1024), Ordering::Relaxed);
-
-            total_work_cycles = 0;
-            last_util_calc = Instant::now();
+            let observed = stack_samples.observe(dashboard_pico2::memory::stack_pointer());
+            CORE1_OBSERVATION.lock(|slot| {
+                slot.set(WorkObservation {
+                    at_us: Some(now.as_micros()),
+                    work_tenths: util,
+                    stack_bytes: observed,
+                })
+            });
+            last_util_calc = now;
         }
 
         // Never run a burst of overdue catch-up ticks after scheduling delays.

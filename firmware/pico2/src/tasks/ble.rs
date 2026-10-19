@@ -1,4 +1,7 @@
 //! Core0 owns radio DMA, HCI and GATT. Only bounded status leaves this task.
+#[path = "ble_error.rs"]
+mod ble_error;
+
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -206,7 +209,7 @@ async fn host(
         core::future::pending::<()>().await;
     };
     match select(runner.run(), lifecycle).await {
-        Either::First(result) => crate::log_fault!("BLE HCI stopped: {:?}", result),
+        Either::First(result) => crate::log_fault!("{}", ble_error::RunnerFault(&result)),
         Either::Second(()) => unreachable!(),
     }
     publish(LinkState::Fault, Some(LinkFault::Transport));

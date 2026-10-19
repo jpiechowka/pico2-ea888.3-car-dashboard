@@ -224,8 +224,8 @@ impl<'a> DebugPage<'a> {
                 GREEN
             }
             DoneFps | AverageFps | FrameTime | SourceStatus | ConfigFault => YELLOW,
-            Core0Utilization if data.cpu0_util_percent.is_some_and(|v| v > 850) => YELLOW,
-            Core1Utilization if data.cpu1_util_percent.is_some_and(|v| v > 850) => YELLOW,
+            Core0Utilization if data.cpu0_util_percent.is_some_and(|v| (851..=1000).contains(&v)) => YELLOW,
+            Core1Utilization if data.cpu1_util_percent.is_some_and(|v| (851..=1000).contains(&v)) => YELLOW,
             _ => WHITE,
         };
         match line {
@@ -267,24 +267,16 @@ impl<'a> DebugPage<'a> {
                 let _ = write!(text, "Cycles: {}K", Available(data.frame_cycles.map(|v| v / 1000)));
             }
             Core0Stack => {
-                let _ = write!(
-                    text,
-                    "SP now: {}K/{}K",
-                    Available(data.core0_stack_used_kb),
-                    Available(data.core0_stack_total_kb)
-                );
+                let (used, total) = memory_pair(data.core0_stack_used_kb, data.core0_stack_total_kb);
+                let _ = write!(text, "SP now: {}K/{}K", Available(used), Available(total));
             }
             Core1Header => {
                 let _ = text.write_str("CORE 1");
             }
             Core1Utilization => util(&mut text, "Acq work", data.cpu1_util_percent),
             Core1Stack => {
-                let _ = write!(
-                    text,
-                    "SP seen: {}K/{}K",
-                    Available(data.core1_stack_used_kb),
-                    Available(data.core1_stack_total_kb)
-                );
+                let (used, total) = memory_pair(data.core1_stack_used_kb, data.core1_stack_total_kb);
+                let _ = write!(text, "SP seen: {}K/{}K", Available(used), Available(total));
             }
             SystemHeader => {
                 let _ = text.write_str("SYSTEM");
@@ -314,12 +306,8 @@ impl<'a> DebugPage<'a> {
                 );
             }
             Ram => {
-                let _ = write!(
-                    text,
-                    "Static: {}K/{}K",
-                    Available(data.static_ram_kb),
-                    Available(data.ram_total_kb)
-                );
+                let (used, total) = memory_pair(data.static_ram_kb, data.ram_total_kb);
+                let _ = write!(text, "Static: {}K/{}K", Available(used), Available(total));
             }
             Framebuffers => {
                 let _ = write!(
@@ -461,10 +449,7 @@ fn fps(
     label: &str,
     value: Option<f32>,
 ) {
-    let _ = match value.filter(|v| v.is_finite()) {
-        Some(v) => write!(text, "{label}: {v:.1}"),
-        None => write!(text, "{label}: --"),
-    };
+    let _ = write!(text, "{label}: {}", crate::diagnostic_values::rate_text(value));
 }
 fn duration(
     text: &mut LineText,
@@ -482,20 +467,28 @@ fn buffer(
     label: &str,
     value: Option<usize>,
 ) {
-    let _ = match value {
+    let _ = match value.filter(|&index| index < 2) {
         Some(v) => write!(text, "{label}buf{v}"),
         None => write!(text, "{label}--"),
     };
+}
+
+fn memory_pair(
+    used: Option<u32>,
+    total: Option<u32>,
+) -> (Option<u32>, Option<u32>) {
+    let total = total.filter(|&value| (1..=512).contains(&value));
+    (
+        used.filter(|&value| total.is_some_and(|capacity| value <= capacity)),
+        total,
+    )
 }
 fn util(
     text: &mut LineText,
     label: &str,
     value: Option<u32>,
 ) {
-    let _ = match value {
-        Some(v) => write!(text, "{label}: {}.{}%", v / 10, v % 10),
-        None => write!(text, "{label}: --"),
-    };
+    let _ = write!(text, "{label}: {}", crate::diagnostic_values::work_text(value));
 }
 
 pub(crate) fn draw_compact_row<D: DrawTarget<Color = Rgb565>>(

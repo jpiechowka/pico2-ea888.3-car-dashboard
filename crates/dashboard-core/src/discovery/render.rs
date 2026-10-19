@@ -1,12 +1,13 @@
 //! Fixed landscape photographic UI. Pagination walks bounded records without allocating a document.
 use core::fmt::Write;
 
-use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_7X13, FONT_9X15};
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
-use embedded_graphics::text::{Baseline, Text};
+use embedded_graphics::text::Baseline;
+use embedded_graphics::text::renderer::TextRenderer;
 use heapless::String;
 
 use super::*;
@@ -82,18 +83,18 @@ fn control_hints(
     } else if let Some(peer) = probe.selected_device() {
         if peer.age_ms(now_ms) > 30_000 {
             if details {
-                "Turn/A/B: pages  GATT stale; Y to rescan"
+                "Turn/A/B: pages  Advert old; Y to rescan"
             } else {
-                "Turn/A/B: select  GATT stale; rescan"
+                "Turn/A/B: select  Advert old; rescan"
             }
         } else if details {
             if gatt_requested(probe) {
-                "Turn/A/B: pages  Click/X: Repeat GATT"
+                "Turn/A/B: pages Click/X/Hold A 2s: Repeat"
             } else {
-                "Turn/A/B: pages  Click/X: Inspect GATT"
+                "Turn/A/B: pages Click/X/Hold A 2s: Inspect"
             }
         } else {
-            "Turn/A/B: select  Click: Inspect GATT"
+            "Turn/A/B: select Click/Hold A 2s: Inspect"
         }
     } else if details {
         "Turn/A/B: pages  No peer to inspect"
@@ -103,6 +104,8 @@ fn control_hints(
     let second = if details {
         if busy && gatt_requested(probe) {
             "Y: Cancel / back to scan"
+        } else if gatt_requested(probe) && probe.selected_device().is_some_and(|peer| peer.age_ms(now_ms) > 30_000) {
+            "GATT retained here; Y: scan  Hold X: slots"
         } else {
             "Y: Back to scan"
         }
@@ -161,45 +164,36 @@ fn text<D: DrawTarget<Color = Rgb565>>(
     s: &str,
     c: Rgb565,
 ) -> Result<(), D::Error> {
-    Text::with_baseline(s, Point::new(x, y), MonoTextStyle::new(&FONT_6X10, c), Baseline::Top)
-        .draw(d)
+    font_text(d, Point::new(x, y), s, c, &FONT_6X10)
+}
+fn font_text<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    position: Point,
+    s: &str,
+    c: Rgb565,
+    font: &MonoFont<'_>,
+) -> Result<(), D::Error> {
+    // Every row is single-line ASCII (peer bytes are sanitized before here).
+    // Use the same glyph renderer without Text's unused multiline/alignment pass.
+    MonoTextStyle::new(font, c)
+        .draw_string(s, position, Baseline::Top, d)
         .map(|_| ())
 }
 
-fn rate(value: Option<f32>) -> String<8> {
-    let mut s = String::new();
-    match value {
-        Some(v) if v.is_finite() && (0.0..1000.0).contains(&v) => {
-            // Bounded one-decimal rounding avoids pulling the general float
-            // formatter's large conversion frames into the utility image.
-            let tenths = (v * 10.0 + 0.5) as u32;
-            let _ = write!(s, "{}.{:01}", tenths / 10, tenths % 10);
-        }
-        Some(v) if v.is_finite() && v >= 1000.0 => {
-            let _ = s.push_str(">999");
-        }
-        _ => {
-            let _ = s.push_str("--");
-        }
-    }
-    s
-}
+fn rate(value: Option<f32>) -> String<8> { crate::diagnostic_values::rate_text(value) }
 
 fn work(value: Option<u16>) -> String<8> {
-    let mut s = String::new();
-    if let Some(v) = value.filter(|&v| v <= 1000) {
-        let _ = write!(s, "{}.{:01}%", v / 10, v % 10);
-    } else {
-        let _ = s.push_str("--%");
+    let mut s = crate::diagnostic_values::work_text(value.map(u32::from));
+    if s == "--" {
+        let _ = s.push('%');
     }
     s
 }
 
 fn memory(value: Option<MemoryUse>) -> String<12> {
     let mut s = String::new();
-    if let Some(v) = value.filter(|v| v.valid()) {
-        // Both are rounded KiB labels; byte-exact bounds remain in MemoryUse.
-        let _ = write!(s, "{}/{}K", v.used.div_ceil(1024), v.total.div_ceil(1024));
+    if let Some((used, total)) = value.and_then(|v| crate::diagnostic_values::memory_kib(v.used, v.total)) {
+        let _ = write!(s, "{used}/{total}K");
     } else {
         let _ = s.push_str("--/--K");
     }
@@ -260,13 +254,6 @@ fn rect<D: DrawTarget<Color = Rgb565>>(
         .into_styled(PrimitiveStyle::with_fill(c))
         .draw(d)
 }
-fn uuid_text(uuid: Uuid) -> String<50> {
-    let mut s = String::new();
-    for byte in uuid.bytes[..usize::from(uuid.len).min(16)].iter().rev() {
-        let _ = write!(s, "{byte:02X}");
-    }
-    s
-}
 fn uuid_label(uuid: Uuid) -> &'static str {
     match uuid.short() {
         Some(0x1800) => "Generic Access",
@@ -280,58 +267,128 @@ fn uuid_label(uuid: Uuid) -> &'static str {
         None => "",
     }
 }
+// Count and draw share a concrete writer and one formatting buffer across the
+// traversal. Keep the callback inside the writer, not as a formatter parameter:
+// otherwise LLVM specializes the whole packet/record tree for each callback.
+struct EvidenceLines<'a> {
+    output: Option<&'a mut dyn FnMut(&str)>,
+    count: usize,
+    scratch: String<50>,
+}
+impl<'a> EvidenceLines<'a> {
+    fn new(output: Option<&'a mut dyn FnMut(&str)>) -> Self {
+        Self {
+            output,
+            count: 0,
+            scratch: String::new(),
+        }
+    }
+
+    fn text(
+        &mut self,
+        value: &str,
+    ) {
+        self.count += 1;
+        if let Some(output) = &mut self.output {
+            output(value);
+        }
+    }
+
+    fn formatted(
+        &mut self,
+        args: core::fmt::Arguments<'_>,
+    ) {
+        self.count += 1;
+        if let Some(output) = &mut self.output {
+            self.scratch.clear();
+            let _ = self.scratch.write_fmt(args);
+            output(&self.scratch);
+        }
+    }
+
+    fn uuid(
+        &mut self,
+        uuid: Uuid,
+    ) {
+        self.hex_line(&uuid.bytes[..usize::from(uuid.len).min(16)], true);
+    }
+
+    // Raw rows contain at most 16 bytes. UUID rows reverse those bytes and omit
+    // spaces. Fixed nibbles avoid per-byte fmt state and a second line buffer.
+    fn hex_line(
+        &mut self,
+        bytes: &[u8],
+        uuid_order: bool,
+    ) {
+        self.count += 1;
+        if let Some(output) = &mut self.output {
+            self.scratch.clear();
+            for index in 0..bytes.len() {
+                if !uuid_order && index > 0 {
+                    let _ = self.scratch.push(' ');
+                }
+                let byte = bytes[if uuid_order { bytes.len() - index - 1 } else { index }];
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                let _ = self.scratch.push(char::from(HEX[usize::from(byte >> 4)]));
+                let _ = self.scratch.push(char::from(HEX[usize::from(byte & 15)]));
+            }
+            output(&self.scratch);
+        }
+    }
+}
 fn hex(
     bytes: &[u8],
-    emit: &mut impl FnMut(&str),
+    emit: &mut EvidenceLines<'_>,
 ) {
     for chunk in bytes.chunks(16) {
-        let mut s = String::<50>::new();
-        for (i, b) in chunk.iter().enumerate() {
-            if i > 0 {
-                let _ = s.push(' ');
-            }
-            let _ = write!(s, "{b:02X}");
-        }
-        emit(&s);
+        emit.hex_line(chunk, false);
     }
 }
 fn packet(
     title: &str,
     payload: &Payload<31>,
-    emit: &mut impl FnMut(&str),
+    emit: &mut EvidenceLines<'_>,
 ) {
-    emit(&line(format_args!(
+    packet_bytes(title, payload.as_slice(), payload.truncated, emit);
+}
+fn packet_bytes(
+    title: &str,
+    bytes: &[u8],
+    truncated: bool,
+    emit: &mut EvidenceLines<'_>,
+) {
+    emit.formatted(format_args!(
         "{title}: {} bytes{}",
-        payload.len,
-        if payload.truncated { " [TRUNCATED]" } else { "" }
-    )));
-    if payload.as_slice().is_empty() {
-        emit("No payload received");
+        bytes.len(),
+        if truncated { " [TRUNCATED]" } else { "" }
+    ));
+    if bytes.is_empty() {
+        emit.text("No payload received");
         return;
     }
-    emit("RAW HEX (wire order)");
-    hex(payload.as_slice(), emit);
-    for field in AdFields::new(payload.as_slice()) {
+    emit.text("RAW HEX (wire order)");
+    hex(bytes, emit);
+    for field in AdFields::new(bytes) {
         let Ok(f) = field else {
-            emit("! MALFORMED advertisement length");
+            emit.text("! MALFORMED advertisement length");
             break;
         };
         match f.kind {
-            1 if f.data.len() == 1 => emit(&line(format_args!("Flags: 0x{:02X}", f.data[0]))),
+            1 if f.data.len() == 1 => emit.formatted(format_args!("Flags: 0x{:02X}", f.data[0])),
             8 | 9 => {
-                emit(if f.kind == 9 {
+                emit.text(if f.kind == 9 {
                     "Complete name:"
                 } else {
                     "Shortened name:"
                 });
-                emit(&printable::<50>(f.data));
+                emit.text(&printable::<50>(f.data));
             }
-            0x0A if f.data.len() == 1 => emit(&line(format_args!("TX power: {} dBm", f.data[0] as i8))),
+            0x0A if f.data.len() == 1 => emit.formatted(format_args!("TX power: {} dBm", f.data[0] as i8)),
             0xFF if f.data.len() >= 2 => {
-                emit(&line(format_args!(
+                emit.formatted(format_args!(
                     "Manufacturer ID: 0x{:04X}",
                     u16::from_le_bytes([f.data[0], f.data[1]])
-                )))
+                ))
             }
             2..=7 => {
                 let width = match f.kind {
@@ -339,65 +396,211 @@ fn packet(
                     4 | 5 => 4,
                     _ => 16,
                 };
-                emit(if f.kind % 2 == 1 {
+                emit.text(if f.kind % 2 == 1 {
                     "Service UUIDs (complete list):"
                 } else {
                     "Service UUIDs (incomplete list):"
                 });
                 for chunk in f.data.chunks(width) {
                     if let Some(uuid) = Uuid::from_wire(chunk).filter(|_| chunk.len() == width) {
-                        emit(&uuid_text(uuid));
+                        emit.uuid(uuid);
                         let label = uuid_label(uuid);
                         if !label.is_empty() {
-                            emit(label);
+                            emit.text(label);
                         }
                     } else {
-                        emit("! MALFORMED UUID field");
+                        emit.text("! MALFORMED UUID field");
                     }
                 }
             }
             _ => {
-                emit(&line(format_args!(
+                emit.formatted(format_args!(
                     "AD type 0x{:02X}: {} bytes (see raw)",
                     f.kind,
                     f.data.len()
-                )))
+                ))
             }
         }
+    }
+}
+fn packet_observation(
+    title: &str,
+    observation: Option<PacketObservation>,
+    now: u64,
+    emit: &mut EvidenceLines<'_>,
+) {
+    emit.formatted(format_args!("{title} observation:"));
+    if let Some(value) = observation {
+        emit.formatted(format_args!("Type: {:?} / at {} ms", value.kind, value.at_ms));
+        match now.checked_sub(value.at_ms) {
+            Some(age) => emit.formatted(format_args!("Age at snapshot: {age} ms")),
+            None => emit.text("Age unavailable: clock before observation"),
+        }
+        match value.rssi {
+            Some(v) => emit.formatted(format_args!("Packet RSSI: {v} dBm")),
+            None => emit.text("Packet RSSI: unavailable"),
+        }
+    } else {
+        emit.text("Not observed");
+    }
+}
+fn link_details(
+    link: Option<LinkInfo>,
+    stages: [bool; 4],
+    cleanup: bool,
+    disconnect: Option<u8>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    emit.text("LINK / OBSERVED PARAMETERS");
+    if let Some(link) = link {
+        emit.formatted(format_args!("Connected at: {} ms", link.connected_at_ms));
+        emit.formatted(format_args!("Connect elapsed: {} ms", link.connect_elapsed_ms));
+        emit.formatted(format_args!(
+            "Interval: {} us / latency {}",
+            link.interval_us, link.latency
+        ));
+        emit.formatted(format_args!("Supervision timeout: {} us", link.supervision_timeout_us));
+        match link.att_mtu {
+            Some(mtu) => emit.formatted(format_args!("ATT MTU: {mtu} bytes")),
+            None => emit.text("ATT MTU: unavailable"),
+        }
+    } else {
+        emit.text("No connection parameters observed");
+    }
+    emit.text("INVENTORY STAGES / ended is not compatibility");
+    for (name, complete) in ["Services", "Characteristics", "Descriptors", "Standard reads"]
+        .into_iter()
+        .zip(stages)
+    {
+        emit.formatted(format_args!(
+            "{name}: {}",
+            if complete { "ended" } else { "partial / not run" }
+        ));
+    }
+    emit.text(if cleanup {
+        "Disconnect cleanup: acknowledged"
+    } else {
+        "Disconnect cleanup: not acknowledged"
+    });
+    match disconnect {
+        Some(code) => emit.formatted(format_args!("Disconnect reason: 0x{code:02X}")),
+        None => emit.text("Disconnect reason: unavailable"),
+    }
+}
+fn record_details(
+    record: capture::Record<'_>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    use capture::Record;
+    match record {
+        Record::Service(s) => {
+            emit.formatted(format_args!("SERVICE {:04X}-{:04X}", s.start, s.end));
+            emit.uuid(s.uuid);
+            let label = uuid_label(s.uuid);
+            if !label.is_empty() {
+                emit.text(label);
+            }
+        }
+        Record::Characteristic(c) => {
+            emit.formatted(format_args!("CHAR {:04X} / service {:04X}", c.handle, c.service_start));
+            emit.uuid(c.uuid);
+            let label = uuid_label(c.uuid);
+            if !label.is_empty() {
+                emit.text(label);
+            }
+            emit.formatted(format_args!(
+                "Decl {:04X} / properties 0x{:02X}",
+                c.declaration, c.properties
+            ));
+            emit.text(&properties_text(c.properties));
+        }
+        Record::Descriptor(d) => {
+            emit.formatted(format_args!(
+                "DESCRIPTOR {:04X} / characteristic {:04X}",
+                d.handle, d.characteristic_handle
+            ));
+            emit.formatted(format_args!("Service {:04X} / UUID:", d.service_start));
+            emit.uuid(d.uuid);
+            if d.uuid.short() == Some(0x2902) {
+                emit.text("Client configuration / not written");
+            }
+        }
+        Record::Value(v) => {
+            emit.formatted(format_args!(
+                "STANDARD READ / {} ({:04X})",
+                info_label(v.uuid).unwrap_or("Value"),
+                v.uuid
+            ));
+            emit.formatted(format_args!(
+                "Read service {:04X} / handle {:04X}",
+                v.service_start, v.handle
+            ));
+            emit.formatted(format_args!("Outcome: {:?} / {} ms", v.result, v.elapsed_ms));
+            if let Some(error) = v.failure {
+                reason_line("Read error", error, emit);
+            }
+            if v.result == ReadResult::Ok {
+                if !v.length_valid() {
+                    emit.text("! Unexpected standard length; raw retained");
+                }
+                for chunk in v.bytes.chunks(48) {
+                    emit.text(&printable::<50>(chunk));
+                }
+                emit.text("Value RAW HEX:");
+                hex(v.bytes, emit);
+            }
+            if v.truncated {
+                emit.text("! VALUE TRUNCATED");
+            }
+        }
+    }
+}
+fn reason_line(
+    title: &str,
+    reason: FailureReason,
+    emit: &mut EvidenceLines<'_>,
+) {
+    if let Some(code) = reason.code() {
+        emit.formatted(format_args!("{title}: {} 0x{code:02X}", reason.label()));
+    } else {
+        emit.formatted(format_args!("{title}: {}", reason.label()));
     }
 }
 fn peer_details(
     probe: &Probe,
     now: u64,
-    emit: &mut impl FnMut(&str),
+    emit: &mut EvidenceLines<'_>,
 ) {
     let Some(d) = probe.selected_device() else {
-        emit("No selected device");
+        emit.text("No selected device");
         return;
     };
-    emit("PEER / ADVERTISEMENT EVIDENCE");
-    emit(&d.name());
-    emit(&line(format_args!("{} / {}", d.peer.to_string(), d.peer.kind_label())));
-    emit(&line(format_args!(
+    emit.text("PEER / ADVERTISEMENT EVIDENCE");
+    emit.text(&d.name());
+    emit.formatted(format_args!("{} / {}", d.peer.to_string(), d.peer.kind_label()));
+    emit.formatted(format_args!(
         "Seen {}s ago / {} reports",
         d.age_ms(now) / 1000,
         d.reports
-    )));
-    emit(&match d.rssi {
+    ));
+    emit.text(&match d.rssi {
         Some(rssi) => line(format_args!("RSSI: {rssi} dBm (not distance)")),
         None => line(format_args!("RSSI unavailable")),
     });
+    packet_observation("Advertisement", d.advertisement_meta, now, emit);
     packet("ADVERTISEMENT", &d.advertisement, emit);
+    packet_observation("Scan response", d.response_meta, now, emit);
     packet("SCAN RESPONSE", &d.response, emit);
     if !gatt_requested(probe) {
-        emit("GATT not inspected");
-        emit("Advertisement only / no connection requested");
-        emit("When ready: Click/X connects + inspects GATT");
+        emit.text("GATT not inspected");
+        emit.text("Advertisement only / no connection requested");
+        emit.text("When ready: Click/X connects + inspects GATT");
         return;
     }
     let i = &probe.inspection;
-    emit("GATT / EXPLICIT INSPECTION");
-    emit(if i.complete && i.omitted == 0 && i.malformed == 0 {
+    emit.text("GATT / EXPLICIT INSPECTION");
+    emit.text("Advert age does not invalidate these records");
+    emit.text(if i.complete && i.omitted == 0 && i.malformed == 0 {
         "Enumeration ended"
     } else {
         match probe.phase {
@@ -408,130 +611,396 @@ fn peer_details(
             _ => "Partial / not completed",
         }
     });
-    emit(&line(format_args!(
-        "Omitted {} / rejected records {}",
-        i.omitted, i.malformed
-    )));
-    emit(&line(format_args!(
+    emit.formatted(format_args!("Omitted {} / rejected records {}", i.omitted, i.malformed));
+    emit.formatted(format_args!(
         "{} primary services / {} characteristics",
         i.services.len(),
         i.characteristics.len()
-    )));
+    ));
+    emit.formatted(format_args!(
+        "{} descriptors / {} standard reads",
+        i.descriptors.len(),
+        i.values.len()
+    ));
+    link_details(i.link, i.stages, i.cleanup_complete, i.disconnect_reason, emit);
     for s in &i.services {
-        emit(&line(format_args!("SERVICE {:04X}-{:04X}", s.start, s.end)));
-        emit(&uuid_text(s.uuid));
-        let label = uuid_label(s.uuid);
-        if !label.is_empty() {
-            emit(label);
-        }
+        record_details(capture::Record::Service(*s), emit);
     }
     for c in &i.characteristics {
-        emit(&line(format_args!(
-            "CHAR {:04X} / service {:04X}",
-            c.handle, c.service_start
-        )));
-        emit(&uuid_text(c.uuid));
-        let label = uuid_label(c.uuid);
-        if !label.is_empty() {
-            emit(label);
-        }
-        emit(&line(format_args!(
-            "Decl {:04X} / properties 0x{:02X}",
-            c.declaration, c.properties
-        )));
-        emit(&properties_text(c.properties));
+        record_details(capture::Record::Characteristic(*c), emit);
+    }
+    for d in &i.descriptors {
+        record_details(capture::Record::Descriptor(*d), emit);
     }
     for v in &i.values {
-        emit(&line(format_args!(
-            "{} ({:04X}) / {:?}",
-            info_label(v.uuid).unwrap_or("Value"),
-            v.uuid,
-            v.result
-        )));
-        if v.result == ReadResult::Ok {
-            for chunk in v.value.as_slice().chunks(48) {
-                emit(&printable::<50>(chunk));
-            }
-            emit("Value RAW HEX:");
-            hex(v.value.as_slice(), emit);
-        }
-        if v.value.truncated {
-            emit("! VALUE TRUNCATED");
-        }
+        record_details(
+            capture::Record::Value(capture::ValueRef {
+                service_start: v.service_start,
+                handle: v.handle,
+                uuid: v.uuid,
+                result: v.result,
+                failure: v.failure,
+                elapsed_ms: v.elapsed_ms,
+                bytes: v.value.as_slice(),
+                truncated: v.value.truncated,
+            }),
+            emit,
+        );
     }
 }
 fn details(
     probe: &Probe,
     now: u64,
-    emit: &mut impl FnMut(&str),
+    emit: &mut EvidenceLines<'_>,
 ) {
     if let Some(failure) = probe.failure.filter(|_| gatt_requested(probe)) {
-        emit(&line(format_args!("GATT FAILURE / {}", failure.stage.label())));
+        emit.formatted(format_args!("GATT FAILURE / {}", failure.stage.label()));
         if let Some(code) = failure.reason.code() {
-            emit(&line(format_args!("Reason: {} 0x{code:02X}", failure.reason.label())));
+            emit.formatted(format_args!("Reason: {} 0x{code:02X}", failure.reason.label()));
         } else {
-            emit(&line(format_args!("Reason: {}", failure.reason.label())));
+            emit.formatted(format_args!("Reason: {}", failure.reason.label()));
         }
         if let Some(elapsed) = failure.elapsed_ms {
-            emit(&line(format_args!("Stage elapsed: {elapsed} ms")));
+            emit.formatted(format_args!("Stage elapsed: {elapsed} ms"));
         }
         if let Some((start, end)) = failure.range {
-            emit(&line(format_args!("Query range {start:04X}-{end:04X}")));
+            emit.formatted(format_args!("Query range {start:04X}-{end:04X}"));
         }
         if let Some((decl, value)) = failure.last_accepted {
-            emit(&line(format_args!("Last accepted decl {decl:04X} / value {value:04X}")));
+            emit.formatted(format_args!("Last accepted decl {decl:04X} / value {value:04X}"));
         }
         if let Some(error) = probe.failure_context.local_error {
             if let Some(code) = error.code() {
-                emit(&line(format_args!("Host ingress: {} 0x{code:02X}", error.label())));
+                emit.formatted(format_args!("Host ingress: {} 0x{code:02X}", error.label()));
             } else {
-                emit(&line(format_args!("Host ingress: {}", error.label())));
+                emit.formatted(format_args!("Host ingress: {}", error.label()));
             }
         }
         match probe.failure_context.disconnect_reason {
-            Some(code) => emit(&line(format_args!("HCI disconnect: 0x{code:02X}"))),
-            None => emit("HCI disconnect: unavailable"),
+            Some(code) => emit.formatted(format_args!("HCI disconnect: 0x{code:02X}")),
+            None => emit.text("HCI disconnect: unavailable"),
         }
-        emit("Partial records retained; Y returns to scan");
+        emit.text("Partial records retained; Y returns to scan");
     }
     peer_details(probe, now, emit);
     if let Some(last) = probe.scan_diagnostics.last {
         let scan = probe.scan_diagnostics;
-        emit("GLOBAL HCI SCAN ERRORS / since boot");
-        emit("Not attributed to the selected device");
-        emit(&line(format_args!(
-            "Bad batches {} / size {}",
-            scan.total, scan.invalid_size
-        )));
-        emit(&line(format_args!("Invalid value {}", scan.invalid_value)));
-        emit(&line(format_args!(
+        emit.text("GLOBAL HCI SCAN ERRORS / since boot");
+        emit.text("Not attributed to the selected device");
+        emit.formatted(format_args!("Bad batches {} / size {}", scan.total, scan.invalid_size));
+        emit.formatted(format_args!("Invalid value {}", scan.invalid_value));
+        emit.formatted(format_args!(
             "Last {:?} / {}s ago",
             last.kind,
             now.saturating_sub(last.at_ms) / 1000
-        )));
-        emit(&line(format_args!(
+        ));
+        emit.formatted(format_args!(
             "Scan revision {} / entry {}/{}",
             last.revision,
             u16::from(last.index) + 1,
             last.total_reports
-        )));
-        emit("Parsing stops at the first bad entry in a batch");
-        emit(&line(format_args!(
+        ));
+        emit.text("Parsing stops at the first bad entry in a batch");
+        emit.formatted(format_args!(
             "Report bytes {} / remaining {}",
             last.report_bytes, last.remaining_bytes
-        )));
+        ));
         match last.declared_data_len {
-            Some(length) => emit(&line(format_args!("Declared data length: {length}"))),
-            None => emit("Declared data length: missing header byte"),
+            Some(length) => emit.formatted(format_args!("Declared data length: {length}")),
+            None => emit.text("Declared data length: missing header byte"),
         }
-        emit("One record needs 10 + data length bytes");
+        emit.text("One record needs 10 + data length bytes");
     }
 }
 /// Detail page count, independent of the current screen and page index.
 pub fn page_count(probe: &Probe) -> usize {
-    let mut count: usize = 0;
-    details(probe, 0, &mut |_| count += 1);
-    count.div_ceil(LINES).max(1)
+    let mut lines = EvidenceLines::new(None);
+    details(probe, 0, &mut lines);
+    lines.count.div_ceil(LINES).max(1)
+}
+fn saved_details(
+    view: &capture::CaptureView<'_>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    let m = view.metadata();
+    emit.text("SAVED EVIDENCE / frozen boot-relative timestamps");
+    emit.formatted(format_args!("{} / {}", m.peer.to_string(), m.peer.kind_label()));
+    emit.formatted(format_args!("Captured at: {} ms", m.captured_at_ms));
+    emit.formatted(format_args!("Request revision: {}", m.revision));
+    emit.formatted(format_args!("Radio {:?} / {:?}", m.phase, m.error));
+    emit.formatted(format_args!("First seen: {} ms", m.first_seen_ms));
+    emit.formatted(format_args!("Last seen: {} ms", m.last_seen_ms));
+    emit.formatted(format_args!("Reports: {}", m.reports));
+    match m.rssi {
+        Some(v) => emit.formatted(format_args!("Latest RSSI: {v} dBm (not distance)")),
+        None => emit.text("Latest RSSI: unavailable"),
+    }
+    packet_observation("Advertisement", m.advertisement.observation, m.captured_at_ms, emit);
+    packet_bytes(
+        "ADVERTISEMENT",
+        m.advertisement.bytes(),
+        m.advertisement.truncated,
+        emit,
+    );
+    packet_observation("Scan response", m.response.observation, m.captured_at_ms, emit);
+    packet_bytes("SCAN RESPONSE", m.response.bytes(), m.response.truncated, emit);
+    if m.gatt_requested {
+        emit.text("GATT / explicit inspection evidence");
+        emit.text(if m.complete && m.omitted == 0 && m.malformed == 0 {
+            "Enumeration ended"
+        } else {
+            "Partial / not completed"
+        });
+        let [services, characteristics, descriptors, values] = view.counts();
+        emit.formatted(format_args!("{services} services / {characteristics} characteristics"));
+        emit.formatted(format_args!("{descriptors} descriptors / {values} standard reads"));
+        emit.formatted(format_args!("Omitted {} / rejected {}", m.omitted, m.malformed));
+        if let Some(at) = m.started_at_ms {
+            emit.formatted(format_args!("Inspection start: {at} ms"));
+        }
+        if let Some(at) = m.ended_at_ms {
+            emit.formatted(format_args!("Inspection end: {at} ms"));
+        }
+        link_details(m.link, m.stages, m.cleanup_complete, m.disconnect_reason, emit);
+        if let Some(failure) = m.failure {
+            emit.formatted(format_args!("FAILURE / {}", failure.stage.label()));
+            reason_line("Reason", failure.reason, emit);
+            if let Some(elapsed) = failure.elapsed_ms {
+                emit.formatted(format_args!("Stage elapsed: {elapsed} ms"));
+            }
+            if let Some((a, b)) = failure.range {
+                emit.formatted(format_args!("Query range {a:04X}-{b:04X}"));
+            }
+            if let Some((a, b)) = failure.last_accepted {
+                emit.formatted(format_args!("Last accepted decl {a:04X} / value {b:04X}"));
+            }
+        }
+        if let Some(reason) = m.failure_context.local_error {
+            reason_line("Host ingress", reason, emit);
+        }
+        if let Some(code) = m.failure_context.disconnect_reason {
+            emit.formatted(format_args!("HCI disconnect: 0x{code:02X}"));
+        }
+        for record in view.records() {
+            record_details(record, emit);
+        }
+    } else {
+        emit.text("GATT not inspected / no connection requested");
+    }
+    emit.text("GLOBAL SCAN EVIDENCE / not peer-attributed");
+    emit.formatted(format_args!(
+        "Reports dropped {} / malformed {}",
+        m.dropped_reports, m.malformed_reports
+    ));
+    emit.formatted(format_args!("Catalogue full reports {}", m.catalog_overflow_reports));
+    emit.formatted(format_args!(
+        "Bad batches {} / size {}",
+        m.scan_diagnostics.total, m.scan_diagnostics.invalid_size
+    ));
+    emit.formatted(format_args!("Invalid value {}", m.scan_diagnostics.invalid_value));
+    if let Some(last) = m.scan_diagnostics.last {
+        emit.formatted(format_args!("Last {:?} / at {} ms", last.kind, last.at_ms));
+        emit.formatted(format_args!(
+            "Scan revision {} / entry {}/{}",
+            last.revision,
+            u16::from(last.index) + 1,
+            last.total_reports
+        ));
+        emit.formatted(format_args!(
+            "Report bytes {} / remaining {}",
+            last.report_bytes, last.remaining_bytes
+        ));
+        if let Some(length) = last.declared_data_len {
+            emit.formatted(format_args!("Declared data length: {length}"));
+        } else {
+            emit.text("Declared data length: missing header byte");
+        }
+        emit.text("One record needs 10 + data length bytes");
+    }
+    emit.text("CAPTURE BUILD / configured clocks, not measured");
+    emit.formatted(format_args!("Profile {:?}", m.build.profile));
+    emit.formatted(format_args!("CPU {} Hz / SPI {} Hz", m.build.cpu_hz, m.build.spi_hz));
+    emit.text(if m.build.source_identity_available {
+        "Source digest (raw byte order):"
+    } else {
+        "Source identity unavailable; digest bytes:"
+    });
+    hex(&m.build.source_digest, emit);
+    emit.text("No pairing, arbitrary reads, writes or ECU data");
+    emit.text("Enumeration does not prove adapter compatibility");
+    emit.text("USB serial export retains the exact capture bytes");
+}
+pub fn saved_page_count(view: &capture::CaptureView<'_>) -> usize {
+    let mut lines = EvidenceLines::new(None);
+    saved_details(view, &mut lines);
+    lines.count.div_ceil(LINES).max(1)
+}
+fn capture_header<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    title: &str,
+    diagnostics: ProbeDiagnostics,
+) -> Result<(), D::Error> {
+    rect(d, 0, 0, 320, 240, BG)?;
+    font_text(d, Point::new(10, 5), title, WHITE, &FONT_9X15)?;
+    telemetry(d, diagnostics)
+}
+/// Borrows the validated capture; never reconstructs or copies a complete Probe.
+pub fn render_saved<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    view: &capture::CaptureView<'_>,
+    slot: u8,
+    page: usize,
+    diagnostics: ProbeDiagnostics,
+) -> Result<(), D::Error> {
+    // Use the same screen target as live rendering so text/shape code is shared.
+    let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
+    let d = &mut clipped;
+    capture_header(d, "SAVED BLE CAPTURE", diagnostics)?;
+    let pages = saved_page_count(view);
+    let page = page.min(pages - 1);
+    let slot_label = if slot < 4 {
+        line(format_args!("Slot {}", slot + 1))
+    } else {
+        line(format_args!("Slot --"))
+    };
+    text(
+        d,
+        10,
+        61,
+        &line(format_args!("{slot_label} / read only / {}/{}", page + 1, pages)),
+        RED,
+    )?;
+    let mut index = 0;
+    let mut error = None;
+    saved_details(
+        view,
+        &mut EvidenceLines::new(Some(&mut |s| {
+            if (page * LINES..(page + 1) * LINES).contains(&index)
+                && error.is_none()
+                && let Err(e) = text(d, 10, 88 + (index % LINES) as i32 * 11, s, WHITE)
+            {
+                error = Some(e);
+            }
+            index += 1;
+        })),
+    );
+    if let Some(error) = error {
+        return Err(error);
+    }
+    rect(d, 0, 204, 320, 36, PANEL)?;
+    text(d, 8, 206, "Turn/A/B: pages  X/Y: back to slots", WHITE)?;
+    text(d, 8, 217, "Header: current Pico / body: saved evidence", MUTED)?;
+    text(d, 8, 228, "Hold Y 2s: recover scan; saves retained", MUTED)
+}
+fn slot_label(slot: capture_ui::Slot) -> &'static str {
+    use capture_ui::Slot;
+    match slot {
+        Slot::Unknown => "Not loaded",
+        Slot::Empty => "Empty",
+        Slot::Saved { .. } => "Saved capture",
+        Slot::SavedBlocked { .. } => "Saved / replacement blocked",
+        Slot::Corrupt => "Damaged capture",
+        Slot::Unsupported => "Unsupported format",
+        Slot::Unavailable => "Storage unavailable",
+    }
+}
+fn ui_error(error: capture_ui::UiError) -> &'static str {
+    use capture_ui::UiError;
+    match error {
+        UiError::NoPeer => "Select a peer before saving",
+        UiError::Busy => "Wait for the active operation to finish",
+        UiError::Empty => "Slot is empty; X saves current evidence",
+        UiError::Storage => "Storage failed; refresh slots before retry",
+        UiError::Corrupt => "Damaged slot; X offers explicit erase",
+        UiError::Unsupported => "Unknown format; export before erasing",
+        UiError::Unavailable => "Storage unavailable; hold X to refresh",
+        UiError::Timeout => "Timed out; owner must finish before retry",
+        UiError::Changed => "Evidence changed; review then confirm again",
+        UiError::Clock => "Clock changed; retry the gesture",
+        UiError::Exhausted => "Request limit reached; restart required",
+    }
+}
+pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    ui: &capture_ui::CaptureUi,
+    diagnostics: ProbeDiagnostics,
+) -> Result<(), D::Error> {
+    use capture_ui::{Operation, Screen as CaptureScreen};
+    let mut clipped = target.clipped(&Rectangle::new(Point::zero(), Size::new(320, 240)));
+    let d = &mut clipped;
+    capture_header(d, "CAPTURE SLOTS", diagnostics)?;
+    let screen = ui.screen();
+    let status = match screen {
+        CaptureScreen::ConfirmOverwrite => "Replace saved capture?",
+        CaptureScreen::ConfirmReset => "Erase this slot and ALL its saved data?",
+        CaptureScreen::Busy(Operation::Refresh) => "Loading slot directory...",
+        CaptureScreen::Busy(Operation::Load) => "Reading selected capture...",
+        CaptureScreen::Busy(Operation::Save) => "Saving frozen evidence; please wait...",
+        CaptureScreen::Busy(Operation::Reset) => "Erasing selected slot; please wait...",
+        CaptureScreen::Error(error) => ui_error(error),
+        _ if ui.pending().is_some() => "Operation still running; please wait",
+        _ if matches!(
+            ui.slots()[usize::from(ui.selected())],
+            capture_ui::Slot::SavedBlocked { .. }
+        ) =>
+        {
+            "Readable save; export before erasing this slot"
+        }
+        _ => "Four saves survive USB power off",
+    };
+    text(d, 10, 61, status, RED)?;
+    for (index, &slot) in ui.slots().iter().enumerate() {
+        let y = 78 + index as i32 * 30;
+        rect(
+            d,
+            6,
+            y,
+            308,
+            29,
+            if usize::from(ui.selected()) == index { PANEL } else { BG },
+        )?;
+        if usize::from(ui.selected()) == index {
+            rect(d, 6, y, 3, 29, RED)?;
+        }
+        text(
+            d,
+            14,
+            y + 1,
+            &line(format_args!("Slot {} / {}", index + 1, slot_label(slot))),
+            WHITE,
+        )?;
+        let detail =
+            if let capture_ui::Slot::Saved { generation } | capture_ui::Slot::SavedBlocked { generation } = slot {
+                line(format_args!("Generation {generation}"))
+            } else {
+                line(format_args!(
+                    "{}",
+                    if matches!(slot, capture_ui::Slot::Corrupt | capture_ui::Slot::Unsupported) {
+                        "Export first; never erased automatically"
+                    } else {
+                        "USB serial provides read-only recovery"
+                    }
+                ))
+            };
+        text(d, 14, y + 14, &detail, MUTED)?;
+    }
+    rect(d, 0, 204, 320, 36, PANEL)?;
+    let confirm = matches!(screen, CaptureScreen::ConfirmOverwrite | CaptureScreen::ConfirmReset);
+    text(
+        d,
+        8,
+        206,
+        if confirm {
+            "Click/Hold A 2s: confirm  Y: cancel (10s)"
+        } else if ui.pending().is_some() {
+            "Y: leave view; storage finishes safely"
+        } else {
+            "A/B: slot Click/Hold A 2s: open X: save/reset"
+        },
+        WHITE,
+    )?;
+    text(d, 8, 217, "Y: back  Hold X 2s: refresh slot directory", MUTED)?;
+    text(d, 8, 228, "Hold Y 2s: recover scan; saves retained", MUTED)
 }
 /// Draws the same RGB565 scene for host screenshots and the hardware framebuffer.
 pub fn render<D: DrawTarget<Color = Rgb565>>(
@@ -543,13 +1012,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
     let d = &mut clipped;
     d.clear(BG)?;
     rect(d, 0, 0, 320, 3, RED)?;
-    Text::with_baseline(
-        "BLE PROBE",
-        Point::new(10, 7),
-        MonoTextStyle::new(&FONT_9X15, WHITE),
-        Baseline::Top,
-    )
-    .draw(d)?;
+    font_text(d, Point::new(10, 7), "BLE PROBE", WHITE, &FONT_9X15)?;
     let active = !matches!(probe.phase, RadioPhase::Paused | RadioPhase::Fault);
     let spin = if active {
         ["|", "/", "-", "\\"][((now_ms / 200) % 4) as usize]
@@ -610,13 +1073,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
             }
             let name = device.name();
             let label = if name.is_empty() { "Unnamed device" } else { &name };
-            Text::with_baseline(
-                label,
-                Point::new(14, y + 1),
-                MonoTextStyle::new(&FONT_7X13, WHITE),
-                Baseline::Top,
-            )
-            .draw(d)?;
+            font_text(d, Point::new(14, y + 1), label, WHITE, &FONT_7X13)?;
             text(
                 d,
                 14,
@@ -656,15 +1113,19 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         )?;
         let mut index = 0;
         let mut error = None;
-        details(probe, now_ms, &mut |s| {
-            if (page * LINES..(page + 1) * LINES).contains(&index)
-                && error.is_none()
-                && let Err(e) = text(d, 10, 88 + (index % LINES) as i32 * 11, s, WHITE)
-            {
-                error = Some(e);
-            }
-            index += 1;
-        });
+        details(
+            probe,
+            now_ms,
+            &mut EvidenceLines::new(Some(&mut |s| {
+                if (page * LINES..(page + 1) * LINES).contains(&index)
+                    && error.is_none()
+                    && let Err(e) = text(d, 10, 88 + (index % LINES) as i32 * 11, s, WHITE)
+                {
+                    error = Some(e);
+                }
+                index += 1;
+            })),
+        );
         if let Some(e) = error {
             return Err(e);
         }
@@ -678,9 +1139,9 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         8,
         228,
         if probe.encoder_connected {
-            "Hold Y 2s: clear + recover scan"
+            "Hold X 2s: slots | Hold Y 2s: recover"
         } else {
-            "Hold Y 2s: recover | ENCODER MISSING"
+            "Hold X/Y 2s: slots/recover | NO ENCODER"
         },
         if probe.encoder_connected { MUTED } else { RED },
     )
@@ -690,6 +1151,91 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
 mod tests {
     use super::*;
     extern crate std;
+    #[test]
+    fn single_line_glyph_rendering_matches_text_layout_for_all_printable_ascii() {
+        use embedded_graphics::mock_display::MockDisplay;
+        use embedded_graphics::text::Text;
+        for font in [&FONT_6X10, &FONT_7X13, &FONT_9X15] {
+            for byte in 32..=126 {
+                let mut value = String::<1>::new();
+                value.push(char::from(byte)).unwrap();
+                let mut expected = MockDisplay::new();
+                let mut actual = MockDisplay::new();
+                Text::with_baseline(&value, Point::new(4, 7), MonoTextStyle::new(font, WHITE), Baseline::Top)
+                    .draw(&mut expected)
+                    .unwrap();
+                font_text(&mut actual, Point::new(4, 7), &value, WHITE, font).unwrap();
+                assert_eq!(actual, expected, "ASCII {byte}");
+            }
+        }
+    }
+    #[test]
+    fn page_count_does_not_format_values_but_draw_emits_each_value() {
+        struct Observed<'a>(&'a core::cell::Cell<usize>);
+        impl core::fmt::Display for Observed<'_> {
+            fn fmt(
+                &self,
+                f: &mut core::fmt::Formatter<'_>,
+            ) -> core::fmt::Result {
+                self.0.set(self.0.get() + 1);
+                f.write_str("observed")
+            }
+        }
+        let calls = core::cell::Cell::new(0);
+        let mut count = EvidenceLines::new(None);
+        count.text("heading");
+        count.formatted(format_args!("{}", Observed(&calls)));
+        assert_eq!(count.count, 2);
+        assert_eq!(calls.get(), 0);
+
+        let mut rows = std::vec::Vec::<std::string::String>::new();
+        let mut collect = |line: &str| rows.push(line.into());
+        let mut draw = EvidenceLines::new(Some(&mut collect));
+        draw.text("heading");
+        draw.formatted(format_args!("{}", Observed(&calls)));
+        assert_eq!(draw.count, count.count);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(rows, ["heading", "observed"]);
+    }
+    #[test]
+    fn raw_hex_and_uuid_rows_preserve_all_byte_values_and_wire_order() {
+        let bytes: std::vec::Vec<u8> = (0..=255).collect();
+        for length in [0, 1, 15, 16, 17, 31, 32, 255, 256] {
+            let mut rows = std::vec::Vec::<std::string::String>::new();
+            hex(
+                &bytes[..length],
+                &mut EvidenceLines::new(Some(&mut |line| rows.push(line.into()))),
+            );
+            let expected: std::vec::Vec<_> = bytes[..length]
+                .chunks(16)
+                .map(|chunk| {
+                    chunk
+                        .iter()
+                        .map(|byte| std::format!("{byte:02X}"))
+                        .collect::<std::vec::Vec<_>>()
+                        .join(" ")
+                })
+                .collect();
+            assert_eq!(rows, expected);
+            let mut count = EvidenceLines::new(None);
+            hex(&bytes[..length], &mut count);
+            assert_eq!(count.count, rows.len());
+        }
+        for len in [0, 2, 4, 16, 255] {
+            let uuid = Uuid {
+                bytes: core::array::from_fn(|i| i as u8 * 17),
+                len,
+            };
+            let expected: std::string::String = uuid.bytes[..usize::from(len).min(16)]
+                .iter()
+                .rev()
+                .map(|byte| std::format!("{byte:02X}"))
+                .collect();
+            let mut rows = std::vec::Vec::<std::string::String>::new();
+            EvidenceLines::new(Some(&mut |line| rows.push(line.into()))).uuid(uuid);
+            assert_eq!(rows, [expected]);
+        }
+    }
     #[test]
     fn telemetry_values_are_bounded_and_invalid_is_not_zero() {
         for v in [None, Some(f32::NAN), Some(f32::INFINITY), Some(-1.0)] {
@@ -732,6 +1278,144 @@ mod tests {
             total: 524288,
         }));
         assert!(line(format_args!("Static {max} SP0 {max} SP1 {max}")).len() * 6 <= 300);
+    }
+    #[test]
+    fn old_advertisement_does_not_label_retained_gatt_as_stale() {
+        let mut p = probe();
+        p.input(Input::Click, 0).unwrap();
+        p.phase = RadioPhase::Paused;
+        let hints = control_hints(&p, 30_001);
+        assert!(hints[0].contains("Advert old"));
+        assert!(!hints[0].contains("GATT stale"));
+        assert!(hints[1].contains("retained"));
+    }
+    #[test]
+    fn link_stages_descriptor_and_exact_read_evidence_are_retained_in_lines() {
+        let mut p = probe();
+        p.input(Input::Click, 0).unwrap();
+        p.inspection.link = Some(LinkInfo {
+            connected_at_ms: 123,
+            connect_elapsed_ms: 456,
+            interval_us: 30_000,
+            latency: 4,
+            supervision_timeout_us: 2_000_000,
+            att_mtu: Some(247),
+        });
+        p.inspection.stages = [true, true, false, false];
+        p.inspection
+            .descriptors
+            .push(Descriptor {
+                service_start: 1,
+                characteristic_handle: 3,
+                handle: 4,
+                uuid: Uuid::from_wire(&[2, 0x29]).unwrap(),
+            })
+            .unwrap();
+        p.inspection
+            .values
+            .push(InfoValue {
+                service_start: 1,
+                handle: 3,
+                uuid: 0x2A29,
+                result: ReadResult::Protected,
+                failure: Some(FailureReason::Att(5)),
+                elapsed_ms: 55,
+                value: Payload::new(&[]),
+            })
+            .unwrap();
+        let rows = lines(&p);
+        for expected in [
+            "ATT MTU: 247 bytes",
+            "Services: ended",
+            "Descriptors: partial / not run",
+            "DESCRIPTOR 0004 / characteristic 0003",
+            "Read service 0001 / handle 0003",
+            "Outcome: Protected / 55 ms",
+            "Read error: ATT error 0x05",
+        ] {
+            assert!(rows.iter().any(|row| row == expected), "missing {expected}");
+        }
+    }
+    #[test]
+    fn saved_lines_preserve_extreme_numbers_raw_values_and_capture_provenance() {
+        let mut p = probe();
+        p.input(Input::Click, 0).unwrap();
+        p.inspection
+            .services
+            .push(Service {
+                start: 1,
+                end: 9,
+                uuid: Uuid::from_wire(&[0, 0x18]).unwrap(),
+            })
+            .unwrap();
+        p.inspection
+            .characteristics
+            .push(Characteristic {
+                service_start: 1,
+                declaration: 2,
+                handle: 3,
+                properties: 2,
+                uuid: Uuid::from_wire(&[1, 0x2A]).unwrap(),
+            })
+            .unwrap();
+        p.inspection
+            .values
+            .push(InfoValue {
+                service_start: 1,
+                handle: 3,
+                uuid: 0x2A01,
+                result: ReadResult::Ok,
+                failure: None,
+                elapsed_ms: u32::MAX,
+                value: Payload::new(&[0xAB]),
+            })
+            .unwrap();
+        p.inspection.link = Some(LinkInfo {
+            connected_at_ms: u64::MAX,
+            connect_elapsed_ms: u32::MAX,
+            interval_us: u32::MAX,
+            latency: u16::MAX,
+            supervision_timeout_us: u32::MAX,
+            att_mtu: Some(517),
+        });
+        p.dropped_reports = u32::MAX;
+        p.malformed_reports = u32::MAX;
+        let mut bytes = [0; 8192];
+        let len = capture::encode(
+            &p,
+            capture::BuildIdentity {
+                source_digest: [0xFF; 32],
+                cpu_hz: u32::MAX,
+                spi_hz: u32::MAX,
+                profile: capture::BuildProfile::Stock,
+                source_identity_available: true,
+            },
+            u64::MAX,
+            &mut bytes,
+        )
+        .unwrap();
+        let mut decoder = capture::Decoder::new();
+        let view = decoder.decode(&bytes[..len]).unwrap();
+        let mut rows = std::vec::Vec::<std::string::String>::new();
+        saved_details(&view, &mut EvidenceLines::new(Some(&mut |line| rows.push(line.into()))));
+        for expected in [
+            "Captured at: 18446744073709551615 ms",
+            "Connected at: 18446744073709551615 ms",
+            "Interval: 4294967295 us / latency 65535",
+            "CPU 4294967295 Hz / SPI 4294967295 Hz",
+            "Outcome: Ok / 4294967295 ms",
+            "! Unexpected standard length; raw retained",
+            "AB",
+            "Reports dropped 4294967295 / malformed 4294967295",
+        ] {
+            assert!(
+                rows.iter().any(|row| row == expected),
+                "missing or truncated {expected}"
+            );
+        }
+        assert_eq!(rows.iter().filter(|row| row.starts_with("FF FF FF")).count(), 2);
+        assert!(rows.iter().all(|row| row.is_ascii() && row.len() * 6 <= 300));
+        assert_eq!(saved_page_count(&view), rows.len().div_ceil(LINES));
     }
     #[test]
     fn empty_catalog_copy_matches_radio_state() {
@@ -798,7 +1482,7 @@ mod tests {
     }
     fn lines(p: &Probe) -> std::vec::Vec<std::string::String> {
         let mut lines = std::vec::Vec::new();
-        details(p, 0, &mut |s| lines.push(s.into()));
+        details(p, 0, &mut EvidenceLines::new(Some(&mut |s| lines.push(s.into()))));
         lines
     }
     fn probe() -> Probe {
@@ -915,6 +1599,10 @@ mod tests {
         p.inspection
             .values
             .push(InfoValue {
+                service_start: 1,
+                handle: 3,
+                failure: None,
+                elapsed_ms: 1,
                 uuid: 0x2A29,
                 value: Payload::new(&[0xFE; 64]),
                 result: ReadResult::Ok,
@@ -1028,7 +1716,7 @@ mod tests {
         let hints = control_hints(&p, 2);
         assert!(hints[0].contains("pages") && !hints[0].contains("Click"));
         let mut l = std::vec::Vec::<std::string::String>::new();
-        details(&p, u64::MAX, &mut |s| l.push(s.into()));
+        details(&p, u64::MAX, &mut EvidenceLines::new(Some(&mut |s| l.push(s.into()))));
         assert!(l.iter().any(|s| s == "Not attributed to the selected device"));
         assert!(l.iter().any(|s| s == "Bad batches 4294967295 / size 4294967295"));
         assert!(l.iter().any(|s| s == "Invalid value 4294967295"));

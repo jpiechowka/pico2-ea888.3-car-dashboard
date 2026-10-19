@@ -32,6 +32,26 @@ def diagnostic(seq=1, at=1):
 
 
 class Telemetry(unittest.TestCase):
+    def test_unavailable_cycles_preserve_completed_frames_and_timing(self):
+        rows = frame()
+        rows[0] = "FRAME2,1,0,30000000,1,2,na,0"
+        result = parse(rows)
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["frames"][0]["frames"], 1)
+        self.assertIsNone(result["frames"][0]["active_cycles"])
+        self.assertEqual(result["frames"][0]["record_version"], 2)
+        self.assertEqual(result["frames"][0]["metrics"][3]["max"], 10)
+        self.assertEqual(parse(frame())["frames"][0]["active_cycles"], 0)
+        self.assertEqual(parse(frame())["frames"][0]["record_version"], 1)
+        for index in (1, 2, 3, 4, 5, 7):
+            invalid = rows.copy()
+            fields = invalid[0].split(",")
+            fields[index] = "na"
+            invalid[0] = ",".join(fields)
+            self.assertFalse(parse(invalid)["frames"])
+        rows[0] = "FRAME1,1,0,30000000,1,2,na,0"
+        self.assertFalse(parse(rows)["frames"])
+
     def test_impossible_producer_states_and_unchanged_histograms(self):
         for replacement in [
             "PID1,1,0,1,0,1,0,0,0,0,0",
@@ -77,6 +97,8 @@ class Telemetry(unittest.TestCase):
         self.assertEqual(result["errors"], [])
         self.assertEqual([row["frames"] for row in result["frames"]], [1, 0])
         self.assertEqual(result["frames"][0]["metrics"][3]["max"], 10)
+        self.assertIsNone(result["frames"][0]["active_cycles"])
+        self.assertEqual(result["frames"][0]["record_version"], 2)
         self.assertEqual(result["diagnostics"][0]["metrics"][0]["max"], 2)
         self.assertEqual(result["diagnostics"][0]["pids"][0][:3], [1, 1, 1])
 

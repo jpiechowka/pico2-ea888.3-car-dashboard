@@ -186,6 +186,22 @@ fn x_opens_a_fresh_advertisement_view_and_only_a_second_press_requests_gatt() {
         limited: false,
     });
     assert_eq!(p.inspection.services.len(), 1);
+    assert!(!p.inspection.complete, "stage acknowledgments are still missing");
+    for stage in [
+        InventoryStage::Services,
+        InventoryStage::Characteristics,
+        InventoryStage::Descriptors,
+        InventoryStage::Reads,
+    ] {
+        p.event(Event::Item {
+            revision: inspection.revision,
+            item: InspectionItem::StageComplete(stage),
+        });
+    }
+    p.event(Event::Complete {
+        revision: inspection.revision,
+        limited: false,
+    });
     assert!(p.inspection.complete);
     p.input(Input::Back, 13).unwrap();
     let fresh_view = p.input(Input::Details, 14).unwrap();
@@ -300,6 +316,10 @@ fn cancelled_inspection_cannot_publish_values_or_completion_after_recovery() {
         Event::Item {
             revision,
             item: InspectionItem::Value(InfoValue {
+                service_start: 1,
+                handle: 3,
+                failure: None,
+                elapsed_ms: 1,
                 uuid: 0x2A29,
                 value: Payload::new(b"old"),
                 result: ReadResult::Ok,

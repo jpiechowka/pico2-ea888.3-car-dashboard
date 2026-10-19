@@ -94,6 +94,119 @@ fn normal_release_allows_a_second_press_including_large_timestamps() {
 }
 
 #[test]
+fn stable_release_survives_bounce_and_never_completes_a_phantom_short_press() {
+    let mut button = DebouncedButton::new();
+    assert_eq!(button.stable_pressed(), None);
+    let mut armed = false;
+    let mut edges = Vec::new();
+    for (raw, at) in [
+        (false, 0),
+        (true, 10),
+        (true, 60),
+        (false, 100),
+        (true, 110),
+        (false, 200),
+        (false, 249),
+        (false, 250),
+        (false, 251),
+        (true, 300),
+        (true, 350),
+    ] {
+        if button.update(raw, at) {
+            armed = true;
+            edges.push((true, at));
+        }
+        if armed && button.stable_pressed() == Some(false) {
+            armed = false;
+            edges.push((false, at));
+        }
+    }
+    assert_eq!(edges, [(true, 60), (false, 250), (true, 350)]);
+    assert_eq!(button.stable_pressed(), Some(true));
+    button.update(false, 100); // a reversed clock cannot release the current press
+    assert_eq!(button.stable_pressed(), Some(true));
+    let mut held_at_boot = DebouncedButton::new();
+    assert!(!held_at_boot.update(true, 0));
+    assert_eq!(held_at_boot.stable_pressed(), Some(true));
+    assert!(!held_at_boot.update(false, 1));
+    assert!(!held_at_boot.update(false, 51));
+    assert_eq!(held_at_boot.stable_pressed(), Some(false));
+}
+
+#[test]
+fn deferred_buttons_separate_short_release_long_hold_and_a_late_held_release() {
+    use dashboard_host_validation::input_model::{ButtonEdges, DeferredButton};
+    let mut button = DeferredButton::new();
+    assert_eq!(button.update(false, 0), ButtonEdges::default());
+    button.update(true, 10);
+    assert_eq!(
+        button.update(true, 60),
+        ButtonEdges {
+            pressed: true,
+            ..ButtonEdges::default()
+        }
+    );
+    assert_eq!(button.update(false, 100), ButtonEdges::default());
+    assert_eq!(button.update(true, 110), ButtonEdges::default());
+    assert_eq!(button.update(false, 120), ButtonEdges::default());
+    assert_eq!(
+        button.update(false, 170),
+        ButtonEdges {
+            released: true,
+            short: true,
+            ..ButtonEdges::default()
+        }
+    );
+    button.update(true, 200);
+    button.update(true, 250);
+    assert_eq!(button.update(true, 2249), ButtonEdges::default());
+    assert_eq!(
+        button.update(true, 2250),
+        ButtonEdges {
+            held: true,
+            ..ButtonEdges::default()
+        }
+    );
+    assert_eq!(button.update(true, 2251), ButtonEdges::default());
+    button.update(false, 2300);
+    assert_eq!(
+        button.update(false, 2350),
+        ButtonEdges {
+            released: true,
+            ..ButtonEdges::default()
+        }
+    );
+    button.update(true, 2400);
+    button.update(true, 2450);
+    button.update(false, 5000);
+    assert_eq!(
+        button.update(false, 5050),
+        ButtonEdges {
+            released: true,
+            held: true,
+            ..ButtonEdges::default()
+        }
+    );
+    assert_eq!(button.update(true, 4999), ButtonEdges::default());
+    button.update(true, 5100);
+    button.update(true, 5150);
+    button.update(false, 5200);
+    assert_eq!(
+        button.update(false, 9000),
+        ButtonEdges {
+            released: true,
+            short: true,
+            ..ButtonEdges::default()
+        }
+    );
+    let mut boot = DeferredButton::new();
+    assert_eq!(boot.update(true, 0), ButtonEdges::default());
+    assert_eq!(boot.update(true, 3000), ButtonEdges::default());
+    boot.update(false, 4000);
+    assert_eq!(boot.update(false, 4050), ButtonEdges::default());
+}
+
+#[test]
 fn concurrent_input_is_consumed_or_counted_as_dropped_without_wrap() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let events = EncoderEvents::new();

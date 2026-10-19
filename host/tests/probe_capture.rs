@@ -1,0 +1,334 @@
+use dashboard_core::discovery::capture::*;
+use dashboard_core::discovery::*;
+
+fn build() -> BuildIdentity {
+    BuildIdentity {
+        source_digest: [0xA5; 32],
+        cpu_hz: 280_000_000,
+        spi_hz: 70_000_000,
+        profile: BuildProfile::Expert280,
+        source_identity_available: true,
+    }
+}
+fn probe() -> Probe {
+    let mut p = Probe::new();
+    let peer = Peer {
+        address: [1, 2, 3, 4, 5, 6],
+        random: false,
+    };
+    p.catalog
+        .observe(Advertisement::new(peer, ReportKind::Connectable, -50, &[2, 1, 6], 10));
+    p.catalog.observe(Advertisement::new(
+        peer,
+        ReportKind::ScanResponse,
+        -48,
+        &[4, 9, b'N', b'G', b'M'],
+        20,
+    ));
+    p.input(Input::Click, 25);
+    p.inspection.accept(InspectionItem::Service(Service {
+        start: 1,
+        end: 20,
+        uuid: Uuid::from_wire(&[0x0A, 0x18]).unwrap(),
+    }));
+    p.inspection.accept(InspectionItem::Characteristic(Characteristic {
+        service_start: 1,
+        declaration: 2,
+        handle: 3,
+        properties: 2,
+        uuid: Uuid::from_wire(&[0x29, 0x2A]).unwrap(),
+    }));
+    p.inspection.accept(InspectionItem::Descriptor(Descriptor {
+        service_start: 1,
+        characteristic_handle: 3,
+        handle: 4,
+        uuid: Uuid::from_wire(&[1, 0x29]).unwrap(),
+    }));
+    p.inspection.accept(InspectionItem::Value(InfoValue {
+        service_start: 1,
+        handle: 3,
+        uuid: 0x2A29,
+        value: Payload::new(&[0, 255, b'X']),
+        result: ReadResult::Ok,
+        failure: None,
+        elapsed_ms: 12,
+    }));
+    p.inspection.link = Some(LinkInfo {
+        connected_at_ms: 28,
+        connect_elapsed_ms: 3,
+        interval_us: 30_000,
+        latency: 0,
+        supervision_timeout_us: 4_000_000,
+        att_mtu: Some(247),
+    });
+    p.inspection.ended_at_ms = Some(50);
+    p.inspection.cleanup_complete = true;
+    p.inspection.stages = [true; 4];
+    p.inspection.complete = true;
+    p.phase = RadioPhase::Paused;
+    p
+}
+
+#[test]
+fn selected_peer_capture_retains_raw_records_build_and_separate_packet_times() {
+    let p = probe();
+    let mut output = [0; 8192];
+    let size = encode(&p, build(), 60, &mut output).unwrap();
+    let view = decode(&output[..size]).unwrap();
+    assert_eq!(view.metadata().build, build());
+    assert_eq!(view.metadata().advertisement.observation.unwrap().at_ms, 10);
+    assert_eq!(view.metadata().response.observation.unwrap().at_ms, 20);
+    assert_eq!(view.metadata().link.unwrap().att_mtu, Some(247));
+    assert_eq!(view.counts(), [1, 1, 1, 1]);
+    let records: Vec<_> = view.records().collect();
+    assert_eq!(records.len(), 4);
+    let Record::Value(v) = records[3] else {
+        panic!("missing value");
+    };
+    assert_eq!(v.bytes, &[0, 255, b'X']);
+    assert_eq!(v.elapsed_ms, 12);
+}
+
+#[test]
+fn rejects_every_truncated_prefix_integrity_damage_trailing_and_invalid_live_relations() {
+    let mut p = probe();
+    let mut output = [0; 8192];
+    let size = encode(&p, build(), 60, &mut output).unwrap();
+    for end in 0..size {
+        assert!(decode(&output[..end]).is_err(), "prefix {end}");
+    }
+    for at in 0..size {
+        let mut damaged = output;
+        damaged[at] ^= 1;
+        assert!(decode(&damaged[..size]).is_err(), "byte {at}");
+    }
+    assert!(decode(&output[..size + 1]).is_err());
+    p.inspection.characteristics[0].handle = 25;
+    assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::Relationships));
+}
+
+fn hex(text: &str) -> Vec<u8> {
+    text.as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u8::from_str_radix(core::str::from_utf8(c).unwrap(), 16).unwrap())
+        .collect()
+}
+fn fix_crc(bytes: &mut [u8]) {
+    let crc = capture_store::crc32(&bytes[24..]);
+    bytes[16..20].copy_from_slice(&crc.to_le_bytes());
+    let crc = capture_store::crc32(&bytes[..20]);
+    bytes[20..24].copy_from_slice(&crc.to_le_bytes());
+}
+
+#[test]
+fn passive_fixture_from_independent_python_struct_and_zlib_is_readable() {
+    let bytes=hex("424c4543415030310100ac00000094006d1fdee578aae4cd000000000000000000000000000000000000000000000000000000000000000080d1f008c06878040000630000000000000001000000000200010203040506000a000000000000000a0000000000000001000000000000010a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
+    let view = decode(&bytes).unwrap();
+    let m = view.metadata();
+    assert_eq!(m.build.cpu_hz, 150_000_000);
+    assert_eq!(m.build.spi_hz, 75_000_000);
+    assert!(!m.build.source_identity_available);
+    assert_eq!(m.captured_at_ms, 99);
+    assert!(!m.gatt_requested);
+    assert_eq!(m.peer.address, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(view.counts(), [0; 4]);
+}
+
+#[test]
+fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
+    let mut output = [0; 8192];
+    let size = encode(&probe(), build(), 60, &mut output).unwrap();
+    for (at, value) in [(8, 2), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
+        let mut bytes = output[..size].to_vec();
+        bytes[at] = value;
+        fix_crc(&mut bytes);
+        assert!(decode(&bytes).is_err(), "at {at}");
+    }
+    let meta = u16::from_le_bytes([output[14], output[15]]) as usize;
+    let start = 24 + meta;
+    for offset in [3, 4] {
+        let mut bytes = output[..size].to_vec();
+        bytes[start + offset] = 0;
+        fix_crc(&mut bytes);
+        if offset == 3 {
+            assert!(decode(&bytes).is_err());
+        }
+    }
+    let mut bytes = output[..size].to_vec();
+    bytes[start] = 5;
+    fix_crc(&mut bytes);
+    assert!(decode(&bytes).is_err());
+}
+
+#[test]
+fn standard_failed_reads_and_invalid_raw_length_remain_explicit() {
+    let mut p = probe();
+    p.inspection.characteristics[0].uuid = Uuid::from_wire(&[0x23, 0x2A]).unwrap();
+    p.inspection.values[0].uuid = 0x2A23;
+    let mut output = [0; 8192];
+    let size = encode(&p, build(), 60, &mut output).unwrap();
+    let view = decode(&output[..size]).unwrap();
+    let Record::Value(v) = view.records().last().unwrap() else {
+        panic!()
+    };
+    assert!(!v.length_valid());
+    assert_eq!(v.bytes, &[0, 255, b'X']);
+    p.inspection.values[0].result = ReadResult::Protected;
+    p.inspection.values[0].failure = Some(FailureReason::Att(0x0F));
+    p.inspection.values[0].value = Payload::empty();
+    let size = encode(&p, build(), 60, &mut output).unwrap();
+    let view = decode(&output[..size]).unwrap();
+    let Record::Value(v) = view.records().last().unwrap() else {
+        panic!()
+    };
+    assert_eq!(v.result, ReadResult::Protected);
+    assert_eq!(v.failure, Some(FailureReason::Att(0x0F)));
+    assert_eq!(v.elapsed_ms, 12);
+    p.inspection.values[0].failure = None;
+    assert!(encode(&p, build(), 60, &mut output).is_err());
+}
+
+#[test]
+fn invalid_live_relationships_and_small_buffers_never_silently_drop_evidence() {
+    let mut output = [0; 8192];
+    assert_eq!(
+        encode(&Probe::new(), build(), 0, &mut output),
+        Err(CaptureError::NoPeer)
+    );
+    assert_eq!(
+        encode(&probe(), build(), 60, &mut [0; 30]),
+        Err(CaptureError::BufferTooSmall)
+    );
+    let mut p = probe();
+    p.inspection.descriptors[0].characteristic_handle = 19;
+    assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::Relationships));
+    let mut p = probe();
+    p.inspection.values[0].handle = 4;
+    assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::Relationships));
+    let mut p = probe();
+    let s = p.inspection.services[0];
+    p.inspection.services.push(s).unwrap();
+    assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::Relationships));
+    let mut p = probe();
+    p.request.action = Action::Scan(false);
+    assert_eq!(encode(&p, build(), 60, &mut output), Err(CaptureError::InvalidState));
+}
+
+#[test]
+fn all_model_capacities_fit_with_full_width_uuids_and_values() {
+    let mut p = probe();
+    p.inspection.services.clear();
+    p.inspection.characteristics.clear();
+    p.inspection.descriptors.clear();
+    p.inspection.values.clear();
+    let wide = |short: u16| {
+        let mut b = [0xFB, 0x34, 0x9B, 0x5F, 0x80, 0, 0, 0x80, 0, 0x10, 0, 0, 0, 0, 0, 0];
+        b[12..14].copy_from_slice(&short.to_le_bytes());
+        Uuid::from_wire(&b).unwrap()
+    };
+    for index in 0..24 {
+        let start = 1 + index * 100;
+        p.inspection
+            .services
+            .push(Service {
+                start,
+                end: start + 99,
+                uuid: wide(0x180A),
+            })
+            .unwrap();
+    }
+    for index in 0..64 {
+        let start = 1 + (index / 3) * 100;
+        let declaration = start + 1 + (index % 3) * 10;
+        let handle = declaration + 1;
+        p.inspection
+            .characteristics
+            .push(Characteristic {
+                service_start: start,
+                declaration,
+                handle,
+                properties: 2,
+                uuid: wide(0x2A29),
+            })
+            .unwrap();
+        for offset in [1, 2] {
+            p.inspection
+                .descriptors
+                .push(Descriptor {
+                    service_start: start,
+                    characteristic_handle: handle,
+                    handle: handle + offset,
+                    uuid: wide(0x2901),
+                })
+                .unwrap();
+        }
+        if index < 16 {
+            p.inspection
+                .values
+                .push(InfoValue {
+                    service_start: start,
+                    handle,
+                    uuid: 0x2A29,
+                    value: Payload::new(&[255; 64]),
+                    result: ReadResult::Ok,
+                    failure: None,
+                    elapsed_ms: u32::MAX,
+                })
+                .unwrap();
+        }
+    }
+    let mut output = [0; 8192];
+    let size = encode(&p, build(), u64::MAX, &mut output).unwrap();
+    assert!(size < 8192);
+    assert_eq!(decode(&output[..size]).unwrap().counts(), [24, 64, 128, 16]);
+    // Insert a 129th descriptor, keeping the envelope CRC and all row tags valid.
+    let meta = u16::from_le_bytes([output[14], output[15]]) as usize;
+    let descriptor = 24 + meta + 24 * 24 + 64 * 27;
+    let end = descriptor + 128 * 26;
+    let mut bytes = output[..end].to_vec();
+    bytes.extend_from_slice(&output[descriptor..descriptor + 26]);
+    bytes.extend_from_slice(&output[end..size]);
+    let len = bytes.len() as u16;
+    bytes[10..12].copy_from_slice(&len.to_le_bytes());
+    bytes[12..14].copy_from_slice(&233u16.to_le_bytes());
+    fix_crc(&mut bytes);
+    assert!(decode(&bytes).is_err());
+}
+#[test]
+fn reusable_decoder_releases_buffer_and_replaces_all_prior_evidence() {
+    let mut decoder = Decoder::new();
+    let mut bytes = vec![0; 8192];
+    let size = decoder.encode(&probe(), build(), 60, &mut bytes).unwrap();
+    {
+        let view = decoder.decode(&bytes[..size]).unwrap();
+        assert_eq!(view.metadata().response.bytes(), &[4, 9, b'N', b'G', b'M']);
+        assert_eq!(view.counts(), [1, 1, 1, 1]);
+    }
+    // Reusing the same mutable buffer must be possible after the view ends.
+    bytes[0] ^= 1;
+    assert!(decoder.decode(&bytes[..size]).is_err());
+    let mut passive = Probe::new();
+    passive.catalog.observe(Advertisement::new(
+        Peer {
+            address: [9; 6],
+            random: true,
+        },
+        ReportKind::Connectable,
+        -80,
+        &[2, 1, 4],
+        100,
+    ));
+    passive.input(Input::Details, 101);
+    let size = decoder.encode(&passive, build(), 110, &mut bytes).unwrap();
+    let view = decoder.decode(&bytes[..size]).unwrap();
+    assert_eq!(view.metadata().peer.address, [9; 6]);
+    assert_eq!(view.metadata().advertisement.bytes(), &[2, 1, 4]);
+    assert!(view.metadata().response.bytes().is_empty());
+    assert!(view.metadata().response.observation.is_none());
+    assert!(view.metadata().link.is_none());
+    assert!(view.metadata().failure.is_none());
+    assert_eq!(view.counts(), [0; 4]);
+    assert_eq!(view.records().count(), 0);
+}

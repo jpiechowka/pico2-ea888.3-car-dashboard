@@ -1,4 +1,4 @@
-"""Validate version 1 decoded RTT groups. This measures software HAL completion,
+"""Validate version 1/2 decoded RTT groups. This measures software HAL completion,
 not panel scanout or ECU support. Start a separate capture after every reboot.
 """
 
@@ -11,8 +11,8 @@ U32 = (1 << 32) - 1
 U64 = (1 << 64) - 1
 PIDS = {0, 32, 64, 5, 15, 66, 92}
 KINDS = {0: "frames", 1: "diagnostics"}
-RECORD = re.compile(r"\b(FRAME1|DIAG1|INPUT1|PID1|METRIC1|END1),(.*)$")
-LENGTHS = {"FRAME1": 7, "DIAG1": 5, "INPUT1": 8, "PID1": 10, "METRIC1": 14, "END1": 2}
+RECORD = re.compile(r"\b(FRAME1|FRAME2|DIAG1|INPUT1|PID1|METRIC1|END1),(.*)$")
+LENGTHS = {"FRAME1": 7, "FRAME2": 7, "DIAG1": 5, "INPUT1": 8, "PID1": 10, "METRIC1": 14, "END1": 2}
 
 
 def require(condition, reason):
@@ -113,6 +113,7 @@ def validate(group, previous, prior_frame=False, continuous_from_boot=False):
                 "input counters regressed",
             )
         return dict(
+            record_version=group["record_version"],
             sequence=seq,
             start_us=start,
             end_us=end,
@@ -214,12 +215,15 @@ def parse(lines):
             tokens = data.split(",")
             require(
                 len(tokens) == LENGTHS[name]
-                and all(re.fullmatch(r"[0-9]{1,20}", x) for x in tokens),
+                and all(
+                    (name == "FRAME2" and i == 5 and x == "na") or re.fullmatch(r"[0-9]{1,20}", x)
+                    for i, x in enumerate(tokens)
+                ),
                 "invalid integer record",
             )
-            values = [int(x) for x in tokens]
-            require(all(x <= U64 for x in values), "integer exceeds u64")
-            if name in ("FRAME1", "DIAG1"):
+            values = [None if x == "na" else int(x) for x in tokens]
+            require(all(x is None or x <= U64 for x in values), "integer exceeds u64")
+            if name in ("FRAME1", "FRAME2", "DIAG1"):
                 kind = int(name == "DIAG1")
                 seq = values[0]
                 if kind in active:
@@ -233,7 +237,13 @@ def parse(lines):
                 require(seq > seen[kind], "replayed/reset header; split capture after reboot")
                 seen[kind] = seq
                 active[kind] = dict(
-                    kind=kind, header=values, inputs=None, metrics={}, pids={}, bad=False
+                    kind=kind,
+                    header=values,
+                    inputs=None,
+                    metrics={},
+                    pids={},
+                    bad=False,
+                    record_version=2 if name == "FRAME2" else 1,
                 )
                 continue
             if name in ("METRIC1", "END1"):

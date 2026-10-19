@@ -25,6 +25,7 @@ use dashboard_pico2::backlight::Backlight;
 use dashboard_pico2::control_session::ControlSession;
 use dashboard_pico2::controls::ControlGestures;
 use dashboard_pico2::dashboard::{DashboardCache, DashboardScene, Overlay};
+use dashboard_pico2::diagnostic_values::{WorkObservation, memory_kib, rate_text, work_text};
 use dashboard_pico2::display::FrameBuffer;
 use dashboard_pico2::display::damage::{DamagePlan, PanelHistory};
 use dashboard_pico2::display::pipeline::{FrameLease, FrameLifecycle};
@@ -398,17 +399,14 @@ async fn dashboard_task(
     );
     let mut dashboard_cache = DashboardCache::new();
     let mut presentation = dashboard_pico2::presentation::PresentationState::new();
-    let mut current_fps = 0.0f32;
-    let mut average_fps = 0.0f32;
     let mut fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
     let mut last_trace: Option<FrameTrace> = None;
     let mut led_presentation = PresentedLed::new();
     let mut warning_requests = WarningRequests::new();
     let mut last_profile_log = Instant::now();
 
-    let mut frame_cycles_used = 0u32;
-    let mut cpu0_util_percent = 0u32;
-    let mut cpu1_util_percent = 0u32;
+    let mut frame_cycles_used = None;
+    let mut core0_work = WorkObservation::EMPTY;
 
     let mut flush_in_progress = None;
 
@@ -487,8 +485,6 @@ async fn dashboard_task(
         }
         if input.page_changed {
             fps_meter = CompletionRate::new(Instant::now().as_micros(), COMPLETED_FRAMES.load(Ordering::Relaxed));
-            current_fps = 0.0;
-            average_fps = 0.0;
             log_info!(
                 "Page: {}",
                 match session.page() {
@@ -587,13 +583,14 @@ async fn dashboard_task(
         let vehicle_status = dashboard_pico2::vehicle_status::VehicleStatus::from_ble(tasks::ble::snapshot().state);
 
         let frame_count = COMPLETED_FRAMES.load(Ordering::Relaxed);
-        if let Some(rate) = fps_meter
-            .sample(Instant::now().as_micros(), frame_count)
-            .expect("invalid completion rate")
-        {
-            current_fps = rate.current;
-            average_fps = rate.average;
+        let rate_at = Instant::now().as_micros();
+        if fps_meter.sample(rate_at, frame_count).is_err() {
+            log_info!("Invalid FPS window; restarting");
+            fps_meter = CompletionRate::new(rate_at, frame_count);
         }
+        let rate = fps_meter.latest(rate_at);
+        let current_fps = rate.map(|v| v.current);
+        let average_fps = rate.map(|v| v.average);
 
         let startup_before = startup.active();
         if startup.active() && startup_validation.is_some() {
@@ -784,8 +781,8 @@ async fn dashboard_task(
                         blink_on,
                         boost_psi: session.boost_psi(),
                         fps_mode: session.fps(),
-                        fps_instant: current_fps,
-                        fps_average: average_fps,
+                        fps_instant: current_fps.unwrap_or(f32::NAN),
+                        fps_average: average_fps.unwrap_or(f32::NAN),
                         backgrounds: [BLACK; 8], // Shared configured renderer owns warning colours.
                         overlay: visible_overlay,
                     };
@@ -807,6 +804,14 @@ async fn dashboard_task(
                     display.clear(BLACK).ok();
                     render_work.checkpoint().await;
                     let mem_stats = crate::profiling::MemoryStats::collect();
+                    let core1 = crate::tasks::CORE1_OBSERVATION.lock(core::cell::Cell::get);
+                    let observed_at = Instant::now().as_micros();
+                    let core0_stack = mem_stats
+                        .stack_used
+                        .and_then(|used| memory_kib(used, mem_stats.stack_total));
+                    let core1_stack = core1
+                        .stack_bytes
+                        .and_then(|used| memory_kib(used, crate::tasks::CORE1_STACK_BYTES));
 
                     let requested_spi_hz = display_spi_config().frequency;
                     let actual_spi_hz = get_actual_spi_freq(embassy_rp::clocks::clk_peri_freq());
@@ -830,15 +835,17 @@ async fn dashboard_task(
                                 index @ 0..=1 => Some(index),
                                 _ => None,
                             },
-                            core0_stack_used_kb: mem_stats.stack_used.map(|bytes| bytes.div_ceil(1024)),
-                            core0_stack_total_kb: mem_stats.stack_total / 1024,
-                            core1_stack_used_kb: crate::tasks::CORE1_STACK_USED_KB.load(Ordering::Relaxed),
+                            core0_stack_used_kb: core0_stack.map(|v| v.0),
+                            core0_stack_total_kb: mem_stats.stack_total.div_ceil(1024),
+                            core1_stack_used_kb: core1_stack.map(|v| v.0),
                             core1_stack_total_kb: crate::tasks::CORE1_STACK_BYTES / 1024,
-                            static_ram_kb: mem_stats.static_ram / 1024,
+                            static_ram_kb: memory_kib(mem_stats.static_ram, mem_stats.ram_total)
+                                .expect("valid RAM bounds")
+                                .0,
                             ram_total_kb: mem_stats.ram_total / 1024,
-                            cpu0_util_percent: dashboard_pico2::cpu_cycles::available(0).then_some(cpu0_util_percent),
-                            cpu1_util_percent: dashboard_pico2::cpu_cycles::available(1).then_some(cpu1_util_percent),
-                            frame_cycles: dashboard_pico2::cpu_cycles::available(0).then_some(frame_cycles_used),
+                            cpu0_util_percent: core0_work.work(observed_at),
+                            cpu1_util_percent: core1.work(observed_at),
+                            frame_cycles: core0_work.work(observed_at).and(frame_cycles_used),
                             requested_cpu_hz: dashboard_pico2::clock_profile::REQUESTED_CPU_HZ,
                             configured_cpu_hz: cpu_freq_hz,
                             requested_spi_hz,
@@ -870,7 +877,10 @@ async fn dashboard_task(
 
         let render_end = Instant::now();
         let render_cycles = render_work.finish();
-        frame_cycles_used = (input_cycles + render_cycles).min(u32::MAX as u64) as u32;
+        let work_cycles = input_cycles
+            .zip(render_cycles)
+            .and_then(|(input, render)| input.checked_add(render));
+        frame_cycles_used = work_cycles.and_then(|cycles| u32::try_from(cycles).ok());
 
         lifecycle.ready(token).expect("render buffer is not owned");
         let wait_start = Instant::now();
@@ -1032,10 +1042,13 @@ async fn dashboard_task(
             render_frame = next_frame;
         }
 
-        let total_frame_time_us = frame_start.elapsed().as_micros().min(u32::MAX as u64) as u32;
-
-        cpu0_util_percent = cpu_profiling::calc_util_percent(frame_cycles_used, total_frame_time_us);
-        cpu1_util_percent = crate::tasks::CORE1_UTIL_PERCENT.load(Ordering::Relaxed);
+        let observed_at = Instant::now();
+        core0_work = WorkObservation {
+            at_us: Some(observed_at.as_micros()),
+            work_tenths: work_cycles
+                .and_then(|cycles| cpu_profiling::calc_util_percent(cycles, (observed_at - frame_start).as_micros())),
+            stack_bytes: None,
+        };
 
         if last_profile_log.elapsed() >= Duration::from_secs(2) {
             #[cfg(feature = "frame-trace")]
@@ -1049,19 +1062,26 @@ async fn dashboard_task(
             #[cfg(feature = "te-trace")]
             crate::tasks::te::log_status();
             // Two log_info! lines to fit within 40-char message limit
+            if let Some(trace) = last_trace {
+                log_info!(
+                    "r={}us f={}us t={}us {}fps",
+                    trace.render_us(),
+                    trace.transfer_observed_us(),
+                    trace.total_us(),
+                    rate_text(current_fps).as_str(),
+                );
+            } else {
+                log_info!("r=--us f=--us t=--us {}fps", rate_text(current_fps).as_str());
+            }
             log_info!(
-                "r={}us f={}us t={}us {}fps",
-                last_trace.map_or(0, |t| t.render_us()),
-                last_trace.map_or(0, |t| t.transfer_observed_us()),
-                last_trace.map_or(0, |t| t.total_us()),
-                current_fps as u32,
-            );
-            log_info!(
-                "C0:{}.{}% C1:{}.{}% sw={} w={}",
-                cpu0_util_percent / 10,
-                cpu0_util_percent % 10,
-                cpu1_util_percent / 10,
-                cpu1_util_percent % 10,
+                "C0:{} C1:{} sw={} w={}",
+                work_text(core0_work.work(Instant::now().as_micros())).as_str(),
+                work_text(
+                    crate::tasks::CORE1_OBSERVATION
+                        .lock(core::cell::Cell::get)
+                        .work(Instant::now().as_micros())
+                )
+                .as_str(),
                 BUFFER_SWAPS.load(Ordering::Relaxed),
                 BUFFER_WAITS.load(Ordering::Relaxed)
             );

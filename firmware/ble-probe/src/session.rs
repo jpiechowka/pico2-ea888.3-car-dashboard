@@ -19,3 +19,22 @@ pub async fn inspect_with_events<C, T, E, R: Future<Output = Result<T, E>>>(
         Either::Second(error) => Err(error),
     }
 }
+
+/// Publish terminal evidence only after the controller cleanup wait resolves.
+pub async fn finish_cleanup(
+    revision: u32,
+    wait: impl Future<Output = bool>,
+    now_ms: impl FnOnce() -> u64,
+    reason: impl FnOnce() -> Option<u8>,
+    emit: impl AsyncFn(dashboard_core::discovery::Event),
+) -> bool {
+    let complete = wait.await;
+    emit(dashboard_core::discovery::Event::InspectionEnd {
+        revision,
+        at_ms: now_ms(),
+        cleanup_complete: complete,
+        disconnect_reason: reason(),
+    })
+    .await;
+    complete
+}
