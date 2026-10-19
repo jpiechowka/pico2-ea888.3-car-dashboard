@@ -8,6 +8,7 @@ use bt_hci::param::FilterDuplicates;
 use dashboard_core::discovery::{
     Action,
     Characteristic,
+    ConnectionFailureContext,
     Event,
     FailureReason,
     FailureStage,
@@ -231,6 +232,18 @@ async fn failed(
     );
     bridge::emit_event(Event::Failure { revision, failure }).await;
 }
+async fn failure_context(
+    connection: &Connection<'_, Pool>,
+    revision: u32,
+) {
+    let context = ConnectionFailureContext {
+        local_error: connection
+            .local_disconnect_error()
+            .map(|error| failure_reason::<()>(BleHostError::BleHost(error))),
+        disconnect_reason: connection.disconnect_reason().map(|code| code.into_inner()),
+    };
+    bridge::emit_event(Event::FailureContext { revision, context }).await;
+}
 async fn inspect_peer(
     stack: &RadioStack<'_>,
     central: &mut Central<'_, RadioController, Pool>,
@@ -323,7 +336,16 @@ async fn inspect_peer(
         Either::Second(Ok(Err(failure))) => failed(request.revision, *failure).await,
         _ => {}
     }
+    let has_failure = matches!(&result, Either::Second(Err(_)) | Either::Second(Ok(Err(_))));
+    if has_failure {
+        // Retain local ingress evidence even if terminal cleanup later stalls.
+        failure_context(&connection, request.revision).await;
+    }
     cleanup(stack, request.revision).await;
+    if has_failure {
+        // HCI terminal reason may arrive after the operation's first failure.
+        failure_context(&connection, request.revision).await;
+    }
     match result {
         Either::First(()) => {
             defmt::info!("probe.radio stage=inspect-canceled revision={}", request.revision);
@@ -390,22 +412,24 @@ async fn inspect(
     connection: &Connection<'_, Pool>,
     revision: u32,
 ) -> Result<bool, InspectionFailure> {
-    let client: Client<'_> = att(FailureStage::Mtu, GattClient::new(stack, connection)).await?;
-    let work = async {
-        match select(inventory(&client, revision), connection_events(stack, connection)).await {
-            Either::First(result) => result,
-            Either::Second(error) => Err(error),
-        }
-    };
-    match select(work, client.task()).await {
-        Either::First(result) => result,
-        Either::Second(result) => {
-            Err(InspectionFailure::new(
-                FailureStage::ClientTask,
-                result.err().map(failure_reason).unwrap_or(FailureReason::Disconnected),
-            ))
-        }
-    }
+    crate::session::inspect_with_events(
+        att(FailureStage::Mtu, Client::new(stack, connection)),
+        |client| {
+            async move {
+                match select(inventory(&client, revision), client.task()).await {
+                    Either::First(result) => result,
+                    Either::Second(result) => {
+                        Err(InspectionFailure::new(
+                            FailureStage::ClientTask,
+                            result.err().map(failure_reason).unwrap_or(FailureReason::Disconnected),
+                        ))
+                    }
+                }
+            }
+        },
+        connection_events(stack, connection),
+    )
+    .await
 }
 async fn connection_events(
     stack: &RadioStack<'_>,

@@ -314,10 +314,13 @@ Inspection clicks are ignored while busy; stale advertisements need a rescan
 with Y. [Detailed controls, limits and capture sequence](docs/vehicle/ble-probe.md#controls-and-evidence-lifetime).
 
 If inspection fails, the first evidence page shows the failed stage, available
-ATT/HCI code, query range, last accepted handles and elapsed stage time. Photograph
-that page and the retained records. **HCIbad** is a global count of scan batches
+ATT/HCI code, query range, last accepted handles and elapsed stage time. Separate
+rows retain any local host-ingress error and controller-confirmed disconnect code,
+including a code arriving during cleanup. Photograph that page and the retained
+records. **HCIbad** is a global count of scan batches
 the HCI parser rejected; it is not an error count for the selected device.
-Its detailed breakdown appears after the peer evidence. With no discovered peer,
+Its detailed breakdown includes total/remaining report bytes and the declared
+data length, without identifying the offending device. With no discovered peer,
 **X: Scan diagnostics** opens that breakdown directly. A stale selection needs a
 fresh advertisement before inspection. [Error meanings and limits](docs/vehicle/ble-probe.md#understanding-failures).
 

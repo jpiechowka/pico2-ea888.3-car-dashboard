@@ -39,6 +39,103 @@ fn failed_inspection_cannot_be_marked_complete_by_a_late_completion() {
 }
 
 #[test]
+fn terminal_context_enriches_first_failure_without_replacing_its_cause() {
+    let mut probe = inspecting();
+    let revision = probe.request.revision;
+    let context = ConnectionFailureContext {
+        local_error: Some(FailureReason::Capacity),
+        disconnect_reason: Some(0x16),
+    };
+    probe.event(Event::FailureContext { revision, context });
+    assert_eq!(
+        probe.failure_context,
+        ConnectionFailureContext::default(),
+        "no orphan evidence"
+    );
+    let mut first = InspectionFailure::new(FailureStage::Mtu, FailureReason::Disconnected);
+    first.elapsed_ms = Some(215);
+    probe.event(Event::Failure {
+        revision,
+        failure: first,
+    });
+    probe.page = 2;
+    probe.event(Event::FailureContext { revision, context });
+    assert_eq!(probe.failure, Some(first));
+    assert_eq!(probe.failure_context, context);
+    assert_eq!(probe.page, 2, "late evidence must not move the reader");
+    for incoming in [
+        ConnectionFailureContext::default(),
+        ConnectionFailureContext {
+            local_error: Some(FailureReason::Codec),
+            disconnect_reason: Some(8),
+        },
+    ] {
+        probe.event(Event::FailureContext {
+            revision,
+            context: incoming,
+        });
+        assert_eq!(probe.failure_context, context, "preserve first observed evidence");
+    }
+    probe.event(Event::Complete {
+        revision,
+        limited: false,
+    });
+    assert!(!probe.inspection.complete);
+    probe.event(Event::State {
+        revision,
+        phase: RadioPhase::Paused,
+        error: ProbeError::None,
+    });
+    probe.input(Input::Click, 101).unwrap();
+    assert_eq!(probe.failure_context, ConnectionFailureContext::default());
+    probe.event(Event::FailureContext { revision, context });
+    assert_eq!(
+        probe.failure_context,
+        ConnectionFailureContext::default(),
+        "stale generation ignored"
+    );
+}
+
+#[test]
+fn delayed_terminal_code_merges_with_local_error_and_cannot_cross_cancel_or_recovery() {
+    for input in [Input::Back, Input::Recover] {
+        let mut probe = inspecting();
+        let revision = probe.request.revision;
+        probe.event(Event::Failure {
+            revision,
+            failure: InspectionFailure::new(FailureStage::Services, FailureReason::Disconnected),
+        });
+        probe.event(Event::FailureContext {
+            revision,
+            context: ConnectionFailureContext {
+                local_error: Some(FailureReason::Codec),
+                disconnect_reason: None,
+            },
+        });
+        probe.event(Event::FailureContext {
+            revision,
+            context: ConnectionFailureContext {
+                local_error: None,
+                disconnect_reason: Some(0x16),
+            },
+        });
+        assert_eq!(probe.failure_context.local_error, Some(FailureReason::Codec));
+        assert_eq!(probe.failure_context.disconnect_reason, Some(0x16));
+        probe.input(input, 101).unwrap();
+        for late in [revision, probe.request.revision] {
+            probe.event(Event::FailureContext {
+                revision: late,
+                context: ConnectionFailureContext {
+                    local_error: Some(FailureReason::Capacity),
+                    disconnect_reason: Some(8),
+                },
+            });
+        }
+        assert_eq!(probe.failure_context, ConnectionFailureContext::default());
+    }
+}
+
+#[test]
 fn first_failure_survives_cleanup_and_only_new_requests_clear_it() {
     let mut probe = inspecting();
     let revision = probe.request.revision;
@@ -203,6 +300,9 @@ fn global_scan_diagnostics_survive_pause_and_clear_and_keep_the_original_revisio
         revision: 1,
         index: 2,
         total_reports: 3,
+        report_bytes: 80,
+        remaining_bytes: 12,
+        declared_data_len: Some(31),
         at_ms: 90,
     };
     probe.scan_diagnostics.record(failure);
@@ -222,6 +322,9 @@ fn scan_failure_details_are_reachable_without_any_valid_peer() {
         revision: 1,
         index: 0,
         total_reports: 1,
+        report_bytes: 9,
+        remaining_bytes: 9,
+        declared_data_len: Some(0),
         at_ms: 10,
     });
     let request = probe.input(Input::Details, 11).expect("X opens global diagnostics");

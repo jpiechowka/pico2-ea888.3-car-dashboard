@@ -186,6 +186,8 @@ the old result; there is no automatic retry. Available fields are:
 | Stage elapsed | Monotonic operation duration when measured; excludes later publication of retained rows; absent for events without a measured start |
 | Query range | The application's requested service/read range, not the remote ATT Error Response handle or internal pagination cursor |
 | Last accepted decl/value | Last validated characteristic in that service, not a guess at the failed handle |
+| Host ingress | First local ACL receive error that requested disconnect, when available; separate from the original operation failure |
+| HCI disconnect | Raw reason from a successful controller terminal event, retained even if its event queue was full; otherwise explicitly unavailable |
 
 Each 3-second ATT deadline covers the **whole operation**, including all pages of
 one service's characteristic query. The 30-second deadline covers the entire
@@ -193,11 +195,22 @@ inspection after connection. A timeout may follow some successful responses.
 Disconnecting can originate locally or remotely; a code-less disconnect does not
 identify which side caused it. Some malformed ingress is rejected by the lower
 host and closes the connection before the app can see the original decode error.
-Such failures may still appear as `disconnected (code unavailable)`.
+The retained ingress row can explain this path. The terminal reason may arrive
+during cleanup; it enriches the evidence without replacing the original stage or
+moving the selected page. A reason caused by deliberate cleanup does not establish
+the original remote cause. Failed controller disconnect status faults the host
+instead of falsely admitting terminal cleanup.
+
+Connection events are serviced during MTU startup as well as inventory. Startup
+consumes early valid-shaped notifications/indications while awaiting its reply;
+there are no subscribers yet. No pairing, subscription or retry is introduced.
+MTU replies advertise local receive capacity separately from the negotiated
+minimum; below-default capabilities retain 23. Only a matching RequestNotSupported
+refusal completes the default-MTU fallback. Other errors retain their actual code.
 
 `HCIbad` and the **GLOBAL HCI SCAN ERRORS / since boot** pages describe all scanned
 devices. They retain invalid-size/value counts and the latest failed batch's scan
-revision, entry position and age. The actual HCI iterator stops at its first bad
+revision, entry position and age. The actual HCI decoder stops at its first bad
 entry: later entries in that batch are not individually counted. Valid preceding
 entries remain available. These counters do not diagnose RF quality and cannot
 be attributed to the selected TV/adapter. Raw AD-field decoding and rejected GATT
@@ -205,16 +218,26 @@ records are separate checks. With no accepted peer, X opens **SCAN DIAGNOSTICS**
 rotation/A/B scroll, Y returns to scanning, and click/X cannot connect without a
 peer. Otherwise the global block follows the peer evidence pages.
 
+The final global lines show report bytes after the count field, bytes remaining
+from the failed record's start, and its declared Data_Length (or a missing header
+byte). One legacy record requires `10 + Data_Length` bytes, including RSSI.
+This separates short fixed headers, missing data and missing RSSI on the next
+capture. For a multi-report batch, remaining bytes also include subsequent
+records. These are numeric shape diagnostics, not raw packet capture or proof of
+where bytes became inconsistent. Existing decoder admission rules are unchanged.
+
 `InvalidPeer` after reading paused evidence usually means the advertisement is
 over 30 seconds old. Y returns to scanning; wait for a new report before clicking.
 This rejection sends no connection request. The header does not assume staleness
 for every InvalidPeer case: an unexpected connected address is also rejected.
 
-The owner's LG TV photographs establish an intermittent partial GATT result,
-not its underlying cause. Low RSSI does not establish why a host parser rejected
-a report. Tests reproduced separate malformed-packet panic, tuple-validation,
-128-bit UUID parsing and mismatched-response defects; richer on-device evidence
-is still needed to relate them to that result.
+The owner's LG TV photographs include a successful inventory, a partial result
+and a later MTU disconnect after 215 ms with no available code. They do not
+establish one common cause. That last elapsed time is below the 3-second ATT
+deadline. Low RSSI does not establish why a host parser rejected a report.
+Tests reproduced separate ATT, MTU and disconnect-state defects. Legal report
+fixtures passed; the new length/connection context still needs a physical capture
+to identify the particular failure path. See the [source and validation record](../validation/ble-probe-mtu-2026-10-19.md).
 
 ## Build from the command line
 
@@ -333,6 +356,10 @@ Actual shared RGB565 renderer output, with **synthetic peers and values**:
 | --- | --- |
 | ![Synthetic ATT failure, not a TV diagnosis](../images/ble-probe/failure-synthetic.png) | ![Synthetic global HCI parser diagnostics](../images/ble-probe/scan-errors-synthetic.png) |
 
+| Separate local/terminal evidence | Numeric report-length evidence |
+| --- | --- |
+| ![Synthetic MTU failure with independent host and HCI reasons](../images/ble-probe/mtu-failure-synthetic.png) | ![Synthetic HCI report lengths](../images/ble-probe/scan-errors-synthetic.png) |
+
 Regenerate the lossless RGB captures from `host/`:
 
 ```text
@@ -386,6 +413,15 @@ and protected/unavailable values. Tests use the production report adapter with
 the locked HCI decoder, including all 256 RSSI byte patterns, mixed valid/bad
 batches and both parse-error kinds. Vendor wire tests exercise valid multi-page
 discovery, normal end-of-list responses, malformed tuples and response matching.
+Report tests cover every legal data length, payload/RSSI truncations, maximum
+event-size batches, valid prefixes and missing length versus declared zero.
+MTU tests cover both directions, crossed/early exchanges, all ATT error codes,
+unsolicited values, one indication confirmation, local resource errors and remote
+termination. Decoded HCI completion tests cover every status/reason byte; queue
+overflow/drain and slot reuse check independent retained evidence. The production
+session supervisor is tested with pending startup/inventory, simultaneous errors,
+external cancellation, event completion and successful completion, including
+dropping losing futures before cleanup. Stale context cannot cross generations.
 A deterministic 66,560-input ATT decoder sweep checks every opcode at lengths
 0 through 64 with four seeded byte patterns and exhausts accepted iterators.
 Explicit valid request families, empty values and 16/128-bit UUID cases check
@@ -398,10 +434,10 @@ exclusion. Software tests and conservative stack estimates do not qualify RF
 interoperability, physical stack high-water, electrical margins or car data.
 
 The checked 2026-10-19 build (`nightly-2026-10-18`, CPU280/SPI70, bounded info
-logging) uses **373296 bytes of static RAM** and leaves **150992 bytes for the
+logging) uses **374632 bytes of static RAM** and leaves **149656 bytes for the
 main stack and headroom**. Static RAM includes both 153600-byte framebuffers and
-the 32768-byte core-1 stack. The largest emitted function frame is 4992 bytes;
-the aggregate emitted frames total 18992 bytes against the unchanged 20480-byte
+the 32768-byte core-1 stack. The largest emitted function frame is 5432 bytes;
+the aggregate emitted frames total 19344 bytes against the unchanged 20480-byte
 limit. The aggregate is a regression check, not simultaneous stack use;
 the conservative named-path budgets include additional child and interrupt
 reserves. These are linked-image/source-review results, not physical stack
@@ -409,7 +445,8 @@ high-water measurements. The frozen ELF, UF2, compiler options and source hashes
 are recorded together by the checked wrapper.
 
 The permanent telemetry added 440 static bytes against its preceding utility
-image; the failure diagnostics add another 136 bytes against that telemetry build.
+image; the initial failure diagnostics added another 136 bytes. Retained
+connection/scan context and startup supervision add 1336 bytes to that image.
 A concrete pinned poll wrapper keeps each task future in one allocation;
 bounded integer formatting avoids adding general float-formatting stack frames.
 Synchronous ATT packet preparation keeps its temporary encoder out of the request

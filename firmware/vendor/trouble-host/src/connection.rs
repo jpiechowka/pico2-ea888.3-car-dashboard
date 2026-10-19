@@ -644,6 +644,18 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.is_disconnected(self.index)
     }
 
+    /// Terminal controller disconnect reason, retained even if the event queue was full.
+    /// A local disconnect request alone does not set this value.
+    pub fn disconnect_reason(&self) -> Option<Status> {
+        self.manager.connection(self.index).disconnect_reason
+    }
+
+    /// First ACL ingress error that caused a local disconnect on this connection.
+    /// Retained through terminal disconnect and cleared only when the slot is reused.
+    pub fn local_disconnect_error(&self) -> Option<Error> {
+        self.manager.connection(self.index).local_disconnect_error.clone()
+    }
+
     /// Connection handle of this connection.
     pub fn handle(&self) -> ConnHandle {
         self.manager.handle(self.index)

@@ -1221,19 +1221,35 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
 
             // Await MTU exchange completion (BT Core Spec requires sequential ATT requests)
             with_timeout(ATT_TRANSACTION_TIMEOUT, async {
-                let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
-                let Some(&opcode) = pdu.as_ref().first() else {
-                    connection.disconnect();
-                    return Err(Error::InvalidValue.into());
-                };
-                match opcode {
-                    att::ATT_EXCHANGE_MTU_RSP => Ok::<_, BleHostError<C::Error>>(()),
-                    att::ATT_ERROR_RSP if validate_error_response(pdu.as_ref(), att::ATT_EXCHANGE_MTU_REQ).is_ok() => {
-                        Ok(())
-                    }
-                    _ => {
+                loop {
+                    let pdu = connection.next_gatt_client().await.ok_or(Error::Disconnected)?;
+                    let Some(&opcode) = pdu.as_ref().first() else {
                         connection.disconnect();
-                        Err(Error::UnexpectedGattResponse.into())
+                        return Err(Error::InvalidValue.into());
+                    };
+                    match opcode {
+                        att::ATT_EXCHANGE_MTU_RSP if pdu.as_ref().len() == 3 => {
+                            return Ok::<_, BleHostError<C::Error>>(());
+                        }
+                        att::ATT_ERROR_RSP
+                            if validate_error_response(pdu.as_ref(), att::ATT_EXCHANGE_MTU_REQ).is_ok() =>
+                        {
+                            let code = att::AttErrorCode::new(pdu.as_ref()[4]);
+                            if code != att::AttErrorCode::REQUEST_NOT_SUPPORTED {
+                                return Err(Error::Att(code).into());
+                            }
+                            // The fallback completes this connection's once-only exchange.
+                            connection.set_att_mtu(crate::connection_manager::DEFAULT_ATT_MTU);
+                            return Ok(());
+                        }
+                        ATT_HANDLE_VALUE_NTF | ATT_HANDLE_VALUE_IND if pdu.as_ref().len() >= 3 => {
+                            // No subscriber exists before construction completes. Consume early
+                            // values; the host ingress already confirms indications exactly once.
+                        }
+                        _ => {
+                            connection.disconnect();
+                            return Err(Error::UnexpectedGattResponse.into());
+                        }
                     }
                 }
             })

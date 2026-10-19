@@ -6,6 +6,7 @@ mod errors;
 mod metrics;
 mod radio;
 mod reports;
+mod session;
 mod tasks;
 
 use dashboard_core::display::FrameBuffer;

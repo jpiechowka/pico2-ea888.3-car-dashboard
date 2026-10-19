@@ -142,7 +142,12 @@ fn discovery_mtu_constructor_correlates_error_opcode_and_preserves_fallback() {
         (&[0x01, 0x02, 0, 0][..], false),
         (&[0x01, 0x02, 0, 0, 0x06, 0][..], false),
         (&[0x01, 0x02, 0, 0, 0x06][..], true),
-        (&[0x01, 0x02, 0, 0, 0x0e][..], true),
+        (&[0x03][..], false),
+        (&[0x03, 23][..], false),
+        (&[0x03, 23, 0, 0][..], false),
+        (&[0x1b][..], false),
+        (&[0x1b, 1][..], false),
+        (&[0x1d][..], false),
         (&[0x03, 23, 0][..], true),
     ] {
         let mut resources = crate::HostResources::<DefaultPacketPool, 1, 1>::new();

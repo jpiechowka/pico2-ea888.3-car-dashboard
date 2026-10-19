@@ -2,6 +2,9 @@
 //!
 //! The host module contains the main entry point for the TrouBLE host.
 #[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
+#[path = "host_mtu_tests.rs"]
+mod mtu_tests;
+#[cfg(all(test, feature = "gatt", feature = "default-packet-pool"))]
 #[path = "host_regression_tests.rs"]
 mod regression_tests;
 #[cfg(feature = "security")]
@@ -725,12 +728,31 @@ where
         true
     }
 
+    fn handle_disconnection_complete(&self, event: DisconnectionComplete) -> Result<(), Error> {
+        // A failed event does not terminate the link and its reason is invalid.
+        event.status.to_result().map_err(Error::Hci)?;
+        info!(
+            "[host] disconnection event on handle {}, reason: {:?}",
+            event.handle.raw(),
+            event.reason
+        );
+        let _ = self.state.connections.disconnected(event.handle, event.reason);
+        let _ = self.state.channels.disconnected(event.handle);
+        let mut metrics = self.state.metrics.borrow_mut();
+        metrics.disconnect_events = metrics.disconnect_events.wrapping_add(1);
+        Ok(())
+    }
+
     fn handle_acl(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
         let result = self.handle_acl_inner(acl, event_handler);
-        if result
+        if let Some(error) = result
             .as_ref()
-            .is_err_and(|error| !matches!(error, Error::NotSupported))
+            .err()
+            .filter(|error| !matches!(error, Error::NotSupported))
         {
+            self.state
+                .connections
+                .record_local_disconnect_error(acl.handle(), error);
             // Lost/malformed ACL bytes invalidate the stream, including failures
             // before ATT decoding (pool exhaustion and fragment reassembly).
             self.state
@@ -928,13 +950,21 @@ where
                 if pdu.as_ref().is_empty() {
                     return Err(Error::InvalidValue);
                 }
+                if matches!(pdu.as_ref()[0], att::ATT_EXCHANGE_MTU_REQ | att::ATT_EXCHANGE_MTU_RSP)
+                    && pdu.as_ref().len() != 3
+                {
+                    return Err(Error::InvalidValue);
+                }
                 // Handle ATT MTU exchange here since it doesn't strictly require
                 // gatt to be enabled.
                 let a = att::Att::decode(pdu.as_ref());
                 if let Ok(att::Att::Client(AttClient::Request(att::AttReq::ExchangeMtu { mtu }))) = a {
-                    let mtu = self.state.connections.exchange_att_mtu(acl.handle(), mtu);
+                    let negotiated = self.state.connections.exchange_att_mtu(acl.handle(), mtu);
 
-                    let rsp = att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu { mtu }));
+                    // Advertise our receive capacity, independently of the negotiated minimum.
+                    let rsp = att::Att::Server(AttServer::Response(att::AttRsp::ExchangeMtu {
+                        mtu: self.state.connections.default_att_mtu(),
+                    }));
                     let l2cap = L2capHeader {
                         channel: L2CAP_CID_ATT,
                         length: 3,
@@ -945,7 +975,7 @@ where
                     w.write_hci(&l2cap)?;
                     w.write(rsp)?;
 
-                    debug!("[host] agreed att MTU of {}", mtu);
+                    debug!("[host] agreed att MTU of {}", negotiated);
                     let len = w.len();
                     self.state
                         .connections
@@ -1231,6 +1261,12 @@ pub trait EventHandler {
     /// Handle advertising reports
     #[cfg(feature = "scan")]
     fn on_adv_reports(&self, reports: bt_hci::param::LeAdvReportsIter) {}
+    /// Handle a complete legacy advertising-report batch, including its borrowed bytes.
+    /// The default preserves handlers that only implement the iterator callback.
+    #[cfg(feature = "scan")]
+    fn on_adv_report_data(&self, reports: bt_hci::param::LeAdvReports<'_>) {
+        self.on_adv_reports(reports.iter());
+    }
     /// Handle extended advertising reports
     #[cfg(feature = "scan")]
     fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter) {}
@@ -1478,7 +1514,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                                     #[cfg(feature = "scan")]
                                     {
                                         let data = unwrap!(LeAdvertisingReport::from_hci_bytes_complete(event.data));
-                                        event_handler.on_adv_reports(data.reports.iter());
+                                        event_handler.on_adv_report_data(data.reports);
                                     }
                                 }
                                 LeEventKind::LeLongTermKeyRequest => {
@@ -1628,26 +1664,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
                         }
                         EventKind::DisconnectionComplete => {
                             let e = unwrap!(DisconnectionComplete::from_hci_bytes_complete(event.data));
-                            let handle = e.handle;
-                            let reason = if let Err(e) = e.status.to_result() {
-                                info!("[host] disconnection event on handle {}, status: {:?}", handle.raw(), e);
-                                None
-                            } else if let Err(err) = e.reason.to_result() {
-                                info!(
-                                    "[host] disconnection event on handle {}, reason: {:?}",
-                                    handle.raw(),
-                                    err
-                                );
-                                Some(e.reason)
-                            } else {
-                                info!("[host] disconnection event on handle {}", handle.raw());
-                                None
-                            }
-                            .unwrap_or(Status::UNSPECIFIED);
-                            let _ = host.state.connections.disconnected(handle, reason);
-                            let _ = host.state.channels.disconnected(handle);
-                            let mut m = host.state.metrics.borrow_mut();
-                            m.disconnect_events = m.disconnect_events.wrapping_add(1);
+                            host.handle_disconnection_complete(e)?;
                         }
                         EventKind::NumberOfCompletedPackets => {
                             let c = unwrap!(NumberOfCompletedPackets::from_hci_bytes_complete(event.data));

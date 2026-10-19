@@ -1,22 +1,28 @@
 //! Legacy report decoding shared with native tests of the exact HCI dependency.
-use bt_hci::FromHciBytesError;
-use bt_hci::param::{AddrKind, LeAdvEventKind, LeAdvReportsIter};
+use bt_hci::param::{AddrKind, LeAdvEventKind, LeAdvReport, LeAdvReports};
+use bt_hci::{FromHciBytes, FromHciBytesError};
 use dashboard_core::discovery::{Advertisement, Event, Peer, ReportKind, ScanErrorKind, ScanFailure};
 
 pub fn parse_reports(
     revision: Option<u32>,
-    reports: LeAdvReportsIter<'_>,
+    reports: LeAdvReports<'_>,
     at_ms: u64,
     mut on_report: impl FnMut(Event),
     mut on_error: impl FnMut(ScanFailure),
 ) {
     let Some(revision) = revision else { return };
-    // The controller stores this count in one byte. The iterator stops at its
-    // first error, so the count describes a failed batch, not every lost report.
-    let total_reports = reports.len() as u8;
-    for (index, report) in reports.enumerate() {
-        let report = match report {
-            Ok(report) => report,
+    // Use the iterator's exact record decoder/count/stop semantics while retaining
+    // the borrowed cursor for numeric diagnostics. No payload bytes are retained.
+    let total_reports = reports.num_reports;
+    let mut remaining = reports.bytes.as_ref();
+    // HCI event parameters cap this at 253 bytes; saturate synthetic oversized input.
+    let report_bytes = u16::try_from(remaining.len()).unwrap_or(u16::MAX);
+    for index in 0..total_reports {
+        let report = match LeAdvReport::from_hci_bytes(remaining) {
+            Ok((report, rest)) => {
+                remaining = rest;
+                report
+            }
             Err(error) => {
                 on_error(ScanFailure {
                     kind: match error {
@@ -24,8 +30,11 @@ pub fn parse_reports(
                         FromHciBytesError::InvalidValue => ScanErrorKind::InvalidValue,
                     },
                     revision,
-                    index: index as u8,
+                    index,
                     total_reports,
+                    report_bytes,
+                    remaining_bytes: u16::try_from(remaining.len()).unwrap_or(u16::MAX),
+                    declared_data_len: remaining.get(8).copied(),
                     at_ms,
                 });
                 break;
@@ -77,9 +86,9 @@ impl Reports {
 
 #[cfg(not(test))]
 impl trouble_host::prelude::EventHandler for Reports {
-    fn on_adv_reports(
+    fn on_adv_report_data(
         &self,
-        reports: LeAdvReportsIter<'_>,
+        reports: LeAdvReports<'_>,
     ) {
         parse_reports(
             self.revision.get(),

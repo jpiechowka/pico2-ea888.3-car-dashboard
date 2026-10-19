@@ -1,6 +1,13 @@
 //! Small, owned failure evidence. No peer payloads, heap strings or remote-handle guesses.
 use super::{Characteristic, ProbeError, Uuid};
 
+/// Local ingress failure and controller-confirmed termination are separate evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConnectionFailureContext {
+    pub local_error: Option<FailureReason>,
+    pub disconnect_reason: Option<u8>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureStage {
     Connect,
@@ -55,7 +62,7 @@ impl FailureReason {
         match self {
             Self::Controller => "controller I/O",
             Self::Timeout => "deadline expired",
-            Self::Disconnected => "disconnected (code unavailable)",
+            Self::Disconnected => "disconnected",
             Self::DisconnectCode(_) => "disconnect HCI",
             Self::Capacity => "buffer / resource capacity",
             Self::Att(_) => "ATT error",

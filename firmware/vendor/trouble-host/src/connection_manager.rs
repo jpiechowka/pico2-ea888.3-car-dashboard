@@ -22,6 +22,8 @@ use crate::prelude::sar::PacketReassembly;
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::{config, Address, Error, Identity, PacketPool};
 
+pub(crate) const DEFAULT_ATT_MTU: u16 = 23;
+
 /// Resolvable private addresses used on a connection.
 ///
 /// Holds the Resolvable Private Addresses (RPAs) for a connection that were
@@ -395,6 +397,14 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
+    pub(crate) fn record_local_disconnect_error(&self, handle: ConnHandle, error: &Error) {
+        if let Some(mut entry) = self.connection_by_handle_mut(handle) {
+            if entry.local_disconnect_error.is_none() {
+                entry.local_disconnect_error = Some(error.clone());
+            }
+        }
+    }
+
     pub(crate) fn request_handle_disconnect(&self, handle: ConnHandle, reason: DisconnectReason) {
         if let Some(mut entry) = self.connection_by_handle_mut(handle) {
             if matches!(entry.state, ConnectionState::Connecting | ConnectionState::Connected) && handle == entry.handle
@@ -514,6 +524,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         for (idx, storage) in self.connections.borrow_mut().iter_mut().enumerate() {
             if h == storage.handle && storage.state != ConnectionState::Disconnected {
                 storage.state = ConnectionState::Disconnected;
+                storage.disconnect_reason = Some(reason);
                 storage.reassembly.clear();
                 storage.acl_send_locked = false;
                 storage.link_credit_waker.wake();
@@ -583,6 +594,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.link_credits = default_credits;
                 storage.acl_send_locked = false;
                 storage.att_mtu = None;
+                storage.disconnect_reason = None;
+                storage.local_disconnect_error = None;
                 storage.handle = handle;
                 #[cfg(feature = "security")]
                 let identity = self
@@ -792,7 +805,12 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
                 ConnectionState::Connecting | ConnectionState::Connected if storage.handle == conn => {
-                    storage.att_mtu = NonZeroU16::new(default_att_mtu.min(mtu));
+                    let negotiated = if mtu < DEFAULT_ATT_MTU || default_att_mtu < DEFAULT_ATT_MTU {
+                        DEFAULT_ATT_MTU
+                    } else {
+                        default_att_mtu.min(mtu)
+                    };
+                    storage.att_mtu = NonZeroU16::new(negotiated);
                     return storage.att_mtu();
                 }
                 _ => {}
@@ -1227,6 +1245,8 @@ pub struct ConnectionStorage<P> {
     #[cfg(feature = "subrating")]
     pub subrating_params: Option<SubratingParams>,
     pub att_mtu: Option<NonZeroU16>,
+    pub(crate) disconnect_reason: Option<Status>,
+    pub(crate) local_disconnect_error: Option<Error>,
     pub link_credits: usize,
     pub link_credit_waker: WakerRegistration,
     pub acl_send_locked: bool,
@@ -1350,6 +1370,8 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "subrating")]
             subrating_params: None,
             att_mtu: None,
+            disconnect_reason: None,
+            local_disconnect_error: None,
             link_credits: 0,
             link_credit_waker: WakerRegistration::new(),
             acl_send_locked: false,
@@ -1422,7 +1444,7 @@ impl<P> ConnectionStorage<P> {
 
     fn att_mtu(&self) -> u16 {
         // Default ATT MTU is 23
-        self.att_mtu.map_or(23, |mtu| mtu.get())
+        self.att_mtu.map_or(DEFAULT_ATT_MTU, |mtu| mtu.get())
     }
 }
 

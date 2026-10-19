@@ -63,6 +63,10 @@ pub enum Event {
         revision: u32,
         failure: InspectionFailure,
     },
+    FailureContext {
+        revision: u32,
+        context: ConnectionFailureContext,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Input {
@@ -88,6 +92,7 @@ pub struct Probe {
     pub phase: RadioPhase,
     pub error: ProbeError,
     pub failure: Option<InspectionFailure>,
+    pub failure_context: ConnectionFailureContext,
     pub request: Request,
     pub dropped_reports: u32,
     pub malformed_reports: u32,
@@ -109,6 +114,10 @@ impl Probe {
             phase: RadioPhase::Starting,
             error: ProbeError::None,
             failure: None,
+            failure_context: ConnectionFailureContext {
+                local_error: None,
+                disconnect_reason: None,
+            },
             request: Request::INITIAL,
             dropped_reports: 0,
             malformed_reports: 0,
@@ -138,6 +147,7 @@ impl Probe {
         self.phase = RadioPhase::Stopping;
         self.error = ProbeError::None;
         self.failure = None;
+        self.failure_context = ConnectionFailureContext::default();
         Some(self.request)
     }
 
@@ -222,6 +232,7 @@ impl Probe {
             | Event::State { revision, .. }
             | Event::Item { revision, .. }
             | Event::Failure { revision, .. }
+            | Event::FailureContext { revision, .. }
             | Event::Complete { revision, .. } => revision,
         };
         if revision != self.request.revision {
@@ -251,6 +262,13 @@ impl Probe {
             }
             Event::Item { item, .. } if matches!(self.request.action, Action::Inspect(_)) => {
                 self.inspection.accept(item)
+            }
+            Event::FailureContext { context, .. }
+                if self.failure.is_some() && matches!(self.request.action, Action::Inspect(_)) =>
+            {
+                self.failure_context.local_error = self.failure_context.local_error.or(context.local_error);
+                self.failure_context.disconnect_reason =
+                    self.failure_context.disconnect_reason.or(context.disconnect_reason);
             }
             Event::Complete { limited, .. } if matches!(self.request.action, Action::Inspect(_)) => {
                 if limited {

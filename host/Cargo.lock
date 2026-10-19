@@ -272,10 +272,12 @@ name = "dashboard-host-validation"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
+ "bt-hci-transport",
  "criterion",
  "critical-section",
  "dashboard-config",
  "dashboard-core",
+ "embassy-futures",
  "embassy-hal-internal",
  "embassy-sync",
  "embassy-time",

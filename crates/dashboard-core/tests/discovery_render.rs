@@ -186,11 +186,21 @@ fn failure_and_scan_pages_preserve_telemetry_and_footer_pixels() {
             elapsed_ms: Some(u32::MAX),
         },
     });
+    p.event(Event::FailureContext {
+        revision: p.request.revision,
+        context: ConnectionFailureContext {
+            local_error: Some(FailureReason::UnexpectedResponse),
+            disconnect_reason: Some(255),
+        },
+    });
     p.scan_diagnostics.record(ScanFailure {
         kind: ScanErrorKind::InvalidSize,
         revision: u32::MAX,
         index: 254,
         total_reports: 255,
+        report_bytes: u16::MAX,
+        remaining_bytes: u16::MAX,
+        declared_data_len: Some(u8::MAX),
         at_ms: u64::MAX,
     });
     p.scan_diagnostics.total = u32::MAX;

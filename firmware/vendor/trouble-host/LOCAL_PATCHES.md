@@ -96,7 +96,7 @@ UnexpectedGattResponse instead of falsely ending discovery/read-blob operations.
 Matching AttributeNotFound remains a normal end of enumeration. Legitimate
 zero error handles remain accepted. The separate MTU constructor also checks
 that an Error Response names Exchange MTU (0x02); mismatches disconnect and fail,
-while matching refusals preserve the existing default-MTU fallback.
+while a matching RequestNotSupported refusal permits the default-MTU fallback.
 
 Error Responses require their exact four-byte payload before field decoding.
 Request prefixes and write-command handles are checked before indexing; empty
@@ -128,3 +128,45 @@ before another transaction.
 Protocol references: Bluetooth Core 6.2
 [ATT 3.4.1.1 and list response formats](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/attribute-protocol--att-.html),
 [GATT 4.6.1 characteristic discovery](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/generic-attribute-profile--gatt-.html).
+
+## MTU startup and retained disconnect evidence (2026-10-19)
+
+MTU request/response PDUs require exactly three bytes. Replies advertise local
+receive capacity; negotiated MTU is the smaller valid capability, with default
+23 retained when a capability is below 23. A matching RequestNotSupported (0x06)
+completes the default-MTU fallback once per connection. Other ATT errors propagate
+their exact code. Early valid-shaped notifications/indications are consumed while
+waiting for the MTU reply; there is no subscriber before construction completes.
+Ingress already confirms indications once. The original transaction deadline,
+bounded queues and fail-closed ingress policy remain in effect.
+
+Connection slots retain the first live ACL ingress error and the successful
+controller DisconnectionComplete reason separately from the bounded event queue.
+Read-only getters survive queue overflow/drain and terminal cleanup; slot reuse
+clears both fields after outstanding references end. Late ACL during intentional
+cleanup cannot create a new local cause. A failed DisconnectionComplete status
+propagates an HCI error to host recovery without falsely marking the link terminal.
+Successful events retain the raw reason byte rather than synthesizing 0x1F.
+
+The additional `on_adv_report_data` callback borrows a complete legacy report
+batch synchronously. Its default invokes the existing iterator callback, preserving
+existing handlers. It enables numerical length diagnostics without changing the
+decoder, filtering, admission, packet ownership or report-count rules.
+
+Fifteen actual-host/constructor regressions cover MTU boundaries, crossed and
+pre-acceptance exchange, early values/one indication confirmation, pool exhaustion,
+malformed ingress, all 256 ATT codes, all 255 failed HCI completion statuses,
+all 256 successful reason bytes, full event queues, first-cause retention and slot
+reuse. Serialized native suites pass 78 tests without security, 116 with security
+and 78 using the probe's actual eight-packet/251-byte pool and four-notification
+queue. The existing pool-exhaustion fixture also works when the pool fills before
+the receive queue. These tests do not identify the cause of a physical disconnect.
+
+Protocol references: Bluetooth Core 6.2
+[ATT 3.4.2 MTU exchange and 3.4.7 notifications](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/attribute-protocol--att-.html),
+[GATT 4.3.1 MTU fallback](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/generic-attribute-profile--gatt-.html),
+and [Core 5.4 HCI 7.7.5 completion status](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
+The current full HCI HTML exceeded the retrieval limit; that specific status
+rule was checked in the accessible official 5.4 text. Upstream
+[issue 619](https://github.com/embassy-rs/trouble/issues/619) concerns another platform
+and crossed MTU timing; it is context, not a diagnosis of this device.

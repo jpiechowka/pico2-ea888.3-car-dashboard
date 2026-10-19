@@ -12,6 +12,12 @@ pub struct ScanFailure {
     /// Zero-based position in the controller's batch, not a catalogue index.
     pub index: u8,
     pub total_reports: u8,
+    /// Concatenated HCI report bytes, excluding the subevent and report count.
+    pub report_bytes: u16,
+    /// Bytes from the failing record's start through the batch end.
+    pub remaining_bytes: u16,
+    /// Failed record's Data_Length byte, absent if its header is truncated.
+    pub declared_data_len: Option<u8>,
     pub at_ms: u64,
 }
 
@@ -63,6 +69,9 @@ mod tests {
             revision: 7,
             index: 2,
             total_reports: 4,
+            report_bytes: 100,
+            remaining_bytes: 10,
+            declared_data_len: Some(31),
             at_ms: 100,
         };
         let latest = ScanFailure {
@@ -70,6 +79,9 @@ mod tests {
             revision: 9,
             index: 0,
             total_reports: 1,
+            report_bytes: 8,
+            remaining_bytes: 8,
+            declared_data_len: None,
             at_ms: 240,
         };
         diagnostics.record(first);
@@ -96,6 +108,9 @@ mod tests {
                 revision: 12,
                 index: 1,
                 total_reports: 3,
+                report_bytes: 60,
+                remaining_bytes: 20,
+                declared_data_len: Some(15),
                 at_ms: 400,
             };
             diagnostics.record(failure);

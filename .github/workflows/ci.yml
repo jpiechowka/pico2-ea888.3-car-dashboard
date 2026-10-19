@@ -242,6 +242,7 @@ jobs:
       - name: Discovery-only GATT regressions and forbidden security unification
         run: |
           cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,scan,discovery-no-security,default-packet-pool -- --test-threads=1
+          cargo test --locked --manifest-path firmware/vendor/trouble-host/Cargo.toml --target x86_64-unknown-linux-gnu --lib --no-default-features --features central,gatt,scan,discovery-no-security,default-packet-pool-size-8,default-packet-pool-mtu-251,gatt-client-notification-queue-size-4 -- --test-threads=1
           python3 firmware/scripts/check_probe_security_guard.py --target x86_64-unknown-linux-gnu
       - name: Target artifact capture contracts
         run: |

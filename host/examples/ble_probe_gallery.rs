@@ -139,6 +139,26 @@ fn main() {
         },
     });
     save(directory, "failure-synthetic", &p);
+    p.input(Input::Click, 12_000).unwrap();
+    p.phase = RadioPhase::Paused;
+    p.event(Event::Failure {
+        revision: p.request.revision,
+        failure: InspectionFailure {
+            stage: FailureStage::Mtu,
+            reason: FailureReason::Disconnected,
+            range: None,
+            last_accepted: None,
+            elapsed_ms: Some(215),
+        },
+    });
+    p.event(Event::FailureContext {
+        revision: p.request.revision,
+        context: ConnectionFailureContext {
+            local_error: Some(FailureReason::InvalidValue),
+            disconnect_reason: Some(0x16),
+        },
+    });
+    save(directory, "mtu-failure-synthetic", &p);
     let back = p.input(Input::Back, 12_000).unwrap();
     p.event(Event::State {
         revision: back.revision,
@@ -162,6 +182,9 @@ fn main() {
         revision: 7,
         index: 1,
         total_reports: 3,
+        report_bytes: 51,
+        remaining_bytes: 10,
+        declared_data_len: Some(31),
         at_ms: 11_000,
     });
     p.malformed_reports = p.scan_diagnostics.total;

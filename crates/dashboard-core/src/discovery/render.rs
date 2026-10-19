@@ -481,6 +481,17 @@ fn details(
         if let Some((decl, value)) = failure.last_accepted {
             emit(&line(format_args!("Last accepted decl {decl:04X} / value {value:04X}")));
         }
+        if let Some(error) = probe.failure_context.local_error {
+            if let Some(code) = error.code() {
+                emit(&line(format_args!("Host ingress: {} 0x{code:02X}", error.label())));
+            } else {
+                emit(&line(format_args!("Host ingress: {}", error.label())));
+            }
+        }
+        match probe.failure_context.disconnect_reason {
+            Some(code) => emit(&line(format_args!("HCI disconnect: 0x{code:02X}"))),
+            None => emit("HCI disconnect: unavailable"),
+        }
         emit("Partial records retained; Y returns to scan");
     }
     peer_details(probe, now, emit);
@@ -505,6 +516,15 @@ fn details(
             last.total_reports
         )));
         emit("Parsing stops at the first bad entry in a batch");
+        emit(&line(format_args!(
+            "Report bytes {} / remaining {}",
+            last.report_bytes, last.remaining_bytes
+        )));
+        match last.declared_data_len {
+            Some(length) => emit(&line(format_args!("Declared data length: {length}"))),
+            None => emit("Declared data length: missing header byte"),
+        }
+        emit("One record needs 10 + data length bytes");
     }
 }
 /// Detail page count, independent of the current screen and page index.
@@ -970,6 +990,19 @@ mod tests {
             l.iter()
                 .all(|s| !s.contains("Stage elapsed") && !s.contains("Query range") && !s.contains("Last accepted"))
         );
+        for code in 0..=u8::MAX {
+            p.failure_context = ConnectionFailureContext {
+                local_error: Some(FailureReason::Att(code)),
+                disconnect_reason: Some(code),
+            };
+            let l = lines(&p);
+            assert!(
+                l.iter()
+                    .any(|s| s == &std::format!("Host ingress: ATT error 0x{code:02X}"))
+            );
+            assert!(l.iter().any(|s| s == &std::format!("HCI disconnect: 0x{code:02X}")));
+            assert!(l.iter().all(|s| s.len() * 6 <= 300));
+        }
     }
 
     #[test]
@@ -984,6 +1017,9 @@ mod tests {
                 revision: u32::MAX,
                 index: 254,
                 total_reports: 255,
+                report_bytes: u16::MAX,
+                remaining_bytes: u16::MAX,
+                declared_data_len: Some(u8::MAX),
                 at_ms: 1,
             }),
         };
@@ -998,10 +1034,18 @@ mod tests {
         assert!(l.iter().any(|s| s == "Invalid value 4294967295"));
         assert!(l.iter().any(|s| s == "Scan revision 4294967295 / entry 255/255"));
         assert!(l.iter().any(|s| s == "Last InvalidValue / 18446744073709551s ago"));
+        assert!(l.iter().any(|s| s == "Report bytes 65535 / remaining 65535"));
+        assert!(l.iter().any(|s| s == "Declared data length: 255"));
         assert!(l.iter().all(|s| s.is_ascii() && s.len() * 6 <= 300));
         let pages = page_count(&p);
         assert_eq!(pages, l.len().div_ceil(10));
         p.input(Input::Back, 2);
         assert!(control_hints(&p, 2)[1].contains("X: Scan diagnostics"));
+        p.scan_diagnostics.last.as_mut().unwrap().declared_data_len = None;
+        assert!(
+            lines(&p)
+                .iter()
+                .any(|s| s == "Declared data length: missing header byte")
+        );
     }
 }

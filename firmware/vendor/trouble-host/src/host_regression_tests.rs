@@ -25,8 +25,12 @@ fn ingress(bytes: &[u8], fill_queue: bool, exhaust_pool: bool, should_fail: bool
     };
     if fill_queue {
         for _ in 0..crate::config::L2CAP_RX_QUEUE_SIZE {
-            mgr.post_gatt_client(handle, Pdu::new(DefaultPacketPool::allocate().unwrap(), 1))
-                .unwrap();
+            // Small pools may fill before the receive queue. Either resource limit
+            // must fail closed, and the fixture must still reach normal cleanup.
+            let Some(packet) = DefaultPacketPool::allocate() else {
+                break;
+            };
+            mgr.post_gatt_client(handle, Pdu::new(packet, 1)).unwrap();
         }
     }
     let mut held = std::vec::Vec::new();
