@@ -71,9 +71,13 @@ Criterion results in [protocol evidence](ble-protocol.md) do not establish ARM
 stack high-water, radio throughput or panel FPS. Stock and 280 MHz images require
 their own exact source/configuration-bound checks.
 
-The integer PIO divider is `ceil(clk_sys / 100 MHz)` because the GSPI clock uses
-two PIO cycles. This bounds the clock to 50 MHz without short fractional-divider
-cycles. Actual divider values use the selected clock tree, not the profile label.
+The shared integer PIO divider is `ceil(clk_sys / 5 MHz)` because the GSPI clock
+uses two PIO cycles. This conservatively caps radio GSPI at **2.5 MHz** without
+fractional short cycles: divider 30 at CPU150 MHz and 56 at CPU280 MHz. Both the
+dashboard and probe use actual clock-tree values; LCD SPI is independent.
+This is a [receive-corruption mitigation](../hardware/cyw43-transport-follow-up.md),
+not measured electrical margin or a proved fix. Initialization and liveness
+deadlines remain unchanged and require physical qualification at the new speed.
 No ADC task samples shared GP29 during radio use. The onboard W LED and SMPS/VBUS
 WL_GPIO functions remain separate from PIM715's GP26/27/28 RGB LED.
 

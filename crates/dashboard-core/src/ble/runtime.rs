@@ -28,13 +28,26 @@ pub const fn write_mode(
     }
 }
 
-/// CYW43439 GSPI uses two PIO cycles per clock. Integer division avoids short
-/// fractional-divider cycles exceeding the documented 50 MHz GSPI limit.
+/// Conservative mitigation for observed CYW43 receive corruption; not a proven
+/// hardware fix. Both radio owners use this ceiling, independently of LCD SPI.
+/// See docs/hardware/cyw43-transport-follow-up.md.
+pub const RADIO_GSPI_MAX_HZ: u32 = 2_500_000;
+
+/// Locked cyw43-pio uses two PIO cycles per clock. Integer dividers avoid
+/// fractional short cycles and select its low-speed program at supported clocks.
 pub const fn pio_divider(cpu_hz: u32) -> Option<u16> {
     if cpu_hz == 0 || cpu_hz > 300_000_000 {
         return None;
     }
-    Some(cpu_hz.div_ceil(100_000_000) as u16)
+    Some(cpu_hz.div_ceil(2 * RADIO_GSPI_MAX_HZ) as u16)
+}
+
+/// Configured GSPI frequency, rounded down to Hz; not a physical measurement.
+pub const fn radio_bus_hz(cpu_hz: u32) -> Option<u32> {
+    match pio_divider(cpu_hz) {
+        Some(divider) => Some(cpu_hz / (2 * divider as u32)),
+        None => None,
+    }
 }
 
 /// Observe completed radio bus boundaries, never a timer-only heartbeat.
@@ -108,6 +121,17 @@ mod tests {
     }
 
     #[test]
+    fn conservative_bus_clock_uses_the_same_ceiling_at_stock_and_expert() {
+        assert_eq!(pio_divider(150_000_000), Some(30));
+        assert_eq!(pio_divider(280_000_000), Some(56));
+        for hz in [1, 4_999_999, 5_000_000, 5_000_001, 299_999_999, 300_000_000] {
+            let divider = u64::from(pio_divider(hz).unwrap());
+            assert!(u64::from(hz) <= divider * 2 * 2_500_000);
+            assert!(divider == 1 || u64::from(hz) > (divider - 1) * 2 * 2_500_000);
+        }
+    }
+
+    #[test]
     fn integer_radio_clock_is_bounded_at_all_supported_cpu_speeds() {
         for hz in [
             132_000_000,
@@ -119,8 +143,8 @@ mod tests {
             300_000_000,
         ] {
             let divider = u32::from(pio_divider(hz).unwrap());
-            assert!(hz <= divider * 100_000_000);
-            assert!(divider == 1 || hz > (divider - 1) * 100_000_000);
+            assert!(hz <= divider * 2 * RADIO_GSPI_MAX_HZ);
+            assert!(divider == 1 || hz > (divider - 1) * 2 * RADIO_GSPI_MAX_HZ);
         }
         assert_eq!(pio_divider(0), None);
         assert_eq!(pio_divider(300_000_001), None);

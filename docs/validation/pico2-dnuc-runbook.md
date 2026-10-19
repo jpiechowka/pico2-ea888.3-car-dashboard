@@ -31,6 +31,11 @@ profile, board identity, power-on run and PASS/FAIL/NOT TESTED for each row belo
 These are pending physical checks; host tests and the synthetic gallery do not
 mark them passed. Image installation needs current flash authorization.
 
+The [2026-10-19 slot-1 follow-up](../hardware/cyw43-transport-follow-up.md)
+records one owner-observed power-off/reopen and a successful normal Windows USB
+export. Other rows remain unqualified. The new 2.5 MHz radio setting and v3
+fault evidence need a new authorized image and hardware run.
+
 | Check | Required observation/evidence |
 | --- | --- |
 | Normal USB startup | Windows enumerates normal-firmware CDC; record VID/PID, product and COM port. No BOOTSEL, automatic inspection, pairing or ECU request follows connection. |
@@ -41,7 +46,9 @@ mark them passed. Image installation needs current flash authorization.
 | Partial evidence | Use a controlled peer that denies a standard read or disconnects. Preserve exact available error, accepted prefix, unfinished stage flags and cleanup outcome; do not relabel it complete. |
 | Probe LED activity | With no recorded errors, verify blue scanning, slow blue blink while inspecting/cleaning up, green only after clean live completion and cleanup, amber paused/browsing, and purple during local capture work. Record colour/polarity against the [LED contract](../vehicle/ble-probe.md#rgb-status-and-recovery). |
 | Probe LED error latch | Use controlled malformed-report fixtures: scan-only errors must slow-blink red at 1 Hz and show the scoped latch hint. A denied read, probe, capacity, storage or USB failure must override with steady red. Red must survive navigation and a successful retry. Hold Y 2 s: clear live evidence/latch and preserve slots. A new failure must relatch, even after counters saturate; historical counters alone must not. |
-| Rejected declaration evidence | With a controlled malformed characteristic fixture, compare the first rejected handle, original length and 19-byte maximum prefix in live pages, a saved slot, and USB JSON/text. Short values must not invent a value handle. Preserve partial records, do not start later descriptor/standard reads, and verify legacy v1 slots still load without rejection context. Repeat the TV check; its prior rejected tuple was not available in the photographs. |
+| First/all fault evidence | Before Y recovery, compare the header source with the first-recorded source and full bit/name list. A scan-first plus later encoder fault must be steady red while preserving scan as first. With no peer, short X must open global fault pages, but Click/X cannot inspect. V3 saves freeze the mask/first/radio rate; legacy v1/v2 mark them unavailable. |
+| Conservative radio clock | Confirm configured 2.5 MHz at stock/280 CPU, startup within existing deadlines, sustained scan/notification progress and flash-maintenance acknowledgment. Compare repeated good/bad attempts and queue losses; no raw-byte repair or validation bypass. Configured clocks do not replace physical measurements. |
+| Rejected declaration evidence | With a controlled malformed characteristic fixture, compare the first rejected handle, original length and 19-byte maximum prefix in live pages, a saved slot, and USB JSON/text. Short values must not invent a value handle. Preserve partial records, do not start later descriptor/standard reads, and verify legacy v1 slots still load without rejection context. Repeat the TV check against the received range/tuple now retained in slot-1 evidence. |
 | Probe LED cancellation/boot | Normal Back cancellation, USB reset/unplug, empty slots and boot without encoder must not create red. Established encoder loss must. In an authorized instrumented fault test, verify terminal blink/watchdog reset and red on next boot; a stalled GPIO owner may prevent the pre-reset blink. Cold boot clears volatile history. |
 | Historical vs current | Open a saved capture after reboot. Saved boot-relative timestamps remain unchanged; header FPS/work/stack describe the current run. No UTC or old performance reading is inferred. |
 | Read-only export | LIST then export a selected slot to a new directory; compare binary/JSON/text identity and require COMPLETE. Repeat export without changing slot generation. Existing output paths must fail without replacement. |

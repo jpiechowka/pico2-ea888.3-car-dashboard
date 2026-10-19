@@ -7,6 +7,10 @@ performed. The [runtime contract](../vehicle/ble-runtime.md) and
 [protocol contract](../vehicle/ble-protocol.md) retain adapter-only MC+/CX traffic
 and a separate synthetic service; no exact DNUC source is enabled.
 
+The later [slot-1 transport review](../hardware/cyw43-transport-follow-up.md)
+adds a shared 2.5 MHz radio GSPI mitigation using the same locked dependencies.
+It records the upstream reports, source timing trace and remaining hardware limits.
+
 ## Locked sources and provenance
 
 | Dependency | Resolved version | Role |

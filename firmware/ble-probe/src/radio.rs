@@ -111,6 +111,11 @@ pub async fn run(resources: Resources) -> ! {
     let Some(divider) = dashboard_core::ble::runtime::pio_divider(embassy_rp::clocks::clk_sys_freq()) else {
         fault(ProbeError::Transport).await;
     };
+    defmt::info!(
+        "Probe BLE PIO divider {}; GSPI {} Hz",
+        divider,
+        dashboard_core::ble::runtime::radio_bus_hz(embassy_rp::clocks::clk_sys_freq()).unwrap()
+    );
     let spi = cyw43_pio::PioSpi::new(
         &mut pio.common,
         pio.sm0,

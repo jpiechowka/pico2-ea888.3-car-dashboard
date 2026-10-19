@@ -237,7 +237,11 @@ fn latched_scan_hint_changes_only_the_status_band_even_with_saturated_counts() {
     let mut before = ScreenTarget::default();
     render(&mut before, &p, 0).unwrap();
     for latch in [ErrorLatch::ScanOnly, ErrorLatch::Other] {
-        p.error_latch = latch;
+        p.fault_latch = match latch {
+            ErrorLatch::None => FaultLatch::EMPTY,
+            ErrorLatch::ScanOnly => FaultLatch::single(Fault::Scan),
+            ErrorLatch::Other => FaultLatch::from_parts(0x1FF, Fault::Encoder as u8).unwrap(),
+        };
         let mut after = ScreenTarget::default();
         render(&mut after, &p, 0).unwrap();
         let changes: Vec<_> = before

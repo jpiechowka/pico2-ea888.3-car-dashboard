@@ -146,7 +146,7 @@ pub async fn radio_task(
     crate::log_info!(
         "BLE PIO divider {}; GSPI {} Hz",
         divider,
-        embassy_rp::clocks::clk_sys_freq() / (2 * u32::from(divider))
+        dashboard_pico2::ble::runtime::radio_bus_hz(embassy_rp::clocks::clk_sys_freq()).unwrap()
     );
     let spi = cyw43_pio::PioSpi::new(
         &mut pio.common,

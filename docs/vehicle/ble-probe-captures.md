@@ -102,7 +102,9 @@ Use the COM port shown on your PC; `COM7` is an example. Existing Rust/MSVC host
 prerequisites are described in [setup](../configurator/setup-tools.md). After
 building, `host/target/debug/ble_probe_captures.exe` can be used directly. No
 Python serial package, extra debug probe or phone is required for this recovery
-route. Windows USB enumeration and transfer still require physical validation.
+route. Normal Windows CDC enumeration and slot-1 export were verified on the
+owner's connected Pico on 2026-10-19, after their power-off/reopen check.
+This does not qualify every USB host/driver or interrupted-transfer scenario.
 
 Automatic selection is deliberately conservative: it requires exactly one
 matching VID/PID and recognized product name. Windows may expose its generic
@@ -116,7 +118,7 @@ Every successful export directory contains:
 | File | Meaning |
 | --- | --- |
 | `capture.blecap` | Exact versioned capture payload, at most 8192 bytes |
-| `capture.json` | Every metadata/record field, raw hexadecimal bytes and explicit unknown values |
+| `capture.json` | Every metadata/record field, raw bytes, unknowns, binary SHA256 and derived connection hints |
 | `capture.txt` | Readable report containing the same evidence |
 | `COMPLETE` | Written after the three artifacts have been written and synced |
 
@@ -126,6 +128,14 @@ files yourself, then choose a new directory. The saved device slot is unchanged.
 Detached `.blecap` files contain acquisition evidence, while slot/generation are
 export-envelope metadata: offline decoding without that envelope marks them
 unknown. Preserve the complete original export directory.
+
+The [Studio handoff contract](ble-capture-studio-handoff.md) documents the
+`export_schema: 1` JSON projection: normalized UUIDs, property flags, exact
+endpoint/CCCD record links, duplicate detection and shared-validated address
+candidates. These PC-derived fields require no Pico storage or radio work.
+The actual binary `schema` stays separate. Studio capture import is future work;
+hints leave the connection disabled and profile unknown. Old binaries gain
+these hints through offline `decode`, without modifying a slot.
 
 An interrupted transfer, timeout or protocol error requires **unplugging and
 replugging normal USB before retrying**. Firmware abandons that USB session so a
@@ -153,7 +163,8 @@ scan diagnostics remain labelled global and cannot be blamed on that peer.
 | Four stage flags and omissions/rejections | Partial, unrequested or limited work stays explicit; no invented missing records |
 | First failure and local/terminal context | Exact available reason, range and elapsed time; absent raw status remains absent |
 | First rejected characteristic declaration | Handle, original byte length and up to 19 raw bytes; its value-handle field is unvalidated and can be absent |
-| Producer identity | Full source digest when supplied, profile and actual CPU/SPI rates; not a firmware self-check |
+| Global LED fault snapshot | First recorded source and all latched bits at save; atomic recording order, not a causal trace or selected-peer attribution |
+| Producer identity | Full source digest when supplied, profile, CPU/LCD SPI and configured radio GSPI rates; not a firmware self-check or physical clock measurement |
 
 All capture times are device boot-relative monotonic milliseconds. No RTC date
 or UTC is fabricated. Raw packet/value/UUID fields preserve their byte order;
@@ -171,12 +182,18 @@ is written, and there is no pairing, authentication or ECU request.
 
 ## Storage, source identity and verification
 
-New captures use **payload schema v2**. This firmware and exporter also read
-legacy v1 captures; v1 has no rejected-declaration field, so exports report it as
-absent instead of reconstructing it. JSON reports the actual input schema.
+New captures use **payload schema v3**. This firmware and exporter also read
+legacy v1/v2 captures. V1 has no rejected-declaration field; v1/v2 have no LED
+fault mask/first source or radio GSPI rate. Those fields remain explicitly
+unavailable instead of being reconstructed from current firmware. JSON reports
+the actual input schema. V3 adds seven metadata bytes: fault mask `u16`, first
+source code `u8`, and radio Hz `u32` (zero denotes unavailable). The first source
+must belong to the mask; an empty mask has first code zero. Undefined bits/codes
+and implausible clock values are rejected. The live latch is sampled immediately
+before encoding, including faults recorded since the preceding UI frame.
 The journal and USB protocol versions are unchanged, as is the 8192-byte payload
-limit. Existing slots are not rewritten during load/export. Older v1-only
-firmware/exporters cannot decode v2; export with the matching current tool before
+limit. Existing slots are not rewritten during load/export. Older
+firmware/exporters cannot decode newer payload versions; export with the current tool before
 downgrading, and retain the original binary. Unknown-format protections still
 apply across both journal copies.
 
@@ -207,6 +224,8 @@ exports. Those establish software behavior, not physical flash endurance/power
 loss, USB driver behavior, RF compatibility, true stack high-water or DNUC data.
 See [dependency review](../dependencies/probe-captures-2026-10-19.md).
 
-The [delivery validation record](../validation/probe-offline-audit-2026-10-19.md)
-records software checks and exact images; physical retention and USB recovery
-are separate pending checks in the linked bench runbook.
+The [earlier delivery record](../validation/probe-offline-audit-2026-10-19.md)
+records its software checks and images. The [slot-1 follow-up](../hardware/cyw43-transport-follow-up.md)
+separately records owner-observed retention and a successful read-only USB export.
+Physical interrupted-write/reset and endurance checks remain pending. Saving
+still requires a selected peer; global fault details can be viewed without one.

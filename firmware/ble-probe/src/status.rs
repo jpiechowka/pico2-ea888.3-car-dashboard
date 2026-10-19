@@ -5,8 +5,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use dashboard_core::discovery::{
     Action,
     AdFields,
-    ErrorLatch,
     Event,
+    FaultLatch,
     InfoValue,
     Input,
     Probe,
@@ -21,22 +21,11 @@ use dashboard_core::discovery::{
 
 const CLEAN: u32 = 1 << 4;
 const CAPTURE: u32 = 1 << 5;
-const ERRORS: u32 = 0xFFFF_FF00;
-const SCAN_ERRORS: u32 = Fault::Scan as u32 | Fault::Advertisement as u32;
+const ERRORS: u32 = 0x0001_FF00;
+const FIRST: u32 = 0x00F0_0000;
+const SCAN_ERRORS: u32 = ((Fault::Scan.bit() | Fault::Advertisement.bit()) as u32) << 8;
 
-#[derive(Clone, Copy)]
-#[repr(u32)]
-pub enum Fault {
-    Probe = 1 << 8,
-    Scan = 1 << 9,
-    Capacity = 1 << 10,
-    Storage = 1 << 11,
-    Usb = 1 << 12,
-    Encoder = 1 << 13,
-    Timing = 1 << 14,
-    Watchdog = 1 << 15,
-    Advertisement = 1 << 16,
-}
+pub use dashboard_core::discovery::Fault;
 
 pub struct Status {
     word: AtomicU32,
@@ -52,7 +41,10 @@ impl Status {
         &self,
         fault: Fault,
     ) {
-        self.word.fetch_or(fault as u32, Ordering::Relaxed);
+        let _ = self.word.try_update(Ordering::Relaxed, Ordering::Relaxed, |word| {
+            let first = if word & FIRST == 0 { (fault as u32) << 20 } else { 0 };
+            Some(word | ((fault.bit() as u32) << 8) | first)
+        });
     }
 
     /// Atomic clear also removes the old green activity. A fault linearized
@@ -237,7 +229,7 @@ impl Status {
             | if ui.pending().is_some() { CAPTURE } else { 0 };
         // No associated non-atomic data is read by the consumer.
         let _ = self.word.try_update(Ordering::Relaxed, Ordering::Relaxed, |word| {
-            Some((word & ERRORS) | activity)
+            Some((word & (ERRORS | FIRST)) | activity)
         });
     }
 
@@ -274,13 +266,14 @@ impl Status {
     }
 
     /// UI snapshot of the same latch bits; cumulative counters cannot relatch it.
-    pub fn error_latch(&self) -> ErrorLatch {
-        match self.word.load(Ordering::Relaxed) & ERRORS {
-            0 => ErrorLatch::None,
-            bits if bits & !SCAN_ERRORS == 0 => ErrorLatch::ScanOnly,
-            _ => ErrorLatch::Other,
-        }
+    pub fn fault_latch(&self) -> FaultLatch {
+        let word = self.word.load(Ordering::Relaxed);
+        FaultLatch::from_parts(((word & ERRORS) >> 8) as u16, ((word & FIRST) >> 20) as u8)
+            .expect("atomic fault evidence invariant")
     }
+
+    #[cfg(test)]
+    pub fn error_latch(&self) -> dashboard_core::discovery::ErrorLatch { self.fault_latch().category() }
 }
 
 fn clean_probe(model: &Probe) -> bool {

@@ -133,10 +133,18 @@ error sets red again, including an outstanding storage operation that fails afte
 recovery. A short Y press, successful retry, or saving the result does not clear
 red. Historical `lost`/`HCIbad` counters remain until reboot; old counter values
 alone do not relatch the LED. With no current radio error, the status row says
-`Slow red: scan errors` or `Red: error latched` while the latch is set.
+`Slow red: scan errors` or a steady-red source such as `Red: encoder I2C`.
 An actual current radio error takes precedence in that row. Scan errors are
 global; the selected device is not automatically their source. A later probe or
 other error changes slow red to steady red until recovery.
+
+Detail pages include the global first recorded fault, mask and every latched
+source. This is atomic recording order, not a proven root cause. If scan errors
+were first, a later non-scan source is used in the steady-red header, while the
+detail list preserves the original first source. With no peer, **short X opens
+fault details** and pauses scanning; click/hold A cannot connect without a peer.
+Y returns to scanning. Saving still requires a selected peer. New captures freeze
+these global causes and the configured radio rate; legacy v1/v2 show unavailable.
 
 Recorded errors include rejected HCI/AD reports, report/catalogue capacity loss,
 GATT and allowed-read failures (including protected/unavailable values), invalid
@@ -153,7 +161,8 @@ frame count controls it. A stalled supervisor cannot promise a visible blink.
 A terminal transport, display or stalled-owner fault stops watchdog feeding:
 both cores/peripherals restart after approximately two seconds. A watchdog timer
 reset sets red again on boot. Power removal or an intentional non-watchdog restart
-clears RAM-only latch history; it is not saved to flash. The reset loses unsaved
+clears RAM-only latch history; only an explicit capture saves a snapshot, which
+does not restore the live latch after reboot. The reset loses unsaved
 evidence; valid committed slots remain. Ordinary connection/discovery timeouts
 retain partial records and wait for input.
 
@@ -171,13 +180,16 @@ contains a 128-bit UUID. Longer malformed values retain a labelled prefix.
 The displayed rejected value field is explicitly **unvalidated**, and is
 unavailable when fewer than three bytes arrived. No later descriptor or standard
 read is attempted after this rejection. Earlier valid records remain inspectable
-and saveable, including the rejection context in capture payload v2.
+and saveable, including the rejection context introduced in payload v2 and
+retained in current payload v3.
 Lower-layer decoding can fail before a tuple reaches that guard; those failures
 retain their available error context and leave rejected bytes absent.
 
-The photographed failure did not contain the rejected tuple. These additions
-enable a future diagnosis; the shared client repairs do not establish that the
-TV caused or will no longer exhibit that failure. HCI `0x16` describes local-host
+The earlier photograph lacked the rejected tuple. The later slot-1 USB capture
+contains a value handle outside the received service range. Strict rejection is
+correct; the evidence does not identify where the inconsistency originated.
+See the [transport follow-up](../hardware/cyw43-transport-follow-up.md).
+HCI `0x16` describes local-host
 termination during cleanup, not the original declaration problem.
 
 ## Always-visible telemetry
@@ -355,8 +367,9 @@ From the repository root:
 
 `280-70` is the owner's reported working overclock, not a safe electrical rating.
 See [clock limitations](../../README.md#experimental-clock-profiles). The radio
-uses its own integer PIO divider: at 280 MHz its GSPI clock is about 46.67 MHz,
-independent of display SPI70 MHz.
+uses its own shared integer PIO divider, now capped at **2.5 MHz GSPI** at stock
+and 280 MHz CPU, independent of display SPI. This is a conservative mitigation
+pending hardware retest; it does not establish a corruption root cause.
 
 The wrapper prints the dated compiler and options, uses two Cargo jobs, clears
 ambient compiler/profile/dashboard/source-identity overrides in the child process, retains stack
@@ -451,6 +464,10 @@ measurements or observations of an actual adapter:
 | --- | --- | --- |
 | ![Synthetic slow-red scan-error hint](../images/ble-probe/scan-latched-synthetic.png) | ![Synthetic rejected tuple, not a TV diagnosis](../images/ble-probe/rejected-declaration-synthetic.png) | ![Synthetic paginated failure context](../images/ble-probe/rejected-context-synthetic.png) |
 
+| Global first/all fault sources and radio clock |
+| --- |
+| ![Synthetic encoder-first and scan fault ledger](../images/ble-probe/fault-ledger-synthetic.png) |
+
 | Scanning | Paused photo view | Advertisement bytes |
 | --- | --- | --- |
 | ![Synthetic scan list](../images/ble-probe/scan-synthetic.png) | ![Synthetic paused list](../images/ble-probe/paused-synthetic.png) | ![Synthetic advertisement](../images/ble-probe/details-0-synthetic.png) |
@@ -467,9 +484,9 @@ measurements or observations of an actual adapter:
 | --- | --- | --- |
 | ![Synthetic stage completion and services](../images/ble-probe/details-4-synthetic.png) | ![Synthetic characteristic inventory](../images/ble-probe/details-5-synthetic.png) | ![Synthetic descriptor and standard read](../images/ble-probe/details-6-synthetic.png) |
 
-| Raw standard read / ATT 05 | Database hash / global diagnostics |
+| Raw standard read / ATT 05 | Database hash / LED ledger |
 | --- | --- |
-| ![Synthetic raw bytes and exact ATT failure](../images/ble-probe/details-7-synthetic.png) | ![Synthetic hash and global diagnostic counters](../images/ble-probe/details-8-synthetic.png) |
+| ![Synthetic raw bytes and exact ATT failure](../images/ble-probe/details-7-synthetic.png) | ![Synthetic hash and global fault ledger](../images/ble-probe/details-8-synthetic.png) |
 
 | Four slots | Confirm replacement | Confirm destructive Reset |
 | --- | --- | --- |
@@ -481,7 +498,7 @@ measurements or observations of an actual adapter:
 
 | Saved identity | Saved link / stages | Saved descriptor / standard read |
 | --- | --- | --- |
-| ![Frozen synthetic selected identity](../images/ble-probe/saved-0-synthetic.png) | ![Frozen synthetic link and stage evidence](../images/ble-probe/saved-4-synthetic.png) | ![Frozen synthetic descriptor and read](../images/ble-probe/saved-7-synthetic.png) |
+| ![Frozen synthetic selected identity and latch](../images/ble-probe/saved-0-synthetic.png) | ![Frozen synthetic link and stage evidence](../images/ble-probe/saved-4-synthetic.png) | ![Frozen synthetic descriptor and read](../images/ble-probe/saved-7-synthetic.png) |
 
 | Saved raw bytes / ATT 05 | Saved configured clocks / source digest |
 | --- | --- |
@@ -493,7 +510,7 @@ measurements or observations of an actual adapter:
 
 | Separate local/terminal evidence | Numeric report-length evidence |
 | --- | --- |
-| ![Synthetic MTU failure with independent host and HCI reasons](../images/ble-probe/mtu-failure-synthetic.png) | ![Synthetic HCI report lengths](../images/ble-probe/scan-errors-synthetic.png) |
+| ![Synthetic MTU failure with independent host and HCI reasons](../images/ble-probe/mtu-failure-synthetic.png) | ![Synthetic HCI report lengths](../images/ble-probe/scan-errors-lengths-synthetic.png) |
 
 Regenerate the lossless RGB captures from `host/`:
 
@@ -501,7 +518,7 @@ Regenerate the lossless RGB captures from `host/`:
 cargo run --locked --example ble_probe_gallery -- target/ble-probe-gallery
 ```
 
-The generator writes 44 PPM files. To update the PNG documentation copies, use Python
+The generator writes 52 PPM files. To update the PNG documentation copies, use Python
 with Pillow installed, from the same `host/` directory:
 
 ```python

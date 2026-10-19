@@ -12,6 +12,7 @@ use crate::{bridge, maintenance, metrics, storage};
 pub async fn run() {
     static MODEL: StaticCell<Probe> = StaticCell::new();
     let model = MODEL.init_with(Probe::new);
+    model.radio_bus_hz = dashboard_core::ble::runtime::radio_bus_hz(embassy_rp::clocks::clk_sys_freq());
     let mut captures = cap::CaptureUi::new();
     let mut bytes = Some(storage::ui_buffer());
     let mut length = 0;
@@ -94,7 +95,7 @@ pub async fn run() {
         model.malformed_reports = model.scan_diagnostics.total;
         model.encoder_connected = bridge::ENCODER_CONNECTED.load(Ordering::Relaxed);
         bridge::STATUS.publish(model, &captures);
-        model.error_latch = bridge::STATUS.error_latch();
+        model.fault_latch = bridge::STATUS.fault_latch();
         if !maintenance::FRAME_INHIBIT.load(Ordering::SeqCst)
             && now.saturating_sub(last_frame) >= 50
             && let Ok(frame) = bridge::FREE.try_receive()
@@ -195,6 +196,8 @@ fn action_apply(
                 bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Changed));
                 return;
             }
+            // Freeze the current atomic latch, not the previous rendered frame.
+            model.fault_latch = bridge::STATUS.fault_latch();
             let result = bytes
                 .as_deref_mut()
                 .ok_or(capture::CaptureError::InvalidState)

@@ -5,6 +5,10 @@ Review date: 2026-10-19. This follows the
 It repairs reproduced software defects and improves failure evidence. It does
 not identify the TV's rejected tuple or claim physical interoperability.
 
+Subsequent [slot-1 USB evidence and transport follow-up](../hardware/cyw43-transport-follow-up.md)
+now retain a contradictory service/characteristic pair and add global fault
+evidence in schema v3. The observations below describe this earlier delivery.
+
 ## Hardware observations and limits
 
 The first photograph shows scanning, a red RGB LED, `Error:None` and `HCIbad:5`.

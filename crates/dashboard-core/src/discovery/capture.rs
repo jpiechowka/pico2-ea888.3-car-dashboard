@@ -65,6 +65,9 @@ pub enum Record<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureMetadata {
     pub schema_version: u16,
+    /// Absent in legacy v1/v2 captures, never inferred from current firmware.
+    pub fault_latch: Option<FaultLatch>,
+    pub radio_bus_hz: Option<u32>,
     pub build: BuildIdentity,
     pub captured_at_ms: u64,
     pub revision: u32,
@@ -100,6 +103,8 @@ impl CaptureMetadata {
     // relationships have been decoded and validated successfully.
     const EMPTY: Self = Self {
         schema_version: 0,
+        fault_latch: None,
+        radio_bus_hz: None,
         build: BuildIdentity {
             source_digest: [0; 32],
             cpu_hz: 0,
@@ -687,7 +692,13 @@ fn write_metadata(
     w.u32(p.dropped_reports)?;
     w.u32(p.malformed_reports)?;
     w.u32(p.catalog.overflow_reports)?;
-    write_scan(w, &p.scan_diagnostics)
+    write_scan(w, &p.scan_diagnostics)?;
+    w.u16(p.fault_latch.bits())?;
+    w.u8(p.fault_latch.first().map_or(0, |f| f as u8))?;
+    if p.radio_bus_hz == Some(0) {
+        return Err(CaptureError::InvalidData);
+    }
+    w.u32(p.radio_bus_hz.unwrap_or(0))
 }
 fn read_metadata<'a>(
     r: &mut Reader<'a>,
@@ -785,6 +796,18 @@ fn read_metadata<'a>(
     m.malformed_reports = r.u32()?;
     m.catalog_overflow_reports = r.u32()?;
     read_scan(r, &mut m.scan_diagnostics)?;
+    // Always overwrite these when reusing a decoder across schema versions.
+    m.fault_latch = None;
+    m.radio_bus_hz = None;
+    if version >= 3 {
+        m.fault_latch = Some(FaultLatch::from_parts(r.u16()?, r.u8()?).ok_or(CaptureError::InvalidData)?);
+        let hz = r.u32()?;
+        // Admit evidence independently of this build's conservative ceiling.
+        if hz > 50_000_000 || hz > m.build.cpu_hz / 2 {
+            return Err(CaptureError::InvalidData);
+        }
+        m.radio_bus_hz = (hz != 0).then_some(hz);
+    }
     Ok(())
 }
 
@@ -905,7 +928,7 @@ fn encode_bytes(
         + probe.inspection.descriptors.len()
         + probe.inspection.values.len();
     w.bytes[..8].copy_from_slice(MAGIC);
-    w.bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
+    w.bytes[8..10].copy_from_slice(&3u16.to_le_bytes());
     w.bytes[10..12].copy_from_slice(&(total as u16).to_le_bytes());
     w.bytes[12..14].copy_from_slice(&(count as u16).to_le_bytes());
     w.bytes[14..16].copy_from_slice(&(metadata_len as u16).to_le_bytes());
@@ -1099,7 +1122,7 @@ pub fn check_header(
     if r.take(8)? != MAGIC {
         return Err(CaptureError::Magic);
     }
-    if !matches!(r.u16()?, 1 | 2) {
+    if !matches!(r.u16()?, 1..=3) {
         return Err(CaptureError::Version);
     }
     let total = usize::from(r.u16()?);

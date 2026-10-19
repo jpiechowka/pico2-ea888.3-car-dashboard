@@ -133,7 +133,7 @@ fn malformed_response_sequences_and_crc_valid_invalid_capture_are_refused() {
     assert!(exchange(&mut fake(duplicate), Request::List, Duration::from_secs(1)).is_err());
     assert!(exchange(&mut fake(end()), Request::List, Duration::from_secs(1)).is_err());
     let mut unknown = valid.clone();
-    unknown[8] = 3;
+    unknown[8] = 4;
     let mut bad = frame(FrameKind::Capture, FrameStatus::Ok, Some(0), 1, &unknown);
     bad.extend(end());
     assert!(exchange(&mut fake(bad), Request::Get(0), Duration::from_secs(1)).is_err());
@@ -251,6 +251,9 @@ fn publication_is_validated_unique_complete_and_never_overwrites() {
     let value: serde_json::Value = serde_json::from_slice(&fs::read(output.join("capture.json")).unwrap()).unwrap();
     assert_eq!(value["export"]["slot"], 3);
     assert_eq!(value["export"]["generation"], 9);
+    assert_eq!(value["export_schema"], 1);
+    assert_eq!(value["connection_handoff"]["enabled"], false);
+    assert_eq!(value["binary"]["byte_length"], bytes.len());
     assert!(
         fs::read_to_string(output.join("capture.txt"))
             .unwrap()
@@ -263,6 +266,22 @@ fn publication_is_validated_unique_complete_and_never_overwrites() {
     }
     fs::remove_dir(output).unwrap();
     fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn publication_rejects_invalid_or_incomplete_slot_envelopes_before_writing() {
+    let output = std::env::temp_dir().join(format!("ble-invalid-envelope-{}", std::process::id()));
+    assert!(!output.exists());
+    for (slot, generation) in [
+        (Some(4), Some(1)),
+        (Some(255), Some(1)),
+        (Some(0), None),
+        (None, Some(1)),
+        (Some(0), Some(0)),
+    ] {
+        assert!(publish(&output, &payload(), slot, generation).is_err());
+        assert!(!output.exists());
+    }
 }
 
 #[test]

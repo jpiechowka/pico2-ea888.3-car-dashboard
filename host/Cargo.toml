@@ -20,6 +20,7 @@ profont = "=0.7.0"
 embassy-sync = "=0.8.0"
 serialport = { version = "=4.10.1", default-features = false }
 serde_json = "=1.0.154"
+sha2-const-stable = "=0.1.0"
 critical-section = { version = "=1.2.0", features = ["std"] }
 
 [dev-dependencies]

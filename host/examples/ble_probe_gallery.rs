@@ -45,6 +45,7 @@ fn main() {
     let directory = Path::new(&directory);
     std::fs::create_dir_all(directory).unwrap();
     let mut p = Probe::new();
+    p.radio_bus_hz = Some(2_500_000);
     // Deliberately synthetic measurements, not a device performance claim.
     p.diagnostics = ProbeDiagnostics {
         fps: Some(FrameRate {
@@ -103,12 +104,20 @@ fn main() {
         11_000,
     ));
     save(directory, "scan-synthetic", &p);
-    p.error_latch = ErrorLatch::ScanOnly;
+    p.fault_latch = FaultLatch::single(Fault::Scan);
     p.malformed_reports = 5;
     save(directory, "scan-latched-synthetic", &p);
-    p.error_latch = ErrorLatch::Other;
+    p.fault_latch = FaultLatch::single(Fault::Probe);
     save(directory, "error-latched-synthetic", &p);
-    p.error_latch = ErrorLatch::None;
+    p.fault_latch = FaultLatch::from_parts(Fault::Encoder.bit() | Fault::Scan.bit(), Fault::Encoder as u8).unwrap();
+    p.screen = Screen::Details;
+    p.phase = RadioPhase::Paused;
+    p.page = page_count(&p) - 1;
+    save(directory, "fault-ledger-synthetic", &p);
+    p.screen = Screen::List;
+    p.phase = RadioPhase::Scanning;
+    p.page = 0;
+    p.fault_latch = FaultLatch::EMPTY;
     p.malformed_reports = 0;
     let pause = p.input(Input::Back, 12_000).unwrap();
     p.event(Event::State {
@@ -345,7 +354,7 @@ fn main() {
         rejected: Some(RejectedDeclaration::from_wire(6, &[2, 7, 0, 0x29, 0x2A])),
         elapsed_ms: Some(119),
     });
-    p.error_latch = ErrorLatch::Other;
+    p.fault_latch = FaultLatch::single(Fault::Probe);
     p.page = 0;
     save(directory, "rejected-declaration-synthetic", &p);
     p.page = 1;
@@ -403,4 +412,6 @@ fn main() {
     p.input(Input::Details, 12_000).unwrap();
     p.phase = RadioPhase::Paused;
     save(directory, "scan-errors-synthetic", &p);
+    p.page = page_count(&p) - 1;
+    save(directory, "scan-errors-lengths-synthetic", &p);
 }

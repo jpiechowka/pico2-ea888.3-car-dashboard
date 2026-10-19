@@ -13,8 +13,9 @@ const HELP: &str = "BLE probe saved captures (normal firmware USB, not BOOTSEL)\
                     ble_probe_captures list [--port COMx]\n  ble_probe_captures export SLOT NEW_DIRECTORY [--port \
                     COMx]\n  ble_probe_captures decode CAPTURE.blecap NEW_DIRECTORY\n\nSLOT is 1..4. NEW_DIRECTORY \
                     must not exist; its parent must exist.\nExport writes capture.blecap, capture.json, capture.txt \
-                    and COMPLETE.\nNo save, erase, pairing, adapter connection or ECU commands are supported.\nIf \
-                    Windows shows a generic USB Serial Device name, select its COM port explicitly.\n";
+                    and COMPLETE. JSON includes derived evidence hints for a future Studio importer; it is not a \
+                    connection profile.\nNo save, erase, pairing, adapter connection or ECU commands are \
+                    supported.\nIf Windows shows a generic USB Serial Device name, select its COM port explicitly.\n";
 fn transaction(
     request: Request,
     explicit: Option<&str>,

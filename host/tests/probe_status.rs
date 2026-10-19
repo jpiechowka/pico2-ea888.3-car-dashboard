@@ -764,3 +764,54 @@ fn late_storage_failure_after_recovery_is_new_evidence_but_stale_reply_is_ignore
     status.publish(&model, &ui);
     assert_eq!(status.levels(0, false), [false, true, true]);
 }
+
+#[test]
+fn latch_retains_first_and_all_sources_until_recovery() {
+    for first in Fault::ALL {
+        let status = Status::new();
+        let mut model = Probe::new();
+        status.record(first);
+        for fault in Fault::ALL {
+            status.record(fault);
+            status.record(fault);
+            status.publish(&model, &cap::CaptureUi::new());
+            assert_eq!(status.fault_latch().first(), Some(first));
+            assert!(status.fault_latch().contains(fault));
+        }
+        assert_eq!(status.fault_latch().bits(), 0x1FF);
+        status.input(&mut model, Input::Recover, 100);
+        assert_eq!(status.fault_latch(), FaultLatch::EMPTY);
+        status.record(Fault::Usb);
+        status.publish(&model, &cap::CaptureUi::new());
+        assert_eq!(status.fault_latch().first(), Some(Fault::Usb));
+        assert_eq!(status.fault_latch().bits(), Fault::Usb.bit());
+    }
+}
+
+#[test]
+fn concurrent_sources_and_activity_cannot_lose_latched_bits_or_first_cause() {
+    let status = Status::new();
+    std::thread::scope(|scope| {
+        for fault in Fault::ALL {
+            let status = &status;
+            scope.spawn(move || {
+                for _ in 0..1000 {
+                    status.record(fault);
+                }
+            });
+        }
+        scope.spawn(|| {
+            for _ in 0..1000 {
+                status.publish(&Probe::new(), &cap::CaptureUi::new());
+            }
+        });
+    });
+    let latch = status.fault_latch();
+    assert_eq!(latch.bits(), 0x1FF);
+    assert!(latch.contains(latch.first().unwrap()));
+    let first = latch.first();
+    for fault in Fault::ALL {
+        status.record(fault);
+    }
+    assert_eq!(status.fault_latch().first(), first);
+}

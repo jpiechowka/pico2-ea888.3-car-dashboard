@@ -364,6 +364,13 @@ before retry; saved slots remain. Export before installing other firmware.
 [Complete capture/export workflow](docs/vehicle/ble-probe-captures.md) ·
 [NGM/OBDeleven research limits](docs/vehicle/adapter-research.md).
 
+Exports now include a binary SHA256, normalized UUIDs, characteristic capabilities,
+CCCD links, duplicate-endpoint flags and an address candidate validated by the
+shared dashboard rules. They prepare a [future Studio import and connection draft](docs/vehicle/ble-capture-studio-handoff.md)
+without extra Pico storage or BLE traffic. Studio import is not implemented yet;
+unknown adapter protocols/authentication stay unresolved and no profile is enabled.
+Existing saved binaries gain these fields through offline `decode`.
+
 Every probe page keeps **current/average FPS, C0/C1 work percentages, static RAM
 and sampled stack use** visible above the evidence. FPS counts successful display
 transfers: current uses the latest window of at least one second; average uses
@@ -399,19 +406,29 @@ landscape. Its RGB status is:
 
 All red states override other colours and survive a successful retry until
 **hold Y for two seconds**. The status row explains a latched error when there is
-no current radio error; historical `HCIbad` counts alone do not relatch it.
+no current radio error, naming a steady-red source such as `Red: encoder I2C`.
+Details retain the first recorded source and all fault bits; short X opens these
+even without a discovered peer. Historical `HCIbad` counts alone do not relatch it.
 Scan/report loss, protected/failed reads and storage/USB errors also count.
 Green means completed and disconnected,
 not an open connection or vehicle/adapter qualification. Terminal resets lose
 unsaved RAM evidence and relatch red after a watchdog timeout. Saved slots are
-separate; physical persistence and USB behavior still require device validation.
+separate. The owner confirmed slot 1 reopening after power removal; its binary,
+JSON and text were then exported successfully over normal USB on Windows.
+Interrupted writes, endurance and broader USB qualification remain separate.
 [Full LED precedence, error scope and reboot limits](docs/vehicle/ble-probe.md#rgb-status-and-recovery).
 
 Characteristic rejection now retains the first rejected declaration handle,
 original length and up to 19 raw bytes in live pages and saved exports. Capture
-payload v2 remains readable alongside legacy v1. The shared ATT client also
+payload v3 adds the global LED fault snapshot and configured radio GSPI speed;
+v1/v2 remain readable with those new fields explicitly unavailable. The shared ATT client also
 validates service/characteristic boundaries for the dashboard's adapter discovery.
 [Follow-up findings, regressions and remaining hardware checks](docs/validation/probe-discovery-followup-2026-10-19.md).
+
+Both the probe and dashboard now cap radio GSPI at **2.5 MHz**, independently of
+their CPU/LCD profile. This conservative mitigation follows upstream corruption
+reports; it is not proof of the TV failure's cause or a verified hardware cure.
+Protocol validation remains strict. [Saved evidence, source review and next hardware check](docs/hardware/cyw43-transport-follow-up.md).
 
 [Full controls, capture workflow, bounds, gallery and step-by-step CLI flashing](docs/vehicle/ble-probe.md).
 

@@ -57,11 +57,7 @@ fn status_copy(probe: &Probe) -> &'static str {
     if probe.error != ProbeError::None {
         return error_copy(probe.error);
     }
-    match probe.error_latch {
-        ErrorLatch::None => "Error:None",
-        ErrorLatch::ScanOnly => "Slow red: scan errors",
-        ErrorLatch::Other => "Red: error latched",
-    }
+    probe.fault_latch.header()
 }
 fn gatt_requested(probe: &Probe) -> bool {
     matches!(probe.request.action, Action::Inspect(peer) if probe.selected_device().is_some_and(|d| d.peer == peer))
@@ -120,7 +116,13 @@ fn control_hints(
             "Y: Back to scan"
         }
     } else if probe.selected_device().is_none() {
-        if probe.scan_diagnostics.last.is_some() {
+        if probe.fault_latch != FaultLatch::EMPTY {
+            if matches!(probe.request.action, Action::Scan(true)) {
+                "X: Fault details  Y: Pause scan"
+            } else {
+                "X: Fault details  Y: Resume scan"
+            }
+        } else if probe.scan_diagnostics.last.is_some() {
             if matches!(probe.request.action, Action::Scan(true)) {
                 "X: Scan diagnostics  Y: Pause scan"
             } else {
@@ -694,18 +696,8 @@ fn details(
         emit.text("Partial records retained; Y returns to scan");
     }
     peer_details(probe, now, emit);
-    match probe.error_latch {
-        ErrorLatch::None => {}
-        ErrorLatch::ScanOnly => {
-            emit.text("LED slow red: scan report errors latched");
-            emit.text("Global scan evidence; not selected-peer failure");
-            emit.text("Hold Y 2s to clear latch and recover scan");
-        }
-        ErrorLatch::Other => {
-            emit.text("LED red: probe or other error latched");
-            emit.text("Hold Y 2s to clear latch and recover scan");
-        }
-    }
+    fault_details(Some(probe.fault_latch), emit);
+    radio_clock_details(probe.radio_bus_hz, emit);
     if let Some(last) = probe.scan_diagnostics.last {
         let scan = probe.scan_diagnostics;
         emit.text("GLOBAL HCI SCAN ERRORS / since boot");
@@ -733,6 +725,38 @@ fn details(
             None => emit.text("Declared data length: missing header byte"),
         }
         emit.text("One record needs 10 + data length bytes");
+    }
+}
+fn fault_details(
+    latch: Option<FaultLatch>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    emit.text("LED FAULTS / global since recovery");
+    let Some(latch) = latch else {
+        emit.text("Not recorded by this legacy capture");
+        return;
+    };
+    emit.formatted(format_args!("Latched mask: 0x{:03X}", latch.bits()));
+    if let Some(first) = latch.first() {
+        emit.formatted(format_args!("First recorded: {}", first.label()));
+        emit.text("Recording order; not a proven root cause");
+        for fault in Fault::ALL {
+            if latch.contains(fault) {
+                emit.formatted(format_args!("Latched: {}", fault.label()));
+            }
+        }
+        emit.text("Live latch clears only with Hold Y 2s");
+    } else {
+        emit.text("No faults recorded since recovery");
+    }
+}
+fn radio_clock_details(
+    hz: Option<u32>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    match hz {
+        Some(hz) => emit.formatted(format_args!("Radio GSPI: {hz} Hz (configured)")),
+        None => emit.text("Radio GSPI: not recorded"),
     }
 }
 fn rejected_details(
@@ -769,6 +793,8 @@ fn saved_details(
     emit.formatted(format_args!("Captured at: {} ms", m.captured_at_ms));
     emit.formatted(format_args!("Request revision: {}", m.revision));
     emit.formatted(format_args!("Radio {:?} / {:?}", m.phase, m.error));
+    fault_details(m.fault_latch, emit);
+    radio_clock_details(m.radio_bus_hz, emit);
     emit.formatted(format_args!("First seen: {} ms", m.first_seen_ms));
     emit.formatted(format_args!("Last seen: {} ms", m.last_seen_ms));
     emit.formatted(format_args!("Reports: {}", m.reports));
@@ -1095,7 +1121,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
             status_copy(probe),
             probe.malformed_reports
         )),
-        if probe.error == ProbeError::None && probe.error_latch == ErrorLatch::None {
+        if probe.error == ProbeError::None && probe.fault_latch.category() == ErrorLatch::None {
             MUTED
         } else {
             RED
@@ -1558,14 +1584,14 @@ mod tests {
             assert_eq!(counted.count, rows.len());
         }
         let mut p = Probe::new();
-        p.error_latch = ErrorLatch::ScanOnly;
+        p.fault_latch = FaultLatch::single(Fault::Scan);
         assert_eq!(status_copy(&p), "Slow red: scan errors");
         p.error = ProbeError::Discovery;
         assert_eq!(status_copy(&p), "Discovery: failed; Y back");
         p.error = ProbeError::None;
-        p.error_latch = ErrorLatch::Other;
-        assert_eq!(status_copy(&p), "Red: error latched");
-        p.error_latch = ErrorLatch::None;
+        p.fault_latch = FaultLatch::single(Fault::Probe);
+        assert_eq!(status_copy(&p), "Red: probe error");
+        p.fault_latch = FaultLatch::EMPTY;
         p.malformed_reports = u32::MAX;
         assert_eq!(status_copy(&p), "Error:None");
     }
@@ -1583,6 +1609,32 @@ mod tests {
         ));
         p
     }
+    #[test]
+    fn fault_ledger_keeps_every_source_visible_and_legacy_unknown() {
+        let mut p = probe();
+        p.fault_latch = FaultLatch::from_parts(0x1FF, Fault::Timing as u8).unwrap();
+        p.radio_bus_hz = Some(2_500_000);
+        let rows = lines(&p);
+        assert_eq!(status_copy(&p), "Red: timing");
+        assert!(rows.iter().any(|r| r == "First recorded: display completion timeline"));
+        for fault in Fault::ALL {
+            assert!(rows.iter().any(|r| r == &std::format!("Latched: {}", fault.label())));
+        }
+        assert!(rows.iter().all(|r| r.len() * 6 <= 300));
+        assert_eq!(page_count(&p), rows.len().div_ceil(LINES));
+        let mut legacy = std::vec::Vec::<std::string::String>::new();
+        fault_details(None, &mut EvidenceLines::new(Some(&mut |s| legacy.push(s.into()))));
+        assert_eq!(legacy[1], "Not recorded by this legacy capture");
+        // A scan recorded first must not hide a later steady-red cause.
+        p.fault_latch = FaultLatch::from_parts(Fault::Scan.bit() | Fault::Encoder.bit(), Fault::Scan as u8).unwrap();
+        assert_eq!(status_copy(&p), "Red: encoder I2C");
+        p.catalog = Catalog::new();
+        assert_eq!(control_hints(&p, 0)[1], "X: Fault details  Y: Pause scan");
+        let rows = lines(&p);
+        assert!(rows.iter().any(|r| r == "Latched: encoder I2C"));
+        assert!(rows.iter().any(|r| r == "No selected device"));
+    }
+
     #[test]
     fn parsed_fields_and_raw_wire_bytes_are_preserved() {
         let p = probe();

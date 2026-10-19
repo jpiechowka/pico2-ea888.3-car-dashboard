@@ -329,6 +329,30 @@ fn global_scan_diagnostics_survive_pause_and_clear_and_keep_the_original_revisio
 }
 
 #[test]
+fn non_scan_fault_details_are_reachable_without_a_peer_and_never_connect() {
+    let mut probe = Probe::new();
+    probe.fault_latch = FaultLatch::from_parts(Fault::Encoder.bit() | Fault::Usb.bit(), Fault::Encoder as u8).unwrap();
+    let request = probe.input(Input::Details, 11).expect("X opens global fault evidence");
+    assert_eq!(request.action, Action::Scan(false));
+    assert_eq!(probe.screen, Screen::Details);
+    probe.event(Event::State {
+        revision: request.revision,
+        phase: RadioPhase::Paused,
+        error: ProbeError::None,
+    });
+    for input in [Input::Click, Input::Details] {
+        assert!(
+            probe.input(input, 12).is_none(),
+            "global evidence cannot initiate inspection"
+        );
+    }
+    assert_eq!(probe.input(Input::Back, 13).unwrap().action, Action::Scan(true));
+    assert_eq!(probe.screen, Screen::List);
+    assert!(probe.fault_latch.contains(Fault::Encoder));
+    assert!(probe.fault_latch.contains(Fault::Usb));
+}
+
+#[test]
 fn scan_failure_details_are_reachable_without_any_valid_peer() {
     let mut probe = Probe::new();
     assert!(probe.input(Input::Details, 10).is_none());

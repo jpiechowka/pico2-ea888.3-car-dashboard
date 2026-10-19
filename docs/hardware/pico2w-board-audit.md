@@ -6,6 +6,9 @@ This checks source and published drawings; it does not measure the board,
 qualify its overclock, or establish physical wireless operation. Updated
 2026-10-18 for the optional [BLE runtime](../vehicle/ble-runtime.md).
 
+The [2026-10-19/20 transport follow-up](cyw43-transport-follow-up.md) retains
+these pin assignments and applies a shared conservative radio GSPI clock policy.
+
 ## Internal pins differ; application header pins remain compatible
 
 No application peripheral remap is needed. The internal allocation differs:

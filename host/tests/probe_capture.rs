@@ -12,6 +12,7 @@ fn build() -> BuildIdentity {
 }
 fn probe() -> Probe {
     let mut p = Probe::new();
+    p.radio_bus_hz = Some(2_500_000);
     let peer = Peer {
         address: [1, 2, 3, 4, 5, 6],
         random: false,
@@ -70,7 +71,7 @@ fn probe() -> Probe {
 }
 
 #[test]
-fn v2_rejected_evidence_round_trips_and_legacy_decode_clears_it() {
+fn rejected_evidence_round_trips_and_legacy_decode_clears_it() {
     let legacy = hex(include_str!("fixtures/ble-capture-v1-failure.hex").trim());
     let mut decoder = Decoder::new();
     let mut p = probe();
@@ -88,7 +89,7 @@ fn v2_rejected_evidence_round_trips_and_legacy_decode_clears_it() {
         let mut output = [0; 8192];
         let size = encode(&p, build(), 60, &mut output).unwrap();
         let view = decoder.decode(&output[..size]).unwrap();
-        assert_eq!(view.metadata().schema_version, 2);
+        assert_eq!(view.metadata().schema_version, 3);
         assert_eq!(view.metadata().failure, Some(failure));
         assert_eq!(rejected.length(), length as u16);
         assert_eq!(rejected.bytes(), &bytes[..length.min(19)]);
@@ -125,7 +126,7 @@ fn rejected_evidence_export_preserves_raw_fields_and_actual_schema() {
     let mut bytes = [0; 8192];
     let len = encode(&p, build(), 60, &mut bytes).unwrap();
     let json = decode_json(&bytes[..len]).unwrap();
-    assert_eq!(json["schema"], 2);
+    assert_eq!(json["schema"], 3);
     let rejected = &json["inspection"]["failure"]["rejected"];
     assert_eq!(rejected["declaration_handle"], 20);
     assert_eq!(rejected["value_handle"], 21);
@@ -212,7 +213,7 @@ fn passive_fixture_from_independent_python_struct_and_zlib_is_readable() {
 fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
     let mut output = [0; 8192];
     let size = encode(&probe(), build(), 60, &mut output).unwrap();
-    for (at, value) in [(8, 3), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
+    for (at, value) in [(8, 4), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
         let mut bytes = output[..size].to_vec();
         bytes[at] = value;
         fix_crc(&mut bytes);
@@ -421,4 +422,69 @@ fn reusable_decoder_releases_buffer_and_replaces_all_prior_evidence() {
     assert!(view.metadata().failure.is_none());
     assert_eq!(view.counts(), [0; 4]);
     assert_eq!(view.records().count(), 0);
+}
+
+#[test]
+fn frozen_v2_and_v1_do_not_inherit_new_fault_evidence() {
+    let old2 = hex(include_str!("fixtures/ble-capture-v2-failure.hex").trim());
+    let old1 = hex(include_str!("fixtures/ble-capture-v1-failure.hex").trim());
+    let mut decoder = Decoder::new();
+    let mut p = probe();
+    p.fault_latch = FaultLatch::from_parts(Fault::Encoder.bit() | Fault::Scan.bit(), Fault::Encoder as u8).unwrap();
+    let mut output = [0; 8192];
+    let n = encode(&p, build(), 60, &mut output).unwrap();
+    for _ in 0..3 {
+        let view = decoder.decode(&output[..n]).unwrap();
+        assert_eq!(view.metadata().schema_version, 3);
+        assert_eq!(view.metadata().fault_latch, Some(p.fault_latch));
+        assert_eq!(view.metadata().radio_bus_hz, Some(2_500_000));
+        for (bytes, version) in [(&old2, 2), (&old1, 1)] {
+            let view = decoder.decode(bytes).unwrap();
+            assert_eq!(view.metadata().schema_version, version);
+            assert_eq!(view.metadata().fault_latch, None);
+            assert_eq!(view.metadata().radio_bus_hz, None);
+            assert_eq!(view.counts(), [1; 4]);
+        }
+    }
+    let json = dashboard_host_validation::probe_captures::decode_json(&output[..n]).unwrap();
+    assert_eq!(json["led_latch"]["first"], "encoder I2C");
+    assert_eq!(json["led_latch"]["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(json["build"]["radio_gspi_hz"], 2_500_000);
+    let legacy = dashboard_host_validation::probe_captures::decode_json(&old2).unwrap();
+    assert!(legacy["led_latch"].is_null());
+    assert!(legacy["build"]["radio_gspi_hz"].is_null());
+}
+
+#[test]
+fn crc_valid_fault_metadata_rejects_unknown_bits_bad_first_and_invalid_bus() {
+    let mut bytes = [0; 8192];
+    let n = encode(&probe(), build(), 60, &mut bytes).unwrap();
+    let end = 24 + usize::from(u16::from_le_bytes([bytes[14], bytes[15]]));
+    // Schema 3's seven-byte append: mask LE u16, first u8, configured bus LE u32.
+    for (bits, first, hz) in [
+        (0u16, 1u8, 2_500_000u32),
+        (1, 0, 2_500_000),
+        (1, 2, 2_500_000),
+        (0x200, 10, 2_500_000),
+        (0, 0, 300_000_000),
+        (0, 0, 50_000_001),
+    ] {
+        let mut damaged = bytes[..n].to_vec();
+        damaged[end - 7..end - 5].copy_from_slice(&bits.to_le_bytes());
+        damaged[end - 5] = first;
+        damaged[end - 4..end].copy_from_slice(&hz.to_le_bytes());
+        fix_crc(&mut damaged);
+        assert!(decode(&damaged).is_err(), "{bits:x}/{first}/{hz}");
+    }
+}
+
+#[test]
+fn radio_configuration_unknown_is_distinct_from_invalid_zero() {
+    let mut p = probe();
+    let mut bytes = [0; 8192];
+    p.radio_bus_hz = None;
+    let n = encode(&p, build(), 60, &mut bytes).unwrap();
+    assert_eq!(decode(&bytes[..n]).unwrap().metadata().radio_bus_hz, None);
+    p.radio_bus_hz = Some(0);
+    assert_eq!(encode(&p, build(), 60, &mut bytes), Err(CaptureError::InvalidData));
 }

@@ -5,6 +5,10 @@ shared BLE failure handling and audits diagnostics on both firmware routes.
 Software checks and linked-image admission are separate from device validation.
 No firmware was flashed during this audit.
 
+Later [slot-1 hardware evidence](../hardware/cyw43-transport-follow-up.md)
+records owner-observed power-off/reopen and an independently successful normal
+USB export. Pending hardware statements below describe this earlier audit.
+
 ## Hardware evidence and scope
 
 The supplied follow-up photographs show successful enumeration of the TV:

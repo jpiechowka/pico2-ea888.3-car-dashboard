@@ -639,3 +639,28 @@ fn transport_failure_records_failed_read_and_stops_before_next_request() {
     assert!(!fixture.calls.borrow().contains(&Request::Read(6)));
     assert!(!complete(&events, InventoryStage::Reads));
 }
+
+#[test]
+fn slot1_service_endpoint_is_not_silently_extended_to_accept_rejected_value() {
+    for end in [4, 5] {
+        let mut fixture = Fixture::default();
+        fixture.service(1, end, 0x1800);
+        fixture.declarations.push((2, vec![2, 3, 0, 0, 0x2A]));
+        fixture.declarations.push((4, vec![2, 5, 0, 1, 0x2A]));
+        let (result, events) = run(&fixture);
+        if end == 4 {
+            let failure = result.unwrap_err();
+            assert_eq!(failure.range, Some((1, 4)));
+            assert_eq!(failure.last_accepted, Some((2, 3)));
+            assert_eq!(failure.reason, FailureReason::DeclarationOrder);
+            assert_eq!(failure.rejected.unwrap().bytes(), &[2, 5, 0, 1, 0x2A]);
+            assert_eq!(fixture.calls.borrow().as_slice(), &[Request::Type(1, 4, 0x2803)]);
+            assert!(!complete(&events, InventoryStage::Characteristics));
+        } else {
+            assert_eq!(result, Ok(false));
+            assert!(complete(&events, InventoryStage::Characteristics));
+            assert!(complete(&events, InventoryStage::Descriptors));
+            assert!(complete(&events, InventoryStage::Reads));
+        }
+    }
+}

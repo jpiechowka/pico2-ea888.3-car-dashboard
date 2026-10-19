@@ -25,6 +25,12 @@ USB powers the Pico 2 W dashboard and retained encoder. Turning USB off does
 not turn off an OBD adapter. Studio cannot display a physical BLE connection;
 its status statement makes that limitation explicit.
 
+Probe exports now contain [connection evidence for a future import flow](../vehicle/ble-capture-studio-handoff.md):
+canonical UUIDs, exact endpoint/CCCD links, capabilities, ambiguity flags and an
+address candidate. **Studio capture import is not implemented.** The export is
+not a dashboard project or enabled adapter profile; NGM/OBDeleven protocol and
+authentication qualification remain separate. Current configuration is manual.
+
 ## Exercise the protocol
 
 Choose **Open synthetic BLE diagnostics**, or open **Diagnostics → Timing

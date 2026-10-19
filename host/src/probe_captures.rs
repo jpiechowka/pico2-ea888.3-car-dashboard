@@ -1,10 +1,13 @@
 //! Read-only probe capture recovery, separate from hardware discovery.
+mod handoff;
+
 use std::io::{ErrorKind, Read, Write};
 use std::time::{Duration, Instant};
 
+use dashboard_core::discovery::FailureReason;
 use dashboard_core::discovery::capture::{self, PacketEvidence, Record};
 use dashboard_core::discovery::capture_wire::{FrameHeader, FrameKind, HEADER_BYTES, Request};
-use dashboard_core::discovery::{FailureReason, Uuid};
+use handoff::uuid;
 use serde_json::{Value, json};
 
 pub struct Reply {
@@ -125,9 +128,6 @@ pub fn hex(bytes: &[u8]) -> String {
     }
     text
 }
-fn uuid(uuid: Uuid) -> Value {
-    json!({"wire_hex":hex(&uuid.bytes[..usize::from(uuid.len)]),"width_bytes":uuid.len,"assigned_u16":uuid.short()})
-}
 fn reason(reason: Option<FailureReason>) -> Value {
     reason.map_or(Value::Null, |reason| {
         let raw = match reason {
@@ -149,13 +149,16 @@ pub fn decode_json(bytes: &[u8]) -> Result<Value, String> {
     let m = view.metadata();
     let records:Vec<Value>=view.records().map(|r|match r{
         Record::Service(v)=>json!({"type":"service","start_handle":v.start,"end_handle":v.end,"uuid":uuid(v.uuid)}),
-        Record::Characteristic(v)=>json!({"type":"characteristic","service_start_handle":v.service_start,"declaration_handle":v.declaration,"value_handle":v.handle,"properties":v.properties,"uuid":uuid(v.uuid)}),
+        Record::Characteristic(v)=>json!({"type":"characteristic","service_start_handle":v.service_start,"declaration_handle":v.declaration,"value_handle":v.handle,"properties":v.properties,"property_flags":handoff::properties(v.properties),"uuid":uuid(v.uuid)}),
         Record::Descriptor(v)=>json!({"type":"descriptor","service_start_handle":v.service_start,"characteristic_value_handle":v.characteristic_handle,"handle":v.handle,"uuid":uuid(v.uuid)}),
         Record::Value(v)=>json!({"type":"standard_read","service_start_handle":v.service_start,"handle":v.handle,"uuid_u16":v.uuid,"result":format!("{:?}",v.result),"failure":reason(v.failure),"elapsed_ms":v.elapsed_ms,"raw_hex":hex(v.bytes),"utf8":core::str::from_utf8(v.bytes).ok(),"truncated":v.truncated,"standard_length_valid":v.length_valid()})
     }).collect();
-    Ok(
-        json!({"format":"BLECAP01","schema":m.schema_version,"policy":"manual-selected-peer-no-pairing-standard-read-allowlist-v1","time_basis":"device boot monotonic milliseconds; no UTC recorded","captured_at_boot_ms":m.captured_at_ms,
-        "build":{"source_digest_hex":hex(&m.build.source_digest),"source_identity_available":m.build.source_identity_available,"profile":format!("{:?}",m.build.profile),"cpu_hz":m.build.cpu_hz,"spi_hz":m.build.spi_hz},
+    Ok(json!({"format":"BLECAP01","schema":m.schema_version,"export_schema":1,
+        "binary":{"byte_length":bytes.len(),"sha256":hex(&sha2_const_stable::Sha256::new().update(bytes).finalize())},
+        "connection_handoff":handoff::connection(&view),
+        "policy":"manual-selected-peer-no-pairing-standard-read-allowlist-v1","time_basis":"device boot monotonic milliseconds; no UTC recorded","captured_at_boot_ms":m.captured_at_ms,
+        "build":{"source_digest_hex":hex(&m.build.source_digest),"source_identity_available":m.build.source_identity_available,"profile":format!("{:?}",m.build.profile),"cpu_hz":m.build.cpu_hz,"spi_hz":m.build.spi_hz,"radio_gspi_hz":m.radio_bus_hz},
+        "led_latch":m.fault_latch.map(|l|json!({"scope":"global since recovery; first is atomic recording order, not proven root cause","mask":l.bits(),"first":l.first().map(|f|f.label()),"sources":dashboard_core::discovery::Fault::ALL.into_iter().filter(|f|l.contains(*f)).map(|f|f.label()).collect::<Vec<_>>()})),
         "revision":m.revision,"gatt_requested":m.gatt_requested,"phase":format!("{:?}",m.phase),"error":format!("{:?}",m.error),
         "peer":{"address_display_hex":hex(&m.peer.address),"address_display":m.peer.to_string().as_str(),"random":m.peer.random,"address_kind":m.peer.kind_label(),"first_seen_boot_ms":m.first_seen_ms,"last_seen_boot_ms":m.last_seen_ms,"reports":m.reports,"rssi_dbm":m.rssi},
         "advertisement":packet(&m.advertisement),"scan_response":packet(&m.response),
@@ -164,8 +167,7 @@ pub fn decode_json(bytes: &[u8]) -> Result<Value, String> {
           "failure":m.failure.map(|f|json!({"stage":format!("{:?}",f.stage),"reason":reason(Some(f.reason)),"range":f.range,"last_accepted":f.last_accepted,"rejected":f.rejected.map(|r|json!({"declaration_handle":r.handle,"value_handle":r.value_handle(),"length":r.length(),"raw_prefix_hex":hex(r.bytes()),"prefix_truncated":usize::from(r.length())>r.bytes().len()})),"elapsed_ms":f.elapsed_ms})),"failure_context":{"local_error":reason(m.failure_context.local_error),"disconnect_reason":m.failure_context.disconnect_reason}},
         "global_scan":{"attribution":"global counters; not proven to belong to selected peer","dropped_reports":m.dropped_reports,"malformed_reports":m.malformed_reports,"catalog_overflow_reports":m.catalog_overflow_reports,"total_errors":m.scan_diagnostics.total,"invalid_size":m.scan_diagnostics.invalid_size,"invalid_value":m.scan_diagnostics.invalid_value,"last_error":m.scan_diagnostics.last.map(|s|json!({"kind":format!("{:?}",s.kind),"revision":s.revision,"index":s.index,"total_reports":s.total_reports,"report_bytes":s.report_bytes,"remaining_bytes":s.remaining_bytes,"declared_data_len":s.declared_data_len,"at_boot_ms":s.at_ms}))},
         "record_counts":{"services":view.counts()[0],"characteristics":view.counts()[1],"descriptors":view.counts()[2],"reads":view.counts()[3]},"records":records,
-        "limits":"Inventory and standard reads do not establish proprietary authentication, L2CAP PSM acceptance, application commands, ECU support or vehicle data."}),
-    )
+        "limits":"Inventory and standard reads do not establish proprietary authentication, L2CAP PSM acceptance, application commands, ECU support or vehicle data."}))
 }
 
 pub fn text_report(value: &Value) -> String {
@@ -201,7 +203,8 @@ pub fn text_report(value: &Value) -> String {
     }
     let mut out = String::from(
         "BLE probe capture: validated offline evidence\nRaw payload and UUID bytes use Bluetooth wire order; peer \
-         addresses use display order. All hexadecimal fields are lowercase.\n\n",
+         addresses use display order. Canonical UUID text uses expanded display order.\nHexadecimal byte fields are \
+         lowercase. Connection hints require review and live rediscovery.\n\n",
     );
     flatten("", value, &mut out);
     out
@@ -209,6 +212,7 @@ pub fn text_report(value: &Value) -> String {
 
 /// A fresh directory and create_new files prevent overwrites. COMPLETE is written
 /// only after every artifact is synced. Failed/interrupted exports lack this marker.
+/// Slot/generation are either both known and valid, or both absent for offline decode.
 pub fn publish(
     directory: &std::path::Path,
     bytes: &[u8],
@@ -216,6 +220,9 @@ pub fn publish(
     generation: Option<u64>,
 ) -> Result<(), String> {
     use std::fs::{self, OpenOptions};
+    if !matches!((slot, generation), (None, None) | (Some(0..=3), Some(1..))) {
+        return Err("invalid export envelope: expected slot 0..3 and nonzero generation, or neither".into());
+    }
     let mut value = decode_json(bytes)?;
     value["export"] = json!({"slot":slot.map(|s|s+1),"generation":generation});
     let json = serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?;

@@ -464,7 +464,7 @@ fn future_payload_in_either_copy_blocks_save_but_loads_supported_copy() {
             let mut flash = Flash::new();
             let current = evidence();
             let mut future = current.clone();
-            future[8..10].copy_from_slice(&3u16.to_le_bytes());
+            future[8..10].copy_from_slice(&4u16.to_le_bytes());
             save_slot(&mut flash, 0, if future_first { &future } else { &current })
                 .await
                 .unwrap();
@@ -500,7 +500,7 @@ fn future_payload_in_either_copy_blocks_save_but_loads_supported_copy() {
 fn future_or_malformed_payload_requires_reset_without_mutation() {
     block_on(async {
         let mut future = evidence();
-        future[8] = 3;
+        future[8] = 4;
         let mut wrong = evidence();
         wrong[0] = 0;
         for bad in [future, wrong, b"BLECAP01".to_vec(), vec![1], evidence()[..23].to_vec()] {

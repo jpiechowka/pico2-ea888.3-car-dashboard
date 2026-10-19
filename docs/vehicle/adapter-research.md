@@ -81,6 +81,16 @@ service/characteristic pair. A Gen3 inventory can identify candidate surfaces;
 it cannot reveal login/cloud dependencies, keys, encrypted payload semantics,
 notification framing, accepted commands or exact ECU definitions.
 
+## Connection draft preparation
+
+The exporter adds a [versioned Studio handoff](ble-capture-studio-handoff.md)
+with a binary fingerprint, canonical UUIDs, properties, parent/CCCD links,
+duplicate warnings and a shared-validated address candidate. These are derived
+observations; neither NGM nor OBDeleven is assigned a profile. Future import must
+preserve unknown protocol/security state, obtain a qualified implementation and
+rediscover live endpoints. Current Studio has no capture importer or arbitrary
+adapter profile editor.
+
 ## Next evidence, only when a concrete gap requires it
 
 Keep separate captures for each adapter and repeat/failure attempt, with manually
