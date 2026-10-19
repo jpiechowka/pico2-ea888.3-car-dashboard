@@ -6,7 +6,9 @@
 #![warn(missing_docs)]
 
 #[cfg(all(feature = "discovery-no-security", feature = "security"))]
-compile_error!("discovery-no-security forbids the security feature; build the BLE probe separately from pairing-enabled firmware");
+compile_error!(
+    "discovery-no-security forbids the security feature; build the BLE probe separately from pairing-enabled firmware"
+);
 
 use core::cell::{Cell, RefCell};
 use core::mem::{ManuallyDrop, MaybeUninit};

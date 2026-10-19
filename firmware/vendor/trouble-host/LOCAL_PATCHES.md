@@ -80,3 +80,51 @@ Cargo.toml carries the local feature addition.
 Guard verification: the 46-test native central/gatt/scan library suite passed
 with discovery-no-security. Adding security to the same feature set was rejected
 by the intended compile_error diagnostic, not an unrelated compiler failure.
+
+## ATT tuple and error-response validation (2026-10-19 follow-up)
+
+FindByTypeValue, FindInformation, ReadByType and ReadByGroupType responses must
+contain a nonempty list of complete tuples before their iterators are exposed.
+Minimum tuple lengths include their handles; valid zero-length attribute values
+remain accepted. This prevents length-subtraction underflow and silently ignored
+truncated tails. The entire malformed response is rejected; valid records from
+earlier complete response packets remain available to the caller.
+
+The common GATT request boundary compares an Error Response's Request Opcode in
+Error with the actual encoded request opcode. Mismatches return
+UnexpectedGattResponse instead of falsely ending discovery/read-blob operations.
+Matching AttributeNotFound remains a normal end of enumeration. Legitimate
+zero error handles remain accepted. The separate MTU constructor also checks
+that an Error Response names Exchange MTU (0x02); mismatches disconnect and fail,
+while matching refusals preserve the existing default-MTU fallback.
+
+Error Responses require their exact four-byte payload before field decoding.
+Request prefixes and write-command handles are checked before indexing; empty
+variable values remain valid. The 128-bit ReadByGroupType request UUID now uses
+the correct 16-byte slice. Short Error Responses, empty fixed request prefixes
+and a valid 128-bit group request each reproduced a decoder panic before repair.
+
+Ten decoder tests and seven asynchronous wire tests were added. Complete
+serialized native suites now pass 63 tests with the probe's no-security feature
+and 101 with security. A deterministic 66,560-input sweep covers all 256 opcodes,
+lengths 0 through 64 and four seeded byte patterns, including iterator exhaustion.
+Explicit valid requests, empty values and UUID widths guard against over-rejection.
+Wire tests check emitted request bytes, mixed 16/128-bit pages,
+declaration-handle-plus-one pagination, prior-page retention, normal termination,
+the real MTU constructor and mismatched/malformed errors. The shared synchronous
+Error Response shape/opcode check avoids full response-enum decoding inside
+async transaction frames. Packet allocation/encoding is a synchronous helper;
+requests directly await sending its owned packet, avoiding a nested send-future
+copy. Commands/confirmations use the same encoder and existing async wrapper.
+The linked image must still pass unchanged stack gates.
+Two pre-existing snippets (compile-error wrapping and security imports) were
+formatted because the new native test dependency brings this path crate under
+the host's formatting gate; their behavior is unchanged. These independent
+malformed-input corrections are not a proven diagnosis of a photographed TV
+failure. Host ingress may disconnect on malformed ATT before the app receives
+the original decode reason. Cancellation still requires terminal disconnect
+before another transaction.
+
+Protocol references: Bluetooth Core 6.2
+[ATT 3.4.1.1 and list response formats](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/attribute-protocol--att-.html),
+[GATT 4.6.1 characteristic discovery](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host/generic-attribute-profile--gatt-.html).

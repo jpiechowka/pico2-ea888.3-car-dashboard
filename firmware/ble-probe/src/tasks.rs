@@ -76,7 +76,8 @@ pub async fn probe_ui_task() {
                 }
             }
             model.dropped_reports = bridge::DROPPED_REPORTS.load(Ordering::Relaxed);
-            model.malformed_reports = bridge::RADIO_MALFORMED.load(Ordering::Relaxed);
+            model.scan_diagnostics = bridge::SCAN_DIAGNOSTICS.lock(core::cell::Cell::get);
+            model.malformed_reports = model.scan_diagnostics.total;
             model.encoder_connected = bridge::ENCODER_CONNECTED.load(Ordering::Relaxed);
             // Only accepted-generation state drives the LED, including local errors.
             bridge::PHASE.store(model.phase as u8, Ordering::Relaxed);

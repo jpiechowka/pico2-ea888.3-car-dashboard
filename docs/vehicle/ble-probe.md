@@ -79,7 +79,7 @@ return to the list with Y, resume scanning if paused, and wait for a fresh repor
 before inspecting. Reading existing evidence remains available.
 A long Y hold includes the ordinary Y press before recovery. Ordinary recovery
 clears the catalogue/GATT evidence, including `full` and per-device report counts.
-It does not reset uptime FPS or the global `lost`/`bad` counters; reboot clears
+It does not reset uptime FPS or the global `lost`/`HCIbad` counters; reboot clears
 all RAM-only state.
 Turning in details never changes the peer being inspected. A missing encoder is
 shown explicitly; onboard controls remain usable. The utility has a fixed
@@ -162,14 +162,59 @@ Some adapters expose their useful protocol only after authentication, so a succe
 inspection does not establish NGM/OBDeleven interoperability or DNUC measurements.
 
 `lost` counts dropped host report-queue entries; `full` counts reports for new
-identities when the catalogue is full, not unique omitted devices. `bad` counts
-malformed HCI advertisement reports; malformed AD fields are also identified on
-their detail pages. Limits and malformed discovery are never labelled complete.
+identities when the catalogue is full, not unique omitted devices. `HCIbad` counts
+scan report batches rejected by the HCI iterator, once at its first bad entry.
+Malformed AD fields are separately identified on their detail pages.
+Limits and malformed discovery are never labelled complete.
 If the underlying client's 24-service capacity is exceeded, it returns a capacity
 error before publishing its service list. Valid characteristic rows already
 published before a later error remain available. UUIDs use conventional displayed
 order; packet hex retains wire order. Non-ASCII/control bytes display as `?` with
 their original bytes retained in hex.
+
+## Understanding failures
+
+An inspection failure moves to the first evidence page and retains the first
+cause through disconnect/cleanup. The header may show a later terminal cleanup
+fault while the detailed first cause stays intact. A fresh inspection replaces
+the old result; there is no automatic retry. Available fields are:
+
+| Field | Meaning and limitation |
+| --- | --- |
+| GATT FAILURE / stage | Connect, MTU, services, characteristics, Device Information, receive task, connection events or whole inspection |
+| Reason and `0xNN` | Exact ATT/HCI status when supplied by the library; absent codes are not invented |
+| Stage elapsed | Monotonic operation duration when measured; excludes later publication of retained rows; absent for events without a measured start |
+| Query range | The application's requested service/read range, not the remote ATT Error Response handle or internal pagination cursor |
+| Last accepted decl/value | Last validated characteristic in that service, not a guess at the failed handle |
+
+Each 3-second ATT deadline covers the **whole operation**, including all pages of
+one service's characteristic query. The 30-second deadline covers the entire
+inspection after connection. A timeout may follow some successful responses.
+Disconnecting can originate locally or remotely; a code-less disconnect does not
+identify which side caused it. Some malformed ingress is rejected by the lower
+host and closes the connection before the app can see the original decode error.
+Such failures may still appear as `disconnected (code unavailable)`.
+
+`HCIbad` and the **GLOBAL HCI SCAN ERRORS / since boot** pages describe all scanned
+devices. They retain invalid-size/value counts and the latest failed batch's scan
+revision, entry position and age. The actual HCI iterator stops at its first bad
+entry: later entries in that batch are not individually counted. Valid preceding
+entries remain available. These counters do not diagnose RF quality and cannot
+be attributed to the selected TV/adapter. Raw AD-field decoding and rejected GATT
+records are separate checks. With no accepted peer, X opens **SCAN DIAGNOSTICS**;
+rotation/A/B scroll, Y returns to scanning, and click/X cannot connect without a
+peer. Otherwise the global block follows the peer evidence pages.
+
+`InvalidPeer` after reading paused evidence usually means the advertisement is
+over 30 seconds old. Y returns to scanning; wait for a new report before clicking.
+This rejection sends no connection request. The header does not assume staleness
+for every InvalidPeer case: an unexpected connected address is also rejected.
+
+The owner's LG TV photographs establish an intermittent partial GATT result,
+not its underlying cause. Low RSSI does not establish why a host parser rejected
+a report. Tests reproduced separate malformed-packet panic, tuple-validation,
+128-bit UUID parsing and mismatched-response defects; richer on-device evidence
+is still needed to relate them to that result.
 
 ## Build from the command line
 
@@ -284,6 +329,10 @@ Actual shared RGB565 renderer output, with **synthetic peers and values**:
 | --- | --- | --- |
 | ![Synthetic packet decoding](../images/ble-probe/details-1-synthetic.png) | ![Synthetic GATT inventory](../images/ble-probe/details-2-synthetic.png) | ![Synthetic Device Information](../images/ble-probe/details-3-synthetic.png) |
 
+| Failure stage and retained context | Global scan errors without a peer |
+| --- | --- |
+| ![Synthetic ATT failure, not a TV diagnosis](../images/ble-probe/failure-synthetic.png) | ![Synthetic global HCI parser diagnostics](../images/ble-probe/scan-errors-synthetic.png) |
+
 Regenerate the lossless RGB captures from `host/`:
 
 ```text
@@ -331,23 +380,41 @@ encoder progress, radio stalls, time-based animation, clipping and pagination.
 Telemetry tests also cover suspended/cancelled polls, propagated errors, irregular
 windows, counter wrap, clock regression, idle frames, stale work, invalid values
 and pixel isolation from list/details/footer regions.
+Failure regressions cover first-cause retention, late completion/cancellation,
+repeat/recovery, valid partial rows, terminal handles, exact error-code mapping
+and protected/unavailable values. Tests use the production report adapter with
+the locked HCI decoder, including all 256 RSSI byte patterns, mixed valid/bad
+batches and both parse-error kinds. Vendor wire tests exercise valid multi-page
+discovery, normal end-of-list responses, malformed tuples and response matching.
+A deterministic 66,560-input ATT decoder sweep checks every opcode at lengths
+0 through 64 with four seeded byte patterns and exhausts accepted iterators.
+Explicit valid request families, empty values and 16/128-bit UUID cases check
+that short-packet guards preserve valid traffic. This is bounded regression
+coverage, not exhaustive enumeration of every possible packet or handler.
+Maximum diagnostic values and every failure label are checked for text bounds;
+pixel tests keep evidence separate from telemetry and the control footer.
 CI checks stock/280 builds, strict nightly Clippy, Python gates and security-feature
 exclusion. Software tests and conservative stack estimates do not qualify RF
 interoperability, physical stack high-water, electrical margins or car data.
 
 The checked 2026-10-19 build (`nightly-2026-10-18`, CPU280/SPI70, bounded info
-logging) uses **373160 bytes of static RAM** and leaves **151128 bytes for the
+logging) uses **373296 bytes of static RAM** and leaves **150992 bytes for the
 main stack and headroom**. Static RAM includes both 153600-byte framebuffers and
 the 32768-byte core-1 stack. The largest emitted function frame is 4992 bytes;
+the aggregate emitted frames total 18992 bytes against the unchanged 20480-byte
+limit. The aggregate is a regression check, not simultaneous stack use;
 the conservative named-path budgets include additional child and interrupt
 reserves. These are linked-image/source-review results, not physical stack
 high-water measurements. The frozen ELF, UF2, compiler options and source hashes
 are recorded together by the checked wrapper.
 
-The permanent telemetry adds 440 static bytes against the preceding utility
-image. A concrete pinned poll wrapper keeps each task future in one allocation;
+The permanent telemetry added 440 static bytes against its preceding utility
+image; the failure diagnostics add another 136 bytes against that telemetry build.
+A concrete pinned poll wrapper keeps each task future in one allocation;
 bounded integer formatting avoids adding general float-formatting stack frames.
-Stock and 280/70 images both passed the unchanged practical image checks.
+Synchronous ATT packet preparation keeps its temporary encoder out of the request
+future. The current 280/70 image passed the unchanged practical image checks;
+CI also checks the stock profile.
 
 References checked against actual locked sources:
 [Pico 2 W datasheet](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf),

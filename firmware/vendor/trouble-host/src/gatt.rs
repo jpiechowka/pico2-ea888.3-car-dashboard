@@ -1122,6 +1122,16 @@ pub(crate) struct Response<P> {
     handle: ConnHandle,
 }
 
+// ATT 3.4.1.1 defines a fixed five-byte Error Response. Check its request
+// without decoding the full response enum in the async transaction frames.
+fn validate_error_response(data: &[u8], request: u8) -> Result<(), Error> {
+    match data {
+        [att::ATT_ERROR_RSP, opcode, _, _, _] if *opcode == request => Ok(()),
+        [att::ATT_ERROR_RSP, _, _, _, _] => Err(Error::UnexpectedGattResponse),
+        _ => Err(Error::InvalidValue),
+    }
+}
+
 /// Trait with behavior for a gatt client.
 pub(crate) trait Client<'d, E, P: PacketPool> {
     /// Perform a gatt request and return the response.
@@ -1135,7 +1145,8 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
     async fn request(&self, req: AttReq<'_>) -> Result<Response<P::Packet>, BleHostError<T::Error>> {
         let data = Att::Client(AttClient::Request(req));
 
-        self.send_att_data(data).await?;
+        let (request_opcode, pdu) = Self::encode_att_data(data)?;
+        self.connection.send(pdu).await;
 
         // BT Core Spec Vol 3, Part F, Section 3.3.3: 30-second ATT transaction timeout.
         // If the server does not respond within 30 seconds, the client shall close the
@@ -1149,6 +1160,9 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
             })?;
 
         assert_eq!(h, self.connection.handle());
+        if pdu.as_ref().first() == Some(&att::ATT_ERROR_RSP) {
+            validate_error_response(pdu.as_ref(), request_opcode)?;
+        }
         Ok(Response { handle: h, pdu })
     }
 
@@ -1162,7 +1176,8 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> Client
 }
 
 impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> GattClient<'reference, T, P, MAX_SERVICES> {
-    async fn send_att_data(&self, data: Att<'_>) -> Result<(), BleHostError<T::Error>> {
+    // Keep encoding temporaries out of the async send future.
+    fn encode_att_data(data: Att<'_>) -> Result<(u8, Pdu<P::Packet>), BleHostError<T::Error>> {
         let header = L2capHeader {
             channel: crate::types::l2cap::L2CAP_CID_ATT,
             length: data.size() as u16,
@@ -1171,11 +1186,18 @@ impl<'reference, T: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         let mut buf = P::allocate().ok_or(Error::OutOfMemory)?;
         let mut w = WriteCursor::new(buf.as_mut());
         w.write_hci(&header)?;
+        let opcode_offset = w.len();
         w.write(data)?;
         let len = w.len();
+        let opcode = buf.as_ref()[opcode_offset];
 
-        self.connection.send(Pdu::new(buf, len)).await;
-        Ok(())
+        Ok((opcode, Pdu::new(buf, len)))
+    }
+
+    async fn send_att_data(&self, data: Att<'_>) -> Result<u8, BleHostError<T::Error>> {
+        let (opcode, pdu) = Self::encode_att_data(data)?;
+        self.connection.send(pdu).await;
+        Ok(opcode)
     }
 }
 
@@ -1205,7 +1227,10 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     return Err(Error::InvalidValue.into());
                 };
                 match opcode {
-                    att::ATT_EXCHANGE_MTU_RSP | att::ATT_ERROR_RSP => Ok::<_, BleHostError<C::Error>>(()),
+                    att::ATT_EXCHANGE_MTU_RSP => Ok::<_, BleHostError<C::Error>>(()),
+                    att::ATT_ERROR_RSP if validate_error_response(pdu.as_ref(), att::ATT_EXCHANGE_MTU_REQ).is_ok() => {
+                        Ok(())
+                    }
                     _ => {
                         connection.disconnect();
                         Err(Error::UnexpectedGattResponse.into())
@@ -1971,6 +1996,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
     pub async fn confirm_indication(&self) -> Result<(), BleHostError<C::Error>> {
         self.send_att_data(Att::Client(AttClient::Confirmation(AttCfm::ConfirmIndication)))
             .await
+            .map(|_| ())
     }
 
     /// Handle a notification or indication that was received.

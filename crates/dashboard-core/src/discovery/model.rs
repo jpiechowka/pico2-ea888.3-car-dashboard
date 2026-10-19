@@ -59,13 +59,17 @@ pub enum Event {
         revision: u32,
         limited: bool,
     },
+    Failure {
+        revision: u32,
+        failure: InspectionFailure,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Input {
     Rotate(i32),
     /// Encoder: request a fresh selected-peer GATT inspection when idle.
     Click,
-    /// X: fresh advertisement-only view from the list; Inspect from details.
+    /// X: fresh advertisement or global scan diagnostics; Inspect from peer details.
     Details,
     Back,
     Recover,
@@ -83,9 +87,11 @@ pub struct Probe {
     pub screen: Screen,
     pub phase: RadioPhase,
     pub error: ProbeError,
+    pub failure: Option<InspectionFailure>,
     pub request: Request,
     pub dropped_reports: u32,
     pub malformed_reports: u32,
+    pub scan_diagnostics: ScanDiagnostics,
     pub encoder_connected: bool,
     pub diagnostics: ProbeDiagnostics,
 }
@@ -102,9 +108,11 @@ impl Probe {
             screen: Screen::List,
             phase: RadioPhase::Starting,
             error: ProbeError::None,
+            failure: None,
             request: Request::INITIAL,
             dropped_reports: 0,
             malformed_reports: 0,
+            scan_diagnostics: ScanDiagnostics::new(),
             encoder_connected: false,
             diagnostics: ProbeDiagnostics {
                 fps: None,
@@ -129,6 +137,7 @@ impl Probe {
         self.request = Request { revision, action };
         self.phase = RadioPhase::Stopping;
         self.error = ProbeError::None;
+        self.failure = None;
         Some(self.request)
     }
 
@@ -174,7 +183,9 @@ impl Probe {
                 if self.screen == Screen::Details {
                     return self.input(Input::Click, now_ms);
                 }
-                self.selected_device()?;
+                if self.selected_device().is_none() && self.scan_diagnostics.last.is_none() {
+                    return None;
+                }
                 self.screen = Screen::Details;
                 self.page = 0;
                 // This is a fresh advertisement view, not a cached GATT result.
@@ -210,6 +221,7 @@ impl Probe {
             Event::Report { revision, .. }
             | Event::State { revision, .. }
             | Event::Item { revision, .. }
+            | Event::Failure { revision, .. }
             | Event::Complete { revision, .. } => revision,
         };
         if revision != self.request.revision {
@@ -219,7 +231,23 @@ impl Probe {
             Event::Report { report, .. } if self.request.action == Action::Scan(true) => self.catalog.observe(report),
             Event::State { phase, error, .. } => {
                 self.phase = phase;
-                self.error = error;
+                self.error = if error == ProbeError::None {
+                    self.failure.map_or(error, InspectionFailure::error)
+                } else {
+                    error
+                };
+                if self.error != ProbeError::None {
+                    self.inspection.complete = false;
+                }
+            }
+            Event::Failure { failure, .. } if matches!(self.request.action, Action::Inspect(_)) => {
+                // Retain the first inspection failure through disconnect/cleanup.
+                if self.failure.is_none() {
+                    self.failure = Some(failure);
+                    self.error = failure.error();
+                    self.page = 0;
+                }
+                self.inspection.complete = false;
             }
             Event::Item { item, .. } if matches!(self.request.action, Action::Inspect(_)) => {
                 self.inspection.accept(item)
@@ -228,7 +256,11 @@ impl Probe {
                 if limited {
                     self.inspection.omitted = self.inspection.omitted.saturating_add(1);
                 }
-                self.inspection.complete = !limited && self.inspection.omitted == 0 && self.inspection.malformed == 0;
+                self.inspection.complete = !limited
+                    && self.error == ProbeError::None
+                    && self.failure.is_none()
+                    && self.inspection.omitted == 0
+                    && self.inspection.malformed == 0;
             }
             _ => {}
         }

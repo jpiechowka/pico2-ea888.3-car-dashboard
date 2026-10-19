@@ -168,3 +168,49 @@ fn telemetry_is_always_visible_and_does_not_overpaint_other_regions() {
         }
     }
 }
+
+#[test]
+fn failure_and_scan_pages_preserve_telemetry_and_footer_pixels() {
+    let mut p = populated();
+    p.input(Input::Click, 0).unwrap();
+    p.phase = RadioPhase::Paused;
+    let mut before = ScreenTarget::default();
+    render(&mut before, &p, 0).unwrap();
+    p.event(Event::Failure {
+        revision: p.request.revision,
+        failure: InspectionFailure {
+            stage: FailureStage::Characteristics,
+            reason: FailureReason::Att(255),
+            range: Some((1, 65535)),
+            last_accepted: Some((65534, 65535)),
+            elapsed_ms: Some(u32::MAX),
+        },
+    });
+    p.scan_diagnostics.record(ScanFailure {
+        kind: ScanErrorKind::InvalidSize,
+        revision: u32::MAX,
+        index: 254,
+        total_reports: 255,
+        at_ms: u64::MAX,
+    });
+    p.scan_diagnostics.total = u32::MAX;
+    p.scan_diagnostics.invalid_size = u32::MAX;
+    p.malformed_reports = u32::MAX;
+    for page in 0..page_count(&p) {
+        p.page = page;
+        let mut after = ScreenTarget::default();
+        render(&mut after, &p, 0).unwrap();
+        let changes: Vec<_> = before
+            .pixels
+            .iter()
+            .filter(|(point, color)| after.pixels.get(point) != Some(color))
+            .collect();
+        assert!(!changes.is_empty());
+        assert!(
+            changes
+                .iter()
+                .all(|((x, y), _)| (10..310).contains(x) && (61..198).contains(y)),
+            "failure content escaped status/body or changed header/footer on page {page}"
+        );
+    }
+}

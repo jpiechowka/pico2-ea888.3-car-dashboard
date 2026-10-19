@@ -2,8 +2,10 @@
 #![no_main]
 
 mod bridge;
+mod errors;
 mod metrics;
 mod radio;
+mod reports;
 mod tasks;
 
 use dashboard_core::display::FrameBuffer;

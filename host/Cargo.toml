@@ -20,6 +20,9 @@ profont = "=0.7.0"
 embassy-sync = "=0.8.0"
 
 [dev-dependencies]
+bt-hci = "=0.10.1"
+trouble-host = { version = "=0.8.0", path = "../firmware/vendor/trouble-host", default-features = false, features = ["central", "gatt", "scan", "discovery-no-security", "default-packet-pool-size-8", "default-packet-pool-mtu-251", "gatt-client-notification-queue-size-4"] }
+embassy-time = { version = "=0.5.1", features = ["std", "generic-queue-8"] }
 embassy-hal-internal = "=0.5.0"
 criterion = "=0.8.2"
 critical-section = { version = "=1.2.0", features = ["std"] }

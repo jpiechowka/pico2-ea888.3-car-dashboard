@@ -7,15 +7,15 @@ pub(crate) mod crypto;
 mod pairing;
 mod types;
 use core::cell::{Ref, RefCell};
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::task::Poll;
 
-use bt_hci::FromHciBytes;
 use bt_hci::event::le::{LeEventKind, LeEventPacket, LeLongTermKeyRequest};
 use bt_hci::event::{EncryptionChangeV1, EncryptionKeyRefreshComplete, EventKind, EventPacket};
 #[cfg(feature = "central")]
 use bt_hci::param::BdAddr;
 use bt_hci::param::{ConnHandle, EncryptionEnabledLevel, LeConnRole};
+use bt_hci::FromHciBytes;
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -1327,10 +1327,10 @@ mod tests {
     use rand_core::SeedableRng;
 
     use super::*;
-    use crate::IoCapabilities;
     use crate::connection::ConnParams;
     use crate::connection_manager::{ConnectionManager, ConnectionStorage};
     use crate::prelude::DefaultPacketPool;
+    use crate::IoCapabilities;
 
     fn setup_manager() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage: &RefCell<[_]> = Box::leak(Box::new(RefCell::new([const { ConnectionStorage::new() }; 2])));

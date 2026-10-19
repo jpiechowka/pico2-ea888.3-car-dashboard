@@ -1,27 +1,28 @@
 //! Core0 retains CYW bus ownership even if the host or an inspection fails.
-use core::cell::Cell;
 use core::future::Future;
 use core::ops::ControlFlow;
 use core::sync::atomic::Ordering;
 
 use bt_hci::cmd::info::ReadBdAddr;
-use bt_hci::param::{FilterDuplicates, LeAdvEventKind};
+use bt_hci::param::FilterDuplicates;
 use dashboard_core::discovery::{
     Action,
-    Advertisement,
     Characteristic,
     Event,
+    FailureReason,
+    FailureStage,
     InfoValue,
+    InspectionFailure,
     InspectionItem,
     Payload,
     Peer,
     ProbeError,
     RadioPhase,
     ReadResult,
-    ReportKind,
     Request,
     Service,
     Uuid as ProbeUuid,
+    characteristic_from_wire,
     may_read,
 };
 use embassy_futures::join::join;
@@ -35,6 +36,7 @@ use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
 use crate::bridge;
+use crate::errors::{device_info_att_result, failure_reason};
 type RadioController = ExternalController<cyw43::bluetooth::BtDriver<'static>, 5>;
 type Pool = DefaultPacketPool;
 type RadioStack<'a> = Stack<'a, RadioController, Pool>;
@@ -47,45 +49,7 @@ pub struct Resources {
     pub cs: Peri<'static, PIN_25>,
     pub clock: Peri<'static, PIN_29>,
 }
-struct Reports {
-    revision: Cell<Option<u32>>,
-}
-impl EventHandler for Reports {
-    fn on_adv_reports(
-        &self,
-        reports: LeAdvReportsIter<'_>,
-    ) {
-        let Some(revision) = self.revision.get() else { return };
-        for report in reports {
-            let Ok(report) = report else {
-                let _ = bridge::RADIO_MALFORMED.try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                    Some(count.saturating_add(1))
-                });
-                continue;
-            };
-            if report.addr_kind != AddrKind::PUBLIC && report.addr_kind != AddrKind::RANDOM {
-                continue;
-            }
-            let kind = match report.event_kind {
-                LeAdvEventKind::AdvInd => ReportKind::Connectable,
-                LeAdvEventKind::AdvDirectInd => ReportKind::Directed,
-                LeAdvEventKind::ScanRsp => ReportKind::ScanResponse,
-                _ => continue,
-            };
-            let mut address = [0; 6];
-            address.copy_from_slice(report.addr.raw());
-            address.reverse();
-            let peer = Peer {
-                address,
-                random: report.addr_kind == AddrKind::RANDOM,
-            };
-            bridge::emit_report(Event::Report {
-                revision,
-                report: Advertisement::new(peer, kind, report.rssi, report.data, Instant::now().as_millis()),
-            });
-        }
-    }
-}
+use crate::reports::Reports;
 async fn state(
     revision: u32,
     phase: RadioPhase,
@@ -174,9 +138,7 @@ async fn host(driver: cyw43::bluetooth::BtDriver<'static>) -> ! {
         RESOURCES.init_with(HostResources::new),
     )
     .build();
-    let reports = Reports {
-        revision: Cell::new(None),
-    };
+    let reports = Reports::new();
     let mut runner = stack.runner();
     match select(runner.run_with_handler(&reports), operations(&stack, &reports)).await {
         Either::First(_) => {
@@ -236,10 +198,10 @@ async fn operations(
                     Ok(Ok(session)) => session,
                     _ => fault(ProbeError::Scan).await,
                 };
-                reports.revision.set(Some(request.revision));
+                reports.set_revision(Some(request.revision));
                 state(request.revision, RadioPhase::Scanning, ProbeError::None).await;
                 changed(request.revision).await;
-                reports.revision.set(None);
+                reports.set_revision(None);
                 state(bridge::request().revision, RadioPhase::Stopping, ProbeError::None).await;
                 if with_timeout(Duration::from_secs(5), session.stop()).await.is_err() {
                     fault(ProbeError::Cleanup).await;
@@ -253,14 +215,21 @@ async fn operations(
         }
     }
 }
-fn map_error<E>(error: BleHostError<E>) -> ProbeError {
-    match error {
-        BleHostError::Controller(_) => ProbeError::Transport,
-        BleHostError::BleHost(Error::Timeout) => ProbeError::Timeout,
-        BleHostError::BleHost(Error::Disconnected) => ProbeError::Disconnected,
-        BleHostError::BleHost(Error::InsufficientSpace | Error::OutOfMemory) => ProbeError::Capacity,
-        _ => ProbeError::Discovery,
-    }
+async fn failed(
+    revision: u32,
+    failure: InspectionFailure,
+) {
+    defmt::warn!(
+        "probe.failure revision={} stage={} reason={} code={:?} range={:?} last_accepted={:?} elapsed_ms={:?}",
+        revision,
+        failure.stage.label(),
+        failure.reason.label(),
+        failure.reason.code(),
+        failure.range,
+        failure.last_accepted,
+        failure.elapsed_ms
+    );
+    bridge::emit_event(Event::Failure { revision, failure }).await;
 }
 async fn inspect_peer(
     stack: &RadioStack<'_>,
@@ -295,6 +264,7 @@ async fn inspect_peer(
         },
     };
     state(request.revision, RadioPhase::Connecting, ProbeError::None).await;
+    let connect_started = Instant::now();
     let connection = match select(
         changed(request.revision),
         with_timeout(Duration::from_secs(8), central.connect(&config)),
@@ -307,11 +277,17 @@ async fn inspect_peer(
             return;
         }
         Either::Second(Err(_)) => {
+            let mut failure = InspectionFailure::new(FailureStage::Connect, FailureReason::Timeout);
+            failure.elapsed_ms = Some(elapsed_ms(connect_started));
+            failed(request.revision, failure).await;
             cleanup(stack, request.revision).await;
             state(request.revision, RadioPhase::Paused, ProbeError::Timeout).await;
             return;
         }
-        Either::Second(Ok(Err(_))) => {
+        Either::Second(Ok(Err(error))) => {
+            let mut failure = InspectionFailure::new(FailureStage::Connect, failure_reason(error));
+            failure.elapsed_ms = Some(elapsed_ms(connect_started));
+            failed(request.revision, failure).await;
             cleanup(stack, request.revision).await;
             state(request.revision, RadioPhase::Paused, ProbeError::Connect).await;
             return;
@@ -320,11 +296,17 @@ async fn inspect_peer(
     };
     if connection.peer_address() != peers[0] {
         connection.disconnect();
+        failed(
+            request.revision,
+            InspectionFailure::new(FailureStage::Connect, FailureReason::PeerMismatch),
+        )
+        .await;
         cleanup(stack, request.revision).await;
         state(request.revision, RadioPhase::Paused, ProbeError::InvalidPeer).await;
         return;
     }
     state(request.revision, RadioPhase::Discovering, ProbeError::None).await;
+    let inspection_started = Instant::now();
     let result = select(
         changed(request.revision),
         with_timeout(Duration::from_secs(30), inspect(stack, &connection, request.revision)),
@@ -332,13 +314,22 @@ async fn inspect_peer(
     .await;
     // Client/request futures are gone. Late ATT responses cannot become a new request.
     connection.disconnect();
+    match &result {
+        Either::Second(Err(_)) => {
+            let mut failure = InspectionFailure::new(FailureStage::Inspection, FailureReason::Timeout);
+            failure.elapsed_ms = Some(elapsed_ms(inspection_started));
+            failed(request.revision, failure).await;
+        }
+        Either::Second(Ok(Err(failure))) => failed(request.revision, *failure).await,
+        _ => {}
+    }
     cleanup(stack, request.revision).await;
     match result {
         Either::First(()) => {
             defmt::info!("probe.radio stage=inspect-canceled revision={}", request.revision);
         }
         Either::Second(Err(_)) => state(request.revision, RadioPhase::Paused, ProbeError::Timeout).await,
-        Either::Second(Ok(Err(error))) => state(request.revision, RadioPhase::Paused, error).await,
+        Either::Second(Ok(Err(failure))) => state(request.revision, RadioPhase::Paused, failure.error()).await,
         Either::Second(Ok(Ok(limited))) => {
             bridge::emit_event(Event::Complete {
                 revision: request.revision,
@@ -372,60 +363,64 @@ fn error_label(error: ProbeError) -> &'static str {
         ProbeError::InvalidPeer => "invalid-peer",
     }
 }
+fn elapsed_ms(started: Instant) -> u32 {
+    Instant::now()
+        .duration_since(started)
+        .as_millis()
+        .min(u64::from(u32::MAX)) as u32
+}
 async fn att<T, E>(
-    revision: u32,
-    stage: &'static str,
+    stage: FailureStage,
     future: impl Future<Output = Result<T, BleHostError<E>>>,
-) -> Result<T, ProbeError> {
+) -> Result<T, InspectionFailure> {
     let started = Instant::now();
     let result = match with_timeout(Duration::from_secs(3), future).await {
-        Ok(result) => result.map_err(map_error),
-        Err(_) => Err(ProbeError::Timeout),
+        Ok(result) => result.map_err(failure_reason),
+        Err(_) => Err(FailureReason::Timeout),
     };
-    if let Err(error) = &result {
-        defmt::warn!(
-            "probe.radio stage={} revision={} error={} elapsed_ms={}",
-            stage,
-            revision,
-            error_label(*error),
-            Instant::now().duration_since(started).as_millis()
-        );
-    }
-    result
+    result.map_err(|reason| {
+        let mut failure = InspectionFailure::new(stage, reason);
+        failure.elapsed_ms = Some(elapsed_ms(started));
+        failure
+    })
 }
 
 async fn inspect(
     stack: &RadioStack<'_>,
     connection: &Connection<'_, Pool>,
     revision: u32,
-) -> Result<bool, ProbeError> {
-    let client: Client<'_> = att(revision, "mtu", GattClient::new(stack, connection)).await?;
+) -> Result<bool, InspectionFailure> {
+    let client: Client<'_> = att(FailureStage::Mtu, GattClient::new(stack, connection)).await?;
     let work = async {
-        match select(
-            inventory(&client, revision),
-            connection_events(stack, connection, revision),
-        )
-        .await
-        {
+        match select(inventory(&client, revision), connection_events(stack, connection)).await {
             Either::First(result) => result,
             Either::Second(error) => Err(error),
         }
     };
     match select(work, client.task()).await {
         Either::First(result) => result,
-        Either::Second(result) => Err(result.err().map(map_error).unwrap_or(ProbeError::Disconnected)),
+        Either::Second(result) => {
+            Err(InspectionFailure::new(
+                FailureStage::ClientTask,
+                result.err().map(failure_reason).unwrap_or(FailureReason::Disconnected),
+            ))
+        }
     }
 }
 async fn connection_events(
     stack: &RadioStack<'_>,
     connection: &Connection<'_, Pool>,
-    revision: u32,
-) -> ProbeError {
+) -> InspectionFailure {
     loop {
         match connection.next().await {
-            ConnectionEvent::Disconnected { .. } => return ProbeError::Disconnected,
+            ConnectionEvent::Disconnected { reason } => {
+                return InspectionFailure::new(
+                    FailureStage::ConnectionEvents,
+                    FailureReason::DisconnectCode(reason.into_inner()),
+                );
+            }
             ConnectionEvent::RequestConnectionParams(request) => {
-                if let Err(error) = att(revision, "connection-parameters", request.reject(stack)).await {
+                if let Err(error) = att(FailureStage::ConnectionEvents, request.reject(stack)).await {
                     return error;
                 }
             }
@@ -436,11 +431,12 @@ async fn connection_events(
 async fn inventory(
     client: &Client<'_>,
     revision: u32,
-) -> Result<bool, ProbeError> {
-    let services = att(revision, "services", client.services()).await?;
+) -> Result<bool, InspectionFailure> {
+    let services = att(FailureStage::Services, client.services()).await?;
     for service in &services {
         let range = service.handle_range();
-        let uuid = ProbeUuid::from_wire(service.uuid().as_raw()).ok_or(ProbeError::Discovery)?;
+        let uuid = ProbeUuid::from_wire(service.uuid().as_raw())
+            .ok_or_else(|| InspectionFailure::new(FailureStage::Services, FailureReason::InvalidValue))?;
         bridge::emit_event(Event::Item {
             revision,
             item: InspectionItem::Service(Service {
@@ -462,48 +458,39 @@ async fn inventory(
         let range = service.handle_range();
         let start = *range.start();
         let end = *range.end();
-        let service_uuid = ProbeUuid::from_wire(service.uuid().as_raw()).ok_or(ProbeError::Discovery)?;
+        let service_uuid = ProbeUuid::from_wire(service.uuid().as_raw())
+            .ok_or_else(|| InspectionFailure::new(FailureStage::Characteristics, FailureReason::InvalidValue))?;
         let mut rows: Vec<Characteristic, 64> = Vec::new();
-        let mut malformed = false;
+        let mut malformed = None;
         let mut previous_value = start;
+        let mut last_accepted = None;
+        let started = Instant::now();
         let result = att(
-            revision,
-            "characteristics",
+            FailureStage::Characteristics,
             client.read_by_type(start, end, &Uuid::new_short(0x2803), |declaration, bytes| {
-                if !matches!(bytes.len(), 5 | 19) || declaration <= previous_value {
-                    malformed = true;
-                    return ControlFlow::Break(());
-                }
-                let handle = u16::from_le_bytes([bytes[1], bytes[2]]);
-                if handle <= declaration || handle > end {
-                    malformed = true;
-                    return ControlFlow::Break(());
-                }
-                let Some(uuid) = ProbeUuid::from_wire(&bytes[3..]) else {
-                    malformed = true;
-                    return ControlFlow::Break(());
+                let row = match characteristic_from_wire(start, end, previous_value, declaration, bytes) {
+                    Ok(row) => row,
+                    Err(reason) => {
+                        malformed = Some(reason);
+                        return ControlFlow::Break(());
+                    }
                 };
                 if total == 64 {
                     limited = true;
                     return ControlFlow::Break(());
                 }
-                previous_value = handle;
-                let row = Characteristic {
-                    service_start: start,
-                    declaration,
-                    handle,
-                    properties: bytes[0],
-                    uuid,
-                };
                 if rows.push(row).is_err() {
                     limited = true;
                     return ControlFlow::Break(());
                 }
+                previous_value = row.handle;
+                last_accepted = Some((declaration, row.handle));
                 total += 1;
                 ControlFlow::Continue(())
             }),
         )
         .await;
+        let query_elapsed_ms = elapsed_ms(started);
         // Keep valid rows preceding a malformed response or the capacity boundary.
         for row in rows {
             if may_read(service_uuid, row.uuid, row.properties)
@@ -519,9 +506,18 @@ async fn inventory(
             })
             .await;
         }
-        result?;
-        if malformed {
-            return Err(ProbeError::Discovery);
+        // Attach application query context without guessing the hidden ATT page cursor.
+        result.map_err(|mut failure| {
+            failure.range = Some((start, end));
+            failure.last_accepted = last_accepted;
+            failure
+        })?;
+        if let Some(reason) = malformed {
+            let mut failure = InspectionFailure::new(FailureStage::Characteristics, reason);
+            failure.range = Some((start, end));
+            failure.last_accepted = last_accepted;
+            failure.elapsed_ms = Some(query_elapsed_ms);
+            return Err(failure);
         }
     }
     defmt::info!(
@@ -534,41 +530,25 @@ async fn inventory(
     );
     for (uuid, handle) in readable {
         let mut bytes = [0u8; 64];
+        let started = Instant::now();
+        let failure = |reason| {
+            let mut failure = InspectionFailure::new(FailureStage::DeviceInfo, reason);
+            failure.range = Some((handle, handle));
+            failure.elapsed_ms = Some(elapsed_ms(started));
+            failure
+        };
         let (result, value) = match with_timeout(Duration::from_secs(3), client.read_handle(handle, &mut bytes)).await {
             Err(_) => {
-                defmt::warn!("probe.radio stage=device-info revision={} error=timeout", revision);
-                return Err(ProbeError::Timeout);
+                return Err(failure(FailureReason::Timeout));
             }
             Ok(Ok(length)) => {
                 let mut value = Payload::new(&bytes[..length]);
                 value.truncated = length == bytes.len();
                 (ReadResult::Ok, value)
             }
-            Ok(Err(BleHostError::BleHost(Error::Att(code)))) => {
-                let protected = matches!(
-                    code,
-                    AttErrorCode::INSUFFICIENT_AUTHENTICATION
-                        | AttErrorCode::INSUFFICIENT_ENCRYPTION
-                        | AttErrorCode::INSUFFICIENT_ENCRYPTION_KEY_SIZE
-                        | AttErrorCode::INSUFFICIENT_AUTHORISATION
-                );
-                (
-                    if protected {
-                        ReadResult::Protected
-                    } else {
-                        ReadResult::Unavailable
-                    },
-                    Payload::empty(),
-                )
-            }
+            Ok(Err(BleHostError::BleHost(Error::Att(code)))) => (device_info_att_result(code), Payload::empty()),
             Ok(Err(error)) => {
-                let error = map_error(error);
-                defmt::warn!(
-                    "probe.radio stage=device-info revision={} error={}",
-                    revision,
-                    error_label(error)
-                );
-                return Err(error);
+                return Err(failure(failure_reason(error)));
             }
         };
         bridge::emit_event(Event::Item {

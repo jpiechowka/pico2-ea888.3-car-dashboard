@@ -43,13 +43,13 @@ fn error_copy(error: ProbeError) -> &'static str {
         ProbeError::None => "Error:None",
         ProbeError::Scan => "Scan: failed; Y to rescan",
         ProbeError::Connect => "Connect: retry / Y back",
-        ProbeError::Timeout => "Timeout: no reply; Y back",
+        ProbeError::Timeout => "Timeout: deadline; Y back",
         ProbeError::Discovery => "Discovery: failed; Y back",
         ProbeError::Capacity => "Capacity: partial results",
-        ProbeError::Disconnected => "Disconnected: peer left",
+        ProbeError::Disconnected => "Disconnected: see details",
         ProbeError::Cleanup => "Cleanup: restarting",
-        ProbeError::Transport => "Transport: restarting",
-        ProbeError::InvalidPeer => "InvalidPeer: stale; rescan with Y",
+        ProbeError::Transport => "Transport: failed; Y back",
+        ProbeError::InvalidPeer => "InvalidPeer: Y to rescan",
     }
 }
 fn gatt_requested(probe: &Probe) -> bool {
@@ -95,6 +95,8 @@ fn control_hints(
         } else {
             "Turn/A/B: select  Click: Inspect GATT"
         }
+    } else if details {
+        "Turn/A/B: pages  No peer to inspect"
     } else {
         "Turn/A/B: select  No peer selected"
     };
@@ -105,7 +107,13 @@ fn control_hints(
             "Y: Back to scan"
         }
     } else if probe.selected_device().is_none() {
-        if matches!(probe.request.action, Action::Scan(true)) {
+        if probe.scan_diagnostics.last.is_some() {
+            if matches!(probe.request.action, Action::Scan(true)) {
+                "X: Scan diagnostics  Y: Pause scan"
+            } else {
+                "X: Scan diagnostics  Y: Resume scan"
+            }
+        } else if matches!(probe.request.action, Action::Scan(true)) {
             "Y: Pause scan"
         } else {
             "Y: Resume scan"
@@ -358,7 +366,7 @@ fn packet(
         }
     }
 }
-fn details(
+fn peer_details(
     probe: &Probe,
     now: u64,
     emit: &mut impl FnMut(&str),
@@ -400,7 +408,10 @@ fn details(
             _ => "Partial / not completed",
         }
     });
-    emit(&line(format_args!("Omitted {} / malformed {}", i.omitted, i.malformed)));
+    emit(&line(format_args!(
+        "Omitted {} / rejected records {}",
+        i.omitted, i.malformed
+    )));
     emit(&line(format_args!(
         "{} primary services / {} characteristics",
         i.services.len(),
@@ -447,6 +458,53 @@ fn details(
         if v.value.truncated {
             emit("! VALUE TRUNCATED");
         }
+    }
+}
+fn details(
+    probe: &Probe,
+    now: u64,
+    emit: &mut impl FnMut(&str),
+) {
+    if let Some(failure) = probe.failure.filter(|_| gatt_requested(probe)) {
+        emit(&line(format_args!("GATT FAILURE / {}", failure.stage.label())));
+        if let Some(code) = failure.reason.code() {
+            emit(&line(format_args!("Reason: {} 0x{code:02X}", failure.reason.label())));
+        } else {
+            emit(&line(format_args!("Reason: {}", failure.reason.label())));
+        }
+        if let Some(elapsed) = failure.elapsed_ms {
+            emit(&line(format_args!("Stage elapsed: {elapsed} ms")));
+        }
+        if let Some((start, end)) = failure.range {
+            emit(&line(format_args!("Query range {start:04X}-{end:04X}")));
+        }
+        if let Some((decl, value)) = failure.last_accepted {
+            emit(&line(format_args!("Last accepted decl {decl:04X} / value {value:04X}")));
+        }
+        emit("Partial records retained; Y returns to scan");
+    }
+    peer_details(probe, now, emit);
+    if let Some(last) = probe.scan_diagnostics.last {
+        let scan = probe.scan_diagnostics;
+        emit("GLOBAL HCI SCAN ERRORS / since boot");
+        emit("Not attributed to the selected device");
+        emit(&line(format_args!(
+            "Bad batches {} / size {}",
+            scan.total, scan.invalid_size
+        )));
+        emit(&line(format_args!("Invalid value {}", scan.invalid_value)));
+        emit(&line(format_args!(
+            "Last {:?} / {}s ago",
+            last.kind,
+            now.saturating_sub(last.at_ms) / 1000
+        )));
+        emit(&line(format_args!(
+            "Scan revision {} / entry {}/{}",
+            last.revision,
+            u16::from(last.index) + 1,
+            last.total_reports
+        )));
+        emit("Parsing stops at the first bad entry in a batch");
     }
 }
 /// Detail page count, independent of the current screen and page index.
@@ -508,7 +566,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         10,
         61,
         &line(format_args!(
-            "{} bad:{}",
+            "{} HCIbad:{}",
             error_copy(probe.error),
             probe.malformed_reports
         )),
@@ -564,7 +622,9 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
             75,
             &line(format_args!(
                 "{}  {}/{}",
-                if gatt_requested(probe) {
+                if probe.selected_device().is_none() {
+                    "SCAN DIAGNOSTICS"
+                } else if gatt_requested(probe) {
                     "ADVERTISEMENT + GATT"
                 } else {
                     "ADVERTISEMENT"
@@ -673,7 +733,7 @@ mod tests {
     #[test]
     fn error_copy_preserves_code_and_explains_recovery() {
         for (error, code, clue) in [
-            (ProbeError::Timeout, "Timeout", "reply"),
+            (ProbeError::Timeout, "Timeout", "deadline"),
             (ProbeError::Connect, "Connect", "retry"),
             (ProbeError::Capacity, "Capacity", "partial"),
             (ProbeError::InvalidPeer, "InvalidPeer", "rescan"),
@@ -682,7 +742,7 @@ mod tests {
             let hint = error_copy(error);
             assert!(hint.starts_with(code));
             assert!(hint.contains(clue));
-            assert!(hint.len() + 15 <= 50);
+            assert!(hint.len() + 18 <= 50);
         }
     }
     #[test]
@@ -843,5 +903,105 @@ mod tests {
         let l = lines(&p);
         assert!(l.iter().all(|l| l.len() <= 50));
         assert_eq!(l.iter().filter(|l| l.starts_with("FE FE")).count(), 4);
+    }
+
+    #[test]
+    fn every_failure_label_and_maximum_evidence_field_is_visible_and_fits() {
+        let mut p = probe();
+        p.input(Input::Click, 0).unwrap();
+        for stage in [
+            FailureStage::Connect,
+            FailureStage::Mtu,
+            FailureStage::Services,
+            FailureStage::Characteristics,
+            FailureStage::DeviceInfo,
+            FailureStage::ConnectionEvents,
+            FailureStage::ClientTask,
+            FailureStage::Inspection,
+        ] {
+            for reason in [
+                FailureReason::Controller,
+                FailureReason::Timeout,
+                FailureReason::Disconnected,
+                FailureReason::DisconnectCode(255),
+                FailureReason::Capacity,
+                FailureReason::Att(255),
+                FailureReason::Hci(255),
+                FailureReason::HciDecode,
+                FailureReason::UnexpectedResponse,
+                FailureReason::InvalidValue,
+                FailureReason::Codec,
+                FailureReason::InvalidState,
+                FailureReason::NotFound,
+                FailureReason::Unsupported,
+                FailureReason::Busy,
+                FailureReason::Other,
+                FailureReason::DeclarationLength,
+                FailureReason::DeclarationOrder,
+                FailureReason::ValueHandle,
+                FailureReason::PeerMismatch,
+            ] {
+                p.failure = Some(InspectionFailure {
+                    stage,
+                    reason,
+                    range: Some((1, 0xFFFF)),
+                    last_accepted: Some((0xFFFE, 0xFFFF)),
+                    elapsed_ms: Some(u32::MAX),
+                });
+                let l = lines(&p);
+                assert_eq!(l[0], std::format!("GATT FAILURE / {}", stage.label()));
+                assert!(l[1].ends_with(if reason.code().is_some() {
+                    "0xFF"
+                } else {
+                    reason.label()
+                }));
+                assert_eq!(l[2], "Stage elapsed: 4294967295 ms");
+                assert_eq!(l[3], "Query range 0001-FFFF");
+                assert_eq!(l[4], "Last accepted decl FFFE / value FFFF");
+                assert!(l.iter().all(|s| s.is_ascii() && s.len() * 6 <= 300));
+            }
+        }
+        p.failure = Some(InspectionFailure::new(
+            FailureStage::ClientTask,
+            FailureReason::Disconnected,
+        ));
+        let l = lines(&p);
+        assert!(
+            l.iter()
+                .all(|s| !s.contains("Stage elapsed") && !s.contains("Query range") && !s.contains("Last accepted"))
+        );
+    }
+
+    #[test]
+    fn scan_evidence_keeps_maximum_counts_and_does_not_blame_a_peer() {
+        let mut p = Probe::new();
+        p.scan_diagnostics = ScanDiagnostics {
+            total: u32::MAX,
+            invalid_size: u32::MAX,
+            invalid_value: u32::MAX,
+            last: Some(ScanFailure {
+                kind: ScanErrorKind::InvalidValue,
+                revision: u32::MAX,
+                index: 254,
+                total_reports: 255,
+                at_ms: 1,
+            }),
+        };
+        p.input(Input::Details, 2).unwrap();
+        p.phase = RadioPhase::Paused;
+        let hints = control_hints(&p, 2);
+        assert!(hints[0].contains("pages") && !hints[0].contains("Click"));
+        let mut l = std::vec::Vec::<std::string::String>::new();
+        details(&p, u64::MAX, &mut |s| l.push(s.into()));
+        assert!(l.iter().any(|s| s == "Not attributed to the selected device"));
+        assert!(l.iter().any(|s| s == "Bad batches 4294967295 / size 4294967295"));
+        assert!(l.iter().any(|s| s == "Invalid value 4294967295"));
+        assert!(l.iter().any(|s| s == "Scan revision 4294967295 / entry 255/255"));
+        assert!(l.iter().any(|s| s == "Last InvalidValue / 18446744073709551s ago"));
+        assert!(l.iter().all(|s| s.is_ascii() && s.len() * 6 <= 300));
+        let pages = page_count(&p);
+        assert_eq!(pages, l.len().div_ceil(10));
+        p.input(Input::Back, 2);
+        assert!(control_hints(&p, 2)[1].contains("X: Scan diagnostics"));
     }
 }

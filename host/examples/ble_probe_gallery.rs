@@ -127,6 +127,18 @@ fn main() {
         p.page = page;
         save(directory, &format!("details-{page}-synthetic"), &p);
     }
+    // Deliberately fabricated failure, not a diagnosis of any physical peer.
+    p.event(Event::Failure {
+        revision: p.request.revision,
+        failure: InspectionFailure {
+            stage: FailureStage::Characteristics,
+            reason: FailureReason::Att(0x0E),
+            range: Some((1, 9)),
+            last_accepted: Some((2, 3)),
+            elapsed_ms: Some(321),
+        },
+    });
+    save(directory, "failure-synthetic", &p);
     let back = p.input(Input::Back, 12_000).unwrap();
     p.event(Event::State {
         revision: back.revision,
@@ -145,4 +157,15 @@ fn main() {
         error: ProbeError::None,
     });
     save(directory, "empty-paused-synthetic", &p);
+    p.scan_diagnostics.record(ScanFailure {
+        kind: ScanErrorKind::InvalidSize,
+        revision: 7,
+        index: 1,
+        total_reports: 3,
+        at_ms: 11_000,
+    });
+    p.malformed_reports = p.scan_diagnostics.total;
+    p.input(Input::Details, 12_000).unwrap();
+    p.phase = RadioPhase::Paused;
+    save(directory, "scan-errors-synthetic", &p);
 }

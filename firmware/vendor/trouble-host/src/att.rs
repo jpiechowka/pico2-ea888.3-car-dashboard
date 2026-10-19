@@ -589,20 +589,28 @@ impl<'d> AttRsp<'d> {
 
     fn decode_with_opcode(opcode: u8, mut r: ReadCursor<'d>) -> Result<Self, codec::Error> {
         match opcode {
-            ATT_FIND_BY_TYPE_VALUE_RSP => Ok(Self::FindByTypeValue {
-                it: FindByTypeValueIter { cursor: r },
-            }),
-            ATT_FIND_INFORMATION_RSP => Ok(Self::FindInformation {
-                it: FindInformationIter {
-                    format: FindInformationUuidFormat::from(r.read()?)?,
-                    cursor: r,
-                },
-            }),
+            ATT_FIND_BY_TYPE_VALUE_RSP => {
+                validate_tuple_list(r.available(), 4, 4)?;
+                Ok(Self::FindByTypeValue {
+                    it: FindByTypeValueIter { cursor: r },
+                })
+            }
+            ATT_FIND_INFORMATION_RSP => {
+                let format = FindInformationUuidFormat::from(r.read()?)?;
+                validate_tuple_list(r.available(), 2 + format.num_bytes(), 4)?;
+                Ok(Self::FindInformation {
+                    it: FindInformationIter { format, cursor: r },
+                })
+            }
             ATT_EXCHANGE_MTU_RSP => {
                 let mtu: u16 = r.read()?;
                 Ok(Self::ExchangeMtu { mtu })
             }
             ATT_ERROR_RSP => {
+                // ATT 3.4.1.1: request opcode, two-byte handle, one-byte error code.
+                if r.available() != 4 {
+                    return Err(codec::Error::InvalidValue);
+                }
                 let request = r.read()?;
                 let handle = r.read()?;
                 let code = r.read()?;
@@ -612,6 +620,7 @@ impl<'d> AttRsp<'d> {
             ATT_READ_BLOB_RSP => Ok(Self::ReadBlob { data: r.remaining() }),
             ATT_READ_BY_TYPE_RSP => {
                 let item_len: u8 = r.read()?;
+                validate_tuple_list(r.available(), item_len as usize, 2)?;
                 Ok(Self::ReadByType {
                     it: ReadByTypeIter {
                         item_len: item_len as usize,
@@ -621,6 +630,7 @@ impl<'d> AttRsp<'d> {
             }
             ATT_READ_BY_GROUP_TYPE_RSP => {
                 let item_len: u8 = r.read()?;
+                validate_tuple_list(r.available(), item_len as usize, 4)?;
                 Ok(Self::ReadByGroupType {
                     it: ReadByTypeIter {
                         item_len: item_len as usize,
@@ -631,6 +641,17 @@ impl<'d> AttRsp<'d> {
             ATT_WRITE_RSP => Ok(Self::Write),
             _ => Err(codec::Error::InvalidValue),
         }
+    }
+}
+
+// Discovery responses contain at least one complete tuple; no tuple spans PDUs.
+// Validate before exposing an iterator so malformed lengths cannot underflow or
+// turn a truncated tail into successful enumeration.
+fn validate_tuple_list(available: usize, item_len: usize, minimum: usize) -> Result<(), codec::Error> {
+    if item_len < minimum || available == 0 || !available.is_multiple_of(item_len) {
+        Err(codec::Error::InvalidValue)
+    } else {
+        Ok(())
     }
 }
 
@@ -797,6 +818,21 @@ impl<'d> AttReq<'d> {
 
     fn decode_with_opcode(opcode: u8, r: ReadCursor<'d>) -> Result<Self, codec::Error> {
         let payload = r.remaining();
+        // Admit each fixed prefix before indexing; variable values may be empty.
+        let minimum = match opcode {
+            ATT_READ_BY_GROUP_TYPE_REQ
+            | ATT_READ_BY_TYPE_REQ
+            | ATT_FIND_INFORMATION_REQ
+            | ATT_PREPARE_WRITE_REQ
+            | ATT_READ_BLOB_REQ => 4,
+            ATT_READ_REQ | ATT_WRITE_REQ | ATT_EXCHANGE_MTU_REQ => 2,
+            ATT_FIND_BY_TYPE_VALUE_REQ => 6,
+            ATT_EXECUTE_WRITE_REQ => 1,
+            _ => 0,
+        };
+        if payload.len() < minimum {
+            return Err(codec::Error::InvalidValue);
+        }
         match opcode {
             ATT_READ_BY_GROUP_TYPE_REQ => {
                 let start_handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
@@ -805,7 +841,7 @@ impl<'d> AttReq<'d> {
                 let group_type = if payload.len() == 6 {
                     Uuid::Uuid16([payload[4], payload[5]])
                 } else if payload.len() == 20 {
-                    let uuid = payload[4..21].try_into().map_err(|_| codec::Error::InvalidValue)?;
+                    let uuid = payload[4..20].try_into().map_err(|_| codec::Error::InvalidValue)?;
                     Uuid::Uuid128(uuid)
                 } else {
                     return Err(codec::Error::InvalidValue);
@@ -923,6 +959,9 @@ impl<'d> AttCmd<'d> {
         let payload = r.remaining();
         match opcode {
             ATT_WRITE_CMD => {
+                if payload.len() < 2 {
+                    return Err(codec::Error::InvalidValue);
+                }
                 let handle = (payload[0] as u16) + ((payload[1] as u16) << 8);
                 let data = &payload[2..];
 
@@ -1015,5 +1054,290 @@ impl codec::Encode for Att<'_> {
 impl<'d> codec::Decode<'d> for Att<'d> {
     fn decode(data: &'d [u8]) -> Result<Self, codec::Error> {
         Self::decode(data)
+    }
+}
+
+#[cfg(test)]
+mod tuple_tests {
+    extern crate std;
+    use super::*;
+    use std::vec;
+
+    #[test]
+    fn all_opcodes_and_bounded_payloads_decode_without_panicking() {
+        fn exhaust<T>(length: usize, mut next: impl FnMut() -> Option<T>) {
+            for _ in 0..=length {
+                if next().is_none() {
+                    return;
+                }
+            }
+            panic!("iterator did not terminate within input length");
+        }
+        for opcode in 0..=u8::MAX {
+            for length in 0..=64 {
+                for seed in [0u32, 1, 0x12345678, u32::MAX] {
+                    let mut bytes = [0; 64];
+                    let mut state = seed;
+                    for byte in &mut bytes[..length] {
+                        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                        *byte = (state >> 24) as u8;
+                    }
+                    bytes[0] = opcode;
+                    let result = std::panic::catch_unwind(|| match Att::decode(&bytes[..length]) {
+                        Ok(Att::Server(AttServer::Response(AttRsp::FindByTypeValue { mut it }))) => {
+                            exhaust(length, || it.next());
+                        }
+                        Ok(Att::Server(AttServer::Response(AttRsp::FindInformation { mut it }))) => {
+                            exhaust(length, || it.next());
+                        }
+                        Ok(Att::Server(AttServer::Response(
+                            AttRsp::ReadByType { mut it } | AttRsp::ReadByGroupType { mut it },
+                        ))) => {
+                            exhaust(length, || it.next());
+                        }
+                        _ => {}
+                    });
+                    assert!(result.is_ok(), "opcode={opcode:#x} length={length} seed={seed:#x}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn guarded_request_prefixes_preserve_valid_requests_and_empty_values() {
+        for bytes in [
+            &[0x10, 1, 0, 9, 0, 3, 0x28][..],
+            &[0x08, 1, 0, 9, 0, 3, 0x28][..],
+            &[0x0a, 1, 0][..],
+            &[0x12, 1, 0][..],
+            &[0x02, 23, 0][..],
+            &[0x06, 1, 0, 9, 0, 0, 0x28][..],
+            &[0x04, 1, 0, 9, 0][..],
+            &[0x16, 1, 0, 2, 0][..],
+            &[0x0c, 1, 0, 2, 0][..],
+            &[0x18, 1][..],
+            &[0x52, 1, 0][..],
+        ] {
+            for length in 0..bytes.len() {
+                assert!(
+                    Att::decode(&bytes[..length]).is_err(),
+                    "accepted incomplete prefix {bytes:?} at {length}"
+                );
+            }
+            match (bytes[0], Att::decode(bytes).unwrap()) {
+                (
+                    0x10,
+                    Att::Client(AttClient::Request(AttReq::ReadByGroupType {
+                        start: 1,
+                        end: 9,
+                        group_type,
+                    })),
+                ) => assert_eq!(group_type, Uuid::new_short(0x2803)),
+                (
+                    0x08,
+                    Att::Client(AttClient::Request(AttReq::ReadByType {
+                        start: 1,
+                        end: 9,
+                        attribute_type,
+                    })),
+                ) => assert_eq!(attribute_type, Uuid::new_short(0x2803)),
+                (0x0a, Att::Client(AttClient::Request(AttReq::Read { handle: 1 }))) => {}
+                (0x12, Att::Client(AttClient::Request(AttReq::Write { handle: 1, data }))) => assert!(data.is_empty()),
+                (0x02, Att::Client(AttClient::Request(AttReq::ExchangeMtu { mtu: 23 }))) => {}
+                (
+                    0x06,
+                    Att::Client(AttClient::Request(AttReq::FindByTypeValue {
+                        start_handle: 1,
+                        end_handle: 9,
+                        att_type: 0x2800,
+                        att_value,
+                    })),
+                ) => assert!(att_value.is_empty()),
+                (
+                    0x04,
+                    Att::Client(AttClient::Request(AttReq::FindInformation {
+                        start_handle: 1,
+                        end_handle: 9,
+                    })),
+                ) => {}
+                (
+                    0x16,
+                    Att::Client(AttClient::Request(AttReq::PrepareWrite {
+                        handle: 1,
+                        offset: 2,
+                        value,
+                    })),
+                ) => assert!(value.is_empty()),
+                (0x0c, Att::Client(AttClient::Request(AttReq::ReadBlob { handle: 1, offset: 2 }))) => {}
+                (0x18, Att::Client(AttClient::Request(AttReq::ExecuteWrite { flags: 1 }))) => {}
+                (0x52, Att::Client(AttClient::Command(AttCmd::Write { handle: 1, data }))) => assert!(data.is_empty()),
+                _ => panic!("valid request changed: {bytes:?}"),
+            }
+        }
+        let bytes = [0x08, 1, 0, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        assert!(
+            matches!(Att::decode(&bytes), Ok(Att::Client(AttClient::Request(AttReq::ReadByType {
+            start: 1, end: 9, attribute_type: Uuid::Uuid128(uuid),
+        }))) if uuid == bytes[5..])
+        );
+    }
+
+    #[test]
+    fn read_by_group_type_request_preserves_128_bit_uuid() {
+        let bytes = [0x10, 1, 0, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        assert!(
+            matches!(Att::decode(&bytes), Ok(Att::Client(AttClient::Request(AttReq::ReadByGroupType {
+            start: 1, end: 9, group_type: Uuid::Uuid128(uuid),
+        }))) if uuid == bytes[5..])
+        );
+    }
+
+    #[test]
+    fn error_response_requires_complete_fixed_payload() {
+        for bytes in [
+            &[][..],
+            &[0x01][..],
+            &[0x01, 0x08][..],
+            &[0x01, 0x08, 0][..],
+            &[0x01, 0x08, 0, 0][..],
+            &[0x01, 0x08, 0, 0, 0x06, 0][..],
+        ] {
+            assert!(Att::decode(bytes).is_err(), "accepted malformed error {bytes:?}");
+        }
+        for code in 0..=u8::MAX {
+            let bytes = [0x01, 0x08, 0, 0, code];
+            assert!(
+                matches!(Att::decode(&bytes), Ok(Att::Server(AttServer::Response(AttRsp::Error {
+                request: 0x08, handle: 0, code: received,
+            }))) if received.to_u8() == code)
+            );
+        }
+    }
+
+    #[test]
+    fn read_tuple_lengths_must_include_their_handles() {
+        for (opcode, minimum) in [(0x09, 2), (0x11, 4)] {
+            for length in 0..minimum {
+                let bytes = [opcode, length, 1, 0, 2, 0];
+                assert!(
+                    matches!(Att::decode(&bytes), Err(codec::Error::InvalidValue)),
+                    "{bytes:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn read_tuple_lists_require_complete_nonempty_entries() {
+        for (opcode, length) in [(0x09, 7), (0x09, 21), (0x11, 6), (0x11, 20)] {
+            assert!(Att::decode(&[opcode, length]).is_err());
+            for tail in 1..length as usize {
+                for complete in [0, 1] {
+                    let mut bytes = vec![0; 2 + complete * length as usize + tail];
+                    bytes[0] = opcode;
+                    bytes[1] = length;
+                    assert!(
+                        matches!(Att::decode(&bytes), Err(codec::Error::InvalidValue)),
+                        "{bytes:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn find_by_type_lists_require_complete_nonempty_handle_ranges() {
+        for length in [0, 1, 2, 3, 5, 6, 7] {
+            let mut bytes = vec![0; 1 + length];
+            bytes[0] = 0x07;
+            assert!(
+                matches!(Att::decode(&bytes), Err(codec::Error::InvalidValue)),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn find_information_lists_require_complete_nonempty_uuid_entries() {
+        for (format, length) in [(1, 4), (2, 18)] {
+            assert!(Att::decode(&[0x05, format]).is_err());
+            for tail in 1..length {
+                for complete in [0, 1] {
+                    let mut bytes = vec![0; 2 + complete * length + tail];
+                    bytes[0] = 0x05;
+                    bytes[1] = format;
+                    assert!(
+                        matches!(Att::decode(&bytes), Err(codec::Error::InvalidValue)),
+                        "{bytes:?}"
+                    );
+                }
+            }
+        }
+        assert!(Att::decode(&[0x05, 3, 1, 0, 2, 0]).is_err());
+    }
+
+    #[test]
+    fn read_tuples_keep_zero_length_values_and_all_complete_entries() {
+        for (opcode, bytes, expected) in [
+            (0x09, &[0x09, 2, 1, 0, 2, 0][..], &[(1, &[][..]), (2, &[][..])][..]),
+            (0x11, &[0x11, 4, 1, 0, 2, 0][..], &[(1, &[2, 0][..])][..]),
+        ] {
+            let Att::Server(AttServer::Response(rsp)) = Att::decode(bytes).unwrap() else {
+                panic!()
+            };
+            let mut it = match rsp {
+                AttRsp::ReadByType { it } if opcode == 0x09 => it,
+                AttRsp::ReadByGroupType { it } if opcode == 0x11 => it,
+                _ => panic!(),
+            };
+            for &(handle, value) in expected {
+                assert_eq!(it.next().unwrap().unwrap(), (handle, value));
+            }
+            assert!(it.next().is_none());
+        }
+    }
+
+    #[test]
+    fn complete_discovery_tuples_preserve_128_bit_values_and_ranges() {
+        let uuid = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        for (opcode, prefix) in [
+            (0x09, &[0x09, 21, 2, 0, 2, 3, 0][..]),
+            (0x11, &[0x11, 20, 1, 0, 5, 0][..]),
+        ] {
+            let mut bytes = prefix.to_vec();
+            bytes.extend_from_slice(&uuid);
+            let Att::Server(AttServer::Response(rsp)) = Att::decode(&bytes).unwrap() else {
+                panic!()
+            };
+            let mut it = match rsp {
+                AttRsp::ReadByType { it } if opcode == 0x09 => it,
+                AttRsp::ReadByGroupType { it } if opcode == 0x11 => it,
+                _ => panic!(),
+            };
+            assert_eq!(it.next().unwrap().unwrap().1, &bytes[4..]);
+            assert!(it.next().is_none());
+        }
+        for format in [1, 2] {
+            let value = if format == 1 { &uuid[..2] } else { &uuid[..] };
+            let mut bytes = vec![0x05, format, 2, 0];
+            bytes.extend_from_slice(value);
+            bytes.extend_from_slice(&[3, 0]);
+            bytes.extend_from_slice(value);
+            let Att::Server(AttServer::Response(AttRsp::FindInformation { mut it })) = Att::decode(&bytes).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(it.next().unwrap().unwrap(), (2, Uuid::try_from(value).unwrap()));
+            assert_eq!(it.next().unwrap().unwrap(), (3, Uuid::try_from(value).unwrap()));
+            assert!(it.next().is_none());
+        }
+        let Att::Server(AttServer::Response(AttRsp::FindByTypeValue { mut it })) =
+            Att::decode(&[0x07, 1, 0, 5, 0, 6, 0, 0xff, 0xff]).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(it.next().unwrap().unwrap(), (1, 5));
+        assert_eq!(it.next().unwrap().unwrap(), (6, 0xffff));
+        assert!(it.next().is_none());
     }
 }

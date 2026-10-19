@@ -2,7 +2,7 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-use dashboard_core::discovery::{Event, Input, RadioPhase, Request};
+use dashboard_core::discovery::{Event, Input, RadioPhase, Request, ScanDiagnostics};
 use dashboard_core::display::FrameBuffer;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -17,7 +17,8 @@ static REQUEST: Mutex<CriticalSectionRawMutex, Cell<Request>> = Mutex::new(Cell:
 pub static RADIO_READY: AtomicBool = AtomicBool::new(false);
 pub static RADIO_FATAL: AtomicBool = AtomicBool::new(false);
 pub static RADIO_PROGRESS: AtomicU32 = AtomicU32::new(0);
-pub static RADIO_MALFORMED: AtomicU32 = AtomicU32::new(0);
+pub static SCAN_DIAGNOSTICS: Mutex<CriticalSectionRawMutex, Cell<ScanDiagnostics>> =
+    Mutex::new(Cell::new(ScanDiagnostics::new()));
 pub static DROPPED_REPORTS: AtomicU32 = AtomicU32::new(0);
 pub static PHASE: AtomicU8 = AtomicU8::new(RadioPhase::Starting as u8);
 pub static UI_PROGRESS: AtomicU32 = AtomicU32::new(0);
