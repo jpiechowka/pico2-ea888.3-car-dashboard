@@ -393,15 +393,25 @@ landscape. Its RGB status is:
 | Green | Current live probe completed cleanly, including allowed reads and disconnect cleanup |
 | Amber | Paused without clean live success, or browsing saved captures |
 | Purple | A local capture operation is pending |
-| Red | Error latched until **hold Y for two seconds**; fast blinking red means a terminal fault awaiting watchdog recovery |
+| Slow blinking red | Only malformed scan/advertisement reports recorded since recovery; scanning may continue |
+| Steady red | A probe, capacity, storage, USB or other error was recorded; overrides slow red |
+| Fast blinking red | Terminal fault awaiting watchdog recovery |
 
-Red overrides other colours and survives a successful retry. Scan/report loss,
-protected/failed reads and storage/USB errors also count; `Error:None` in the
-radio header does not clear this history. Green means completed and disconnected,
+All red states override other colours and survive a successful retry until
+**hold Y for two seconds**. The status row explains a latched error when there is
+no current radio error; historical `HCIbad` counts alone do not relatch it.
+Scan/report loss, protected/failed reads and storage/USB errors also count.
+Green means completed and disconnected,
 not an open connection or vehicle/adapter qualification. Terminal resets lose
 unsaved RAM evidence and relatch red after a watchdog timeout. Saved slots are
 separate; physical persistence and USB behavior still require device validation.
 [Full LED precedence, error scope and reboot limits](docs/vehicle/ble-probe.md#rgb-status-and-recovery).
+
+Characteristic rejection now retains the first rejected declaration handle,
+original length and up to 19 raw bytes in live pages and saved exports. Capture
+payload v2 remains readable alongside legacy v1. The shared ATT client also
+validates service/characteristic boundaries for the dashboard's adapter discovery.
+[Follow-up findings, regressions and remaining hardware checks](docs/validation/probe-discovery-followup-2026-10-19.md).
 
 [Full controls, capture workflow, bounds, gallery and step-by-step CLI flashing](docs/vehicle/ble-probe.md).
 

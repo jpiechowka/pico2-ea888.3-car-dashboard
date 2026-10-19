@@ -187,6 +187,7 @@ fn failure_and_scan_pages_preserve_telemetry_and_footer_pixels() {
             reason: FailureReason::Att(255),
             range: Some((1, 65535)),
             last_accepted: Some((65534, 65535)),
+            rejected: Some(RejectedDeclaration::from_wire(65535, &[0xFF; 253])),
             elapsed_ms: Some(u32::MAX),
         },
     });
@@ -225,6 +226,30 @@ fn failure_and_scan_pages_preserve_telemetry_and_footer_pixels() {
                 .iter()
                 .all(|((x, y), _)| (10..310).contains(x) && (61..198).contains(y)),
             "failure content escaped status/body or changed header/footer on page {page}"
+        );
+    }
+}
+
+#[test]
+fn latched_scan_hint_changes_only_the_status_band_even_with_saturated_counts() {
+    let mut p = populated();
+    p.malformed_reports = u32::MAX;
+    let mut before = ScreenTarget::default();
+    render(&mut before, &p, 0).unwrap();
+    for latch in [ErrorLatch::ScanOnly, ErrorLatch::Other] {
+        p.error_latch = latch;
+        let mut after = ScreenTarget::default();
+        render(&mut after, &p, 0).unwrap();
+        let changes: Vec<_> = before
+            .pixels
+            .iter()
+            .filter(|(point, color)| after.pixels.get(point) != Some(color))
+            .collect();
+        assert!(!changes.is_empty());
+        assert!(
+            changes
+                .iter()
+                .all(|((x, y), _)| (10..310).contains(x) && (61..71).contains(y))
         );
     }
 }

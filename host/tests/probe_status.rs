@@ -16,6 +16,62 @@ fn levels(
 }
 
 #[test]
+fn scan_only_faults_blink_slowly_and_remain_latched_across_healthy_publications() {
+    for fault in [Fault::Scan, Fault::Advertisement] {
+        let status = Status::new();
+        let mut model = start(&status);
+        inventory(&status, &mut model);
+        status.record(fault);
+        assert_eq!(status.error_latch(), ErrorLatch::ScanOnly);
+        for phase in [
+            RadioPhase::Scanning,
+            RadioPhase::Paused,
+            RadioPhase::Connecting,
+            RadioPhase::Disconnecting,
+        ] {
+            model.phase = phase;
+            status.publish(&model, &cap::CaptureUi::new());
+            for at in [0, 499, 1000, u64::MAX - 615] {
+                assert_eq!(status.levels(at, false), [false, true, true], "on at {at}");
+            }
+            for at in [500, 999, 1500] {
+                assert_eq!(status.levels(at, false), [true; 3], "off at {at}");
+            }
+        }
+        status.input(&mut model, Input::Recover, 1600);
+        assert_eq!(status.error_latch(), ErrorLatch::None);
+        model.phase = RadioPhase::Scanning;
+        assert_eq!(levels(&status, &model), [true, true, false]);
+        status.record(Fault::Scan);
+        status.publish(&model, &cap::CaptureUi::new());
+        assert_eq!(status.levels(500, false), [true; 3]);
+    }
+}
+
+#[test]
+fn non_scan_faults_override_scan_blink_and_fatal_overrides_both() {
+    for fault in [
+        Fault::Probe,
+        Fault::Capacity,
+        Fault::Storage,
+        Fault::Usb,
+        Fault::Encoder,
+        Fault::Timing,
+        Fault::Watchdog,
+    ] {
+        for scan_first in [false, true] {
+            let status = Status::new();
+            status.record(if scan_first { Fault::Scan } else { fault });
+            status.record(if scan_first { fault } else { Fault::Advertisement });
+            assert_eq!(status.error_latch(), ErrorLatch::Other);
+            assert_eq!(status.levels(500, false), [false, true, true]);
+            assert_eq!(status.levels(125, true), [true; 3]);
+            assert_eq!(status.levels(250, true), [false, true, true]);
+        }
+    }
+}
+
+#[test]
 fn scanning_drives_only_the_active_low_blue_channel() {
     let status = Status::new();
     let mut model = Probe::new();
@@ -453,7 +509,10 @@ fn faults_win_every_activity_update_even_after_diagnostic_counters_saturate() {
         assert_eq!(levels(&status, &model), [true, true, false]);
         status.record(fault);
         status.record(fault);
-        assert_eq!(status.levels(999, false), [false, true, true]);
+        assert_eq!(
+            status.levels(999, false),
+            [matches!(fault, Fault::Scan | Fault::Advertisement), true, true]
+        );
     }
 }
 

@@ -94,6 +94,7 @@ pub async fn run() {
         model.malformed_reports = model.scan_diagnostics.total;
         model.encoder_connected = bridge::ENCODER_CONNECTED.load(Ordering::Relaxed);
         bridge::STATUS.publish(model, &captures);
+        model.error_latch = bridge::STATUS.error_latch();
         if !maintenance::FRAME_INHIBIT.load(Ordering::SeqCst)
             && now.saturating_sub(last_frame) >= 50
             && let Ok(frame) = bridge::FREE.try_receive()

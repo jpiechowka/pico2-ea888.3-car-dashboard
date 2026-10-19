@@ -21,9 +21,9 @@ enum Request {
 }
 
 #[test]
-fn mixed_uuid_service_discovery_order_keeps_every_descriptor_range() {
+fn adapter_service_order_keeps_every_descriptor_range() {
     let mut fixture = Fixture::default();
-    // Mixed UUID widths can return later service groups before pending gaps.
+    // Exercise arbitrary adapter order independently of the ATT client.
     for start in [1, 21, 11] {
         fixture.service(start, start + 9, 0xFFF0);
         fixture.characteristic(start + 1, 0xFFF1, false);
@@ -444,6 +444,63 @@ fn descriptor_error_retains_prefix_and_completed_characteristics_without_reading
     );
     assert!(!fixture.calls.borrow().iter().any(|r| matches!(r, Request::Read(_))));
 }
+#[test]
+fn rejected_terminal_declaration_keeps_two_valid_rows_and_stops_further_work() {
+    let mut fixture = Fixture::default();
+    fixture.service(1, 6, 0x180A);
+    fixture.characteristic(2, 0x2A29, true);
+    fixture.characteristic(4, 0x2A24, true);
+    fixture.characteristic(6, 0x2A25, true);
+    let (result, events) = run(&fixture);
+    let failure = result.unwrap_err();
+    assert_eq!(failure.reason, FailureReason::DeclarationOrder);
+    assert_eq!(failure.range, Some((1, 6)));
+    assert_eq!(failure.last_accepted, Some((4, 5)));
+    let rejected = failure.rejected.unwrap();
+    assert_eq!(rejected.handle, 6);
+    assert_eq!(rejected.value_handle(), Some(7));
+    assert_eq!(rejected.length(), 5);
+    assert_eq!(rejected.bytes(), &[2, 7, 0, 0x25, 0x2A]);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::Item {
+                        item: InspectionItem::Characteristic(_),
+                        ..
+                    }
+                )
+            })
+            .count(),
+        2
+    );
+    assert!(!complete(&events, InventoryStage::Characteristics));
+    assert!(!complete(&events, InventoryStage::Descriptors));
+    assert!(!complete(&events, InventoryStage::Reads));
+    assert_eq!(fixture.calls.borrow().as_slice(), &[Request::Type(1, 6, 0x2803)]);
+}
+
+#[test]
+fn rejected_length_evidence_is_bounded_and_short_values_are_not_invented() {
+    for length in [0, 1, 2, 3, 4, 6, 18, 20, 255, 512] {
+        let mut fixture = Fixture::default();
+        fixture.service(1, 20, 0x180A);
+        fixture.declarations.push((2, vec![0xAB; length]));
+        let (result, events) = run(&fixture);
+        let failure = result.unwrap_err();
+        assert_eq!(failure.reason, FailureReason::DeclarationLength);
+        let rejected = failure.rejected.unwrap();
+        assert_eq!(rejected.handle, 2);
+        assert_eq!(rejected.length(), length as u16);
+        assert_eq!(rejected.bytes(), vec![0xAB; length.min(19)]);
+        assert_eq!(rejected.value_handle(), (length >= 3).then_some(0xABAB));
+        assert!(!complete(&events, InventoryStage::Characteristics));
+        assert_eq!(fixture.calls.borrow().as_slice(), &[Request::Type(1, 20, 0x2803)]);
+    }
+}
+
 #[test]
 fn malformed_characteristic_preserves_valid_prefix_and_query_context() {
     let mut fixture = Fixture::default();

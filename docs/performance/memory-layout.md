@@ -252,3 +252,26 @@ traced BLE stock and 280/70 images use 458344 static bytes and leave 65944 bytes
 560 bytes across the ring and other stored copies. This does not change stack
 reserves or establish physical worst-case depth. Exact image identities and
 verification scope are in the [delivery record](../validation/probe-offline-audit-2026-10-19.md).
+
+### Discovery boundary and rejected-evidence follow-up (2026-10-19)
+
+The subsequent checked stock and 280/70 probe images use 401696 static bytes and
+leave 122592 bytes of core-0 headroom. The bounded rejected-declaration prefix and
+capture v2 preserve the existing buffers, 32768-byte core-1 stack and stack
+reserves. The probe's nonradio emitted-frame total is 12080 bytes, 208 below its
+unchanged 12288-byte gate; its largest emitted frame is 1504 bytes. Named bounds
+are boot 17128, core 0 17240, radio 24648 and render 17272 bytes.
+
+The corresponding traced BLE dashboard images use 458360 static bytes and leave
+65928 bytes, 392 above the unchanged 65536-byte geometry floor. The shared client
+repair changes its radio named bound to 17352 bytes; boot/construction/runtime/
+dashboard bounds remain 3336/18736/15632/28200 bytes. Traced demo images use
+441584 static bytes and leave 82704 bytes. Their construction/runtime bounds are
+18808/15704 bytes, with no radio bound. Both clock profiles passed the same
+practical checks for all three image types.
+
+Exact hashes, compiler/options and the source-drift comparison are in the
+[discovery follow-up record](../validation/probe-discovery-followup-2026-10-19.md#exact-linked-images).
+The narrow margins remain visible; no gate or reserve was weakened. These figures
+describe the linked artifacts and reviewed paths, not observed worst-case stack
+use, total live RAM, CPU utilization or physical hardware qualification.

@@ -103,6 +103,13 @@ fn main() {
         11_000,
     ));
     save(directory, "scan-synthetic", &p);
+    p.error_latch = ErrorLatch::ScanOnly;
+    p.malformed_reports = 5;
+    save(directory, "scan-latched-synthetic", &p);
+    p.error_latch = ErrorLatch::Other;
+    save(directory, "error-latched-synthetic", &p);
+    p.error_latch = ErrorLatch::None;
+    p.malformed_reports = 0;
     let pause = p.input(Input::Back, 12_000).unwrap();
     p.event(Event::State {
         revision: pause.revision,
@@ -325,10 +332,24 @@ fn main() {
             reason: FailureReason::Att(0x0E),
             range: Some((1, 9)),
             last_accepted: Some((2, 3)),
+            rejected: None,
             elapsed_ms: Some(321),
         },
     });
     save(directory, "failure-synthetic", &p);
+    p.failure = Some(InspectionFailure {
+        stage: FailureStage::Characteristics,
+        reason: FailureReason::DeclarationOrder,
+        range: Some((1, 6)),
+        last_accepted: Some((4, 5)),
+        rejected: Some(RejectedDeclaration::from_wire(6, &[2, 7, 0, 0x29, 0x2A])),
+        elapsed_ms: Some(119),
+    });
+    p.error_latch = ErrorLatch::Other;
+    p.page = 0;
+    save(directory, "rejected-declaration-synthetic", &p);
+    p.page = 1;
+    save(directory, "rejected-context-synthetic", &p);
     p.input(Input::Click, 12_000).unwrap();
     p.phase = RadioPhase::Paused;
     p.event(Event::Failure {
@@ -338,6 +359,7 @@ fn main() {
             reason: FailureReason::Disconnected,
             range: None,
             last_accepted: None,
+            rejected: None,
             elapsed_ms: Some(215),
         },
     });

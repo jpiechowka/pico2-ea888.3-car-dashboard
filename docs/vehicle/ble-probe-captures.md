@@ -152,6 +152,7 @@ scan diagnostics remain labelled global and cannot be blamed on that peer.
 | Link, ATT MTU, timings and cleanup | Observed connection parameters and negotiated ATT limit when available; no L2CAP CoC negotiation |
 | Four stage flags and omissions/rejections | Partial, unrequested or limited work stays explicit; no invented missing records |
 | First failure and local/terminal context | Exact available reason, range and elapsed time; absent raw status remains absent |
+| First rejected characteristic declaration | Handle, original byte length and up to 19 raw bytes; its value-handle field is unvalidated and can be absent |
 | Producer identity | Full source digest when supplied, profile and actual CPU/SPI rates; not a firmware self-check |
 
 All capture times are device boot-relative monotonic milliseconds. No RTC date
@@ -169,6 +170,15 @@ by identity only. No vendor characteristic or descriptor value is read, no CCCD
 is written, and there is no pairing, authentication or ECU request.
 
 ## Storage, source identity and verification
+
+New captures use **payload schema v2**. This firmware and exporter also read
+legacy v1 captures; v1 has no rejected-declaration field, so exports report it as
+absent instead of reconstructing it. JSON reports the actual input schema.
+The journal and USB protocol versions are unchanged, as is the 8192-byte payload
+limit. Existing slots are not rewritten during load/export. Older v1-only
+firmware/exporters cannot decode v2; export with the matching current tool before
+downgrading, and retain the original binary. Unknown-format protections still
+apply across both journal copies.
 
 Four logical slots each have two 12 KiB copies: 96 KiB total at flash offsets
 `0x1E6000..0x1FE000`, below the existing settings sectors. Each copy has explicit

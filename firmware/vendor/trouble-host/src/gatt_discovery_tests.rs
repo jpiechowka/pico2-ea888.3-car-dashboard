@@ -1,10 +1,14 @@
 use super::tests::test_client;
 use super::*;
+use crate::attribute::CharacteristicProp;
 use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 
-fn reply(client: &GattClient<'_, crate::mock_controller::MockController, DefaultPacketPool, 1>, bytes: &[u8]) {
+fn reply<const N: usize>(
+    client: &GattClient<'_, crate::mock_controller::MockController, DefaultPacketPool, N>,
+    bytes: &[u8],
+) {
     let mut packet = DefaultPacketPool::allocate().unwrap();
     packet.as_mut()[..bytes.len()].copy_from_slice(bytes);
     client
@@ -434,6 +438,439 @@ fn discovery_blob_offset_cannot_wrap() {
     ));
 }
 extern crate std;
+
+fn service_client<const N: usize>(
+    connection: &Connection<'static, DefaultPacketPool>,
+) -> GattClient<'static, crate::mock_controller::MockController, DefaultPacketPool, N> {
+    GattClient {
+        known_services: RefCell::new(Vec::new()),
+        _phantom: PhantomData,
+        connection: connection.clone(),
+        response_channel: Channel::new(),
+        notifications: PubSubChannel::new(),
+    }
+}
+
+#[test]
+fn discovery_services_mix_uuid_widths_and_sparse_groups_across_pages() {
+    let (guard, conn) = connection();
+    let client = service_client::<3>(&conn);
+    let mut future = pin!(client.services());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    expect_request(&guard, &[0x10, 1, 0, 0xff, 0xff, 0, 0x28]);
+    reply(&client, &[0x11, 6, 2, 0, 4, 0, 1, 0x18]);
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    expect_request(&guard, &[0x10, 5, 0, 0xff, 0xff, 0, 0x28]);
+    assert!(
+        client.known_services.borrow().is_empty(),
+        "unfinished discovery must not cache a prefix"
+    );
+    reply(
+        &client,
+        &[
+            0x11, 20, 11, 0, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        ],
+    );
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    expect_request(&guard, &[0x10, 16, 0, 0xff, 0xff, 0, 0x28]);
+    reply(&client, &[0x11, 6, 20, 0, 0xff, 0xff, 0, 0x18]);
+    let Poll::Ready(Ok(rows)) = future.as_mut().poll(&mut cx) else {
+        panic!("legal mixed services failed");
+    };
+    assert_eq!(
+        rows.iter()
+            .map(ServiceHandle::handle_range)
+            .collect::<std::vec::Vec<_>>(),
+        [2..=4, 11..=15, 20..=0xffff]
+    );
+    assert_eq!(
+        rows[1].uuid().as_raw(),
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    );
+    assert_eq!(client.known_services.borrow().len(), 3);
+    assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+}
+
+#[test]
+fn discovery_filtered_group_pages_validate_progress_and_cache_only_success() {
+    for (second_start, second_end, success) in [(1u8, 9u8, false), (4, 9, false), (5, 4, false), (5, 9, true)] {
+        let (guard, conn) = connection();
+        let client = service_client::<2>(&conn);
+        let uuid = Uuid::new_short(0x1801);
+        let mut future = pin!(client.services_by_uuid(&uuid));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(future.as_mut().poll(&mut cx).is_pending());
+        expect_request(&guard, &[0x06, 1, 0, 0xff, 0xff, 0, 0x28, 1, 0x18]);
+        reply(&client, &[0x07, 1, 0, 4, 0]);
+        assert!(future.as_mut().poll(&mut cx).is_pending());
+        expect_request(&guard, &[0x06, 5, 0, 0xff, 0xff, 0, 0x28, 1, 0x18]);
+        assert!(client.known_services.borrow().is_empty());
+        reply(&client, &[0x07, second_start, 0, second_end, 0]);
+        if success {
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            expect_request(&guard, &[0x06, 10, 0, 0xff, 0xff, 0, 0x28, 1, 0x18]);
+            reply(&client, &[0x01, 0x06, 10, 0, 0x0a]);
+            let Poll::Ready(Ok(rows)) = future.as_mut().poll(&mut cx) else {
+                panic!("valid pagination failed");
+            };
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[1].handle_range(), 5..=9);
+            assert_eq!(client.known_services.borrow().len(), 2);
+        } else {
+            assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+            assert!(client.known_services.borrow().is_empty());
+        }
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+fn discovery_service_capacity_failure_never_publishes_a_partial_cache() {
+    for filtered in [false, true] {
+        let (guard, conn) = connection();
+        let client = service_client::<1>(&conn);
+        let uuid = Uuid::new_short(0x1801);
+        let mut future = pin!(async {
+            if filtered {
+                client.services_by_uuid(&uuid).await
+            } else {
+                client.services().await
+            }
+        });
+        let mut cx = Context::from_waker(Waker::noop());
+        reply(
+            &client,
+            if filtered {
+                &[0x07, 1, 0, 4, 0, 5, 0, 0xff, 0xff][..]
+            } else {
+                &[0x11, 6, 1, 0, 4, 0, 1, 0x18, 5, 0, 0xff, 0xff, 0, 0x18][..]
+            },
+        );
+        assert!(matches!(
+            future.as_mut().poll(&mut cx),
+            Poll::Ready(Err(BleHostError::BleHost(Error::InsufficientSpace)))
+        ));
+        assert!(client.known_services.borrow().is_empty());
+        expect_request(
+            &guard,
+            if filtered {
+                &[0x06, 1, 0, 0xff, 0xff, 0, 0x28, 1, 0x18][..]
+            } else {
+                &[0x10, 1, 0, 0xff, 0xff, 0, 0x28][..]
+            },
+        );
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+fn discovery_service_cache_merge_preserves_existing_entries_on_overflow() {
+    for filtered in [false, true] {
+        for overlap in [false, true] {
+            let (guard, conn) = connection();
+            let client = service_client::<2>(&conn);
+            let uuid = Uuid::new_short(0x1801);
+            let previous = ServiceHandle { start: 1, end: 4, uuid };
+            client.known_services.borrow_mut().push(previous.clone()).unwrap();
+            let mut future = pin!(async {
+                if filtered {
+                    client.services_by_uuid(&uuid).await
+                } else {
+                    client.services().await
+                }
+            });
+            let mut cx = Context::from_waker(Waker::noop());
+            let (first, end) = if overlap { (1, 4) } else { (5, 9) };
+            let filtered_reply = [0x07, first, 0, end, 0, 10, 0, 0xff, 0xff];
+            let all_reply = [0x11, 6, first, 0, end, 0, 1, 0x18, 10, 0, 0xff, 0xff, 1, 0x18];
+            reply(&client, if filtered { &filtered_reply[..] } else { &all_reply[..] });
+            let result = future.as_mut().poll(&mut cx);
+            if overlap {
+                let Poll::Ready(Ok(rows)) = result else {
+                    panic!("duplicate cache entry consumed capacity")
+                };
+                assert_eq!(rows.len(), 2);
+                assert_eq!(client.known_services.borrow().len(), 2);
+                assert_eq!(client.known_services.borrow()[0], previous);
+            } else {
+                assert!(matches!(
+                    result,
+                    Poll::Ready(Err(BleHostError::BleHost(Error::InsufficientSpace)))
+                ));
+                assert_eq!(client.known_services.borrow().as_slice(), &[previous]);
+            }
+            expect_request(
+                &guard,
+                if filtered {
+                    &[0x06, 1, 0, 0xff, 0xff, 0, 0x28, 1, 0x18][..]
+                } else {
+                    &[0x10, 1, 0, 0xff, 0xff, 0, 0x28][..]
+                },
+            );
+            assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+        }
+    }
+}
+
+#[test]
+fn discovery_overlapping_characteristic_value_stops_both_apis_before_descriptors() {
+    for bulk in [false, true] {
+        let (guard, conn) = connection();
+        let client = test_client(&conn);
+        let service = ServiceHandle {
+            start: 1,
+            end: 10,
+            uuid: Uuid::new_short(0x1800),
+        };
+        let uuid = Uuid::new_short(0x2a00);
+        let mut future = pin!(async {
+            if bulk {
+                client.characteristics::<2>(&service).await.map(|_| ())
+            } else {
+                client.characteristic_by_uuid::<[u8]>(&service, &uuid).await.map(|_| ())
+            }
+        });
+        let mut cx = Context::from_waker(Waker::noop());
+        reply(&client, &[0x09, 7, 2, 0, 0x10, 5, 0, 0, 0x2a, 4, 0, 2, 6, 0, 1, 0x2a]);
+        assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+        expect_request(&guard, &[0x08, 1, 0, 10, 0, 3, 0x28]);
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+fn discovery_sparse_characteristic_cccd_query_stays_inside_its_definition() {
+    let (guard, conn) = connection();
+    let client = test_client(&conn);
+    let service = ServiceHandle {
+        start: 1,
+        end: 12,
+        uuid: Uuid::new_short(0x1800),
+    };
+    let uuid = Uuid::new_short(0x2a00);
+    let mut future = pin!(client.characteristic_by_uuid::<[u8]>(&service, &uuid));
+    let mut cx = Context::from_waker(Waker::noop());
+    reply(&client, &[0x09, 7, 2, 0, 0x10, 4, 0, 0, 0x2a, 8, 0, 2, 10, 0, 1, 0x2a]);
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    expect_request(&guard, &[0x08, 1, 0, 12, 0, 3, 0x28]);
+    expect_request(&guard, &[0x04, 5, 0, 7, 0]);
+    reply(&client, &[0x05, 1, 6, 0, 2, 0x29]);
+    let Poll::Ready(Ok(row)) = future.as_mut().poll(&mut cx) else {
+        panic!("valid CCCD rejected");
+    };
+    assert_eq!((row.handle, row.end_handle, row.cccd_handle), (4, 7, Some(6)));
+    assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+}
+
+#[test]
+fn discovery_terminal_characteristic_value_is_valid_but_cannot_have_cccd() {
+    for notify in [false, true] {
+        let (guard, conn) = connection();
+        let client = test_client(&conn);
+        let service = ServiceHandle {
+            start: 0xfffc,
+            end: 0xffff,
+            uuid: Uuid::new_short(0x1800),
+        };
+        let uuid = Uuid::new_short(0x2a00);
+        let mut future = pin!(client.characteristic_by_uuid::<[u8]>(&service, &uuid));
+        let mut cx = Context::from_waker(Waker::noop());
+        reply(
+            &client,
+            &[0x09, 7, 0xfe, 0xff, if notify { 0x10 } else { 2 }, 0xff, 0xff, 0, 0x2a],
+        );
+        let result = future.as_mut().poll(&mut cx);
+        if notify {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(BleHostError::BleHost(Error::NotFound)))
+            ));
+        } else {
+            let Poll::Ready(Ok(row)) = result else {
+                panic!("terminal value rejected");
+            };
+            assert_eq!((row.handle, row.end_handle), (0xffff, 0xffff));
+        }
+        expect_request(&guard, &[0x08, 0xfc, 0xff, 0xff, 0xff, 3, 0x28]);
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+fn discovery_all_services_does_not_search_backwards_through_unused_handles() {
+    let (guard, conn) = connection();
+    let client = test_client(&conn);
+    let mut future = pin!(client.services());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    expect_request(&guard, &[0x10, 1, 0, 0xff, 0xff, 0, 0x28]);
+    reply(&client, &[0x11, 6, 2, 0, 0xff, 0xff, 1, 0x18]);
+    let Poll::Ready(Ok(services)) = future.as_mut().poll(&mut cx) else {
+        panic!("queried an already searched gap");
+    };
+    assert_eq!(services[0].handle_range(), 2..=0xffff);
+    assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+}
+
+#[test]
+fn discovery_terminal_value_has_no_wrapped_descriptor_query() {
+    for lookup in [false, true] {
+        let (guard, conn) = connection();
+        let client = test_client(&conn);
+        let characteristic = Characteristic::<[u8]> {
+            handle: 0xffff,
+            end_handle: 0xffff,
+            props: CharacteristicProps::from([CharacteristicProp::Read]),
+            cccd_handle: None,
+            uuid: Uuid::new_short(0x2a00),
+            phantom: PhantomData,
+        };
+        let uuid = Uuid::new_short(0x2901);
+        let mut future = pin!(async {
+            if lookup {
+                client
+                    .descriptor_by_uuid::<[u8], [u8]>(&characteristic, &uuid)
+                    .await
+                    .map(|_| 1)
+            } else {
+                client
+                    .descriptors::<[u8], 1>(&characteristic)
+                    .await
+                    .map(|rows| rows.len())
+            }
+        });
+        let mut cx = Context::from_waker(Waker::noop());
+        let result = future.as_mut().poll(&mut cx);
+        if lookup {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(BleHostError::BleHost(Error::NotFound)))
+            ));
+        } else {
+            assert!(matches!(result, Poll::Ready(Ok(0))));
+        }
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+fn discovery_filtered_services_reject_invalid_ranges_before_caching() {
+    for (start, end) in [(0u16, 1u16), (2, 1)] {
+        let (guard, conn) = connection();
+        let client = test_client(&conn);
+        let uuid = Uuid::new_short(0x1801);
+        let mut future = pin!(client.services_by_uuid(&uuid));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(future.as_mut().poll(&mut cx).is_pending());
+        expect_request(&guard, &[0x06, 1, 0, 0xff, 0xff, 0, 0x28, 1, 0x18]);
+        let [a, b] = start.to_le_bytes();
+        let [c, d] = end.to_le_bytes();
+        reply(&client, &[0x07, a, b, c, d]);
+        assert!(
+            matches!(future.as_mut().poll(&mut cx), Poll::Ready(Err(_))),
+            "accepted {start}..{end}"
+        );
+        assert!(client.known_services.borrow().is_empty());
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+fn discovery_characteristic_apis_reject_value_outside_its_definition() {
+    for bulk in [false, true] {
+        for (declaration, value) in [(1u8, 2u8), (2, 0), (2, 2), (2, 11), (10, 11)] {
+            let (guard, conn) = connection();
+            let client = test_client(&conn);
+            let service = ServiceHandle {
+                start: 1,
+                end: 10,
+                uuid: Uuid::new_short(0x1800),
+            };
+            let uuid = Uuid::new_short(0x2a00);
+            let mut future = pin!(async {
+                if bulk {
+                    client.characteristics::<4>(&service).await.map(|_| ())
+                } else {
+                    client.characteristic_by_uuid::<[u8]>(&service, &uuid).await.map(|_| ())
+                }
+            });
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            expect_request(&guard, &[0x08, 1, 0, 10, 0, 3, 0x28]);
+            reply(&client, &[0x09, 7, declaration, 0, 2, value, 0, 0, 0x2a]);
+            assert!(
+                matches!(future.as_mut().poll(&mut cx), Poll::Ready(Err(_))),
+                "bulk={bulk} decl={declaration} value={value}"
+            );
+            assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+        }
+    }
+}
+
+#[test]
+fn discovery_characteristic_apis_stop_before_next_declaration_with_sparse_handles() {
+    for bulk in [false, true] {
+        let (guard, conn) = connection();
+        let client = test_client(&conn);
+        let service = ServiceHandle {
+            start: 1,
+            end: 12,
+            uuid: Uuid::new_short(0x1800),
+        };
+        let uuid = Uuid::new_short(0x2a00);
+        let mut future = pin!(async {
+            if bulk {
+                client
+                    .characteristics::<4>(&service)
+                    .await
+                    .map(|rows| rows[0].end_handle)
+            } else {
+                client
+                    .characteristic_by_uuid::<[u8]>(&service, &uuid)
+                    .await
+                    .map(|row| row.end_handle)
+            }
+        });
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(future.as_mut().poll(&mut cx).is_pending());
+        expect_request(&guard, &[0x08, 1, 0, 12, 0, 3, 0x28]);
+        reply(&client, &[0x09, 7, 2, 0, 2, 4, 0, 0, 0x2a, 8, 0, 2, 10, 0, 1, 0x2a]);
+        if bulk {
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            expect_request(&guard, &[0x08, 9, 0, 12, 0, 3, 0x28]);
+            reply(&client, &[0x01, 0x08, 9, 0, 0x0a]);
+        }
+        assert!(
+            matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(7))),
+            "bulk={bulk}"
+        );
+        assert!(pin!(guard.0.outbound()).as_mut().poll(&mut cx).is_pending());
+    }
+}
+
+#[test]
+fn discovery_descriptor_capacity_is_not_reported_as_complete() {
+    let (guard, conn) = connection();
+    let client = test_client(&conn);
+    let characteristic = Characteristic::<[u8]> {
+        handle: 3,
+        end_handle: 5,
+        props: CharacteristicProps::from([CharacteristicProp::Read]),
+        cccd_handle: None,
+        uuid: Uuid::new_short(0x2a00),
+        phantom: PhantomData,
+    };
+    let mut future = pin!(client.descriptors::<[u8], 1>(&characteristic));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(future.as_mut().poll(&mut cx).is_pending());
+    expect_request(&guard, &[0x04, 4, 0, 5, 0]);
+    reply(&client, &[0x05, 1, 4, 0, 1, 0x29, 5, 0, 2, 0x29]);
+    assert!(matches!(
+        future.as_mut().poll(&mut cx),
+        Poll::Ready(Err(BleHostError::BleHost(Error::InsufficientSpace)))
+    ));
+}
 
 struct Drain(&'static crate::connection_manager::ConnectionManager<'static, DefaultPacketPool>);
 impl Drop for Drain {

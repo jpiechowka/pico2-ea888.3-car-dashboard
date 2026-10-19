@@ -1285,16 +1285,15 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         })
     }
 
-    /// Discover primary services associated with a UUID.
+    /// Discover all primary services in ascending handle order.
     pub async fn services(&self) -> Result<Vec<ServiceHandle, MAX_SERVICES>, BleHostError<C::Error>> {
         let mut result = Vec::new();
-        let mut pending: Vec<(u16, u16), MAX_SERVICES> = Vec::new();
-        let _ = pending.push((0x0001, u16::MAX));
+        let mut start = 1u16;
 
-        while let Some((start, range_end)) = pending.pop() {
+        loop {
             let data = att::AttReq::ReadByGroupType {
                 start,
-                end: range_end,
+                end: u16::MAX,
                 group_type: PRIMARY_SERVICE.into(),
             };
 
@@ -1303,30 +1302,22 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             match res {
                 AttRsp::Error { request, handle, code } => {
                     if code == att::AttErrorCode::ATTRIBUTE_NOT_FOUND {
-                        continue;
+                        break;
                     }
                     return Err(Error::Att(code).into());
                 }
                 AttRsp::ReadByGroupType { mut it } => {
-                    let mut end: u16 = start.saturating_sub(1);
+                    let mut end = start - 1;
                     while let Some(res) = it.next() {
                         let (handle, data) = res?;
 
-                        if handle < start || handle > range_end || handle <= end {
+                        if handle < start || handle <= end {
                             return Err(Error::UnexpectedGattResponse.into());
-                        }
-                        // ReadByGroupType responses have uniform-length attribute
-                        // data, so services with a different UUID size are skipped.
-                        // Push any gaps onto the pending stack to discover them.
-                        if handle > end + 1 {
-                            pending
-                                .push((end + 1, handle - 1))
-                                .map_err(|_| Error::InsufficientSpace)?;
                         }
 
                         let mut r = ReadCursor::new(data);
                         end = r.read()?;
-                        if end < handle || end > range_end {
+                        if end < handle {
                             return Err(Error::UnexpectedGattResponse.into());
                         }
                         let uuid = Uuid::try_from(r.remaining())?;
@@ -1338,19 +1329,16 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                         };
 
                         result.push(svc.clone()).map_err(|_| Error::InsufficientSpace)?;
-                        let mut known = self.known_services.borrow_mut();
-                        if !known.contains(&svc) {
-                            known.push(svc).map_err(|_| Error::InsufficientSpace)?;
-                        }
                     }
                     if end < start {
                         return Err(Error::UnexpectedGattResponse.into());
                     }
-                    if end < range_end {
-                        pending
-                            .push((end + 1, range_end))
-                            .map_err(|_| Error::InsufficientSpace)?;
+                    if end == u16::MAX {
+                        break;
                     }
+                    // GATT 4.4.1: continue after the last group, including when
+                    // a response ends at a UUID-width change. Gaps are legal.
+                    start = end + 1;
                 }
                 res => {
                     trace!("[gatt client] response: {:?}", res);
@@ -1359,6 +1347,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             }
         }
 
+        self.remember_services(&result)?;
         Ok(result)
     }
 
@@ -1388,9 +1377,12 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                     return Err(Error::Att(code).into());
                 }
                 AttRsp::FindByTypeValue { mut it } => {
-                    let mut end: u16 = 0;
+                    let mut end = start - 1;
                     while let Some(res) = it.next() {
                         let (handle, e) = res?;
+                        if handle < start || handle <= end || e < handle {
+                            return Err(Error::UnexpectedGattResponse.into());
+                        }
                         end = e;
                         let svc = ServiceHandle {
                             start: handle,
@@ -1398,10 +1390,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             uuid: *uuid,
                         };
                         result.push(svc.clone()).map_err(|_| Error::InsufficientSpace)?;
-                        let mut known = self.known_services.borrow_mut();
-                        if !known.contains(&svc) {
-                            known.push(svc).map_err(|_| Error::InsufficientSpace)?;
-                        }
+                    }
+                    if end < start {
+                        return Err(Error::UnexpectedGattResponse.into());
                     }
                     if end == 0xFFFF {
                         break;
@@ -1415,7 +1406,46 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             }
         }
 
+        self.remember_services(&result)?;
         Ok(result)
+    }
+
+    fn remember_services(&self, services: &[ServiceHandle]) -> Result<(), Error> {
+        let mut known = self.known_services.borrow_mut();
+        let additional = services.iter().filter(|s| !known.contains(s)).count();
+        if additional > known.capacity() - known.len() {
+            return Err(Error::InsufficientSpace);
+        }
+        for service in services {
+            if !known.contains(service) {
+                known.push(service.clone()).map_err(|_| Error::InsufficientSpace)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn checked_declaration(
+        service: &ServiceHandle,
+        previous_value: u16,
+        handle: u16,
+        item: &[u8],
+    ) -> Result<CharacteristicDeclaration, Error> {
+        // GATT 3.3: declaration precedes value, then optional descriptors.
+        // Handles need not be consecutive, but definitions must not overlap.
+        if !matches!(item.len(), 5 | 19) {
+            return Err(Error::InvalidCharacteristicDeclarationData);
+        }
+        let declaration = CharacteristicDeclaration::try_from(item)?;
+        if service.start == 0
+            || handle <= service.start
+            || handle <= previous_value
+            || handle >= service.end
+            || declaration.value_handle <= handle
+            || declaration.value_handle > service.end
+        {
+            return Err(Error::InvalidCharacteristicDeclarationData);
+        }
+        Ok(declaration)
     }
 
     /// Discover all characteristics in a given service
@@ -1431,31 +1461,16 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             service.end,
             &CHARACTERISTIC.into(),
             |declaration_handle, item| {
-                if declaration_handle == 0xFFFF {
-                    err = Some(Error::Att(AttErrorCode::INVALID_HANDLE).into());
-                    return ControlFlow::Break(());
-                }
-
-                let expected_items_len = 5;
-                let item_len = item.len();
-
-                if item_len < expected_items_len {
-                    err = Some(
-                        Error::MalformedCharacteristicDeclaration {
-                            expected: expected_items_len,
-                            actual: item_len,
-                        }
-                        .into(),
-                    );
-                    return ControlFlow::Break(());
-                }
-
-                match CharacteristicDeclaration::try_from(item) {
+                let previous = characteristics.last().map_or(service.start, |row| row.handle);
+                match Self::checked_declaration(service, previous, declaration_handle, item) {
                     Ok(decl) => {
+                        if let Some(previous) = characteristics.last_mut() {
+                            previous.end_handle = declaration_handle - 1;
+                        }
                         if characteristics
                             .push(Characteristic {
                                 handle: decl.value_handle,
-                                end_handle: 0,
+                                end_handle: service.end,
                                 props: decl.props,
                                 cccd_handle: None,
                                 uuid: decl.uuid,
@@ -1481,12 +1496,12 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
             return Err(e);
         }
 
-        let mut iter = characteristics.iter_mut().peekable();
-        while let Some(characteristic) = iter.next() {
-            let end = iter.peek().map(|x| x.handle - 2).unwrap_or(service.end);
-            characteristic.end_handle = end;
-            if characteristic.props.has_cccd() {
-                characteristic.cccd_handle = match self.get_characteristic_cccd(characteristic.handle + 1, end).await {
+        for characteristic in &mut characteristics {
+            if characteristic.props.has_cccd() && characteristic.handle < characteristic.end_handle {
+                characteristic.cccd_handle = match self
+                    .get_characteristic_cccd(characteristic.handle + 1, characteristic.end_handle)
+                    .await
+                {
                     Ok(handle) => Some(handle),
                     Err(BleHostError::BleHost(Error::NotFound)) => None,
                     Err(err) => return Err(err),
@@ -1504,6 +1519,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         uuid: &Uuid,
     ) -> Result<Characteristic<T>, BleHostError<C::Error>> {
         let mut found: Option<(u16, CharacteristicProps)> = None;
+        let mut previous_value = service.start;
 
         trace!(
             "[characteristic_by_uuid] service start={}, end={}, uuid={:?}",
@@ -1521,22 +1537,13 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 service.end,
                 &CHARACTERISTIC.into(),
                 |declaration_handle, item| {
-                    let expected_items_len = 5;
-                    let item_len = item.len();
-
-                    if item_len < expected_items_len {
-                        return ControlFlow::Break(Err(Error::MalformedCharacteristicDeclaration {
-                            expected: expected_items_len,
-                            actual: item_len,
-                        }));
-                    }
-
-                    match CharacteristicDeclaration::try_from(item) {
+                    match Self::checked_declaration(service, previous_value, declaration_handle, item) {
                         Ok(decl) => {
+                            previous_value = decl.value_handle;
                             if found.is_some() {
                                 // We already found our match; this is the next declaration,
                                 // so we can determine end_handle.
-                                return ControlFlow::Break(Ok(declaration_handle));
+                                return ControlFlow::Break(Ok(declaration_handle - 1));
                             }
 
                             if *uuid == decl.uuid {
@@ -1544,7 +1551,7 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                             }
 
                             if decl.value_handle == 0xFFFF && found.is_some() {
-                                return ControlFlow::Break(Ok(declaration_handle));
+                                return ControlFlow::Break(Ok(service.end));
                             }
 
                             ControlFlow::Continue(())
@@ -1561,6 +1568,9 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
                 // If we broke early, the next declaration_handle gives us the end.
                 // If we exhausted the range, use service.end.
                 let cccd_handle: Option<u16> = if props.has_cccd() {
+                    if handle >= end {
+                        return Err(Error::NotFound.into());
+                    }
                     Some(self.get_characteristic_cccd(handle + 1, end).await?)
                 } else {
                     None
@@ -1677,25 +1687,29 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         &self,
         characteristic: &Characteristic<T>,
     ) -> Result<Vec<Descriptor<[u8]>, N>, BleHostError<C::Error>> {
-        let start = characteristic.handle + 1;
         let end = characteristic.end_handle;
-        if start > end {
+        if characteristic.handle >= end {
             return Ok(Vec::new());
         }
+        let start = characteristic.handle + 1;
         let mut result = Vec::new();
-        self.find_information(start, end, |handle, uuid| {
-            let desc = Descriptor {
-                handle,
-                uuid,
-                phantom: PhantomData,
-            };
-            if result.push(desc).is_err() {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .await?;
+        let overflow = self
+            .find_information(start, end, |handle, uuid| {
+                let desc = Descriptor {
+                    handle,
+                    uuid,
+                    phantom: PhantomData,
+                };
+                if result.push(desc).is_err() {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })
+            .await?;
+        if overflow.is_some() {
+            return Err(Error::InsufficientSpace.into());
+        }
         Ok(result)
     }
 
@@ -1707,8 +1721,11 @@ impl<'reference, C: Controller, P: PacketPool, const MAX_SERVICES: usize> GattCl
         characteristic: &Characteristic<T>,
         uuid: &Uuid,
     ) -> Result<Descriptor<DT>, BleHostError<C::Error>> {
-        let start = characteristic.handle + 1;
         let end = characteristic.end_handle;
+        if characteristic.handle >= end {
+            return Err(Error::NotFound.into());
+        }
+        let start = characteristic.handle + 1;
         self.find_information(start, end, |handle, desc_uuid| {
             if desc_uuid == *uuid {
                 ControlFlow::Break(Descriptor {

@@ -207,3 +207,28 @@ The failed-completion field table was additionally cross-checked in the official
 [Core 6.0 HCI text](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
 The locked bt-hci 0.10.1 LE envelope decoder rejects only a missing or unknown
 subevent byte; known event payload decoding remains separate.
+
+## Discovery handle boundaries (2026-10-19 hardware follow-up)
+
+Both primary-service queries now validate monotonic, nonzero, nonoverlapping
+ranges before atomically adding the completed result to the bounded service
+cache. All-service discovery advances from the last group end; a UUID-width
+change ends a response rather than skipping matching groups for later gap
+queries. Sparse handle numbering is legal.
+
+Both characteristic APIs share exact declaration-size and handle-order checks.
+The previous characteristic ends before the next declaration, including sparse
+value handles. Terminal value handle 0xFFFF never wraps descriptor requests.
+Bulk descriptor capacity exhaustion now returns InsufficientSpace instead of a
+false complete result. Probe services() and dashboard services_by_uuid()/
+characteristic_by_uuid() use the corrected shared client.
+
+Thirteen added wire-level regressions reproduce invalid ranges, overlapping
+definitions, crossed descriptor boundaries, terminal arithmetic and silent
+descriptor truncation, then cover valid sparse handles, mixed UUID widths,
+multi-page replies and service-cache atomicity, including merge overflow with an
+already populated cache and duplicate entries not consuming capacity. The photographed TV rejection
+still lacks its rejected tuple and is not attributed to these defects.
+
+References: Bluetooth Core 6.1 [GATT 3.1, 3.3, 4.4, 4.6 and 4.7](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/generic-attribute-profile--gatt-.html),
+[ATT 3.2.2, 3.4.3.4 and 3.4.4.10](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/attribute-protocol--att-.html).

@@ -70,6 +70,77 @@ fn probe() -> Probe {
 }
 
 #[test]
+fn v2_rejected_evidence_round_trips_and_legacy_decode_clears_it() {
+    let legacy = hex(include_str!("fixtures/ble-capture-v1-failure.hex").trim());
+    let mut decoder = Decoder::new();
+    let mut p = probe();
+    p.inspection.complete = false;
+    p.error = ProbeError::Discovery;
+    let mut failure = InspectionFailure::new(FailureStage::Characteristics, FailureReason::DeclarationLength);
+    failure.range = Some((1, 20));
+    failure.last_accepted = Some((2, 3));
+    failure.elapsed_ms = Some(119);
+    for length in [0, 1, 2, 3, 4, 5, 18, 19, 20, 255, 512, 65535] {
+        let bytes = vec![0xAB; length];
+        let rejected = RejectedDeclaration::from_wire(7, &bytes);
+        failure.rejected = Some(rejected);
+        p.failure = Some(failure);
+        let mut output = [0; 8192];
+        let size = encode(&p, build(), 60, &mut output).unwrap();
+        let view = decoder.decode(&output[..size]).unwrap();
+        assert_eq!(view.metadata().schema_version, 2);
+        assert_eq!(view.metadata().failure, Some(failure));
+        assert_eq!(rejected.length(), length as u16);
+        assert_eq!(rejected.bytes(), &bytes[..length.min(19)]);
+        assert_eq!(rejected.value_handle(), (length >= 3).then_some(0xABAB));
+        for end in 0..size {
+            assert!(decoder.decode(&output[..end]).is_err());
+        }
+        let view = decoder.decode(&legacy).unwrap();
+        assert_eq!(view.metadata().schema_version, 1);
+        let old = view.metadata().failure.unwrap();
+        assert_eq!(old.reason, FailureReason::DeclarationOrder);
+        assert_eq!(old.range, Some((1, 20)));
+        assert_eq!(old.last_accepted, Some((2, 3)));
+        assert_eq!(old.elapsed_ms, Some(119));
+        assert_eq!(old.rejected, None);
+        assert_eq!(view.counts(), [1; 4]);
+    }
+}
+
+#[test]
+fn rejected_evidence_export_preserves_raw_fields_and_actual_schema() {
+    use dashboard_host_validation::probe_captures::{decode_json, text_report};
+    let legacy = hex(include_str!("fixtures/ble-capture-v1-failure.hex").trim());
+    let old = decode_json(&legacy).unwrap();
+    assert_eq!(old["schema"], 1);
+    assert!(old["inspection"]["failure"]["rejected"].is_null());
+    let mut p = probe();
+    p.inspection.complete = false;
+    p.error = ProbeError::Discovery;
+    let mut f = InspectionFailure::new(FailureStage::Characteristics, FailureReason::DeclarationOrder);
+    f.range = Some((1, 20));
+    f.rejected = Some(RejectedDeclaration::from_wire(20, &[2, 21, 0, 0x25, 0x2A]));
+    p.failure = Some(f);
+    let mut bytes = [0; 8192];
+    let len = encode(&p, build(), 60, &mut bytes).unwrap();
+    let json = decode_json(&bytes[..len]).unwrap();
+    assert_eq!(json["schema"], 2);
+    let rejected = &json["inspection"]["failure"]["rejected"];
+    assert_eq!(rejected["declaration_handle"], 20);
+    assert_eq!(rejected["value_handle"], 21);
+    assert_eq!(rejected["raw_prefix_hex"], "021500252a");
+    assert_eq!(rejected["prefix_truncated"], false);
+    assert!(text_report(&json).contains("inspection.failure.rejected.raw_prefix_hex: \"021500252a\""));
+    // CRC-valid evidence still needs an appropriate failure context.
+    p.failure.as_mut().unwrap().stage = FailureStage::Mtu;
+    assert_eq!(encode(&p, build(), 60, &mut bytes), Err(CaptureError::InvalidState));
+    p.failure.as_mut().unwrap().stage = FailureStage::Characteristics;
+    p.failure.as_mut().unwrap().range = None;
+    assert_eq!(encode(&p, build(), 60, &mut bytes), Err(CaptureError::InvalidState));
+}
+
+#[test]
 fn selected_peer_capture_retains_raw_records_build_and_separate_packet_times() {
     let p = probe();
     let mut output = [0; 8192];
@@ -115,6 +186,7 @@ fn hex(text: &str) -> Vec<u8> {
         .map(|c| u8::from_str_radix(core::str::from_utf8(c).unwrap(), 16).unwrap())
         .collect()
 }
+
 fn fix_crc(bytes: &mut [u8]) {
     let crc = capture_store::crc32(&bytes[24..]);
     bytes[16..20].copy_from_slice(&crc.to_le_bytes());
@@ -140,7 +212,7 @@ fn passive_fixture_from_independent_python_struct_and_zlib_is_readable() {
 fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
     let mut output = [0; 8192];
     let size = encode(&probe(), build(), 60, &mut output).unwrap();
-    for (at, value) in [(8, 2), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
+    for (at, value) in [(8, 3), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
         let mut bytes = output[..size].to_vec();
         bytes[at] = value;
         fix_crc(&mut bytes);
@@ -295,6 +367,24 @@ fn all_model_capacities_fit_with_full_width_uuids_and_values() {
     bytes[12..14].copy_from_slice(&233u16.to_le_bytes());
     fix_crc(&mut bytes);
     assert!(decode(&bytes).is_err());
+    // Maximum retained records must still leave room for the longest failure
+    // prefix. This synthetic combination measures the bounded storage envelope.
+    p.inspection.complete = false;
+    p.error = ProbeError::Discovery;
+    let rejected = RejectedDeclaration::from_wire(0xFFFF, &[0xFF; 253]);
+    p.failure = Some(InspectionFailure {
+        stage: FailureStage::Characteristics,
+        reason: FailureReason::DeclarationLength,
+        range: Some((1, 0xFFFF)),
+        last_accepted: Some((0xFFFC, 0xFFFD)),
+        rejected: Some(rejected),
+        elapsed_ms: Some(u32::MAX),
+    });
+    let size = encode(&p, build(), u64::MAX, &mut output).unwrap();
+    assert!(size <= 8192);
+    let view = decode(&output[..size]).unwrap();
+    assert_eq!(view.counts(), [24, 64, 128, 16]);
+    assert_eq!(view.metadata().failure.unwrap().rejected, Some(rejected));
 }
 #[test]
 fn reusable_decoder_releases_buffer_and_replaces_all_prior_evidence() {

@@ -64,6 +64,7 @@ pub enum Record<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureMetadata {
+    pub schema_version: u16,
     pub build: BuildIdentity,
     pub captured_at_ms: u64,
     pub revision: u32,
@@ -98,6 +99,7 @@ impl CaptureMetadata {
     // Private parsing destination. Never published until all fields and record
     // relationships have been decoded and validated successfully.
     const EMPTY: Self = Self {
+        schema_version: 0,
         build: BuildIdentity {
             source_digest: [0; 32],
             cpu_hz: 0,
@@ -673,6 +675,12 @@ fn write_metadata(
         write_pair(w, f.range)?;
         write_pair(w, f.last_accepted)?;
         w.opt_u32(f.elapsed_ms)?;
+        w.bool(f.rejected.is_some())?;
+        if let Some(rejected) = f.rejected {
+            w.u16(rejected.handle)?;
+            w.u16(rejected.length())?;
+            w.bytes(rejected.bytes())?;
+        }
     }
     write_reason(w, p.failure_context.local_error)?;
     w.opt_u8(p.failure_context.disconnect_reason)?;
@@ -684,7 +692,9 @@ fn write_metadata(
 fn read_metadata<'a>(
     r: &mut Reader<'a>,
     m: &mut CaptureMetadata,
+    version: u16,
 ) -> Result<(), CaptureError> {
+    m.schema_version = version;
     m.build.source_digest.copy_from_slice(r.take(32)?);
     m.build.cpu_hz = r.u32()?;
     m.build.spi_hz = r.u32()?;
@@ -753,6 +763,16 @@ fn read_metadata<'a>(
             range: read_pair(r)?,
             last_accepted: read_pair(r)?,
             elapsed_ms: r.opt_u32()?,
+            rejected: if version >= 2 && r.bool()? {
+                let handle = r.u16()?;
+                let length = r.u16()?;
+                Some(
+                    RejectedDeclaration::from_prefix(handle, length, r.take(usize::from(length).min(19))?)
+                        .ok_or(CaptureError::InvalidData)?,
+                )
+            } else {
+                None
+            },
         })
     } else {
         None
@@ -885,7 +905,7 @@ fn encode_bytes(
         + probe.inspection.descriptors.len()
         + probe.inspection.values.len();
     w.bytes[..8].copy_from_slice(MAGIC);
-    w.bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+    w.bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
     w.bytes[10..12].copy_from_slice(&(total as u16).to_le_bytes());
     w.bytes[12..14].copy_from_slice(&(count as u16).to_le_bytes());
     w.bytes[14..16].copy_from_slice(&(metadata_len as u16).to_le_bytes());
@@ -1045,6 +1065,15 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
         || (m.cleanup_complete || m.disconnect_reason.is_some()) && m.ended_at_ms.is_none()
         || m.stages[1..].iter().any(|&complete| complete) && !m.stages[0]
         || (m.stages[2] || m.stages[3]) && !m.stages[1]
+        || m.failure.is_some_and(|f| {
+            f.rejected.is_some()
+                && (f.stage != FailureStage::Characteristics
+                    || f.range.is_none()
+                    || !matches!(
+                        f.reason,
+                        FailureReason::DeclarationLength | FailureReason::DeclarationOrder | FailureReason::ValueHandle
+                    ))
+        })
         || m.complete
             && (!m.stages.iter().all(|&complete| complete)
                 || m.error != ProbeError::None
@@ -1070,7 +1099,7 @@ pub fn check_header(
     if r.take(8)? != MAGIC {
         return Err(CaptureError::Magic);
     }
-    if r.u16()? != 1 {
+    if !matches!(r.u16()?, 1 | 2) {
         return Err(CaptureError::Version);
     }
     let total = usize::from(r.u16()?);
@@ -1102,7 +1131,7 @@ fn decode_into<'a>(
     let mut meta = Reader {
         bytes: r.take(metadata_len)?,
     };
-    read_metadata(&mut meta, metadata)?;
+    read_metadata(&mut meta, metadata, u16::from_le_bytes([bytes[8], bytes[9]]))?;
     let mut view = CaptureView {
         metadata,
         records: r.bytes,

@@ -113,7 +113,8 @@ warning LED. States below are in priority order; an error overrides activity.
 | LED | Meaning |
 | --- | --- |
 | Fast blinking red | Terminal radio/display/progress fault; watchdog recovery is pending |
-| Steady red | An error was recorded since the last two-second Y recovery; it stays red across navigation and successful retries |
+| Steady red | A probe, capacity, storage, USB, encoder, timing or watchdog error was recorded since recovery; overrides scan-only blinking |
+| Slow blinking red | Only malformed HCI scan or advertisement-data reports were recorded since recovery; scanning can continue |
 | Purple | A local capture directory/load/save/reset operation is pending, including one still finishing after leaving its page |
 | Steady blue | Scanning for advertisements |
 | Slow blinking blue | Starting, stopping scanning, connecting, inspecting, or disconnecting |
@@ -131,8 +132,11 @@ live peers/GATT and the volatile LED latch, preserving saved captures. A later
 error sets red again, including an outstanding storage operation that fails after
 recovery. A short Y press, successful retry, or saving the result does not clear
 red. Historical `lost`/`HCIbad` counters remain until reboot; old counter values
-alone do not relatch the LED. `Error:None` describes the current radio error and
-can coexist with red from an earlier failure or another subsystem.
+alone do not relatch the LED. With no current radio error, the status row says
+`Slow red: scan errors` or `Red: error latched` while the latch is set.
+An actual current radio error takes precedence in that row. Scan errors are
+global; the selected device is not automatically their source. A later probe or
+other error changes slow red to steady red until recovery.
 
 Recorded errors include rejected HCI/AD reports, report/catalogue capacity loss,
 GATT and allowed-read failures (including protected/unavailable values), invalid
@@ -143,7 +147,7 @@ not a defective device. Global scan errors are not attributed to the selected
 peer. Empty slots, normal cancellation, an encoder absent at startup, idle USB
 timeouts and USB reset/unplug cancellation do not themselves latch red.
 
-Blinking uses elapsed monotonic time: working blue has a 500 ms half-period;
+Blinking uses elapsed monotonic time: working blue and scan-only red have a 500 ms half-period;
 terminal red has a 125 ms half-period, sampled by the 50 ms supervisor. No display
 frame count controls it. A stalled supervisor cannot promise a visible blink.
 A terminal transport, display or stalled-owner fault stops watchdog feeding:
@@ -154,7 +158,27 @@ evidence; valid committed slots remain. Ordinary connection/discovery timeouts
 retain partial records and wait for input.
 
 See the [LED source review and validation](../validation/probe-led-status-2026-10-19.md)
+and [scan-only LED and discovery follow-up](../validation/probe-discovery-followup-2026-10-19.md),
 and [pending physical checks](../validation/pico2-dnuc-runbook.md#standalone-probe-captures-and-diagnostics).
+
+### Rejected characteristic evidence
+
+When the probe's application guard rejects a returned characteristic declaration, its failure pages retain
+the first rejected handle, original byte length and at most 19 bytes in wire
+order, alongside the query range and last accepted declaration/value handles.
+A five-byte declaration contains a 16-bit UUID; a nineteen-byte declaration
+contains a 128-bit UUID. Longer malformed values retain a labelled prefix.
+The displayed rejected value field is explicitly **unvalidated**, and is
+unavailable when fewer than three bytes arrived. No later descriptor or standard
+read is attempted after this rejection. Earlier valid records remain inspectable
+and saveable, including the rejection context in capture payload v2.
+Lower-layer decoding can fail before a tuple reaches that guard; those failures
+retain their available error context and leave rejected bytes absent.
+
+The photographed failure did not contain the rejected tuple. These additions
+enable a future diagnosis; the shared client repairs do not establish that the
+TV caused or will no longer exhibit that failure. HCI `0x16` describes local-host
+termination during cleanup, not the original declaration problem.
 
 ## Always-visible telemetry
 
@@ -422,6 +446,10 @@ Actual shared RGB565 renderer output, with **synthetic peers and values**.
 The header represents current synthetic running diagnostics; saved-page bodies
 contain frozen boot-relative evidence. None of these values are hardware
 measurements or observations of an actual adapter:
+
+| Scan-only error latch | Rejected declaration | Continued failure context |
+| --- | --- | --- |
+| ![Synthetic slow-red scan-error hint](../images/ble-probe/scan-latched-synthetic.png) | ![Synthetic rejected tuple, not a TV diagnosis](../images/ble-probe/rejected-declaration-synthetic.png) | ![Synthetic paginated failure context](../images/ble-probe/rejected-context-synthetic.png) |
 
 | Scanning | Paused photo view | Advertisement bytes |
 | --- | --- | --- |

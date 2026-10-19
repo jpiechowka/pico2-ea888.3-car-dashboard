@@ -15,6 +15,7 @@ use dashboard_core::discovery::{
     InventoryStage,
     Payload,
     ReadResult,
+    RejectedDeclaration,
     Service,
     Uuid as ProbeUuid,
     characteristic_from_wire,
@@ -111,7 +112,7 @@ pub async fn inventory(
     let mut reads_complete = true;
     let mut service_complete = [false; 24];
     // Each service appends one contiguous run, already validated in declaration
-    // order. Keep its indices even when mixed UUID widths reorder the services.
+    // order. Keep its indices independent of the service adapter's ordering.
     // Every endpoint is at most64; unvisited/empty services retain an empty run.
     let mut service_rows = [[0u8; 2]; 24];
     let mut rows: Vec<Characteristic, 64> = Vec::new();
@@ -140,7 +141,7 @@ pub async fn inventory(
                     let row = match characteristic_from_wire(start, end, previous_value, declaration, bytes) {
                         Ok(row) => row,
                         Err(reason) => {
-                            malformed = Some(reason);
+                            malformed = Some((reason, RejectedDeclaration::from_wire(declaration, bytes)));
                             return ControlFlow::Break(());
                         }
                     };
@@ -182,10 +183,11 @@ pub async fn inventory(
             failure.last_accepted = last_accepted;
             failure
         })?;
-        if let Some(reason) = malformed {
+        if let Some((reason, rejected)) = malformed {
             let mut failure = InspectionFailure::new(FailureStage::Characteristics, reason);
             failure.range = Some((start, end));
             failure.last_accepted = last_accepted;
+            failure.rejected = Some(rejected);
             failure.elapsed_ms = Some(query_elapsed_ms);
             return Err(failure);
         }

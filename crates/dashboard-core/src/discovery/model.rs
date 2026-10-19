@@ -89,6 +89,13 @@ pub enum Screen {
     List,
     Details,
 }
+/// Current hardware latch, separate from historical counters and saved evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorLatch {
+    None,
+    ScanOnly,
+    Other,
+}
 pub struct Probe {
     pub catalog: Catalog,
     pub inspection: Inspection,
@@ -97,6 +104,7 @@ pub struct Probe {
     pub screen: Screen,
     pub phase: RadioPhase,
     pub error: ProbeError,
+    pub error_latch: ErrorLatch,
     pub failure: Option<InspectionFailure>,
     pub failure_context: ConnectionFailureContext,
     pub request: Request,
@@ -119,6 +127,7 @@ impl Probe {
             screen: Screen::List,
             phase: RadioPhase::Starting,
             error: ProbeError::None,
+            error_latch: ErrorLatch::None,
             failure: None,
             failure_context: ConnectionFailureContext {
                 local_error: None,

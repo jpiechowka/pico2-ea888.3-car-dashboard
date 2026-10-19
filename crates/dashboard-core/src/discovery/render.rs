@@ -53,6 +53,16 @@ fn error_copy(error: ProbeError) -> &'static str {
         ProbeError::InvalidPeer => "InvalidPeer: Y to rescan",
     }
 }
+fn status_copy(probe: &Probe) -> &'static str {
+    if probe.error != ProbeError::None {
+        return error_copy(probe.error);
+    }
+    match probe.error_latch {
+        ErrorLatch::None => "Error:None",
+        ErrorLatch::ScanOnly => "Slow red: scan errors",
+        ErrorLatch::Other => "Red: error latched",
+    }
+}
 fn gatt_requested(probe: &Probe) -> bool {
     matches!(probe.request.action, Action::Inspect(peer) if probe.selected_device().is_some_and(|d| d.peer == peer))
 }
@@ -669,6 +679,7 @@ fn details(
         if let Some((decl, value)) = failure.last_accepted {
             emit.formatted(format_args!("Last accepted decl {decl:04X} / value {value:04X}"));
         }
+        rejected_details(failure.rejected, emit);
         if let Some(error) = probe.failure_context.local_error {
             if let Some(code) = error.code() {
                 emit.formatted(format_args!("Host ingress: {} 0x{code:02X}", error.label()));
@@ -683,6 +694,18 @@ fn details(
         emit.text("Partial records retained; Y returns to scan");
     }
     peer_details(probe, now, emit);
+    match probe.error_latch {
+        ErrorLatch::None => {}
+        ErrorLatch::ScanOnly => {
+            emit.text("LED slow red: scan report errors latched");
+            emit.text("Global scan evidence; not selected-peer failure");
+            emit.text("Hold Y 2s to clear latch and recover scan");
+        }
+        ErrorLatch::Other => {
+            emit.text("LED red: probe or other error latched");
+            emit.text("Hold Y 2s to clear latch and recover scan");
+        }
+    }
     if let Some(last) = probe.scan_diagnostics.last {
         let scan = probe.scan_diagnostics;
         emit.text("GLOBAL HCI SCAN ERRORS / since boot");
@@ -710,6 +733,24 @@ fn details(
             None => emit.text("Declared data length: missing header byte"),
         }
         emit.text("One record needs 10 + data length bytes");
+    }
+}
+fn rejected_details(
+    rejected: Option<RejectedDeclaration>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    if let Some(r) = rejected {
+        emit.formatted(format_args!("Rejected decl {:04X} / {} bytes", r.handle, r.length()));
+        match r.value_handle() {
+            Some(v) => emit.formatted(format_args!("Rejected value field: {v:04X} (unvalidated)")),
+            None => emit.text("Rejected value field: missing"),
+        }
+        emit.text(if usize::from(r.length()) > r.bytes().len() {
+            "Rejected RAW HEX prefix (first 19 bytes)"
+        } else {
+            "Rejected RAW HEX (wire order)"
+        });
+        hex(r.bytes(), emit);
     }
 }
 /// Detail page count, independent of the current screen and page index.
@@ -774,6 +815,7 @@ fn saved_details(
             if let Some((a, b)) = failure.last_accepted {
                 emit.formatted(format_args!("Last accepted decl {a:04X} / value {b:04X}"));
             }
+            rejected_details(failure.rejected, emit);
         }
         if let Some(reason) = m.failure_context.local_error {
             reason_line("Host ingress", reason, emit);
@@ -1050,10 +1092,14 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         61,
         &line(format_args!(
             "{} HCIbad:{}",
-            error_copy(probe.error),
+            status_copy(probe),
             probe.malformed_reports
         )),
-        if probe.error == ProbeError::None { MUTED } else { RED },
+        if probe.error == ProbeError::None && probe.error_latch == ErrorLatch::None {
+            MUTED
+        } else {
+            RED
+        },
     )?;
     if probe.screen == Screen::List {
         let devices = probe.catalog.devices();
@@ -1485,6 +1531,44 @@ mod tests {
         details(p, 0, &mut EvidenceLines::new(Some(&mut |s| lines.push(s.into()))));
         lines
     }
+
+    #[test]
+    fn rejected_wire_evidence_is_bounded_explicit_and_paginated() {
+        for length in [0, 1, 2, 3, 5, 19, 20, 253, 65535] {
+            let raw = std::vec![0xAB; length];
+            let rejected = RejectedDeclaration::from_wire(0xFFFF, &raw);
+            let mut rows = std::vec::Vec::<std::string::String>::new();
+            rejected_details(
+                Some(rejected),
+                &mut EvidenceLines::new(Some(&mut |s| rows.push(s.into()))),
+            );
+            assert_eq!(rows[0], std::format!("Rejected decl FFFF / {length} bytes"));
+            assert_eq!(
+                rows[1],
+                if length >= 3 {
+                    "Rejected value field: ABAB (unvalidated)"
+                } else {
+                    "Rejected value field: missing"
+                }
+            );
+            assert_eq!(rows.len(), 3 + length.min(19).div_ceil(16));
+            assert!(rows.iter().all(|s| s.is_ascii() && s.len() * 6 <= 300));
+            let mut counted = EvidenceLines::new(None);
+            rejected_details(Some(rejected), &mut counted);
+            assert_eq!(counted.count, rows.len());
+        }
+        let mut p = Probe::new();
+        p.error_latch = ErrorLatch::ScanOnly;
+        assert_eq!(status_copy(&p), "Slow red: scan errors");
+        p.error = ProbeError::Discovery;
+        assert_eq!(status_copy(&p), "Discovery: failed; Y back");
+        p.error = ProbeError::None;
+        p.error_latch = ErrorLatch::Other;
+        assert_eq!(status_copy(&p), "Red: error latched");
+        p.error_latch = ErrorLatch::None;
+        p.malformed_reports = u32::MAX;
+        assert_eq!(status_copy(&p), "Error:None");
+    }
     fn probe() -> Probe {
         let mut p = Probe::new();
         p.catalog.observe(Advertisement::new(
@@ -1654,6 +1738,7 @@ mod tests {
                     reason,
                     range: Some((1, 0xFFFF)),
                     last_accepted: Some((0xFFFE, 0xFFFF)),
+                    rejected: None,
                     elapsed_ms: Some(u32::MAX),
                 });
                 let l = lines(&p);

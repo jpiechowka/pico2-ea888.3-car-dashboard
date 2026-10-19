@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use dashboard_core::discovery::{
     Action,
     AdFields,
+    ErrorLatch,
     Event,
     InfoValue,
     Input,
@@ -21,6 +22,7 @@ use dashboard_core::discovery::{
 const CLEAN: u32 = 1 << 4;
 const CAPTURE: u32 = 1 << 5;
 const ERRORS: u32 = 0xFFFF_FF00;
+const SCAN_ERRORS: u32 = Fault::Scan as u32 | Fault::Advertisement as u32;
 
 #[derive(Clone, Copy)]
 #[repr(u32)]
@@ -249,8 +251,11 @@ impl Status {
         if terminal_fault || word & 15 == RadioPhase::Fault as u32 {
             return [now_ms % 250 >= 125, true, true];
         }
-        if word & ERRORS != 0 {
+        if word & ERRORS & !SCAN_ERRORS != 0 {
             return [false, true, true];
+        }
+        if word & SCAN_ERRORS != 0 {
+            return [now_ms % 1000 >= 500, true, true];
         }
         if word & CAPTURE != 0 {
             return [false, true, false];
@@ -266,6 +271,15 @@ impl Status {
             };
         }
         [true, true, now_ms % 1000 >= 500]
+    }
+
+    /// UI snapshot of the same latch bits; cumulative counters cannot relatch it.
+    pub fn error_latch(&self) -> ErrorLatch {
+        match self.word.load(Ordering::Relaxed) & ERRORS {
+            0 => ErrorLatch::None,
+            bits if bits & !SCAN_ERRORS == 0 => ErrorLatch::ScanOnly,
+            _ => ErrorLatch::Other,
+        }
     }
 }
 

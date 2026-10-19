@@ -1,4 +1,4 @@
-//! Small, owned failure evidence. No peer payloads, heap strings or remote-handle guesses.
+//! Small, owned failure evidence with a bounded rejected declaration prefix.
 use super::{Characteristic, ProbeError, Uuid};
 
 /// Local ingress failure and controller-confirmed termination are separate evidence.
@@ -107,6 +107,50 @@ impl FailureReason {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RejectedDeclaration {
+    pub handle: u16,
+    length: u16,
+    prefix: [u8; 19],
+}
+impl RejectedDeclaration {
+    /// ATT declaration values fit u16. Longer synthetic inputs saturate the length.
+    pub fn from_wire(
+        handle: u16,
+        bytes: &[u8],
+    ) -> Self {
+        let mut prefix = [0; 19];
+        let count = bytes.len().min(prefix.len());
+        prefix[..count].copy_from_slice(&bytes[..count]);
+        Self {
+            handle,
+            length: bytes.len().try_into().unwrap_or(u16::MAX),
+            prefix,
+        }
+    }
+
+    pub const fn length(&self) -> u16 { self.length }
+
+    pub fn bytes(&self) -> &[u8] { &self.prefix[..usize::from(self.length).min(self.prefix.len())] }
+
+    pub fn value_handle(&self) -> Option<u16> {
+        (self.length >= 3).then(|| u16::from_le_bytes([self.prefix[1], self.prefix[2]]))
+    }
+
+    pub(crate) fn from_prefix(
+        handle: u16,
+        length: u16,
+        bytes: &[u8],
+    ) -> Option<Self> {
+        if bytes.len() != usize::from(length).min(19) {
+            return None;
+        }
+        let mut value = Self::from_wire(handle, bytes);
+        value.length = length;
+        Some(value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InspectionFailure {
     pub stage: FailureStage,
     pub reason: FailureReason,
@@ -114,6 +158,8 @@ pub struct InspectionFailure {
     pub range: Option<(u16, u16)>,
     /// Last accepted declaration/value in this service, NOT the failed request cursor.
     pub last_accepted: Option<(u16, u16)>,
+    /// First tuple rejected by the application guard; absent for lower-layer errors.
+    pub rejected: Option<RejectedDeclaration>,
     pub elapsed_ms: Option<u32>,
 }
 impl InspectionFailure {
@@ -126,6 +172,7 @@ impl InspectionFailure {
             reason,
             range: None,
             last_accepted: None,
+            rejected: None,
             elapsed_ms: None,
         }
     }

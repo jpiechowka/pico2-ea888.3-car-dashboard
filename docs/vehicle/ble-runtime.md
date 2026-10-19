@@ -87,6 +87,18 @@ the retained buffer bounds, compatibility constraints and reviewed repairs.
 
 ## Stream, deadlines and connection lifetime
 
+The shared ATT client validates nonzero, ordered, nonoverlapping service ranges
+and characteristic declaration/value bounds before the dashboard selects adapter
+endpoints. Mixed 16/128-bit service UUID responses advance from the last group's
+inclusive end; legal gaps do not trigger backward queries. A characteristic's
+descriptor range stops before the next declaration, including sparse handles.
+Terminal handle `FFFF` cannot wrap a descriptor query to zero. Capacity exhaustion
+is an explicit failure; incomplete service discovery does not publish new cached
+services. Both security-enabled dashboard and no-pairing probe feature graphs
+have wire-level regression coverage in the
+[discovery follow-up](../validation/probe-discovery-followup-2026-10-19.md).
+These checks do not qualify an adapter or add permitted vehicle traffic.
+
 GATT writes use at most 20 bytes, covering the minimum ATT MTU 23. Discovery
 requires Notify and prefers Write with response. Only MC+ may use Write without
 response when that is its advertised write capability; CX and TestPeer require
