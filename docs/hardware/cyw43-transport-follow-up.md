@@ -4,6 +4,11 @@ Review dates: 2026-10-19 to 2026-10-20. Applies to the Pico 2 W standalone BLE p
 dashboard's `ble-obd` radio owner. This follows the
 [discovery review](../validation/probe-discovery-followup-2026-10-19.md).
 
+A later [light capture and termination review](../validation/probe-termination-followup-2026-10-20.md)
+observed zero global scan errors in that run, but an LL response timeout after
+completed GATT work. Reboot cleared the owner's red LED while the TV stayed
+missing. This does not establish a transport cure or the absent TV's cause.
+
 ## What the hardware check established
 
 The owner reported that slot 1 could be saved, unplugged and reopened. A subsequent

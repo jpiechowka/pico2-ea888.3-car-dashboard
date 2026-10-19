@@ -144,6 +144,19 @@ impl Probe {
 
     pub fn selected_device(&self) -> Option<&Device> { self.catalog.devices().get(self.selected) }
 
+    fn record_failure(
+        &mut self,
+        failure: InspectionFailure,
+    ) {
+        // Preserve the operation's first cause through later teardown evidence.
+        if self.failure.is_none() {
+            self.failure = Some(failure);
+            self.error = failure.error();
+            self.page = 0;
+        }
+        self.inspection.complete = false;
+    }
+
     fn issue(
         &mut self,
         action: Action,
@@ -267,23 +280,25 @@ impl Probe {
                 }
             }
             Event::Failure { failure, .. } if matches!(self.request.action, Action::Inspect(_)) => {
-                // Retain the first inspection failure through disconnect/cleanup.
-                if self.failure.is_none() {
-                    self.failure = Some(failure);
-                    self.error = failure.error();
-                    self.page = 0;
-                }
-                self.inspection.complete = false;
+                self.record_failure(failure);
             }
             Event::Item { item, .. } if matches!(self.request.action, Action::Inspect(_)) => {
                 self.inspection.accept(item)
             }
-            Event::FailureContext { context, .. }
-                if self.failure.is_some() && matches!(self.request.action, Action::Inspect(_)) =>
-            {
+            Event::FailureContext { context, .. } if matches!(self.request.action, Action::Inspect(_)) => {
                 self.failure_context.local_error = self.failure_context.local_error.or(context.local_error);
                 self.failure_context.disconnect_reason =
                     self.failure_context.disconnect_reason.or(context.disconnect_reason);
+                // The receive fault can arrive after the inventory's last await.
+                // Even a normal local-host reason cannot hide that failure.
+                if let Some(reason) = context.local_error.or_else(|| {
+                    context
+                        .disconnect_reason
+                        .filter(|&code| !crate::ble::termination::normal_reason(Some(code)))
+                        .map(FailureReason::DisconnectCode)
+                }) {
+                    self.record_failure(InspectionFailure::new(FailureStage::ConnectionEvents, reason));
+                }
             }
             Event::Complete { limited, .. } if matches!(self.request.action, Action::Inspect(_)) => {
                 if limited {
@@ -305,6 +320,18 @@ impl Probe {
                 self.inspection.ended_at_ms = Some(at_ms);
                 self.inspection.cleanup_complete = cleanup_complete;
                 self.inspection.disconnect_reason = disconnect_reason;
+                self.failure_context.disconnect_reason = self.failure_context.disconnect_reason.or(disconnect_reason);
+                // No reason is expected for a failed/canceled create without a
+                // link. A connected attempt requires terminal reason evidence.
+                if cleanup_complete
+                    && (self.inspection.link.is_some() || disconnect_reason.is_some())
+                    && !crate::ble::termination::normal_reason(disconnect_reason)
+                {
+                    self.record_failure(InspectionFailure::new(
+                        FailureStage::ConnectionEvents,
+                        disconnect_reason.map_or(FailureReason::Disconnected, FailureReason::DisconnectCode),
+                    ));
+                }
             }
             _ => {}
         }

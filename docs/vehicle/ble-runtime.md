@@ -181,6 +181,16 @@ maintenance command and acknowledges resume before new bus work. This is a bus
 barrier, not a claim that the dongle or controller FIFO was flushed. Tests must
 cover pending connects, writes, notifications, security and teardown at the pause.
 
+After acknowledged disconnect, maintenance suppresses admission cancellation's
+generic `Transport` only with controller reason `0x13`/`0x16` and no retained
+local receive fault. Specific operation faults survive, as do missing/abnormal
+reasons and ingress failures. An active session's unexpected disconnect remains
+a fault even with a normal reason. A once-per-connection log records
+`BLE <epoch> END <hex-or-??> RX<0-or-1>`; `RX1` means a retained local receive
+fault. Unknown reason is distinct from zero. The bounded log ring can evict old
+records; this is not a persistent event trace. See the
+[shared termination review](../validation/probe-termination-followup-2026-10-20.md).
+
 Even disabled BLE retains power/CS ownership and participates in the barrier.
 Enabled startup gets a 10 s software progress budget; after startup, 500 ms without
 a completed radio boundary latches failure. The existing maintenance watchdog

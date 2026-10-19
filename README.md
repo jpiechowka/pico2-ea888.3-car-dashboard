@@ -370,6 +370,9 @@ shared dashboard rules. They prepare a [future Studio import and connection draf
 without extra Pico storage or BLE traffic. Studio import is not implemented yet;
 unknown adapter protocols/authentication stay unresolved and no profile is enabled.
 Existing saved binaries gain these fields through offline `decode`.
+Exports also add a versioned termination assessment. An old capture can retain
+its original `complete: true` while the assessment flags an abnormal disconnect;
+the captured bytes and historical LED/error fields are never rewritten.
 
 Every probe page keeps **current/average FPS, C0/C1 work percentages, static RAM
 and sampled stack use** visible above the evidence. FPS counts successful display
@@ -397,7 +400,7 @@ landscape. Its RGB status is:
 | Colour | Probe state |
 | --- | --- |
 | Blue | Scanning; slow blinking blue means startup/connection/inspection/cleanup |
-| Green | Current live probe completed cleanly, including allowed reads and disconnect cleanup |
+| Green | Current live probe completed cleanly, including allowed reads, acknowledged normal termination and no local receive fault |
 | Amber | Paused without clean live success, or browsing saved captures |
 | Purple | A local capture operation is pending |
 | Slow blinking red | Only malformed scan/advertisement reports recorded since recovery; scanning may continue |
@@ -410,6 +413,11 @@ no current radio error, naming a steady-red source such as `Red: encoder I2C`.
 Details retain the first recorded source and all fault bits; short X opens these
 even without a discovered peer. Historical `HCIbad` counts alone do not relatch it.
 Scan/report loss, protected/failed reads and storage/USB errors also count.
+Clean termination requires controller reason `0x13` or `0x16`; a missing reason
+or a timeout such as `0x22` cannot qualify. The [termination follow-up](docs/validation/probe-termination-followup-2026-10-20.md)
+fixes false green after completed inventory and preserves abnormal disconnects
+during dashboard maintenance. These are reporting fixes; the first-boot red
+observation and missing TV remain unqualified hardware questions.
 Green means completed and disconnected,
 not an open connection or vehicle/adapter qualification. Terminal resets lose
 unsaved RAM evidence and relatch red after a watchdog timeout. Saved slots are

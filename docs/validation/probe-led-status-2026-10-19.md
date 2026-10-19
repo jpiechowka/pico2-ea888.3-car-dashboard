@@ -4,6 +4,11 @@ Date: 2026-10-19. Scope: the standalone probe's PIM715 status LED. The dashboard
 configurable warning LED, BLE requests, capture format, display geometry, clocks,
 watchdog thresholds and flash maintenance protocol are unchanged.
 
+The later [termination follow-up](probe-termination-followup-2026-10-20.md)
+repairs a missing green guard found in saved hardware evidence: cleanup
+acknowledgment alone did not qualify its terminal reason or late receive faults.
+The measurements below describe this earlier delivery.
+
 ## Behavior and findings
 
 The old supervisor used radio phase alone: scanning was green, paused was amber,

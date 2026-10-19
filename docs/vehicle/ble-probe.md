@@ -118,7 +118,7 @@ warning LED. States below are in priority order; an error overrides activity.
 | Purple | A local capture directory/load/save/reset operation is pending, including one still finishing after leaving its page |
 | Steady blue | Scanning for advertisements |
 | Slow blinking blue | Starting, stopping scanning, connecting, inspecting, or disconnecting |
-| Steady green | The current live inspection finished all four inventory stages, retained its negotiated link/timing evidence, completed disconnect cleanup, and had no recorded errors, rejected/truncated records or failed/invalid-length standard reads |
+| Steady green | The current live inspection finished all four inventory stages, retained its negotiated link/timing evidence, acknowledged normal disconnect (`0x13`/`0x16`), and had no local receive fault, recorded errors, rejected/truncated records or failed/invalid-length standard reads |
 | Amber | Paused without that clean live result, or browsing saved slots/evidence |
 
 **Green means the probe finished cleanly and disconnected.** It does not mean a
@@ -126,6 +126,15 @@ connection remains open, every possible field was present, proprietary access
 works, or the adapter/vehicle is healthy. An absent optional readable field is
 not a read failure. Opening an old successful capture never creates live green.
 Returning to scanning shows blue unless the error latch is still set.
+
+Cleanup acknowledgment establishes that the connection ended. Its terminal
+reason is checked separately: only remote-user `0x13` or local-host `0x16` may
+qualify with otherwise complete work. A timeout such as `0x22`, another reason,
+or missing reason on a connected attempt cannot qualify. A receive failure
+retained by the host also prevents green, even if inventory finished before it
+arrived. Live/saved link pages show the code and label; an older capture keeps
+its original completion flag and gains a separate termination warning.
+See the [hardware evidence and shared fix](../validation/probe-termination-followup-2026-10-20.md).
 
 **Hold Y for two seconds to acknowledge red and recover scanning.** This clears
 live peers/GATT and the volatile LED latch, preserving saved captures. A later
@@ -304,8 +313,10 @@ Disconnecting can originate locally or remotely; a code-less disconnect does not
 identify which side caused it. Some malformed ingress is rejected by the lower
 host and closes the connection before the app can see the original decode error.
 The retained ingress row can explain this path. The terminal reason may arrive
-during cleanup; it enriches the evidence without replacing the original stage or
-moving the selected page. A reason caused by deliberate cleanup does not establish
+during cleanup. With an existing failure it enriches evidence without replacing
+the original stage or moving the selected page. Otherwise an abnormal terminal
+or local receive failure opens the first failure page, even after inventory ended.
+A reason caused by deliberate cleanup does not establish
 the original remote cause. Failed controller disconnect status faults the host
 instead of falsely admitting terminal cleanup.
 
@@ -480,13 +491,13 @@ measurements or observations of an actual adapter:
 | --- | --- | --- |
 | ![Synthetic packet decoding and scan response](../images/ble-probe/details-1-synthetic.png) | ![Synthetic manufacturer/service data and GATT summary](../images/ble-probe/details-2-synthetic.png) | ![Synthetic negotiated link and stage evidence](../images/ble-probe/details-3-synthetic.png) |
 
-| Remaining stages / cleanup / services | Characteristics | Descriptor / standard read |
+| Remaining stages / cleanup / services | Services / characteristics | Characteristics / descriptor |
 | --- | --- | --- |
-| ![Synthetic stage completion and services](../images/ble-probe/details-4-synthetic.png) | ![Synthetic characteristic inventory](../images/ble-probe/details-5-synthetic.png) | ![Synthetic descriptor and standard read](../images/ble-probe/details-6-synthetic.png) |
+| ![Synthetic stage completion and services](../images/ble-probe/details-4-synthetic.png) | ![Synthetic service and characteristic inventory](../images/ble-probe/details-5-synthetic.png) | ![Synthetic characteristic and descriptor inventory](../images/ble-probe/details-6-synthetic.png) |
 
-| Raw standard read / ATT 05 | Database hash / LED ledger |
+| Raw standard read | ATT 05 / database hash / LED ledger |
 | --- | --- |
-| ![Synthetic raw bytes and exact ATT failure](../images/ble-probe/details-7-synthetic.png) | ![Synthetic hash and global fault ledger](../images/ble-probe/details-8-synthetic.png) |
+| ![Synthetic standard read and raw bytes](../images/ble-probe/details-7-synthetic.png) | ![Synthetic exact ATT failure, hash and global ledger heading](../images/ble-probe/details-8-synthetic.png) |
 
 | Four slots | Confirm replacement | Confirm destructive Reset |
 | --- | --- | --- |
@@ -496,13 +507,13 @@ measurements or observations of an actual adapter:
 | --- | --- | --- |
 | ![Synthetic save in progress](../images/ble-probe/saving-synthetic.png) | ![Synthetic storage error](../images/ble-probe/storage-error-synthetic.png) | ![Synthetic supported copy with explicit reset required](../images/ble-probe/blocked-save-synthetic.png) |
 
-| Saved identity | Saved link / stages | Saved descriptor / standard read |
+| Saved identity | Saved link / stages | Saved characteristics / descriptor |
 | --- | --- | --- |
-| ![Frozen synthetic selected identity and latch](../images/ble-probe/saved-0-synthetic.png) | ![Frozen synthetic link and stage evidence](../images/ble-probe/saved-4-synthetic.png) | ![Frozen synthetic descriptor and read](../images/ble-probe/saved-7-synthetic.png) |
+| ![Frozen synthetic selected identity and latch](../images/ble-probe/saved-0-synthetic.png) | ![Frozen synthetic link and stage evidence](../images/ble-probe/saved-4-synthetic.png) | ![Frozen synthetic characteristics and descriptor](../images/ble-probe/saved-7-synthetic.png) |
 
 | Saved raw bytes / ATT 05 | Saved configured clocks / source digest |
 | --- | --- |
-| ![Frozen synthetic raw bytes and exact ATT failure](../images/ble-probe/saved-8-synthetic.png) | ![Frozen synthetic producer identity](../images/ble-probe/saved-10-synthetic.png) |
+| ![Frozen synthetic raw bytes and exact ATT failure](../images/ble-probe/saved-9-synthetic.png) | ![Frozen synthetic producer identity](../images/ble-probe/saved-10-synthetic.png) |
 
 | Failure stage and retained context | Global scan errors without a peer |
 | --- | --- |
@@ -512,13 +523,17 @@ measurements or observations of an actual adapter:
 | --- | --- |
 | ![Synthetic MTU failure with independent host and HCI reasons](../images/ble-probe/mtu-failure-synthetic.png) | ![Synthetic HCI report lengths](../images/ble-probe/scan-errors-lengths-synthetic.png) |
 
+| Live terminal failure | Historical saved completion with abnormal termination |
+| --- | --- |
+| ![Synthetic LL timeout retained as a failure](../images/ble-probe/termination-failure-synthetic.png) | ![Synthetic saved cleanup acknowledgment with separate timeout warning](../images/ble-probe/saved-abnormal-termination-synthetic.png) |
+
 Regenerate the lossless RGB captures from `host/`:
 
 ```text
 cargo run --locked --example ble_probe_gallery -- target/ble-probe-gallery
 ```
 
-The generator writes 52 PPM files. To update the PNG documentation copies, use Python
+The generator writes 54 PPM files. To update the PNG documentation copies, use Python
 with Pillow installed, from the same `host/` directory:
 
 ```python
@@ -546,6 +561,10 @@ owning hardware are not timeout-cancelled. Separate input/status/report queues
 and bounded drain counts prevent an advertising flood from starving controls.
 Request generations reject late results; scan stop and terminal connection
 cleanup precede any new operation. ATT timeout abandons the entire connection.
+Cleanup snapshots retained local receive and controller reason evidence after
+the wait, publishes it before the end event, and keeps the first operation
+failure. An acknowledged abnormal termination stays saveable and latches red;
+it does not falsely report an unacknowledged cleanup or discard the inventory.
 Host-runner failure retains the CYW owner while recovery resets the device.
 
 The shared progress monitor checks input/encoder/render/transfer work; radio
@@ -577,6 +596,10 @@ overflow/drain and slot reuse check independent retained evidence. The productio
 session supervisor is tested with pending startup/inventory, simultaneous errors,
 external cancellation, event completion and successful completion, including
 dropping losing futures before cleanup. Stale context cannot cross generations.
+Termination-policy tests cover all 256 reason bytes plus missing evidence,
+receive faults arriving after completed inventory, first-cause retention,
+inconsistent context, normal completion and recovery. The shared dashboard
+policy preserves abnormal and specific operation faults during maintenance.
 A deterministic 66,560-input ATT decoder sweep checks every opcode at lengths
 0 through 64 with four seeded byte patterns and exhausts accepted iterators.
 Explicit valid request families, empty values and 16/128-bit UUID cases check

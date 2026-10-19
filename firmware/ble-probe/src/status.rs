@@ -283,6 +283,12 @@ fn clean_probe(model: &Probe) -> bool {
         && model.failure.is_none()
         && i.complete
         && i.cleanup_complete
+        && dashboard_core::ble::termination::normal_reason(i.disconnect_reason)
+        && model.failure_context.local_error.is_none()
+        && model
+            .failure_context
+            .disconnect_reason
+            .is_none_or(|code| Some(code) == i.disconnect_reason)
         && i.stages.iter().all(|&done| done)
         && i.omitted == 0
         && i.malformed == 0

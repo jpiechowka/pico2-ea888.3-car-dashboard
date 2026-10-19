@@ -33,8 +33,11 @@ mark them passed. Image installation needs current flash authorization.
 
 The [2026-10-19 slot-1 follow-up](../hardware/cyw43-transport-follow-up.md)
 records one owner-observed power-off/reopen and a successful normal Windows USB
-export. Other rows remain unqualified. The new 2.5 MHz radio setting and v3
-fault evidence need a new authorized image and hardware run.
+export. The [2026-10-20 light capture](probe-termination-followup-2026-10-20.md)
+adds a retrieved v3 slot at configured 2.5 MHz with zero global scan errors in
+that run, completed inventory and abnormal termination `0x22`. The old green
+result was incorrect. Other rows remain unqualified; the termination reporting
+repair requires a new authorized image and hardware run.
 
 | Check | Required observation/evidence |
 | --- | --- |
@@ -44,7 +47,9 @@ fault evidence need a new authorized image and hardware run.
 | Evidence identity | Select peer A, inspect, then save; confirm address/type, packet timestamps, handles and failure state match that attempt. Scan-list capture is a fresh passive view; details capture retains the current inspection. Old advertisement age must not erase GATT evidence. |
 | Four slots | Save each slot, open/page it, cancel an overwrite, let confirmation expire, then confirm replacement. Only the selected slot changes and its generation advances. Busy/error state must remain reachable and recoverable. |
 | Partial evidence | Use a controlled peer that denies a standard read or disconnects. Preserve exact available error, accepted prefix, unfinished stage flags and cleanup outcome; do not relabel it complete. |
-| Probe LED activity | With no recorded errors, verify blue scanning, slow blue blink while inspecting/cleaning up, green only after clean live completion and cleanup, amber paused/browsing, and purple during local capture work. Record colour/polarity against the [LED contract](../vehicle/ble-probe.md#rgb-status-and-recovery). |
+| Probe LED activity | With no recorded errors, verify blue scanning, slow blue blink while inspecting/cleaning up, green only after clean live completion and acknowledged normal `0x13`/`0x16` termination without a local receive fault, amber paused/browsing, and purple during local capture work. Record colour/polarity against the [LED contract](../vehicle/ble-probe.md#rgb-status-and-recovery). |
+| Terminal reason and late faults | On a controlled peer, finish inventory then terminate abnormally or inject a local receive fault. Compare live failure, acknowledged cleanup, retained inventory and exported reason/context. Red must remain latched; a normal cleanup code cannot erase an earlier fault. Older saved success flags must remain unchanged alongside the separate termination warning/assessment. |
+| First-boot red / missing peer | If red appears with `HCIbad:0`, photograph the first/all LED fault details before Y or reboot; save to an empty slot when a selected peer is available. Record cold boot vs watchdog/reset and power/encoder state. For an absent TV/adapter, compare a separate scanner and the peer's power/app connection state; a reboot clearing red does not establish advertising recovery. |
 | Probe LED error latch | Use controlled malformed-report fixtures: scan-only errors must slow-blink red at 1 Hz and show the scoped latch hint. A denied read, probe, capacity, storage or USB failure must override with steady red. Red must survive navigation and a successful retry. Hold Y 2 s: clear live evidence/latch and preserve slots. A new failure must relatch, even after counters saturate; historical counters alone must not. |
 | First/all fault evidence | Before Y recovery, compare the header source with the first-recorded source and full bit/name list. A scan-first plus later encoder fault must be steady red while preserving scan as first. With no peer, short X must open global fault pages, but Click/X cannot inspect. V3 saves freeze the mask/first/radio rate; legacy v1/v2 mark them unavailable. |
 | Conservative radio clock | Confirm configured 2.5 MHz at stock/280 CPU, startup within existing deadlines, sustained scan/notification progress and flash-maintenance acknowledgment. Compare repeated good/bad attempts and queue losses; no raw-byte repair or validation bypass. Configured clocks do not replace physical measurements. |

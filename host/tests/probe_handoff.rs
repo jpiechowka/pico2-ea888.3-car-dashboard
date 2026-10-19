@@ -329,4 +329,100 @@ fn advertisement_only_handoff_cannot_become_a_completed_connection_recipe() {
     assert_eq!(v["connection_handoff"]["endpoints"], json!([]));
     assert_eq!(v["connection_handoff"]["enabled"], false);
     assert!(v["connection_handoff"]["profile"].is_null());
+    assert_eq!(v["inspection"]["termination_assessment"]["status"], "not_observed");
+}
+
+#[test]
+fn old_complete_flag_does_not_suppress_derived_abnormal_termination_assessment() {
+    let mut p = base();
+    service(&mut p, 1, 5, uuid(0x1800));
+    characteristic(&mut p, 1, 2, 2, uuid(0x2A00));
+    p.inspection.link = Some(LinkInfo {
+        connected_at_ms: 3,
+        connect_elapsed_ms: 1,
+        interval_us: 30_000,
+        latency: 0,
+        supervision_timeout_us: 4_000_000,
+        att_mtu: Some(23),
+    });
+    p.inspection.stages = [true; 4];
+    p.inspection.complete = true;
+    p.inspection.ended_at_ms = Some(50);
+    p.inspection.cleanup_complete = true;
+    p.inspection.disconnect_reason = Some(0x22);
+    let original = bytes(&p);
+    let v = decode_json(&original).unwrap();
+    assert_eq!(v["inspection"]["complete"], true, "retain the old firmware's raw claim");
+    assert_eq!(v["inspection"]["disconnect_reason"], 34);
+    assert!(v["inspection"]["failure"].is_null());
+    assert_eq!(v["led_latch"]["mask"], 0, "do not invent historical latch events");
+    assert_eq!(v["connection_handoff"]["inventory_complete"], true);
+    assert_eq!(v["inspection"]["termination_assessment"]["status"], "abnormal_reason");
+    assert_eq!(v["inspection"]["termination_assessment"]["reason_hex"], "0x22");
+    assert_eq!(
+        v["inspection"]["termination_assessment"]["reason_label"],
+        "LL response timeout"
+    );
+    assert_eq!(
+        v["inspection"]["termination_assessment"]["acceptable_for_clean_probe"],
+        false
+    );
+    assert_eq!(v["inspection"]["termination_assessment"]["version"], 1);
+    assert_eq!(original, bytes(&p));
+}
+
+#[test]
+fn termination_assessment_distinguishes_normal_missing_ingress_unconfirmed_and_conflicting_evidence() {
+    for (reason, cleanup, local_error, context_reason, expected, acceptable) in [
+        (Some(0x16), true, None, Some(0x16), "normal_reason", true),
+        (Some(0x13), true, None, None, "normal_reason", true),
+        (None, true, None, None, "reason_unavailable", false),
+        (Some(0), true, None, None, "abnormal_reason", false),
+        (Some(0xFF), true, None, None, "abnormal_reason", false),
+        (
+            Some(0x16),
+            true,
+            Some(FailureReason::Codec),
+            Some(0x16),
+            "local_ingress_error",
+            false,
+        ),
+        (Some(0x16), false, None, Some(0x16), "cleanup_unconfirmed", false),
+        (Some(0x16), true, None, Some(0x22), "conflicting_reason", false),
+    ] {
+        let mut p = base();
+        p.inspection.link = Some(LinkInfo {
+            connected_at_ms: 3,
+            connect_elapsed_ms: 1,
+            interval_us: 30_000,
+            latency: 0,
+            supervision_timeout_us: 4_000_000,
+            att_mtu: Some(23),
+        });
+        p.inspection.ended_at_ms = Some(50);
+        p.inspection.cleanup_complete = cleanup;
+        p.inspection.disconnect_reason = reason;
+        p.failure_context = ConnectionFailureContext {
+            local_error,
+            disconnect_reason: context_reason,
+        };
+        let v = export(&p);
+        let assessment = &v["inspection"]["termination_assessment"];
+        assert_eq!(assessment["status"], expected);
+        assert_eq!(assessment["acceptable_for_clean_probe"], acceptable);
+        assert_eq!(
+            v["connection_handoff"]["inventory_complete"], false,
+            "even normal teardown is not completed inventory"
+        );
+        assert_eq!(v["connection_handoff"]["enabled"], false);
+    }
+    let mut p = base();
+    p.inspection.ended_at_ms = Some(50);
+    p.inspection.cleanup_complete = true;
+    p.failure = Some(InspectionFailure::new(FailureStage::Connect, FailureReason::Timeout));
+    p.error = ProbeError::Timeout;
+    assert_eq!(
+        export(&p)["inspection"]["termination_assessment"]["status"],
+        "not_observed"
+    );
 }

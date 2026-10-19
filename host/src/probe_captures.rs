@@ -1,4 +1,5 @@
 //! Read-only probe capture recovery, separate from hardware discovery.
+mod assessment;
 mod handoff;
 
 use std::io::{ErrorKind, Read, Write};
@@ -163,7 +164,7 @@ pub fn decode_json(bytes: &[u8]) -> Result<Value, String> {
         "peer":{"address_display_hex":hex(&m.peer.address),"address_display":m.peer.to_string().as_str(),"random":m.peer.random,"address_kind":m.peer.kind_label(),"first_seen_boot_ms":m.first_seen_ms,"last_seen_boot_ms":m.last_seen_ms,"reports":m.reports,"rssi_dbm":m.rssi},
         "advertisement":packet(&m.advertisement),"scan_response":packet(&m.response),
         "link":m.link.map(|l|json!({"connected_at_boot_ms":l.connected_at_ms,"connect_elapsed_ms":l.connect_elapsed_ms,"interval_us":l.interval_us,"latency":l.latency,"supervision_timeout_us":l.supervision_timeout_us,"att_mtu":l.att_mtu})),
-        "inspection":{"started_at_boot_ms":m.started_at_ms,"ended_at_boot_ms":m.ended_at_ms,"disconnect_reason":m.disconnect_reason,"cleanup_complete":m.cleanup_complete,"stages_complete":{"services":m.stages[0],"characteristics":m.stages[1],"descriptors":m.stages[2],"reads":m.stages[3]},"omitted":m.omitted,"malformed":m.malformed,"complete":m.complete,
+        "inspection":{"termination_assessment":assessment::termination(m),"started_at_boot_ms":m.started_at_ms,"ended_at_boot_ms":m.ended_at_ms,"disconnect_reason":m.disconnect_reason,"cleanup_complete":m.cleanup_complete,"stages_complete":{"services":m.stages[0],"characteristics":m.stages[1],"descriptors":m.stages[2],"reads":m.stages[3]},"omitted":m.omitted,"malformed":m.malformed,"complete":m.complete,
           "failure":m.failure.map(|f|json!({"stage":format!("{:?}",f.stage),"reason":reason(Some(f.reason)),"range":f.range,"last_accepted":f.last_accepted,"rejected":f.rejected.map(|r|json!({"declaration_handle":r.handle,"value_handle":r.value_handle(),"length":r.length(),"raw_prefix_hex":hex(r.bytes()),"prefix_truncated":usize::from(r.length())>r.bytes().len()})),"elapsed_ms":f.elapsed_ms})),"failure_context":{"local_error":reason(m.failure_context.local_error),"disconnect_reason":m.failure_context.disconnect_reason}},
         "global_scan":{"attribution":"global counters; not proven to belong to selected peer","dropped_reports":m.dropped_reports,"malformed_reports":m.malformed_reports,"catalog_overflow_reports":m.catalog_overflow_reports,"total_errors":m.scan_diagnostics.total,"invalid_size":m.scan_diagnostics.invalid_size,"invalid_value":m.scan_diagnostics.invalid_value,"last_error":m.scan_diagnostics.last.map(|s|json!({"kind":format!("{:?}",s.kind),"revision":s.revision,"index":s.index,"total_reports":s.total_reports,"report_bytes":s.report_bytes,"remaining_bytes":s.remaining_bytes,"declared_data_len":s.declared_data_len,"at_boot_ms":s.at_ms}))},
         "record_counts":{"services":view.counts()[0],"characteristics":view.counts()[1],"descriptors":view.counts()[2],"reads":view.counts()[3]},"records":records,

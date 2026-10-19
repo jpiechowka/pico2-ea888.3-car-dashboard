@@ -224,10 +224,13 @@ fn borrowed_startup_and_event_futures_are_dropped_before_outer_cleanup() {
 fn every_attempt_publishes_end_after_cleanup_ack_including_failed_connect() {
     use std::cell::RefCell;
 
-    use dashboard_core::discovery::Event;
-    for (_connected, cleanup_ok, reason) in [
+    use dashboard_core::discovery::{ConnectionFailureContext, Event, FailureReason};
+    for (connected, cleanup_ok, reason) in [
         (false, true, None),
         (true, true, Some(0x13)),
+        (true, true, Some(0x16)),
+        (true, true, Some(0x22)),
+        (true, true, None),
         (false, false, None),
         (true, false, None),
     ] {
@@ -243,7 +246,13 @@ fn every_attempt_publishes_end_after_cleanup_ack_including_failed_connect() {
                 }
             }),
             || 1234,
-            || reason,
+            || {
+                assert!(ack.get(), "sample terminal/local context after the wait resolves");
+                connected.then_some(ConnectionFailureContext {
+                    local_error: Some(FailureReason::Codec),
+                    disconnect_reason: reason,
+                })
+            },
             async |event| events.borrow_mut().push(event)
         ));
         let mut cx = Context::from_waker(Waker::noop());
@@ -254,8 +263,15 @@ fn every_attempt_publishes_end_after_cleanup_ack_including_failed_connect() {
         );
         ack.set(true);
         assert_eq!(finish.as_mut().poll(&mut cx), Poll::Ready(cleanup_ok));
+        let events = events.borrow();
+        assert_eq!(events.len(), if connected { 2 } else { 1 });
+        if connected {
+            assert!(matches!(events[0], Event::FailureContext { revision: 77, context }
+                if context.local_error == Some(FailureReason::Codec) && context.disconnect_reason == reason));
+        }
         assert!(
-            matches!(events.borrow().as_slice(), [Event::InspectionEnd { revision: 77, at_ms: 1234, cleanup_complete, disconnect_reason }] if *cleanup_complete == cleanup_ok && *disconnect_reason == reason)
+            matches!(events.last(), Some(Event::InspectionEnd { revision: 77, at_ms: 1234, cleanup_complete, disconnect_reason })
+            if *cleanup_complete == cleanup_ok && *disconnect_reason == reason)
         );
     }
 }

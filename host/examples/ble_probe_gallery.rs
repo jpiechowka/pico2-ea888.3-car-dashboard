@@ -251,6 +251,41 @@ fn main() {
         render_saved(&mut St7789Renderer::new(&mut frame.0), &view, 0, page, p.diagnostics).unwrap();
         save_frame(directory, &format!("saved-{page}-synthetic"), &frame);
     }
+    // Historical firmware could mark inventory complete despite an abnormal
+    // terminal reason. Preserve that evidence and show its separate warning.
+    p.inspection.disconnect_reason = Some(0x22);
+    let size = capture::encode(
+        &p,
+        capture::BuildIdentity {
+            source_digest: [0xA5; 32],
+            cpu_hz: 280_000_000,
+            spi_hz: 70_000_000,
+            profile: capture::BuildProfile::Expert280,
+            source_identity_available: true,
+        },
+        12_040,
+        &mut bytes,
+    )
+    .unwrap();
+    let view = decoder.decode(&bytes[..size]).unwrap();
+    let mut frame = AlignedFrame::boxed();
+    render_saved(&mut St7789Renderer::new(&mut frame.0), &view, 0, 5, p.diagnostics).unwrap();
+    save_frame(directory, "saved-abnormal-termination-synthetic", &frame);
+    p.event(Event::FailureContext {
+        revision: p.request.revision,
+        context: ConnectionFailureContext {
+            local_error: None,
+            disconnect_reason: Some(0x22),
+        },
+    });
+    p.fault_latch = FaultLatch::single(Fault::Probe);
+    save(directory, "termination-failure-synthetic", &p);
+    p.inspection.disconnect_reason = Some(0x16);
+    p.inspection.complete = true;
+    p.failure = None;
+    p.failure_context = ConnectionFailureContext::default();
+    p.error = ProbeError::None;
+    p.fault_latch = FaultLatch::EMPTY;
     {
         use capture_ui::{
             Action as CaptureAction,

@@ -202,11 +202,7 @@ async fn cleanup(
             .is_ok()
         },
         || Instant::now().as_millis(),
-        || {
-            connection
-                .and_then(|connection| connection.disconnect_reason())
-                .map(|reason| reason.into_inner())
-        },
+        || connection.map(connection_context),
         bridge::emit_event,
     )
     .await;
@@ -288,13 +284,19 @@ async fn failure_context(
     connection: &Connection<'_, Pool>,
     revision: u32,
 ) {
-    let context = ConnectionFailureContext {
+    bridge::emit_event(Event::FailureContext {
+        revision,
+        context: connection_context(connection),
+    })
+    .await;
+}
+fn connection_context(connection: &Connection<'_, Pool>) -> ConnectionFailureContext {
+    ConnectionFailureContext {
         local_error: connection
             .local_disconnect_error()
             .map(|error| failure_reason::<()>(BleHostError::BleHost(error))),
         disconnect_reason: connection.disconnect_reason().map(|code| code.into_inner()),
-    };
-    bridge::emit_event(Event::FailureContext { revision, context }).await;
+    }
 }
 async fn inspect_peer(
     stack: &RadioStack<'_>,
@@ -424,10 +426,7 @@ async fn inspect_peer(
     }
     cleanup(stack, request.revision, Some(&connection), active_inspection).await;
 
-    if has_failure {
-        // HCI terminal reason may arrive after the operation's first failure.
-        failure_context(&connection, request.revision).await;
-    }
+    // Cleanup publishes late ingress and HCI reason even after successful work.
     match result {
         Either::First(()) => {
             defmt::info!("probe.radio stage=inspect-canceled revision={}", request.revision);

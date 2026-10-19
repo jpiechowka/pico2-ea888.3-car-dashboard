@@ -222,9 +222,184 @@ fn connection_and_inventory_cannot_turn_green_before_terminal_cleanup() {
     assert_eq!(levels(&status, &model), [false, false, true]);
     end(&status, &mut model, true);
     assert_eq!(levels(&status, &model), [true, false, true]);
-    // Local normal termination reason is evidence, not an inspection failure.
+    // Remote user termination after completed work is also a normal reason.
     model.inspection.disconnect_reason = Some(0x13);
+    model.failure_context.disconnect_reason = Some(0x13);
     assert_eq!(levels(&status, &model), [true, false, true]);
+}
+
+#[test]
+fn terminal_reason_is_checked_after_completed_inventory_without_losing_evidence() {
+    // Includes the observed 0x22 after all stages finished, HCI success (not a
+    // valid clean-disconnect reason), unknown/reserved bytes and no reason.
+    for reason in (0..=u8::MAX).map(Some).chain([None]) {
+        let status = Status::new();
+        let mut model = start(&status);
+        inventory(&status, &mut model);
+        let revision = model.request.revision;
+        status.event(
+            &mut model,
+            Event::InspectionEnd {
+                revision,
+                at_ms: 50,
+                cleanup_complete: true,
+                disconnect_reason: reason,
+            },
+        );
+        complete(&status, &mut model, false);
+        assert!(model.inspection.cleanup_complete, "ack is independent of reason");
+        assert_eq!(model.inspection.disconnect_reason, reason);
+        assert_eq!(model.inspection.services.len(), 1);
+        assert_eq!(model.inspection.characteristics.len(), 1);
+        assert_eq!(model.inspection.stages, [true; 4]);
+        if matches!(reason, Some(0x13 | 0x16)) {
+            assert!(model.failure.is_none());
+            assert_eq!(levels(&status, &model), [true, false, true]);
+        } else {
+            assert!(!model.inspection.complete, "{reason:?}");
+            assert_eq!(model.error, ProbeError::Disconnected, "{reason:?}");
+            assert_eq!(
+                model.failure.unwrap().reason,
+                reason.map_or(FailureReason::Disconnected, FailureReason::DisconnectCode)
+            );
+            assert_eq!(levels(&status, &model), [false, true, true]);
+            assert!(status.fault_latch().contains(Fault::Probe));
+            status.input(&mut model, Input::Back, 60);
+            assert_eq!(levels(&status, &model), [false, true, true]);
+            status.input(&mut model, Input::Recover, 70);
+            assert_eq!(status.fault_latch(), FaultLatch::EMPTY);
+        }
+    }
+}
+
+#[test]
+fn late_ingress_error_cannot_hide_behind_normal_disconnect_or_overwrite_first_failure() {
+    for prior in [
+        None,
+        Some(InspectionFailure::new(
+            FailureStage::Characteristics,
+            FailureReason::DeclarationOrder,
+        )),
+    ] {
+        for context_first in [false, true] {
+            let status = Status::new();
+            let mut model = start(&status);
+            inventory(&status, &mut model);
+            let revision = model.request.revision;
+            if let Some(failure) = prior {
+                status.event(&mut model, Event::Failure { revision, failure });
+            }
+            let context = Event::FailureContext {
+                revision,
+                context: ConnectionFailureContext {
+                    local_error: Some(FailureReason::Codec),
+                    disconnect_reason: Some(0x16),
+                },
+            };
+            if context_first {
+                status.event(&mut model, context);
+            }
+            end(&status, &mut model, true);
+            complete(&status, &mut model, false);
+            if !context_first {
+                status.event(&mut model, context);
+            }
+            // Later publication must neither restore success nor erase context.
+            complete(&status, &mut model, false);
+            assert_eq!(
+                model.failure.unwrap().reason,
+                prior.map_or(FailureReason::Codec, |f| f.reason)
+            );
+            assert_eq!(model.failure_context.local_error, Some(FailureReason::Codec));
+            assert_eq!(model.failure_context.disconnect_reason, Some(0x16));
+            assert!(!model.inspection.complete);
+            assert_eq!(levels(&status, &model), [false, true, true]);
+        }
+    }
+}
+
+#[test]
+fn stale_terminal_context_and_disconnect_do_not_poison_recovered_scan() {
+    let status = Status::new();
+    let mut model = start(&status);
+    inventory(&status, &mut model);
+    let revision = model.request.revision;
+    status.input(&mut model, Input::Recover, 40);
+    status.event(
+        &mut model,
+        Event::FailureContext {
+            revision,
+            context: ConnectionFailureContext {
+                local_error: Some(FailureReason::Codec),
+                disconnect_reason: Some(0x22),
+            },
+        },
+    );
+    status.event(
+        &mut model,
+        Event::InspectionEnd {
+            revision,
+            at_ms: 50,
+            cleanup_complete: true,
+            disconnect_reason: Some(0x22),
+        },
+    );
+    assert!(model.failure.is_none());
+    assert_eq!(model.failure_context, ConnectionFailureContext::default());
+    assert_eq!(status.fault_latch(), FaultLatch::EMPTY);
+}
+
+#[test]
+fn green_defensively_requires_reason_and_no_local_error_even_in_a_precompleted_model() {
+    for case in 0..4 {
+        let status = Status::new();
+        let mut model = start(&status);
+        inventory(&status, &mut model);
+        end(&status, &mut model, true);
+        complete(&status, &mut model, false);
+        match case {
+            0 => model.inspection.disconnect_reason = Some(0x22),
+            1 => model.inspection.disconnect_reason = None,
+            2 => model.failure_context.disconnect_reason = Some(0x13),
+            _ => model.failure_context.local_error = Some(FailureReason::Codec),
+        }
+        assert_ne!(levels(&status, &model), [true, false, true]);
+    }
+}
+
+#[test]
+fn first_operation_failure_survives_abnormal_teardown_and_failed_connect_needs_no_reason() {
+    for connected in [false, true] {
+        let status = Status::new();
+        let mut model = start(&status);
+        if connected {
+            inventory(&status, &mut model);
+        }
+        let revision = model.request.revision;
+        let failure = InspectionFailure::new(
+            if connected {
+                FailureStage::DeviceInfo
+            } else {
+                FailureStage::Connect
+            },
+            FailureReason::Timeout,
+        );
+        status.event(&mut model, Event::Failure { revision, failure });
+        status.event(
+            &mut model,
+            Event::InspectionEnd {
+                revision,
+                at_ms: 50,
+                cleanup_complete: true,
+                disconnect_reason: connected.then_some(0x22),
+            },
+        );
+        complete(&status, &mut model, false);
+        assert_eq!(model.failure, Some(failure));
+        assert_eq!(model.error, ProbeError::Timeout);
+        assert_eq!(model.failure_context.disconnect_reason, connected.then_some(0x22));
+        assert_eq!(levels(&status, &model), [false, true, true]);
+    }
 }
 
 #[test]

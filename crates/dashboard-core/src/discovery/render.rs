@@ -495,8 +495,14 @@ fn link_details(
         "Disconnect cleanup: not acknowledged"
     });
     match disconnect {
-        Some(code) => emit.formatted(format_args!("Disconnect reason: 0x{code:02X}")),
+        Some(code) => {
+            emit.formatted(format_args!("Disconnect reason: 0x{code:02X}"));
+            emit.text(crate::ble::termination::reason_label(code));
+        }
         None => emit.text("Disconnect reason: unavailable"),
+    }
+    if cleanup && link.is_some() && !crate::ble::termination::normal_reason(disconnect) {
+        emit.text("Termination not clean / inspect reason");
     }
 }
 fn record_details(
@@ -1872,5 +1878,37 @@ mod tests {
                 .iter()
                 .any(|s| s == "Declared data length: missing header byte")
         );
+    }
+
+    #[test]
+    fn shared_live_and_saved_link_lines_separate_cleanup_ack_from_abnormal_termination() {
+        let link = Some(LinkInfo {
+            connected_at_ms: 2,
+            connect_elapsed_ms: 1,
+            interval_us: 30_000,
+            latency: 0,
+            supervision_timeout_us: 4_000_000,
+            att_mtu: Some(23),
+        });
+        for reason in (0..=u8::MAX).map(Some).chain([None]) {
+            let mut rows = std::vec::Vec::<std::string::String>::new();
+            link_details(
+                link,
+                [true; 4],
+                true,
+                reason,
+                &mut EvidenceLines::new(Some(&mut |s| rows.push(s.into()))),
+            );
+            assert!(rows.iter().any(|s| s == "Disconnect cleanup: acknowledged"));
+            assert_eq!(
+                rows.iter().any(|s| s == "Termination not clean / inspect reason"),
+                !matches!(reason, Some(0x13 | 0x16))
+            );
+            assert!(rows.iter().all(|s| s.is_ascii() && s.len() * 6 <= 300));
+            if reason == Some(0x22) {
+                assert!(rows.iter().any(|s| s == "Disconnect reason: 0x22"));
+                assert!(rows.iter().any(|s| s == "LL response timeout"));
+            }
+        }
     }
 }

@@ -46,12 +46,6 @@ fn terminal_context_enriches_first_failure_without_replacing_its_cause() {
         local_error: Some(FailureReason::Capacity),
         disconnect_reason: Some(0x16),
     };
-    probe.event(Event::FailureContext { revision, context });
-    assert_eq!(
-        probe.failure_context,
-        ConnectionFailureContext::default(),
-        "no orphan evidence"
-    );
     let mut first = InspectionFailure::new(FailureStage::Mtu, FailureReason::Disconnected);
     first.elapsed_ms = Some(215);
     probe.event(Event::Failure {
@@ -93,6 +87,62 @@ fn terminal_context_enriches_first_failure_without_replacing_its_cause() {
         probe.failure_context,
         ConnectionFailureContext::default(),
         "stale generation ignored"
+    );
+}
+
+#[test]
+fn terminal_context_can_reveal_a_failure_after_inventory_completed() {
+    let mut probe = inspecting();
+    let revision = probe.request.revision;
+    for stage in [
+        InventoryStage::Services,
+        InventoryStage::Characteristics,
+        InventoryStage::Descriptors,
+        InventoryStage::Reads,
+    ] {
+        probe.event(Event::Item {
+            revision,
+            item: InspectionItem::StageComplete(stage),
+        });
+    }
+    probe.event(Event::Complete {
+        revision,
+        limited: false,
+    });
+    let normal = ConnectionFailureContext {
+        local_error: None,
+        disconnect_reason: Some(0x16),
+    };
+    probe.event(Event::FailureContext {
+        revision,
+        context: normal,
+    });
+    assert!(probe.inspection.complete);
+    assert!(probe.failure.is_none());
+    let late = ConnectionFailureContext {
+        local_error: Some(FailureReason::Capacity),
+        ..normal
+    };
+    probe.event(Event::FailureContext {
+        revision,
+        context: late,
+    });
+    assert_eq!(probe.failure_context, late);
+    assert_eq!(
+        probe.failure,
+        Some(InspectionFailure::new(
+            FailureStage::ConnectionEvents,
+            FailureReason::Capacity
+        ))
+    );
+    assert!(!probe.inspection.complete);
+    probe.event(Event::Complete {
+        revision,
+        limited: false,
+    });
+    assert!(
+        !probe.inspection.complete,
+        "late completion cannot erase ingress failure"
     );
 }
 

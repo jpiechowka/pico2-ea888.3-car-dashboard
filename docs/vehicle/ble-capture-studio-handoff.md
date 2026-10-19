@@ -23,6 +23,7 @@ without it remains an old report; regenerate it from its binary with offline
 | `binary.byte_length`, `binary.sha256` | Length and lowercase SHA256 of the exact complete binary, including its header. Bind reports/notes to those bytes; the hash is not a signature or authenticity proof. |
 | Each `uuid.canonical` | Lowercase expanded 128-bit UUID text. `wire_hex`, `width_bytes` and `assigned_u16` remain, preserving original encoding. |
 | Each characteristic's `property_flags` | Eight booleans: broadcast, read, write without response, write request, notify, indicate, authenticated signed writes and extended properties. Raw `properties` remains. These describe declared procedures, not verified access permissions. |
+| `inspection.termination_assessment` | Version 1 derived classification: `not_observed`, `local_ingress_error`, `cleanup_unconfirmed`, `conflicting_reason`, `reason_unavailable`, `normal_reason`, or `abnormal_reason`. Includes `reason_hex` and `reason_label`, null when unavailable. `acceptable_for_clean_probe` qualifies only acknowledged, consistent normal termination with observed link/end and no local ingress fault; all other inspection checks remain separate. |
 | `connection_handoff.version` | Version 1 of the derived hint structure. |
 | `status`, `enabled`, `profile` | Always `evidence_only`, `false`, `null`. No name/UUID match selects a protocol or enables a connection. |
 | `address_candidate` | Shared `BlePeer` shape: six display-order numeric bytes plus `Public` or `RandomStatic`, only when shared dashboard validation accepts it as an enabled address. Otherwise null. |
@@ -47,6 +48,13 @@ Original timestamps, raw bytes, failures, build identity and global error scope
 remain intact. No host date replaces boot-relative observation time. Slot and
 generation are known together for USB export and both unknown for a detached
 offline binary. Invalid/incomplete export envelopes fail before creating files.
+
+An older firmware's `inspection.complete: true` can coexist with an abnormal
+termination assessment. Likewise `inventory_complete` can remain true when all
+discovery stages finished but the connection ended abnormally.
+Consumers must show these distinct facts and preserve the original reason/error
+and LED fields. Regenerate assessments from the binary rather than trusting
+edited hints. `0x13`/`0x16` alone never establish a successful whole probe.
 
 ## Proposed end-to-end flow
 
@@ -106,3 +114,6 @@ invalid limits, duplicate services/characteristics, missing/multiple CCCDs,
 advertisement-only and partial/omitted inventory, unusable hashes, a frozen legacy
 fingerprint, malformed binary rejection and no-overwrite publication. These are
 software checks; they do not qualify a Studio importer or adapter connection.
+Termination regressions also preserve legacy raw success flags alongside an
+abnormal assessment, distinguish missing/contradictory/late local evidence and
+keep advertisement-only or failed-connect attempts separate from live links.

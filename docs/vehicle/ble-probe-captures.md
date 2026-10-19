@@ -137,6 +137,17 @@ The actual binary `schema` stays separate. Studio capture import is future work;
 hints leave the connection disabled and profile unknown. Old binaries gain
 these hints through offline `decode`, without modifying a slot.
 
+`inspection.termination_assessment` is an additive, versioned PC assessment.
+It includes a hexadecimal reason and label, with distinct statuses for normal,
+abnormal, unavailable, conflicting, unacknowledged or locally failed termination
+and for an unobserved connection. Its `acceptable_for_clean_probe` field only
+qualifies termination; it does not replace inventory/read/failure checks or
+prove adapter access. Original completion, reason, error and LED fields remain
+unchanged even if older firmware reported success with a timeout reason.
+Decode into a new directory to reassess old bytes; preserve the original export.
+The [termination evidence note](../validation/probe-termination-followup-2026-10-20.md)
+records the hardware observation that exposed this distinction.
+
 An interrupted transfer, timeout or protocol error requires **unplugging and
 replugging normal USB before retrying**. Firmware abandons that USB session so a
 pending endpoint packet cannot become the prefix of another reply. Reopening the

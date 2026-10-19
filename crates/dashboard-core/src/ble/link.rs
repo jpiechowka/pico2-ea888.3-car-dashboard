@@ -40,6 +40,44 @@ pub struct LinkSnapshot {
     pub fault: Option<LinkFault>,
 }
 
+/// Decide the outcome after controller-confirmed disconnection. Intentional
+/// maintenance cancellation may surface as Transport from admission; suppress it
+/// only with normal termination and no ingress fault. Specific errors survive.
+pub fn closed_fault(
+    parked: bool,
+    operation: Option<LinkFault>,
+    reason: Option<u8>,
+    local_error: bool,
+) -> Option<LinkFault> {
+    if parked && super::termination::normal_reason(reason) && !local_error {
+        operation.filter(|fault| *fault != LinkFault::Transport)
+    } else {
+        operation.or(Some(LinkFault::Transport))
+    }
+}
+
+/// One bounded terminal record per connection. RX1 means retained local ingress
+/// failure; ?? means the controller reason is unavailable, never success/zero.
+pub fn log_disconnect<M: embassy_sync::blocking_mutex::raw::RawMutex>(
+    store: &crate::logging::LogStore<M>,
+    now_ms: u64,
+    epoch: u64,
+    reason: Option<u8>,
+    local_error: bool,
+) {
+    use crate::logging::Level;
+    let level = if super::termination::normal_reason(reason) && !local_error {
+        Level::Info
+    } else {
+        Level::Fault
+    };
+    let ingress = u8::from(local_error);
+    match reason {
+        Some(code) => store.push(level, now_ms, format_args!("BLE {epoch} END {code:02X} RX{ingress}")),
+        None => store.push(level, now_ms, format_args!("BLE {epoch} END ?? RX{ingress}")),
+    }
+}
+
 /// Record a changed BLE state outside the status lock. Codes retain every
 /// state/reason in at most 39 ASCII bytes, including a full u64 epoch.
 pub fn log_transition<M: embassy_sync::blocking_mutex::raw::RawMutex>(

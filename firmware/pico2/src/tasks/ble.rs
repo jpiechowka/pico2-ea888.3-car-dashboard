@@ -308,14 +308,24 @@ async fn connections(
                 {
                     return LinkFault::Transport;
                 }
-                if PARK_GENERATION.load(Ordering::Relaxed) != generation {
-                    None
-                } else {
+                let reason = connection.disconnect_reason().map(|code| code.into_inner());
+                let local_error = connection.local_disconnect_error().is_some();
+                dashboard_pico2::ble::link::log_disconnect(
+                    &crate::profiling::LOGS,
+                    Instant::now().as_millis(),
+                    epoch,
+                    reason,
+                    local_error,
+                );
+                dashboard_pico2::ble::link::closed_fault(
+                    PARK_GENERATION.load(Ordering::Relaxed) != generation,
                     match outcome {
                         Either::First(()) => None,
                         Either::Second(fault) => Some(fault),
-                    }
-                }
+                    },
+                    reason,
+                    local_error,
+                )
             }
         };
         session.invalidate();

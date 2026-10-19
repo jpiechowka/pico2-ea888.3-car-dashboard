@@ -20,20 +20,26 @@ pub async fn inspect_with_events<C, T, E, R: Future<Output = Result<T, E>>>(
     }
 }
 
-/// Publish terminal evidence only after the controller cleanup wait resolves.
+/// Sample local/terminal evidence after cleanup, even when inventory succeeded.
+/// Return acknowledgment only; the model separately classifies termination quality.
 pub async fn finish_cleanup(
     revision: u32,
     wait: impl Future<Output = bool>,
     now_ms: impl FnOnce() -> u64,
-    reason: impl FnOnce() -> Option<u8>,
+    context: impl FnOnce() -> Option<dashboard_core::discovery::ConnectionFailureContext>,
     emit: impl AsyncFn(dashboard_core::discovery::Event),
 ) -> bool {
     let complete = wait.await;
+    let at_ms = now_ms();
+    let context = context();
+    if let Some(context) = context {
+        emit(dashboard_core::discovery::Event::FailureContext { revision, context }).await;
+    }
     emit(dashboard_core::discovery::Event::InspectionEnd {
         revision,
-        at_ms: now_ms(),
+        at_ms,
         cleanup_complete: complete,
-        disconnect_reason: reason(),
+        disconnect_reason: context.and_then(|context| context.disconnect_reason),
     })
     .await;
     complete
