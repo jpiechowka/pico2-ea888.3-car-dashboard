@@ -118,6 +118,11 @@ See the [BLE workflow](ble-prototype.md) for repair and failure paths.
 
 Filter bounded browser events and inspect shared Dashboard/Debug/Logs simulation. Optional warning/error context relay requires a connected helper; bounded drops are reported. Raw messages, configuration and artwork are not relayed.
 
+The Debug preview deliberately shows `--` for hardware measurements unavailable
+in the browser. `Static` identifies linked allocations on the actual firmware;
+it is not a browser memory reading. [Measurement definitions](../performance/diagnostic-measurements.md)
+explain FPS, scoped work percentages and sampled stack depth.
+
 [![Synthetic Logs screen reached through the configured Y button](../images/gallery/workflows/logs-simulator.jpg)](../images/gallery/workflows/logs-simulator.jpg)
 
 This second capture shows Logs after the configured Y action and an explicit
@@ -186,6 +191,14 @@ physical scanout or warning timing. The distinct measured performance pass is
 separate; [benchmark scope](../performance/benchmark-coverage.md) remains explicit.
 
 ## Capture record
+
+The Diagnostics capture was refreshed on 19 October 2026 from the production
+bundle at `319ba79`, using an isolated origin at 1280×720. The configured Y button
+selected Debug, followed by explicit simulated submission/completion. Timing and
+file controls were collapsed for a compact view. The
+[diagnostics capture manifest](../images/gallery/workflows/diagnostics-capture.json)
+records the Wasm/image hashes. No horizontal page overflow or browser warnings
+were observed. The temporary server/tab were closed; the user's Studio was preserved.
 
 The two resource/occupancy captures were taken on 18 October 2026 from the normal
 production bundle built at `23ef6e6`, at 1440×1000 and 760×1000. A fresh isolated

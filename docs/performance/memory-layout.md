@@ -213,3 +213,9 @@ old sentinel scan of live stack words was removed: initialization and aliasing
 requirements were not established, and untouched bytes in deep frames could
 understate use. No stack memory is read by the replacement. Both measurements
 still require target stress tests; neither proves a safe worst-case margin.
+
+Debug rounds observed stack byte depths upward to KiB on both cores; an invalid
+current core 0 SP renders unavailable rather than zero. Its `Static` row counts
+linked allocations in the 512 KiB main RAM arena, including framebuffers and the
+reserved core 1 stack. It is neither total live usage nor all 520 KiB of physical
+SRAM: the two extra 4 KiB banks lie outside this arena.

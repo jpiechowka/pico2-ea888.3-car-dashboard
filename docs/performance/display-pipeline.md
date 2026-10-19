@@ -53,6 +53,19 @@ Stock and serial fallback builds pass. FPS now counts completed HAL transfers,
 not render-loop iterations. This is software-observed completion; executor delay
 can extend its measured duration after the wire transfer has finished.
 
+Debug's Waits counter counts completion receives that were not immediately ready;
+ordinary pipeline backpressure is not a warning. Flush identifies the transfer
+owner only while a transfer is outstanding, and shows unavailable after a
+successful HAL return. Failed transfers retain their ownership indication.
+The UI-work cycle fraction excludes cooperative startup-validation and raster
+yields, but includes interrupt cycles during measured segments. It is not total
+core utilization and does not include other tasks executing while the UI yields.
+Each core checks DWT enable/availability bits and progress over a bounded 64-NOP
+initialization interval. A failed check renders its work/cycle observations
+unavailable. It does not reset CYCCNT, calibrate the physical clock or replace
+the separate target-benchmark validation, and it cannot detect a later debugger
+or external change that disables the counter.
+
 Logic-analyzer acceptance remains open: trace payload start before the next
 render, CS through the final SCK edge, alternating buffer contents, DMA stalls,
 and physical scan/TE behaviour. Host tests cannot prove physical FPS, tearing,

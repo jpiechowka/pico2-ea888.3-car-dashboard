@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-19",
+  "browser": "Codex in-app browser",
+  "source_commit": "319ba792a9159f688052b8fe797e4ece74c43306",
+  "build": "trunk build --release --locked --offline --dist ../target/probe-diagnostics-studio (from configurator/)",
+  "synthetic": true,
+  "device_operations": false,
+  "production_main_wasm": {
+    "bytes": 5305039,
+    "sha256": "b1eed038960bf05a4f9efcbb0a5448e3933c34ed9c7f22e56a1b6b238122447f"
+  },
+  "viewport_css_pixels": [
+    1280,
+    720
+  ],
+  "full_page": true,
+  "images": {
+    "diagnostics.jpg": "1be4c48da8b9b002f413aecaf7f88e7be4b8e08f6da72778978a1ad5f9267eac"
+  },
+  "scenario": "Fresh origin; Diagnostics > Simulation; X toggles FPS; submit/complete Dashboard; configured Y switches to Debug; submit/complete; collapse Timing simulation and Configuration files",
+  "checks": [
+    "Shared Debug renderer shows Static and unavailable hardware readings",
+    "No document-wide horizontal overflow: scrollWidth and clientWidth both 1265",
+    "No browser warning/error console entries"
+  ],
+  "cleanup": "Temporary tab and identity-checked server closed; existing Studio server and project preserved"
+}

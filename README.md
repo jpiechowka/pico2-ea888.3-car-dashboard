@@ -309,6 +309,15 @@ keeps the list stable; limits, protected fields and partial results stay explici
 There are no automatic connections, pairing or OBD commands. A successful GATT
 inspection does not establish adapter or ECU compatibility.
 
+Every probe page keeps **current/average FPS, C0/C1 work percentages, static RAM
+and sampled stack use** visible above the evidence. FPS counts successful display
+transfers: current uses the latest window of at least one second; average uses
+all elapsed time since UI startup. It is not panel scanout. The UI targets 20
+updates/s. `W` means measured task-poll work, excluding suspended waits; `Static`
+includes both framebuffers and the reserved core-1 stack. `SP0/SP1` show the
+greatest observed poll-boundary depth, not a complete stack high-water mark.
+Unavailable or stale work readings show `--`; navigation does not reset FPS.
+
 From the repository root, build a checked CLI artifact using the installed tools:
 
 ```powershell
@@ -325,6 +334,11 @@ landscape. Green/amber/blue indicate scanning/paused/working; terminal faults
 turn red and automatically restart, losing RAM-only observations.
 
 [Full controls, capture workflow, bounds, gallery and step-by-step CLI flashing](docs/vehicle/ble-probe.md).
+
+The dashboard Debug screen uses the same completion-rate arithmetic. Its `Waits`
+counter records observed backpressure, `Flush` becomes `--` when idle, and UI-work
+cycles exclude cooperative yields. Invalid stack readings and unavailable cycle
+counters display `--`. [Measurement definitions and audit](docs/performance/diagnostic-measurements.md).
 
 ## Firmware build and validation
 

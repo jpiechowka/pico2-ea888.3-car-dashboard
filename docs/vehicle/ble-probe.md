@@ -51,6 +51,45 @@ restart after approximately two seconds. That reset loses the RAM-only evidence.
 Ordinary connection/discovery timeouts retain partial records and wait for input.
 The LED describes the tool's state, not vehicle health.
 
+## Always-visible telemetry
+
+Two fixed rows beneath the title remain visible while scanning, paused,
+connecting, inspecting or showing faults. They do not replace device evidence or
+change the controls. `K` means KiB, rounded up for these compact labels.
+
+| Field | Meaning |
+| --- | --- |
+| FPS | Successful HAL display transfers divided by actual elapsed seconds in the latest window of at least one second; not an inverse render-time estimate |
+| AVG | Total successful transfers divided by total elapsed time since probe UI startup; weighted by time, including pauses and idle windows |
+| W C0 / C1 | Application task-poll work as a percentage of each core's actual wall-time window, to 0.1%; `W` means work, not whole-core utilization |
+| Static | Linked static allocation / 512 KiB linker arena, including both framebuffers and the reserved 32 KiB core-1 stack |
+| SP0 / SP1 | Greatest stack depth observed at task-poll boundaries / respective stack region; not a scan of stack memory or a physical high-water measurement |
+
+FPS is **software completion, not LCD scanout**. Both rates initially show `--`
+until the first complete window. Navigating, pausing scanning or clearing peers
+does not reset the meter; reboot does. A paused radio still allows screen updates.
+The existing 50 ms render cadence targets 20 updates/s; load can reduce that rate.
+Failed transfers never add a frame, and their buffers remain quarantined.
+
+Work uses the locked HAL's 1 MHz monotonic TIMER0 clock. Each top-level task is
+wrapped once, including all radio child futures, and only time inside `poll` is
+counted. Waiting on DMA, timers or another task is excluded. IRQ time inside a
+poll is included; scheduler/IRQ work outside polls and the observer's recording
+overhead are excluded. One-microsecond resolution limits tiny-poll accuracy.
+Before a full window, after invalid timing, or more than two seconds after the
+latest observation, work displays `--%`, never an invented idle value.
+
+The two cores publish bounded observations under one short critical section;
+snapshot time and the completion counter are captured together. No rendering,
+hardware operation or await occurs inside that lock. The current UI poll is
+visible only after it returns. Stack samples can miss deeper calls between poll
+boundaries. Static memory is not total live usage: do not add the framebuffers or
+core-1 stack again. The RP2350 has 520 KiB physically; this linker leaves its two
+4 KiB scratch banks outside the displayed 512 KiB arena.
+
+See [dashboard/probe measurement audit](../performance/diagnostic-measurements.md)
+for differences between the two tools and remaining device checks.
+
 ## What it collects and sends
 
 | Item | Bound / behavior |
@@ -243,18 +282,26 @@ logger or on-device persistent log was added.
 Tests cover malformed advertisement/GATT bytes, handle/offset overflow, standard
 UUID aliases, capacities, stable selection, cancellation, stale results, missing
 encoder progress, radio stalls, time-based animation, clipping and pagination.
+Telemetry tests also cover suspended/cancelled polls, propagated errors, irregular
+windows, counter wrap, clock regression, idle frames, stale work, invalid values
+and pixel isolation from list/details/footer regions.
 CI checks stock/280 builds, strict nightly Clippy, Python gates and security-feature
 exclusion. Software tests and conservative stack estimates do not qualify RF
 interoperability, physical stack high-water, electrical margins or car data.
 
 The checked 2026-10-19 build (`nightly-2026-10-18`, CPU280/SPI70, bounded info
-logging) uses **372720 bytes of static RAM** and leaves **151568 bytes for the
+logging) uses **373160 bytes of static RAM** and leaves **151128 bytes for the
 main stack and headroom**. Static RAM includes both 153600-byte framebuffers and
 the 32768-byte core-1 stack. The largest emitted function frame is 4992 bytes;
 the conservative named-path budgets include additional child and interrupt
 reserves. These are linked-image/source-review results, not physical stack
 high-water measurements. The frozen ELF, UF2, compiler options and source hashes
 are recorded together by the checked wrapper.
+
+The permanent telemetry adds 440 static bytes against the preceding utility
+image. A concrete pinned poll wrapper keeps each task future in one allocation;
+bounded integer formatting avoids adding general float-formatting stack frames.
+Stock and 280/70 images both passed the unchanged practical image checks.
 
 References checked against actual locked sources:
 [Pico 2 W datasheet](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf),
