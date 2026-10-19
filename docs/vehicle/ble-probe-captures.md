@@ -65,6 +65,14 @@ Back/recovery and a UI timeout do not cancel an in-progress flash operation.
 The storage owner finishes and returns its buffer before another operation is
 admitted. Do not interpret leaving the page as undoing a save or reset.
 
+The [RGB status LED](ble-probe.md#rgb-status-and-recovery) is purple while a local
+capture operation is pending, unless an error takes priority. Saved browsing is
+amber; an old successful result cannot turn the live status green. Storage
+failures and unknown/corrupt slots latch red. Empty slots are normal. Y recovery
+acknowledges the latch without erasing slots; a pending operation can still finish
+with a new error after that acknowledgment. USB export is read-only and has no
+separate busy colour; a current-session protocol/transfer failure latches red.
+
 ## Recover captures on a PC
 
 Keep the probe firmware installed and plug the Pico into the PC with a USB data

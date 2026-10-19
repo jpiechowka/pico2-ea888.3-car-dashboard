@@ -2,7 +2,6 @@ use core::pin::pin;
 use core::sync::atomic::Ordering;
 
 use dashboard_core::ble::runtime::Liveness;
-use dashboard_core::discovery::RadioPhase;
 use dashboard_core::display::damage::DamagePlan;
 use dashboard_core::display::transfer::flush_plan;
 use dashboard_core::health::{Progress, ProgressMonitor};
@@ -159,6 +158,7 @@ pub async fn probe_encoder_task(mut bus: I2c<'static, I2C0, embassy_rp::i2c::Asy
                 .await;
                 bridge::ENCODER_PROGRESS.fetch_add(1, Ordering::Relaxed);
                 if result.is_err() {
+                    bridge::STATUS.encoder_failed(connected);
                     if connected {
                         defmt::warn!("Probe encoder lost; onboard controls remain");
                     }
@@ -219,27 +219,10 @@ pub async fn probe_supervisor_task(
                     );
                     failed = true;
                 }
-                let phase = bridge::PHASE.load(Ordering::Relaxed);
-                let fault = !healthy || phase == RadioPhase::Fault as u8;
-                red.set_level(if fault || phase == RadioPhase::Paused as u8 {
-                    Level::Low
-                } else {
-                    Level::High
-                });
-                green.set_level(
-                    if !fault && (phase == RadioPhase::Scanning as u8 || phase == RadioPhase::Paused as u8) {
-                        Level::Low
-                    } else {
-                        Level::High
-                    },
-                );
-                blue.set_level(
-                    if !fault && phase != RadioPhase::Paused as u8 && phase != RadioPhase::Scanning as u8 {
-                        Level::Low
-                    } else {
-                        Level::High
-                    },
-                );
+                let [r, g, b] = bridge::STATUS.levels(now, !healthy);
+                red.set_level(if r { Level::High } else { Level::Low });
+                green.set_level(if g { Level::High } else { Level::Low });
+                blue.set_level(if b { Level::High } else { Level::Low });
                 if healthy {
                     use crate::maintenance::{HealthReply, HealthRequest};
                     let result = match crate::maintenance::HEALTH_REQUEST.try_receive() {

@@ -26,6 +26,7 @@ pub async fn run() {
         let snapshot = metrics::snapshot();
         let now = snapshot.at_us / 1000;
         if fps.sample(snapshot.at_us, snapshot.completed).is_err() {
+            bridge::STATUS.record(crate::status::Fault::Timing);
             defmt::warn!("probe.metrics completion timeline reset");
             fps = CompletionRate::new(snapshot.at_us, snapshot.completed);
         }
@@ -37,12 +38,12 @@ pub async fn run() {
                 bytes = Some(returned);
                 length = reply.length;
             }
-            captures.complete(reply.id, reply.completion);
+            bridge::STATUS.capture_complete(&mut captures, reply.id, reply.completion);
         }
         // Reliable inventory/completion evidence must precede a save decision.
         for _ in 0..8 {
             match bridge::EVENTS.try_receive() {
-                Ok(e) => model.event(e),
+                Ok(e) => bridge::STATUS.event(model, e),
                 Err(_) => break,
             }
         }
@@ -72,19 +73,19 @@ pub async fn run() {
                 live_input_apply(model, input, now);
             }
             if let Some(input) = capture_input
-                && let Some(action) = captures.input(input, now, context)
+                && let Some(action) = bridge::STATUS.capture_input(&mut captures, input, now, context)
             {
                 action_apply(action, &mut captures, model, &mut bytes, &mut decoder, now);
             }
             model.page = model.page.min(discovery::page_count(model).saturating_sub(1));
         }
-        if let Some(action) = captures.tick(now) {
+        if let Some(action) = bridge::STATUS.capture_tick(&mut captures, now) {
             action_apply(action, &mut captures, model, &mut bytes, &mut decoder, now);
         }
         // Controls change the generation before queued scan reports are admitted.
         for _ in 0..32 {
             match bridge::REPORTS.try_receive() {
-                Ok(e) => model.event(e),
+                Ok(e) => bridge::STATUS.event(model, e),
                 Err(_) => break,
             }
         }
@@ -92,7 +93,7 @@ pub async fn run() {
         model.scan_diagnostics = bridge::SCAN_DIAGNOSTICS.lock(core::cell::Cell::get);
         model.malformed_reports = model.scan_diagnostics.total;
         model.encoder_connected = bridge::ENCODER_CONNECTED.load(Ordering::Relaxed);
-        bridge::PHASE.store(model.phase as u8, Ordering::Relaxed);
+        bridge::STATUS.publish(model, &captures);
         if !maintenance::FRAME_INHIBIT.load(Ordering::SeqCst)
             && now.saturating_sub(last_frame) >= 50
             && let Ok(frame) = bridge::FREE.try_receive()
@@ -117,6 +118,7 @@ pub async fn run() {
                             model.diagnostics,
                         );
                     } else {
+                        bridge::STATUS.record(crate::status::Fault::Storage);
                         let _ = discovery::render_slots(&mut renderer, &captures, model.diagnostics);
                     }
                 }
@@ -153,7 +155,7 @@ fn live_input_apply(
     if matches!(input, Input::Recover) && model.phase == RadioPhase::Fault {
         bridge::RESET_REQUESTED.store(true, Ordering::Relaxed);
     }
-    if let Some(request) = model.input(input, now) {
+    if let Some(request) = bridge::STATUS.input(model, input, now) {
         bridge::set_request(request);
     }
 }
@@ -189,7 +191,7 @@ fn action_apply(
             overwrite,
         } => {
             if model.request.revision != revision || context(model).save != cap::SaveAvailability::Ready {
-                captures.complete(id, cap::Completion::Failed(cap::UiError::Changed));
+                bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Changed));
                 return;
             }
             let result = bytes
@@ -210,7 +212,7 @@ fn action_apply(
                 }
                 Err(e) => {
                     defmt::warn!("probe.capture encode {:?}", defmt::Debug2Format(&e));
-                    captures.complete(id, cap::Completion::Failed(cap::UiError::Changed));
+                    bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Changed));
                     return;
                 }
             }
@@ -218,7 +220,8 @@ fn action_apply(
     };
     let buffer = if needs_bytes { bytes.take() } else { None };
     if needs_bytes && buffer.is_none() {
-        captures.complete(id, cap::Completion::Failed(cap::UiError::Busy));
+        bridge::STATUS.record(crate::status::Fault::Storage);
+        bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Busy));
         return;
     }
     if let Err(embassy_sync::channel::TrySendError::Full(request)) =
@@ -227,7 +230,8 @@ fn action_apply(
         if let Some(returned) = request.buffer {
             *bytes = Some(returned);
         }
-        captures.complete(id, cap::Completion::Failed(cap::UiError::Busy));
+        bridge::STATUS.record(crate::status::Fault::Storage);
+        bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Busy));
     }
 }
 fn build_identity() -> capture::BuildIdentity {

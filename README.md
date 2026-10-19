@@ -304,7 +304,7 @@ export them later over normal USB as binary, JSON and text.
 | X short press | **Advert only:** pause scanning and open a fresh advertisement view, without connecting; clears the previous live GATT result | **Inspect GATT:** the same connection action as encoder click |
 | Hold X for 2 seconds | Open saved capture slots and pause the selected live view | Open saved capture slots without repeating inspection |
 | Y | Pause/resume scanning; keep the device list | Cancel any inspection and return to scanning |
-| Hold Y for 2 seconds | Clear the device list and live GATT evidence, then restart scanning; saved slots remain | Same recovery action |
+| Hold Y for 2 seconds | Clear the LED error latch, device list and live GATT evidence, then restart scanning; saved slots remain | Same recovery action |
 
 **Why three pages with X but nine with encoder click?** Advertisement packets
 need fewer pages. Inspection adds the device's GATT records. The headings now
@@ -385,9 +385,23 @@ The utility stays **outside Studio** and replaces the dashboard until you flash
 the dashboard back. It uses both cores, two fixed framebuffers, Cortex-M33
 instructions and bounded read-only discovery. The wrapper builds/checks only;
 flashing is a separate explicit operation. The display stays full-brightness
-landscape. Green/amber/blue indicate scanning/paused/working; terminal faults
-turn red and automatically restart, losing unsaved RAM observations. Saved slots
-are separate; physical persistence and USB behavior still require device validation.
+landscape. Its RGB status is:
+
+| Colour | Probe state |
+| --- | --- |
+| Blue | Scanning; slow blinking blue means startup/connection/inspection/cleanup |
+| Green | Current live probe completed cleanly, including allowed reads and disconnect cleanup |
+| Amber | Paused without clean live success, or browsing saved captures |
+| Purple | A local capture operation is pending |
+| Red | Error latched until **hold Y for two seconds**; fast blinking red means a terminal fault awaiting watchdog recovery |
+
+Red overrides other colours and survives a successful retry. Scan/report loss,
+protected/failed reads and storage/USB errors also count; `Error:None` in the
+radio header does not clear this history. Green means completed and disconnected,
+not an open connection or vehicle/adapter qualification. Terminal resets lose
+unsaved RAM evidence and relatch red after a watchdog timeout. Saved slots are
+separate; physical persistence and USB behavior still require device validation.
+[Full LED precedence, error scope and reboot limits](docs/vehicle/ble-probe.md#rgb-status-and-recovery).
 
 [Full controls, capture workflow, bounds, gallery and step-by-step CLI flashing](docs/vehicle/ble-probe.md).
 

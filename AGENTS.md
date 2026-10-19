@@ -211,6 +211,10 @@ use `cargo build` for compilation without device operations.
   unknown-format protection across both copies, affine byte leases, USB session
   invalidation and the reserved flash range. Save/export must not initiate BLE
   traffic. Enumeration and standard reads do not prove proprietary adapter access.
+  Its [RGB status](docs/vehicle/ble-probe.md#rgb-status-and-recovery) is separate
+  from dashboard warnings: blue scanning, green only clean live completion and
+  cleanup, errors latched red until two-second Y recovery. Saved evidence never
+  creates live success. Preserve atomic fault priority and watchdog fault visibility.
 
 ## Display, controls and configuration invariants
 

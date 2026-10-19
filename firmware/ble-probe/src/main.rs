@@ -9,6 +9,7 @@ mod metrics;
 mod radio;
 mod reports;
 mod session;
+mod status;
 mod storage;
 mod ui;
 mod usb;
@@ -55,9 +56,15 @@ async fn main(spawner: Spawner) {
     config.clocks = dashboard_pico2::clock_profile::clock_config();
     let p = embassy_rp::init(config);
     let watchdog = dashboard_pico2::recovery_watchdog::RecoveryWatchdog::start(p.WATCHDOG);
+    // Match the locked HAL's force-before-timer reset-reason precedence.
+    let reset = embassy_rp::pac::WATCHDOG.reason().read();
+    if reset.timer() && !reset.force() {
+        bridge::STATUS.record(status::Fault::Watchdog);
+    }
     let mut flash =
         dashboard_pico2::flash_guard::CheckedFlash::new(p.FLASH, dashboard_pico2::flash_guard::Region::Captures);
     if let Err(error) = flash.qualify() {
+        bridge::STATUS.record(status::Fault::Storage);
         defmt::warn!("probe.capture unavailable: {:?}", defmt::Debug2Format(&error));
     }
     defmt::info!(

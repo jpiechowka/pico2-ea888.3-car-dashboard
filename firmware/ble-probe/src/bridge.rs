@@ -1,8 +1,8 @@
 //! Cross-core messages contain owned bytes or exclusive framebuffer references.
 use core::cell::Cell;
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use dashboard_core::discovery::{Event, RadioPhase, Request, ScanDiagnostics};
+use dashboard_core::discovery::{Event, Request, ScanDiagnostics};
 use dashboard_core::display::FrameBuffer;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -28,7 +28,7 @@ pub static RADIO_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static SCAN_DIAGNOSTICS: Mutex<CriticalSectionRawMutex, Cell<ScanDiagnostics>> =
     Mutex::new(Cell::new(ScanDiagnostics::new()));
 pub static DROPPED_REPORTS: AtomicU32 = AtomicU32::new(0);
-pub static PHASE: AtomicU8 = AtomicU8::new(RadioPhase::Starting as u8);
+pub static STATUS: crate::status::Status = crate::status::Status::new();
 pub static UI_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static INPUT_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static ENCODER_PROGRESS: AtomicU32 = AtomicU32::new(0);
@@ -42,6 +42,7 @@ pub fn set_request(request: Request) { REQUEST.lock(|cell| cell.set(request)); }
 pub async fn emit_event(event: Event) { EVENTS.send(event).await; }
 pub fn emit_report(event: Event) {
     if REPORTS.try_send(event).is_err() {
+        STATUS.record(crate::status::Fault::Capacity);
         let _ = DROPPED_REPORTS.try_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_add(1)));
     }
 }

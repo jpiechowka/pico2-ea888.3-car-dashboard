@@ -99,6 +99,9 @@ fn conditions(request: dashboard_core::maintenance::Request) -> WriteConditions 
     }
 }
 fn error(error: journal::Error<Error>) -> ui::UiError {
+    if !matches!(error, journal::Error::Empty) {
+        bridge::STATUS.record(crate::status::Fault::Storage);
+    }
     match error {
         journal::Error::Empty => ui::UiError::Empty,
         journal::Error::UnsupportedSchema(_) => ui::UiError::Unsupported,
@@ -125,12 +128,14 @@ fn error(error: journal::Error<Error>) -> ui::UiError {
     }
 }
 fn admission_error(e: admission::Error<Error>) -> ui::UiError {
-    match e {
+    let error = match e {
         admission::Error::Journal(e) => error(e),
         admission::Error::Unsupported => ui::UiError::Unsupported,
         admission::Error::Corrupt => ui::UiError::Corrupt,
         admission::Error::Changed => ui::UiError::Changed,
-    }
+    };
+    bridge::STATUS.capture_error(error);
+    error
 }
 async fn listing(
     storage: &mut Storage,
@@ -157,6 +162,9 @@ async fn listing(
             }
             Err(e) => Err(error(e)),
         };
+        if let Err(e) = *out {
+            bridge::STATUS.capture_error(e);
+        }
     }
 }
 async fn ui_listing(storage: &mut Storage) -> [ui::Slot; 4] {
@@ -172,6 +180,12 @@ async fn ui_listing(storage: &mut Storage) -> [ui::Slot; 4] {
                 }
             }
         };
+        if matches!(
+            *out,
+            ui::Slot::Corrupt | ui::Slot::Unsupported | ui::Slot::Unavailable | ui::Slot::SavedBlocked { .. }
+        ) {
+            bridge::STATUS.record(crate::status::Fault::Storage);
+        }
     }
     slots
 }
@@ -260,6 +274,9 @@ async fn handle_ui(
                 .map_err(error)
         }
     };
+    if let Err(error) = result {
+        bridge::STATUS.capture_error(error);
+    }
     UI_REPLY
         .send(UiReply {
             id: request.id,

@@ -108,6 +108,10 @@ async fn probe_usb_capture_task(cdc: &'static mut Cdc) {
                     .await
                     {
                         Ok(Ok(Ok(n))) => n,
+                        Ok(Ok(Err(embassy_usb::driver::EndpointError::BufferOverflow))) => {
+                            crate::bridge::STATUS.usb_failed(same_session(epoch));
+                            break;
+                        }
                         Ok(_) => break,
                         Err(_) => {
                             parser.reset();
@@ -122,6 +126,7 @@ async fn probe_usb_capture_task(cdc: &'static mut Cdc) {
                         if let Some(request) = parser.feed(byte)
                             && respond(cdc, epoch, request, &mut bytes).await.is_err()
                         {
+                            crate::bridge::STATUS.usb_failed(same_session(epoch));
                             failed = true;
                             break;
                         }
@@ -155,7 +160,10 @@ async fn respond(
     bytes: &mut Option<&'static mut storage::Buffer>,
 ) -> Result<(), ()> {
     match request {
-        Err(_) => frame(cdc, epoch, FrameKind::Error, FrameStatus::InvalidRequest, None, 0, &[]).await?,
+        Err(_) => {
+            crate::bridge::STATUS.usb_failed(same_session(epoch));
+            frame(cdc, epoch, FrameKind::Error, FrameStatus::InvalidRequest, None, 0, &[]).await?;
+        }
         Ok(Request::List) => {
             storage::USB_REQUEST.send(storage::UsbRequest::List).await;
             let storage::UsbReply::Listed(slots) = storage::USB_REPLY.receive().await else {

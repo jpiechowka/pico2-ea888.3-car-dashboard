@@ -96,6 +96,7 @@ impl trouble_host::prelude::EventHandler for Reports {
             embassy_time::Instant::now().as_millis(),
             crate::bridge::emit_report,
             |failure| {
+                crate::bridge::STATUS.record(crate::status::Fault::Scan);
                 // Only this bounded Copy value crosses the critical section.
                 crate::bridge::SCAN_DIAGNOSTICS.lock(|cell| {
                     let mut diagnostics = cell.get();

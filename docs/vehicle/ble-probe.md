@@ -55,7 +55,7 @@ two rows at the top. Longer explanations are here so evidence stays readable.
 | X short press | **Advert only (fresh):** freeze the selected advertisement/scan response, open its first page and clear the old live GATT result; no connection is requested | **Inspect GATT / Repeat GATT:** identical to encoder click, including replacing old live GATT records |
 | Hold X, 2 seconds | Open capture slots and pause the selected peer's live view | Open capture slots; does not repeat inspection |
 | Y tap | Pause/resume scanning without clearing the device list | Cancel a pending inspection, finish radio cleanup and return to scanning; keeps the device list |
-| Hold Y, 2 seconds | Clear the device list and live GATT result, then restart scanning; a terminal fault requests reset; saved slots remain | Same recovery action |
+| Hold Y, 2 seconds | Clear the LED error latch, device list and live GATT result, then restart scanning; a terminal fault requests reset; saved slots remain | Same recovery action |
 
 A, X and Y distinguish short presses from holds; a hold does not also perform its
 short action. A two-second A hold is the onboard equivalent of encoder click,
@@ -105,13 +105,56 @@ shown explicitly; onboard controls remain usable. The utility has a fixed
 **320×240 landscape layout**, full backlight and its own controls, independent of
 dashboard configuration and brightness preferences.
 
-The RGB LED is green while scanning, amber while paused, blue during startup and
-inspection transitions, and red for a terminal fault. A terminal transport,
-display or stalled-owner fault stops watchdog feeding: both cores/peripherals
-restart after approximately two seconds. That reset loses unsaved RAM evidence;
-valid committed slots remain available after restart.
-Ordinary connection/discovery timeouts retain partial records and wait for input.
-The LED describes the tool's state, not vehicle health.
+## RGB status and recovery
+
+The probe uses the PIM715 RGB LED independently of the dashboard's configurable
+warning LED. States below are in priority order; an error overrides activity.
+
+| LED | Meaning |
+| --- | --- |
+| Fast blinking red | Terminal radio/display/progress fault; watchdog recovery is pending |
+| Steady red | An error was recorded since the last two-second Y recovery; it stays red across navigation and successful retries |
+| Purple | A local capture directory/load/save/reset operation is pending, including one still finishing after leaving its page |
+| Steady blue | Scanning for advertisements |
+| Slow blinking blue | Starting, stopping scanning, connecting, inspecting, or disconnecting |
+| Steady green | The current live inspection finished all four inventory stages, retained its negotiated link/timing evidence, completed disconnect cleanup, and had no recorded errors, rejected/truncated records or failed/invalid-length standard reads |
+| Amber | Paused without that clean live result, or browsing saved slots/evidence |
+
+**Green means the probe finished cleanly and disconnected.** It does not mean a
+connection remains open, every possible field was present, proprietary access
+works, or the adapter/vehicle is healthy. An absent optional readable field is
+not a read failure. Opening an old successful capture never creates live green.
+Returning to scanning shows blue unless the error latch is still set.
+
+**Hold Y for two seconds to acknowledge red and recover scanning.** This clears
+live peers/GATT and the volatile LED latch, preserving saved captures. A later
+error sets red again, including an outstanding storage operation that fails after
+recovery. A short Y press, successful retry, or saving the result does not clear
+red. Historical `lost`/`HCIbad` counters remain until reboot; old counter values
+alone do not relatch the LED. `Error:None` describes the current radio error and
+can coexist with red from an earlier failure or another subsystem.
+
+Recorded errors include rejected HCI/AD reports, report/catalogue capacity loss,
+GATT and allowed-read failures (including protected/unavailable values), invalid
+fixed-length standard values, storage errors/unsupported captures, malformed USB
+commands or a failed transfer on its current USB session, loss of an established
+encoder, and invalid FPS timing. A protected read reports an access restriction,
+not a defective device. Global scan errors are not attributed to the selected
+peer. Empty slots, normal cancellation, an encoder absent at startup, idle USB
+timeouts and USB reset/unplug cancellation do not themselves latch red.
+
+Blinking uses elapsed monotonic time: working blue has a 500 ms half-period;
+terminal red has a 125 ms half-period, sampled by the 50 ms supervisor. No display
+frame count controls it. A stalled supervisor cannot promise a visible blink.
+A terminal transport, display or stalled-owner fault stops watchdog feeding:
+both cores/peripherals restart after approximately two seconds. A watchdog timer
+reset sets red again on boot. Power removal or an intentional non-watchdog restart
+clears RAM-only latch history; it is not saved to flash. The reset loses unsaved
+evidence; valid committed slots remain. Ordinary connection/discovery timeouts
+retain partial records and wait for input.
+
+See the [LED source review and validation](../validation/probe-led-status-2026-10-19.md)
+and [pending physical checks](../validation/pico2-dnuc-runbook.md#standalone-probe-captures-and-diagnostics).
 
 ## Always-visible telemetry
 
