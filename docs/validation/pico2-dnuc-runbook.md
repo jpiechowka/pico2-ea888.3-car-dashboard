@@ -22,6 +22,71 @@ UART, switch and regulator steps apply only to that historical alternative.
 Display/control/recovery checks remain useful, but require an explicitly selected
 image and separate authorization before physical flashing or any vehicle work.
 
+### Standalone probe captures and diagnostics
+
+Use the separately checked [probe image](../vehicle/ble-probe.md) and its
+[capture/export procedure](../vehicle/ble-probe-captures.md), with the car
+disconnected and a separate synthetic BLE peer. Record image/source digest,
+profile, board identity, power-on run and PASS/FAIL/NOT TESTED for each row below.
+These are pending physical checks; host tests and the synthetic gallery do not
+mark them passed. Image installation needs current flash authorization.
+
+| Check | Required observation/evidence |
+| --- | --- |
+| Normal USB startup | Windows enumerates normal-firmware CDC; record VID/PID, product and COM port. No BOOTSEL, automatic inspection, pairing or ECU request follows connection. |
+| Onboard controls without encoder | A/B select; short A acts on release; A hold 2 s opens/confirms without moving selection first. Short X opens details/inspects only on release; X hold 2 s opens slots without inspecting. Y hold 2 s recovers scanning and preserves slots. |
+| Gesture boundaries | Exercise short presses, bounce, near-2 s release, holds during busy screens and initial held buttons. No short action follows a recognized hold; no phantom action on encoder reconnect. |
+| Evidence identity | Select peer A, inspect, then save; confirm address/type, packet timestamps, handles and failure state match that attempt. Scan-list capture is a fresh passive view; details capture retains the current inspection. Old advertisement age must not erase GATT evidence. |
+| Four slots | Save each slot, open/page it, cancel an overwrite, let confirmation expire, then confirm replacement. Only the selected slot changes and its generation advances. Busy/error state must remain reachable and recoverable. |
+| Partial evidence | Use a controlled peer that denies a standard read or disconnects. Preserve exact available error, accepted prefix, unfinished stage flags and cleanup outcome; do not relabel it complete. |
+| Historical vs current | Open a saved capture after reboot. Saved boot-relative timestamps remain unchanged; header FPS/work/stack describe the current run. No UTC or old performance reading is inferred. |
+| Read-only export | LIST then export a selected slot to a new directory; compare binary/JSON/text identity and require COMPLETE. Repeat export without changing slot generation. Existing output paths must fail without replacement. |
+| USB interruption | Disconnect USB or stop reading during a controlled export. Retain incomplete host output; reconnect normal USB before retrying. No old reply prefix, lost byte lease, save, erase or BLE inspection may follow. Reopening COM alone is not sufficient evidence of endpoint reset. |
+| Operation abandonment | Back/Y recovery or UI timeout during save/load/reset must not admit overlapping storage work. Await owner completion; leaving the page does not undo a flash operation. |
+| Persistence | After a confirmed completed save, power off/on and export the same bytes. Export before installing any different image; a linker reservation does not qualify an arbitrary loader's erase behavior. |
+
+Unknown/corrupt schema and power-cut testing require a controlled bench fixture
+and disposable slots with exported backups. Keep a known-readable copy beside an
+unsupported copy, confirm readable evidence can be opened on the display, and
+confirm replacement remains blocked until the explicit full-slot Reset. USB
+selects the newest journal-valid copy, which can be the unsupported payload; the
+normal host exporter then rejects it and does not select the older sibling.
+Keep backups before constructing this fixture. Cancel Reset
+first; only then confirm erasure of that slot. Do not modify journal bytes or cut
+power on the owner's only copy as an ordinary smoke test. A first interrupted
+save may leave a damaged slot; replacement must retain either the prior committed
+generation or the fully committed new one. Record exact cut position; arbitrary
+power cycling does not exhaust the journal's failure cases.
+
+For **both dashboard and probe**, compare diagnostics against the same frozen
+image's linked receipt and instrumented time window:
+
+- Capture boot and dashboard page-change behavior: FPS starts unavailable, then
+  becomes measured after its first complete window. A valid idle window is zero.
+  In a controlled instrumented test, missing/future/stale samples must show `--`,
+  rather than a retained percentage or fabricated zero. Do not halt both cores
+  and call that an isolated measurement-owner stall.
+- Compare successful SPI/CS completion counts over a recorded interval with the
+  software completion rate. Measure TE/visible changes separately; transfer FPS
+  does not close panel scanout or tearing acceptance.
+- Record `Static` against exact linked allocation bytes, and both SP capacities
+  against linker/HAL stack bounds. Check upward KiB rounding. Stress radio,
+  navigation, saving and export, recording sampled depth maxima and resets.
+  Neither a low SP reading nor a passing named-path gate proves physical stack
+  high-water or whole-program worst-case depth.
+- Record configured CPU/SPI rates and physical clocks where instruments permit.
+  Work percentages cover the [documented measurement scopes](../performance/diagnostic-measurements.md),
+  not whole-core occupancy. Do not compare the two firmware routes as though
+  their work denominators and measured code paths were identical.
+- For dashboard FRAME2 captures, retain raw RTT and verify unavailable cycles
+  export as `na`/JSON null while valid frame/timing totals survive. Lost RTT groups
+  and invalid cycles must remain visible in analysis.
+
+Keep screenshots, waveforms, raw exports and failures with the image receipt.
+No PC transfer, physical power-loss, clock, stack or RF qualification is implied
+by completing the software checklist. The historical numbered procedure below
+continues to apply only to its explicitly named backend.
+
 ## 1. Prepare and inspect, with the car disconnected
 
 Equipment for the historical wired route: Pico 2 W (radio unused in this backend),

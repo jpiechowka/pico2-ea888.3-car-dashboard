@@ -30,6 +30,33 @@ poll. Probe windows expire after two seconds without a fresh observation.
 Neither sparse SP sampling scheme measures deepest unobserved call depth.
 Both framebuffers and the allocated core-1 stack are already in `Static`.
 
+Dashboard FPS stays unavailable until its first complete window after boot or a
+page change. A qualified idle window is a measured zero. Both routes expire rate
+and work observations after two seconds; a future timestamp is unavailable.
+Dashboard core1 publishes work, sampled stack depth and observation time in one
+bounded cross-core copy. Its stack maximum remains a historical observation,
+while its work percentage expires. The first stack sample is unavailable until
+the acquisition owner actually observes SP. Transfer trace timings and sample
+age refer to the last completed frame, not the current age of vehicle data.
+
+Both screens round memory numerator and capacity upward to KiB (`K` in compact
+labels), after validating exact byte bounds. These rounded values must not be
+added together to infer exact free memory. Invalid rates, work percentages,
+memory pairs and buffer indices display unavailable.
+
+The probe's compact `C0`/`C1` values are task-poll work percentages. `SP0`/`SP1`
+are sampled stack-depth maxima against their allocated capacities. They are not
+whole-core utilization or a physical stack watermark. A displayed `1K` depth
+means a positive observation up to 1024 bytes after rounding, not exactly 1 KiB.
+`Static` is an allocation boundary, not memory that became live during scanning.
+
+On slot, confirmation and saved-evidence pages the header still describes the
+**currently running Pico**. Capture timestamps and link parameters below it are
+historical observations from the saved attempt. Loading an old capture does not
+restore its old FPS/work readings or reset the running meters. Flash maintenance
+and USB export are included where their task polls intersect the measured scope;
+waiting for another owner or USB does not count as active poll work.
+
 ## Corrections
 
 - Count `Waits` only when a completion receive is not immediately ready. A result
@@ -44,6 +71,13 @@ Both framebuffers and the allocated core-1 stack are already in `Static`.
   This neither resets CYCCNT nor detects later external debugger changes.
 - Reject out-of-range core-0 SP observations; display `--` instead of zero.
   Round observed stack depths upward consistently and label linked RAM `Static`.
+- Reject invalid/overflowing cycle segments and zero-denominator windows rather
+  than converting them to idle work. A two-second wall-time guard also rejects
+  intervals long enough to hide an entire CYCCNT revolution. Measurement failure
+  does not stop rendering. Logs use the same optional work formatter as Debug.
+- [FRAME2 exports](telemetry-windows.md#versioned-export-and-collector) retain
+  valid transfer counts/timing when cycle observations are unavailable. Their
+  cycle sum is explicitly `na`, not zero or a partial sum.
 
 ## Hardware/source cross-check
 
@@ -76,10 +110,19 @@ clipping on list/details/state screens. The gallery uses the real shared RGB565
 renderer with explicitly synthetic values. Native/Wasm/ARM checks and linked
 image admission remain separate from hardware measurements.
 
-The final stock and 280/70 probe images use 373160 static bytes (+440 against the
-preceding utility), retaining 151128 bytes for the main stack and headroom. The
-280/70 demo dashboard uses 441384 static bytes with 82904 bytes remaining. All
-three passed the existing practical image limits with Cortex-M33 code generation.
+The same unavailable-value, formatting and exact-byte memory checks serve both
+firmware routes. Regressions distinguish an unobserved first window from a valid
+idle zero, a future/stale observation from current data, and invalid render cycles
+from otherwise valid completed-frame timing. A sampled stack maximum can remain
+available after its work window expires; it remains historical evidence.
+
+The preceding diagnostic delivery's stock and 280/70 probe images used 373160
+static bytes (+440 against the preceding utility), retaining 151128 bytes for
+the main stack and headroom. The 280/70 demo dashboard used 441384 static bytes
+with 82904 bytes remaining. All
+three passed the existing practical image limits with Cortex-M33 code generation
+at that delivery. These are historical image values; current changes require
+fresh linked-image admission and must not reuse those byte counts as current.
 A storage/pinning regression guards the single-copy task wrapper; bounded FPS
 formatting avoids general floating-point formatting on the utility's stack.
 
@@ -88,3 +131,10 @@ windows, inspect stack samples under heavy radio/UI load, check scan/detail/inpu
 recovery, and observe display completion on the physical board. Timer accuracy,
 whole-core occupancy and stack high-water are not established by host tests.
 No automatic flash follows this audit.
+
+Record physical acceptance against the exact image using the
+[capture and diagnostic bench checklist](../validation/pico2-dnuc-runbook.md#standalone-probe-captures-and-diagnostics).
+
+Current software checks, shared fixes and linked memory are recorded in the
+[2026-10-19 validation record](../validation/probe-offline-audit-2026-10-19.md).
+Its image table supersedes historical memory figures only for those exact images.

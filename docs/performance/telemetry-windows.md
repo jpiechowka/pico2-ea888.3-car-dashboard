@@ -90,7 +90,7 @@ RTT writes are nonblocking and may lose data. The shared Rust encoder is also
 used by the host fixture; Python tests parse that producer's actual output.
 
 ```text
-FRAME1,seq,start_us,end_us,frames,payload_bytes,active_cycles,rejected
+FRAME2,seq,start_us,end_us,frames,payload_bytes,active_cycles,rejected
 INPUT1,seq,ignored,no_damage,obscured,invalid,maintenance_gaps,dropped,discarded
 METRIC1,kind,seq,metric,samples,overflow,rejected,min,max,p50lo,p50hi,p95lo,p95hi,p99lo,p99hi
 END1,kind,seq
@@ -100,6 +100,28 @@ Kind 0 requires nine metrics and one input row. Kind 1 is a
 [diagnostic snapshot](diagnostic-telemetry.md) with seven PID and seven metric
 rows, using milliseconds. Groups may interleave. A fixed 320-byte encoder buffer
 covers maximum-width numeric rows. Bound zero means absent only when samples=0.
+
+`FRAME2` cycle sums are either an unsigned integer or the exact token `na`.
+If any completed frame lacks a valid cycle observation, or their sum overflows,
+the whole window's cycle sum is unavailable; its frame count, payload total and
+timing distributions remain valid. An idle window has a known zero sum. The
+collector maps `na` to JSON `null`, accepts it only in this field, and still reads
+legacy numeric `FRAME1` groups. JSON retains `record_version` (1 or 2) so a legacy
+zero, which cannot establish counter availability, remains distinguishable.
+Other row versions and group identity rules remain unchanged. Old collectors
+must be upgraded before reading `FRAME2`; they cannot silently treat `na` as zero.
+
+Cycle availability is separate from timing admission: a frame can have valid
+monotonic transfer timestamps while its DWT sample is unavailable. Its timing
+distribution and frame/payload counts still contribute. A partially known cycle
+sum must not be divided by the whole window to estimate CPU use. These are render
+active cycles, not both-core work or all interrupt/scheduler cycles. They also
+remain distinct from the standalone probe's elapsed task-poll work percentages.
+
+Keep the original RTT text beside parsed JSON. `record_version` identifies the
+producer row's availability semantics; it does not authenticate the image or
+replace its ELF/source receipt. JSON `null`, numeric zero and a missing/rejected
+group carry different meanings and must remain distinct in later analysis.
 
 From `host`:
 
@@ -127,9 +149,12 @@ physical input latency or ECU validity. SPI/CS/TE and vehicle captures are pendi
 Tests include sorted-reference distributions over 1,500 serial/overlapping
 frames, idle/boundary windows, zero/extreme clocks, count exhaustion, replay,
 receive cancellation, maximum-width encoding and corrupt RTT groups. The Longan
-both-trace release at this stage uses 438,456 bytes static RAM with 85,832 bytes
+both-trace release recorded during the original telemetry-window work used
+438,456 bytes static RAM with 85,832 bytes
 below the core-0 stack top. All four reviewed SRAM flash routines pass their byte
-gates. This is a linker bound, not measured stack high-water usage.
+gates. These historical figures are linker bounds, not measured stack high-water
+usage or measurements of the current BLE/capture firmware. Use the current
+image's admission receipt for its allocation and stack estimates.
 
 `stage08_windows` retains policy-2 provenance, 171 source inputs and 30 raw samples
 per case on `ea888-workstation-01`. Median cost is 41.453 ns for recording all nine

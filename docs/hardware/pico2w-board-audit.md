@@ -81,9 +81,10 @@ The resolved HAL is the reviewed `embassy-rp` 0.10.0 source in
 - [`clock_profile.rs`](../../firmware/pico2/src/clock_profile.rs) uses a 12 MHz
   crystal, matching schematic X1. Core-voltage telemetry is a register setting,
   not a measurement. Profile validation and electrical caveats remain.
-- [`settings_flash.rs`](../../firmware/pico2/src/drivers/settings_flash.rs) checks
+- The shared [`flash_guard.rs`](../../firmware/pico2/src/flash_guard.rs) checks
   IO_QSPI register entries for USB/QSPI and GPIO bit 17 for LCD CS. Those indices
-  are not hidden uses of header GP0/1 or W internal wireless pins.
+  are not hidden uses of header GP0/1 or W internal wireless pins. Both dashboard
+  settings and probe captures use this guard with distinct immutable regions.
 
 Firmware still targets `thumbv8m.main-none-eabihf` with
 `-C target-cpu=cortex-m33`. The `pico2` paths, package names, Cargo aliases and

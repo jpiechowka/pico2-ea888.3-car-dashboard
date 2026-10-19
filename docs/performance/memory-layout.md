@@ -219,3 +219,36 @@ current core 0 SP renders unavailable rather than zero. Its `Static` row counts
 linked allocations in the 512 KiB main RAM arena, including framebuffers and the
 reserved core 1 stack. It is neither total live usage nor all 520 KiB of physical
 SRAM: the two extra 4 KiB banks lie outside this arena.
+
+The standalone probe samples SP around task polls and retains the largest accepted
+depth for each core. The dashboard keeps a current core-0 observation and the
+largest core-1 acquisition observation. These scopes differ. Both routes report
+unavailable until a valid observation exists; neither scans or paints live stack
+memory. Core-1 work and stack fields cross cores in one timestamped publication,
+while the historical stack maximum is retained independently of work freshness.
+
+Compact `K` labels mean KiB rounded upward for both numerator and capacity, after
+checking exact byte bounds. Rounded stack capacities must not be added to the
+rounded `Static` value to reconstruct RAM: the core-1 stack is already a static
+allocation, and the core-0 capacity describes the remaining linked arena. Capture
+buffers, USB buffers and task futures belong in the new image's static count even
+when their contents are idle or empty. A reserved flash capture region is not RAM.
+Keep each image's exact-byte linked receipt as the memory admission evidence;
+screen photographs and synthetic gallery values cannot replace it.
+
+### Optional cycle evidence without growing the trace ring (2026-10-19)
+
+Preserving missing cycle observations initially grew each stored trace by eight
+bytes. The traced BLE dashboard then had 65384 bytes of core-0 headroom and was
+correctly rejected by the unchanged 65536-byte gate. Private `FrameTrace` storage
+now places an independent cycle-presence flag in existing padding, while its
+public `RenderTrace` API retains `Option<u64>`. Missing, zero and `u64::MAX` remain
+distinct; there is no sentinel, narrowing, packed representation or unsafe cast.
+
+The pinned ARM compiler reports 152 bytes per stored trace, restoring the
+64-entry ring's linked allocation to 9752 bytes including its wrapper. Final
+traced BLE stock and 280/70 images use 458344 static bytes and leave 65944 bytes,
+408 above the admission floor. The total reduction from the rejected image is
+560 bytes across the ring and other stored copies. This does not change stack
+reserves or establish physical worst-case depth. Exact image identities and
+verification scope are in the [delivery record](../validation/probe-offline-audit-2026-10-19.md).

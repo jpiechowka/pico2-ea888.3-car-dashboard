@@ -294,22 +294,26 @@ See [setup details](docs/configurator/setup-tools.md) and the
 
 Take the Pico 2 W to the car to collect adapter evidence. This separate firmware
 lists nearby connectable BLE advertisements and offers **manual GATT inspection
-on encoder click**. Rotate or use A/B to select a device or scroll pages.
+on encoder click or a two-second A hold**. Rotate or use short A/B presses to
+select a device or scroll pages. **Four saved capture slots survive power off**;
+export them later over normal USB as binary, JSON and text.
 
 | Control | From the device list | From an evidence page |
 | --- | --- | --- |
-| Encoder click | **Inspect GATT:** connect to the selected device, enumerate services/characteristics and read allowed standard information, then disconnect | Start a fresh inspection of the same device; replaces the previous GATT result |
-| X | **Advert only:** pause scanning and open a fresh advertisement view, without connecting; clears the previous GATT result | **Inspect GATT:** the same connection action as encoder click |
+| Encoder click / hold A for 2 seconds | **Inspect GATT:** connect to the selected device, enumerate services/characteristics/descriptors and read allowed standard information, then disconnect | Start a fresh inspection of the same device; replaces the previous live GATT result |
+| X short press | **Advert only:** pause scanning and open a fresh advertisement view, without connecting; clears the previous live GATT result | **Inspect GATT:** the same connection action as encoder click |
+| Hold X for 2 seconds | Open saved capture slots and pause the selected live view | Open saved capture slots without repeating inspection |
 | Y | Pause/resume scanning; keep the device list | Cancel any inspection and return to scanning |
-| Hold Y for 2 seconds | Clear the device list and GATT evidence, then restart scanning | Same recovery action |
+| Hold Y for 2 seconds | Clear the device list and live GATT evidence, then restart scanning; saved slots remain | Same recovery action |
 
 **Why three pages with X but nine with encoder click?** Advertisement packets
 need fewer pages. Inspection adds the device's GATT records. The headings now
 say **ADVERTISEMENT** or **ADVERTISEMENT + GATT**, and an advertisement-only view
 says **GATT not inspected**, rather than implying that discovery failed. Page
 counts depend on the device and received data; three/nine are examples.
-For onboard-only use: **X → wait for Paused → X again**. Photograph the GATT
-result before opening a fresh advertisement view or starting another inspection.
+For onboard-only inspection, **hold A for two seconds** or use **X → wait for
+Paused → X again**. Save or photograph the GATT result before opening a fresh
+advertisement view or starting another inspection. A/X/Y holds suppress their short action.
 Inspection clicks are ignored while busy; stale advertisements need a rescan
 with Y. [Detailed controls, limits and capture sequence](docs/vehicle/ble-probe.md#controls-and-evidence-lifetime).
 
@@ -334,10 +338,31 @@ fresh advertisement before inspection. [Error meanings and limits](docs/vehicle/
 
 These are actual shared-renderer captures with synthetic peers. Names, signal
 strength, address types, raw advertising bytes, UUIDs, handles, properties and
-readable standard Device Information remain available for photographs. Pausing
+readable standard information remain available for photographs and saved export. Pausing
 keeps the list stable; limits, protected fields and partial results stay explicit.
 There are no automatic connections, pairing or OBD commands. A successful GATT
 inspection does not establish adapter or ECU compatibility.
+
+To save, wait for Paused, **hold X for two seconds**, choose slot 1–4 with A/B or
+the encoder, then tap X. Replacing a save requires encoder click or a two-second
+A hold to confirm; Y cancels. Click/hold A opens a saved slot. Damaged captures or
+unknown journal/payload formats require a distinct confirmed Reset; no slot is erased automatically.
+A readable old copy can still load when replacement is blocked.
+
+On the PC, plug normal USB in **without BOOTSEL**. From `host/`:
+
+```powershell
+cargo run --locked --bin ble_probe_captures -- ports
+cargo run --locked --bin ble_probe_captures -- list --port COM7
+cargo run --locked --bin ble_probe_captures -- export 1 C:\Captures\adapter-01 --port COM7
+```
+
+Use your listed COM port and a new output directory with an existing parent.
+Automatic selection requires one recognized product; generic Windows serial
+names need explicit `--port`. Interrupted transfers require USB unplug/replug
+before retry; saved slots remain. Export before installing other firmware.
+[Complete capture/export workflow](docs/vehicle/ble-probe-captures.md) ·
+[NGM/OBDeleven research limits](docs/vehicle/adapter-research.md).
 
 Every probe page keeps **current/average FPS, C0/C1 work percentages, static RAM
 and sampled stack use** visible above the evidence. FPS counts successful display
@@ -361,7 +386,8 @@ the dashboard back. It uses both cores, two fixed framebuffers, Cortex-M33
 instructions and bounded read-only discovery. The wrapper builds/checks only;
 flashing is a separate explicit operation. The display stays full-brightness
 landscape. Green/amber/blue indicate scanning/paused/working; terminal faults
-turn red and automatically restart, losing RAM-only observations.
+turn red and automatically restart, losing unsaved RAM observations. Saved slots
+are separate; physical persistence and USB behavior still require device validation.
 
 [Full controls, capture workflow, bounds, gallery and step-by-step CLI flashing](docs/vehicle/ble-probe.md).
 
@@ -369,6 +395,10 @@ The dashboard Debug screen uses the same completion-rate arithmetic. Its `Waits`
 counter records observed backpressure, `Flush` becomes `--` when idle, and UI-work
 cycles exclude cooperative yields. Invalid stack readings and unavailable cycle
 counters display `--`. [Measurement definitions and audit](docs/performance/diagnostic-measurements.md).
+
+The [2026-10-19 audit and validation record](docs/validation/probe-offline-audit-2026-10-19.md)
+maps fixes to both firmware routes, records tests and linked memory, and separates
+remaining hardware checks from software results.
 
 ## Firmware build and validation
 

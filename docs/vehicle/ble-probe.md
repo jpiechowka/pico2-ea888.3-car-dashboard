@@ -3,7 +3,9 @@
 `dashboard-ble-probe` is a separate, maintained firmware image for the Pico 2 W,
 Pimoroni PIM715 and Adafruit 5880 encoder. It replaces the dashboard while installed
 and runs without Studio, a phone or a computer. Its purpose is to collect
-photographable adapter evidence before attempting protocol integration.
+adapter evidence before attempting protocol integration. Four explicitly saved
+captures survive power removal and can be viewed on the display or exported later
+over normal USB. Photographs remain useful; the saved binary is the lossless record.
 
 ## Use it in the car
 
@@ -14,16 +16,21 @@ photographable adapter evidence before attempting protocol integration.
    signal strength cannot move the selection. Four rows fit on each screen.
 4. Press **X** for **Advert only**: pause and read a fresh snapshot of the selected
    advertisement without connecting. The heading is **ADVERTISEMENT**.
-5. **Click the encoder** to connect to that selected address and inspect GATT.
+5. **Click the encoder**, or **hold A for two seconds**, to connect to that selected address and inspect GATT.
    During inspection, rotate to read pages as records arrive. No peer is connected
    automatically. X on a detail page provides the same **Inspect GATT** action.
    The heading changes to **ADVERTISEMENT + GATT**. Without an encoder, press
    **X → wait for Paused → X again**.
-6. Wait for **Paused**, then photograph the address/type, advertisement bytes,
-   service UUIDs, characteristic handles/properties and Device Information pages.
-   A partial/error result is useful evidence too. Include its error and page count.
-7. Press **Y** to return to scanning. Hold Y for two seconds to clear the catalogue
-   and restart. Power cycling also clears all observations.
+6. Wait for **Paused**. Hold **X for two seconds** to open the four capture slots.
+   Select with the encoder or A/B, then tap X to save the current evidence.
+   Replacing an occupied slot requires encoder click or a two-second A hold to
+   confirm. A partial/error result is useful too; retain its failure context.
+7. Open a saved slot with encoder click or a two-second A hold. Read its pages or
+   take photographs. Y returns; holding Y for two seconds recovers scanning and
+   clears live observations, while saved slots remain.
+8. Later, plug normal USB into the PC, without BOOTSEL, and use the
+   [capture exporter](ble-probe-captures.md#recover-captures-on-a-pc). No laptop or
+   phone is required during capture in the car. Export before installing other firmware.
 
 An advertisement older than 30 seconds cannot start an inspection: return with Y
 and let scanning refresh it. Private addresses can change; an address/name is not
@@ -43,11 +50,22 @@ two rows at the top. Longer explanations are here so evidence stays readable.
 | Control | Device list | Evidence pages |
 | --- | --- | --- |
 | Encoder rotation | Select the previous/next device, clamped at the ends; does not connect | Scroll previous/next evidence page, clamped at the ends; never changes the selected device |
-| Encoder click | **Inspect GATT:** clear the old inspection, stop scanning, connect to the selected device, discover GATT and allowed standard information, then disconnect | **Inspect GATT / Repeat GATT:** start the same fresh inspection for this device, reset to the first page and replace previous GATT records |
-| A / B tap | Select previous/next device; the onboard alternative to turning the encoder | Previous/next evidence page |
-| X tap | **Advert only (fresh):** freeze the selected advertisement/scan response, open its first page and clear the old GATT result; no connection is requested | **Inspect GATT / Repeat GATT:** identical to encoder click, including replacing old GATT records |
+| Encoder click / hold A, 2 seconds | **Inspect GATT:** clear the old live inspection, stop scanning, connect to the selected device, discover GATT and allowed standard information, then disconnect | **Inspect GATT / Repeat GATT:** start the same fresh inspection for this device, reset to the first page and replace previous live GATT records |
+| A / B short press | Select previous/next device; the onboard alternative to turning the encoder | Previous/next evidence page |
+| X short press | **Advert only (fresh):** freeze the selected advertisement/scan response, open its first page and clear the old live GATT result; no connection is requested | **Inspect GATT / Repeat GATT:** identical to encoder click, including replacing old live GATT records |
+| Hold X, 2 seconds | Open capture slots and pause the selected peer's live view | Open capture slots; does not repeat inspection |
 | Y tap | Pause/resume scanning without clearing the device list | Cancel a pending inspection, finish radio cleanup and return to scanning; keeps the device list |
-| Hold Y, 2 seconds | Clear the device list and GATT result, then restart scanning; a terminal fault requests reset | Same recovery action |
+| Hold Y, 2 seconds | Clear the device list and live GATT result, then restart scanning; a terminal fault requests reset; saved slots remain | Same recovery action |
+
+A, X and Y distinguish short presses from holds; a hold does not also perform its
+short action. A two-second A hold is the onboard equivalent of encoder click,
+including opening saved slots and confirming overwrite/reset. Slot selection and saved
+pages wrap; live device selection and pages stop at the ends. See
+[slot controls and confirmations](ble-probe-captures.md#save-open-replace-and-reset).
+Both journal copies are checked before saving. An unknown journal/payload format
+or malformed capture header requires explicit Reset; a supported sibling remains
+openable with replacement blocked. USB and CLI recovery limits are documented
+with the slot controls.
 
 ### Why the number of pages changes
 
@@ -64,20 +82,21 @@ The owner's TV example used three advertisement pages and nine after finding
 three services and twelve characteristics. Those counts are examples, not fixed
 limits or adapter qualification. More records produce more pages as they arrive.
 
-There is **one temporary GATT result, not a per-device archive**. Photograph all
-needed pages before leaving them. Opening a fresh advertisement view with X from
+There is **one live GATT result plus four explicitly saved captures**. Save or
+photograph needed evidence before replacing the live result. Opening a fresh advertisement view with X from
 the list, starting another inspection, holding Y or restarting clears/replaces
-that result. After **Y → X**, fewer pages are therefore expected: X has opened a
+that live result. These actions do not erase saved slots. After **Y → X**, fewer pages are therefore expected: X has opened a
 new advertisement-only view. X never restores a previous inspection or connects
 from the list. Use another X after Paused, or click the encoder, to inspect again.
 
 Inspection clicks during stopping, connecting, discovering or disconnecting are
 ignored; the footer says **GATT busy; please wait** and Y remains available.
 Inspection is also unavailable during a terminal fault or with no selected peer.
-If the selected advertisement is older than 30 seconds, the footer says stale:
+If the selected advertisement is older than 30 seconds, the footer says the advertisement is old:
 return to the list with Y, resume scanning if paused, and wait for a fresh report
-before inspecting. Reading existing evidence remains available.
-A long Y hold includes the ordinary Y press before recovery. Ordinary recovery
+before inspecting. Old advertising prevents a new connection; it does not
+invalidate retained GATT evidence or prevent saving a paused result.
+Y performs its short Back action on release; a long hold goes directly to recovery. Ordinary recovery
 clears the catalogue/GATT evidence, including `full` and per-device report counts.
 It does not reset uptime FPS or the global `lost`/`HCIbad` counters; reboot clears
 all RAM-only state.
@@ -89,7 +108,8 @@ dashboard configuration and brightness preferences.
 The RGB LED is green while scanning, amber while paused, blue during startup and
 inspection transitions, and red for a terminal fault. A terminal transport,
 display or stalled-owner fault stops watchdog feeding: both cores/peripherals
-restart after approximately two seconds. That reset loses the RAM-only evidence.
+restart after approximately two seconds. That reset loses unsaved RAM evidence;
+valid committed slots remain available after restart.
 Ordinary connection/discovery timeouts retain partial records and wait for input.
 The LED describes the tool's state, not vehicle health.
 
@@ -119,7 +139,7 @@ counted. Waiting on DMA, timers or another task is excluded. IRQ time inside a
 poll is included; scheduler/IRQ work outside polls and the observer's recording
 overhead are excluded. One-microsecond resolution limits tiny-poll accuracy.
 Before a full window, after invalid timing, or more than two seconds after the
-latest observation, work displays `--%`, never an invented idle value.
+latest observation, work displays `--`, never an invented idle value.
 
 The two cores publish bounded observations under one short critical section;
 snapshot time and the completion counter are captured together. No rendering,
@@ -138,16 +158,19 @@ for differences between the two tools and remaining device checks.
 | --- | --- |
 | Catalogue | 48 address/type identities; no eviction; excess **reports** counted as `full` |
 | Scan | Legacy 1M active scan, 100 ms interval / 50 ms window; duplicate reports enabled |
-| Raw advertising | Latest 31-byte advertisement and separate 31-byte scan response per peer |
+| Raw advertising | Latest 31-byte advertisement and separate 31-byte scan response per peer, each with its own observation time, report kind and RSSI |
 | Decoded advertising | Name, flags, advertised UUIDs, TX power, manufacturer ID; all other AD bytes remain in hex |
 | Primary services | Up to 24; UUID and handle range |
 | Characteristics | Up to 64 total; UUID, service, declaration/value handles, raw and decoded property flags |
-| Standard information | Manufacturer, model, serial, hardware, firmware, software, System ID and PnP ID within Device Information service `180A` |
-| Values | Up to 64 bytes each, readable-property required; ASCII plus complete retained hex; full buffer marked truncated conservatively |
+| Descriptors | Up to 128 handle/UUID identities, with service and parent characteristic; only known characteristic ranges |
+| Standard information | Eight Device Information fields under `180A`; GAP Device Name, Appearance and preferred connection parameters under `1800`; GATT Database Hash under `1801` |
+| Values | Up to 16 read outcomes, 64 bytes each; readable-property required; raw bytes, service/handle, exact available error code and elapsed time; full buffer marked truncated conservatively |
+| Link and completion | Observed connection interval, latency and supervision timeout; ATT MTU when negotiated; four stage flags, start/end timing and disconnect/cleanup outcome |
+| Saved evidence | Four numbered slots; one selected peer per capture; maximum 8192 encoded bytes; binary/JSON/text USB export |
 | Deadlines | Scan start 3 s; stop/terminal disconnect 5 s; connect 8 s; each ATT operation 3 s; entire GATT inspection 30 s |
 
 Active scanning sends BLE scan requests to obtain scan responses. Manual inspection
-sends connection, MTU, primary-service/characteristic discovery and allowlisted
+sends connection, MTU, primary-service/characteristic/descriptor discovery and allowlisted
 read requests, then disconnects. It **does not send OBD commands, characteristic
 writes, subscription/CCCD writes, pairing, bonding or vendor authentication**.
 Protected fields remain marked `Protected`; the tool does not try to unlock them.
@@ -157,9 +180,15 @@ unification from enabling pairing.
 This is not an exhaustive Bluetooth inventory: Classic, extended-only advertising,
 hidden/nonadvertising, already-connected and out-of-range devices can be absent.
 Directed advertisements may target another central and fail to connect here.
-Secondary services/descriptors and arbitrary proprietary values are not enumerated.
+Secondary services, included-service relationships, descriptor values and arbitrary
+proprietary values are not read. Database Hash uses Read Using Characteristic UUID;
+other allowed fields use their discovered readable handles. Appearance, preferred
+parameters, System ID, PnP ID and Database Hash have fixed-length checks; malformed
+lengths retain raw bytes with an explicit marker. Preferred parameters are not
+the actual link parameters. ATT MTU is not L2CAP CoC MTU.
 Some adapters expose their useful protocol only after authentication, so a successful
 inspection does not establish NGM/OBDeleven interoperability or DNUC measurements.
+See [adapter research and remaining evidence](adapter-research.md).
 
 `lost` counts dropped host report-queue entries; `full` counts reports for new
 identities when the catalogue is full, not unique omitted devices. `HCIbad` counts
@@ -181,8 +210,8 @@ the old result; there is no automatic retry. Available fields are:
 
 | Field | Meaning and limitation |
 | --- | --- |
-| GATT FAILURE / stage | Connect, MTU, services, characteristics, Device Information, receive task, connection events or whole inspection |
-| Reason and `0xNN` | Exact ATT/HCI status when supplied by the library; absent codes are not invented |
+| GATT FAILURE / stage | Connect, MTU, services, characteristics, descriptors, standard information, receive task, connection events or whole inspection |
+| Reason and `0xNN` | Exact ATT/HCI/controller hardware code when supplied by the library; absent codes are not invented |
 | Stage elapsed | Monotonic operation duration when measured; excludes later publication of retained rows; absent for events without a measured start |
 | Query range | The application's requested service/read range, not the remote ATT Error Response handle or internal pagination cursor |
 | Last accepted decl/value | Last validated characteristic in that service, not a guess at the failed handle |
@@ -263,13 +292,15 @@ uses its own integer PIO divider: at 280 MHz its GSPI clock is about 46.67 MHz,
 independent of display SPI70 MHz.
 
 The wrapper prints the dated compiler and options, uses two Cargo jobs, clears
-ambient compiler/profile/dashboard overrides in the child process, retains stack
+ambient compiler/profile/dashboard/source-identity overrides in the child process, retains stack
 symbols and explicitly passes **`-C target-cpu=cortex-m33`** for
 **`thumbv8m.main-none-eabihf`**. It stores commands, sources, resolved clocks, ELF,
 UF2 and a separate utility image receipt under
 `firmware/target/ble-probe-captures/<name>/`. It checks source drift, radio/HAL
-provenance, flash/settings boundaries, fixed buffers, conservative stack reserves
-and exact UF2 payload equality. It never accesses or flashes a device. Failed
+provenance, capture/settings boundaries, reviewed flash-lockout code, fixed buffers,
+conservative stack reserves and exact UF2 payload equality. It embeds a digest of
+the source inventory and checks the linked bytes against the manifest; that digest
+does not mean firmware has verified its own image. It never accesses or flashes a device. Failed
 attempts remain for diagnosis; use a new name after repairing the cause.
 
 For a developer compile only, from `firmware/`:
@@ -280,7 +311,11 @@ cargo ble-probe-280-70-1v30
 cargo clippy --locked -p dashboard-ble-probe -- -D warnings
 ```
 
-These aliases build without the capture/admission wrapper. They inherit the
+These aliases are unchecked developer builds with the default compiler options;
+the checked wrapper and CI additionally use a measured binary-only inlining
+option described in the [dependency review](../dependencies/probe-captures-2026-10-19.md).
+The aliases build without the capture/admission wrapper and normally mark the
+source identity unavailable. They inherit the
 firmware Cargo debug logging filter. Build the probe separately from the
 pairing-enabled dashboard; a combined all-features workspace build is deliberately
 rejected. Existing `cargo pico2` and default workspace builds still target the
@@ -292,7 +327,9 @@ physical flashing instructions here target Windows.
 1. Connect the confirmed genuine **Pico 2 W** while holding BOOTSEL. Capacity is
    owner-confirmed from the board specification; picotool's content-derived flash
    estimate does not independently measure it. The image retains the 2 MiB layout
-   and leaves the final two settings sectors untouched.
+   and excludes the four capture slots and final two settings sectors from its
+   checked program/erase ranges. Export captures before replacing firmware: a
+   dashboard, older image or erase-all operation may use or erase that region.
 2. Select the exact USB serial (Windows Device Manager hardware instance path,
    `USB\VID_2E8A&PID_000F\<serial>`). Check `picotool info -d --debug` and
    `picotool partition info` with that selector: RP2350 A2/A3/A4, ARM available,
@@ -338,7 +375,10 @@ physical radio, encoder, display and overclock qualification.
 
 ## Rendering gallery
 
-Actual shared RGB565 renderer output, with **synthetic peers and values**:
+Actual shared RGB565 renderer output, with **synthetic peers and values**.
+The header represents current synthetic running diagnostics; saved-page bodies
+contain frozen boot-relative evidence. None of these values are hardware
+measurements or observations of an actual adapter:
 
 | Scanning | Paused photo view | Advertisement bytes |
 | --- | --- | --- |
@@ -348,9 +388,33 @@ Actual shared RGB565 renderer output, with **synthetic peers and values**:
 | --- | --- | --- |
 | ![X opens advertisement-only evidence](../images/ble-probe/advertisement-synthetic.png) | ![Not-inspected status and connection hint](../images/ble-probe/not-inspected-synthetic.png) | ![GATT discovery with busy hints and cancellation](../images/ble-probe/inspecting-synthetic.png) |
 
-| Advertisement decoding | GATT inventory | Standard information |
+| Advertisement decode / scan response | Manufacturer/service data / GATT summary | Link / MTU / stages |
 | --- | --- | --- |
-| ![Synthetic packet decoding](../images/ble-probe/details-1-synthetic.png) | ![Synthetic GATT inventory](../images/ble-probe/details-2-synthetic.png) | ![Synthetic Device Information](../images/ble-probe/details-3-synthetic.png) |
+| ![Synthetic packet decoding and scan response](../images/ble-probe/details-1-synthetic.png) | ![Synthetic manufacturer/service data and GATT summary](../images/ble-probe/details-2-synthetic.png) | ![Synthetic negotiated link and stage evidence](../images/ble-probe/details-3-synthetic.png) |
+
+| Remaining stages / cleanup / services | Characteristics | Descriptor / standard read |
+| --- | --- | --- |
+| ![Synthetic stage completion and services](../images/ble-probe/details-4-synthetic.png) | ![Synthetic characteristic inventory](../images/ble-probe/details-5-synthetic.png) | ![Synthetic descriptor and standard read](../images/ble-probe/details-6-synthetic.png) |
+
+| Raw standard read / ATT 05 | Database hash / global diagnostics |
+| --- | --- |
+| ![Synthetic raw bytes and exact ATT failure](../images/ble-probe/details-7-synthetic.png) | ![Synthetic hash and global diagnostic counters](../images/ble-probe/details-8-synthetic.png) |
+
+| Four slots | Confirm replacement | Confirm destructive Reset |
+| --- | --- | --- |
+| ![Synthetic capture slots](../images/ble-probe/slots-synthetic.png) | ![Synthetic overwrite confirmation](../images/ble-probe/overwrite-synthetic.png) | ![Synthetic slot reset confirmation](../images/ble-probe/erase-confirm-synthetic.png) |
+
+| Saving | Storage failure | Readable copy / replacement blocked |
+| --- | --- | --- |
+| ![Synthetic save in progress](../images/ble-probe/saving-synthetic.png) | ![Synthetic storage error](../images/ble-probe/storage-error-synthetic.png) | ![Synthetic supported copy with explicit reset required](../images/ble-probe/blocked-save-synthetic.png) |
+
+| Saved identity | Saved link / stages | Saved descriptor / standard read |
+| --- | --- | --- |
+| ![Frozen synthetic selected identity](../images/ble-probe/saved-0-synthetic.png) | ![Frozen synthetic link and stage evidence](../images/ble-probe/saved-4-synthetic.png) | ![Frozen synthetic descriptor and read](../images/ble-probe/saved-7-synthetic.png) |
+
+| Saved raw bytes / ATT 05 | Saved configured clocks / source digest |
+| --- | --- |
+| ![Frozen synthetic raw bytes and exact ATT failure](../images/ble-probe/saved-8-synthetic.png) | ![Frozen synthetic producer identity](../images/ble-probe/saved-10-synthetic.png) |
 
 | Failure stage and retained context | Global scan errors without a peer |
 | --- | --- |
@@ -366,7 +430,7 @@ Regenerate the lossless RGB captures from `host/`:
 cargo run --locked --example ble_probe_gallery -- target/ble-probe-gallery
 ```
 
-The generator writes PPM files. To update the PNG documentation copies, use Python
+The generator writes 44 PPM files. To update the PNG documentation copies, use Python
 with Pillow installed, from the same `host/` directory:
 
 ```python
@@ -382,9 +446,10 @@ for source in Path("target/ble-probe-gallery").glob("*.ppm"):
 
 Core 0 owns CYW43439/PIO0 SM0/DMA1, SPI0/DMA0, I2C0, four buttons, backlight,
 RGB and watchdog. Core 1 owns the bounded catalogue, inspection state and renderer.
-Only owned messages and exclusive framebuffer references cross cores through
-critical-section channels. No runtime flash writes, saved peers, ADC/VSYS reads
-or extra framebuffer exist. Rendering targets 20 software updates/s; this is
+Core 0 also owns USB CDC and the capture journal. Only owned messages and exclusive
+framebuffer/capture-buffer references cross cores through critical-section channels.
+Explicit local saves/reset use bounded flash maintenance; USB list/export is
+read-only. There are no ADC/VSYS reads or extra framebuffers. Rendering targets 20 software updates/s; this is
 neither measured device FPS nor panel scanout.
 
 The two 153600-byte buffers circulate through FREE/render/READY/transfer/FREE.
@@ -398,8 +463,10 @@ Host-runner failure retains the CYW owner while recovery resets the device.
 The shared progress monitor checks input/encoder/render/transfer work; radio
 liveness observes actual bus boundaries, with a separate host-start deadline.
 The checked build retains nonblocking RTT stage/revision/timing logs and filters
-upstream info/debug traffic. RTT needs a debug probe to collect; no USB serial
-logger or on-device persistent log was added.
+upstream info/debug traffic. RTT needs a debug probe to collect. USB CDC exports
+saved captures, not a continuous log; the journal stores selected evidence, not
+an RF trace or complete event history. Flash maintenance parks participating owners
+for each bounded erase/program operation and resumes them between operations.
 
 Tests cover malformed advertisement/GATT bytes, handle/offset overflow, standard
 UUID aliases, capacities, stable selection, cancellation, stale results, missing
@@ -433,11 +500,13 @@ CI checks stock/280 builds, strict nightly Clippy, Python gates and security-fea
 exclusion. Software tests and conservative stack estimates do not qualify RF
 interoperability, physical stack high-water, electrical margins or car data.
 
-The checked 2026-10-19 build (`nightly-2026-10-18`, CPU280/SPI70, bounded info
-logging) uses **374632 bytes of static RAM** and leaves **149656 bytes for the
+### Historical image measurements before persistent capture
+
+The earlier checked 2026-10-19 build (`nightly-2026-10-18`, CPU280/SPI70, bounded info
+logging) used **374632 bytes of static RAM** and left **149656 bytes for the
 main stack and headroom**. Static RAM includes both 153600-byte framebuffers and
-the 32768-byte core-1 stack. The largest emitted function frame is 5432 bytes;
-the aggregate emitted frames total 19344 bytes against the unchanged 20480-byte
+the 32768-byte core-1 stack. The largest emitted function frame was 5432 bytes;
+the aggregate emitted frames totalled 19344 bytes against the unchanged 20480-byte
 limit. The aggregate is a regression check, not simultaneous stack use;
 the conservative named-path budgets include additional child and interrupt
 reserves. These are linked-image/source-review results, not physical stack
@@ -450,8 +519,12 @@ connection/scan context and startup supervision add 1336 bytes to that image.
 A concrete pinned poll wrapper keeps each task future in one allocation;
 bounded integer formatting avoids adding general float-formatting stack frames.
 Synchronous ATT packet preparation keeps its temporary encoder out of the request
-future. The current 280/70 image passed the unchanged practical image checks;
-CI also checks the stock profile.
+future. That preceding 280/70 image passed the practical image checks. These
+historical figures do not describe the new capture/USB image. Its own linked
+receipt must pass the unchanged memory/stack limits; host tests alone do not
+establish this. CI also checks the stock profile. See the
+[capture contract](ble-probe-captures.md) and
+[dependency/source audit](../dependencies/probe-captures-2026-10-19.md).
 
 References checked against actual locked sources:
 [Pico 2 W datasheet](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf),

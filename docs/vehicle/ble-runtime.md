@@ -1,6 +1,6 @@
 # USB-powered BLE prototype
 
-Implementation contract, 2026-10-18. The supported board remains Raspberry Pi
+Implementation contract, updated 2026-10-19. The supported board remains Raspberry Pi
 Pico 2 W / RP2350 Cortex-M33 with PIM715 and the retained Adafruit 5880 encoder.
 The selected [hardware arrangement](../../hardware/README.md) powers the dashboard
 from USB and removes the proposed Longan/Pololu/protection-board assembly.
@@ -105,6 +105,15 @@ notifications are consumed; unsolicited non-CR/LF bytes fail the stream. A bound
 queue drain precedes each new command. Loss before the ELM parser must also fail
 closed at the HCI/ACL/GATT boundary.
 
+The shared Trouble receive path now returns malformed known HCI events as a
+bounded decode fault, ignores unknown LE subevents, and preserves the raw
+controller Hardware Error byte. The dashboard log retains that compact cause
+before existing fault recovery. Failed connection-complete events retain their
+status even when the event's other, undefined fields contain invalid values;
+success still requires full decoding. These repairs also serve the standalone
+probe. Actual receive-loop and ring fixtures cover both feature graphs; this
+does not identify the source of the probe's photographed short scan reports.
+
 Each connection attempt has a checked new epoch. Reconnection requires a fresh
 GATT client, subscription and initialization. The lifecycle contract requires
 actual controller disconnection and settled create/cancel procedures before a
@@ -145,7 +154,7 @@ security.
 The radio task retains the bus owner rather than canceling a DMA operation.
 Its maintenance hook runs between completed CYW bus operations. Park requires
 CS high, DMA1 idle, a self chain target and the required interrupt context. The
-settings driver independently checks radio idle and all DMA channels before a
+shared [flash guard](../../firmware/pico2/src/flash_guard.rs) independently checks radio idle and all DMA channels before a
 synchronous flash operation. Radio is an additional participant in the existing
 acquisition/input/display flash coordination; both framebuffers retain their
 ownership rules.

@@ -200,11 +200,17 @@ use `cargo build` for compilation without device operations.
   the [physical validation runbook](docs/validation/pico2-dnuc-runbook.md).
 
 - The [standalone BLE probe](docs/vehicle/ble-probe.md) scans advertisements and
-  connects only on explicit selected-peer Inspect (encoder click or X in details).
-  Preserve its no-pairing feature guard, DIS read allowlist, generation-based
+  connects only on explicit selected-peer Inspect (encoder click, two-second A
+  hold, or X in details). Preserve its no-pairing feature guard, standard
+  DIS/GAP/GATT read allowlist, generation-based
   cancellation, stop/disconnect acknowledgments and separate image gate. Build
   it separately from the pairing-enabled dashboard; default workspace builds
   remain `pico2`. No Studio flashing or automatic adapter/ECU probing is implied.
+  Its [four saved capture slots](docs/vehicle/ble-probe-captures.md) use a bounded
+  journal and read-only USB serial recovery. Preserve explicit overwrite/Reset,
+  unknown-format protection across both copies, affine byte leases, USB session
+  invalidation and the reserved flash range. Save/export must not initiate BLE
+  traffic. Enumeration and standard reads do not prove proprietary adapter access.
 
 ## Display, controls and configuration invariants
 
@@ -315,6 +321,10 @@ See [editor state](docs/configurator/editor-state.md),
   validation in every report. Host timings do not prove RP2350 cycles or FPS;
   software transfer FPS does not measure scanout. ECU support, electrical margins,
   tearing and physical stack high-water require their own device evidence.
+  Keep unavailable/stale diagnostic observations distinct from valid zero. Work
+  percentages describe their instrumented scope; stack pointers are samples, not
+  continuous high-water measurements. Saved capture headers show the current
+  Pico's diagnostics, while the capture body contains frozen boot-relative data.
 - Before delivery, audit the affected path end-to-end and check code, comments,
   defaults, codecs, toolchain pins, Cargo profiles, UI/help, scripts, tests, README
   and relevant docs for drift. State exactly what ran and what remains unverified.

@@ -49,7 +49,7 @@ negative artifact fixtures.
 Keep the repository's conservative 2 MiB flash contract. Official Pico 2 W has
 4 MiB W25Q32RV ([board datasheet](https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf),
 [SDK board header](https://github.com/raspberrypi/pico-sdk/blob/079c6f39023649b154152db30f1d781e884879bc/src/boards/include/boards/pico2_w.h)).
-Program FLASH ends at `0x101fe000` (2040 KiB). Settings sectors occupy physical
+Dashboard program FLASH ends at `0x101fe000` (2040 KiB). Settings sectors occupy physical
 offsets `0x1fe000` and `0x1ff000`, ending at `0x200000`. They have no initialized
 ELF sections. The ELF gate checks every flash PT_LOAD physical file range,
 including the flash copy of RAM data/code and the final boot block.
@@ -57,6 +57,47 @@ including the flash copy of RAM data/code and the final boot block.
 An ordinary loader using only ELF/UF2 ranges should preserve those sectors;
 actual update preservation remains a hardware gate. Erase-all/flash-nuke clears
 settings. No persistence guarantee follows from a linker reservation alone.
+
+The standalone probe additionally reserves `0x1e6000..0x1fe000` (96 KiB) for
+four capture slots. Its program limit is therefore `0x101e6000` (1944 KiB).
+Each slot has two 12 KiB copies and an 8192-byte payload limit. The probe's
+ELF/UF2 admission checks all load and erase extents against this boundary;
+settings remain outside its writable region. A dashboard or older firmware
+can use the capture area: export captures before installing another image.
+[Capture format, recovery and limitations](../vehicle/ble-probe-captures.md).
+
+## Shared guard and probe capture maintenance (2026-10-19)
+
+`pico2::flash_guard::CheckedFlash` owns the peripheral and applies the same
+release-only boot qualification and per-operation checks to both firmware
+routes. Its selected region is immutable: settings or captures. The dashboard
+settings adapter retains its journal and maintenance policy; the probe has a
+single core0 storage task, with separate affine UI and USB byte buffers. USB
+offers only directory and read operations and cannot erase or save a slot.
+
+Probe capture writes use one maintenance window per 4 KiB erase or 256-byte
+program, retaining the 400 ms preparation, 500 ms write and 1000 ms total limits.
+The display drains its current transfer and acknowledges quiescence before the
+supervisor issues a ticket. Core1 UI, core0 input/I2C and radio bus owners park;
+interrupts remain available for the HAL's SRAM multicore lockout. No DMA or
+I2C operation is canceled to make the gate pass. Owners resume between journal
+steps and must make fresh progress before another ticket. Write/resume failure
+cannot keep the watchdog alive through a feed loop.
+
+The inactive copy is erased, programmed and read back before its separate commit
+page is written. A normal save retains the previously valid copy through torn
+writes. Unknown journal or capture payload formats block replacement, including
+an unknown inactive copy. A distinct local Reset confirmation is required to
+erase both copies; Reset itself cannot promise power-loss preservation. Readable
+supported copies remain accessible when replacement is blocked. Neither CRC nor
+a source digest authenticates the capture's origin.
+
+The common guard checks full SRAM program-buffer extent, physical flash bounds,
+mapping, all DMA channels, SPI busy/TX state, display CS, I2C idle and radio
+ownership again for every mutation. Probe admission also runs the unchanged
+reviewed SRAM flash-code/vector checks. These are software and artifact checks;
+USB reconnects, power cuts, concurrent RF load and physical stack maxima still
+need the exact-image hardware runbook.
 
 ## Runtime ownership contract
 
