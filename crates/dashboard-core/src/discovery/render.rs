@@ -52,6 +52,71 @@ fn error_copy(error: ProbeError) -> &'static str {
         ProbeError::InvalidPeer => "InvalidPeer: stale; rescan with Y",
     }
 }
+fn gatt_requested(probe: &Probe) -> bool {
+    matches!(probe.request.action, Action::Inspect(peer) if probe.selected_device().is_some_and(|d| d.peer == peer))
+}
+
+fn control_hints(
+    probe: &Probe,
+    now_ms: u64,
+) -> [&'static str; 2] {
+    let details = probe.screen == Screen::Details;
+    // These phases ignore both Inspect inputs; keep the footer honest while
+    // the radio acknowledges stop/disconnect, including after cancellation.
+    let busy = matches!(
+        probe.phase,
+        RadioPhase::Stopping | RadioPhase::Connecting | RadioPhase::Discovering | RadioPhase::Disconnecting
+    );
+    let first = if probe.phase == RadioPhase::Fault {
+        if details {
+            "Turn/A/B: pages  GATT unavailable"
+        } else {
+            "Turn/A/B: select  GATT unavailable"
+        }
+    } else if busy {
+        if details {
+            "Turn/A/B: pages  GATT busy; please wait"
+        } else {
+            "Turn/A/B: select  GATT busy; please wait"
+        }
+    } else if let Some(peer) = probe.selected_device() {
+        if peer.age_ms(now_ms) > 30_000 {
+            if details {
+                "Turn/A/B: pages  GATT stale; Y to rescan"
+            } else {
+                "Turn/A/B: select  GATT stale; rescan"
+            }
+        } else if details {
+            if gatt_requested(probe) {
+                "Turn/A/B: pages  Click/X: Repeat GATT"
+            } else {
+                "Turn/A/B: pages  Click/X: Inspect GATT"
+            }
+        } else {
+            "Turn/A/B: select  Click: Inspect GATT"
+        }
+    } else {
+        "Turn/A/B: select  No peer selected"
+    };
+    let second = if details {
+        if busy && gatt_requested(probe) {
+            "Y: Cancel / back to scan"
+        } else {
+            "Y: Back to scan"
+        }
+    } else if probe.selected_device().is_none() {
+        if matches!(probe.request.action, Action::Scan(true)) {
+            "Y: Pause scan"
+        } else {
+            "Y: Resume scan"
+        }
+    } else if matches!(probe.request.action, Action::Scan(true)) {
+        "X: Advert only (fresh)  Y: Pause scan"
+    } else {
+        "X: Advert only (fresh)  Y: Resume scan"
+    };
+    [first, second]
+}
 fn properties_text(properties: u8) -> String<50> {
     let mut out = String::new();
     for (bit, label) in [
@@ -316,12 +381,24 @@ fn details(
     });
     packet("ADVERTISEMENT", &d.advertisement, emit);
     packet("SCAN RESPONSE", &d.response, emit);
+    if !gatt_requested(probe) {
+        emit("GATT not inspected");
+        emit("Advertisement only / no connection requested");
+        emit("When ready: Click/X connects + inspects GATT");
+        return;
+    }
     let i = &probe.inspection;
     emit("GATT / EXPLICIT INSPECTION");
     emit(if i.complete && i.omitted == 0 && i.malformed == 0 {
         "Enumeration ended"
     } else {
-        "Partial / not completed"
+        match probe.phase {
+            RadioPhase::Stopping => "Waiting for scan / connection cleanup",
+            RadioPhase::Connecting => "Connecting to selected peer",
+            RadioPhase::Discovering => "GATT inspection in progress",
+            RadioPhase::Disconnecting => "Disconnecting / partial results",
+            _ => "Partial / not completed",
+        }
     });
     emit(&line(format_args!("Omitted {} / malformed {}", i.omitted, i.malformed)));
     emit(&line(format_args!(
@@ -329,9 +406,6 @@ fn details(
         i.services.len(),
         i.characteristics.len()
     )));
-    if i.services.is_empty() && i.characteristics.is_empty() {
-        emit("Click encoder to inspect selected peer");
-    }
     for s in &i.services {
         emit(&line(format_args!("SERVICE {:04X}-{:04X}", s.start, s.end)));
         emit(&uuid_text(s.uuid));
@@ -488,7 +562,16 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
             d,
             10,
             75,
-            &line(format_args!("DETAILS   page {} / {}", page + 1, pages)),
+            &line(format_args!(
+                "{}  {}/{}",
+                if gatt_requested(probe) {
+                    "ADVERTISEMENT + GATT"
+                } else {
+                    "ADVERTISEMENT"
+                },
+                page + 1,
+                pages
+            )),
             RED,
         )?;
         let mut index = 0;
@@ -507,8 +590,9 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         }
     }
     rect(d, 0, 204, 320, 36, PANEL)?;
-    text(d, 8, 206, "Turn / A B: scroll   Click: Inspect", WHITE)?;
-    text(d, 8, 217, "X: detail / inspect   Y: back / pause", MUTED)?;
+    let hints = control_hints(probe, now_ms);
+    text(d, 8, 206, hints[0], WHITE)?;
+    text(d, 8, 217, hints[1], MUTED)?;
     text(
         d,
         8,
@@ -663,8 +747,77 @@ mod tests {
         assert!(l.iter().any(|l| l == "02 01 06 02 0A F6 03 FF 34 12 03 03 0A 18"));
     }
     #[test]
+    fn advertisement_view_does_not_claim_a_failed_or_empty_gatt_inspection() {
+        let mut p = probe();
+        assert_eq!(p.input(Input::Details, 0).unwrap().action, Action::Scan(false));
+        let l = lines(&p);
+        assert!(l.iter().any(|l| l.contains("GATT not inspected")));
+        assert!(
+            !l.iter()
+                .any(|l| l.contains("Partial") || l.contains("0 primary services"))
+        );
+        assert!(l.iter().any(|l| l.contains("no connection")));
+
+        p.event(Event::State {
+            revision: p.request.revision,
+            phase: RadioPhase::Paused,
+            error: ProbeError::None,
+        });
+        assert!(matches!(p.input(Input::Click, 1).unwrap().action, Action::Inspect(_)));
+        for (phase, expected) in [
+            (RadioPhase::Stopping, "Waiting for scan / connection cleanup"),
+            (RadioPhase::Connecting, "Connecting to selected peer"),
+            (RadioPhase::Discovering, "GATT inspection in progress"),
+            (RadioPhase::Paused, "Partial / not completed"),
+        ] {
+            p.event(Event::State {
+                revision: p.request.revision,
+                phase,
+                error: ProbeError::Timeout,
+            });
+            let l = lines(&p);
+            assert!(l.iter().any(|l| l == expected), "wrong status for {phase:?}: {l:?}");
+            assert!(!l.iter().any(|l| l.contains("GATT not inspected")));
+        }
+    }
+    #[test]
+    fn footer_only_offers_inspection_when_the_input_path_accepts_it_and_fits_its_rows() {
+        for screen in [Screen::List, Screen::Details] {
+            for phase in [
+                RadioPhase::Starting,
+                RadioPhase::Scanning,
+                RadioPhase::Paused,
+                RadioPhase::Stopping,
+                RadioPhase::Connecting,
+                RadioPhase::Discovering,
+                RadioPhase::Disconnecting,
+                RadioPhase::Fault,
+            ] {
+                for now in [0, 30_000, 30_001] {
+                    let mut p = probe();
+                    p.screen = screen;
+                    p.phase = phase;
+                    let hints = control_hints(&p, now);
+                    let accepts_inspect = p.input(Input::Click, now).is_some();
+                    assert_eq!(
+                        hints[0].contains("Click"),
+                        accepts_inspect,
+                        "{screen:?}/{phase:?}/{now}"
+                    );
+                    assert!(hints.iter().all(|s| s.is_ascii() && s.len() * 6 <= 304));
+                    assert!(hints[1].contains("Y:"));
+                }
+            }
+        }
+        let empty = Probe::new();
+        assert!(!control_hints(&empty, 0)[0].contains("Click"));
+        assert!(!control_hints(&empty, 0)[1].contains("X:"));
+    }
+    #[test]
     fn incomplete_or_malformed_inspection_never_claims_enumeration_ended() {
         let mut p = probe();
+        p.input(Input::Click, 0).unwrap();
+        p.phase = RadioPhase::Paused;
         p.inspection.complete = true;
         assert!(lines(&p).iter().any(|l| l == "Enumeration ended"));
         for (omitted, malformed) in [(1, 0), (0, 1)] {
@@ -678,6 +831,7 @@ mod tests {
     #[test]
     fn all_detail_lines_fit_without_losing_value_bytes() {
         let mut p = probe();
+        p.input(Input::Click, 0).unwrap();
         p.inspection
             .values
             .push(InfoValue {

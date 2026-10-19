@@ -79,10 +79,23 @@ fn main() {
     }
     p.selected = 1;
     save(directory, "scan-synthetic", &p);
-    p.phase = RadioPhase::Paused;
+    let pause = p.input(Input::Back, 12_000).unwrap();
+    p.event(Event::State {
+        revision: pause.revision,
+        phase: RadioPhase::Paused,
+        error: ProbeError::None,
+    });
     p.encoder_connected = false;
     save(directory, "paused-synthetic", &p);
-    p.screen = Screen::Details;
+    p.input(Input::Details, 12_000).unwrap();
+    p.phase = RadioPhase::Paused;
+    save(directory, "advertisement-synthetic", &p);
+    p.page = page_count(&p) - 1;
+    save(directory, "not-inspected-synthetic", &p);
+    p.input(Input::Click, 12_000).unwrap();
+    p.phase = RadioPhase::Discovering;
+    save(directory, "inspecting-synthetic", &p);
+    p.phase = RadioPhase::Paused;
     p.inspection
         .services
         .push(Service {
@@ -114,15 +127,22 @@ fn main() {
         p.page = page;
         save(directory, &format!("details-{page}-synthetic"), &p);
     }
-    p.phase = RadioPhase::Fault;
-    p.error = ProbeError::Cleanup;
-    p.screen = Screen::List;
+    let back = p.input(Input::Back, 12_000).unwrap();
+    p.event(Event::State {
+        revision: back.revision,
+        phase: RadioPhase::Fault,
+        error: ProbeError::Cleanup,
+    });
     p.dropped_reports = 31;
     p.catalog.overflow_reports = 8;
     save(directory, "fault-synthetic", &p);
     p.catalog = Catalog::new();
     save(directory, "empty-fault-synthetic", &p);
-    p.phase = RadioPhase::Paused;
-    p.error = ProbeError::None;
+    let pause = p.input(Input::Back, 12_000).unwrap();
+    p.event(Event::State {
+        revision: pause.revision,
+        phase: RadioPhase::Paused,
+        error: ProbeError::None,
+    });
     save(directory, "empty-paused-synthetic", &p);
 }

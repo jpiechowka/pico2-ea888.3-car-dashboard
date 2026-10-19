@@ -68,7 +68,7 @@ fn every_phase_and_extreme_selection_stays_on_display() {
 #[test]
 fn detail_pages_cover_large_inspection_and_clamp() {
     let mut p = populated();
-    p.screen = Screen::Details;
+    p.input(Input::Click, 0).unwrap();
     for i in 0..64 {
         p.inspection
             .characteristics

@@ -294,13 +294,32 @@ See [setup details](docs/configurator/setup-tools.md) and the
 
 Take the Pico 2 W to the car to collect adapter evidence. This separate firmware
 lists nearby connectable BLE advertisements and offers **manual GATT inspection
-on encoder click**. Rotate to scroll devices/pages; A/B/X/Y work without the
-encoder. X opens advertisement evidence, Y returns or pauses scanning, and a
-two-second Y hold clears/restarts discovery.
+on encoder click**. Rotate or use A/B to select a device or scroll pages.
+
+| Control | From the device list | From an evidence page |
+| --- | --- | --- |
+| Encoder click | **Inspect GATT:** connect to the selected device, enumerate services/characteristics and read allowed standard information, then disconnect | Start a fresh inspection of the same device; replaces the previous GATT result |
+| X | **Advert only:** pause scanning and open a fresh advertisement view, without connecting; clears the previous GATT result | **Inspect GATT:** the same connection action as encoder click |
+| Y | Pause/resume scanning; keep the device list | Cancel any inspection and return to scanning |
+| Hold Y for 2 seconds | Clear the device list and GATT evidence, then restart scanning | Same recovery action |
+
+**Why three pages with X but nine with encoder click?** Advertisement packets
+need fewer pages. Inspection adds the device's GATT records. The headings now
+say **ADVERTISEMENT** or **ADVERTISEMENT + GATT**, and an advertisement-only view
+says **GATT not inspected**, rather than implying that discovery failed. Page
+counts depend on the device and received data; three/nine are examples.
+For onboard-only use: **X → wait for Paused → X again**. Photograph the GATT
+result before opening a fresh advertisement view or starting another inspection.
+Inspection clicks are ignored while busy; stale advertisements need a rescan
+with Y. [Detailed controls, limits and capture sequence](docs/vehicle/ble-probe.md#controls-and-evidence-lifetime).
 
 | Scan and select | Inspect services and characteristics |
 | --- | --- |
 | ![Synthetic BLE scan list](docs/images/ble-probe/scan-synthetic.png) | ![Synthetic GATT detail page](docs/images/ble-probe/details-2-synthetic.png) |
+
+| X: advertisement only | Encoder click / X in details: GATT |
+| --- | --- |
+| ![Advertisement view explicitly says GATT not inspected](docs/images/ble-probe/not-inspected-synthetic.png) | ![GATT inspection in progress with busy controls](docs/images/ble-probe/inspecting-synthetic.png) |
 
 These are actual shared-renderer captures with synthetic peers. Names, signal
 strength, address types, raw advertising bytes, UUIDs, handles, properties and

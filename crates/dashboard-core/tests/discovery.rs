@@ -157,6 +157,51 @@ fn stale_peer_and_empty_list_do_not_initiate_connection() {
 }
 
 #[test]
+fn x_opens_a_fresh_advertisement_view_and_only_a_second_press_requests_gatt() {
+    let mut p = Probe::new();
+    p.catalog.observe(report(1, ReportKind::Connectable, &[2, 1, 6], 10));
+    let peer = p.selected_device().unwrap().peer;
+    let paused = p.input(Input::Details, 10).unwrap();
+    assert_eq!(paused.action, Action::Scan(false));
+    // Repeated input before the stop acknowledgment cannot start a connection.
+    assert!(p.input(Input::Details, 11).is_none());
+    assert!(p.input(Input::Click, 11).is_none());
+    p.event(Event::State {
+        revision: paused.revision,
+        phase: RadioPhase::Paused,
+        error: ProbeError::None,
+    });
+    let inspection = p.input(Input::Details, 12).unwrap();
+    assert_eq!(inspection.action, Action::Inspect(peer));
+    p.event(Event::Item {
+        revision: inspection.revision,
+        item: InspectionItem::Service(Service {
+            start: 1,
+            end: 10,
+            uuid: Uuid::from_wire(&[0x0A, 0x18]).unwrap(),
+        }),
+    });
+    p.event(Event::Complete {
+        revision: inspection.revision,
+        limited: false,
+    });
+    assert_eq!(p.inspection.services.len(), 1);
+    assert!(p.inspection.complete);
+    p.input(Input::Back, 13).unwrap();
+    let fresh_view = p.input(Input::Details, 14).unwrap();
+    assert_eq!(fresh_view.action, Action::Scan(false));
+    assert_eq!(p.selected_device().unwrap().peer, peer);
+    assert_eq!(p.selected_device().unwrap().advertisement.as_slice(), &[2, 1, 6]);
+    assert!(p.inspection.services.is_empty());
+    assert!(!p.inspection.complete);
+    p.event(Event::Complete {
+        revision: inspection.revision,
+        limited: false,
+    });
+    assert!(!p.inspection.complete, "old completion cannot repopulate a fresh view");
+}
+
+#[test]
 fn huge_encoder_steps_are_bounded_and_pause_does_not_clear_evidence() {
     let mut probe = Probe::new();
     for id in 0..5 {

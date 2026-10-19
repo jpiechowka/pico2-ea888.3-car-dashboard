@@ -12,10 +12,13 @@ photographable adapter evidence before attempting protocol integration.
    connected. The utility cannot list a device that is not advertising.
 3. Rotate the encoder to select a peer. The list keeps first-seen order so changing
    signal strength cannot move the selection. Four rows fit on each screen.
-4. Press **X** to pause and read the selected advertisement without connecting.
+4. Press **X** for **Advert only**: pause and read a fresh snapshot of the selected
+   advertisement without connecting. The heading is **ADVERTISEMENT**.
 5. **Click the encoder** to connect to that selected address and inspect GATT.
    During inspection, rotate to read pages as records arrive. No peer is connected
-   automatically. X on a detail page provides the same Inspect action.
+   automatically. X on a detail page provides the same **Inspect GATT** action.
+   The heading changes to **ADVERTISEMENT + GATT**. Without an encoder, press
+   **X → wait for Paused → X again**.
 6. Wait for **Paused**, then photograph the address/type, advertisement bytes,
    service UUIDs, characteristic handles/properties and Device Information pages.
    A partial/error result is useful evidence too. Include its error and page count.
@@ -28,17 +31,56 @@ authenticated device identity. RSSI is signal strength, not measured distance.
 Names and firmware/serial strings are untrusted peer claims. Redact unrelated
 devices and private identifiers before sharing photographs publicly.
 
-| Control | Device list | Detail pages |
-| --- | --- | --- |
-| Encoder rotation | Previous/next device, clamped at ends | Previous/next page |
-| Encoder click | Inspect selected device | Inspect again when idle |
-| A / B | Previous/next device | Previous/next page |
-| X | Pause and open advertisement evidence | Inspect selected device |
-| Y | Pause/resume scan | Cancel inspection and return to scan |
-| Hold Y, 2 seconds | Clear observations and restart scan | Clear observations and restart scan |
+## Controls and evidence lifetime
 
-Clicks during stopping, connecting, discovering or disconnecting are ignored;
-Y remains available. A long Y hold includes the ordinary Y press before recovery.
+The footer describes the action available **on the current screen**. `Click`
+means pressing the encoder knob; `Turn` means rotating it. `Advert` means the
+advertisement and scan-response packets already collected during scanning.
+`GATT` is the additional service/characteristic inventory obtained by connecting.
+The footer occupies three fixed rows below the evidence; telemetry has its own
+two rows at the top. Longer explanations are here so evidence stays readable.
+
+| Control | Device list | Evidence pages |
+| --- | --- | --- |
+| Encoder rotation | Select the previous/next device, clamped at the ends; does not connect | Scroll previous/next evidence page, clamped at the ends; never changes the selected device |
+| Encoder click | **Inspect GATT:** clear the old inspection, stop scanning, connect to the selected device, discover GATT and allowed standard information, then disconnect | **Inspect GATT / Repeat GATT:** start the same fresh inspection for this device, reset to the first page and replace previous GATT records |
+| A / B tap | Select previous/next device; the onboard alternative to turning the encoder | Previous/next evidence page |
+| X tap | **Advert only (fresh):** freeze the selected advertisement/scan response, open its first page and clear the old GATT result; no connection is requested | **Inspect GATT / Repeat GATT:** identical to encoder click, including replacing old GATT records |
+| Y tap | Pause/resume scanning without clearing the device list | Cancel a pending inspection, finish radio cleanup and return to scanning; keeps the device list |
+| Hold Y, 2 seconds | Clear the device list and GATT result, then restart scanning; a terminal fault requests reset | Same recovery action |
+
+### Why the number of pages changes
+
+**ADVERTISEMENT** contains the captured packets and decoded fields, followed by
+**GATT not inspected** and a connection hint. This is an unrequested inspection,
+not a failed one and not evidence that the device has zero services.
+**ADVERTISEMENT + GATT** includes those packets plus the inspection's services,
+characteristics and allowed Device Information values. Its status distinguishes
+waiting for cleanup, connecting, discovery in progress, enumeration ended and
+partial results. A timeout can leave zero or some records; it remains a partial
+inspection with the error visible.
+
+The owner's TV example used three advertisement pages and nine after finding
+three services and twelve characteristics. Those counts are examples, not fixed
+limits or adapter qualification. More records produce more pages as they arrive.
+
+There is **one temporary GATT result, not a per-device archive**. Photograph all
+needed pages before leaving them. Opening a fresh advertisement view with X from
+the list, starting another inspection, holding Y or restarting clears/replaces
+that result. After **Y → X**, fewer pages are therefore expected: X has opened a
+new advertisement-only view. X never restores a previous inspection or connects
+from the list. Use another X after Paused, or click the encoder, to inspect again.
+
+Inspection clicks during stopping, connecting, discovering or disconnecting are
+ignored; the footer says **GATT busy; please wait** and Y remains available.
+Inspection is also unavailable during a terminal fault or with no selected peer.
+If the selected advertisement is older than 30 seconds, the footer says stale:
+return to the list with Y, resume scanning if paused, and wait for a fresh report
+before inspecting. Reading existing evidence remains available.
+A long Y hold includes the ordinary Y press before recovery. Ordinary recovery
+clears the catalogue/GATT evidence, including `full` and per-device report counts.
+It does not reset uptime FPS or the global `lost`/`bad` counters; reboot clears
+all RAM-only state.
 Turning in details never changes the peer being inspected. A missing encoder is
 shown explicitly; onboard controls remain usable. The utility has a fixed
 **320×240 landscape layout**, full backlight and its own controls, independent of
@@ -233,6 +275,10 @@ Actual shared RGB565 renderer output, with **synthetic peers and values**:
 | Scanning | Paused photo view | Advertisement bytes |
 | --- | --- | --- |
 | ![Synthetic scan list](../images/ble-probe/scan-synthetic.png) | ![Synthetic paused list](../images/ble-probe/paused-synthetic.png) | ![Synthetic advertisement](../images/ble-probe/details-0-synthetic.png) |
+
+| Fresh advertisement view | No GATT inspection requested | Explicit inspection running |
+| --- | --- | --- |
+| ![X opens advertisement-only evidence](../images/ble-probe/advertisement-synthetic.png) | ![Not-inspected status and connection hint](../images/ble-probe/not-inspected-synthetic.png) | ![GATT discovery with busy hints and cancellation](../images/ble-probe/inspecting-synthetic.png) |
 
 | Advertisement decoding | GATT inventory | Standard information |
 | --- | --- | --- |

@@ -63,7 +63,9 @@ pub enum Event {
 #[derive(Clone, Copy, Debug)]
 pub enum Input {
     Rotate(i32),
+    /// Encoder: request a fresh selected-peer GATT inspection when idle.
     Click,
+    /// X: fresh advertisement-only view from the list; Inspect from details.
     Details,
     Back,
     Recover,
@@ -175,6 +177,8 @@ impl Probe {
                 self.selected_device()?;
                 self.screen = Screen::Details;
                 self.page = 0;
+                // This is a fresh advertisement view, not a cached GATT result.
+                // The renderer must not present this empty inspection as failed.
                 self.inspection = Inspection::new();
                 self.issue(Action::Scan(false))
             }
