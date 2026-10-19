@@ -1,6 +1,10 @@
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static CPU_FREQ_HZ: AtomicU32 = AtomicU32::new(150_000_000);
+static AVAILABLE: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+
+/// Whether this core's initialization observed an enabled, advancing counter.
+pub fn available(core: usize) -> bool { AVAILABLE.get(core).is_some_and(|value| value.load(Ordering::Acquire)) }
 
 /// Maximum sane cycle count for a single elapsed measurement.
 /// Derived from CPU frequency: allows up to ~2 seconds of elapsed time.
@@ -21,14 +25,31 @@ pub fn init(freq_hz: u32) {
         write_volatile(DEMCR, demcr_val | (1 << 24));
 
         // Use the CoreSight software-lock key as supported by cortex-m's DWT
-        // helper. Availability is separately checked by target-bench; a write
-        // here alone is not evidence of a functioning cycle counter.
+        // helper. The bounded progress check below does not reset the counter;
+        // target-bench retains its independent controls and timing checks.
         const DWT_LAR: *mut u32 = 0xE000_1FB0 as *mut u32;
         write_volatile(DWT_LAR, 0xC5AC_CE55);
 
         const DWT_CTRL: *mut u32 = 0xE000_1000 as *mut u32;
         let ctrl_val = read_volatile(DWT_CTRL);
         write_volatile(DWT_CTRL, ctrl_val | 1);
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
+        let start = read();
+        for _ in 0..64 {
+            cortex_m::asm::nop();
+        }
+        let end = read();
+        let valid = dashboard_core::cpu_math::cycle_counter_available(
+            read_volatile(DWT_CTRL),
+            read_volatile(DEMCR),
+            start,
+            end,
+        );
+        let core = embassy_rp::pac::SIO.cpuid().read() as usize;
+        if let Some(value) = AVAILABLE.get(core) {
+            value.store(valid, Ordering::Release);
+        }
     }
 }
 

@@ -360,6 +360,7 @@ dependencies = [
  "embedded-graphics",
  "heapless",
  "micromath",
+ "pin-project-lite",
  "profont",
 ]
 

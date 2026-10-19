@@ -113,3 +113,58 @@ fn spinner_is_elapsed_time_based() {
     render(&mut b, &p, 200).unwrap();
     assert_ne!(a.pixels, b.pixels);
 }
+
+#[test]
+fn telemetry_is_always_visible_and_does_not_overpaint_other_regions() {
+    let mut p = populated();
+    for screen in [Screen::List, Screen::Details] {
+        p.screen = screen;
+        for phase in [
+            RadioPhase::Scanning,
+            RadioPhase::Paused,
+            RadioPhase::Connecting,
+            RadioPhase::Fault,
+        ] {
+            p.phase = phase;
+            p.diagnostics = ProbeDiagnostics::default();
+            let mut before = ScreenTarget::default();
+            render(&mut before, &p, 500).unwrap();
+            p.diagnostics = ProbeDiagnostics {
+                fps: Some(dashboard_core::display::telemetry::FrameRate {
+                    current: 20.0,
+                    average: 19.5,
+                }),
+                work: [Some(200), Some(1000)],
+                ram: Some(MemoryUse {
+                    used: 372_720,
+                    total: 524_288,
+                }),
+                stacks: [
+                    Some(MemoryUse {
+                        used: 4097,
+                        total: 151_568,
+                    }),
+                    Some(MemoryUse {
+                        used: 2048,
+                        total: 32768,
+                    }),
+                ],
+            };
+            let mut after = ScreenTarget::default();
+            render(&mut after, &p, 500).unwrap();
+            let changes: Vec<_> = before
+                .pixels
+                .iter()
+                .filter(|(point, color)| after.pixels.get(point) != Some(color))
+                .collect();
+            assert!(!changes.is_empty(), "telemetry missing for {screen:?}/{phase:?}");
+            assert!(
+                changes
+                    .iter()
+                    .all(|((x, y), _)| (10..310).contains(x) && (25..47).contains(y))
+            );
+            assert!(changes.iter().any(|((_, y), _)| (25..35).contains(y)));
+            assert!(changes.iter().any(|((_, y), _)| (37..47).contains(y)));
+        }
+    }
+}

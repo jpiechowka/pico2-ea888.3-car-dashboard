@@ -16,7 +16,8 @@ static FLUSH_COMPLETED: Channel<CriticalSectionRawMutex, Completion, 1> = Channe
 
 pub static BUFFER_SWAPS: AtomicU32 = AtomicU32::new(0);
 pub static BUFFER_WAITS: AtomicU32 = AtomicU32::new(0);
-pub static FLUSH_BUFFER_IDX: AtomicUsize = AtomicUsize::new(0);
+// No active transfer until a request is received. Failed transfers retain ownership.
+pub static FLUSH_BUFFER_IDX: AtomicUsize = AtomicUsize::new(usize::MAX);
 pub static COMPLETED_FRAMES: AtomicU32 = AtomicU32::new(0);
 pub static INPUT_COUNTS: embassy_sync::blocking_mutex::Mutex<
     CriticalSectionRawMutex,
@@ -86,8 +87,14 @@ pub async fn wait_completed(
     lifecycle: &mut FrameLifecycle,
     expected: FrameToken,
 ) -> CompletedFrame {
-    BUFFER_WAITS.fetch_add(1, Ordering::Relaxed);
-    match with_timeout(PROGRESS_DEADLINE, FLUSH_COMPLETED.receive()).await {
+    let completion = match FLUSH_COMPLETED.try_receive() {
+        Ok(completed) => Ok(completed),
+        Err(_) => {
+            BUFFER_WAITS.fetch_add(1, Ordering::Relaxed);
+            with_timeout(PROGRESS_DEADLINE, FLUSH_COMPLETED.receive()).await
+        }
+    };
+    match completion {
         Ok(Completion {
             request,
             trace: Some(trace),
@@ -152,6 +159,7 @@ pub async fn display_flush_task(flusher: &'static mut St7789Flusher<'static>) {
             );
         }
         let trace = if result.is_ok() {
+            FLUSH_BUFFER_IDX.store(usize::MAX, Ordering::Relaxed);
             let trace = FrameTrace::finish(
                 token,
                 request.trace(),

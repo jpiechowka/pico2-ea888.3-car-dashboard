@@ -224,7 +224,6 @@ impl<'a> DebugPage<'a> {
                 GREEN
             }
             DoneFps | AverageFps | FrameTime | SourceStatus | ConfigFault => YELLOW,
-            Waits if data.buffer_waits.is_some_and(|v| v > 0) => YELLOW,
             Core0Utilization if data.cpu0_util_percent.is_some_and(|v| v > 850) => YELLOW,
             Core1Utilization if data.cpu1_util_percent.is_some_and(|v| v > 850) => YELLOW,
             _ => WHITE,
@@ -317,7 +316,7 @@ impl<'a> DebugPage<'a> {
             Ram => {
                 let _ = write!(
                     text,
-                    "RAM: {}K/{}K",
+                    "Static: {}K/{}K",
                     Available(data.static_ram_kb),
                     Available(data.ram_total_kb)
                 );

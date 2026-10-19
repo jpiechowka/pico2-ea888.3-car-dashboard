@@ -53,6 +53,7 @@ mod profiling {
     pub mod cpu_math;
     pub mod cycle_segments;
     pub mod stack_samples;
+    pub mod task_work;
 }
 
 mod state {
@@ -71,6 +72,6 @@ pub mod ui {
     pub use styles::*;
 }
 
-pub use profiling::{cpu_math, cycle_segments, stack_samples};
+pub use profiling::{cpu_math, cycle_segments, stack_samples, task_work};
 pub use state::{extrema, history, pages, popup, sensor_state};
 pub use ui::{animations, colors, styles};

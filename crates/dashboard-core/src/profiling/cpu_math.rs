@@ -1,4 +1,14 @@
 //! Portable arithmetic for configured DWT clocks; no hardware ownership.
+/// Initialization evidence only; this does not calibrate the physical clock.
+pub fn cycle_counter_available(
+    control: u32,
+    demcr: u32,
+    start: u32,
+    end: u32,
+) -> bool {
+    control & (1 << 25) == 0 && control & 1 != 0 && demcr & (1 << 24) != 0 && end != start
+}
+
 pub fn sanity_cycles(freq_hz: u32) -> Option<u32> {
     if freq_hz == 0 {
         return None;

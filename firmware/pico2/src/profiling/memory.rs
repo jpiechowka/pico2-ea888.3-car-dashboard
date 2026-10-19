@@ -18,7 +18,7 @@ pub const CORE1_STACK_BYTES: u32 = 32 * 1024;
 
 #[derive(Clone, Copy, Default)]
 pub struct MemoryStats {
-    pub stack_used: u32,
+    pub stack_used: Option<u32>,
     pub stack_total: u32,
     pub static_ram: u32,
     pub ram_total: u32,
@@ -35,11 +35,8 @@ impl MemoryStats {
         let static_end = core::ptr::addr_of!(__sheap) as u32;
         assert!((RAM_START..=RAM_END).contains(&static_end), "invalid static RAM end");
 
-        let stack_used = if (static_end..=RAM_END).contains(&stack_ptr) {
-            RAM_END.saturating_sub(stack_ptr)
-        } else {
-            0
-        };
+        let stack_used = dashboard_core::stack_samples::StackSamples::new(static_end, RAM_END)
+            .and_then(|mut sample| sample.observe(stack_ptr));
 
         let static_ram = static_end - RAM_START;
         let stack_total = RAM_SIZE - static_ram;

@@ -85,6 +85,7 @@ pub struct Probe {
     pub dropped_reports: u32,
     pub malformed_reports: u32,
     pub encoder_connected: bool,
+    pub diagnostics: ProbeDiagnostics,
 }
 impl Default for Probe {
     fn default() -> Self { Self::new() }
@@ -103,6 +104,12 @@ impl Probe {
             dropped_reports: 0,
             malformed_reports: 0,
             encoder_connected: false,
+            diagnostics: ProbeDiagnostics {
+                fps: None,
+                work: [None; 2],
+                ram: None,
+                stacks: [None; 2],
+            },
         }
     }
 

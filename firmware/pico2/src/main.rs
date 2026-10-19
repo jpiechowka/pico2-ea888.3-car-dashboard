@@ -438,7 +438,7 @@ async fn dashboard_task(
         // Give the SAVING state one normal presentation before maintenance.
         // The immutable ticket also makes changes during that frame explicit.
         let save_this_frame = pending_save.is_some();
-        let frame_cycles_start = cpu_profiling::read();
+        let mut input_work = cpu_profiling::RenderWork::new(cpu_freq_hz);
 
         let elapsed_ms = animation_start.elapsed().as_millis();
         let blink_on = dashboard_pico2::animations::blink_on(elapsed_ms);
@@ -614,7 +614,7 @@ async fn dashboard_task(
                         break;
                     }
                 }
-                embassy_futures::yield_now().await;
+                input_work.checkpoint().await;
             }
             if startup_validation.is_some() && startup_validation_started.elapsed().as_millis() >= 250 {
                 startup_validation = None;
@@ -677,7 +677,7 @@ async fn dashboard_task(
         };
         input_tracker.exclude_obscured(visible_overlay.and_then(Overlay::warning_phase).is_some());
         let render_start = Instant::now();
-        let input_cycles = cpu_profiling::elapsed(frame_cycles_start, cpu_profiling::read());
+        let input_cycles = input_work.finish();
         let mut render_work = cpu_profiling::RenderWork::new(cpu_freq_hz);
 
         // Resolve once. The queued request and completed history retain this
@@ -826,20 +826,19 @@ async fn dashboard_task(
                             buffer_swaps: BUFFER_SWAPS.load(Ordering::Relaxed),
                             buffer_waits: BUFFER_WAITS.load(Ordering::Relaxed),
                             render_buffer_idx: render_idx,
-                            flush_buffer_idx: FLUSH_BUFFER_IDX.load(Ordering::Relaxed),
-                            core0_stack_used_kb: if mem_stats.stack_used > 0 && mem_stats.stack_used < 1024 {
-                                1
-                            } else {
-                                mem_stats.stack_used / 1024
+                            flush_buffer_idx: match FLUSH_BUFFER_IDX.load(Ordering::Relaxed) {
+                                index @ 0..=1 => Some(index),
+                                _ => None,
                             },
+                            core0_stack_used_kb: mem_stats.stack_used.map(|bytes| bytes.div_ceil(1024)),
                             core0_stack_total_kb: mem_stats.stack_total / 1024,
                             core1_stack_used_kb: crate::tasks::CORE1_STACK_USED_KB.load(Ordering::Relaxed),
                             core1_stack_total_kb: crate::tasks::CORE1_STACK_BYTES / 1024,
                             static_ram_kb: mem_stats.static_ram / 1024,
                             ram_total_kb: mem_stats.ram_total / 1024,
-                            cpu0_util_percent,
-                            cpu1_util_percent,
-                            frame_cycles: frame_cycles_used,
+                            cpu0_util_percent: dashboard_pico2::cpu_cycles::available(0).then_some(cpu0_util_percent),
+                            cpu1_util_percent: dashboard_pico2::cpu_cycles::available(1).then_some(cpu1_util_percent),
+                            frame_cycles: dashboard_pico2::cpu_cycles::available(0).then_some(frame_cycles_used),
                             requested_cpu_hz: dashboard_pico2::clock_profile::REQUESTED_CPU_HZ,
                             configured_cpu_hz: cpu_freq_hz,
                             requested_spi_hz,
@@ -871,7 +870,7 @@ async fn dashboard_task(
 
         let render_end = Instant::now();
         let render_cycles = render_work.finish();
-        frame_cycles_used = (u64::from(input_cycles) + render_cycles).min(u32::MAX as u64) as u32;
+        frame_cycles_used = (input_cycles + render_cycles).min(u32::MAX as u64) as u32;
 
         lifecycle.ready(token).expect("render buffer is not owned");
         let wait_start = Instant::now();

@@ -92,6 +92,89 @@ fn text<D: DrawTarget<Color = Rgb565>>(
         .draw(d)
         .map(|_| ())
 }
+
+fn rate(value: Option<f32>) -> String<8> {
+    let mut s = String::new();
+    match value {
+        Some(v) if v.is_finite() && (0.0..1000.0).contains(&v) => {
+            // Bounded one-decimal rounding avoids pulling the general float
+            // formatter's large conversion frames into the utility image.
+            let tenths = (v * 10.0 + 0.5) as u32;
+            let _ = write!(s, "{}.{:01}", tenths / 10, tenths % 10);
+        }
+        Some(v) if v.is_finite() && v >= 1000.0 => {
+            let _ = s.push_str(">999");
+        }
+        _ => {
+            let _ = s.push_str("--");
+        }
+    }
+    s
+}
+
+fn work(value: Option<u16>) -> String<8> {
+    let mut s = String::new();
+    if let Some(v) = value.filter(|&v| v <= 1000) {
+        let _ = write!(s, "{}.{:01}%", v / 10, v % 10);
+    } else {
+        let _ = s.push_str("--%");
+    }
+    s
+}
+
+fn memory(value: Option<MemoryUse>) -> String<12> {
+    let mut s = String::new();
+    if let Some(v) = value.filter(|v| v.valid()) {
+        // Both are rounded KiB labels; byte-exact bounds remain in MemoryUse.
+        let _ = write!(s, "{}/{}K", v.used.div_ceil(1024), v.total.div_ceil(1024));
+    } else {
+        let _ = s.push_str("--/--K");
+    }
+    s
+}
+
+fn telemetry<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    values: ProbeDiagnostics,
+) -> Result<(), D::Error> {
+    let mut fps = d.clipped(&Rectangle::new(Point::new(10, 25), Size::new(152, 10)));
+    text(
+        &mut fps,
+        10,
+        25,
+        &line(format_args!(
+            "FPS {} AVG {}",
+            rate(values.fps.map(|v| v.current)),
+            rate(values.fps.map(|v| v.average))
+        )),
+        WHITE,
+    )?;
+    let mut cpu = d.clipped(&Rectangle::new(Point::new(166, 25), Size::new(144, 10)));
+    text(
+        &mut cpu,
+        166,
+        25,
+        &line(format_args!(
+            "W C0 {} C1 {}",
+            work(values.work[0]),
+            work(values.work[1])
+        )),
+        WHITE,
+    )?;
+    let mut ram = d.clipped(&Rectangle::new(Point::new(10, 37), Size::new(300, 10)));
+    text(
+        &mut ram,
+        10,
+        37,
+        &line(format_args!(
+            "Static {} SP0 {} SP1 {}",
+            memory(values.ram),
+            memory(values.stacks[0]),
+            memory(values.stacks[1])
+        )),
+        MUTED,
+    )
+}
 fn rect<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     x: i32,
@@ -322,15 +405,11 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         " "
     };
     text(d, 112, 10, &line(format_args!("{spin} {:?}", probe.phase)), WHITE)?;
-    if !probe.encoder_connected {
-        text(d, 10, 25, "ENCODER MISSING - use A/B/X/Y", RED)?;
-    } else {
-        text(d, 10, 25, "Connectable BLE / explicit inspection", MUTED)?;
-    }
+    telemetry(d, probe.diagnostics)?;
     text(
         d,
         10,
-        39,
+        49,
         &if probe.screen == Screen::Details
             && let Some(peer) = probe.selected_device()
         {
@@ -353,7 +432,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
     text(
         d,
         10,
-        52,
+        61,
         &line(format_args!(
             "{} bad:{}",
             error_copy(probe.error),
@@ -371,7 +450,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
             text(d, 14, 112, action, MUTED)?;
         }
         for (row, device) in devices.iter().enumerate().skip(start).take(4) {
-            let y = 70 + (row - start) as i32 * 32;
+            let y = 76 + (row - start) as i32 * 31;
             let focus = row == selected;
             rect(d, 6, y, 308, 30, if focus { PANEL } else { BG })?;
             if focus {
@@ -408,7 +487,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         text(
             d,
             10,
-            67,
+            75,
             &line(format_args!("DETAILS   page {} / {}", page + 1, pages)),
             RED,
         )?;
@@ -417,7 +496,7 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
         details(probe, now_ms, &mut |s| {
             if (page * LINES..(page + 1) * LINES).contains(&index)
                 && error.is_none()
-                && let Err(e) = text(d, 10, 81 + (index % LINES) as i32 * 12, s, WHITE)
+                && let Err(e) = text(d, 10, 88 + (index % LINES) as i32 * 11, s, WHITE)
             {
                 error = Some(e);
             }
@@ -430,13 +509,66 @@ pub fn render<D: DrawTarget<Color = Rgb565>>(
     rect(d, 0, 204, 320, 36, PANEL)?;
     text(d, 8, 206, "Turn / A B: scroll   Click: Inspect", WHITE)?;
     text(d, 8, 217, "X: detail / inspect   Y: back / pause", MUTED)?;
-    text(d, 8, 228, "Hold Y 2s: clear + recover scan", MUTED)
+    text(
+        d,
+        8,
+        228,
+        if probe.encoder_connected {
+            "Hold Y 2s: clear + recover scan"
+        } else {
+            "Hold Y 2s: recover | ENCODER MISSING"
+        },
+        if probe.encoder_connected { MUTED } else { RED },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     extern crate std;
+    #[test]
+    fn telemetry_values_are_bounded_and_invalid_is_not_zero() {
+        for v in [None, Some(f32::NAN), Some(f32::INFINITY), Some(-1.0)] {
+            assert_eq!(rate(v).as_str(), "--");
+        }
+        assert_eq!(rate(Some(19.875)).as_str(), "19.9");
+        assert_eq!(rate(Some(0.0)).as_str(), "0.0");
+        assert_eq!(rate(Some(19.94)).as_str(), "19.9");
+        assert_eq!(rate(Some(19.96)).as_str(), "20.0");
+        assert_eq!(rate(Some(999.99)).as_str(), "1000.0");
+        assert_eq!(rate(Some(f32::MAX)).as_str(), ">999");
+        assert_eq!(work(Some(1000)).as_str(), "100.0%");
+        assert_eq!(work(Some(1001)).as_str(), "--%");
+        assert_eq!(
+            memory(Some(MemoryUse {
+                used: 4097,
+                total: 32768
+            }))
+            .as_str(),
+            "5/32K"
+        );
+        for v in [
+            MemoryUse { used: 1, total: 0 },
+            MemoryUse {
+                used: 32769,
+                total: 32768,
+            },
+            MemoryUse {
+                used: 0,
+                total: u32::MAX,
+            },
+        ] {
+            assert_eq!(memory(Some(v)).as_str(), "--/--K");
+        }
+        // Worst supported values fit independent columns without clipping content.
+        assert!(line(format_args!("FPS {} AVG {}", rate(Some(999.99)), rate(Some(999.99)))).len() * 6 <= 152);
+        assert!(line(format_args!("W C0 {} C1 {}", work(Some(1000)), work(Some(1000)))).len() * 6 <= 144);
+        let max = memory(Some(MemoryUse {
+            used: 524288,
+            total: 524288,
+        }));
+        assert!(line(format_args!("Static {max} SP0 {max} SP1 {max}")).len() * 6 <= 300);
+    }
     #[test]
     fn empty_catalog_copy_matches_radio_state() {
         assert!(empty_copy(RadioPhase::Scanning).0.starts_with("Listening"));

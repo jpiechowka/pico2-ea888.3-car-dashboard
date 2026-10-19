@@ -2,6 +2,7 @@
 #![no_main]
 
 mod bridge;
+mod metrics;
 mod radio;
 mod tasks;
 
@@ -58,6 +59,7 @@ async fn main(spawner: Spawner) {
             &mut *core::ptr::addr_of_mut!(BLE_PROBE_CORE1_STACK),
         )
     };
+    metrics::init(stack.mem.as_ptr() as u32, stack.mem.len() as u32);
     assert!(bridge::FREE.try_send(frame0).is_ok());
     assert!(bridge::FREE.try_send(frame1).is_ok());
     embassy_rp::multicore::spawn_core1(p.CORE1, stack, probe_core1);

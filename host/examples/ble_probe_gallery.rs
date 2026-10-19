@@ -5,6 +5,7 @@ use std::path::Path;
 
 use dashboard_core::discovery::*;
 use dashboard_core::display::St7789Renderer;
+use dashboard_core::display::telemetry::FrameRate;
 use dashboard_host_validation::AlignedFrame;
 fn save(
     dir: &Path,
@@ -27,6 +28,28 @@ fn main() {
     let directory = Path::new(&directory);
     std::fs::create_dir_all(directory).unwrap();
     let mut p = Probe::new();
+    // Deliberately synthetic measurements, not a device performance claim.
+    p.diagnostics = ProbeDiagnostics {
+        fps: Some(FrameRate {
+            current: 19.8,
+            average: 19.7,
+        }),
+        work: [Some(125), Some(68)],
+        ram: Some(MemoryUse {
+            used: 373_000,
+            total: 524_288,
+        }),
+        stacks: [
+            Some(MemoryUse {
+                used: 7_000,
+                total: 151_288,
+            }),
+            Some(MemoryUse {
+                used: 4_000,
+                total: 32_768,
+            }),
+        ],
+    };
     p.phase = RadioPhase::Scanning;
     p.encoder_connected = true;
     for (n, name) in [

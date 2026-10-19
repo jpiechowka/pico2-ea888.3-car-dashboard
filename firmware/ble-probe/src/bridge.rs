@@ -21,7 +21,6 @@ pub static RADIO_MALFORMED: AtomicU32 = AtomicU32::new(0);
 pub static DROPPED_REPORTS: AtomicU32 = AtomicU32::new(0);
 pub static PHASE: AtomicU8 = AtomicU8::new(RadioPhase::Starting as u8);
 pub static UI_PROGRESS: AtomicU32 = AtomicU32::new(0);
-pub static DISPLAY_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static INPUT_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static ENCODER_PROGRESS: AtomicU32 = AtomicU32::new(0);
 pub static ENCODER_CONNECTED: AtomicBool = AtomicBool::new(false);

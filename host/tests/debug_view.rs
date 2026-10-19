@@ -116,7 +116,7 @@ fn complete_measured_screen_matches_independent_literal_bitmap() {
         (164, 132, "CPU:290.4/290M", WHITE),
         (164, 146, "Vset:1300/1300mV", WHITE),
         (164, 160, "SPI:72.6/72.0M", WHITE),
-        (164, 174, "RAM: 448K/512K", WHITE),
+        (164, 174, "Static: 448K/512K", WHITE),
         (164, 188, "FB: 2x150K", WHITE),
         (164, 202, "BL: FULL SAVED", WHITE),
         (4, 198, "Reset: POR", WHITE),
@@ -128,6 +128,27 @@ fn complete_measured_screen_matches_independent_literal_bitmap() {
         literal(&mut expected, x, y, if y >= 226 { 316 } else { 156 }, text, color);
     }
     assert!(actual.0 == expected.0);
+}
+
+#[test]
+fn unavailable_work_and_stack_observations_are_not_rendered_as_zero() {
+    let map = ControlMap::default();
+    let data = DebugData {
+        core0_stack_total_kb: Some(64),
+        ..Default::default()
+    };
+    for (line, y, text) in [
+        (DebugLine::Core0Utilization, 26, "UI work: --"),
+        (DebugLine::FrameCycles, 40, "Cycles: --K"),
+        (DebugLine::Core0Stack, 54, "SP now: --K/64K"),
+        (DebugLine::Core1Utilization, 86, "Acq work: --"),
+    ] {
+        let mut actual = AlignedFrame::boxed();
+        let mut expected = AlignedFrame::boxed();
+        DebugPage::new(&data, &map).draw_line(&mut St7789Renderer::new(&mut actual.0), line);
+        literal(&mut expected, 164, y, 156, text, WHITE);
+        assert!(actual.0 == expected.0, "{text}");
+    }
 }
 
 #[test]
@@ -355,7 +376,8 @@ fn max_numeric_text_keeps_color_units_and_configured_requested_order() {
         ..Default::default()
     };
     for (line, x, y, text, color) in [
-        (DebugLine::Waits, 4, 156, "Waits: 4294967295", YELLOW),
+        // Waiting for an in-flight transfer is ordinary pipeline backpressure.
+        (DebugLine::Waits, 4, 156, "Waits: 4294967295", WHITE),
         (DebugLine::Core0Utilization, 164, 26, "UI work: 429496729.5%", YELLOW),
         (DebugLine::VregSetting, 164, 146, "Vset:4294967295/4294967295mV", WHITE),
     ] {
