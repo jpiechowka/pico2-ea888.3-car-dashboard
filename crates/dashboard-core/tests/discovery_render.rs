@@ -359,12 +359,15 @@ fn saved_pages_and_slot_prompts_fit_and_preserve_the_same_diagnostics_band() {
     render_slots(&mut ScreenTarget::default(), &ui, diagnostic).unwrap();
     ui.complete(
         id,
-        Completion::Listed([
-            Slot::SavedBlocked { generation: u64::MAX },
-            Slot::Empty,
-            Slot::Unsupported,
-            Slot::Corrupt,
-        ]),
+        Completion::Listed {
+            slots: [
+                Slot::SavedBlocked { generation: u64::MAX },
+                Slot::Empty,
+                Slot::Unsupported,
+                Slot::Corrupt,
+            ],
+            identities: [None; 4],
+        },
     );
     ui.input(CaptureInput::XUp, 2001, context);
     for selected in 0..4 {

@@ -19,22 +19,21 @@ pub struct Device {
     pub first_seen_ms: u64,
     pub reports: u32,
     pub rssi: Option<i8>,
+    pub cached_name: Option<names::ObservedName>,
 }
 impl Device {
-    pub fn name(&self) -> String<31> {
-        let mut short = None;
-        // A complete name wins over a shortened name, regardless of packet order.
-        for packet in [&self.response, &self.advertisement] {
-            for field in AdFields::new(packet.as_slice()).flatten() {
-                if field.kind == 9 && !field.data.is_empty() {
-                    return printable(field.data);
-                }
-                if field.kind == 8 && short.is_none() {
-                    short = Some(field.data);
-                }
-            }
+    pub fn name(&self) -> String<31> { names::device_name(self).map(|n| printable(n.bytes)).unwrap_or_default() }
+
+    fn remember_name(
+        &mut self,
+        name: names::ObservedName,
+    ) {
+        if self.cached_name.as_ref().is_none_or(|old| {
+            name.at_ms >= old.at_ms
+                && (!(old.complete && !old.data.truncated) || (name.complete && !name.data.truncated))
+        }) {
+            self.cached_name = Some(name);
         }
-        short.map(printable).unwrap_or_default()
     }
 
     pub fn age_ms(
@@ -61,6 +60,29 @@ impl Catalog {
 
     pub fn devices(&self) -> &[Device] { &self.devices }
 
+    pub(super) fn remember_gap_name(
+        &mut self,
+        peer: Peer,
+        data: Payload<64>,
+        at_ms: u64,
+    ) {
+        if data.as_slice().is_empty() || data.truncated {
+            return;
+        }
+        if let Some(device) = self
+            .devices
+            .iter_mut()
+            .find(|d| d.peer == peer && at_ms >= d.last_seen_ms)
+        {
+            device.remember_name(names::ObservedName {
+                data,
+                source: names::NameSource::Gap,
+                complete: true,
+                at_ms,
+            });
+        }
+    }
+
     pub fn observe(
         &mut self,
         report: Advertisement,
@@ -86,6 +108,7 @@ impl Catalog {
                         first_seen_ms: report.at_ms,
                         reports: 0,
                         rssi: None,
+                        cached_name: None,
                     })
                     .is_err()
                 {
@@ -108,6 +131,14 @@ impl Catalog {
             rssi: device.rssi,
             kind: report.kind,
         });
+        let source = if report.kind == ReportKind::ScanResponse {
+            names::NameSource::ScanResponse
+        } else {
+            names::NameSource::Advertisement
+        };
+        if let Some(name) = names::packet_observation(&report.data, source, report.at_ms) {
+            device.remember_name(name);
+        }
         if report.kind == ReportKind::ScanResponse {
             device.response = report.data;
             device.response_meta = metadata;

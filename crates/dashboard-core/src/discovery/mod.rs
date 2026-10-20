@@ -9,6 +9,7 @@ mod failure;
 mod faults;
 mod inspection;
 mod model;
+pub mod names;
 mod scan_diagnostics;
 mod telemetry;
 pub use advertisement::*;

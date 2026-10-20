@@ -9,14 +9,20 @@ use static_cell::StaticCell;
 
 use crate::{bridge, maintenance, metrics, storage};
 
-pub async fn run() {
+// Preserve the task identity in the concrete future for named stack admission.
+pub async fn probe_ui_task_run() {
     static MODEL: StaticCell<Probe> = StaticCell::new();
     let model = MODEL.init_with(Probe::new);
+    model.boot = Some(bridge::BOOT.receive().await);
     model.radio_bus_hz = dashboard_core::ble::runtime::radio_bus_hz(embassy_rp::clocks::clk_sys_freq());
-    let mut captures = cap::CaptureUi::new();
+    // Sole UI-owner state lives in place, like MODEL. Keeping these larger
+    // values out of the async future avoids whole-future construction copies.
+    static CAPTURES: StaticCell<cap::CaptureUi> = StaticCell::new();
+    static DECODER: StaticCell<capture::Decoder> = StaticCell::new();
+    let captures = CAPTURES.init_with(cap::CaptureUi::new);
+    let decoder = DECODER.init_with(capture::Decoder::new);
     let mut bytes = Some(storage::ui_buffer());
     let mut length = 0;
-    let mut decoder = capture::Decoder::new();
     let mut last_frame = 0;
     let start = metrics::snapshot();
     let mut fps = CompletionRate::new(start.at_us, start.completed);
@@ -33,14 +39,14 @@ pub async fn run() {
         }
         model.diagnostics = snapshot.values;
         model.diagnostics.fps = fps.latest(snapshot.at_us);
-        if let Ok(reply) = storage::UI_REPLY.try_receive() {
-            if let Some(returned) = reply.buffer {
+        storage::UI_REPLY.consume(|reply| {
+            if let Some(returned) = reply.buffer.take() {
                 assert!(bytes.is_none());
                 bytes = Some(returned);
                 length = reply.length;
             }
-            bridge::STATUS.capture_complete(&mut captures, reply.id, reply.completion);
-        }
+            bridge::STATUS.capture_complete(captures, reply.id, &reply.completion);
+        });
         // Reliable inventory/completion evidence must precede a save decision.
         for _ in 0..8 {
             match bridge::EVENTS.try_receive() {
@@ -74,14 +80,14 @@ pub async fn run() {
                 live_input_apply(model, input, now);
             }
             if let Some(input) = capture_input
-                && let Some(action) = bridge::STATUS.capture_input(&mut captures, input, now, context)
+                && let Some(action) = bridge::STATUS.capture_input(captures, input, now, context)
             {
-                action_apply(action, &mut captures, model, &mut bytes, &mut decoder, now);
+                action_apply(action, captures, model, &mut bytes, decoder, now);
             }
             model.page = model.page.min(discovery::page_count(model).saturating_sub(1));
         }
-        if let Some(action) = bridge::STATUS.capture_tick(&mut captures, now) {
-            action_apply(action, &mut captures, model, &mut bytes, &mut decoder, now);
+        if let Some(action) = bridge::STATUS.capture_tick(captures, now) {
+            action_apply(action, captures, model, &mut bytes, decoder, now);
         }
         // Controls change the generation before queued scan reports are admitted.
         for _ in 0..32 {
@@ -94,7 +100,7 @@ pub async fn run() {
         model.scan_diagnostics = bridge::SCAN_DIAGNOSTICS.lock(core::cell::Cell::get);
         model.malformed_reports = model.scan_diagnostics.total;
         model.encoder_connected = bridge::ENCODER_CONNECTED.load(Ordering::Relaxed);
-        bridge::STATUS.publish(model, &captures);
+        bridge::STATUS.publish(model, captures);
         model.fault_latch = bridge::STATUS.fault_latch();
         if !maintenance::FRAME_INHIBIT.load(Ordering::SeqCst)
             && now.saturating_sub(last_frame) >= 50
@@ -121,11 +127,11 @@ pub async fn run() {
                         );
                     } else {
                         bridge::STATUS.record(crate::status::Fault::Storage);
-                        let _ = discovery::render_slots(&mut renderer, &captures, model.diagnostics);
+                        let _ = discovery::render_slots(&mut renderer, captures, model.diagnostics);
                     }
                 }
                 _ => {
-                    let _ = discovery::render_slots(&mut renderer, &captures, model.diagnostics);
+                    let _ = discovery::render_slots(&mut renderer, captures, model.diagnostics);
                 }
             }
             if let Err(embassy_sync::channel::TrySendError::Full(frame)) = bridge::READY.try_send(frame) {
@@ -182,7 +188,7 @@ fn action_apply(
             if model.screen == discovery::Screen::List && model.selected_device().is_some() {
                 live_input_apply(model, Input::Details, now);
             }
-            (id, storage::UiOperation::List, false)
+            (id, storage::UiOperation::List, true)
         }
         cap::Action::Load { id, slot } => (id, storage::UiOperation::Load(slot), true),
         cap::Action::Reset { id, slot } => (id, storage::UiOperation::Reset(slot), false),
@@ -193,7 +199,7 @@ fn action_apply(
             overwrite,
         } => {
             if model.request.revision != revision || context(model).save != cap::SaveAvailability::Ready {
-                bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Changed));
+                bridge::STATUS.capture_complete(captures, id, &cap::Completion::Failed(cap::UiError::Changed));
                 return;
             }
             // Freeze the current atomic latch, not the previous rendered frame.
@@ -216,7 +222,7 @@ fn action_apply(
                 }
                 Err(e) => {
                     defmt::warn!("probe.capture encode {:?}", defmt::Debug2Format(&e));
-                    bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Changed));
+                    bridge::STATUS.capture_complete(captures, id, &cap::Completion::Failed(cap::UiError::Changed));
                     return;
                 }
             }
@@ -225,7 +231,7 @@ fn action_apply(
     let buffer = if needs_bytes { bytes.take() } else { None };
     if needs_bytes && buffer.is_none() {
         bridge::STATUS.record(crate::status::Fault::Storage);
-        bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Busy));
+        bridge::STATUS.capture_complete(captures, id, &cap::Completion::Failed(cap::UiError::Busy));
         return;
     }
     if let Err(embassy_sync::channel::TrySendError::Full(request)) =
@@ -235,7 +241,7 @@ fn action_apply(
             *bytes = Some(returned);
         }
         bridge::STATUS.record(crate::status::Fault::Storage);
-        bridge::STATUS.capture_complete(captures, id, cap::Completion::Failed(cap::UiError::Busy));
+        bridge::STATUS.capture_complete(captures, id, &cap::Completion::Failed(cap::UiError::Busy));
     }
 }
 fn build_identity() -> capture::BuildIdentity {

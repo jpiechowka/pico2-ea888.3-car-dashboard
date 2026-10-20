@@ -69,7 +69,10 @@ fn older_valid_capture_remains_loadable_and_unknown_sibling_requires_full_reset_
         };
         state.complete(
             id,
-            ui::Completion::Listed([status, ui::Slot::Empty, ui::Slot::Empty, ui::Slot::Empty]),
+            ui::Completion::Listed {
+                slots: [status, ui::Slot::Empty, ui::Slot::Empty, ui::Slot::Empty],
+                identities: [None; 4],
+            },
         );
         state.input(ui::Input::XUp, 2001, context);
         let ui::Action::Load { id, slot: 0 } = state.input(ui::Input::Click, 2100, context).unwrap() else {

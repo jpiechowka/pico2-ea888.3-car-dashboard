@@ -1,4 +1,5 @@
 //! Watchdog eligibility follows useful task progress, not timer wakeups alone.
+pub mod reset;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Progress {
     pub acquisition: u32,

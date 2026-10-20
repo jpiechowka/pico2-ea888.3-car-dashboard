@@ -153,11 +153,11 @@ impl Status {
         &self,
         ui: &mut cap::CaptureUi,
         id: cap::RequestId,
-        completion: cap::Completion,
+        completion: &cap::Completion,
     ) {
-        if ui.complete(id, completion) {
+        if ui.complete_ref(id, completion) {
             if let cap::Completion::Failed(error) = completion {
-                self.capture_error(error);
+                self.capture_error(*error);
             }
             self.observe_capture(ui);
         }

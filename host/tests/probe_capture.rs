@@ -1,5 +1,6 @@
 use dashboard_core::discovery::capture::*;
 use dashboard_core::discovery::*;
+use dashboard_core::health::reset::{BootEvidence, RecoveryCause, ResetRecord, ResetStage};
 
 fn build() -> BuildIdentity {
     BuildIdentity {
@@ -89,7 +90,7 @@ fn rejected_evidence_round_trips_and_legacy_decode_clears_it() {
         let mut output = [0; 8192];
         let size = encode(&p, build(), 60, &mut output).unwrap();
         let view = decoder.decode(&output[..size]).unwrap();
-        assert_eq!(view.metadata().schema_version, 3);
+        assert_eq!(view.metadata().schema_version, 4);
         assert_eq!(view.metadata().failure, Some(failure));
         assert_eq!(rejected.length(), length as u16);
         assert_eq!(rejected.bytes(), &bytes[..length.min(19)]);
@@ -126,7 +127,7 @@ fn rejected_evidence_export_preserves_raw_fields_and_actual_schema() {
     let mut bytes = [0; 8192];
     let len = encode(&p, build(), 60, &mut bytes).unwrap();
     let json = decode_json(&bytes[..len]).unwrap();
-    assert_eq!(json["schema"], 3);
+    assert_eq!(json["schema"], 4);
     let rejected = &json["inspection"]["failure"]["rejected"];
     assert_eq!(rejected["declaration_handle"], 20);
     assert_eq!(rejected["value_handle"], 21);
@@ -213,7 +214,7 @@ fn passive_fixture_from_independent_python_struct_and_zlib_is_readable() {
 fn crc_valid_malformed_enums_counts_and_relations_are_rejected() {
     let mut output = [0; 8192];
     let size = encode(&probe(), build(), 60, &mut output).unwrap();
-    for (at, value) in [(8, 4), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
+    for (at, value) in [(8, 5), (12, 255), (64, 255), (65, 2), (78, 2), (79, 255), (80, 255)] {
         let mut bytes = output[..size].to_vec();
         bytes[at] = value;
         fix_crc(&mut bytes);
@@ -292,6 +293,27 @@ fn invalid_live_relationships_and_small_buffers_never_silently_drop_evidence() {
 #[test]
 fn all_model_capacities_fit_with_full_width_uuids_and_values() {
     let mut p = probe();
+    // Learn the longest retained GAP name through the real admission/end path
+    // before replacing the inventory with maximum-width synthetic records.
+    p.inspection.services[0].uuid = Uuid::from_wire(&[0, 0x18]).unwrap();
+    p.inspection.characteristics[0].uuid = Uuid::from_wire(&[0, 0x2A]).unwrap();
+    p.inspection.values[0].uuid = 0x2A00;
+    p.inspection.values[0].value = Payload::new(&[b'N'; 64]);
+    p.event(Event::InspectionEnd {
+        revision: p.request.revision,
+        at_ms: 50,
+        cleanup_complete: true,
+        disconnect_reason: Some(0x16),
+    });
+    assert_eq!(p.selected_device().unwrap().cached_name.unwrap().data.len, 64);
+    p.boot = Some(BootEvidence {
+        raw_reason: 1,
+        boot_type: Some(0),
+        previous: Some(ResetRecord {
+            stage: ResetStage::Failure(RecoveryCause::RadioStartup),
+            elapsed_ms: u32::MAX,
+        }),
+    });
     p.inspection.services.clear();
     p.inspection.characteristics.clear();
     p.inspection.descriptors.clear();
@@ -386,6 +408,8 @@ fn all_model_capacities_fit_with_full_width_uuids_and_values() {
     let view = decode(&output[..size]).unwrap();
     assert_eq!(view.counts(), [24, 64, 128, 16]);
     assert_eq!(view.metadata().failure.unwrap().rejected, Some(rejected));
+    assert_eq!(view.metadata().cached_name.unwrap().data.as_slice(), &[b'N'; 64]);
+    assert_eq!(view.metadata().boot, p.boot);
 }
 #[test]
 fn reusable_decoder_releases_buffer_and_replaces_all_prior_evidence() {
@@ -435,7 +459,7 @@ fn frozen_v2_and_v1_do_not_inherit_new_fault_evidence() {
     let n = encode(&p, build(), 60, &mut output).unwrap();
     for _ in 0..3 {
         let view = decoder.decode(&output[..n]).unwrap();
-        assert_eq!(view.metadata().schema_version, 3);
+        assert_eq!(view.metadata().schema_version, 4);
         assert_eq!(view.metadata().fault_latch, Some(p.fault_latch));
         assert_eq!(view.metadata().radio_bus_hz, Some(2_500_000));
         for (bytes, version) in [(&old2, 2), (&old1, 1)] {
@@ -457,10 +481,10 @@ fn frozen_v2_and_v1_do_not_inherit_new_fault_evidence() {
 
 #[test]
 fn crc_valid_fault_metadata_rejects_unknown_bits_bad_first_and_invalid_bus() {
-    let mut bytes = [0; 8192];
-    let n = encode(&probe(), build(), 60, &mut bytes).unwrap();
+    let bytes = hex(include_str!("fixtures/ble-capture-v3-watchdog.hex").trim());
+    let n = bytes.len();
     let end = 24 + usize::from(u16::from_le_bytes([bytes[14], bytes[15]]));
-    // Schema 3's seven-byte append: mask LE u16, first u8, configured bus LE u32.
+    // Frozen schema 3's seven-byte append: mask LE u16, first u8, configured bus LE u32.
     for (bits, first, hz) in [
         (0u16, 1u8, 2_500_000u32),
         (1, 0, 2_500_000),
@@ -487,4 +511,107 @@ fn radio_configuration_unknown_is_distinct_from_invalid_zero() {
     assert_eq!(decode(&bytes[..n]).unwrap().metadata().radio_bus_hz, None);
     p.radio_bus_hz = Some(0);
     assert_eq!(encode(&p, build(), 60, &mut bytes), Err(CaptureError::InvalidData));
+}
+
+#[test]
+fn v4_cached_name_and_reset_record_roundtrip_and_legacy_reuse() {
+    let mut p = probe();
+    p.boot = Some(BootEvidence {
+        raw_reason: 1,
+        boot_type: Some(0),
+        previous: Some(ResetRecord {
+            stage: ResetStage::Failure(RecoveryCause::RadioStartup),
+            elapsed_ms: 12001,
+        }),
+    });
+    let mut output = [0; 8192];
+    let n = encode(&p, build(), 60, &mut output).unwrap();
+    let mut decoder = Decoder::new();
+    let view = decoder.decode(&output[..n]).unwrap();
+    assert_eq!(view.metadata().schema_version, 4);
+    assert_eq!(view.metadata().boot, p.boot);
+    assert_eq!(view.metadata().cached_name.unwrap().data.as_slice(), b"NGM");
+    let old = hex(include_str!("fixtures/ble-capture-v3-watchdog.hex").trim());
+    let view = decoder.decode(&old).unwrap();
+    assert_eq!(view.metadata().schema_version, 3);
+    assert!(view.metadata().cached_name.is_none());
+    assert!(view.metadata().boot.is_none());
+    assert_eq!(view.metadata().fault_latch.unwrap().first(), Some(Fault::Watchdog));
+    assert_eq!(view.metadata().radio_bus_hz, Some(2_500_000));
+    assert_eq!(view.counts(), [1; 4]);
+    let json = dashboard_host_validation::probe_captures::decode_json(&output[..n]).unwrap();
+    assert_eq!(json["boot"]["raw_watchdog_reason"], 1);
+    assert_eq!(json["boot"]["previous"]["stage"], "radio startup");
+    assert_eq!(json["boot"]["previous"]["observed_at_previous_boot_ms"], 12001);
+    assert_eq!(json["cached_name"]["utf8"], "NGM");
+    let old = dashboard_host_validation::probe_captures::decode_json(&old).unwrap();
+    assert!(old["cached_name"].is_null() && old["boot"].is_null());
+}
+
+#[test]
+fn v4_metadata_rejects_corrupt_names_timestamps_flags_and_reset_stages_with_valid_crc() {
+    let mut p = probe();
+    p.boot = Some(BootEvidence {
+        raw_reason: 1,
+        boot_type: None,
+        previous: Some(ResetRecord {
+            stage: ResetStage::Supervised,
+            elapsed_ms: 1,
+        }),
+    });
+    let mut output = [0; 8192];
+    let n = encode(&p, build(), 60, &mut output).unwrap();
+    let end = 24 + usize::from(u16::from_le_bytes([output[14], output[15]]));
+    // name present/source/complete/time/length/NGM/trunc =16 bytes;
+    // boot present/reason/type absent/previous present/stage/time =12.
+    let name = end - 28;
+    let boot = end - 12;
+    let legacy = hex(include_str!("fixtures/ble-capture-v3-watchdog.hex").trim());
+    let mut decoder = Decoder::new();
+    for (at, byte) in [
+        (name, 2),
+        (name + 1, 0),
+        (name + 1, 4),
+        (name + 2, 2),
+        (name + 11, 0),
+        (name + 11, 65),
+        (name + 15, 2),
+        (boot, 2),
+        (boot + 5, 2),
+        (boot + 6, 2),
+        (boot + 7, 0),
+        (boot + 7, 255),
+    ] {
+        let mut broken = output[..n].to_vec();
+        broken[at] = byte;
+        fix_crc(&mut broken);
+        assert!(decode(&broken).is_err(), "offset {at}, byte {byte}");
+        decoder.decode(&output[..n]).unwrap();
+        // Several cuts occur after cached-name insertion. Failed partial
+        // metadata must remain unpublished and cannot leak into the next load.
+        assert!(decoder.decode(&broken).is_err(), "reused offset {at}");
+        let view = decoder.decode(&legacy).unwrap();
+        assert!(view.metadata().cached_name.is_none());
+        assert!(view.metadata().boot.is_none());
+        let view = decoder.decode(&output[..n]).unwrap();
+        assert_eq!(view.metadata().cached_name.unwrap().data.as_slice(), b"NGM");
+        assert_eq!(view.metadata().boot, p.boot);
+    }
+    for at in [0u64, 61, u64::MAX] {
+        let mut broken = output[..n].to_vec();
+        broken[name + 3..name + 11].copy_from_slice(&at.to_le_bytes());
+        fix_crc(&mut broken);
+        assert!(decode(&broken).is_err());
+    }
+    // A retained prior stage cannot be attached to a non-watchdog boot.
+    let mut broken = output[..n].to_vec();
+    broken[boot + 1..boot + 5].fill(0);
+    fix_crc(&mut broken);
+    assert!(decode(&broken).is_err());
+    // A GAP label must come from a successful non-truncated full read.
+    let mut broken = output[..n].to_vec();
+    broken[name + 1] = 3;
+    broken[name + 15] = 1;
+    fix_crc(&mut broken);
+    assert!(decode(&broken).is_err());
 }

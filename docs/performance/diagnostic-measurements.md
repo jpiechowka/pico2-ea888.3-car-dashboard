@@ -59,6 +59,14 @@ waiting for another owner or USB does not count as active poll work.
 
 ## Corrections
 
+Boot-reset evidence is separate from CPU/RAM/stack measurements and from `HCIbad`.
+The shared watchdog boundary retains a checked previous stage and last-observed
+boot-relative time, saturated at `u32::MAX` milliseconds. That is neither the
+reset instant nor a stack watermark. Power removal can erase it; a saved v4
+capture freezes what was available on that boot. Y recovery clears the live
+fault acknowledgment without changing boot evidence. See the
+[2026-10-20 reset/name follow-up](../validation/probe-slot3-discovery-2026-10-20.md).
+
 - Count `Waits` only when a completion receive is not immediately ready. A result
   arriving immediately afterward can avoid suspension; this counts observed
   backpressure, not measured stall duration. Nonzero waits are normal.

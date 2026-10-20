@@ -218,6 +218,10 @@ use `cargo build` for compilation without device operations.
   from dashboard warnings: blue scanning, green only clean live completion and
   cleanup, errors latched red until two-second Y recovery. Saved evidence never
   creates live success. Preserve atomic fault priority and watchdog fault visibility.
+  Keep observed device names bounded and sourced; cached names must not replace
+  raw packet evidence or cross address/type identities. Slot labels and PC export
+  identities use the same validated saved-name selection. Retained watchdog
+  stage/time is a last observation, not a proven cause or reset timestamp.
 
 ## Display, controls and configuration invariants
 

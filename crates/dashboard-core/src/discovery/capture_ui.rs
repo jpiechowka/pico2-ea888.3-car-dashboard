@@ -1,4 +1,6 @@
 //! Bounded capture controls. Effects carry non-reused identities; firmware owns bytes and I/O.
+use super::names::SavedIdentity;
+
 pub const HOLD_MS: u64 = crate::input_model::BUTTON_HOLD_MS;
 pub const OPERATION_TIMEOUT_MS: u64 = 30_000;
 pub const CONFIRM_TIMEOUT_MS: u64 = 10_000;
@@ -121,9 +123,17 @@ pub enum Action {
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Completion {
-    Listed([Slot; 4]),
-    Loaded { pages: usize },
-    Saved { generation: u64 },
+    Listed {
+        slots: [Slot; 4],
+        identities: [Option<SavedIdentity>; 4],
+    },
+    Loaded {
+        pages: usize,
+    },
+    Saved {
+        generation: u64,
+        identity: SavedIdentity,
+    },
     Reset,
     Failed(UiError),
 }
@@ -145,6 +155,7 @@ struct Confirmation {
 pub struct CaptureUi {
     screen: Screen,
     slots: [Slot; 4],
+    identities: [Option<SavedIdentity>; 4],
     selected: u8,
     page: usize,
     pages: usize,
@@ -162,6 +173,7 @@ impl CaptureUi {
         Self {
             screen: Screen::Live,
             slots: [Slot::Unknown; 4],
+            identities: [None; 4],
             selected: 0,
             page: 0,
             pages: 1,
@@ -177,6 +189,8 @@ impl CaptureUi {
 
     pub fn slots(&self) -> &[Slot; 4] { &self.slots }
 
+    pub fn identities(&self) -> &[Option<SavedIdentity>; 4] { &self.identities }
+
     pub fn selected(&self) -> u8 { self.selected }
 
     pub fn page(&self) -> usize { self.page }
@@ -189,6 +203,17 @@ impl CaptureUi {
     ) {
         self.confirmation = None;
         self.screen = Screen::Error(error);
+    }
+
+    fn invalidate_identity(
+        &mut self,
+        pending: Pending,
+    ) {
+        if pending.operation == Operation::Refresh {
+            self.identities = [None; 4];
+        } else {
+            self.identities[usize::from(pending.slot)] = None;
+        }
     }
 
     fn start(
@@ -253,6 +278,8 @@ impl CaptureUi {
                 .is_none_or(|age| age >= OPERATION_TIMEOUT_MS)
         {
             pending.visible = false;
+            let pending = *pending;
+            self.invalidate_identity(pending);
             self.fail(UiError::Timeout);
         }
         if let Some(confirm) = self.confirmation
@@ -459,26 +486,48 @@ impl CaptureUi {
         id: RequestId,
         completion: Completion,
     ) -> bool {
+        self.complete_ref(id, &completion)
+    }
+
+    /// Apply the mailbox record without another full directory copy on stack.
+    pub fn complete_ref(
+        &mut self,
+        id: RequestId,
+        completion: &Completion,
+    ) -> bool {
         let Some(pending) = self.pending.filter(|p| p.id == id) else {
             return false;
         };
         let screen = match (pending.operation, completion) {
-            (_, Completion::Failed(error)) => Screen::Error(error),
-            (Operation::Refresh, Completion::Listed(slots)) => {
-                self.slots = slots;
+            (_, Completion::Failed(error)) => {
+                self.invalidate_identity(pending);
+                Screen::Error(*error)
+            }
+            (Operation::Refresh, Completion::Listed { slots, identities }) => {
+                self.slots = *slots;
+                self.identities = *identities;
+                for (slot, identity) in self.slots.iter().zip(&mut self.identities) {
+                    if !matches!(slot, Slot::Saved { .. } | Slot::SavedBlocked { .. }) {
+                        *identity = None;
+                    }
+                }
                 Screen::Slots
             }
-            (Operation::Load, Completion::Loaded { pages }) if pages > 0 => {
-                self.pages = pages;
+            (Operation::Load, Completion::Loaded { pages }) if *pages > 0 => {
+                self.pages = *pages;
                 self.page = 0;
                 Screen::Saved
             }
-            (Operation::Save, Completion::Saved { generation }) if generation > 0 => {
-                self.slots[usize::from(pending.slot)] = Slot::Saved { generation };
+            (Operation::Save, Completion::Saved { generation, identity }) if *generation > 0 => {
+                self.slots[usize::from(pending.slot)] = Slot::Saved {
+                    generation: *generation,
+                };
+                self.identities[usize::from(pending.slot)] = Some(*identity);
                 Screen::Slots
             }
             (Operation::Reset, Completion::Reset) => {
                 self.slots[usize::from(pending.slot)] = Slot::Empty;
+                self.identities[usize::from(pending.slot)] = None;
                 Screen::Slots
             }
             _ => return false,

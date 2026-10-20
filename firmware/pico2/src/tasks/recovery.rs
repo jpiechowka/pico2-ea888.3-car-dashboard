@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+#[cfg(feature = "ble-obd")]
+use dashboard_pico2::health::reset::RecoveryCause;
 use dashboard_pico2::health::{MaintenanceTicket, Progress, ProgressMonitor};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -68,6 +70,11 @@ pub async fn recovery_task(mut watchdog: RecoveryWatchdog) {
                 !monitor.feeding_allowed(),
             )
         {
+            watchdog.record_failure(if super::ble::FATAL.load(Ordering::Relaxed) {
+                RecoveryCause::RadioFatal
+            } else {
+                RecoveryCause::RadioStalled
+            });
             crate::log_fault!("BLE owner failed or stalled; watchdog recovery");
             core::future::pending::<()>().await;
         }
@@ -92,6 +99,7 @@ pub async fn recovery_task(mut watchdog: RecoveryWatchdog) {
             Ok(())
         });
         if let Err(fault) = result {
+            watchdog.record_failure(fault.into());
             crate::log_fault!("Watchdog: {:?}", fault);
             // Retain all owners and stop feeding. The watchdog is configured to
             // reset both cores and peripherals without executor/IRQ progress.

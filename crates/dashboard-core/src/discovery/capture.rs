@@ -1,6 +1,8 @@
 //! Canonical, bounded selected-peer evidence; all time values are boot-relative.
 use super::capture_store::{PAYLOAD_MAX, crc32};
+use super::names::{NameSource, ObservedName};
 use super::*;
+use crate::health::reset::{BootEvidence, ResetRecord, ResetStage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildProfile {
@@ -68,6 +70,9 @@ pub struct CaptureMetadata {
     /// Absent in legacy v1/v2 captures, never inferred from current firmware.
     pub fault_latch: Option<FaultLatch>,
     pub radio_bus_hz: Option<u32>,
+    /// Absent in v1/v2/v3; never filled from the current Pico when loading.
+    pub cached_name: Option<ObservedName>,
+    pub boot: Option<BootEvidence>,
     pub build: BuildIdentity,
     pub captured_at_ms: u64,
     pub revision: u32,
@@ -105,6 +110,8 @@ impl CaptureMetadata {
         schema_version: 0,
         fault_latch: None,
         radio_bus_hz: None,
+        cached_name: None,
+        boot: None,
         build: BuildIdentity {
             source_digest: [0; 32],
             cpu_hz: 0,
@@ -698,7 +705,30 @@ fn write_metadata(
     if p.radio_bus_hz == Some(0) {
         return Err(CaptureError::InvalidData);
     }
-    w.u32(p.radio_bus_hz.unwrap_or(0))
+    w.u32(p.radio_bus_hz.unwrap_or(0))?;
+    w.bool(d.cached_name.is_some())?;
+    if let Some(name) = d.cached_name {
+        if usize::from(name.data.len) > 64 {
+            return Err(CaptureError::InvalidData);
+        }
+        w.u8(name.source.code())?;
+        w.bool(name.complete)?;
+        w.u64(name.at_ms)?;
+        w.u8(name.data.len)?;
+        w.bytes(name.data.as_slice())?;
+        w.bool(name.data.truncated)?;
+    }
+    w.bool(p.boot.is_some())?;
+    if let Some(boot) = p.boot {
+        w.u32(boot.raw_reason)?;
+        w.opt_u8(boot.boot_type)?;
+        w.bool(boot.previous.is_some())?;
+        if let Some(previous) = boot.previous {
+            w.u8(previous.stage.code())?;
+            w.u32(previous.elapsed_ms)?;
+        }
+    }
+    Ok(())
 }
 fn read_metadata<'a>(
     r: &mut Reader<'a>,
@@ -799,6 +829,8 @@ fn read_metadata<'a>(
     // Always overwrite these when reusing a decoder across schema versions.
     m.fault_latch = None;
     m.radio_bus_hz = None;
+    m.cached_name = None;
+    m.boot = None;
     if version >= 3 {
         m.fault_latch = Some(FaultLatch::from_parts(r.u16()?, r.u8()?).ok_or(CaptureError::InvalidData)?);
         let hz = r.u32()?;
@@ -807,6 +839,48 @@ fn read_metadata<'a>(
             return Err(CaptureError::InvalidData);
         }
         m.radio_bus_hz = (hz != 0).then_some(hz);
+    }
+    if version >= 4 {
+        if r.bool()? {
+            let source = NameSource::from_code(r.u8()?).ok_or(CaptureError::InvalidData)?;
+            let complete = r.bool()?;
+            let at_ms = r.u64()?;
+            let len = usize::from(r.u8()?);
+            if len == 0 || len > 64 {
+                return Err(CaptureError::InvalidData);
+            }
+            // Fill unpublished metadata in place. The decoder returns no view
+            // until the entire record and its relationships have passed.
+            let name = m.cached_name.insert(ObservedName {
+                data: Payload::empty(),
+                source: NameSource::Advertisement,
+                complete: false,
+                at_ms: 0,
+            });
+            name.source = source;
+            name.complete = complete;
+            name.at_ms = at_ms;
+            name.data.bytes[..len].copy_from_slice(r.take(len)?);
+            name.data.len = len as u8;
+            name.data.truncated = r.bool()?;
+        }
+        if r.bool()? {
+            let raw_reason = r.u32()?;
+            let boot_type = r.opt_u8()?;
+            let previous = if r.bool()? {
+                Some(ResetRecord {
+                    stage: ResetStage::from_code(r.u8()?).ok_or(CaptureError::InvalidData)?,
+                    elapsed_ms: r.u32()?,
+                })
+            } else {
+                None
+            };
+            m.boot = Some(BootEvidence {
+                raw_reason,
+                boot_type,
+                previous,
+            });
+        }
     }
     Ok(())
 }
@@ -928,7 +1002,7 @@ fn encode_bytes(
         + probe.inspection.descriptors.len()
         + probe.inspection.values.len();
     w.bytes[..8].copy_from_slice(MAGIC);
-    w.bytes[8..10].copy_from_slice(&3u16.to_le_bytes());
+    w.bytes[8..10].copy_from_slice(&4u16.to_le_bytes());
     w.bytes[10..12].copy_from_slice(&(total as u16).to_le_bytes());
     w.bytes[12..14].copy_from_slice(&(count as u16).to_le_bytes());
     w.bytes[14..16].copy_from_slice(&(metadata_len as u16).to_le_bytes());
@@ -1071,6 +1145,18 @@ fn metadata_valid(m: &CaptureMetadata) -> Result<(), CaptureError> {
             .is_none_or(|o| (m.first_seen_ms..=m.last_seen_ms).contains(&o.at_ms))
     };
     if m.revision == 0
+        || m.cached_name.is_some_and(|name| {
+            name.at_ms < m.first_seen_ms
+                || name.at_ms > m.captured_at_ms
+                || match name.source {
+                    NameSource::Gap => !name.complete || name.data.truncated,
+                    NameSource::Advertisement | NameSource::ScanResponse => {
+                        name.data.len > 29 || name.at_ms > m.last_seen_ms
+                    }
+                }
+        })
+        || m.boot
+            .is_some_and(|boot| boot.previous.is_some() && !boot.watchdog_fault())
         || m.reports == 0
         || m.first_seen_ms > m.last_seen_ms
         || m.last_seen_ms > m.captured_at_ms
@@ -1122,7 +1208,7 @@ pub fn check_header(
     if r.take(8)? != MAGIC {
         return Err(CaptureError::Magic);
     }
-    if !matches!(r.u16()?, 1..=3) {
+    if !matches!(r.u16()?, 1..=4) {
         return Err(CaptureError::Version);
     }
     let total = usize::from(r.u16()?);

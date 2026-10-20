@@ -1,4 +1,16 @@
 use dashboard_core::discovery::capture_ui::*;
+use dashboard_core::discovery::names::SavedIdentity;
+use dashboard_core::discovery::{Payload, Peer};
+
+fn identity(byte: u8) -> SavedIdentity {
+    SavedIdentity {
+        peer: Peer {
+            address: [byte; 6],
+            random: true,
+        },
+        name: Payload::new(b"Saved device"),
+    }
+}
 
 fn context() -> Context {
     Context {
@@ -14,7 +26,13 @@ fn open(
     let Action::Refresh { id } = ui.tick(2000).unwrap() else {
         panic!()
     };
-    assert!(ui.complete(id, Completion::Listed(slots)));
+    assert!(ui.complete(
+        id,
+        Completion::Listed {
+            slots,
+            identities: [None; 4]
+        }
+    ));
     assert_eq!(ui.input(Input::XUp, 2001, context()), None);
 }
 
@@ -59,8 +77,20 @@ fn save_requires_current_revision_and_explicit_overwrite_then_stale_results_fail
         panic!()
     };
     assert_eq!((slot, revision, overwrite), (0, 7, true));
-    assert!(!ui.complete(id + 1, Completion::Saved { generation: 10 }));
-    assert!(ui.complete(id, Completion::Saved { generation: 10 }));
+    assert!(!ui.complete(
+        id + 1,
+        Completion::Saved {
+            generation: 10,
+            identity: identity(1)
+        }
+    ));
+    assert!(ui.complete(
+        id,
+        Completion::Saved {
+            generation: 10,
+            identity: identity(1)
+        }
+    ));
     assert_eq!(ui.slots()[0], Slot::Saved { generation: 10 });
     assert!(!ui.complete(id, Completion::Failed(UiError::Storage)));
 }
@@ -89,7 +119,13 @@ fn empty_missing_busy_timeout_and_recovery_never_erase_implicitly() {
     assert_eq!(ui.tick(2301 + OPERATION_TIMEOUT_MS), None);
     assert_eq!(ui.screen(), Screen::Error(UiError::Timeout));
     assert_eq!(ui.pending(), Some(id));
-    assert!(ui.complete(id, Completion::Saved { generation: 1 }));
+    assert!(ui.complete(
+        id,
+        Completion::Saved {
+            generation: 1,
+            identity: identity(1)
+        }
+    ));
     assert_eq!(ui.screen(), Screen::Error(UiError::Timeout));
     assert_eq!(ui.input(Input::Recover, 40_000, context()), Some(Action::Recover));
     assert_eq!(ui.screen(), Screen::Live);
@@ -131,7 +167,13 @@ fn held_release_without_ticks_is_consumed_and_confirmation_expires() {
     let Action::Refresh { id } = ui.input(Input::XUp, 2000, context()).unwrap() else {
         panic!()
     };
-    ui.complete(id, Completion::Listed([Slot::Saved { generation: 1 }; 4]));
+    ui.complete(
+        id,
+        Completion::Listed {
+            slots: [Slot::Saved { generation: 1 }; 4],
+            identities: [None; 4],
+        },
+    );
     ui.input(Input::XDown, 2100, context());
     ui.input(Input::XUp, 2101, context());
     assert_eq!(ui.screen(), Screen::ConfirmOverwrite);
@@ -157,15 +199,28 @@ fn abandoned_results_keep_original_slot_and_reject_wrong_operation_or_empty_page
     let Action::Save { id, slot: 0, .. } = ui.input(Input::XUp, 2101, context()).unwrap() else {
         panic!()
     };
-    assert!(!ui.complete(id, Completion::Saved { generation: 0 }));
+    assert!(!ui.complete(
+        id,
+        Completion::Saved {
+            generation: 0,
+            identity: identity(1)
+        }
+    ));
     ui.input(Input::Back, 2102, context());
     ui.input(Input::Turn(1), 2103, context());
-    assert!(ui.complete(id, Completion::Saved { generation: 1 }));
+    assert!(ui.complete(
+        id,
+        Completion::Saved {
+            generation: 1,
+            identity: identity(1)
+        }
+    ));
     assert_eq!(ui.selected(), 1);
     assert_eq!(
         ui.slots(),
         &[Slot::Saved { generation: 1 }, Slot::Empty, Slot::Empty, Slot::Empty]
     );
+    assert_eq!(ui.identities(), &[Some(identity(1)), None, None, None]);
     ui.input(Input::Turn(-1), 2104, context());
     let Action::Load { id, .. } = ui.input(Input::Click, 2105, context()).unwrap() else {
         panic!()
@@ -211,7 +266,13 @@ fn semantic_x_uses_producer_hold_and_cannot_inspect_from_release_bounce() {
     let Action::Refresh { id } = state.input(Input::XHold, 5000, context()).unwrap() else {
         panic!()
     };
-    assert!(state.complete(id, Completion::Listed([Slot::Empty; 4])));
+    assert!(state.complete(
+        id,
+        Completion::Listed {
+            slots: [Slot::Empty; 4],
+            identities: [None; 4]
+        }
+    ));
     let Action::Save { overwrite: false, .. } = state.input(Input::XShort, 5100, context()).unwrap() else {
         panic!()
     };
@@ -236,4 +297,185 @@ fn loading_pages_back_confirmation_cancel_and_clock_reversal_are_bounded() {
     ui.input(Input::XDown, 2400, context());
     assert_eq!(ui.input(Input::XUp, 2399, context()), None);
     assert_eq!(ui.screen(), Screen::Error(UiError::Clock));
+}
+
+fn named_directory(
+    ui: &mut CaptureUi,
+    slot: Slot,
+) {
+    let Action::Refresh { id } = ui.input(Input::XHold, 0, context()).unwrap() else {
+        panic!()
+    };
+    assert!(ui.complete(
+        id,
+        Completion::Listed {
+            slots: [slot; 4],
+            identities: [
+                Some(identity(1)),
+                Some(identity(2)),
+                Some(identity(3)),
+                Some(identity(4))
+            ],
+        }
+    ));
+}
+
+#[test]
+fn listing_keeps_identity_only_for_readable_slots_and_ignores_stale_replies() {
+    let mut ui = CaptureUi::new();
+    named_directory(&mut ui, Slot::Saved { generation: 1 });
+    let previous = *ui.identities();
+    let Action::Refresh { id } = ui.input(Input::XHold, 10, context()).unwrap() else {
+        panic!()
+    };
+    let listed = Completion::Listed {
+        slots: [
+            Slot::Saved { generation: 2 },
+            Slot::SavedBlocked { generation: 1 },
+            Slot::Empty,
+            Slot::Corrupt,
+        ],
+        identities: [
+            Some(identity(8)),
+            Some(identity(9)),
+            Some(identity(10)),
+            Some(identity(11)),
+        ],
+    };
+    assert!(!ui.complete(id - 1, listed));
+    assert_eq!(ui.identities(), &previous);
+    assert!(!ui.complete(
+        id,
+        Completion::Saved {
+            generation: 2,
+            identity: identity(12)
+        }
+    ));
+    assert_eq!(ui.identities(), &previous);
+    assert_eq!(ui.pending(), Some(id));
+    assert!(ui.complete(id, listed));
+    assert_eq!(ui.identities(), &[Some(identity(8)), Some(identity(9)), None, None]);
+}
+
+#[test]
+fn matching_io_failure_clears_only_affected_identity_and_refresh_failure_clears_directory() {
+    for operation in [Operation::Load, Operation::Save, Operation::Reset, Operation::Refresh] {
+        let mut ui = CaptureUi::new();
+        named_directory(
+            &mut ui,
+            if operation == Operation::Reset {
+                Slot::SavedBlocked { generation: 1 }
+            } else {
+                Slot::Saved { generation: 1 }
+            },
+        );
+        ui.input(Input::Turn(2), 10, context());
+        let action = match operation {
+            Operation::Load => ui.input(Input::Click, 11, context()),
+            Operation::Refresh => ui.input(Input::XHold, 11, context()),
+            Operation::Save | Operation::Reset => {
+                ui.input(Input::XShort, 11, context());
+                ui.input(Input::Click, 12, context())
+            }
+        }
+        .unwrap();
+        let id = match action {
+            Action::Load { id, slot: 2 }
+            | Action::Save { id, slot: 2, .. }
+            | Action::Reset { id, slot: 2 }
+            | Action::Refresh { id } => id,
+            other => panic!("unexpected {other:?}"),
+        };
+        let previous = *ui.identities();
+        assert!(!ui.complete(id + 1, Completion::Failed(UiError::Storage)));
+        assert_eq!(ui.identities(), &previous);
+        ui.input(Input::Back, 13, context());
+        ui.input(Input::Turn(1), 14, context());
+        assert!(ui.complete(id, Completion::Failed(UiError::Storage)));
+        assert_eq!(ui.screen(), Screen::Slots);
+        assert_eq!(
+            *ui.identities(),
+            if operation == Operation::Refresh {
+                [None; 4]
+            } else {
+                [Some(identity(1)), Some(identity(2)), None, Some(identity(4))]
+            }
+        );
+    }
+}
+
+#[test]
+fn reset_and_recovered_save_update_identity_only_when_the_owner_finishes() {
+    let mut ui = CaptureUi::new();
+    named_directory(&mut ui, Slot::SavedBlocked { generation: 1 });
+    ui.input(Input::XShort, 10, context());
+    let Action::Reset { id, slot: 0 } = ui.input(Input::Click, 11, context()).unwrap() else {
+        panic!()
+    };
+    ui.input(Input::Recover, 12, context());
+    assert_eq!(ui.pending(), Some(id));
+    assert!(ui.complete(id, Completion::Reset));
+    assert_eq!(ui.screen(), Screen::Live);
+    assert_eq!(ui.slots()[0], Slot::Empty);
+    assert_eq!(
+        ui.identities(),
+        &[None, Some(identity(2)), Some(identity(3)), Some(identity(4))]
+    );
+    let Action::Refresh { id } = ui.input(Input::XHold, 13, context()).unwrap() else {
+        panic!()
+    };
+    ui.complete(
+        id,
+        Completion::Listed {
+            slots: [Slot::Empty; 4],
+            identities: [None; 4],
+        },
+    );
+    let Action::Save { id, slot: 0, .. } = ui.input(Input::XShort, 14, context()).unwrap() else {
+        panic!()
+    };
+    ui.input(Input::Recover, 15, context());
+    assert_eq!(ui.pending(), Some(id));
+    assert!(ui.complete(
+        id,
+        Completion::Saved {
+            generation: 1,
+            identity: identity(5)
+        }
+    ));
+    assert_eq!(ui.screen(), Screen::Live);
+    assert_eq!(ui.identities(), &[Some(identity(5)), None, None, None]);
+}
+
+#[test]
+fn timed_out_operation_hides_unconfirmed_identity_and_retains_its_completion_fence() {
+    let mut ui = CaptureUi::new();
+    named_directory(&mut ui, Slot::Saved { generation: 1 });
+    ui.input(Input::XShort, 10, context());
+    let Action::Save { id, slot: 0, .. } = ui.input(Input::Click, 11, context()).unwrap() else {
+        panic!()
+    };
+    ui.tick(11 + OPERATION_TIMEOUT_MS);
+    assert_eq!(
+        ui.identities(),
+        &[None, Some(identity(2)), Some(identity(3)), Some(identity(4))]
+    );
+    assert_eq!(ui.pending(), Some(id));
+    assert!(ui.complete(
+        id,
+        Completion::Saved {
+            generation: 2,
+            identity: identity(6)
+        }
+    ));
+    assert_eq!(ui.screen(), Screen::Error(UiError::Timeout));
+    assert_eq!(
+        ui.identities(),
+        &[
+            Some(identity(6)),
+            Some(identity(2)),
+            Some(identity(3)),
+            Some(identity(4))
+        ]
+    );
 }

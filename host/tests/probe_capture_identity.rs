@@ -83,6 +83,46 @@ fn gap_name(
 fn identity(p: &Probe) -> Value { decode_json(&bytes(p)).unwrap()["identity"].clone() }
 
 #[test]
+fn cached_packet_and_gap_names_agree_in_directory_and_export_without_fabricated_packets() {
+    use dashboard_core::discovery::capture;
+    use dashboard_core::discovery::names::SavedIdentity;
+    let mut p = probe(&ad(9, b"Light"), &[]);
+    let peer = p.selected_device().unwrap().peer;
+    p.catalog
+        .observe(Advertisement::new(peer, ReportKind::Connectable, -60, &[2, 1, 6], 4));
+    let data = bytes(&p);
+    let capture = capture::decode(&data).unwrap();
+    assert_eq!(SavedIdentity::from_capture(&capture.view()).name.as_slice(), b"Light");
+    let json = decode_json(&data).unwrap();
+    assert_eq!(json["identity"]["device_name"]["cached"], true);
+    assert_eq!(json["identity"]["device_name"]["observed_at_boot_ms"], 1);
+    assert_eq!(json["advertisement"]["raw_hex"], "020106");
+
+    let mut p = probe(&[], &[]);
+    let name = [b'A'; 64];
+    gap_name(&mut p, &name, ReadResult::Ok);
+    p.event(Event::InspectionEnd {
+        revision: p.request.revision,
+        at_ms: 10,
+        cleanup_complete: true,
+        disconnect_reason: Some(0x16),
+    });
+    p.input(Input::Back, 11);
+    p.input(Input::Details, 12);
+    assert!(p.inspection.values.is_empty());
+    let data = bytes(&p);
+    let capture = capture::decode(&data).unwrap();
+    let saved = SavedIdentity::from_capture(&capture.view());
+    assert_eq!(saved.name.as_slice(), &[b'A'; 31]);
+    assert!(saved.name.truncated);
+    let json = decode_json(&data).unwrap();
+    assert_eq!(json["identity"]["device_name"]["cached"], true);
+    assert_eq!(json["identity"]["device_name"]["source"], "gap_device_name");
+    assert_eq!(json["identity"]["device_name"]["utf8"], "A".repeat(64));
+    assert_eq!(json["record_counts"]["reads"], 0);
+}
+
+#[test]
 fn name_address_and_full_content_id_are_derived_from_validated_bytes() {
     let bytes = bytes(&probe(&ad(9, b"NEEWER-TL21C"), &[]));
     let v = decode_json(&bytes).unwrap();
@@ -151,6 +191,9 @@ fn malformed_empty_duplicate_and_truncated_packets_preserve_evidence_without_gue
     assert_eq!(i["device_name"]["utf8"], "Saved");
     assert_eq!(i["device_name"]["complete"], true);
     assert_eq!(i["device_name"]["truncated"], true);
+    let data = bytes(&probe(&packet, &[]));
+    let capture = dashboard_core::discovery::capture::decode(&data).unwrap();
+    assert!(names::SavedIdentity::from_capture(&capture.view()).name.truncated);
 }
 
 #[test]

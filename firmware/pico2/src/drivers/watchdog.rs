@@ -1,16 +1,21 @@
 //! RP2350-only boundary for the locked HAL's RP2040 WDSEL mask.
+use dashboard_core::health::reset::{BootEvidence, RecoveryCause, ResetRecord, boot_type_from_sys_info};
 use embassy_rp::peripherals::WATCHDOG;
 use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, pac};
-use embassy_time::Duration;
+use embassy_time::{Duration, Instant};
 
 pub struct RecoveryWatchdog {
     watchdog: Watchdog,
+    boot: BootEvidence,
+    current: ResetRecord,
 }
 
 impl RecoveryWatchdog {
     pub fn start(peripheral: Peri<'static, WATCHDOG>) -> Self {
         let mut watchdog = Watchdog::new(peripheral);
+        let raw_reason = pac::WATCHDOG.reason().read().0;
+        let scratch = core::array::from_fn(|index| watchdog.get_scratch(index));
         watchdog.pause_on_debug(false);
         watchdog.start(Duration::from_secs(15));
         // RP2350 PSM.WDSEL has bits 0..24; ROSC/XOSC are bits 2/3.
@@ -40,18 +45,68 @@ impl RecoveryWatchdog {
             reference_hz / 1_000_000,
             "watchdog tick must be 1 MHz"
         );
-        Self { watchdog }
+        let boot = BootEvidence::capture(raw_reason, rom_boot_type(), scratch);
+        let mut owner = Self {
+            watchdog,
+            boot,
+            current: ResetRecord::booting(),
+        };
+        owner.persist_record();
+        owner
     }
 
-    pub fn feed(&mut self) { self.watchdog.feed(Duration::from_secs(2)); }
+    pub fn feed(&mut self) {
+        let previous = self.current;
+        self.current.supervised(Instant::now().as_millis());
+        if self.current != previous {
+            self.persist_record();
+        }
+        self.watchdog.feed(Duration::from_secs(2));
+    }
 
-    /// Hardware only distinguishes watchdog force/timer from other causes.
-    /// Do not label every non-watchdog reset as a power-on reset.
-    pub fn reset_label(&self) -> &'static str {
-        match self.watchdog.reset_reason() {
-            Some(embassy_rp::watchdog::ResetReason::Forced) => "WD FORCED",
-            Some(embassy_rp::watchdog::ResetReason::TimedOut) => "WD TIMEOUT",
-            None => "OTHER",
+    pub const fn boot_evidence(&self) -> BootEvidence { self.boot }
+
+    pub const fn reset_label(&self) -> &'static str { self.boot_evidence().label() }
+
+    /// Call before logging or pending forever, while this core0 owner can run.
+    pub fn record_failure(
+        &mut self,
+        cause: RecoveryCause,
+    ) {
+        let previous = self.current;
+        self.current.fail(cause, Instant::now().as_millis());
+        if self.current != previous {
+            self.persist_record();
         }
     }
+
+    fn persist_record(&mut self) {
+        // Core0 startup/supervisor owns these writes. RP2350 ROM reboot uses
+        // scratch2/3 as parameters and may invalidate this record; never call it
+        // concurrently with this owner. The ROM consumes valid scratch4..7
+        // vectors before launching us. We never write those vector registers.
+        for (index, value) in self.current.scratch_writes() {
+            // Order invalidation/payload/commit at the peripheral before a reset.
+            cortex_m::asm::dmb();
+            self.watchdog.set_scratch(index, value);
+        }
+        cortex_m::asm::dsb();
+    }
+}
+
+fn rom_boot_type() -> Option<u8> {
+    // The locked HAL's function wrapper transmutes lookup results unchecked.
+    // Check the secure-Arm GS entry before constructing its function pointer.
+    let entry = embassy_rp::rom_data::rom_table_lookup(*b"GS", 0x0004);
+    if entry == 0 || entry & 1 == 0 {
+        return None;
+    }
+    let mut words = [0u32; 5];
+    // SAFETY: the RP2350 secure ROM table supplies GS with this ABI. The
+    // aligned five-word buffer stays live and exclusively borrowed for the call.
+    let status = unsafe {
+        let get_sys_info: unsafe extern "C" fn(*mut u32, usize, u32) -> i32 = core::mem::transmute(entry);
+        get_sys_info(words.as_mut_ptr(), words.len(), 0x0040)
+    };
+    boot_type_from_sys_info(status, words)
 }

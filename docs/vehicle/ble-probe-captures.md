@@ -31,6 +31,13 @@ seconds recovers live scanning without erasing saves. The telemetry above saved
 pages describes the running Pico; the evidence below contains frozen capture
 timestamps. It is not a replay of historical CPU or stack measurements.
 
+Readable slots show the saved device name, observed address/type (`P` public or
+`R` random) and generation. Names are sanitized to at most 31 display bytes;
+`Unnamed` means no usable name was captured. Directory labels come from fully
+validated saved bytes, including older supported captures, rather than the live
+selection. Refresh is read-only. A read/validation failure removes the uncertain
+label. A protected readable copy retains its identity and Reset requirement.
+
 | Slot state | Open | X action |
 | --- | --- | --- |
 | Empty | Explains that no save exists | Save the current paused evidence |
@@ -64,6 +71,14 @@ remains separate.
 Back/recovery and a UI timeout do not cancel an in-progress flash operation.
 The storage owner finishes and returns its buffer before another operation is
 admitted. Do not interpret leaving the page as undoing a save or reset.
+
+The storage task owns one fixed reply record. It transfers an exclusive reference
+to core 1 and waits for its return before servicing another request. Core 1 takes
+the returned byte lease even for a hidden or stale completion, then returns the
+record synchronously before rendering. Flash maintenance has already resumed
+both cores before this handoff. This avoids copying the directory through task
+stacks; it adds no payload buffer or framebuffer. USB requests can wait behind
+that serial owner, and a stalled UI remains subject to the progress watchdog.
 
 The [RGB status LED](ble-probe.md#rgb-status-and-recovery) is purple while a local
 capture operation is pending, unless an error takes priority. Saved browsing is
@@ -136,14 +151,20 @@ An address or name is not permanent or authenticated physical device identity.
 Name selection is deterministic: first nonempty complete Local Name from scan
 response, then advertisement; otherwise the first successful, non-truncated
 captured GAP Device Name read (`2A00`); otherwise the first nonempty shortened
-Local Name from response, then advertisement. Duplicate names use the first
+Local Name from response, then advertisement. In v4, a complete, non-truncated
+cached name follows the current complete packet/GAP read candidates and precedes
+shortened packet names; another cached observation is the final fallback.
+Duplicate names use the first
 field in that source. A malformed AD length stops parsing that packet; valid
 earlier fields remain usable. Original packets/read records remain untouched.
 An empty name is skipped. The selected name's raw bytes, UTF-8 when valid, source,
 complete/shortened status and truncation flag are retained in `identity.device_name`.
 For advertising, `complete` describes the AD type and `truncated` describes the
 containing captured packet; they can both be true. GAP reads include their
-zero-based `records` index. Missing selected names are null.
+zero-based `records` index. `cached` and `observed_at_boot_ms` distinguish a retained
+observation from the current packet/read; absent legacy timestamps remain null.
+Cached names never alter raw packets or create read records. Missing selected
+names are null. Names and addresses are observations, not authenticated identity.
 
 Filename slugs allow only lowercase ASCII letters, digits and collapsed hyphens,
 with at most 32 characters and no leading/trailing hyphen. Other characters become
@@ -153,8 +174,8 @@ Windows reserved basenames. This bounds each generated filename to 78 ASCII
 characters; the chosen parent path still has operating-system limits. Names with
 path syntax, controls, reserved characters or identical sanitized slugs cannot
 select a path outside the new export directory. Full hash/raw evidence remains
-available to distinguish captures. No new Pico read, allocation or format change
-is required. Legacy generic filenames remain accepted as offline decode inputs.
+available to distinguish captures. Filename derivation runs on the PC and needs
+no new radio operation. Legacy generic filenames remain accepted as offline decode inputs.
 
 The directory and files must be new; nothing is overwritten. A failed/interrupted
 host export can leave partial files; artifact write/sync failures happen before
@@ -205,6 +226,7 @@ scan diagnostics remain labelled global and cannot be blamed on that peer.
 | --- | --- |
 | Address/type, first/last seen, reports and RSSI | Observation identity; private addresses may change; RSSI is not distance |
 | Separate raw advertisement and scan response | Up to 31 bytes each, own timestamp/kind/RSSI/truncation; not necessarily the same event |
+| Cached device name (v4) | Up to 64 raw bytes, source/completeness/truncation and observation time; exact observed peer only, not resolved across private address changes |
 | Primary services, characteristics and descriptors | Up to 24 / 64 / 128; exact UUIDs, handles, properties and parent relationships |
 | Standard reads | Up to 16 outcomes of 64 bytes; service/handle, result, raw error code when available, duration and bytes |
 | Link, ATT MTU, timings and cleanup | Observed connection parameters and negotiated ATT limit when available; no L2CAP CoC negotiation |
@@ -212,6 +234,7 @@ scan diagnostics remain labelled global and cannot be blamed on that peer.
 | First failure and local/terminal context | Exact available reason, range and elapsed time; absent raw status remains absent |
 | First rejected characteristic declaration | Handle, original byte length and up to 19 raw bytes; its value-handle field is unvalidated and can be absent |
 | Global LED fault snapshot | First recorded source and all latched bits at save; atomic recording order, not a causal trace or selected-peer attribution |
+| Boot reset evidence (v4) | Raw watchdog bits, ROM boot type when available and checked previous stage/time; last observation, not proven reset cause or exact reset time |
 | Producer identity | Full source digest when supplied, profile, CPU/LCD SPI and configured radio GSPI rates; not a firmware self-check or physical clock measurement |
 
 All capture times are device boot-relative monotonic milliseconds. No RTC date
@@ -230,8 +253,8 @@ is written, and there is no pairing, authentication or ECU request.
 
 ## Storage, source identity and verification
 
-New captures use **payload schema v3**. This firmware and exporter also read
-legacy v1/v2 captures. V1 has no rejected-declaration field; v1/v2 have no LED
+New captures use **payload schema v4**. This firmware and exporter also read
+legacy v1/v2/v3 captures. V1 has no rejected-declaration field; v1/v2 have no LED
 fault mask/first source or radio GSPI rate. Those fields remain explicitly
 unavailable instead of being reconstructed from current firmware. JSON reports
 the actual input schema. V3 adds seven metadata bytes: fault mask `u16`, first
@@ -239,6 +262,26 @@ source code `u8`, and radio Hz `u32` (zero denotes unavailable). The first sourc
 must belong to the mask; an empty mask has first code zero. Undefined bits/codes
 and implausible clock values are rejected. The live latch is sampled immediately
 before encoding, including faults recorded since the preceding UI frame.
+V4 appends two optional fields after those seven v3 bytes:
+
+- Cached name: presence flag; source `u8` (1 advertisement, 2 scan response,
+  3 GAP), complete flag, boot-relative `u64` milliseconds, `u8` byte count,
+  1–64 raw bytes and truncation flag. AD-derived cache bytes are at most 29;
+  GAP cache requires a complete, non-truncated successful read. Observation
+  times must lie inside the captured peer/time context.
+- Boot evidence: presence flag; raw watchdog reason `u32`; optional ROM boot
+  byte (presence flag plus `u8`); optional previous record (presence flag,
+  stage `u8`, saturated previous-boot observation milliseconds `u32`). Previous
+  stages are 1 Booting, 2 Supervised and 17–28 first supervisor failure codes.
+  A previous record is admitted only for a watchdog-fault classification.
+
+Integers are little-endian, booleans are only 0/1, and unknown source/stage codes,
+invalid lengths or inconsistent timestamps fail admission. Legacy decodes clear
+these fields to unavailable. JSON exposes them as `cached_name` and `boot`, with
+the same evidence in text. Power removal can erase the scratch record; the record
+does not identify which firmware image produced it. See the
+[reset/name source review](../validation/probe-slot3-discovery-2026-10-20.md).
+
 The journal and USB protocol versions are unchanged, as is the 8192-byte payload
 limit. Existing slots are not rewritten during load/export. Older
 firmware/exporters cannot decode newer payload versions; export with the current tool before

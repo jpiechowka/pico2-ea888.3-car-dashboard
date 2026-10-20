@@ -175,6 +175,8 @@ fn decode_export(bytes: &[u8]) -> Result<(Value, PublishedCapture), String> {
         "record_counts":{"services":view.counts()[0],"characteristics":view.counts()[1],"descriptors":view.counts()[2],"reads":view.counts()[3]},"records":records,
         "limits":"Inventory and standard reads do not establish proprietary authentication, L2CAP PSM acceptance, application commands, ECU support or vehicle data."});
     value["identity"] = identity;
+    value["cached_name"] = m.cached_name.map(|n|json!({"source":n.source.label(),"raw_hex":hex(n.data.as_slice()),"utf8":core::str::from_utf8(n.data.as_slice()).ok(),"complete":n.complete,"truncated":n.data.truncated,"observed_at_boot_ms":n.at_ms})).unwrap_or(Value::Null);
+    value["boot"] = m.boot.map(|b|json!({"raw_watchdog_reason":b.raw_reason,"rom_boot_type":b.boot_type,"classification":b.label(),"watchdog_fault":b.watchdog_fault(),"previous":b.previous.map(|p|json!({"stage_code":p.stage.code(),"stage":p.stage.label(),"observed_at_previous_boot_ms":p.elapsed_ms})),"scope":"Last retained observation, not proven reset cause or exact reset time. Power removal may erase it; producer image unknown."})).unwrap_or(Value::Null);
     Ok((value, publication))
 }
 

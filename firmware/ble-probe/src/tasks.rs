@@ -4,6 +4,7 @@ use core::sync::atomic::Ordering;
 use dashboard_core::ble::runtime::Liveness;
 use dashboard_core::display::damage::DamagePlan;
 use dashboard_core::display::transfer::flush_plan;
+use dashboard_core::health::reset::RecoveryCause;
 use dashboard_core::health::{Progress, ProgressMonitor};
 use dashboard_core::input_model::{DebouncedButton, DeferredButton};
 use dashboard_pico2::panel::St7789Flusher;
@@ -14,6 +15,8 @@ use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::*;
 use embassy_rp::spi::{Async, Spi};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_time::{Instant, Timer};
 
 use crate::bridge::Control as UiInput;
@@ -26,7 +29,11 @@ pub async fn probe_radio_task(resources: radio::Resources) {
 }
 
 #[embassy_executor::task]
-pub async fn probe_ui_task() { metrics::measure(1, pin!(crate::ui::run())).await; }
+pub fn probe_ui_task() -> impl core::future::Future<Output = ()> {
+    // Own the future once; an outer async wrapper materializes another full
+    // UI future on the stack before its first poll on the pinned compiler.
+    metrics::measure(1, crate::ui::probe_ui_task_run())
+}
 
 #[embassy_executor::task]
 pub async fn probe_display_task(
@@ -174,87 +181,115 @@ pub async fn probe_encoder_task(mut bus: I2c<'static, I2C0, embassy_rp::i2c::Asy
     .await;
 }
 
+pub struct SupervisorResources {
+    pub watchdog: RecoveryWatchdog,
+    pub red: Peri<'static, PIN_26>,
+    pub green: Peri<'static, PIN_27>,
+    pub blue: Peri<'static, PIN_28>,
+}
+// Main transfers the sole owner before spawning. Argument-free task creation
+// avoids materializing a second complete supervisor future on the stack.
+pub static SUPERVISOR: Channel<CriticalSectionRawMutex, SupervisorResources, 1> = Channel::new();
+
 #[embassy_executor::task]
-pub async fn probe_supervisor_task(
-    mut watchdog: RecoveryWatchdog,
-    red: Peri<'static, PIN_26>,
-    green: Peri<'static, PIN_27>,
-    blue: Peri<'static, PIN_28>,
-) {
-    metrics::measure(
-        0,
-        pin!(async {
-            let mut red = Output::new(red, Level::High);
-            let mut green = Output::new(green, Level::High);
-            let mut blue = Output::new(blue, Level::High);
-            let start = Instant::now().as_millis();
-            let mut monitor = ProgressMonitor::new(start, progress());
-            let mut radio = Liveness::new(start);
-            let mut failed = false;
-            loop {
-                let now = Instant::now().as_millis();
-                let progress_result = monitor.observe(now, progress());
-                let radio_alive = radio.observe(
-                    bridge::RADIO_PROGRESS.load(Ordering::Relaxed),
-                    now,
-                    !monitor.feeding_allowed(),
-                );
-                let healthy = !failed
-                    && progress_result.is_ok()
-                    && radio_alive
-                    && (bridge::RADIO_READY.load(Ordering::Relaxed) || now.saturating_sub(start) < 12_000)
-                    && !bridge::RADIO_FATAL.load(Ordering::Relaxed)
-                    && !bridge::DISPLAY_FATAL.load(Ordering::Relaxed)
-                    && !bridge::RESET_REQUESTED.load(Ordering::Relaxed);
-                if !healthy && !failed {
-                    defmt::error!(
-                        "Probe watchdog recovery: progress={:?} radio_alive={} radio_ready={} radio_fatal={} \
-                         display_fatal={} requested={}",
-                        defmt::Debug2Format(&progress_result),
-                        radio_alive,
-                        bridge::RADIO_READY.load(Ordering::Relaxed),
-                        bridge::RADIO_FATAL.load(Ordering::Relaxed),
-                        bridge::DISPLAY_FATAL.load(Ordering::Relaxed),
-                        bridge::RESET_REQUESTED.load(Ordering::Relaxed)
-                    );
-                    failed = true;
-                }
-                let [r, g, b] = bridge::STATUS.levels(now, !healthy);
-                red.set_level(if r { Level::High } else { Level::Low });
-                green.set_level(if g { Level::High } else { Level::Low });
-                blue.set_level(if b { Level::High } else { Level::Low });
-                if healthy {
-                    use crate::maintenance::{HealthReply, HealthRequest};
-                    let result = match crate::maintenance::HEALTH_REQUEST.try_receive() {
-                        Ok(HealthRequest::Begin) => {
-                            monitor.begin_maintenance(now, progress()).map(|ticket| {
-                                watchdog.feed();
-                                crate::maintenance::reply(HealthReply::Begun(ticket));
-                            })
-                        }
-                        Ok(HealthRequest::End(ticket)) => {
-                            monitor.end_maintenance(ticket, now, progress()).map(|()| {
-                                crate::maintenance::reply(HealthReply::Ended);
-                            })
-                        }
-                        Err(_) => Ok(()),
-                    };
-                    if let Err(error) = result {
-                        defmt::error!(
-                            "probe.flash health {:?}; watchdog recovery",
-                            defmt::Debug2Format(&error)
-                        );
-                        failed = true;
-                    }
-                    if !failed && monitor.feeding_allowed() {
+pub fn probe_supervisor_task() -> impl core::future::Future<Output = ()> {
+    metrics::measure(0, probe_supervisor_task_run())
+}
+
+async fn probe_supervisor_task_run() {
+    let SupervisorResources {
+        mut watchdog,
+        red,
+        green,
+        blue,
+    } = SUPERVISOR.receive().await;
+    let mut red = Output::new(red, Level::High);
+    let mut green = Output::new(green, Level::High);
+    let mut blue = Output::new(blue, Level::High);
+    let start = Instant::now().as_millis();
+    let mut monitor = ProgressMonitor::new(start, progress());
+    let mut radio = Liveness::new(start);
+    let mut failed = false;
+    loop {
+        let now = Instant::now().as_millis();
+        let progress_result = monitor.observe(now, progress());
+        let radio_alive = radio.observe(
+            bridge::RADIO_PROGRESS.load(Ordering::Relaxed),
+            now,
+            !monitor.feeding_allowed(),
+        );
+        let radio_ready = bridge::RADIO_READY.load(Ordering::Relaxed);
+        let radio_fatal = bridge::RADIO_FATAL.load(Ordering::Relaxed);
+        let display_fatal = bridge::DISPLAY_FATAL.load(Ordering::Relaxed);
+        let requested = bridge::RESET_REQUESTED.load(Ordering::Relaxed);
+        let startup_expired = !radio_ready && now.saturating_sub(start) >= 12_000;
+        let healthy = !failed
+            && progress_result.is_ok()
+            && radio_alive
+            && !startup_expired
+            && !radio_fatal
+            && !display_fatal
+            && !requested;
+        if !healthy && !failed {
+            watchdog.record_failure(if let Err(fault) = progress_result {
+                fault.into()
+            } else if radio_fatal {
+                RecoveryCause::RadioFatal
+            } else if display_fatal {
+                RecoveryCause::DisplayFatal
+            } else if requested {
+                RecoveryCause::RecoveryRequested
+            } else if startup_expired {
+                RecoveryCause::RadioStartup
+            } else {
+                RecoveryCause::RadioStalled
+            });
+            defmt::error!(
+                "Probe watchdog recovery: progress={:?} radio_alive={} radio_ready={} radio_fatal={} display_fatal={} \
+                 requested={}",
+                defmt::Debug2Format(&progress_result),
+                radio_alive,
+                radio_ready,
+                radio_fatal,
+                display_fatal,
+                requested
+            );
+            failed = true;
+        }
+        let [r, g, b] = bridge::STATUS.levels(now, !healthy);
+        red.set_level(if r { Level::High } else { Level::Low });
+        green.set_level(if g { Level::High } else { Level::Low });
+        blue.set_level(if b { Level::High } else { Level::Low });
+        if healthy {
+            use crate::maintenance::{HealthReply, HealthRequest};
+            let result = match crate::maintenance::HEALTH_REQUEST.try_receive() {
+                Ok(HealthRequest::Begin) => {
+                    monitor.begin_maintenance(now, progress()).map(|ticket| {
                         watchdog.feed();
-                    }
+                        crate::maintenance::reply(HealthReply::Begun(ticket));
+                    })
                 }
-                Timer::after_millis(50).await;
+                Ok(HealthRequest::End(ticket)) => {
+                    monitor.end_maintenance(ticket, now, progress()).map(|()| {
+                        crate::maintenance::reply(HealthReply::Ended);
+                    })
+                }
+                Err(_) => Ok(()),
+            };
+            if let Err(error) = result {
+                watchdog.record_failure(error.into());
+                defmt::error!(
+                    "probe.flash health {:?}; watchdog recovery",
+                    defmt::Debug2Format(&error)
+                );
+                failed = true;
             }
-        }),
-    )
-    .await;
+            if !failed && monitor.feeding_allowed() {
+                watchdog.feed();
+            }
+        }
+        Timer::after_millis(50).await;
+    }
 }
 
 fn progress() -> Progress {

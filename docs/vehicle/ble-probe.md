@@ -169,15 +169,45 @@ terminal red has a 125 ms half-period, sampled by the 50 ms supervisor. No displ
 frame count controls it. A stalled supervisor cannot promise a visible blink.
 A terminal transport, display or stalled-owner fault stops watchdog feeding:
 both cores/peripherals restart after approximately two seconds. A watchdog timer
-reset sets red again on boot. Power removal or an intentional non-watchdog restart
-clears RAM-only latch history; only an explicit capture saves a snapshot, which
-does not restore the live latch after reboot. The reset loses unsaved
+reset sets red again on boot. Both images now inspect raw watchdog reason and
+ROM boot type; known intentional ROM reboot types are distinguished from a
+watchdog fault. Unknown/unavailable ROM evidence keeps a watchdog warning
+conservative. `HCIbad:0` does not contradict a watchdog reset: these are separate
+observations. Power removal clears the ordinary RAM latch, but a startup stall
+can produce a new watchdog reset after power returns. Only an explicit capture
+persists a snapshot, which does not restore the live latch after reboot. The reset loses unsaved
 evidence; valid committed slots remain. Ordinary connection/discovery timeouts
 retain partial records and wait for input.
+
+Live details (short X, even without a peer) include `BOOT RESET`: raw reason,
+ROM boot type and a checked previous stage/time when available. Both firmware
+routes retain Booting, Supervised or the first explicit supervisor failure in
+watchdog scratch, with a checksum and commit marker. This is the last observation,
+not a proven root cause, exact reset time or image identity. Power removal can
+erase it. Y recovery acknowledges red while keeping the immutable boot evidence
+inspectable; v4 captures freeze it. No timeout or watchdog deadline was relaxed.
+[Source review, limits and next physical checks](../validation/probe-slot3-discovery-2026-10-20.md).
 
 See the [LED source review and validation](../validation/probe-led-status-2026-10-19.md)
 and [scan-only LED and discovery follow-up](../validation/probe-discovery-followup-2026-10-19.md),
 and [pending physical checks](../validation/pico2-dnuc-runbook.md#standalone-probe-captures-and-diagnostics).
+
+### Device names
+
+The scanner retains a nonempty observed name when a later packet omits it.
+Complete packet names take priority; otherwise a complete cached name precedes
+shortened packet names. Empty shortened fields cannot hide a usable name. After
+explicit selected-peer Inspect, a successful, nonempty, non-truncated GAP Device
+Name read can label that exact address/type when no complete packet name exists.
+Returning to scanning retains it; Y recovery clears the live catalogue/cache.
+Details and exports identify the source, cached status and boot-relative time.
+Raw advertisement/response bytes always remain the latest admitted packets.
+
+Local Name is optional advertising data. Active scanning cannot force a device
+to advertise, answer with a name or accept a connection. There are no automatic
+connections, manufacturer-name guesses or cross-address identity matching.
+An unnamed peer may remain unnamed after Inspect. The missing TV's cause remains
+unknown; the clean NEEWER capture verifies only that separate attempt.
 
 ### Rejected characteristic evidence
 
@@ -190,7 +220,7 @@ The displayed rejected value field is explicitly **unvalidated**, and is
 unavailable when fewer than three bytes arrived. No later descriptor or standard
 read is attempted after this rejection. Earlier valid records remain inspectable
 and saveable, including the rejection context introduced in payload v2 and
-retained in current payload v3.
+retained in current payload v4.
 Lower-layer decoding can fail before a tuple reaches that guard; those failures
 retain their available error context and leave rejected bytes absent.
 
@@ -479,6 +509,10 @@ measurements or observations of an actual adapter:
 | --- |
 | ![Synthetic encoder-first and scan fault ledger](../images/ble-probe/fault-ledger-synthetic.png) |
 
+| Raw reset / ROM boot type | Retained previous stage and limits |
+| --- | --- |
+| ![Synthetic watchdog metadata, not a physical reset diagnosis](../images/ble-probe/reset-evidence-0-synthetic.png) | ![Synthetic prior stage and boot-relative observation time](../images/ble-probe/reset-evidence-1-synthetic.png) |
+
 | Scanning | Paused photo view | Advertisement bytes |
 | --- | --- | --- |
 | ![Synthetic scan list](../images/ble-probe/scan-synthetic.png) | ![Synthetic paused list](../images/ble-probe/paused-synthetic.png) | ![Synthetic advertisement](../images/ble-probe/details-0-synthetic.png) |
@@ -487,15 +521,15 @@ measurements or observations of an actual adapter:
 | --- | --- | --- |
 | ![X opens advertisement-only evidence](../images/ble-probe/advertisement-synthetic.png) | ![Not-inspected status and connection hint](../images/ble-probe/not-inspected-synthetic.png) | ![GATT discovery with busy hints and cancellation](../images/ble-probe/inspecting-synthetic.png) |
 
-| Advertisement decode / scan response | Manufacturer/service data / GATT summary | Link / MTU / stages |
+| Raw advertisement / service data | Name / scan response | GATT summary / connection timing |
 | --- | --- | --- |
 | ![Synthetic packet decoding and scan response](../images/ble-probe/details-1-synthetic.png) | ![Synthetic manufacturer/service data and GATT summary](../images/ble-probe/details-2-synthetic.png) | ![Synthetic negotiated link and stage evidence](../images/ble-probe/details-3-synthetic.png) |
 
-| Remaining stages / cleanup / services | Services / characteristics | Characteristics / descriptor |
+| Link / stages / cleanup | Services / characteristics | Characteristic properties |
 | --- | --- | --- |
 | ![Synthetic stage completion and services](../images/ble-probe/details-4-synthetic.png) | ![Synthetic service and characteristic inventory](../images/ble-probe/details-5-synthetic.png) | ![Synthetic characteristic and descriptor inventory](../images/ble-probe/details-6-synthetic.png) |
 
-| Raw standard read | ATT 05 / database hash / LED ledger |
+| Descriptor / standard read | Raw bytes / ATT 05 / database hash |
 | --- | --- |
 | ![Synthetic standard read and raw bytes](../images/ble-probe/details-7-synthetic.png) | ![Synthetic exact ATT failure, hash and global ledger heading](../images/ble-probe/details-8-synthetic.png) |
 
@@ -507,13 +541,13 @@ measurements or observations of an actual adapter:
 | --- | --- | --- |
 | ![Synthetic save in progress](../images/ble-probe/saving-synthetic.png) | ![Synthetic storage error](../images/ble-probe/storage-error-synthetic.png) | ![Synthetic supported copy with explicit reset required](../images/ble-probe/blocked-save-synthetic.png) |
 
-| Saved identity | Saved link / stages | Saved characteristics / descriptor |
+| Saved identity | Saved link / stages | Saved characteristic / descriptor |
 | --- | --- | --- |
-| ![Frozen synthetic selected identity and latch](../images/ble-probe/saved-0-synthetic.png) | ![Frozen synthetic link and stage evidence](../images/ble-probe/saved-4-synthetic.png) | ![Frozen synthetic characteristics and descriptor](../images/ble-probe/saved-7-synthetic.png) |
+| ![Frozen synthetic selected identity and provenance](../images/ble-probe/saved-0-synthetic.png) | ![Frozen synthetic link and stage evidence](../images/ble-probe/saved-5-synthetic.png) | ![Frozen synthetic characteristic and descriptor](../images/ble-probe/saved-8-synthetic.png) |
 
 | Saved raw bytes / ATT 05 | Saved configured clocks / source digest |
 | --- | --- |
-| ![Frozen synthetic raw bytes and exact ATT failure](../images/ble-probe/saved-9-synthetic.png) | ![Frozen synthetic producer identity](../images/ble-probe/saved-10-synthetic.png) |
+| ![Frozen synthetic raw bytes and exact ATT failure](../images/ble-probe/saved-9-synthetic.png) | ![Frozen synthetic producer identity](../images/ble-probe/saved-11-synthetic.png) |
 
 | Failure stage and retained context | Global scan errors without a peer |
 | --- | --- |
@@ -533,7 +567,7 @@ Regenerate the lossless RGB captures from `host/`:
 cargo run --locked --example ble_probe_gallery -- target/ble-probe-gallery
 ```
 
-The generator writes 54 PPM files. To update the PNG documentation copies, use Python
+The generator writes 57 PPM files. To update the PNG documentation copies, use Python
 with Pillow installed, from the same `host/` directory:
 
 ```python
@@ -550,7 +584,10 @@ for source in Path("target/ble-probe-gallery").glob("*.ppm"):
 Core 0 owns CYW43439/PIO0 SM0/DMA1, SPI0/DMA0, I2C0, four buttons, backlight,
 RGB and watchdog. Core 1 owns the bounded catalogue, inspection state and renderer.
 Core 0 also owns USB CDC and the capture journal. Only owned messages and exclusive
-framebuffer/capture-buffer references cross cores through critical-section channels.
+framebuffer/capture-buffer/reply references cross cores through critical-section channels.
+The sole storage owner waits for the reply reference to return before processing
+another request. UI/supervisor startup messages are filled once before spawning;
+the argument-free measured task futures avoid duplicate stack construction.
 Explicit local saves/reset use bounded flash maintenance; USB list/export is
 read-only. There are no ADC/VSYS reads or extra framebuffers. Rendering targets 20 software updates/s; this is
 neither measured device FPS nor panel scanout.

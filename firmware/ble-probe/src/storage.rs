@@ -2,6 +2,7 @@
 use core::pin::pin;
 use core::sync::atomic::Ordering;
 
+use dashboard_core::discovery::names::SavedIdentity;
 use dashboard_core::discovery::{capture, capture_store as journal, capture_ui as ui};
 use dashboard_pico2::flash_guard::{CheckedFlash, WriteConditions};
 use embassy_futures::select::{Either, select};
@@ -10,12 +11,12 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use static_cell::StaticCell;
 
-use crate::{bridge, maintenance, radio};
+use crate::{bridge, capture_reply, maintenance, radio};
 
 #[path = "capture_admission.rs"]
 mod admission;
 
-pub type Buffer = [u8; journal::PAYLOAD_MAX];
+pub use capture_reply::{Buffer, Reply as UiReply};
 pub enum UiOperation {
     List,
     Load(u8),
@@ -26,12 +27,6 @@ pub struct UiRequest {
     pub id: ui::RequestId,
     pub operation: UiOperation,
     pub buffer: Option<&'static mut Buffer>,
-}
-pub struct UiReply {
-    pub id: ui::RequestId,
-    pub completion: ui::Completion,
-    pub buffer: Option<&'static mut Buffer>,
-    pub length: usize,
 }
 pub enum UsbRequest {
     List,
@@ -45,7 +40,7 @@ pub enum UsbReply {
     },
 }
 pub static UI_REQUEST: Channel<CriticalSectionRawMutex, UiRequest, 1> = Channel::new();
-pub static UI_REPLY: Channel<CriticalSectionRawMutex, UiReply, 1> = Channel::new();
+pub static UI_REPLY: capture_reply::Mailbox = capture_reply::Mailbox::new();
 pub static USB_REQUEST: Channel<CriticalSectionRawMutex, UsbRequest, 1> = Channel::new();
 pub static USB_REPLY: Channel<CriticalSectionRawMutex, UsbReply, 1> = Channel::new();
 static UI_BYTES: StaticCell<Buffer> = StaticCell::new();
@@ -167,11 +162,20 @@ async fn listing(
         }
     }
 }
-async fn ui_listing(storage: &mut Storage) -> [ui::Slot; 4] {
-    let mut slots = [ui::Slot::Unavailable; 4];
-    for (slot, out) in slots.iter_mut().enumerate() {
-        *out = match admission::inspect(storage, slot as u8).await {
-            Ok(info) => info.slot,
+async fn ui_listing(
+    storage: &mut Storage,
+    decoder: &mut capture::Decoder,
+    bytes: &mut Buffer,
+    slots: &mut [ui::Slot; 4],
+    identities: &mut [Option<SavedIdentity>; 4],
+) {
+    for (slot, (out, identity)) in slots.iter_mut().zip(identities).enumerate() {
+        *identity = None;
+        *out = match admission::directory_entry(storage, decoder, slot as u8, bytes).await {
+            Ok((state, saved_identity)) => {
+                *identity = saved_identity;
+                state
+            }
             Err(e) => {
                 match admission_error(e) {
                     ui::UiError::Corrupt => ui::Slot::Corrupt,
@@ -187,7 +191,6 @@ async fn ui_listing(storage: &mut Storage) -> [ui::Slot; 4] {
             bridge::STATUS.record(crate::status::Fault::Storage);
         }
     }
-    slots
 }
 #[embassy_executor::task]
 pub async fn probe_storage_task(flash: CheckedFlash) {
@@ -196,9 +199,14 @@ pub async fn probe_storage_task(flash: CheckedFlash) {
         pin!(async {
             let mut storage = Storage { flash };
             let mut decoder = capture::Decoder::new();
+            static REPLY: StaticCell<UiReply> = StaticCell::new();
+            let mut reply = REPLY.init_with(UiReply::new);
             loop {
                 match select(UI_REQUEST.receive(), USB_REQUEST.receive()).await {
-                    Either::First(request) => handle_ui(&mut storage, &mut decoder, request).await,
+                    Either::First(request) => {
+                        handle_ui(&mut storage, &mut decoder, request, reply).await;
+                        reply = UI_REPLY.publish(reply).await;
+                    }
                     Either::Second(UsbRequest::List) => {
                         // Fill the final reply in place instead of returning and
                         // moving the four-slot array through an async result.
@@ -221,24 +229,46 @@ pub async fn probe_storage_task(flash: CheckedFlash) {
 async fn handle_ui(
     storage: &mut Storage,
     decoder: &mut capture::Decoder,
-    mut request: UiRequest,
+    request: UiRequest,
+    reply: &mut UiReply,
 ) {
-    let mut length = 0;
+    assert!(reply.buffer.is_none());
+    reply.id = request.id;
+    reply.completion = ui::Completion::Failed(ui::UiError::Storage);
+    reply.buffer = request.buffer;
+    reply.length = 0;
     let result = match request.operation {
-        UiOperation::List => Ok(ui::Completion::Listed(ui_listing(storage).await)),
+        UiOperation::List => {
+            match reply.buffer.as_deref_mut() {
+                None => Err(ui::UiError::Storage),
+                Some(bytes) => {
+                    // Fill the final reply in place; the existing affine byte
+                    // lease visits each slot without another payload allocation.
+                    reply.completion = ui::Completion::Listed {
+                        slots: [ui::Slot::Unavailable; 4],
+                        identities: [None; 4],
+                    };
+                    if let ui::Completion::Listed { slots, identities } = &mut reply.completion {
+                        ui_listing(storage, decoder, bytes, slots, identities).await;
+                    }
+                    Ok(())
+                }
+            }
+        }
         UiOperation::Load(slot) => {
-            match request.buffer.as_deref_mut() {
+            match reply.buffer.as_deref_mut() {
                 None => Err(ui::UiError::Storage),
                 Some(bytes) => {
                     match admission::load(storage, slot, bytes).await.map_err(admission_error) {
                         Err(e) => Err(e),
                         Ok(meta) => {
-                            length = meta.length as usize;
-                            match decoder.decode(&bytes[..length]) {
+                            reply.length = meta.length as usize;
+                            match decoder.decode(&bytes[..reply.length]) {
                                 Ok(view) => {
-                                    Ok(ui::Completion::Loaded {
+                                    reply.completion = ui::Completion::Loaded {
                                         pages: dashboard_core::discovery::saved_page_count(&view),
-                                    })
+                                    };
+                                    Ok(())
                                 }
                                 Err(capture::CaptureError::Version) => Err(ui::UiError::Unsupported),
                                 Err(_) => Err(ui::UiError::Corrupt),
@@ -253,15 +283,20 @@ async fn handle_ui(
             length: used,
             overwrite,
         } => {
-            if let Some(bytes) = request.buffer.as_deref().and_then(|b| b.get(..used)) {
+            if let Some(bytes) = reply.buffer.as_deref().and_then(|b| b.get(..used)) {
                 admission::save(storage, decoder, slot, bytes, overwrite)
                     .await
-                    .map(|meta| {
-                        ui::Completion::Saved {
-                            generation: meta.generation,
-                        }
-                    })
                     .map_err(admission_error)
+                    .and_then(|meta| {
+                        // Derive from the same admitted bytes whose journal
+                        // write and readback succeeded, never the live peer.
+                        let view = decoder.decode(bytes).map_err(|_| ui::UiError::Corrupt)?;
+                        reply.completion = ui::Completion::Saved {
+                            generation: meta.generation,
+                            identity: SavedIdentity::from_capture(&view),
+                        };
+                        Ok(())
+                    })
             } else {
                 Err(ui::UiError::Storage)
             }
@@ -270,19 +305,12 @@ async fn handle_ui(
         UiOperation::Reset(slot) => {
             journal::reset_slot(storage, slot)
                 .await
-                .map(|()| ui::Completion::Reset)
+                .map(|()| reply.completion = ui::Completion::Reset)
                 .map_err(error)
         }
     };
     if let Err(error) = result {
         bridge::STATUS.capture_error(error);
+        reply.completion = ui::Completion::Failed(error);
     }
-    UI_REPLY
-        .send(UiReply {
-            id: request.id,
-            completion: result.unwrap_or_else(ui::Completion::Failed),
-            buffer: request.buffer,
-            length,
-        })
-        .await;
 }

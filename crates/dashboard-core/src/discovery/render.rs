@@ -594,7 +594,7 @@ fn peer_details(
         return;
     };
     emit.text("PEER / ADVERTISEMENT EVIDENCE");
-    emit.text(&d.name());
+    name_details(names::device_name(d), emit);
     emit.formatted(format_args!("{} / {}", d.peer.to_string(), d.peer.kind_label()));
     emit.formatted(format_args!(
         "Seen {}s ago / {} reports",
@@ -703,6 +703,7 @@ fn details(
     }
     peer_details(probe, now, emit);
     fault_details(Some(probe.fault_latch), emit);
+    boot_details(probe.boot, emit);
     radio_clock_details(probe.radio_bus_hz, emit);
     if let Some(last) = probe.scan_diagnostics.last {
         let scan = probe.scan_diagnostics;
@@ -732,6 +733,57 @@ fn details(
         }
         emit.text("One record needs 10 + data length bytes");
     }
+}
+fn name_details(
+    name: Option<names::NameRef<'_>>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    let Some(name) = name else {
+        emit.text("Name unavailable in observed evidence");
+        emit.text("Explicit Inspect may read a GAP Device Name");
+        return;
+    };
+    for chunk in name.bytes.chunks(50) {
+        emit.text(&printable::<50>(chunk));
+    }
+    emit.formatted(format_args!(
+        "Name source: {} / {}",
+        name.source.label(),
+        if name.cached { "cached" } else { "packet/read" }
+    ));
+    emit.text(if name.complete && !name.truncated {
+        "Name: complete (untrusted device label)"
+    } else {
+        "Name: shortened/truncated (untrusted label)"
+    });
+    if let Some(at) = name.observed_at_ms {
+        emit.formatted(format_args!("Name observed at: {at} ms"));
+    }
+}
+fn boot_details(
+    boot: Option<crate::health::reset::BootEvidence>,
+    emit: &mut EvidenceLines<'_>,
+) {
+    emit.text("BOOT RESET / hardware and retained evidence");
+    let Some(boot) = boot else {
+        emit.text("Boot evidence not recorded");
+        return;
+    };
+    emit.formatted(format_args!("Reset: {} / raw 0x{:08X}", boot.label(), boot.raw_reason));
+    if let Some(kind) = boot.boot_type {
+        emit.formatted(format_args!("ROM boot type: 0x{kind:02X}"));
+    } else {
+        emit.text("ROM boot type: unavailable");
+    }
+    if let Some(previous) = boot.previous {
+        emit.formatted(format_args!("Previous stage: {}", previous.stage.label()));
+        emit.formatted(format_args!("Previous boot observation: {} ms", previous.elapsed_ms));
+        emit.text("Last observation; not proven reset cause");
+        emit.text("Previous image unknown; time may saturate");
+    } else {
+        emit.text("Previous watchdog stage: unavailable");
+    }
+    emit.text("Power removal may erase retained evidence");
 }
 fn fault_details(
     latch: Option<FaultLatch>,
@@ -795,11 +847,13 @@ fn saved_details(
 ) {
     let m = view.metadata();
     emit.text("SAVED EVIDENCE / frozen boot-relative timestamps");
+    name_details(names::capture_name(view), emit);
     emit.formatted(format_args!("{} / {}", m.peer.to_string(), m.peer.kind_label()));
     emit.formatted(format_args!("Captured at: {} ms", m.captured_at_ms));
     emit.formatted(format_args!("Request revision: {}", m.revision));
     emit.formatted(format_args!("Radio {:?} / {:?}", m.phase, m.error));
     fault_details(m.fault_latch, emit);
+    boot_details(m.boot, emit);
     radio_clock_details(m.radio_bus_hz, emit);
     emit.formatted(format_args!("First seen: {} ms", m.first_seen_ms));
     emit.formatted(format_args!("Last seen: {} ms", m.last_seen_ms));
@@ -1036,16 +1090,34 @@ pub fn render_slots<D: DrawTarget<Color = Rgb565>>(
         if usize::from(ui.selected()) == index {
             rect(d, 6, y, 3, 29, RED)?;
         }
-        text(
-            d,
-            14,
-            y + 1,
-            &line(format_args!("Slot {} / {}", index + 1, slot_label(slot))),
-            WHITE,
-        )?;
+        let identity = ui.identities()[index];
+        let title = if let Some(identity) = identity {
+            let name = printable::<31>(identity.name.as_slice());
+            line(format_args!(
+                "{} {} | {}",
+                index + 1,
+                if matches!(slot, capture_ui::Slot::SavedBlocked { .. }) {
+                    "Protected"
+                } else {
+                    "Saved"
+                },
+                if name.is_empty() { "Unnamed" } else { name.as_str() }
+            ))
+        } else {
+            line(format_args!("Slot {} / {}", index + 1, slot_label(slot)))
+        };
+        text(d, 14, y + 1, &title, WHITE)?;
         let detail =
             if let capture_ui::Slot::Saved { generation } | capture_ui::Slot::SavedBlocked { generation } = slot {
-                line(format_args!("Generation {generation}"))
+                if let Some(identity) = identity {
+                    line(format_args!(
+                        "{} {} / gen {generation}",
+                        if identity.peer.random { "R" } else { "P" },
+                        identity.peer.to_string()
+                    ))
+                } else {
+                    line(format_args!("Generation {generation}"))
+                }
             } else {
                 line(format_args!(
                     "{}",
@@ -1639,6 +1711,33 @@ mod tests {
         let rows = lines(&p);
         assert!(rows.iter().any(|r| r == "Latched: encoder I2C"));
         assert!(rows.iter().any(|r| r == "No selected device"));
+    }
+
+    #[test]
+    fn name_and_reset_evidence_are_visible_bounded_and_honest() {
+        use crate::health::reset::{BootEvidence, RecoveryCause, ResetRecord, ResetStage};
+        let mut p = probe();
+        let peer = p.selected_device().unwrap().peer;
+        p.catalog
+            .observe(Advertisement::new(peer, ReportKind::Connectable, -50, b"\x03\x09TV", 1));
+        p.catalog
+            .observe(Advertisement::new(peer, ReportKind::Connectable, -50, &[2, 1, 6], 2));
+        p.boot = Some(BootEvidence {
+            raw_reason: 1,
+            boot_type: Some(0),
+            previous: Some(ResetRecord {
+                stage: ResetStage::Failure(RecoveryCause::RadioStartup),
+                elapsed_ms: u32::MAX,
+            }),
+        });
+        let rows = lines(&p);
+        assert!(rows.iter().any(|r| r == "Name source: advertisement / cached"));
+        assert!(rows.iter().any(|r| r == "Previous stage: radio startup"));
+        assert!(rows.iter().any(|r| r.contains("not proven reset cause")));
+        assert!(rows.iter().all(|r| r.is_ascii() && r.len() * 6 <= 300));
+        p.boot = None;
+        let rows = lines(&p);
+        assert!(!rows.iter().any(|r| r == "Previous stage: radio startup"));
     }
 
     #[test]

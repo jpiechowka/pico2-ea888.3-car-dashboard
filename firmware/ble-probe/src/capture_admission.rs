@@ -1,5 +1,6 @@
 //! Capture-format policy layered over the opaque journal. The caller exclusively
 //! owns storage across inspection and save; no other journal owner may interleave.
+use dashboard_core::discovery::names::SavedIdentity;
 use dashboard_core::discovery::{capture, capture_store as journal, capture_ui as ui};
 
 #[derive(Debug)]
@@ -88,6 +89,31 @@ pub async fn load<S: journal::Storage>(
     journal::load_copy(storage, selected, destination)
         .await
         .map_err(Error::Journal)
+}
+
+/// Derive a directory label only after loading and fully decoding the selected
+/// supported copy. The caller lends its existing payload buffer exclusively.
+pub async fn directory_entry<S: journal::Storage>(
+    storage: &mut S,
+    decoder: &mut capture::Decoder,
+    slot: u8,
+    bytes: &mut [u8],
+) -> Result<(ui::Slot, Option<SavedIdentity>), Error<S::Error>> {
+    let admitted = inspect(storage, slot).await?;
+    let Some(selected) = admitted.selected else {
+        return Ok((admitted.slot, None));
+    };
+    journal::load_copy(storage, selected, bytes)
+        .await
+        .map_err(Error::Journal)?;
+    let view = decoder.decode(&bytes[..selected.length as usize]).map_err(|error| {
+        if error == capture::CaptureError::Version {
+            Error::Unsupported
+        } else {
+            Error::Corrupt
+        }
+    })?;
+    Ok((admitted.slot, Some(SavedIdentity::from_capture(&view))))
 }
 
 pub async fn save<S: journal::Storage>(

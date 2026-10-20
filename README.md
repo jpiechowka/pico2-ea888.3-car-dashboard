@@ -426,6 +426,16 @@ or a timeout such as `0x22` cannot qualify. The [termination follow-up](docs/val
 fixes false green after completed inventory and preserves abnormal disconnects
 during dashboard maintenance. These are reporting fixes; the first-boot red
 observation and missing TV remain unqualified hardware questions.
+The latest [name/reset follow-up](docs/validation/probe-slot3-discovery-2026-10-20.md)
+preserves observed names across nameless packets and retains a successful GAP
+Device Name after explicit Inspect. It adds saved device name/address/generation
+to the slot directory. Names stay sourced, bounded and untrusted; discovery
+never connects automatically. Some peers do not advertise a name.
+
+Both firmware routes now retain checked watchdog stage/time evidence and inspect
+raw reset bits with ROM boot type. Probe detail/export pages expose this evidence
+even when `HCIbad` is zero. It records the last observed stage, not a proven reset
+cause; power removal can erase it. Deadlines and recovery limits are unchanged.
 Green means completed and disconnected,
 not an open connection or vehicle/adapter qualification. Terminal resets lose
 unsaved RAM evidence and relatch red after a watchdog timeout. Saved slots are
@@ -436,8 +446,10 @@ Interrupted writes, endurance and broader USB qualification remain separate.
 
 Characteristic rejection now retains the first rejected declaration handle,
 original length and up to 19 raw bytes in live pages and saved exports. Capture
-payload v3 adds the global LED fault snapshot and configured radio GSPI speed;
-v1/v2 remain readable with those new fields explicitly unavailable. The shared ATT client also
+payload v4 adds cached-name provenance and boot reset evidence to v3's global LED
+fault snapshot and configured radio GSPI speed. V1/v2/v3 remain readable with
+their absent fields explicitly unavailable; existing slots are not rewritten.
+The shared ATT client also
 validates service/characteristic boundaries for the dashboard's adapter discovery.
 [Follow-up findings, regressions and remaining hardware checks](docs/validation/probe-discovery-followup-2026-10-19.md).
 

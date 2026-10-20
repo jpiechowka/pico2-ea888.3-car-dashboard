@@ -269,7 +269,7 @@ fn main() {
     .unwrap();
     let view = decoder.decode(&bytes[..size]).unwrap();
     let mut frame = AlignedFrame::boxed();
-    render_saved(&mut St7789Renderer::new(&mut frame.0), &view, 0, 5, p.diagnostics).unwrap();
+    render_saved(&mut St7789Renderer::new(&mut frame.0), &view, 0, 6, p.diagnostics).unwrap();
     save_frame(directory, "saved-abnormal-termination-synthetic", &frame);
     p.event(Event::FailureContext {
         revision: p.request.revision,
@@ -298,6 +298,13 @@ fn main() {
             UiError,
         };
         let mut ui = CaptureUi::new();
+        let saved_identity = names::SavedIdentity {
+            peer: Peer {
+                address: [0xC0, 0x12, 0x34, 0x56, 0x78, 0x9A],
+                random: true,
+            },
+            name: Payload::new(b"SYNTHETIC NEEWER-TL21C LONG NAME"),
+        };
         let context = Context {
             save: SaveAvailability::Ready,
             revision: p.request.revision,
@@ -308,12 +315,15 @@ fn main() {
         save_slots(directory, "slots-loading-synthetic", &ui, p.diagnostics);
         ui.complete(
             id,
-            Completion::Listed([
-                Slot::Saved { generation: 1 },
-                Slot::Empty,
-                Slot::Corrupt,
-                Slot::Unsupported,
-            ]),
+            Completion::Listed {
+                slots: [
+                    Slot::Saved { generation: 1 },
+                    Slot::Empty,
+                    Slot::Corrupt,
+                    Slot::Unsupported,
+                ],
+                identities: [Some(saved_identity), None, None, None],
+            },
         );
         for (name, input, at) in [
             ("slots-synthetic", CaptureInput::Turn(0), 2010),
@@ -338,7 +348,19 @@ fn main() {
             panic!()
         };
         save_slots(directory, "saving-synthetic", &ui, p.diagnostics);
-        ui.complete(id, Completion::Saved { generation: 1 });
+        ui.complete(
+            id,
+            Completion::Saved {
+                generation: 1,
+                identity: names::SavedIdentity {
+                    peer: Peer {
+                        address: [0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34],
+                        random: false,
+                    },
+                    name: Payload::new(&[]),
+                },
+            },
+        );
         save_slots(directory, "saved-slot-synthetic", &ui, p.diagnostics);
         let CaptureAction::Load { id, .. } = ui.input(CaptureInput::Click, 2110, context).unwrap() else {
             panic!()
@@ -352,12 +374,15 @@ fn main() {
         };
         ui.complete(
             id,
-            Completion::Listed([
-                Slot::SavedBlocked { generation: 1 },
-                Slot::Empty,
-                Slot::Empty,
-                Slot::Empty,
-            ]),
+            Completion::Listed {
+                slots: [
+                    Slot::SavedBlocked { generation: 1 },
+                    Slot::Empty,
+                    Slot::Empty,
+                    Slot::Empty,
+                ],
+                identities: [Some(saved_identity), None, None, None],
+            },
         );
         ui.input(CaptureInput::Turn(-1), 3001, context);
         for (name, input, at) in [
@@ -449,4 +474,19 @@ fn main() {
     save(directory, "scan-errors-synthetic", &p);
     p.page = page_count(&p) - 1;
     save(directory, "scan-errors-lengths-synthetic", &p);
+    p.boot = Some(dashboard_core::health::reset::BootEvidence {
+        raw_reason: 1,
+        boot_type: Some(0),
+        previous: Some(dashboard_core::health::reset::ResetRecord {
+            stage: dashboard_core::health::reset::ResetStage::Failure(
+                dashboard_core::health::reset::RecoveryCause::RadioStartup,
+            ),
+            elapsed_ms: 15_000,
+        }),
+    });
+    let pages = page_count(&p);
+    for (index, page) in (0..pages).enumerate() {
+        p.page = page;
+        save(directory, &format!("reset-evidence-{index}-synthetic"), &p);
+    }
 }

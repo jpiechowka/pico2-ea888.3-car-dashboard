@@ -464,7 +464,7 @@ fn future_payload_in_either_copy_blocks_save_but_loads_supported_copy() {
             let mut flash = Flash::new();
             let current = evidence();
             let mut future = current.clone();
-            future[8..10].copy_from_slice(&4u16.to_le_bytes());
+            future[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
             save_slot(&mut flash, 0, if future_first { &future } else { &current })
                 .await
                 .unwrap();
@@ -486,6 +486,11 @@ fn future_payload_in_either_copy_blocks_save_but_loads_supported_copy() {
             assert_eq!(flash.writes, writes);
             assert_eq!(flash.bytes, before);
             let mut out = vec![0; 8192];
+            let (slot, identity) = admission::directory_entry(&mut flash, &mut capture::Decoder::new(), 0, &mut out)
+                .await
+                .unwrap();
+            assert!(matches!(slot, ui::Slot::SavedBlocked { .. }));
+            assert_eq!(identity.unwrap().peer.address, [1; 6]);
             let meta = admission::load(&mut flash, 0, &mut out).await.unwrap();
             assert_eq!(&out[..meta.length as usize], &current);
             let raw = load_slot(&mut flash, 0, &mut out).await.unwrap();
@@ -500,7 +505,7 @@ fn future_payload_in_either_copy_blocks_save_but_loads_supported_copy() {
 fn future_or_malformed_payload_requires_reset_without_mutation() {
     block_on(async {
         let mut future = evidence();
-        future[8] = 4;
+        future[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
         let mut wrong = evidence();
         wrong[0] = 0;
         for bad in [future, wrong, b"BLECAP01".to_vec(), vec![1], evidence()[..23].to_vec()] {

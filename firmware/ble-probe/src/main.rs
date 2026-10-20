@@ -2,6 +2,7 @@
 #![no_main]
 
 mod bridge;
+mod capture_reply;
 mod errors;
 mod inventory;
 mod maintenance;
@@ -56,9 +57,8 @@ async fn main(spawner: Spawner) {
     config.clocks = dashboard_pico2::clock_profile::clock_config();
     let p = embassy_rp::init(config);
     let watchdog = dashboard_pico2::recovery_watchdog::RecoveryWatchdog::start(p.WATCHDOG);
-    // Match the locked HAL's force-before-timer reset-reason precedence.
-    let reset = embassy_rp::pac::WATCHDOG.reason().read();
-    if reset.timer() && !reset.force() {
+    let boot = watchdog.boot_evidence();
+    if boot.watchdog_fault() {
         bridge::STATUS.record(status::Fault::Watchdog);
     }
     let mut flash =
@@ -85,8 +85,19 @@ async fn main(spawner: Spawner) {
     metrics::init(stack.mem.as_ptr() as u32, stack.mem.len() as u32);
     assert!(bridge::FREE.try_send(frame0).is_ok());
     assert!(bridge::FREE.try_send(frame1).is_ok());
+    assert!(bridge::BOOT.try_send(boot).is_ok());
     embassy_rp::multicore::spawn_core1(p.CORE1, stack, probe_core1);
-    spawner.spawn(tasks::probe_supervisor_task(watchdog, p.PIN_26, p.PIN_27, p.PIN_28).unwrap());
+    assert!(
+        tasks::SUPERVISOR
+            .try_send(tasks::SupervisorResources {
+                watchdog,
+                red: p.PIN_26,
+                green: p.PIN_27,
+                blue: p.PIN_28,
+            })
+            .is_ok()
+    );
+    spawner.spawn(tasks::probe_supervisor_task().unwrap());
     spawner.spawn(tasks::probe_inputs_task(p.PIN_12, p.PIN_13, p.PIN_14, p.PIN_15).unwrap());
     spawner.spawn(storage::probe_storage_task(flash).unwrap());
     usb::start(spawner, p.USB);

@@ -133,7 +133,9 @@ fn malformed_response_sequences_and_crc_valid_invalid_capture_are_refused() {
     assert!(exchange(&mut fake(duplicate), Request::List, Duration::from_secs(1)).is_err());
     assert!(exchange(&mut fake(end()), Request::List, Duration::from_secs(1)).is_err());
     let mut unknown = valid.clone();
-    unknown[8] = 4;
+    unknown[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
+    let checksum = dashboard_core::discovery::capture_store::crc32(&unknown[..20]);
+    unknown[20..24].copy_from_slice(&checksum.to_le_bytes());
     let mut bad = frame(FrameKind::Capture, FrameStatus::Ok, Some(0), 1, &unknown);
     bad.extend(end());
     assert!(exchange(&mut fake(bad), Request::Get(0), Duration::from_secs(1)).is_err());

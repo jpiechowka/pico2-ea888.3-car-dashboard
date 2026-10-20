@@ -99,6 +99,7 @@ pub struct Probe {
     pub error: ProbeError,
     pub fault_latch: FaultLatch,
     pub radio_bus_hz: Option<u32>,
+    pub boot: Option<crate::health::reset::BootEvidence>,
     pub failure: Option<InspectionFailure>,
     pub failure_context: ConnectionFailureContext,
     pub request: Request,
@@ -123,6 +124,7 @@ impl Probe {
             error: ProbeError::None,
             fault_latch: FaultLatch::EMPTY,
             radio_bus_hz: None,
+            boot: None,
             failure: None,
             failure_context: ConnectionFailureContext {
                 local_error: None,
@@ -317,6 +319,20 @@ impl Probe {
                 disconnect_reason,
                 ..
             } if matches!(self.request.action, Action::Inspect(_)) => {
+                if let Action::Inspect(peer) = self.request.action
+                    && self.inspection.started_at_ms.is_some_and(|start| start <= at_ms)
+                {
+                    // Only admitted allowlisted reads from this request can name
+                    // this exact peer. The read remains separately inspectable.
+                    if let Some(value) = self.inspection.values.iter().find(|v| {
+                        v.uuid == 0x2A00
+                            && v.result == ReadResult::Ok
+                            && !v.value.truncated
+                            && !v.value.as_slice().is_empty()
+                    }) {
+                        self.catalog.remember_gap_name(peer, value.value, at_ms);
+                    }
+                }
                 self.inspection.ended_at_ms = Some(at_ms);
                 self.inspection.cleanup_complete = cleanup_complete;
                 self.inspection.disconnect_reason = disconnect_reason;

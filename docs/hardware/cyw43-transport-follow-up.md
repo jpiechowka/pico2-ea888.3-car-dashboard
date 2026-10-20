@@ -201,6 +201,21 @@ After separately authorized installation:
    dashboard BLE startup/notification/liveness checks with a synthetic peer.
    Keep adapter-only/ECU restrictions unchanged.
 
+## Later slot-3 observation, 2026-10-20
+
+The owner reported intermittent `Red: watchdog reset` with `HCIbad:0` following
+USB unplug/replug; Y recovery cleared the latch. Restart did not restore the TV
+to the list. Slot 3 was exported read-only and decoded successfully: the NEEWER
+attempt retained four services, eight characteristics, one descriptor and three
+successful standard reads, with all stages/cleanup complete and normal local
+disconnect `0x16`. It contains no boot-failure record. This separate successful
+attempt does not explain the absent TV or qualify startup reliability.
+
+The [new reset/name audit](../validation/probe-slot3-discovery-2026-10-20.md)
+adds retained stage evidence, cached-name provenance and on-device slot labels.
+Both images share the watchdog changes. No radio rate, timeout or validation
+guard was weakened; no new firmware was flashed during that software follow-up.
+
 ## Primary source references
 
 - [Bluetooth Core 6.1 GATT](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/generic-attribute-profile--gatt-.html), service declaration end-group handle and characteristic discovery within the service.

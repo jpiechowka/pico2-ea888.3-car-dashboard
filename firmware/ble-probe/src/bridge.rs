@@ -19,6 +19,8 @@ pub enum Control {
     XHold,
 }
 pub static INPUTS: Channel<CriticalSectionRawMutex, Control, 16> = Channel::new();
+// Filled once before core1 starts; keeps the UI task future argument-free.
+pub static BOOT: Channel<CriticalSectionRawMutex, dashboard_core::health::reset::BootEvidence, 1> = Channel::new();
 pub static FREE: Channel<CriticalSectionRawMutex, &'static mut FrameBuffer, 2> = Channel::new();
 pub static READY: Channel<CriticalSectionRawMutex, &'static mut FrameBuffer, 2> = Channel::new();
 static REQUEST: Mutex<CriticalSectionRawMutex, Cell<Request>> = Mutex::new(Cell::new(Request::INITIAL));

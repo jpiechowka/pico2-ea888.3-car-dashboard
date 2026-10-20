@@ -773,12 +773,15 @@ fn capture_activity_and_saved_browsing_never_present_saved_evidence_as_live_succ
     status.capture_complete(
         &mut ui,
         id,
-        cap::Completion::Listed([cap::Slot::Saved { generation: 1 }; 4]),
+        &cap::Completion::Listed {
+            slots: [cap::Slot::Saved { generation: 1 }; 4],
+            identities: [None; 4],
+        },
     );
     let Some(cap::Action::Load { id, .. }) = status.capture_input(&mut ui, cap::Input::Click, 60, context) else {
         panic!()
     };
-    status.capture_complete(&mut ui, id, cap::Completion::Loaded { pages: 3 });
+    status.capture_complete(&mut ui, id, &cap::Completion::Loaded { pages: 3 });
     status.publish(&model, &ui);
     assert_eq!(status.levels(0, false), [false, false, true]);
 }
@@ -799,7 +802,7 @@ fn capture_failure_and_timeout_survive_back_and_hidden_completion() {
             status.capture_tick(&mut ui, 30_000);
         } else {
             status.capture_input(&mut ui, cap::Input::Back, 1, context);
-            status.capture_complete(&mut ui, id, cap::Completion::Failed(cap::UiError::Storage));
+            status.capture_complete(&mut ui, id, &cap::Completion::Failed(cap::UiError::Storage));
         }
         status.publish(&Probe::new(), &ui);
         assert_eq!(status.levels(0, false), [false, true, true]);
@@ -825,7 +828,14 @@ fn empty_slots_and_admission_guards_are_neutral_corrupt_or_unknown_slots_are_red
         let Some(cap::Action::Refresh { id }) = status.capture_input(&mut ui, cap::Input::XHold, 0, ctx) else {
             panic!()
         };
-        status.capture_complete(&mut ui, id, cap::Completion::Listed([slot; 4]));
+        status.capture_complete(
+            &mut ui,
+            id,
+            &cap::Completion::Listed {
+                slots: [slot; 4],
+                identities: [None; 4],
+            },
+        );
         status.publish(&Probe::new(), &ui);
         assert_eq!(
             status.levels(0, false),
@@ -928,14 +938,14 @@ fn late_storage_failure_after_recovery_is_new_evidence_but_stale_reply_is_ignore
         Some(cap::Action::Recover)
     );
     status.input(&mut model, Input::Recover, 1);
-    status.capture_complete(&mut ui, id + 1, cap::Completion::Failed(cap::UiError::Storage));
+    status.capture_complete(&mut ui, id + 1, &cap::Completion::Failed(cap::UiError::Storage));
     status.publish(&model, &ui);
     assert_eq!(
         status.levels(0, false),
         [false, true, false],
         "pending operation keeps its ownership fence"
     );
-    status.capture_complete(&mut ui, id, cap::Completion::Failed(cap::UiError::Storage));
+    status.capture_complete(&mut ui, id, &cap::Completion::Failed(cap::UiError::Storage));
     status.publish(&model, &ui);
     assert_eq!(status.levels(0, false), [false, true, true]);
 }
