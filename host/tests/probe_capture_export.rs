@@ -245,23 +245,26 @@ fn publication_is_validated_unique_complete_and_never_overwrites() {
     assert!(publish(&invalid, b"invalid", None, None).is_err());
     assert!(!invalid.exists());
     let bytes = payload();
-    publish(&output, &bytes, Some(2), Some(9)).unwrap();
-    assert_eq!(fs::read(output.join("capture.blecap")).unwrap(), bytes);
+    let published = publish(&output, &bytes, Some(2), Some(9)).unwrap();
+    let binary_name = format!("{}.blecap", published.file_stem);
+    let json_name = format!("{}.json", published.file_stem);
+    let text_name = format!("{}.txt", published.file_stem);
+    assert_eq!(fs::read(output.join(&binary_name)).unwrap(), bytes);
     assert!(output.join("COMPLETE").exists());
-    let value: serde_json::Value = serde_json::from_slice(&fs::read(output.join("capture.json")).unwrap()).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(output.join(&json_name)).unwrap()).unwrap();
     assert_eq!(value["export"]["slot"], 3);
     assert_eq!(value["export"]["generation"], 9);
     assert_eq!(value["export_schema"], 1);
     assert_eq!(value["connection_handoff"]["enabled"], false);
     assert_eq!(value["binary"]["byte_length"], bytes.len());
     assert!(
-        fs::read_to_string(output.join("capture.txt"))
+        fs::read_to_string(output.join(&text_name))
             .unwrap()
             .contains("advertisement.raw_hex: \"020106\"")
     );
     assert!(publish(&output, &bytes, None, None).is_err());
-    assert_eq!(fs::read(output.join("capture.blecap")).unwrap(), bytes);
-    for name in ["capture.blecap", "capture.json", "capture.txt", "COMPLETE"] {
+    assert_eq!(fs::read(output.join(&binary_name)).unwrap(), bytes);
+    for name in [&binary_name, &json_name, &text_name, "COMPLETE"] {
         fs::remove_file(output.join(name)).unwrap();
     }
     fs::remove_dir(output).unwrap();

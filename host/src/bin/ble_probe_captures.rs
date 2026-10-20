@@ -12,8 +12,9 @@ use dashboard_host_validation::probe_captures::*;
 const HELP: &str = "BLE probe saved captures (normal firmware USB, not BOOTSEL)\n\n  ble_probe_captures ports\n  \
                     ble_probe_captures list [--port COMx]\n  ble_probe_captures export SLOT NEW_DIRECTORY [--port \
                     COMx]\n  ble_probe_captures decode CAPTURE.blecap NEW_DIRECTORY\n\nSLOT is 1..4. NEW_DIRECTORY \
-                    must not exist; its parent must exist.\nExport writes capture.blecap, capture.json, capture.txt \
-                    and COMPLETE. JSON includes derived evidence hints for a future Studio importer; it is not a \
+                    must not exist; its parent must exist.\nExport writes device-labelled .blecap, .json, .txt files \
+                    and COMPLETE. Labels include the observed address and a capture hash suffix; full content IDs are \
+                    in JSON/text. JSON includes derived evidence hints for a future Studio importer; it is not a \
                     connection profile.\nNo save, erase, pairing, adapter connection or ECU commands are \
                     supported.\nIf Windows shows a generic USB Serial Device name, select its COM port explicitly.\n";
 fn transaction(
@@ -87,8 +88,9 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let replies = transaction(Request::Get(slot), explicit)?;
             let reply = replies.first().ok_or("missing capture")?;
-            publish(directory, &reply.payload, Some(slot), Some(reply.header.generation))?;
+            let published = publish(directory, &reply.payload, Some(slot), Some(reply.header.generation))?;
             println!("Validated slot {} exported to {}", slot + 1, directory.display());
+            print_artifacts(&published);
             Ok(())
         }
         "decode" if args.len() == 3 => {
@@ -98,12 +100,21 @@ fn run(args: &[String]) -> Result<(), String> {
                 .take((PAYLOAD_MAX + 1) as u64)
                 .read_to_end(&mut bytes)
                 .map_err(|e| e.to_string())?;
-            publish(Path::new(&args[2]), &bytes, None, None)?;
+            let published = publish(Path::new(&args[2]), &bytes, None, None)?;
             println!("Validated offline capture decoded to {}", args[2]);
+            print_artifacts(&published);
             Ok(())
         }
         _ => Err(format!("invalid arguments\n{HELP}")),
     }
+}
+fn print_artifacts(published: &PublishedCapture) {
+    // Only derived ASCII labels reach the terminal, never the raw BLE name.
+    println!("Capture ID: {}", published.capture_id);
+    for extension in ["blecap", "json", "txt"] {
+        println!("  {}.{extension}", published.file_stem);
+    }
+    println!("  COMPLETE");
 }
 fn port_argument(args: &[String]) -> Result<Option<&str>, String> {
     match args {

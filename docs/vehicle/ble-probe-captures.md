@@ -95,7 +95,8 @@ cargo run --locked --bin ble_probe_captures -- list --port COM7
 cargo run --locked --bin ble_probe_captures -- export 1 C:\Captures\ngm-attempt-01 --port COM7
 
 # Decode an already exported binary without connecting any device.
-cargo run --locked --bin ble_probe_captures -- decode C:\Captures\ngm-attempt-01\capture.blecap C:\Captures\ngm-decoded-01
+# Substitute the exact .blecap filename printed by export; old capture.blecap files also work.
+cargo run --locked --bin ble_probe_captures -- decode C:\Captures\ngm-attempt-01\YOUR-EXPORTED-FILE.blecap C:\Captures\ngm-decoded-01
 ```
 
 Use the COM port shown on your PC; `COM7` is an example. Existing Rust/MSVC host
@@ -117,14 +118,50 @@ Every successful export directory contains:
 
 | File | Meaning |
 | --- | --- |
-| `capture.blecap` | Exact versioned capture payload, at most 8192 bytes |
-| `capture.json` | Every metadata/record field, raw bytes, unknowns, binary SHA256 and derived connection hints |
-| `capture.txt` | Readable report containing the same evidence |
+| `<stem>.blecap` | Exact versioned capture payload, at most 8192 bytes |
+| `<stem>.json` | Every metadata/record field, raw bytes, unknowns, binary SHA256, naming identity and derived connection hints |
+| `<stem>.txt` | Readable report containing the same evidence |
 | `COMPLETE` | Written after the three artifacts have been written and synced |
 
+The CLI prints all filenames and the full capture ID. The common stem is
+`blecap-<name>-<p-or-r>-<12-hex-address>-<16-hex-hash>`, for example
+`blecap-neewer-tl21c-r-c0123456789a-0123456789abcdef` (illustrative address/hash). `p`/`r` distinguish public
+and random observed addresses; address bytes use display order. The suffix is
+the first 16 lowercase hex digits of the complete binary's SHA256. Use the full
+`identity.capture_id` (`sha256:` plus all 64 digits), or compare actual bytes,
+when correlating evidence. The short suffix is not a collision-free identifier.
+Slot/generation, output directory and export time do not change that content ID.
+An address or name is not permanent or authenticated physical device identity.
+
+Name selection is deterministic: first nonempty complete Local Name from scan
+response, then advertisement; otherwise the first successful, non-truncated
+captured GAP Device Name read (`2A00`); otherwise the first nonempty shortened
+Local Name from response, then advertisement. Duplicate names use the first
+field in that source. A malformed AD length stops parsing that packet; valid
+earlier fields remain usable. Original packets/read records remain untouched.
+An empty name is skipped. The selected name's raw bytes, UTF-8 when valid, source,
+complete/shortened status and truncation flag are retained in `identity.device_name`.
+For advertising, `complete` describes the AD type and `truncated` describes the
+containing captured packet; they can both be true. GAP reads include their
+zero-based `records` index. Missing selected names are null.
+
+Filename slugs allow only lowercase ASCII letters, digits and collapsed hyphens,
+with at most 32 characters and no leading/trailing hyphen. Other characters become
+separators; an empty result or invalid UTF-8 becomes `unnamed`. Valid Unicode stays
+in JSON/text even when absent from the slug. The fixed `blecap-` prefix avoids
+Windows reserved basenames. This bounds each generated filename to 78 ASCII
+characters; the chosen parent path still has operating-system limits. Names with
+path syntax, controls, reserved characters or identical sanitized slugs cannot
+select a path outside the new export directory. Full hash/raw evidence remains
+available to distinguish captures. No new Pico read, allocation or format change
+is required. Legacy generic filenames remain accepted as offline decode inputs.
+
 The directory and files must be new; nothing is overwritten. A failed/interrupted
-host export can leave incomplete files without `COMPLETE`. Keep or remove those
-files yourself, then choose a new directory. The saved device slot is unchanged.
+host export can leave partial files; artifact write/sync failures happen before
+`COMPLETE` is created. Failure while writing/syncing the marker itself still
+returns an error and may leave the marker. A marker alone does not prove storage
+durability through power failure. Keep or remove partial output yourself, then
+choose a new directory. The saved device slot is unchanged.
 Detached `.blecap` files contain acquisition evidence, while slot/generation are
 export-envelope metadata: offline decoding without that envelope marks them
 unknown. Preserve the complete original export directory.
@@ -234,6 +271,16 @@ slot isolation, schema/bounds/relationships, framing, timeouts and no-overwrite
 exports. Those establish software behavior, not physical flash endurance/power
 loss, USB driver behavior, RF compatibility, true stack high-water or DNUC data.
 See [dependency review](../dependencies/probe-captures-2026-10-19.md).
+
+Export naming regressions cover legacy v1/v2 and current payloads, name-source
+precedence, every individual byte value, Unicode/invalid UTF-8, malformed/empty/
+duplicate/truncated fields, bounded slugs, identical-byte IDs across envelopes,
+distinct captures with equal slugs, actual offline CLI output and invalid input/
+destination failures. Naming follows the [Bluetooth Local Name format](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/CSS_v11/out/en/supplement-to-the-bluetooth-core-specification/data-types-specification.html)
+(CSS Part A §1.2), [Windows file naming rules](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)
+and Rust's atomic [create_new](https://doc.rust-lang.org/std/fs/struct.OpenOptions.html#method.create_new)
+no-overwrite operation. These sources define format/API rules, not physical device
+identity or filesystem power-loss guarantees.
 
 The [earlier delivery record](../validation/probe-offline-audit-2026-10-19.md)
 records its software checks and images. The [slot-1 follow-up](../hardware/cyw43-transport-follow-up.md)

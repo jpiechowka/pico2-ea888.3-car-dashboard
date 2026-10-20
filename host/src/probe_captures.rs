@@ -1,6 +1,7 @@
 //! Read-only probe capture recovery, separate from hardware discovery.
 mod assessment;
 mod handoff;
+mod identity;
 
 use std::io::{ErrorKind, Read, Write};
 use std::time::{Duration, Instant};
@@ -145,8 +146,12 @@ fn packet(p: &PacketEvidence) -> Value {
     json!({"raw_hex":hex(p.bytes()),"truncated":p.truncated,"observation":p.observation.map(|o|json!({"at_boot_ms":o.at_ms,"rssi_dbm":o.rssi,"kind":format!("{:?}",o.kind)}))})
 }
 
-pub fn decode_json(bytes: &[u8]) -> Result<Value, String> {
+pub fn decode_json(bytes: &[u8]) -> Result<Value, String> { decode_export(bytes).map(|(value, _)| value) }
+
+fn decode_export(bytes: &[u8]) -> Result<(Value, PublishedCapture), String> {
     let view = capture::decode(bytes).map_err(|e| format!("capture schema rejected: {e:?}"))?;
+    let digest = hex(&sha2_const_stable::Sha256::new().update(bytes).finalize());
+    let (identity, publication) = identity::derive(&view.view(), &digest);
     let m = view.metadata();
     let records:Vec<Value>=view.records().map(|r|match r{
         Record::Service(v)=>json!({"type":"service","start_handle":v.start,"end_handle":v.end,"uuid":uuid(v.uuid)}),
@@ -154,8 +159,8 @@ pub fn decode_json(bytes: &[u8]) -> Result<Value, String> {
         Record::Descriptor(v)=>json!({"type":"descriptor","service_start_handle":v.service_start,"characteristic_value_handle":v.characteristic_handle,"handle":v.handle,"uuid":uuid(v.uuid)}),
         Record::Value(v)=>json!({"type":"standard_read","service_start_handle":v.service_start,"handle":v.handle,"uuid_u16":v.uuid,"result":format!("{:?}",v.result),"failure":reason(v.failure),"elapsed_ms":v.elapsed_ms,"raw_hex":hex(v.bytes),"utf8":core::str::from_utf8(v.bytes).ok(),"truncated":v.truncated,"standard_length_valid":v.length_valid()})
     }).collect();
-    Ok(json!({"format":"BLECAP01","schema":m.schema_version,"export_schema":1,
-        "binary":{"byte_length":bytes.len(),"sha256":hex(&sha2_const_stable::Sha256::new().update(bytes).finalize())},
+    let mut value = json!({"format":"BLECAP01","schema":m.schema_version,"export_schema":1,
+        "binary":{"byte_length":bytes.len(),"sha256":digest},
         "connection_handoff":handoff::connection(&view),
         "policy":"manual-selected-peer-no-pairing-standard-read-allowlist-v1","time_basis":"device boot monotonic milliseconds; no UTC recorded","captured_at_boot_ms":m.captured_at_ms,
         "build":{"source_digest_hex":hex(&m.build.source_digest),"source_identity_available":m.build.source_identity_available,"profile":format!("{:?}",m.build.profile),"cpu_hz":m.build.cpu_hz,"spi_hz":m.build.spi_hz,"radio_gspi_hz":m.radio_bus_hz},
@@ -168,7 +173,9 @@ pub fn decode_json(bytes: &[u8]) -> Result<Value, String> {
           "failure":m.failure.map(|f|json!({"stage":format!("{:?}",f.stage),"reason":reason(Some(f.reason)),"range":f.range,"last_accepted":f.last_accepted,"rejected":f.rejected.map(|r|json!({"declaration_handle":r.handle,"value_handle":r.value_handle(),"length":r.length(),"raw_prefix_hex":hex(r.bytes()),"prefix_truncated":usize::from(r.length())>r.bytes().len()})),"elapsed_ms":f.elapsed_ms})),"failure_context":{"local_error":reason(m.failure_context.local_error),"disconnect_reason":m.failure_context.disconnect_reason}},
         "global_scan":{"attribution":"global counters; not proven to belong to selected peer","dropped_reports":m.dropped_reports,"malformed_reports":m.malformed_reports,"catalog_overflow_reports":m.catalog_overflow_reports,"total_errors":m.scan_diagnostics.total,"invalid_size":m.scan_diagnostics.invalid_size,"invalid_value":m.scan_diagnostics.invalid_value,"last_error":m.scan_diagnostics.last.map(|s|json!({"kind":format!("{:?}",s.kind),"revision":s.revision,"index":s.index,"total_reports":s.total_reports,"report_bytes":s.report_bytes,"remaining_bytes":s.remaining_bytes,"declared_data_len":s.declared_data_len,"at_boot_ms":s.at_ms}))},
         "record_counts":{"services":view.counts()[0],"characteristics":view.counts()[1],"descriptors":view.counts()[2],"reads":view.counts()[3]},"records":records,
-        "limits":"Inventory and standard reads do not establish proprietary authentication, L2CAP PSM acceptance, application commands, ECU support or vehicle data."}))
+        "limits":"Inventory and standard reads do not establish proprietary authentication, L2CAP PSM acceptance, application commands, ECU support or vehicle data."});
+    value["identity"] = identity;
+    Ok((value, publication))
 }
 
 pub fn text_report(value: &Value) -> String {
@@ -211,47 +218,61 @@ pub fn text_report(value: &Value) -> String {
     out
 }
 
-/// A fresh directory and create_new files prevent overwrites. COMPLETE is written
-/// only after every artifact is synced. Failed/interrupted exports lack this marker.
+pub struct PublishedCapture {
+    pub file_stem: String,
+    pub capture_id: String,
+}
+
+/// A fresh directory and create_new files prevent overwrites. COMPLETE is created
+/// only after every artifact is synced; marker write/sync failure still returns an
+/// error. A marker alone does not prove durability against storage or power failure.
 /// Slot/generation are either both known and valid, or both absent for offline decode.
 pub fn publish(
     directory: &std::path::Path,
     bytes: &[u8],
     slot: Option<u8>,
     generation: Option<u64>,
-) -> Result<(), String> {
+) -> Result<PublishedCapture, String> {
     use std::fs::{self, OpenOptions};
     if !matches!((slot, generation), (None, None) | (Some(0..=3), Some(1..))) {
         return Err("invalid export envelope: expected slot 0..3 and nonzero generation, or neither".into());
     }
-    let mut value = decode_json(bytes)?;
-    value["export"] = json!({"slot":slot.map(|s|s+1),"generation":generation});
+    let (mut value, publication) = decode_export(bytes)?;
+    let binary_name = format!("{}.blecap", publication.file_stem);
+    let json_name = format!("{}.json", publication.file_stem);
+    let text_name = format!("{}.txt", publication.file_stem);
+    value["export"] = json!({"slot":slot.map(|s|s+1),"generation":generation,
+        "artifacts":{"binary":binary_name,"json":json_name,"text":text_name}});
     let json = serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?;
     let text = text_report(&value);
     fs::create_dir(directory).map_err(|e| format!("create new output directory {}: {e}", directory.display()))?;
     for (name, data) in [
-        ("capture.blecap", bytes),
-        ("capture.json", json.as_slice()),
-        ("capture.txt", text.as_bytes()),
+        (binary_name.as_str(), bytes),
+        (json_name.as_str(), json.as_slice()),
+        (text_name.as_str(), text.as_bytes()),
     ] {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(directory.join(name))
-            .map_err(|e| e.to_string())?;
-        file.write_all(data)
-            .and_then(|()| file.sync_all())
-            .map_err(|e| format!("partial output remains in {}: {e}", directory.display()))?;
+            .map_err(|e| format!("create {name}; partial output remains in {}: {e}", directory.display()))?;
+        file.write_all(data).and_then(|()| file.sync_all()).map_err(|e| {
+            format!(
+                "write/sync {name}; partial output remains in {}: {e}",
+                directory.display()
+            )
+        })?;
     }
     let mut complete = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(directory.join("COMPLETE"))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("create COMPLETE in {}: {e}", directory.display()))?;
     complete
         .write_all(b"Validated binary, JSON and text export complete.\n")
         .and_then(|()| complete.sync_all())
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("write/sync COMPLETE in {}: {e}", directory.display()))?;
+    Ok(publication)
 }
 
 pub const USB_VID: u16 = 0x2E8A;

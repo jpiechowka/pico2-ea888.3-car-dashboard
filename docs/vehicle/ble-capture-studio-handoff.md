@@ -1,7 +1,7 @@
 # BLE capture to Studio connection handoff
 
-Updated 2026-10-20. The exporter adds connection evidence to `capture.json` and
-`capture.txt`, derived from the validated `capture.blecap`. **Studio does not yet
+Updated 2026-10-20. The exporter adds connection evidence to device-labelled
+`.json` and `.txt` files, derived from the validated `.blecap`. **Studio does not yet
 import captures or create arbitrary adapter profiles.** This is the data
 contract and planned admission path for that later feature.
 
@@ -21,6 +21,10 @@ without it remains an old report; regenerate it from its binary with offline
 | Field | Meaning and consumer rule |
 | --- | --- |
 | `binary.byte_length`, `binary.sha256` | Length and lowercase SHA256 of the exact complete binary, including its header. Bind reports/notes to those bytes; the hash is not a signature or authenticity proof. |
+| `identity.version`, `capture_id`, `short_id` | Naming projection version 1. Full `sha256:<64 lowercase hex>` of the exact binary and its first 16 hash digits. Use the full ID to correlate evidence; the short label can collide. Independent of slot/generation, export time and output directory. |
+| `identity.device_key`, `file_stem` | Observed address label (`p-`/`r-` plus 12 display-order hex digits) and safe common artifact stem. Never a permanent physical ID, connection selector or trusted input path. |
+| `identity.device_name` | Selected label or null. Raw hex, valid UTF-8 or null, source (`scan_response`, `advertisement`, `gap_device_name`), complete/truncated flags and GAP read record index or null. See [name selection and filename rules](ble-probe-captures.md#recover-captures-on-a-pc); original packets and read records remain authoritative. |
+| `export.artifacts` | Exact `binary`, `json` and `text` basenames written to the new output directory. Derived from the safe stem, not raw BLE names. A future importer must not treat supplied JSON filenames as trusted paths. |
 | Each `uuid.canonical` | Lowercase expanded 128-bit UUID text. `wire_hex`, `width_bytes` and `assigned_u16` remain, preserving original encoding. |
 | Each characteristic's `property_flags` | Eight booleans: broadcast, read, write without response, write request, notify, indicate, authenticated signed writes and extended properties. Raw `properties` remains. These describe declared procedures, not verified access permissions. |
 | `inspection.termination_assessment` | Version 1 derived classification: `not_observed`, `local_ingress_error`, `cleanup_unconfirmed`, `conflicting_reason`, `reason_unavailable`, `normal_reason`, or `abnormal_reason`. Includes `reason_hex` and `reason_label`, null when unavailable. `acceptable_for_clean_probe` qualifies only acknowledged, consistent normal termination with observed link/end and no local ingress fault; all other inspection checks remain separate. |

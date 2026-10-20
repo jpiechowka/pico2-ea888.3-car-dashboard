@@ -364,7 +364,15 @@ before retry; saved slots remain. Export before installing other firmware.
 [Complete capture/export workflow](docs/vehicle/ble-probe-captures.md) ·
 [NGM/OBDeleven research limits](docs/vehicle/adapter-research.md).
 
-Exports now include a binary SHA256, normalized UUIDs, characteristic capabilities,
+Exported `.blecap`, `.json` and `.txt` files share a readable name, for example
+`blecap-neewer-tl21c-r-c0123456789a-0123456789abcdef.json` (illustrative address/hash). The label includes the
+device name (or `unnamed`), observed address/type and a short capture hash. JSON
+and text retain the full `sha256:…` capture ID and name provenance. Names are
+sanitized for filenames; repeated exports of identical bytes keep the same ID.
+The output directory must still be new. Addresses/names are observations, not
+permanent or authenticated device identity. Offline `decode` also names old saves.
+
+Exports include a binary SHA256, normalized UUIDs, characteristic capabilities,
 CCCD links, duplicate-endpoint flags and an address candidate validated by the
 shared dashboard rules. They prepare a [future Studio import and connection draft](docs/vehicle/ble-capture-studio-handoff.md)
 without extra Pico storage or BLE traffic. Studio import is not implemented yet;
