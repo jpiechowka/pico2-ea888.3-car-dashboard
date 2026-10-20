@@ -479,3 +479,116 @@ fn timed_out_operation_hides_unconfirmed_identity_and_retains_its_completion_fen
         ]
     );
 }
+
+#[test]
+fn final_generation_save_stays_readable_and_requires_reset_without_refresh() {
+    for (before, after, expected_screen) in [
+        (1, 2, Screen::ConfirmOverwrite),
+        (u64::MAX - 2, u64::MAX - 1, Screen::ConfirmOverwrite),
+        (u64::MAX - 1, u64::MAX, Screen::ConfirmReset),
+    ] {
+        let mut ui = CaptureUi::new();
+        named_directory(&mut ui, Slot::Saved { generation: before });
+        let originals = *ui.identities();
+        ui.input(Input::Turn(2), 10, context());
+        assert_eq!(ui.input(Input::XShort, 11, context()), None);
+        assert_eq!(ui.screen(), Screen::ConfirmOverwrite);
+        let Action::Save {
+            id,
+            slot: 2,
+            overwrite: true,
+            ..
+        } = ui.input(Input::Click, 12, context()).unwrap()
+        else {
+            panic!()
+        };
+        assert!(ui.complete(
+            id,
+            Completion::Saved {
+                generation: after,
+                identity: identity(9)
+            }
+        ));
+        assert_eq!(ui.screen(), Screen::Slots);
+        // The final generation remains readable; overflow blocks only replacement.
+        let Action::Load { id, slot: 2 } = ui.input(Input::Click, 13, context()).unwrap() else {
+            panic!()
+        };
+        assert!(ui.complete(id, Completion::Loaded { pages: 2 }));
+        ui.input(Input::Back, 14, context());
+        assert_eq!(ui.input(Input::XShort, 15, context()), None);
+        assert_eq!(ui.screen(), expected_screen, "generation {after}");
+        assert_eq!(ui.pending(), None);
+        // Cancelling must retain the newly saved identity and every other slot.
+        ui.input(Input::Back, 16, context());
+        assert_eq!(ui.identities()[2], Some(identity(9)));
+        for index in [0, 1, 3] {
+            assert_eq!(ui.slots()[index], Slot::Saved { generation: before });
+            assert_eq!(ui.identities()[index], originals[index]);
+        }
+        if after == u64::MAX {
+            ui.input(Input::XShort, 17, context());
+            let Action::Reset { id, slot: 2 } = ui.input(Input::Click, 18, context()).unwrap() else {
+                panic!()
+            };
+            assert!(ui.complete(id, Completion::Reset));
+            assert_eq!(ui.slots()[2], Slot::Empty);
+            assert_eq!(ui.identities()[2], None);
+            for index in [0, 1, 3] {
+                assert_eq!(ui.slots()[index], Slot::Saved { generation: before });
+                assert_eq!(ui.identities()[index], originals[index]);
+            }
+        }
+    }
+}
+
+#[test]
+fn hidden_final_generation_completion_updates_original_slot_and_keeps_screen() {
+    for hide in 0..3 {
+        let mut ui = CaptureUi::new();
+        named_directory(
+            &mut ui,
+            Slot::Saved {
+                generation: u64::MAX - 1,
+            },
+        );
+        ui.input(Input::XShort, 10, context());
+        let Action::Save { id, slot: 0, .. } = ui.input(Input::Click, 11, context()).unwrap() else {
+            panic!()
+        };
+        match hide {
+            0 => {
+                ui.input(Input::Back, 12, context());
+                ui.input(Input::Turn(1), 13, context());
+            }
+            1 => {
+                ui.input(Input::Recover, 12, context());
+            }
+            _ => {
+                ui.tick(11 + OPERATION_TIMEOUT_MS);
+            }
+        }
+        let screen = ui.screen();
+        assert_eq!(ui.pending(), Some(id));
+        assert!(ui.complete(
+            id,
+            Completion::Saved {
+                generation: u64::MAX,
+                identity: identity(8)
+            }
+        ));
+        assert_eq!(ui.pending(), None);
+        assert_eq!(ui.screen(), screen);
+        assert_eq!(ui.slots()[0], Slot::SavedBlocked { generation: u64::MAX });
+        assert_eq!(ui.identities()[0], Some(identity(8)));
+        for index in 1..4 {
+            assert_eq!(
+                ui.slots()[index],
+                Slot::Saved {
+                    generation: u64::MAX - 1
+                }
+            );
+            assert_eq!(ui.identities()[index], Some(identity(index as u8 + 1)));
+        }
+    }
+}

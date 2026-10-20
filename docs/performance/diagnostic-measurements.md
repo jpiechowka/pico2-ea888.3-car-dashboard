@@ -77,6 +77,11 @@ reset instant nor a stack watermark. Power removal can erase it; a saved v4
 capture freezes what was available on that boot. Y recovery clears the live
 fault acknowledgment without changing boot evidence. See the
 [2026-10-20 reset/name follow-up](../validation/probe-slot3-discovery-2026-10-20.md).
+A controlled RP2350 NORMAL ROM reboot can use the watchdog timer and overwrite
+the retained stage/checksum. `WD TIMEOUT` therefore identifies the hardware
+indication without proving an application stall. The conservative classifier
+is shared by both images; [exact source evidence](../validation/probe-slot4-followup-2026-10-21.md#post-flash-watchdog-evidence)
+keeps this distinct from unresolved cold-start reports.
 
 - Count `Waits` only when a completion receive is not immediately ready. A result
   arriving immediately afterward can avoid suspension; this counts observed

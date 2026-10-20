@@ -218,6 +218,15 @@ adds retained stage evidence, cached-name provenance and on-device slot labels.
 Both images share the watchdog changes. No radio rate, timeout or validation
 guard was weakened; no new firmware was flashed during that software follow-up.
 
+## Later slot-4 and full-slot review, 2026-10-21
+
+The [2026-10-21 slot-4 follow-up](../validation/probe-slot4-followup-2026-10-21.md)
+adds a successful TV inventory with MTU 247 and normal cleanup, alongside a
+separate early-establishment failure. It traces the post-flash NORMAL reboot
+through exact picotool/A2 ROM source. That controlled-reboot explanation does
+not establish the cause of the earlier cold USB reports above. The full-slot
+audit preserves all four physical captures and covers overwrite/Reset separately.
+
 ## Primary source references
 
 - [Bluetooth Core 6.1 GATT](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/generic-attribute-profile--gatt-.html), service declaration end-group handle and characteristic discovery within the service.

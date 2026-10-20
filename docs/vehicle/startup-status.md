@@ -15,10 +15,15 @@ qualified. Staleness is reevaluated from time even without a new publication.
 RAW ONLY never implies ECU communication. RESET REQ is terminal transport
 quarantine; reset/power cycling is required while the UI continues to run.
 
-The Debug page shows the previous watchdog reason as WD FORCED, WD TIMEOUT or
-OTHER. These use the locked HAL's `Watchdog::reset_reason`, which reads RP2350
-WATCHDOG_REASON FORCE/TIMER. OTHER does not assert power-on rather than an
-external or software reset. The reason is also logged at startup.
+The Debug page and startup log use the shared `BootEvidence` classifier over
+the raw RP2350 WATCHDOG_REASON and validated ROM boot metadata. Labels are
+WD FORCED, WD TIMEOUT, WD BOTH, WD UNKNOWN, ROM REBOOT or OTHER. Known nonnormal
+intentional ROM boot types produce ROM REBOOT; unknown reason bits stay visible.
+OTHER does not assert power-on rather than an external or software reset.
+A controlled NORMAL ROM reboot also uses the watchdog timer and may invalidate
+the retained stage record. WD TIMEOUT describes the hardware indication, not
+proof that firmware stalled or missed a feed. See the
+[shared reset trace](../validation/probe-slot4-followup-2026-10-21.md#post-flash-watchdog-evidence).
 
 The shared status policy has table-driven source/freshness cases and actual
 pixel comparisons of both retained framebuffer headers through every link

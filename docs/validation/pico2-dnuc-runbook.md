@@ -36,8 +36,11 @@ records one owner-observed power-off/reopen and a successful normal Windows USB
 export. The [2026-10-20 light capture](probe-termination-followup-2026-10-20.md)
 adds a retrieved v3 slot at configured 2.5 MHz with zero global scan errors in
 that run, completed inventory and abnormal termination `0x22`. The old green
-result was incorrect. Other rows remain unqualified; the termination reporting
-repair requires a new authorized image and hardware run.
+result was incorrect. The [2026-10-21 slot-4 follow-up](probe-slot4-followup-2026-10-21.md)
+records a later successful TV inspection with MTU 247, normal `0x16` cleanup and
+a historical probe-error latch, plus a separate photographed `0x3E` failure.
+It also explains the controlled post-flash NORMAL reboot's watchdog indication.
+These individual observations do not qualify the full matrix or RF reliability.
 
 | Check | Required observation/evidence |
 | --- | --- |
@@ -45,16 +48,16 @@ repair requires a new authorized image and hardware run.
 | Onboard controls without encoder | A/B select; short A acts on release; A hold 2 s opens/confirms without moving selection first. Short X opens details/inspects only on release; X hold 2 s opens slots without inspecting. Y hold 2 s recovers scanning and preserves slots. |
 | Gesture boundaries | Exercise short presses, bounce, near-2 s release, holds during busy screens and initial held buttons. No short action follows a recognized hold; no phantom action on encoder reconnect. |
 | Evidence identity | Select peer A, inspect, then save; confirm address/type, packet timestamps, handles and failure state match that attempt. Scan-list capture is a fresh passive view; details capture retains the current inspection. Old advertisement age must not erase GATT evidence. |
-| Four slots | Save each slot, open/page it, cancel an overwrite, let confirmation expire, then confirm replacement. Only the selected slot changes and its generation advances. Busy/error state must remain reachable and recoverable. |
+| Four slots | With backed-up disposable data in all four slots, open/page each, cancel an overwrite, let confirmation expire, then confirm replacement. No empty fifth slot or prior Reset is needed; only the selected slot changes and its generation advances. Busy/error state must remain reachable and recoverable. |
 | Partial evidence | Use a controlled peer that denies a standard read or disconnects. Preserve exact available error, accepted prefix, unfinished stage flags and cleanup outcome; do not relabel it complete. |
 | Probe LED activity | With no recorded errors, verify blue scanning, slow blue blink while inspecting/cleaning up, green only after clean live completion and acknowledged normal `0x13`/`0x16` termination without a local receive fault, amber paused/browsing, and purple during local capture work. Record colour/polarity against the [LED contract](../vehicle/ble-probe.md#rgb-status-and-recovery). |
 | Terminal reason and late faults | On a controlled peer, finish inventory then terminate abnormally or inject a local receive fault. Compare live failure, acknowledged cleanup, retained inventory and exported reason/context. Red must remain latched; a normal cleanup code cannot erase an earlier fault. Older saved success flags must remain unchanged alongside the separate termination warning/assessment. |
-| First-boot red / missing peer | If red appears with `HCIbad:0`, photograph the first/all LED fault details before Y or reboot; save to an empty slot when a selected peer is available. Record cold boot vs watchdog/reset and power/encoder state. For an absent TV/adapter, compare a separate scanner and the peer's power/app connection state; a reboot clearing red does not establish advertising recovery. |
+| First-boot red / missing peer | If red appears with `HCIbad:0`, photograph the first/all LED faults and BOOT RESET raw/ROM/previous-stage details before Y or reboot. Save to an available slot, confirming replacement only after preserving wanted bytes. Record cold power cycle vs controlled picotool/ROM reboot and power/encoder state. NORMAL post-flash reboot can itself produce TIMER/type0/no previous record; do not call that an application stall. For an absent TV/adapter, compare a separate scanner and the peer's power/app connection state; clearing red does not establish advertising recovery. |
 | Probe LED error latch | Use controlled malformed-report fixtures: scan-only errors must slow-blink red at 1 Hz and show the scoped latch hint. A denied read, probe, capacity, storage or USB failure must override with steady red. Red must survive navigation and a successful retry. Hold Y 2 s: clear live evidence/latch and preserve slots. A new failure must relatch, even after counters saturate; historical counters alone must not. |
 | First/all fault evidence | Before Y recovery, compare the header source with the first-recorded source and full bit/name list. A scan-first plus later encoder fault must be steady red while preserving scan as first. With no peer, short X must open global fault pages, but Click/X cannot inspect. V3 saves freeze the mask/first/radio rate; legacy v1/v2 mark them unavailable. |
 | Conservative radio clock | Confirm configured 2.5 MHz at stock/280 CPU, startup within existing deadlines, sustained scan/notification progress and flash-maintenance acknowledgment. Compare repeated good/bad attempts and queue losses; no raw-byte repair or validation bypass. Configured clocks do not replace physical measurements. |
 | Rejected declaration evidence | With a controlled malformed characteristic fixture, compare the first rejected handle, original length and 19-byte maximum prefix in live pages, a saved slot, and USB JSON/text. Short values must not invent a value handle. Preserve partial records, do not start later descriptor/standard reads, and verify legacy v1 slots still load without rejection context. Repeat the TV check against the received range/tuple now retained in slot-1 evidence. |
-| Probe LED cancellation/boot | Normal Back cancellation, USB reset/unplug, empty slots and boot without encoder must not create red. Established encoder loss must. In an authorized instrumented fault test, verify terminal blink/watchdog reset and red on next boot; a stalled GPIO owner may prevent the pre-reset blink. Cold boot clears volatile history. |
+| Probe LED cancellation/boot | Normal Back cancellation, USB bus-reset/unplug cancellation, empty slots and encoder absence do not themselves create red. A controlled RP2350 NORMAL reboot can independently set a watchdog warning; record raw reason/ROM type. Established encoder loss must latch. In an authorized instrumented fault test, verify terminal blink/watchdog reset and red on next boot; a stalled GPIO owner may prevent the pre-reset blink. Cold power removal clears volatile history but cannot exclude a new startup fault. |
 | Historical vs current | Open a saved capture after reboot. Saved boot-relative timestamps remain unchanged; header FPS/work/stack describe the current run. No UTC or old performance reading is inferred. |
 | Read-only export | LIST then export a selected slot to a new directory; compare binary/JSON/text identity and require COMPLETE. Repeat export without changing slot generation. Existing output paths must fail without replacement. |
 | USB interruption | Disconnect USB or stop reading during a controlled export. Retain incomplete host output; reconnect normal USB before retrying. No old reply prefix, lost byte lease, save, erase or BLE inspection may follow. Reopening COM alone is not sufficient evidence of endpoint reset. |
@@ -73,6 +76,12 @@ power on the owner's only copy as an ordinary smoke test. A first interrupted
 save may leave a damaged slot; replacement must retain either the prior committed
 generation or the fully committed new one. Record exact cut position; arbitrary
 power cycling does not exhaust the journal's failure cases.
+
+Reset is deliberately destructive and may leave neither old copy after an
+interruption; test selected-slot isolation and explicit retry separately from
+replacement's committed-generation retention. Reset completion leaves Empty,
+without automatically saving the current evidence. Do not use the owner's four
+preserved captures as destructive test fixtures.
 
 For **both dashboard and probe**, compare diagnostics against the same frozen
 image's linked receipt and instrumented time window:

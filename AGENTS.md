@@ -224,6 +224,9 @@ use `cargo build` for compilation without device operations.
   raw packet evidence or cross address/type identities. Slot labels and PC export
   identities use the same validated saved-name selection. Retained watchdog
   stage/time is a last observation, not a proven cause or reset timestamp.
+  A deliberate RP2350 NORMAL ROM reboot also uses the watchdog timer and can
+  invalidate retained scratch; ambiguous TIMER/type0 evidence must not be treated
+  as proof of a missed feed or silently normalized as a healthy reboot.
 
 ## Display, controls and configuration invariants
 

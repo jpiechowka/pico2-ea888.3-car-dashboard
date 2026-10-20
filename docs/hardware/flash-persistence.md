@@ -91,6 +91,10 @@ an unknown inactive copy. A distinct local Reset confirmation is required to
 erase both copies; Reset itself cannot promise power-loss preservation. Readable
 supported copies remain accessible when replacement is blocked. Neither CRC nor
 a source digest authenticates the capture's origin.
+All four logical slots can be occupied: replacing one uses its own inactive
+copy and needs no spare logical slot. Generation exhaustion blocks save before
+erase and requires explicit Reset; the final committed generation remains
+readable. See the [full-slot audit and tests](../validation/probe-slot4-followup-2026-10-21.md#full-slots-replacement-and-reset).
 
 The common guard checks full SRAM program-buffer extent, physical flash bounds,
 mapping, all DMA channels, SPI busy/TX state, display CS, I2C idle and radio

@@ -550,6 +550,15 @@ is pinned to the upstream 0065 Data Length Extension fix; Wi-Fi and Pico 2 W NVR
 bytes are unchanged. Source tests and linked-image checks do not establish
 physical radio behavior or diagnose the earlier watchdog resets.
 
+The [slot-4 and full-slot follow-up](docs/validation/probe-slot4-followup-2026-10-21.md)
+records a successful saved TV inspection and a separate early-link failure,
+explains why the controlled post-flash reboot can report a watchdog timer reset,
+and audits replacement/Reset with all four probe slots occupied. Replacement
+requires confirmation and affects only the selected slot; healthy slots need no
+prior Reset. The generation-exhaustion UI correction preserves readable bytes
+and immediately requires Reset at the final generation. Earlier cold-start
+reports and physical interrupted-write/endurance behavior remain unqualified.
+
 The [overhaul acceptance record](docs/validation/overhaul-2026-10-11.md) maps
 the implemented stages and review corrections to local test/build evidence and
 the remaining hardware gates. The [fixed workload matrix](docs/performance/benchmark-coverage.md)

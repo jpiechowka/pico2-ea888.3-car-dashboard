@@ -206,7 +206,12 @@ The existing 15-second hardware startup and two-second supervised periods stay
 unchanged. The dashboard's boot log uses the classifier; detailed raw/stage
 evidence is exposed by the probe and capture v4. A zero watchdog reason is `OTHER`,
 not a guaranteed power-on reset. Missing/corrupt scratch or unknown ROM metadata
-remains unavailable/conservative. See the
+remains unavailable/conservative. A controlled NORMAL ROM reboot can use the
+watchdog timer and overwrite the retained record, so `WD TIMEOUT` identifies
+the reset mechanism without proving that the application missed a feed. This
+ambiguity is shared by dashboard and probe; the dashboard warning LED policy
+remains separate. See the [exact post-flash source trace](../validation/probe-slot4-followup-2026-10-21.md#post-flash-watchdog-evidence)
+and the
 [shared reset source and ownership audit](../validation/probe-slot3-discovery-2026-10-20.md).
 
 ## Verification boundaries

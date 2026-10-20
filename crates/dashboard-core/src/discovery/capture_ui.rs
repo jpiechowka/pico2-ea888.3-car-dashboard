@@ -21,21 +21,25 @@ pub enum Slot {
     Unsupported,
     Unavailable,
 }
+
+fn readable_slot(
+    generation: u64,
+    replacement_blocked: bool,
+) -> Slot {
+    if replacement_blocked || generation == u64::MAX {
+        Slot::SavedBlocked { generation }
+    } else {
+        Slot::Saved { generation }
+    }
+}
+
 /// Preserve both-copy admission status when projecting a journal directory.
 /// Do not reduce SlotInfo to its selected capture before this decision.
 pub fn slot_from_journal(info: &super::capture_store::SlotInfo) -> Slot {
     use super::capture_store::CopyState;
     let unsupported = info.copies.iter().any(|v| matches!(v, CopyState::UnsupportedSchema(_)));
     if let Some(selected) = info.selected {
-        if unsupported || selected.generation == u64::MAX {
-            Slot::SavedBlocked {
-                generation: selected.generation,
-            }
-        } else {
-            Slot::Saved {
-                generation: selected.generation,
-            }
-        }
+        readable_slot(selected.generation, unsupported)
     } else if unsupported {
         Slot::Unsupported
     } else if info.copies.iter().all(|v| *v == CopyState::Empty) {
@@ -519,9 +523,7 @@ impl CaptureUi {
                 Screen::Saved
             }
             (Operation::Save, Completion::Saved { generation, identity }) if *generation > 0 => {
-                self.slots[usize::from(pending.slot)] = Slot::Saved {
-                    generation: *generation,
-                };
+                self.slots[usize::from(pending.slot)] = readable_slot(*generation, false);
                 self.identities[usize::from(pending.slot)] = Some(*identity);
                 Screen::Slots
             }

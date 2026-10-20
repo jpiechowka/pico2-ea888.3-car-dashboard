@@ -25,6 +25,12 @@ explains what can be started offline and what remains unproved.
    pages; rotate or use A/B to read them. X or Y returns to slots, then Y returns
    to the live view. Hold X to refresh the slot directory.
 
+**All four slots may be occupied.** Select the one you intend to replace and
+confirm its replacement; no fifth slot or prior Reset is needed. The other
+three captures stay unchanged. There is no automatic eviction. Export the old
+capture first if you want to keep it. Healthy saved slots offer replacement;
+Reset is the recovery action for damaged, unsupported or replacement-blocked slots.
+
 A, X and Y holds do not also perform their short-press action. Slot selection and
 saved pages wrap; live selections/pages stop at their ends. Holding Y for two
 seconds recovers live scanning without erasing saves. The telemetry above saved
@@ -53,7 +59,12 @@ silently migrated, replaced or discarded. Both physical copies are checked,
 including the inactive copy that replacement would erase. A supported copy
 alongside an unknown format or malformed capture header remains openable on the
 Pico, but replacement is blocked until explicit Reset. Storage read failures also
-block saving. Generation exhaustion requires Reset rather than counter wrap.
+block saving. Generation exhaustion requires Reset rather than counter wrap,
+including immediately after a save reaches the final generation; the saved
+capture stays readable. An interrupted Reset can erase either or both copies
+of that selected slot. It is not atomic, is never automatically resumed, and
+does not promise to retain the old capture. Refresh after a failed operation
+before deciding on another explicit action.
 
 Export before Reset when the current exporter can decode the selected generation.
 USB LIST/GET intentionally use journal integrity and select the newest committed
@@ -66,7 +77,8 @@ older copy is still viewable on the Pico. An interrupted first-ever save can
 leave a damaged slot that needs explicit Reset. An interrupted replacement keeps
 the prior valid generation where one exists, or the newly committed generation.
 These are the journal's tested software rules; physical power-cut qualification
-remains separate.
+remains separate. The [full-slot audit](../validation/probe-slot4-followup-2026-10-21.md#full-slots-replacement-and-reset)
+records the confirmation, generation, failure-injection and ownership checks.
 
 Back/recovery and a UI timeout do not cancel an in-progress flash operation.
 The storage owner finishes and returns its buffer before another operation is

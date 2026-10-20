@@ -36,6 +36,38 @@ fn only_documented_intentional_boot_types_normalize_watchdog_reason() {
 }
 
 #[test]
+fn normal_rom_reboot_can_look_like_a_watchdog_timeout_without_retained_context() {
+    // picotool 2.3.1 NORMAL reboot uses delay=500 ms, param0=BOOT_PARTITION_NONE
+    // (-1 as u32), param1=0. RP2350 A2 varm_reboot writes params to scratch2/3,
+    // clears scratch4 and enables the timer. See the pinned sources in
+    // docs/validation/probe-slot4-followup-2026-10-21.md. This is a source-derived
+    // fixture, not a hardware reset simulation or evidence of a startup stall.
+    for stage in [
+        ResetStage::Booting,
+        ResetStage::Supervised,
+        ResetStage::Failure(RecoveryCause::Input),
+    ] {
+        let before = ResetRecord { stage, elapsed_ms: 931 };
+        let mut scratch = before.encode();
+        scratch[2] = u32::MAX;
+        scratch[3] = 0;
+        let after = BootEvidence::capture(1, Some(0), scratch);
+        assert_eq!(after.raw_reason, 1);
+        assert_eq!(after.boot_type, Some(0));
+        assert_eq!(after.previous, None);
+        assert_eq!(after.label(), "WD TIMEOUT");
+        assert!(after.watchdog_fault());
+
+        // The same metadata with an intact record must retain its observation.
+        // Neither missing context nor NORMAL type is a reason to suppress a fault.
+        assert_eq!(
+            BootEvidence::capture(1, Some(0), before.encode()).previous,
+            Some(before)
+        );
+    }
+}
+
+#[test]
 fn rom_reply_requires_exact_supported_shape_and_preserves_chained_flag() {
     let words = [0x40, 0x0099_8255, 0, 0, 0];
     assert_eq!(boot_type_from_sys_info(5, words), Some(0x82));

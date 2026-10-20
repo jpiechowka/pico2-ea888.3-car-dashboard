@@ -170,13 +170,17 @@ frame count controls it. A stalled supervisor cannot promise a visible blink.
 A terminal transport, display or stalled-owner fault stops watchdog feeding:
 both cores/peripherals restart after approximately two seconds. A watchdog timer
 reset sets red again on boot. Both images now inspect raw watchdog reason and
-ROM boot type; known intentional ROM reboot types are distinguished from a
-watchdog fault. Unknown/unavailable ROM evidence keeps a watchdog warning
-conservative. `HCIbad:0` does not contradict a watchdog reset: these are separate
-observations. Power removal clears the ordinary RAM latch, but a startup stall
-can produce a new watchdog reset after power returns. Only an explicit capture
-persists a snapshot, which does not restore the live latch after reboot. The reset loses unsaved
-evidence; valid committed slots remain. Ordinary connection/discovery timeouts
+ROM boot type; documented nonnormal intentional ROM reboot types are distinguished
+from a watchdog fault. A deliberate **NORMAL** ROM reboot, including the checked
+picotool post-flash reboot, also uses the watchdog timer. It can therefore show
+`Red: watchdog reset` with no valid retained stage record. The raw timer indication
+alone does not prove that firmware stalled. Unknown/unavailable or ambiguous
+NORMAL metadata keeps the warning conservative. `HCIbad:0` does not contradict
+that warning: these are separate observations. Power removal clears the ordinary
+RAM latch, but a startup stall can produce a new watchdog reset after power
+returns. Only an explicit capture persists a snapshot, which does not restore
+the live latch after reboot. The reset loses unsaved evidence; valid committed
+slots remain. Ordinary connection/discovery timeouts
 retain partial records and wait for input.
 
 Live details (short X, even without a peer) include `BOOT RESET`: raw reason,
@@ -187,6 +191,10 @@ not a proven root cause, exact reset time or image identity. Power removal can
 erase it. Y recovery acknowledges red while keeping the immutable boot evidence
 inspectable; v4 captures freeze it. No timeout or watchdog deadline was relaxed.
 [Source review, limits and next physical checks](../validation/probe-slot3-discovery-2026-10-20.md).
+The [slot-4 follow-up](../validation/probe-slot4-followup-2026-10-21.md)
+checks the exact A2 boot ROM/picotool path and separates a successful saved TV
+inspection from a different attempt's early-link `0x3E` failure. An operation
+stage says where the host was waiting; it does not identify the underlying cause.
 
 See the [LED source review and validation](../validation/probe-led-status-2026-10-19.md)
 and [scan-only LED and discovery follow-up](../validation/probe-discovery-followup-2026-10-19.md),

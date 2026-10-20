@@ -228,6 +228,9 @@ impl BootEvidence {
     /// Unknown ROM metadata never suppresses a hardware watchdog indication.
     /// SDK normalizes the chained flag; only its documented nonnormal types
     /// count as intentional here. Reserved hardware reason bits stay visible.
+    /// A deliberate RP2350 NORMAL ROM reboot also uses the watchdog timer and
+    /// overwrites retained scratch. Its metadata cannot prove a healthy reboot;
+    /// keep it visible without interpreting TIMER as proof of a firmware stall.
     pub const fn watchdog_fault(self) -> bool {
         if self.raw_reason == 0 {
             return false;
